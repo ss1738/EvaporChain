@@ -91,9 +91,7 @@ pub struct ValidatorInfoSnapshot {
     pub vrf_public_key: Option<Vec<u8>>,
     pub blocks_produced: u64,
     pub evaporations_processed: u64,
-    /// Pure-integer parts-per-million health score (0..=1_000_000).
-    /// Replaces legacy `health_score: f64` for validator-determinism.
-    pub health_score_ppm: u32,
+    pub health_score: f64,
     pub jailed: bool,
     pub total_slashed: u64,
 }
@@ -108,7 +106,7 @@ impl From<&crate::validator_set::ValidatorInfo> for ValidatorInfoSnapshot {
             vrf_public_key: v.vrf_public_key.clone(),
             blocks_produced: v.blocks_produced,
             evaporations_processed: v.evaporations_processed,
-            health_score_ppm: v.health_score_ppm,
+            health_score: v.health_score,
             jailed: v.jailed,
             total_slashed: v.total_slashed,
         }
@@ -125,7 +123,7 @@ impl ValidatorInfoSnapshot {
             vrf_public_key: self.vrf_public_key,
             blocks_produced: self.blocks_produced,
             evaporations_processed: self.evaporations_processed,
-            health_score_ppm: self.health_score_ppm,
+            health_score: self.health_score,
             jailed: self.jailed,
             total_slashed: self.total_slashed,
             bls_pop: None,

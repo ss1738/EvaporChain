@@ -262,22 +262,6 @@ impl MockConsensus {
                 "block timestamp too far in the future".into(),
             ));
         }
-        // **Audit fix HIGH**: lower bound on block timestamp. Legacy
-        // code only checked the upper (future) bound, so a proposer
-        // could submit `timestamp = 0` (or any past value), breaking
-        // monotonicity that downstream code (unfinalised_tail metric,
-        // demurrage anchoring) assumes. We use a 24-hour clock-skew
-        // floor here rather than reading prev_block.timestamp from
-        // state to avoid persistence-format changes; the chain-genesis
-        // timestamp itself plus 24h gives us a safe deny gate.
-        const TIMESTAMP_PAST_BOUND_SECS: u64 = 24 * 60 * 60;
-        let past_floor = now.saturating_sub(TIMESTAMP_PAST_BOUND_SECS);
-        if block.timestamp < past_floor {
-            return Err(ConsensusError::ProposalFailed(format!(
-                "block timestamp {} too far in the past (floor {}, now {})",
-                block.timestamp, past_floor, now
-            )));
-        }
         Ok(())
     }
 
@@ -1465,14 +1449,14 @@ mod tests {
         });
 
         let mut rc = make_rotating(1, &[1, 2]);
-        let initial_health = rc.validator_set.get(1).unwrap().health_score_ppm;
+        let initial_health = rc.validator_set.get(1).unwrap().health_score;
 
         // Produce blocks until evaporation happens
         for _ in 0..20 {
             if rc.produce_block_if_leader(&mut db).is_ok() {
                 // produced or skipped
             }
-            if rc.validator_set.get(1).unwrap().health_score_ppm != initial_health {
+            if rc.validator_set.get(1).unwrap().health_score != initial_health {
                 break;
             }
             rc.epoch += 1;
@@ -1481,7 +1465,7 @@ mod tests {
         // The point is the system tracks it
         assert!(
             rc.validator_set.get(1).unwrap().blocks_produced > 0
-                || rc.validator_set.get(1).unwrap().health_score_ppm != initial_health
+                || rc.validator_set.get(1).unwrap().health_score != initial_health
         );
     }
 

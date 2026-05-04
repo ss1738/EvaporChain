@@ -2633,11 +2633,7 @@ impl ExecutionEngine for SimpleExecutor {
                     Transaction::Refresh(refresh) => fc.compute_refresh_fee(refresh.energy_deposit),
                     _ => 0,
                 };
-                // **Audit fix HIGH**: saturating_add. Legacy `+` was an
-                // unchecked u64 add of (PID-controlled) gas_fee plus
-                // user-supplied extra_fee — could wrap and bypass the
-                // `balance < total_tx_fee` check below.
-                let total_tx_fee = gas_fee.saturating_add(extra_fee);
+                let total_tx_fee = gas_fee + extra_fee;
 
                 // Deduct fee from sender's balance before executing
                 if let Some(sender_addr) = tx.sender() {

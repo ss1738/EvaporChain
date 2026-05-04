@@ -249,12 +249,8 @@ impl StateSyncManager {
 
         self.peer_tips.insert(peer_id, (height, block_hash));
 
-        // Find the most common tip height. **Audit fix M18**: BTreeMap
-        // not HashMap so ties are broken deterministically by smallest
-        // height (canonical iteration order). Random tie-breaks caused
-        // flaky sync convergence on equal-popularity peer tips.
-        let mut height_votes: std::collections::BTreeMap<u64, usize> =
-            std::collections::BTreeMap::new();
+        // Find the most common tip height
+        let mut height_votes: HashMap<u64, usize> = HashMap::new();
         for &(h, _) in self.peer_tips.values() {
             *height_votes.entry(h).or_default() += 1;
         }

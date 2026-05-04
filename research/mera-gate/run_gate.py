@@ -142,8 +142,6 @@ def _load_real_ethereum(
     n_blocks: int = N_BLOCKS,
     block_column: str = "block_number",
     account_column: str = "to_address",
-    energy_weighted: bool = False,
-    gas_column: str = "gas",
 ) -> np.ndarray:
     """
     Load Ethereum account-touch matrix from a Dune Analytics CSV export.
@@ -236,31 +234,11 @@ def _load_real_ethereum(
 
     # Second pass: populate the matrix. Streaming to avoid holding the
     # whole CSV in memory.
-    #
-    # Two modes:
-    # - binary (default, doctrine §A1.8 spec): cell = 1 iff account
-    #   was touched in any block of that bin. Tests structural
-    #   correlation in *raw activity*.
-    # - energy-weighted (Layer 2 doctrine follow-up — the test §A1.4
-    #   actually implies, since "Disentanglers = decay operator,
-    #   energy filtration IS the MERA RG flow"): cell = sum of `gas`
-    #   per (account, bin). Captures gas-weighted activity intensity,
-    #   which is closer to the energy-state matrix MERA's RG is
-    #   supposed to coarse-grain.
     mat = np.zeros((n_accounts, n_blocks), dtype=np.float32)
     n_rows = 0
     n_filtered = 0
-    has_gas_column = False
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
-        if energy_weighted:
-            has_gas_column = gas_column in (reader.fieldnames or [])
-            if not has_gas_column:
-                raise ValueError(
-                    f"energy_weighted=True requires '{gas_column}' column "
-                    f"in CSV; got fields {reader.fieldnames}. Re-scrape with "
-                    f"the updated scraper or override with --gas-column."
-                )
         for row in reader:
             n_rows += 1
             account = (row[account_column] or "").strip().lower()
@@ -274,15 +252,7 @@ def _load_real_ethereum(
                 continue
             i = account_to_idx[account]
             j = block_bin(block)
-            if energy_weighted:
-                gas_str = (row.get(gas_column) or "0").strip()
-                try:
-                    gas_int = int(gas_str)
-                except ValueError:
-                    gas_int = 0
-                mat[i, j] += float(gas_int)
-            else:
-                mat[i, j] = 1.0  # binary touched indicator
+            mat[i, j] = 1.0  # binary touched indicator
 
     print(
         f" done ({time.time()-t0:.1f}s; "
@@ -503,12 +473,11 @@ def final_decision(results: list[dict]) -> dict:
     build decision.
     """
     by_name = {r["name"]: r for r in results}
-    # The MERA-decision input is whichever of LOG-CORRELATED (synthetic),
-    # ETH-MAINNET (binary real), or ETH-MAINNET-ENERGY (energy-weighted
-    # real) was run. Real-data mode replaces the synthetic proxy.
+    # The MERA-decision input is whichever of LOG-CORRELATED (synthetic)
+    # or ETH-MAINNET (real) was run. Real-data mode replaces the
+    # synthetic proxy; both flow through the same verdict logic.
     log_corr = (
-        by_name.get("ETH-MAINNET-ENERGY", {}).get("decision")
-        or by_name.get("ETH-MAINNET", {}).get("decision")
+        by_name.get("ETH-MAINNET", {}).get("decision")
         or by_name.get("LOG-CORRELATED", {}).get("decision", "UNKNOWN")
     )
     area_law  = by_name.get("AREA-LAW",      {}).get("decision", "UNKNOWN")
@@ -722,24 +691,6 @@ def main() -> None:
         default="to_address",
         help="Override the account-address column name in the input CSV.",
     )
-    parser.add_argument(
-        "--energy-weighted",
-        action="store_true",
-        help=(
-            "Build the activation matrix as gas-weighted (sum of `gas` "
-            "per (account, bin)) instead of binary touched/not. Tests "
-            "the energy-filtered process the doctrine §A1.4 actually "
-            "implies — 'Disentanglers = decay operator, energy "
-            "filtration IS the MERA RG flow.' Requires a `gas` column "
-            "in the input CSV."
-        ),
-    )
-    parser.add_argument(
-        "--gas-column",
-        type=str,
-        default="gas",
-        help="Column name for the energy proxy (default 'gas').",
-    )
     args = parser.parse_args()
 
     t_start = time.time()
@@ -761,16 +712,11 @@ def main() -> None:
         # Real Ethereum replaces the LOG-CORRELATED proxy. Keep AREA-LAW
         # + RANDOM as control sanity datasets so the classifier's
         # behaviour remains measurable across the structural range.
-        eth_label = "ETH-MAINNET-ENERGY" if args.energy_weighted else "ETH-MAINNET"
-        if args.energy_weighted:
-            print(f"  energy-weighted mode: matrix = sum(gas) per (account, bin)")
         datasets = [
-            (eth_label, _load_real_ethereum(
+            ("ETH-MAINNET", _load_real_ethereum(
                 args.input,
                 block_column=args.block_column,
                 account_column=args.account_column,
-                energy_weighted=args.energy_weighted,
-                gas_column=args.gas_column,
             )),
             ("AREA-LAW",    _generate_area_law(rng)),
             ("RANDOM",      _generate_random(rng)),

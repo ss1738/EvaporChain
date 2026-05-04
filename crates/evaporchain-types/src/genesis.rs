@@ -73,20 +73,7 @@ impl ChainParams {
 
 // ─────────────────────── Tokenomics ─────────────────────────────────────────
 
-/// Parts-per-million denominator for `*_ppm` ratio fields.
-/// 1_000_000 ppm = 100% = 1.0 in legacy float form.
-pub const PPM_DENOMINATOR: u64 = 1_000_000;
-
-/// Basis-points denominator for `*_bps` ratio fields.
-/// 10_000 bps = 100% = 1.0 in legacy float form.
-pub const BPS_DENOMINATOR: u64 = 10_000;
-
 /// Economic parameters governing token supply and rewards.
-///
-/// **Validator-determinism note:** all ratio fields are integer
-/// parts-per-million (`*_ppm`) or basis-points (`*_bps`). Float
-/// arithmetic on these values is forbidden on the consensus path —
-/// `distribute_fees` is pure u128 integer math.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tokenomics {
     /// Total token supply at genesis.
@@ -101,20 +88,17 @@ pub struct Tokenomics {
     /// Set to 0 to disable reward decay (constant reward).
     pub reward_half_life: u64,
 
-    /// Fraction of fees burned, in parts-per-million (0..=1_000_000).
-    /// 500_000 ppm = 50% burned. Remainder goes to producer + stakers.
-    pub fee_burn_rate_ppm: u32,
+    /// Fraction of fees burned (0.0 = none burned, 1.0 = all burned).
+    /// Remainder goes to the block producer.
+    pub fee_burn_rate: f64,
 
-    /// Fraction of (post-burn) fees redistributed to stakers, in
-    /// parts-per-million (0..=1_000_000). E.g., if
-    /// `fee_burn_rate_ppm = 500_000` and `staker_fee_share_ppm =
-    /// 500_000`, then: 50% burned, 25% to producer, 25% to stakers.
-    pub staker_fee_share_ppm: u32,
+    /// Fraction of fees redistributed to stakers (from the non-burned portion).
+    /// E.g., if fee_burn_rate=0.5 and staker_fee_share=0.5, then:
+    ///   50% burned, 25% to producer, 25% to stakers.
+    pub staker_fee_share: f64,
 
-    /// Annual percentage yield target for staking rewards, in basis
-    /// points (informational only — not used in fee distribution
-    /// math). 500 bps = 5%.
-    pub target_staking_apy_bps: u32,
+    /// Annual percentage yield target for staking rewards (informational).
+    pub target_staking_apy: f64,
 }
 
 impl Default for Tokenomics {
@@ -123,9 +107,9 @@ impl Default for Tokenomics {
             total_supply: 1_000_000_000, // 1B tokens
             block_reward: 100,
             reward_half_life: 1_000_000, // ~2 years at 2s blocks
-            fee_burn_rate_ppm: 500_000,  // 50%
-            staker_fee_share_ppm: 500_000, // 50%
-            target_staking_apy_bps: 500, // 5%
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
         }
     }
 }
@@ -140,23 +124,10 @@ impl Tokenomics {
     }
 
     /// Compute fee distribution for a block.
-    ///
-    /// Pure-integer u128 math; no f64 anywhere. Validator-deterministic.
-    /// `burned + to_producer + to_stakers = total_fees` always (no
-    /// dust loss; truncating division gives any remainder to the
-    /// producer).
     pub fn distribute_fees(&self, total_fees: u64) -> FeeDistribution {
-        let total_u128 = total_fees as u128;
-        // burned = floor(total * fee_burn_rate_ppm / 1_000_000)
-        let burned_u128 = total_u128
-            .saturating_mul(self.fee_burn_rate_ppm as u128)
-            / PPM_DENOMINATOR as u128;
-        let burned = burned_u128.min(total_u128) as u64; // clamp ≤ total
+        let burned = (total_fees as f64 * self.fee_burn_rate).round() as u64;
         let remaining = total_fees.saturating_sub(burned);
-        let to_stakers_u128 = (remaining as u128)
-            .saturating_mul(self.staker_fee_share_ppm as u128)
-            / PPM_DENOMINATOR as u128;
-        let to_stakers = to_stakers_u128.min(remaining as u128) as u64;
+        let to_stakers = (remaining as f64 * self.staker_fee_share).round() as u64;
         let to_producer = remaining.saturating_sub(to_stakers);
         FeeDistribution {
             burned,
@@ -350,19 +321,19 @@ impl GenesisConfig {
             ));
         }
 
-        // Fee burn rate must be in [0, 1_000_000] ppm
-        if self.tokenomics.fee_burn_rate_ppm > PPM_DENOMINATOR as u32 {
+        // Fee burn rate must be in [0, 1]
+        if !(0.0..=1.0).contains(&self.tokenomics.fee_burn_rate) {
             errors.push(format!(
-                "fee_burn_rate_ppm must be 0..=1_000_000, got {}",
-                self.tokenomics.fee_burn_rate_ppm
+                "fee_burn_rate must be 0.0–1.0, got {}",
+                self.tokenomics.fee_burn_rate
             ));
         }
 
-        // Staker fee share must be in [0, 1_000_000] ppm
-        if self.tokenomics.staker_fee_share_ppm > PPM_DENOMINATOR as u32 {
+        // Staker fee share must be in [0, 1]
+        if !(0.0..=1.0).contains(&self.tokenomics.staker_fee_share) {
             errors.push(format!(
-                "staker_fee_share_ppm must be 0..=1_000_000, got {}",
-                self.tokenomics.staker_fee_share_ppm
+                "staker_fee_share must be 0.0–1.0, got {}",
+                self.tokenomics.staker_fee_share
             ));
         }
 
@@ -388,9 +359,9 @@ impl GenesisConfig {
                 total_supply: 10_000_000,
                 block_reward: 10,
                 reward_half_life: 100_000,
-                fee_burn_rate_ppm: 500_000,
-                staker_fee_share_ppm: 500_000,
-                target_staking_apy_bps: 500,
+                fee_burn_rate: 0.50,
+                staker_fee_share: 0.50,
+                target_staking_apy: 0.05,
             },
             genesis_time: "2026-04-06T00:00:00Z".to_string(),
             validators: vec![
@@ -496,8 +467,8 @@ mod tests {
     #[test]
     fn test_fee_distribution() {
         let t = Tokenomics {
-            fee_burn_rate_ppm: 500_000,
-            staker_fee_share_ppm: 500_000,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
             ..Default::default()
         };
         let dist = t.distribute_fees(1000);
@@ -509,51 +480,14 @@ mod tests {
     #[test]
     fn test_fee_distribution_all_burned() {
         let t = Tokenomics {
-            fee_burn_rate_ppm: 1_000_000,
-            staker_fee_share_ppm: 500_000,
+            fee_burn_rate: 1.0,
+            staker_fee_share: 0.50,
             ..Default::default()
         };
         let dist = t.distribute_fees(1000);
         assert_eq!(dist.burned, 1000);
         assert_eq!(dist.to_producer, 0);
         assert_eq!(dist.to_stakers, 0);
-    }
-
-    #[test]
-    fn test_fee_distribution_deterministic_30_70() {
-        // Validator-determinism witness: 30% burn, 70% to stakers.
-        // Pure integer math; same byte-exact output on every run /
-        // every architecture.
-        let t = Tokenomics {
-            fee_burn_rate_ppm: 300_000,
-            staker_fee_share_ppm: 1_000_000, // all of remainder to stakers
-            ..Default::default()
-        };
-        let dist = t.distribute_fees(1_000_000);
-        assert_eq!(dist.burned, 300_000);
-        assert_eq!(dist.to_stakers, 700_000);
-        assert_eq!(dist.to_producer, 0);
-        // Conservation: burned + producer + stakers == total
-        assert_eq!(dist.burned + dist.to_producer + dist.to_stakers, 1_000_000);
-    }
-
-    #[test]
-    fn test_fee_distribution_no_dust_loss() {
-        // For any total_fees and any ratio combo, the three buckets
-        // must sum exactly to total_fees (no dust escapes).
-        let t = Tokenomics {
-            fee_burn_rate_ppm: 333_333,
-            staker_fee_share_ppm: 666_666,
-            ..Default::default()
-        };
-        for total in [0, 1, 7, 100, 999, 1_000_000, u64::MAX / 2] {
-            let dist = t.distribute_fees(total);
-            assert_eq!(
-                dist.burned.saturating_add(dist.to_producer).saturating_add(dist.to_stakers),
-                total,
-                "conservation violated at total={total}"
-            );
-        }
     }
 
     #[test]

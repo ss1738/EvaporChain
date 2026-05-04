@@ -371,55 +371,6 @@ impl ProvingEngine for NovaProver {
         }
     }
 
-    /// Audit fix C1: bind `z_n` to `expected_final_state_root` so a
-    /// dishonest prover cannot swap arbitrary bytes into the chain
-    /// proof's `final_state_root` field. `BlockStepCircuit` derives
-    /// `z[0]` per fold from `state_root_to_u64(new_state_root)`, so
-    /// comparison happens at the same u64-truncated semantic. (The
-    /// 8-byte truncation is a separate audit item — C2 — addressed
-    /// by `RealBlockProver::verify_proof_with_final_state` which
-    /// uses the full Poseidon hash via `poseidon_state_root_hash`.)
-    fn verify_proof_with_final_state(
-        &self,
-        proof: &CompressedProof,
-        num_blocks: usize,
-        genesis_state: [u8; 32],
-        expected_final_state_root: [u8; 32],
-    ) -> Result<bool, ProvingError> {
-        let compressed: CompressedSNARK<E1, E2, BlockStepCircuit<G1>, S1, S2> =
-            bincode::deserialize(&proof.proof_bytes)
-                .map_err(|e| ProvingError::VerificationFailed(format!("deserialize: {:?}", e)))?;
-
-        let z0: Vec<Scalar> = bincode::deserialize(&proof.z0_bytes)
-            .map_err(|e| ProvingError::VerificationFailed(format!("z0 deserialize: {:?}", e)))?;
-
-        let expected_z0_hash = Scalar::from(state_root_to_u64(&genesis_state));
-        if z0.first() != Some(&expected_z0_hash) {
-            return Ok(false);
-        }
-
-        let (_pk, vk) = CompressedSNARK::<_, _, _, S1, S2>::setup(&self.pp)
-            .map_err(|e| ProvingError::VerificationFailed(format!("CS setup: {:?}", e)))?;
-
-        // nova-snark CompressedSNARK::verify returns Vec<Scalar> (the
-        // primary z_n) directly; secondary is implicit. Adapted to
-        // current API.
-        let z_n_primary = match compressed.verify(&vk, num_blocks, &z0) {
-            Ok(p) => p,
-            Err(_) => return Ok(false),
-        };
-
-        // Bind z_n[0] to expected_final_state_root. BlockStepCircuit
-        // emits z[0] = state_root_to_u64(new_state_root) at every fold,
-        // so the final z_n[0] must equal the truncated u64 of the
-        // claimed final state root.
-        let expected_z_n_0 = Scalar::from(state_root_to_u64(&expected_final_state_root));
-        match z_n_primary.first() {
-            Some(actual) if actual == &expected_z_n_0 => Ok(true),
-            _ => Ok(false),
-        }
-    }
-
     fn accumulator_size(&self) -> usize {
         // Approximate size of the running RecursiveSNARK
         match &self.recursive_snark {
@@ -2208,42 +2159,6 @@ impl ProvingEngine for RealBlockProver {
         _genesis_state: [u8; 32],
     ) -> Result<bool, ProvingError> {
         RealBlockProver::verify_proof(self, proof, num_blocks)
-    }
-
-    /// Audit fix C1+C2: bind `z_n[0]` to the full-Poseidon hash of
-    /// `expected_final_state_root` (no 8-byte truncation — the Real
-    /// circuit hashes all 4 limbs via `poseidon_state_root_hash`).
-    fn verify_proof_with_final_state(
-        &self,
-        proof: &CompressedProof,
-        num_blocks: usize,
-        _genesis_state: [u8; 32],
-        expected_final_state_root: [u8; 32],
-    ) -> Result<bool, ProvingError> {
-        let compressed: CompressedSNARK<E1, E2, RealBlockCircuit<G1>, S1, S2> =
-            bincode::deserialize(&proof.proof_bytes)
-                .map_err(|e| ProvingError::VerificationFailed(format!("deserialize: {:?}", e)))?;
-        let z0: Vec<Scalar> = bincode::deserialize(&proof.z0_bytes)
-            .map_err(|e| ProvingError::VerificationFailed(format!("z0 deserialize: {:?}", e)))?;
-
-        self.ensure_compressed_setup()?;
-        let guard = self
-            .compressed_setup
-            .lock()
-            .map_err(|_| ProvingError::VerificationFailed("CS setup mutex poisoned".to_string()))?;
-        let (_pk, vk) = guard.as_ref().expect("compressed setup just ensured");
-
-        // nova-snark API: verify returns Vec<Scalar> directly.
-        let z_n_primary = match compressed.verify(vk, num_blocks, &z0) {
-            Ok(p) => p,
-            Err(_) => return Ok(false),
-        };
-
-        let expected_z_n_0 = poseidon_state_root_hash(&expected_final_state_root);
-        match z_n_primary.first() {
-            Some(actual) if actual == &expected_z_n_0 => Ok(true),
-            _ => Ok(false),
-        }
     }
 
     fn accumulator_size(&self) -> usize {

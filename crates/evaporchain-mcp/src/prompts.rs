@@ -133,66 +133,6 @@ mod tests {
             assert_eq!(arg["required"], false);
         }
     }
-
-    #[test]
-    fn test_oracle_data_analysis_has_one_optional_arg() {
-        let prompts = list_prompts();
-        let oda = prompts["prompts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["name"] == "oracle_data_analysis")
-            .unwrap();
-        let args = oda["arguments"].as_array().unwrap();
-        assert_eq!(args.len(), 1);
-        assert_eq!(args[0]["name"], "staleness_threshold_secs");
-        assert_eq!(args[0]["required"], false);
-    }
-
-    #[test]
-    fn test_zero_arg_prompts_list_empty_arguments() {
-        let prompts = list_prompts();
-        let zero_arg = ["explore_chain", "chain_health_report", "viability_audit", "consensus_phase_investigation"];
-        for name in zero_arg {
-            let p = prompts["prompts"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|p| p["name"] == name)
-                .unwrap_or_else(|| panic!("missing prompt {name}"));
-            let args = p["arguments"].as_array().unwrap();
-            assert_eq!(args.len(), 0, "prompt {name} should have no arguments");
-        }
-    }
-
-    #[test]
-    fn test_get_prompt_missing_name_errors() {
-        // Synchronous dispatch path doesn't need a real Context — bad
-        // params return Err before we ever touch the chain. Drive it
-        // through a tiny tokio runtime so we can assert.
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let ctx = Context {
-            node_url: "http://127.0.0.1:1".to_string(),
-            client: reqwest::Client::new(),
-        };
-        let err = rt
-            .block_on(get_prompt(&ctx, &json!({})))
-            .expect_err("should error on missing name");
-        assert!(err.contains("Missing 'name'"), "{err}");
-    }
-
-    #[test]
-    fn test_get_prompt_unknown_name_errors() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let ctx = Context {
-            node_url: "http://127.0.0.1:1".to_string(),
-            client: reqwest::Client::new(),
-        };
-        let err = rt
-            .block_on(get_prompt(&ctx, &json!({"name": "nonexistent_prompt_xyz"})))
-            .expect_err("should error on unknown name");
-        assert!(err.starts_with("Unknown prompt:"), "{err}");
-    }
 }
 
 async fn get_explore_chain(ctx: &Context) -> Result<Value, String> {

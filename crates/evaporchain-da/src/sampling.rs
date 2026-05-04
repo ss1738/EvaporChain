@@ -11,24 +11,6 @@ use thiserror::Error;
 
 use crate::erasure::Shard;
 
-const SAMPLING_INNER_DOMAIN: &[u8] = b"evaporchain:da:sampling:v1:inner\0";
-const SAMPLING_PAD_DOMAIN: &[u8] = b"evaporchain:da:sampling:v1:pad\0";
-const SAMPLING_ROOT_DOMAIN: &[u8] = b"evaporchain:da:sampling:v1:root\0";
-
-fn sampling_pad_leaf() -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(SAMPLING_PAD_DOMAIN);
-    h.finalize().into()
-}
-
-fn sampling_finalise_root(inner_root: &[u8; 32], leaf_count: u64) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(SAMPLING_ROOT_DOMAIN);
-    h.update(inner_root);
-    h.update(&leaf_count.to_le_bytes());
-    h.finalize().into()
-}
-
 #[derive(Error, Debug)]
 pub enum SamplingError {
     #[error("shard index {index} out of range (total: {total})")]
@@ -73,14 +55,8 @@ pub struct MerkleProof {
     pub siblings: Vec<[u8; 32]>,
     /// Index of the leaf in the tree.
     pub leaf_index: usize,
-    /// Root hash this proof verifies against (length-bound finalised root).
+    /// Root hash this proof verifies against.
     pub root: [u8; 32],
-    /// Total number of leaves in the tree, folded into `root` via the
-    /// length-bound finaliser. Required so verifiers can re-derive the
-    /// finalised root from `(shard.hash, siblings, leaf_count)` without
-    /// trusting the prover's tree shape.
-    #[serde(default)]
-    pub leaf_count: u64,
 }
 
 /// A complete DA proof: commitment root + shard proofs.
@@ -137,8 +113,7 @@ pub fn batch_verify_proofs(
         for &idx in indices {
             verified_count += 1;
 
-            // Reconstruct root from leaf + siblings, then finalise with
-            // the length-bound leaf_count.
+            // Reconstruct root from leaf + siblings.
             let mut current = shard_hashes[idx];
             let mut leaf_idx = proofs[idx].leaf_index;
             for sibling in &proofs[idx].siblings {
@@ -149,9 +124,8 @@ pub fn batch_verify_proofs(
                 };
                 leaf_idx /= 2;
             }
-            let final_root = sampling_finalise_root(&current, proofs[idx].leaf_count);
 
-            if final_root != proofs[idx].root {
+            if current != proofs[idx].root {
                 invalid_indices.push(idx);
                 // Short-circuit: skip remaining proofs in this root group.
                 break;
@@ -219,14 +193,12 @@ impl DASampler {
         }
 
         let hashes: Vec<[u8; 32]> = shards.iter().map(|s| s.hash).collect();
-        let leaf_count = hashes.len() as u64;
         let (root, siblings) = Self::merkle_proof(&hashes, shard_index);
 
         Ok(MerkleProof {
             siblings,
             leaf_index: shard_index,
             root,
-            leaf_count,
         })
     }
 
@@ -244,9 +216,7 @@ impl DASampler {
             index /= 2;
         }
 
-        // Finalise with leaf_count (length-bound root). Trees with
-        // different leaf counts cannot collide.
-        sampling_finalise_root(&current, proof.leaf_count) == proof.root
+        current == proof.root
     }
 
     /// Generate random sample queries for a block.
@@ -406,10 +376,8 @@ impl DASampler {
 
     // ── Internal Merkle helpers ──
 
-    /// Domain-tagged inner-node hash. Distinct from any leaf hash.
     fn hash_pair(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(SAMPLING_INNER_DOMAIN);
         hasher.update(left);
         hasher.update(right);
         hasher.finalize().into()
@@ -417,17 +385,16 @@ impl DASampler {
 
     fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
         if leaves.is_empty() {
-            return sampling_finalise_root(&[0u8; 32], 0);
+            return [0u8; 32];
         }
-        let leaf_count = leaves.len() as u64;
         if leaves.len() == 1 {
-            return sampling_finalise_root(&leaves[0], leaf_count);
+            return leaves[0];
         }
 
+        // Pad to power of 2
         let mut layer: Vec<[u8; 32]> = leaves.to_vec();
-        let pad = sampling_pad_leaf();
         while layer.len().count_ones() != 1 {
-            layer.push(pad);
+            layer.push([0u8; 32]);
         }
 
         while layer.len() > 1 {
@@ -438,25 +405,25 @@ impl DASampler {
             layer = next;
         }
 
-        sampling_finalise_root(&layer[0], leaf_count)
+        layer[0]
     }
 
     fn merkle_proof(leaves: &[[u8; 32]], index: usize) -> ([u8; 32], Vec<[u8; 32]>) {
         if leaves.is_empty() {
-            return (sampling_finalise_root(&[0u8; 32], 0), vec![]);
+            return ([0u8; 32], vec![]);
         }
-        let leaf_count = leaves.len() as u64;
 
+        // Pad to power of 2
         let mut layer: Vec<[u8; 32]> = leaves.to_vec();
-        let pad = sampling_pad_leaf();
         while layer.len().count_ones() != 1 {
-            layer.push(pad);
+            layer.push([0u8; 32]);
         }
 
         let mut siblings = Vec::new();
         let mut current_index = index;
 
         while layer.len() > 1 {
+            // Record sibling
             let sibling_index = if current_index.is_multiple_of(2) {
                 current_index + 1
             } else {
@@ -465,9 +432,10 @@ impl DASampler {
             if sibling_index < layer.len() {
                 siblings.push(layer[sibling_index]);
             } else {
-                siblings.push(pad);
+                siblings.push([0u8; 32]);
             }
 
+            // Go up one level
             let mut next = Vec::with_capacity(layer.len() / 2);
             for pair in layer.chunks(2) {
                 next.push(Self::hash_pair(&pair[0], &pair[1]));
@@ -476,7 +444,7 @@ impl DASampler {
             current_index /= 2;
         }
 
-        (sampling_finalise_root(&layer[0], leaf_count), siblings)
+        (layer[0], siblings)
     }
 }
 

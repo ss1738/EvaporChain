@@ -132,49 +132,14 @@ impl PoseidonParams {
     }
 }
 
-/// Deterministic byte→field mapping for **binding** (not challenge
-/// derivation). Top 2 bits cleared to land in `[0, 2^254)`; Pallas
-/// modulus `p ≈ 2^254.97` so every output is < p. This is a fixed
-/// projection with predictable round-trip behaviour — the right
-/// shape for "absorb these bytes into a Poseidon transcript" use.
-///
-/// **Do NOT use this for sampling Fiat-Shamir challenges where
-/// distribution uniformity matters** — the `[2^254, p)` interval is
-/// never sampled, leaving a 0.4% bias. For uniform challenges, use
-/// [`hash_to_field`].
+/// Convert 32 bytes to a Pallas base field element.
+/// Clears top 2 bits to ensure the value is < p (p ≈ 2^254).
 fn bytes_to_field(bytes: &[u8; 32]) -> Fp {
     let mut repr = *bytes;
-    repr[31] &= 0x3F;
+    // Pallas base field modulus p starts with 0x40... in big-endian.
+    // In little-endian repr, byte 31 is the MSB. Clear bits 6,7 so value < p.
+    repr[31] &= 0x3F; // Clears bits 6-7 → value < 2^254 < p ≈ 2^254.97
     Fp::from_repr(repr).unwrap()
-}
-
-/// **Audit fix MED**: unbiased hash-to-field via rejection sampling
-/// on a fresh BLAKE3 XOF stream. Returns a uniformly-distributed
-/// element of `Fp` over the entire `[0, p)` range — the correct
-/// primitive for Fiat-Shamir challenge derivation.
-///
-/// Per-iteration success probability is `p / 2^256 ≈ 0.25`, so the
-/// loop terminates in ~4 iterations on average; each iteration is a
-/// single BLAKE3 squeeze. Termination is observable only via the
-/// public hash output, so there's no input-dependent side channel.
-pub fn hash_to_field(domain: &[u8], data: &[u8]) -> Fp {
-    let mut h = blake3::Hasher::new();
-    h.update(b"evaporchain:hash:hash_to_field:v1\0");
-    h.update(&(domain.len() as u64).to_le_bytes());
-    h.update(domain);
-    h.update(data);
-    let mut xof = h.finalize_xof();
-    let mut counter: u64 = 0;
-    loop {
-        let mut candidate = [0u8; 32];
-        xof.fill(&mut candidate);
-        let ct = Fp::from_repr(candidate);
-        if bool::from(ct.is_some()) {
-            return ct.unwrap();
-        }
-        counter = counter.saturating_add(1);
-        debug_assert!(counter < 1024, "hash_to_field rejection diverged");
-    }
 }
 
 /// Convert a field element back to 32 bytes (little-endian canonical repr).

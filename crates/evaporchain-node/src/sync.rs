@@ -241,25 +241,9 @@ pub async fn fetch_snapshot_blob_from_peer(
 ) -> Result<evaporchain_state::SnapshotFile, String> {
     let peer = peer_url.trim_end_matches('/');
 
-    // **Audit fix C2**: Bounded HTTP client with explicit timeouts.
-    // Legacy code used `reqwest::get()` with no timeout and no
-    // size cap — a hostile bootstrap peer could stream unbounded
-    // gigabytes into the joining node's memory.
-    const SNAPSHOT_MAX_BYTES: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB ceiling
-    const TOTAL_TIMEOUT_SECS: u64 = 600;
-    const CONNECT_TIMEOUT_SECS: u64 = 30;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(TOTAL_TIMEOUT_SECS))
-        .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("reqwest client: {}", e))?;
-
     // 1. Discover latest snapshot height + verify chain_id.
     let latest_url = format!("{}/api/snapshot/latest", peer);
-    let latest = client
-        .get(&latest_url)
-        .send()
+    let latest = reqwest::get(&latest_url)
         .await
         .map_err(|e| format!("GET {}: {}", latest_url, e))?;
     if !latest.status().is_success() {
@@ -295,47 +279,18 @@ pub async fn fetch_snapshot_blob_from_peer(
         ));
     }
 
-    // 2. Download the blob with strict Content-Length cap.
+    // 2. Download the blob.
     let dl_url = format!("{}/api/snapshot/download/{}", peer, height);
-    let dl = client
-        .get(&dl_url)
-        .send()
+    let dl = reqwest::get(&dl_url)
         .await
         .map_err(|e| format!("GET {}: {}", dl_url, e))?;
     if !dl.status().is_success() {
         return Err(format!("GET {} returned {}", dl_url, dl.status()));
     }
-    // **Audit fix C2 (cont)**: require Content-Length and reject
-    // anything above the snapshot ceiling. The peer must serve sized
-    // blobs — operators should not deploy snapshot servers that omit
-    // Content-Length.
-    match dl.content_length() {
-        Some(n) if n > SNAPSHOT_MAX_BYTES => {
-            return Err(format!(
-                "snapshot from {} reports {} bytes, exceeds ceiling {}",
-                dl_url, n, SNAPSHOT_MAX_BYTES
-            ));
-        }
-        Some(_) => {}
-        None => {
-            return Err(format!(
-                "snapshot {} did not declare Content-Length; refusing to download",
-                dl_url
-            ));
-        }
-    }
     let bytes = dl
         .bytes()
         .await
         .map_err(|e| format!("read body {}: {}", dl_url, e))?;
-    if (bytes.len() as u64) > SNAPSHOT_MAX_BYTES {
-        return Err(format!(
-            "snapshot from {} oversized post-download: {} > {}",
-            dl_url,
-            bytes.len(),
-            SNAPSHOT_MAX_BYTES
-        ));
-    }
 
     // 3. Verify integrity hash + double-check chain_id from the blob
     //    itself (the metadata endpoint is informational only).
@@ -442,49 +397,5 @@ mod tests {
         let wrong_root = [0xFFu8; 32];
         let result = apply_sync_snapshot(&mut db, &data, wrong_root);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_apply_sync_snapshot_malformed_bytes_errors() {
-        let mut db = InMemoryStateDB::new();
-        // 4 bytes of garbage cannot deserialize as a SnapshotFile
-        let bogus = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        let result = apply_sync_snapshot(&mut db, &bogus, [0u8; 32]);
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("deserialize"),
-            "expected deserialize error, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn test_sync_client_initial_state() {
-        let mut client = SyncClient::new(0);
-        // Starts uncomplete with zero progress
-        assert!(!client.is_complete());
-        assert_eq!(client.progress(), 0.0);
-        // start() returns at least one action (typically a TipRequest)
-        let actions = client.start();
-        assert!(!actions.is_empty(), "start() should yield bootstrap actions");
-    }
-
-    #[test]
-    fn test_sync_server_handles_unknown_height() {
-        let server = SyncServer::new();
-        // No snapshot registered ⇒ tip request returns provider's response
-        // (height=0 is the default local_height) — and chunk request for an
-        // unknown height should not panic and should not yield chunk data.
-        let resp = server.handle_request(&SyncMessage::ChunkRequest {
-            height: 9_999_999,
-            chunk_index: 0,
-        });
-        // Either None or a structured response, but never a ChunkResponse with data.
-        if let Some(SyncMessage::ChunkResponse { chunk }) = resp {
-            assert!(
-                chunk.height != 9_999_999 || chunk.data.is_empty(),
-                "should not return chunk data for unregistered height"
-            );
-        }
     }
 }

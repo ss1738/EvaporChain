@@ -23,30 +23,19 @@ use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use rand::RngCore;
 
 const MAGIC: &[u8; 4] = b"EVK1";
-/// **Audit fix HIGH (crypto)**: EVK2 envelope adds a 1-byte
-/// `version` / `algorithm` discriminator immediately after the magic.
-/// Layout: `magic("EVK2") || version(1) || salt(16) || nonce(24) ||
-/// ciphertext(48)` = 93 bytes. Reserves headroom for future
-/// migrations (different KDF, different AEAD, hardware-backed keys)
-/// without breaking compat — the version byte selects the algorithm.
-///
-/// New writes go to EVK2 v1 (Argon2id + XChaCha20-Poly1305, same as
-/// EVK1). EVK1 reads remain supported indefinitely so operators can
-/// migrate at their own pace via key rotation.
-const MAGIC_V2: &[u8; 4] = b"EVK2";
-const ALG_VERSION_ARGON2ID_XCHACHA20: u8 = 1;
 /// Crypto-6 (re-audit 2026-05-02): magic header for the new
 /// plaintext-with-magic format. Closes the audit's "32-byte
 /// ciphertext fragment can be silently misclassified as plaintext"
 /// concern. Layout: `b"EVPL" || 32 raw bytes` = 36 bytes total.
+/// Auto-write (in `format_plaintext_for_disk`) and auto-detect
+/// (in `decode_key_from_disk`) handle the new format; legacy raw
+/// 32-byte plaintext is still accepted with a deprecation warning.
 const PLAINTEXT_MAGIC: &[u8; 4] = b"EVPL";
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 const PLAINTEXT_LEN: usize = 32;
 const TAG_LEN: usize = 16;
 pub const ENCRYPTED_LEN: usize = MAGIC.len() + SALT_LEN + NONCE_LEN + PLAINTEXT_LEN + TAG_LEN; // 92
-pub const ENCRYPTED_LEN_V2: usize =
-    MAGIC_V2.len() + 1 + SALT_LEN + NONCE_LEN + PLAINTEXT_LEN + TAG_LEN; // 93
 pub const PLAINTEXT_MAGIC_LEN: usize = PLAINTEXT_MAGIC.len() + PLAINTEXT_LEN; // 36
 
 pub const ENV_PASSPHRASE: &str = "EVAPORCHAIN_VALIDATOR_KEY_PASS";
@@ -168,17 +157,12 @@ pub fn encrypt_bls_secret_with_aad(
         .encrypt(nonce, Payload { msg: secret, aad })
         .map_err(|e| format!("encrypt: {e}"))?;
 
-    // **Audit fix HIGH (crypto)**: write the new EVK2 envelope with a
-    // 1-byte version discriminator. Operators reading old EVK1 blobs
-    // continue to work via the legacy decrypt path; new writes go to
-    // EVK2 only. Reserves migration headroom.
-    let mut out = Vec::with_capacity(ENCRYPTED_LEN_V2);
-    out.extend_from_slice(MAGIC_V2);
-    out.push(ALG_VERSION_ARGON2ID_XCHACHA20);
+    let mut out = Vec::with_capacity(ENCRYPTED_LEN);
+    out.extend_from_slice(MAGIC);
     out.extend_from_slice(&salt);
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
-    debug_assert_eq!(out.len(), ENCRYPTED_LEN_V2);
+    debug_assert_eq!(out.len(), ENCRYPTED_LEN);
     Ok(out)
 }
 
@@ -197,43 +181,19 @@ pub fn decrypt_bls_secret_with_aad(
     aad: &[u8],
 ) -> Result<[u8; 32], String> {
     use chacha20poly1305::aead::Payload;
-
-    // Detect EVK1 (legacy) vs EVK2 (current) by length + magic.
-    let (salt, nonce_bytes, ciphertext) = if blob.len() == ENCRYPTED_LEN_V2
-        && blob.len() >= MAGIC_V2.len()
-        && &blob[..MAGIC_V2.len()] == MAGIC_V2
-    {
-        // EVK2: magic(4) | version(1) | salt(16) | nonce(24) | ciphertext(48)
-        let version = blob[MAGIC_V2.len()];
-        if version != ALG_VERSION_ARGON2ID_XCHACHA20 {
-            return Err(format!(
-                "unsupported EVK2 algorithm version: {version} (this build supports {})",
-                ALG_VERSION_ARGON2ID_XCHACHA20
-            ));
-        }
-        let header = MAGIC_V2.len() + 1;
-        let salt = &blob[header..header + SALT_LEN];
-        let nonce_bytes = &blob[header + SALT_LEN..header + SALT_LEN + NONCE_LEN];
-        let ciphertext = &blob[header + SALT_LEN + NONCE_LEN..];
-        (salt, nonce_bytes, ciphertext)
-    } else if blob.len() == ENCRYPTED_LEN
-        && blob.len() >= MAGIC.len()
-        && &blob[..MAGIC.len()] == MAGIC
-    {
-        // EVK1 (legacy): magic(4) | salt(16) | nonce(24) | ciphertext(48).
-        // Read-only — new writes go to EVK2.
-        let salt = &blob[MAGIC.len()..MAGIC.len() + SALT_LEN];
-        let nonce_bytes = &blob[MAGIC.len() + SALT_LEN..MAGIC.len() + SALT_LEN + NONCE_LEN];
-        let ciphertext = &blob[MAGIC.len() + SALT_LEN + NONCE_LEN..];
-        (salt, nonce_bytes, ciphertext)
-    } else {
+    if blob.len() != ENCRYPTED_LEN {
         return Err(format!(
-            "expected EVK1 ({} bytes) or EVK2 ({} bytes) encrypted blob, got {} bytes",
+            "expected {} encrypted bytes, got {}",
             ENCRYPTED_LEN,
-            ENCRYPTED_LEN_V2,
             blob.len()
         ));
-    };
+    }
+    if &blob[..MAGIC.len()] != MAGIC {
+        return Err("bad magic header (not an EVK1 encrypted key)".into());
+    }
+    let salt = &blob[MAGIC.len()..MAGIC.len() + SALT_LEN];
+    let nonce_bytes = &blob[MAGIC.len() + SALT_LEN..MAGIC.len() + SALT_LEN + NONCE_LEN];
+    let ciphertext = &blob[MAGIC.len() + SALT_LEN + NONCE_LEN..];
 
     let key = kdf(passphrase, salt)?;
     let cipher =
@@ -280,17 +240,16 @@ pub fn format_plaintext_for_disk(secret: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// On-disk format detected from a BLS-key file's bytes.
+/// On-disk format detected from a BLS-key file's bytes. Use this
+/// instead of `match bytes.len()` to avoid the audit's "32-byte
+/// ciphertext fragment misclassified as plaintext" footgun. The
+/// 4-byte `EVPL` / `EVK1` magic prefix is unambiguous.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlsKeyFormat {
     /// 36 bytes: `b"EVPL" || 32 raw secret bytes`.
     PlaintextMagic,
-    /// 92 bytes: `b"EVK1" || salt || nonce || ciphertext` (legacy).
+    /// 92 bytes: `b"EVK1" || salt || nonce || ciphertext`.
     Encrypted,
-    /// 93 bytes: `b"EVK2" || version || salt || nonce || ciphertext`.
-    /// **Audit fix HIGH (crypto)**: current encrypted format with a
-    /// 1-byte algorithm/version discriminator.
-    EncryptedV2,
     /// 32 bytes raw secret (no header). Legacy — accepted with a
     /// deprecation warning by `extract_plaintext`.
     LegacyRaw,
@@ -303,11 +262,6 @@ pub enum BlsKeyFormat {
 pub fn detect_bls_key_format(bytes: &[u8]) -> BlsKeyFormat {
     if bytes.len() == PLAINTEXT_MAGIC_LEN && &bytes[..PLAINTEXT_MAGIC.len()] == PLAINTEXT_MAGIC {
         BlsKeyFormat::PlaintextMagic
-    } else if bytes.len() == ENCRYPTED_LEN_V2
-        && bytes.len() >= MAGIC_V2.len()
-        && &bytes[..MAGIC_V2.len()] == MAGIC_V2
-    {
-        BlsKeyFormat::EncryptedV2
     } else if bytes.len() == ENCRYPTED_LEN && &bytes[..MAGIC.len()] == MAGIC {
         BlsKeyFormat::Encrypted
     } else if bytes.len() == PLAINTEXT_LEN {
@@ -333,11 +287,11 @@ pub fn extract_plaintext(bytes: &[u8]) -> Result<[u8; PLAINTEXT_LEN], String> {
             out.copy_from_slice(bytes);
             Ok(out)
         }
-        BlsKeyFormat::Encrypted | BlsKeyFormat::EncryptedV2 => Err(
-            "blob is encrypted — call decrypt_bls_secret_with_aad instead".into(),
+        BlsKeyFormat::Encrypted => Err(
+            "blob is encrypted (EVK1) — call decrypt_bls_secret_with_aad instead".into(),
         ),
         BlsKeyFormat::Unknown => Err(format!(
-            "unrecognised BLS key format ({} bytes; expected 32 raw, 36 EVPL+raw, 92 EVK1, or 93 EVK2)",
+            "unrecognised BLS key format ({} bytes; expected 32 raw, 36 EVPL+raw, or 92 EVK1)",
             bytes.len()
         )),
     }
@@ -352,43 +306,6 @@ mod tests {
         let secret = [7u8; 32];
         let pass = b"correct-horse-battery-staple";
         let blob = encrypt_bls_secret(&secret, pass).unwrap();
-        // **Audit fix HIGH (crypto)**: new writes use EVK2 (93 bytes).
-        assert_eq!(blob.len(), ENCRYPTED_LEN_V2);
-        assert_eq!(&blob[..MAGIC_V2.len()], MAGIC_V2);
-        assert_eq!(blob[MAGIC_V2.len()], ALG_VERSION_ARGON2ID_XCHACHA20);
-        let out = decrypt_bls_secret(&blob, pass).unwrap();
-        assert_eq!(out, secret);
-    }
-
-    /// Legacy EVK1 blobs must remain decryptable so operators don't
-    /// need a forced migration. Hand-build an EVK1 blob via the old
-    /// layout and confirm `decrypt_bls_secret` accepts it.
-    #[test]
-    fn legacy_evk1_blob_still_decrypts() {
-        let secret = [9u8; 32];
-        let pass = b"legacy-pass";
-        // Replicate the EVK1 path (no version byte) by hand:
-        let mut salt = [0u8; SALT_LEN];
-        let mut nonce_bytes = [0u8; NONCE_LEN];
-        rand::rngs::OsRng.fill_bytes(&mut salt);
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
-        let key = kdf(pass, &salt).unwrap();
-        let cipher = XChaCha20Poly1305::new_from_slice(&key).unwrap();
-        let nonce = XNonce::from_slice(&nonce_bytes);
-        let ciphertext = cipher
-            .encrypt(
-                nonce,
-                chacha20poly1305::aead::Payload {
-                    msg: &secret,
-                    aad: &[],
-                },
-            )
-            .unwrap();
-        let mut blob = Vec::with_capacity(ENCRYPTED_LEN);
-        blob.extend_from_slice(MAGIC);
-        blob.extend_from_slice(&salt);
-        blob.extend_from_slice(&nonce_bytes);
-        blob.extend_from_slice(&ciphertext);
         assert_eq!(blob.len(), ENCRYPTED_LEN);
         let out = decrypt_bls_secret(&blob, pass).unwrap();
         assert_eq!(out, secret);
@@ -417,14 +334,8 @@ mod tests {
         let secret = [2u8; 32];
         let mut blob = encrypt_bls_secret(&secret, b"pw").unwrap();
         blob[0] = b'X';
-        // Corrupted EVK2 magic falls through to "expected EVK1 or EVK2"
-        // shape error; the magic check is now embedded in the format
-        // dispatcher rather than a separate `bad magic` line.
         let err = decrypt_bls_secret(&blob, b"pw").unwrap_err();
-        assert!(
-            err.contains("expected") || err.contains("magic"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("bad magic"), "unexpected error: {err}");
     }
 
     #[test]

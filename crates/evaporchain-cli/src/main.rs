@@ -1577,7 +1577,7 @@ fn cmd_testnet_init(
         // simplest contract. Operator-side encryption is out of scope.
         let kp = BlsKeypair::generate();
         let sk_bytes = kp.secret_key_bytes();
-        let sk: &[u8] = sk_bytes.as_bytes();
+        let sk: &[u8] = &sk_bytes.0;
         let pk_hex = hex::encode(&kp.public_key_bytes().0);
         // Audit fix 2026-05-02: also produce the BLS proof-of-
         // possession at testnet-init time so the per-validator entry
@@ -1662,9 +1662,9 @@ fn cmd_testnet_init(
             total_supply,
             block_reward: 10,
             reward_half_life: 100_000,
-            fee_burn_rate_ppm: 500_000,
-            staker_fee_share_ppm: 500_000,
-            target_staking_apy_bps: 500,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
         },
         genesis_time: format!("{}", now_secs),
         validators: genesis_validators,
@@ -2120,7 +2120,7 @@ fn cmd_genesis_show(path: &str, json_mode: bool) -> Result<()> {
     println!(
         "  {}  {}%",
         "Fee Brn: ".truecolor(140, 150, 170),
-        config.tokenomics.fee_burn_rate_ppm as f64 / 10_000.0
+        config.tokenomics.fee_burn_rate
     );
     println!(
         "  {}  {} EVAP",
@@ -2267,9 +2267,9 @@ fn cmd_genesis_create(
             total_supply,
             block_reward: 10,
             reward_half_life: 100_000,
-            fee_burn_rate_ppm: 500_000,
-            staker_fee_share_ppm: 500_000,
-            target_staking_apy_bps: 500,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
         },
         genesis_time: {
             let secs = std::time::SystemTime::now()
@@ -4154,7 +4154,7 @@ fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
     let bundle = serde_json::json!({
         "bls": {
             "public_key": hex::encode(&bls.public_key_bytes().0),
-            "secret_key": hex::encode(bls.secret_key_bytes().as_bytes()),
+            "secret_key": hex::encode(&bls.secret_key_bytes().0),
             // BLS proof-of-possession over the public key under BLS_POP_DST.
             // Required at validator registration to defeat rogue-key attacks
             // on aggregate signatures (audit-flagged 2026-04-27, closed

@@ -68,29 +68,6 @@ pub trait ProvingEngine: Send + Sync {
         genesis_state: [u8; 32],
     ) -> Result<bool, ProvingError>;
 
-    /// Verify a compressed proof AND bind the IVC's final public output
-    /// (`z_n`) to the supplied `expected_final_state_root`.
-    ///
-    /// Audit fix C1 (chain-proof soundness): the legacy `verify_proof`
-    /// only checks `z_0` matches genesis, never that `z_n` matches the
-    /// claimed `final_state_root`. A node returning a valid proof for
-    /// `genesis → N` could swap any 32-byte value into `final_state_root`
-    /// and a light client would trust it. This method closes the gap.
-    ///
-    /// Default impl falls back to `verify_proof` for engines that don't
-    /// expose `z_n` (e.g. `MockProver`); engines with real IVC must
-    /// override and compare against
-    /// `poseidon_state_root_hash(expected_final_state_root)`.
-    fn verify_proof_with_final_state(
-        &self,
-        proof: &CompressedProof,
-        num_blocks: usize,
-        genesis_state: [u8; 32],
-        _expected_final_state_root: [u8; 32],
-    ) -> Result<bool, ProvingError> {
-        self.verify_proof(proof, num_blocks, genesis_state)
-    }
-
     /// Size of the running IVC accumulator in bytes.
     fn accumulator_size(&self) -> usize;
 

@@ -407,24 +407,10 @@ const BLS_ROTATION_DST: &[u8] = b"BLS_ROTATION_BLS12381G2_XMD:SHA-256_SSWU_RO_RO
 pub struct BlsPublicKey(pub Vec<u8>);
 
 /// BLS12-381 secret key (32 bytes scalar). Zeroized on drop.
-///
-/// **Audit fix HIGH (crypto)**: the inner `Vec<u8>` was previously
-/// `pub` and the struct was `Clone` — either gave callers a way to
-/// `mem::take(&mut sk.0)` or shallow-clone the secret out of the
-/// container, leaving the original secret resident on the heap when
-/// one of the copies leaked. The field is now private; no Clone; the
-/// only constructor lives in `BlsKeypair::secret_key_bytes`. Reading
-/// requires `as_bytes()`, which returns a borrowed slice that the
-/// caller cannot `mem::take` from.
-pub struct BlsSecretKey(Vec<u8>);
+#[derive(Clone)]
+pub struct BlsSecretKey(pub Vec<u8>);
 
 impl BlsSecretKey {
-    /// Construct from owned bytes. `pub(crate)` so external callers
-    /// must go through `BlsKeypair::secret_key_bytes`.
-    pub(crate) fn from_inner(bytes: Vec<u8>) -> Self {
-        Self(bytes)
-    }
-
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -483,7 +469,7 @@ impl BlsKeypair {
 
     /// Get raw secret key bytes (32 bytes).
     pub fn secret_key_bytes(&self) -> BlsSecretKey {
-        BlsSecretKey::from_inner(self.sk.to_bytes().to_vec())
+        BlsSecretKey(self.sk.to_bytes().to_vec())
     }
 
     /// Generate a proof-of-possession: sign the public key with a distinct DST.

@@ -4227,9 +4227,7 @@ async fn get_mev_observations(
             victim_hex: hex::encode(o.victim),
             target_hex: hex::encode(o.target),
             work_estimate: o.work_estimate,
-            // f64 view-only conversion at the API boundary; on-chain
-            // value is the integer ppm form.
-            confidence_score: o.confidence_score_ppm as f64 / 1_000_000.0,
+            confidence_score: o.confidence_score,
             refund_amount: o.refund_amount,
         })
         .collect();
@@ -14499,13 +14497,6 @@ async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoRes
 
 /// `GET /api/snapshot/download/:height` — streams the `.zst` blob for
 /// the given height. 404 if not present.
-///
-/// **Audit fix HIGH (network)**: previously read the entire `.zst`
-/// blob via `std::fs::read` into RAM before responding. With multi-GB
-/// snapshots × N concurrent peers this trivially OOMs the server.
-/// Now streams via `tokio::fs::File` + `tokio_util::io::ReaderStream`,
-/// so memory usage is bounded by the streaming buffer regardless of
-/// blob size or concurrent peer count.
 async fn get_snapshot_download(
     State(state): State<Arc<ApiState>>,
     Path(height): Path<u64>,
@@ -14514,25 +14505,20 @@ async fn get_snapshot_download(
         Some(p) => p,
         None => return (StatusCode::NOT_FOUND, "snapshot dir not configured").into_response(),
     };
-    let metadata = match tokio::fs::metadata(&path).await {
-        Ok(m) => m,
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
         Err(_) => return (StatusCode::NOT_FOUND, "snapshot not found").into_response(),
     };
-    let len = metadata.len();
-    let file = match tokio::fs::File::open(&path).await {
-        Ok(f) => f,
-        Err(_) => return (StatusCode::NOT_FOUND, "snapshot not found").into_response(),
-    };
-    let stream = tokio_util::io::ReaderStream::new(file);
-    let body = axum::body::Body::from_stream(stream);
-    axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .header(axum::http::header::CONTENT_TYPE, "application/zstd")
-        .header(axum::http::header::CONTENT_LENGTH, len.to_string())
-        .body(body)
-        .unwrap_or_else(|_| {
-            (StatusCode::INTERNAL_SERVER_ERROR, "stream init failed").into_response()
-        })
+    let len = bytes.len();
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/zstd".to_string()),
+            (axum::http::header::CONTENT_LENGTH, len.to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 // ─────────────────── Offline signing helpers ─────────────────────────────
