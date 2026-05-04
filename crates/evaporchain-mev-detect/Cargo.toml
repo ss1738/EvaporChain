@@ -13,6 +13,9 @@ evaporchain-types = { path = "../evaporchain-types" }
 # and evaporchain-crooks-mev-refund.
 evaporchain-cfm = { path = "../evaporchain-cfm" }
 evaporchain-crooks-mev-refund = { path = "../evaporchain-crooks-mev-refund" }
+# Phase 3.2 — deterministic digest of (observations, attacker_stats)
+# uses blake3 (already a workspace dep, fast 256-bit hash).
+blake3 = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

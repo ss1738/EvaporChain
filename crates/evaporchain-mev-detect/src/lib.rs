@@ -256,6 +256,69 @@ pub fn compute_observation_refund(
     ))
 }
 
+/// Phase 3.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — deterministic
+/// digest of the (observations, attacker_stats) pair. Two
+/// validators with identical histories MUST compute identical
+/// digests; divergent histories MUST diverge.
+///
+/// Canonicalization: observations sorted by
+/// `(block_height, attacker_pre_idx)`; attacker_stats sorted by
+/// the attacker address bytes. Then the byte-encoding of every
+/// field is fed into a single blake3 hash with a domain-separation
+/// tag.
+///
+/// Phase 3.3 wire-format will commit this digest to either the
+/// block header or the state root; for now it's an in-memory
+/// accessor that proves the determinism contract.
+pub fn mev_state_digest(
+    observations: &std::collections::VecDeque<MevObservation>,
+    attacker_stats: &std::collections::HashMap<AccountAddress, AttackerStat>,
+) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(b"evaporchain.mev_state_digest.v1");
+
+    // Observations: sorted by (block_height, attacker_pre_idx) for
+    // canonical ordering across validators.
+    let mut obs_sorted: Vec<&MevObservation> = observations.iter().collect();
+    obs_sorted.sort_by_key(|o| (o.block_height, o.attacker_pre_idx));
+    h.update(&(obs_sorted.len() as u64).to_le_bytes());
+    for o in &obs_sorted {
+        h.update(&o.block_height.to_le_bytes());
+        h.update(&(o.attacker_pre_idx as u64).to_le_bytes());
+        h.update(&(o.victim_idx as u64).to_le_bytes());
+        h.update(&(o.attacker_post_idx as u64).to_le_bytes());
+        h.update(&o.attacker);
+        h.update(&o.victim);
+        h.update(&o.target);
+        h.update(&o.work_estimate.to_le_bytes());
+        // confidence_score is f64 — encode raw bits to avoid NaN
+        // canonicalization issues. Phase 1 always emits 1.0 so this
+        // is currently a no-op, but lock the contract now.
+        h.update(&o.confidence_score.to_bits().to_le_bytes());
+        match o.refund_amount {
+            None => h.update(&[0u8]),
+            Some(v) => {
+                h.update(&[1u8]);
+                h.update(&v.to_le_bytes())
+            }
+        };
+    }
+
+    // Attacker stats: sorted by address bytes for canonical order.
+    let mut stats_sorted: Vec<(&AccountAddress, &AttackerStat)> =
+        attacker_stats.iter().collect();
+    stats_sorted.sort_by_key(|(addr, _)| *addr);
+    h.update(&(stats_sorted.len() as u64).to_le_bytes());
+    for (addr, stat) in &stats_sorted {
+        h.update(*addr);
+        h.update(&stat.sandwich_count.to_le_bytes());
+        h.update(&stat.first_seen_height.to_le_bytes());
+        h.update(&stat.last_seen_height.to_le_bytes());
+    }
+
+    *h.finalize().as_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,6 +492,88 @@ mod tests {
         assert_eq!(s.sandwich_count, 1);
         assert_eq!(s.first_seen_height, 42);
         assert_eq!(s.last_seen_height, 42);
+    }
+
+    /// Phase 3.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — empty
+    /// state has a stable digest (the genesis case for any chain).
+    #[test]
+    fn mev_state_digest_empty_is_stable() {
+        let obs = std::collections::VecDeque::new();
+        let stats = std::collections::HashMap::new();
+        let d1 = mev_state_digest(&obs, &stats);
+        let d2 = mev_state_digest(&obs, &stats);
+        assert_eq!(d1, d2);
+    }
+
+    /// Phase 3.2 — identical state from two independently-built
+    /// HashMap iteration orders must produce the same digest.
+    #[test]
+    fn mev_state_digest_independent_of_hashmap_order() {
+        // Build two stat tables with the same entries inserted in
+        // opposite orders. HashMap iteration order is arbitrary, so
+        // without canonical sorting these would diverge.
+        let mut stats_a = std::collections::HashMap::new();
+        let mut stats_b = std::collections::HashMap::new();
+        let entries: Vec<(AccountAddress, AttackerStat)> = vec![
+            (addr(0x01), AttackerStat::fresh(10)),
+            (addr(0x02), AttackerStat::fresh(20)),
+            (addr(0x03), AttackerStat::fresh(30)),
+            (addr(0x04), AttackerStat::fresh(40)),
+        ];
+        for (a, s) in &entries {
+            stats_a.insert(*a, *s);
+        }
+        for (a, s) in entries.iter().rev() {
+            stats_b.insert(*a, *s);
+        }
+        let obs = std::collections::VecDeque::new();
+        assert_eq!(mev_state_digest(&obs, &stats_a), mev_state_digest(&obs, &stats_b));
+    }
+
+    /// Phase 3.2 — a single divergent observation must produce a
+    /// divergent digest. Locks the soundness of the contract:
+    /// validators that fold inconsistent histories DON'T converge.
+    #[test]
+    fn mev_state_digest_single_difference_propagates() {
+        let mut obs_a = std::collections::VecDeque::new();
+        let mut obs_b = std::collections::VecDeque::new();
+        let stats = std::collections::HashMap::new();
+        let base = MevObservation {
+            block_height: 1,
+            attacker_pre_idx: 0,
+            victim_idx: 1,
+            attacker_post_idx: 2,
+            attacker: addr(0xAA),
+            victim: addr(0xBB),
+            target: addr(0x99),
+            work_estimate: 250,
+            confidence_score: 1.0,
+            refund_amount: Some(100),
+        };
+        obs_a.push_back(base.clone());
+        let mut diverged = base.clone();
+        diverged.work_estimate = 251; // single byte differs
+        obs_b.push_back(diverged);
+        assert_ne!(
+            mev_state_digest(&obs_a, &stats),
+            mev_state_digest(&obs_b, &stats),
+            "single-byte observation difference must surface in the digest"
+        );
+    }
+
+    /// Phase 3.2 — adding an attacker stat changes the digest.
+    /// Locks: stats are part of the consensus state, not observable
+    /// noise.
+    #[test]
+    fn mev_state_digest_attacker_stat_changes_propagate() {
+        let obs = std::collections::VecDeque::new();
+        let stats_empty = std::collections::HashMap::new();
+        let mut stats_one = std::collections::HashMap::new();
+        stats_one.insert(addr(0xAA), AttackerStat::fresh(1));
+        assert_ne!(
+            mev_state_digest(&obs, &stats_empty),
+            mev_state_digest(&obs, &stats_one),
+        );
     }
 
     #[test]
