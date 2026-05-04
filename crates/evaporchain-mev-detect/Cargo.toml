@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-mev-detect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MEV-shaped pattern detector for EvaporChain blocks. Phase 1 of CROOKS_MEV_INTEGRATION_PLAN.md — no-op observation pipeline that surfaces sandwich/front-run-shaped transaction triples for downstream Crooks-fluctuation refund computation. Intentionally conservative to keep false-positive rate low; precision tightening + confidence scoring is Phase 4."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
