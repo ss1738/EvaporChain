@@ -13,3 +13,7 @@ thiserror  = { workspace = true }
 
 [dev-dependencies]
 proptest = "1"
+
+[[bin]]
+name = "causal_chsh_run_gate"
+path = "src/bin/run_gate.rs"
