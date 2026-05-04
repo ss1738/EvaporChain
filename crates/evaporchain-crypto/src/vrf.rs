@@ -153,12 +153,26 @@ fn vrf_hash(alpha: &[u8], sigma: &[u8]) -> [u8; 32] {
 /// `threshold = (stake / total_stake) * u64::MAX`.
 ///
 /// This gives each validator a selection probability proportional to stake.
+///
+/// **Audit fix MED**: legacy code truncated the 32-byte VRF output to
+/// 8 bytes (u64), wasting 192 bits of entropy and biasing the
+/// threshold compare at the boundary. Now consumes the first 16 bytes
+/// as a u128 — full distribution preserved.
 pub fn vrf_leader_check(vrf_output: &VrfOutput, stake: u64, total_stake: u64) -> bool {
     if total_stake == 0 || stake == 0 {
         return false;
     }
-    let vrf_value = u64::from_le_bytes(vrf_output.0[..8].try_into().unwrap());
-    let threshold = ((stake as u128 * u64::MAX as u128) / total_stake as u128) as u64;
+    // 100%-stake validator (or higher, defensively) always passes —
+    // saves the threshold compare from rounding-down at saturation.
+    if stake >= total_stake {
+        return true;
+    }
+    let vrf_value = u128::from_le_bytes(vrf_output.0[..16].try_into().unwrap());
+    // (stake / total_stake) * u128::MAX without overflow:
+    //   (u128::MAX / total_stake) * stake
+    // Loses one ULP of precision at the boundary; negligible since
+    // stake < total_stake here.
+    let threshold = (u128::MAX / total_stake as u128).saturating_mul(stake as u128);
     vrf_value < threshold
 }
 
@@ -188,9 +202,10 @@ pub fn sortition(
     let fractional_x1000 = (expected_x1000 % 1000) as u64;
 
     // Use VRF output to decide the fractional seat.
-    let vrf_value = u64::from_le_bytes(vrf_output.0[..8].try_into().unwrap());
-    let frac_threshold = (fractional_x1000 as u128 * u64::MAX as u128) / 1000;
-    let extra = if (vrf_value as u128) < frac_threshold {
+    // **Audit fix MED**: u128 from 16 bytes; preserves full entropy.
+    let vrf_value = u128::from_le_bytes(vrf_output.0[..16].try_into().unwrap());
+    let frac_threshold = fractional_x1000 as u128 * (u128::MAX / 1000);
+    let extra = if vrf_value < frac_threshold {
         1
     } else {
         0
@@ -277,10 +292,17 @@ impl RandomnessBeacon {
     /// E.g., `derive(b"lottery:contract_42")` for a lottery contract.
     ///
     /// Deterministic: same beacon state + same domain = same output.
+    ///
+    /// **Audit fix MED M2**: domain is now length-prefixed. Without
+    /// the prefix, an attacker-controlled `domain = X || domain'`
+    /// with `current` shifted by `X.len()` could trivially collide
+    /// with a different `(current', domain')` pair. The 8-byte LE
+    /// length prefix makes such concatenation attacks fail-stop.
     pub fn derive(&self, domain: &[u8]) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"EvaporChain_Beacon_Derive");
+        hasher.update(b"EvaporChain_Beacon_Derive\0");
         hasher.update(&self.current);
+        hasher.update(&(domain.len() as u64).to_le_bytes());
         hasher.update(domain);
         *hasher.finalize().as_bytes()
     }

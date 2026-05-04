@@ -210,4 +210,68 @@ mod tests {
         let msgs = bridge.drain_shard(ShardId(1));
         assert_eq!(msgs.len(), 1);
     }
+
+    #[test]
+    fn test_num_shards_reflects_config() {
+        // ShardConfig requires power-of-2 num_shards.
+        let bridge = ShardBridge::new(8);
+        assert_eq!(bridge.num_shards(), 8);
+    }
+
+    #[test]
+    fn test_reset_metrics_clears_health() {
+        let mut bridge = ShardBridge::new(4);
+        bridge.record_object(&obj_id(1), 1000, 100, true);
+        assert!(!bridge.shard_healths().is_empty());
+        bridge.reset_metrics();
+        assert!(bridge.shard_healths().is_empty());
+    }
+
+    #[test]
+    fn test_dead_object_does_not_inflate_live_or_energy() {
+        let mut bridge = ShardBridge::new(4);
+        bridge.record_object(&obj_id(0), 1000, 100, false);
+        bridge.record_object(&obj_id(0), 500, 50, true);
+        let healths = bridge.shard_healths();
+        assert_eq!(healths.len(), 1);
+        let h = &healths[0];
+        // total=2 (both counted), live=1 (only the alive one)
+        assert_eq!(h.total_objects, 2);
+        assert_eq!(h.live_objects, 1);
+        // total_energy is sum of *live* energies only
+        assert_eq!(h.total_energy, 500);
+        // avg_half_life uses (sum of half_life) / objects_for_avg
+        assert_eq!(h.avg_half_life, (100 + 50) / 2);
+    }
+
+    #[test]
+    fn test_drain_empty_shard_returns_empty() {
+        let mut bridge = ShardBridge::new(4);
+        let msgs = bridge.drain_shard(ShardId(2));
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn test_pending_messages_counter() {
+        use evaporchain_sharding::cross_shard::MessagePayload;
+        let mut bridge = ShardBridge::new(4);
+        assert_eq!(bridge.pending_messages(), 0);
+        for i in 0..3u64 {
+            bridge.send_message(CrossShardMessage {
+                id: i,
+                from_shard: ShardId(0),
+                to_shard: ShardId(1),
+                target_object: [i as u8; 20],
+                payload: MessagePayload::Transfer {
+                    from: [9u8; 20],
+                    amount: 1,
+                },
+                target_energy: 0,
+                timestamp: 0,
+            });
+        }
+        assert_eq!(bridge.pending_messages(), 3);
+        let drained = bridge.drain_shard(ShardId(1));
+        assert_eq!(drained.len(), 3);
+    }
 }

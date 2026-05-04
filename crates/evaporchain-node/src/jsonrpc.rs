@@ -81,11 +81,32 @@ impl JsonRpcResponse {
 
 // ──────────────────────────── Handler ────────────────────────────────
 
+/// Cap on JSON-RPC batch size. Mirrors the existing 100-limit on
+/// `/api/batch` (see api.rs) and prevents an attacker-supplied
+/// `arr.len()` from driving an unbounded `Vec::with_capacity`.
+const JSONRPC_MAX_BATCH: usize = 100;
+
 pub async fn handle_jsonrpc(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<Value>,
 ) -> Json<Value> {
     if let Some(arr) = req.as_array() {
+        // **Audit fix HIGH (network)**: cap batch size before
+        // allocating. Legacy `Vec::with_capacity(arr.len())` was
+        // unbounded — a single malformed request could allocate
+        // gigabytes.
+        if arr.len() > JSONRPC_MAX_BATCH {
+            return Json(serde_json::to_value(JsonRpcResponse::err(
+                Value::Null,
+                -32600,
+                &format!(
+                    "batch size {} exceeds JSONRPC_MAX_BATCH ({})",
+                    arr.len(),
+                    JSONRPC_MAX_BATCH
+                ),
+            ))
+            .unwrap_or(Value::Null));
+        }
         let mut results = Vec::with_capacity(arr.len());
         for item in arr {
             if let Ok(r) = serde_json::from_value::<JsonRpcRequest>(item.clone()) {

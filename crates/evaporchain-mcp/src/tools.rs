@@ -646,4 +646,79 @@ mod tests {
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("42"));
     }
+
+    #[test]
+    fn test_format_text_result_pretty_prints_nested() {
+        // Nested JSON should pretty-print with indentation so the
+        // model can read it. The serializer adds line-prefixes; we
+        // just need to verify nested keys survive.
+        let data = json!({
+            "outer": { "inner": "value", "n": 7 },
+            "arr": [1, 2, 3]
+        });
+        let result = format_text_result(&data);
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("outer"));
+        assert!(text.contains("inner"));
+        assert!(text.contains("value"));
+        assert!(text.contains("7"));
+    }
+
+    #[test]
+    fn test_call_tool_missing_name_errors() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let ctx = Context {
+            node_url: "http://127.0.0.1:1".to_string(),
+            client: reqwest::Client::new(),
+        };
+        let err = rt
+            .block_on(call_tool(&ctx, &json!({})))
+            .expect_err("missing name must error");
+        assert!(err.contains("Missing tool name"), "{err}");
+    }
+
+    #[test]
+    fn test_call_tool_unknown_name_errors() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let ctx = Context {
+            node_url: "http://127.0.0.1:1".to_string(),
+            client: reqwest::Client::new(),
+        };
+        let err = rt
+            .block_on(call_tool(&ctx, &json!({"name": "nonexistent_tool_xyz"})))
+            .expect_err("unknown name must error");
+        // Match the existing error idiom; tools.rs returns
+        // "Unknown tool: <name>" from the catch-all arm.
+        assert!(err.to_lowercase().contains("unknown") || err.to_lowercase().contains("tool"), "{err}");
+    }
+
+    #[test]
+    fn test_list_tools_all_have_input_schema() {
+        let tools = list_tools();
+        for t in tools["tools"].as_array().unwrap() {
+            assert!(t["inputSchema"].is_object(), "tool {} missing inputSchema", t["name"]);
+            assert_eq!(t["inputSchema"]["type"], "object");
+        }
+    }
+
+    #[test]
+    fn test_transfer_required_excludes_nonce() {
+        // `nonce` is optional in the dispatch path (defaults to 0);
+        // make sure the schema reflects that — otherwise client UIs
+        // will refuse to submit without a manually-supplied nonce.
+        let tools = list_tools();
+        let transfer = tools["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "transfer")
+            .unwrap();
+        let required: Vec<&str> = transfer["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(!required.contains(&"nonce"), "nonce should be optional");
+    }
 }

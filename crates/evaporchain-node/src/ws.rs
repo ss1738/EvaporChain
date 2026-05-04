@@ -270,17 +270,49 @@ async fn handle_ws(socket: WebSocket, broadcaster: Arc<WsBroadcaster>, filter: S
         }
     });
 
+    // **Audit fix HIGH (network)**: idle timeout. Legacy `recv_task`
+    // had no timeout — silent attackers could hold the 4096 subscriber
+    // slots forever, denying legitimate clients. We now drop the
+    // connection if no client message arrives within IDLE_TIMEOUT.
+    const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+    // Reject any single client frame larger than this — mirrors the
+    // axum default upper bound (which is 64 MiB) at a tighter cap.
+    const MAX_FRAME_BYTES: usize = 1024 * 1024;
     let recv_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = receiver.next().await {
-            match msg {
-                Message::Close(_) => break,
-                Message::Ping(_data) => {
-                    debug!("WebSocket ping received");
+        loop {
+            match tokio::time::timeout(IDLE_TIMEOUT, receiver.next()).await {
+                Ok(Some(Ok(msg))) => match msg {
+                    Message::Close(_) => break,
+                    Message::Ping(_data) => {
+                        debug!("WebSocket ping received");
+                    }
+                    Message::Text(text) => {
+                        if text.len() > MAX_FRAME_BYTES {
+                            debug!(
+                                len = text.len(),
+                                "WebSocket text frame too large; closing"
+                            );
+                            break;
+                        }
+                        debug!("WebSocket text from client: {text}");
+                    }
+                    Message::Binary(data) => {
+                        if data.len() > MAX_FRAME_BYTES {
+                            debug!(
+                                len = data.len(),
+                                "WebSocket binary frame too large; closing"
+                            );
+                            break;
+                        }
+                    }
+                    _ => {}
+                },
+                Ok(Some(Err(_))) | Ok(None) => break,
+                Err(_) => {
+                    // Timeout elapsed — disconnect the idle client.
+                    debug!("WebSocket idle timeout; closing");
+                    break;
                 }
-                Message::Text(text) => {
-                    debug!("WebSocket text from client: {text}");
-                }
-                _ => {}
             }
         }
     });

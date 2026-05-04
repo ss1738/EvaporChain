@@ -346,16 +346,23 @@ impl ChainProver {
     }
 
     /// Verify a chain proof against this prover's genesis state.
+    ///
+    /// **Audit fix C1**: binds `chain_proof.final_state_root` to the
+    /// IVC's `z_n` public output via `verify_proof_with_final_state`.
+    /// The legacy path only checked `z_0` matched genesis, leaving
+    /// `final_state_root` unbound — a dishonest prover could swap any
+    /// 32-byte value into that field and a light client would trust it.
     pub fn verify_chain_proof(&self, chain_proof: &ChainProof) -> Result<bool, ProvingError> {
         // Genesis must match
         if chain_proof.genesis_state_root != self.genesis_state_root {
             return Ok(false);
         }
 
-        self.engine.verify_proof(
+        self.engine.verify_proof_with_final_state(
             &chain_proof.proof,
             chain_proof.num_steps,
             self.genesis_state_root,
+            chain_proof.final_state_root,
         )
     }
 
@@ -499,11 +506,14 @@ impl LightClientVerifier {
             });
         }
 
-        // 2. Verify the SNARK proof
-        let valid = self.engine.verify_proof(
+        // 2. Verify the SNARK proof AND bind chain_proof.final_state_root
+        //    to z_n. Audit fix C1: legacy `verify_proof` only checked z_0,
+        //    leaving final_state_root forgeable.
+        let valid = self.engine.verify_proof_with_final_state(
             &chain_proof.proof,
             chain_proof.num_steps,
             self.genesis_state_root,
+            chain_proof.final_state_root,
         )?;
 
         let verify_time_us = start.elapsed().as_micros() as u64;

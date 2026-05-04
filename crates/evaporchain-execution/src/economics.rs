@@ -37,11 +37,14 @@ pub fn compute_energy(initial: u64, half_life: u64, epochs_elapsed: u64) -> u64 
     if remainder == 0 {
         return energy_after_halvings;
     }
-    // Linear interpolation within the current halving period
+    // Linear interpolation within the current halving period.
+    // Pure-integer u128 math; no f64 anywhere. Validator-deterministic.
     let next_halving_energy = energy_after_halvings >> 1;
     let diff = energy_after_halvings - next_halving_energy;
-    let fraction_elapsed = remainder as f64 / half_life as f64;
-    energy_after_halvings - (diff as f64 * fraction_elapsed) as u64
+    // floor((diff * remainder) / half_life). u128 intermediate to avoid
+    // overflow (diff ≤ u64::MAX, remainder < half_life ≤ u64::MAX → product fits u128).
+    let drop = ((diff as u128).saturating_mul(remainder as u128) / half_life as u128) as u64;
+    energy_after_halvings - drop
 }
 
 /// Simulate energy decay over N blocks.

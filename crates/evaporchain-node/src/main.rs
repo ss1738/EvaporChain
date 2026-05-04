@@ -2789,7 +2789,7 @@ async fn main() -> Result<()> {
             tracing::info!(
                 block_reward = gc.tokenomics.block_reward,
                 reward_half_life = gc.tokenomics.reward_half_life,
-                fee_burn_rate = gc.tokenomics.fee_burn_rate,
+                fee_burn_rate_ppm = gc.tokenomics.fee_burn_rate_ppm,
                 "Block rewards enabled from genesis tokenomics"
             );
         } else {
@@ -2845,11 +2845,24 @@ async fn main() -> Result<()> {
                         );
                 }
                 Err(e) => {
+                    // **Audit fix HIGH**: hard-fail rather than silently
+                    // falling back to plaintext. The legacy code wrote
+                    // the secret in cleartext on any KDF failure (transient
+                    // OOM, permission glitch, etc.) — the operator believed
+                    // their key was encrypted. Better to abort loudly so
+                    // they can diagnose and retry under known-good
+                    // conditions.
                     eprintln!(
-                            "{} \x1b[31mFailed to encrypt BLS key ({}); falling back to plaintext\x1b[0m",
-                            node_tag, e
-                        );
-                    write_secret_file(path, sk);
+                        "{} \x1b[31mFATAL: failed to encrypt BLS key ({}); \
+                        refusing to fall back to plaintext.\x1b[0m",
+                        node_tag, e
+                    );
+                    return Err(format!(
+                        "BLS key encryption failed: {}. Check Argon2id KDF parameters \
+                        (memory, iterations) and EVAPORCHAIN_BLS_PASSPHRASE.",
+                        e
+                    )
+                    .into());
                 }
                 }
             },

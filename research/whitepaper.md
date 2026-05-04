@@ -507,9 +507,11 @@ root = fold_right(peaks, |a, b| blake3(a || b))
 
 ---
 
-## 8. MEV Protection: Encrypted Mempool
+## 8. MEV Protection: Two-Tier Defense
 
-### 8.1 Commit-Reveal Scheme
+EvaporChain uses a **two-tier MEV defense**: encrypted mempool (preventive — stops the attack at submission time) and Crooks-fluctuation refund (restitutive — settles dissipative work back to victims when the attack landed anyway). The two layers compose: the encrypted mempool reduces the attack surface; Crooks-MEV catches what slips past.
+
+### 8.1 Commit-Reveal Scheme (Preventive)
 
 EvaporChain implements an optional encrypted mempool to prevent Maximal Extractable Value (MEV) attacks such as front-running, back-running, and sandwich attacks.
 

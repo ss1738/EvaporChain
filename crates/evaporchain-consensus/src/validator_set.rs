@@ -15,26 +15,32 @@
 use evaporchain_crypto::hash::blake3_hash;
 use serde::{Deserialize, Serialize};
 
-/// Maximum health score bonus (20% extra weight).
-const HEALTH_BONUS_CAP: f64 = 0.2;
+/// Parts-per-million denominator for health/slash math.
+pub const VS_PPM_DENOMINATOR: u64 = 1_000_000;
 
-/// Health score decay per epoch (small decay to keep validators active).
-const HEALTH_DECAY_RATE: f64 = 0.01;
+/// Maximum health score bonus (20% extra weight) in ppm.
+const HEALTH_BONUS_CAP_PPM: u64 = 200_000;
 
-/// Health score increment per evaporation processed.
-const HEALTH_PER_EVAPORATION: f64 = 0.05;
+/// Health score decay per epoch in ppm (1% = 10_000 ppm).
+const HEALTH_DECAY_RATE_PPM: u32 = 10_000;
 
-/// Maximum health score.
-const MAX_HEALTH_SCORE: f64 = 1.0;
+/// Health score increment per evaporation processed, in ppm (5%).
+const HEALTH_PER_EVAPORATION_PPM: u32 = 50_000;
+
+/// Maximum health score in ppm (1.0 = 1_000_000 ppm).
+const MAX_HEALTH_SCORE_PPM: u32 = 1_000_000;
+
+/// Per-missed-block health-score penalty in ppm (10%).
+const DOWNTIME_HEALTH_PENALTY_PPM: u32 = 100_000;
 
 /// Minimum stake to remain a validator.
 const MIN_STAKE: u64 = 100;
 
-/// Slash penalty for equivocation (double-signing): 10% of stake.
-const SLASH_EQUIVOCATION_PCT: f64 = 0.10;
+/// Slash penalty for equivocation (double-signing): 10% of stake, in ppm.
+const SLASH_EQUIVOCATION_PPM: u64 = 100_000;
 
-/// Slash penalty for downtime (missed blocks): 1% of stake per miss.
-const SLASH_DOWNTIME_PCT: f64 = 0.01;
+/// Slash penalty for downtime (missed blocks): 1% of stake per miss, in ppm.
+const SLASH_DOWNTIME_PPM: u64 = 10_000;
 
 // ─────────────────────── ValidatorInfo ────────────────────────────────────
 
@@ -59,8 +65,9 @@ pub struct ValidatorInfo {
     pub blocks_produced: u64,
     /// Total evaporations processed across all blocks.
     pub evaporations_processed: u64,
-    /// Health score (0.0–1.0) reflecting thermodynamic contribution.
-    pub health_score: f64,
+    /// Health score in parts-per-million (0..=1_000_000) reflecting
+    /// thermodynamic contribution. 1_000_000 ppm = 1.0 in legacy terms.
+    pub health_score_ppm: u32,
     /// Whether this validator has been jailed (temporarily removed from rotation).
     #[serde(default)]
     pub jailed: bool,
@@ -107,7 +114,7 @@ impl ValidatorInfo {
             vrf_public_key: None,
             blocks_produced: 0,
             evaporations_processed: 0,
-            health_score: 0.0,
+            health_score_ppm: 0,
             jailed: false,
             total_slashed: 0,
             bls_pop: None,
@@ -166,10 +173,16 @@ impl ValidatorInfo {
 
     /// Compute this validator's effective weight for leader selection.
     /// weight = stake * (1.0 + min(health_score, 1.0) * 0.2)
+    /// In ppm: weight = stake * (PPM + health_score_ppm_capped * HEALTH_BONUS_CAP_PPM / PPM) / PPM
+    /// Pure-integer u128 math; validator-deterministic.
     pub fn effective_weight(&self) -> u64 {
-        let health_capped = self.health_score.min(MAX_HEALTH_SCORE);
-        let multiplier = 1.0 + health_capped * HEALTH_BONUS_CAP;
-        (self.stake as f64 * multiplier).round() as u64
+        let health_capped_ppm = self.health_score_ppm.min(MAX_HEALTH_SCORE_PPM) as u128;
+        let bonus_ppm = health_capped_ppm.saturating_mul(HEALTH_BONUS_CAP_PPM as u128)
+            / VS_PPM_DENOMINATOR as u128;
+        let multiplier_ppm = VS_PPM_DENOMINATOR as u128 + bonus_ppm;
+        let weighted = (self.stake as u128).saturating_mul(multiplier_ppm)
+            / VS_PPM_DENOMINATOR as u128;
+        if weighted > u64::MAX as u128 { u64::MAX } else { weighted as u64 }
     }
 }
 
@@ -426,9 +439,12 @@ impl ValidatorSet {
             v.blocks_produced += 1;
             v.evaporations_processed += evaporations_in_block as u64;
 
-            // Increase health score based on evaporations processed
-            let health_increase = evaporations_in_block as f64 * HEALTH_PER_EVAPORATION;
-            v.health_score = (v.health_score + health_increase).min(MAX_HEALTH_SCORE);
+            // Increase health score based on evaporations processed.
+            // Pure-integer ppm: increment = evaporations * HEALTH_PER_EVAPORATION_PPM.
+            let health_increase_ppm = (evaporations_in_block as u64)
+                .saturating_mul(HEALTH_PER_EVAPORATION_PPM as u64);
+            let new_ppm = (v.health_score_ppm as u64).saturating_add(health_increase_ppm);
+            v.health_score_ppm = (new_ppm.min(MAX_HEALTH_SCORE_PPM as u64)) as u32;
         }
     }
 
@@ -436,7 +452,7 @@ impl ValidatorSet {
     /// This ensures validators must keep contributing to maintain their bonus.
     pub fn decay_health_scores(&mut self) {
         for v in &mut self.validators {
-            v.health_score = (v.health_score - HEALTH_DECAY_RATE).max(0.0);
+            v.health_score_ppm = v.health_score_ppm.saturating_sub(HEALTH_DECAY_RATE_PPM);
         }
     }
 
@@ -452,11 +468,13 @@ impl ValidatorSet {
     /// Returns the amount slashed.
     pub fn slash_equivocation(&mut self, validator_id: u64) -> u64 {
         if let Some(v) = self.get_mut(validator_id) {
-            let penalty = (v.stake as f64 * SLASH_EQUIVOCATION_PCT).round() as u64;
+            // Pure-integer ppm: penalty = floor(stake * SLASH_EQUIVOCATION_PPM / PPM).
+            let penalty = ((v.stake as u128).saturating_mul(SLASH_EQUIVOCATION_PPM as u128)
+                / VS_PPM_DENOMINATOR as u128) as u64;
             v.stake = v.stake.saturating_sub(penalty);
-            v.total_slashed += penalty;
+            v.total_slashed = v.total_slashed.saturating_add(penalty);
             v.jailed = true;
-            v.health_score = 0.0;
+            v.health_score_ppm = 0;
             // Auto-remove if stake below minimum
             if v.stake < MIN_STAKE {
                 self.remove_validator(validator_id);
@@ -472,14 +490,20 @@ impl ValidatorSet {
     /// Returns the amount slashed.
     pub fn slash_downtime(&mut self, validator_id: u64, missed_blocks: u64) -> u64 {
         if let Some(v) = self.get_mut(validator_id) {
-            let per_miss = (v.stake as f64 * SLASH_DOWNTIME_PCT).round() as u64;
+            // Pure-integer ppm: per_miss = floor(stake * SLASH_DOWNTIME_PPM / PPM).
+            let per_miss = ((v.stake as u128).saturating_mul(SLASH_DOWNTIME_PPM as u128)
+                / VS_PPM_DENOMINATOR as u128) as u64;
             let penalty = per_miss.saturating_mul(missed_blocks);
             v.stake = v.stake.saturating_sub(penalty);
-            v.total_slashed += penalty;
+            v.total_slashed = v.total_slashed.saturating_add(penalty);
             if missed_blocks >= 3 {
                 v.jailed = true;
             }
-            v.health_score = (v.health_score - missed_blocks as f64 * 0.1).max(0.0);
+            // Health penalty: missed_blocks * 10% per miss, in ppm.
+            let health_penalty_ppm = missed_blocks
+                .saturating_mul(DOWNTIME_HEALTH_PENALTY_PPM as u64);
+            v.health_score_ppm =
+                v.health_score_ppm.saturating_sub(health_penalty_ppm.min(u32::MAX as u64) as u32);
             // Auto-remove if stake below minimum
             if v.stake < MIN_STAKE {
                 self.remove_validator(validator_id);
@@ -497,10 +521,10 @@ impl ValidatorSet {
         let actual = if let Some(v) = self.get_mut(validator_id) {
             let deducted = amount.min(v.stake);
             v.stake = v.stake.saturating_sub(deducted);
-            v.total_slashed += deducted;
+            v.total_slashed = v.total_slashed.saturating_add(deducted);
             if jail {
                 v.jailed = true;
-                v.health_score = 0.0;
+                v.health_score_ppm = 0;
             }
             deducted
         } else {
@@ -731,6 +755,21 @@ pub fn slash_delegations_for_validator(
     if !(0.0..=1.0).contains(&slash_pct) || slash_pct == 0.0 {
         return 0;
     }
+    // f64 → ppm conversion at the API boundary. This is the only float
+    // operation; per-record arithmetic below is pure-integer.
+    let slash_ppm = (slash_pct * VS_PPM_DENOMINATOR as f64) as u64;
+    slash_delegations_for_validator_ppm(db, validator_id, slash_ppm)
+}
+
+/// Pure-integer version. `slash_ppm` in 1..=1_000_000.
+pub fn slash_delegations_for_validator_ppm(
+    db: &mut dyn evaporchain_state::db::StateDB,
+    validator_id: u64,
+    slash_ppm: u64,
+) -> u64 {
+    if slash_ppm == 0 || slash_ppm > VS_PPM_DENOMINATOR {
+        return 0;
+    }
     let records: Vec<evaporchain_types::DelegationRecord> = db
         .delegations_for_validator(validator_id)
         .into_iter()
@@ -738,8 +777,10 @@ pub fn slash_delegations_for_validator(
         .collect();
     let mut total_slashed: u64 = 0;
     for mut r in records {
-        let active_slash = (r.amount as f64 * slash_pct).round() as u64;
-        let unbonding_slash = (r.unbonding_amount as f64 * slash_pct).round() as u64;
+        let active_slash = ((r.amount as u128).saturating_mul(slash_ppm as u128)
+            / VS_PPM_DENOMINATOR as u128) as u64;
+        let unbonding_slash = ((r.unbonding_amount as u128).saturating_mul(slash_ppm as u128)
+            / VS_PPM_DENOMINATOR as u128) as u64;
         r.amount = r.amount.saturating_sub(active_slash);
         r.unbonding_amount = r.unbonding_amount.saturating_sub(unbonding_slash);
         total_slashed = total_slashed
@@ -1199,7 +1240,7 @@ mod tests {
         }
 
         // Give validator 1 max health score — should NOT change leader turns
-        vs.get_mut(1).unwrap().health_score = 1.0;
+        vs.get_mut(1).unwrap().health_score_ppm = 1_000_000;
 
         let mut bonus_counts = [0u64; 2];
         for epoch in 1..=5000 {
@@ -1218,16 +1259,16 @@ mod tests {
         let mut v = make_validator(1, 1000);
         assert_eq!(v.effective_weight(), 1000); // no health bonus
 
-        v.health_score = 0.5;
+        v.health_score_ppm = 500_000;
         // 1000 * (1.0 + 0.5 * 0.2) = 1000 * 1.1 = 1100
         assert_eq!(v.effective_weight(), 1100);
 
-        v.health_score = 1.0;
+        v.health_score_ppm = 1_000_000;
         // 1000 * (1.0 + 1.0 * 0.2) = 1000 * 1.2 = 1200
         assert_eq!(v.effective_weight(), 1200);
 
-        // Health score above 1.0 is capped
-        v.health_score = 5.0;
+        // Health score above 1.0 is capped (clamped at MAX_HEALTH_SCORE_PPM)
+        v.health_score_ppm = 5_000_000;
         assert_eq!(v.effective_weight(), 1200);
     }
 
@@ -1288,29 +1329,31 @@ mod tests {
         let v1 = vs.get(1).unwrap();
         assert_eq!(v1.blocks_produced, 1);
         assert_eq!(v1.evaporations_processed, 10);
-        assert!((v1.health_score - 0.5).abs() < 0.001); // 10 * 0.05 = 0.5
+        // 10 * 50_000 ppm = 500_000 ppm = 0.5
+        assert_eq!(v1.health_score_ppm, 500_000);
 
-        // Another block with 12 evaporations → 0.5 + 0.6 = 1.0 (capped)
+        // Another block with 12 evaporations → 500_000 + 600_000 = 1_000_000 (capped)
         vs.update_health_score(1, 12);
         let v1 = vs.get(1).unwrap();
         assert_eq!(v1.blocks_produced, 2);
         assert_eq!(v1.evaporations_processed, 22);
-        assert!((v1.health_score - 1.0).abs() < 0.001);
+        assert_eq!(v1.health_score_ppm, 1_000_000);
     }
 
     #[test]
     fn test_health_decay() {
         let mut vs = make_validator_set(2, 1000);
-        vs.get_mut(1).unwrap().health_score = 0.5;
+        vs.get_mut(1).unwrap().health_score_ppm = 500_000;
 
         vs.decay_health_scores();
-        assert!((vs.get(1).unwrap().health_score - 0.49).abs() < 0.001);
+        // 500_000 - 10_000 = 490_000 ppm
+        assert_eq!(vs.get(1).unwrap().health_score_ppm, 490_000);
 
         // Decay to zero
         for _ in 0..100 {
             vs.decay_health_scores();
         }
-        assert_eq!(vs.get(1).unwrap().health_score, 0.0);
+        assert_eq!(vs.get(1).unwrap().health_score_ppm, 0);
     }
 
     #[test]
@@ -1366,7 +1409,7 @@ mod tests {
         let v = vs.get(1).unwrap();
         assert_eq!(v.stake, 900);
         assert!(v.jailed);
-        assert_eq!(v.health_score, 0.0);
+        assert_eq!(v.health_score_ppm, 0);
         assert_eq!(v.total_slashed, 100);
     }
 

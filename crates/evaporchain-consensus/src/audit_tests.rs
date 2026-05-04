@@ -162,11 +162,12 @@ mod adversarial_tests {
             let proposer_health = nodes[1]
                 .validator_set
                 .get(1)
-                .map(|v| v.health_score)
-                .unwrap_or(100.0);
-            // After equivocation detection, health should be reduced from default
+                .map(|v| v.health_score_ppm as u64)
+                .unwrap_or(100_000_000);
+            // After equivocation detection, health should be reduced from default.
+            // 100.0 in legacy units = 100_000_000 ppm.
             assert!(
-                proposer_health <= 100.0,
+                proposer_health <= 100_000_000,
                 "equivocation should affect proposer health"
             );
         }

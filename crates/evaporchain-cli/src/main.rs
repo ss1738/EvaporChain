@@ -1662,9 +1662,9 @@ fn cmd_testnet_init(
             total_supply,
             block_reward: 10,
             reward_half_life: 100_000,
-            fee_burn_rate: 0.50,
-            staker_fee_share: 0.50,
-            target_staking_apy: 0.05,
+            fee_burn_rate_ppm: 500_000,
+            staker_fee_share_ppm: 500_000,
+            target_staking_apy_bps: 500,
         },
         genesis_time: format!("{}", now_secs),
         validators: genesis_validators,
@@ -2120,7 +2120,7 @@ fn cmd_genesis_show(path: &str, json_mode: bool) -> Result<()> {
     println!(
         "  {}  {}%",
         "Fee Brn: ".truecolor(140, 150, 170),
-        config.tokenomics.fee_burn_rate
+        config.tokenomics.fee_burn_rate_ppm as f64 / 10_000.0
     );
     println!(
         "  {}  {} EVAP",
@@ -2267,9 +2267,9 @@ fn cmd_genesis_create(
             total_supply,
             block_reward: 10,
             reward_half_life: 100_000,
-            fee_burn_rate: 0.50,
-            staker_fee_share: 0.50,
-            target_staking_apy: 0.05,
+            fee_burn_rate_ppm: 500_000,
+            staker_fee_share_ppm: 500_000,
+            target_staking_apy_bps: 500,
         },
         genesis_time: {
             let secs = std::time::SystemTime::now()

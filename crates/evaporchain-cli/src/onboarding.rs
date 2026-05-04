@@ -291,9 +291,9 @@ pub fn cmd_build_genesis(
         total_supply,
         block_reward: 100,
         reward_half_life: 1_000_000,
-        fee_burn_rate: 0.50,
-        staker_fee_share: 0.50,
-        target_staking_apy: 0.05,
+        fee_burn_rate_ppm: 500_000,
+        staker_fee_share_ppm: 500_000,
+        target_staking_apy_bps: 500,
     };
 
     let coordinator_pk_hex = hex::encode(kp.public_key());

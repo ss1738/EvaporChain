@@ -152,9 +152,9 @@ mod tests {
                 total_supply: 1_000_000,
                 block_reward: 10,
                 reward_half_life: 1000,
-                fee_burn_rate: 0.5,
-                staker_fee_share: 0.5,
-                target_staking_apy: 0.05,
+                fee_burn_rate_ppm: 500_000,
+                staker_fee_share_ppm: 500_000,
+                target_staking_apy_bps: 500,
             },
             genesis_time: "2026-01-01T00:00:00Z".into(),
             validators: vec![GenesisValidator {

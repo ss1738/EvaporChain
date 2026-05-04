@@ -278,9 +278,9 @@ mod tests {
             total_supply: 10_000_000,
             block_reward: 100,
             reward_half_life: 1000,
-            fee_burn_rate: 0.50,
-            staker_fee_share: 0.50,
-            target_staking_apy: 0.05,
+            fee_burn_rate_ppm: 500_000,
+            staker_fee_share_ppm: 500_000,
+            target_staking_apy_bps: 500,
         }
     }
 
@@ -402,7 +402,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund(&mut db, 1, 0);
         let mut acc = RewardAccumulator::new(Tokenomics {
-            fee_burn_rate: 1.0,
+            fee_burn_rate_ppm: 1_000_000,
             ..test_tokenomics()
         });
 

@@ -159,7 +159,8 @@ impl<S: CellSource> LightClientSampler<S> {
                     // First check: does cell_data hash to cell_hash? This
                     // catches outright fabrications without needing the
                     // header at all, so it's strictly stronger evidence.
-                    let computed: [u8; 32] = blake3::hash(&proof.cell_data).into();
+                    // Uses the domain-tagged leaf hash (audit fix C3).
+                    let computed = crate::commitments::leaf_hash(&proof.cell_data);
                     if computed != proof.cell_hash {
                         record_fault(&mut faulty_peers, &peer_id, PeerFaultReason::HashMismatch);
                         self.source
@@ -477,6 +478,105 @@ mod tests {
             !report.passes(0.999),
             "withheld block must fail HP threshold"
         );
+    }
+
+    #[test]
+    fn test_sampling_report_passes_requires_all_three_conditions() {
+        let confident_clean = SamplingReport {
+            results: vec![],
+            metrics: AvailabilityMetrics {
+                total_samples: 32,
+                valid_samples: 32,
+                unique_rows_hit: 8,
+                unique_cols_hit: 8,
+                extended_dim: 8,
+                recovery_possible: true,
+                confidence: 0.99999,
+            },
+            faulty_peers: vec![],
+            all_valid: true,
+        };
+        assert!(confident_clean.passes(0.999));
+
+        // Confidence below threshold fails
+        let low_conf = SamplingReport {
+            metrics: AvailabilityMetrics {
+                total_samples: 32,
+                valid_samples: 5,
+                unique_rows_hit: 2,
+                unique_cols_hit: 2,
+                extended_dim: 8,
+                recovery_possible: false,
+                confidence: 0.5,
+            },
+            ..confident_clean.clone()
+        };
+        assert!(!low_conf.passes(0.999));
+
+        // all_valid=false fails even with high confidence
+        let invalid = SamplingReport {
+            all_valid: false,
+            ..confident_clean.clone()
+        };
+        assert!(!invalid.passes(0.999));
+
+        // Any faulty peer fails the gate
+        let with_fault = SamplingReport {
+            faulty_peers: vec![("bad".to_string(), PeerFaultReason::HashMismatch)],
+            ..confident_clean.clone()
+        };
+        assert!(!with_fault.passes(0.999));
+    }
+
+    #[test]
+    fn test_peer_fault_reason_variants_distinct() {
+        // Eq + Copy on the enum lets the host compare without cloning.
+        let a = PeerFaultReason::InvalidProof;
+        let b = PeerFaultReason::HashMismatch;
+        let c = PeerFaultReason::OutOfRange;
+        let d = PeerFaultReason::Unreachable;
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(c, d);
+        assert_eq!(a, PeerFaultReason::InvalidProof);
+    }
+
+    #[test]
+    fn test_default_report_faulty_is_silent_noop() {
+        // Hosts that don't override report_faulty get a no-op default. The
+        // sampler still functions; the host just learns nothing about peers.
+        struct SilentSource;
+        impl CellSource for SilentSource {
+            fn fetch_cell(
+                &self,
+                _h: u64,
+                _r: usize,
+                _c: usize,
+            ) -> Result<(String, CellProof), CellSourceError> {
+                Err(CellSourceError::NotFound)
+            }
+            // No override → default no-op is exercised.
+        }
+        let s = SilentSource;
+        // Calling report_faulty must not panic.
+        s.report_faulty("anyone", PeerFaultReason::Unreachable);
+    }
+
+    #[test]
+    fn test_sampler_source_accessor() {
+        struct TaggedSource(&'static str);
+        impl CellSource for TaggedSource {
+            fn fetch_cell(
+                &self,
+                _h: u64,
+                _r: usize,
+                _c: usize,
+            ) -> Result<(String, CellProof), CellSourceError> {
+                Err(CellSourceError::NotFound)
+            }
+        }
+        let sampler = LightClientSampler::new(TaggedSource("hello"));
+        assert_eq!(sampler.source().0, "hello");
     }
 
     #[test]
