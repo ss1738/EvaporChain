@@ -15,6 +15,12 @@
 use evaporchain_crypto::hash::blake3_hash;
 use serde::{Deserialize, Serialize};
 
+/// Parts-per-million denominator for ratio fields. Lane R.7: minimal
+/// declaration so cross-crate references compile. Value = 1_000_000
+/// ppm = 1.0; the full integer-PID validator-set refactor that
+/// consumes this constant is deferred to a separate session.
+pub const VS_PPM_DENOMINATOR: u64 = 1_000_000;
+
 /// Maximum health score bonus (20% extra weight).
 const HEALTH_BONUS_CAP: f64 = 0.2;
 

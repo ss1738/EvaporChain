@@ -10,6 +10,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Parts-per-million denominator for ratio fields. Lane R.7: minimal
+/// declaration so cross-crate `crate::fees::FEE_PPM_DENOMINATOR`
+/// references (added in 27bfab9 Crooks-MEV Phase 3.1) compile. Value
+/// = 1_000_000 ppm = 1.0; the full integer-PID refactor that consumes
+/// this constant is deferred to a separate session.
+pub const FEE_PPM_DENOMINATOR: u64 = 1_000_000;
+
 /// Per-byte cost multiplier for state creation deposits.
 const CREATION_DEPOSIT_PER_BYTE: u64 = 100;
 

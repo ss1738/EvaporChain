@@ -120,6 +120,11 @@ impl GasEstimator {
             Transaction::Undelegate(_) => 40_000,
             Transaction::RotateValidatorKey(_) => 60_000,
             Transaction::ClaimDelegation(_) => 30_000,
+            // Lane R.7: Refund variant exists in evaporchain-types
+            // since 27bfab9 (Crooks-MEV Phase 3.1) but the wallet
+            // gas estimator's match was never updated. Refund txs
+            // are protocol-issued and cost the same as Transfer.
+            Transaction::Refund(_) => GAS_TRANSFER,
         }
     }
 
