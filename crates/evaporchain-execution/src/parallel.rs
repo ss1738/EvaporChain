@@ -1883,6 +1883,35 @@ impl ExecutionEngine for ParallelExecutor {
                         }
                     }
                 }
+                // Lane S.1: Crooks-MEV Phase 3.5 protocol-issued refund.
+                // Routed to serial phase via line 1449; without this arm
+                // the executor would fall into the `unreachable!()` and
+                // panic on any block containing a Refund tx. Mirrors
+                // SimpleExecutor::execute_refund.
+                Transaction::Refund(refund) => {
+                    if refund.attacker == refund.victim {
+                        Err(ExecutionError::SelfTransfer)
+                    } else if refund.amount == 0 {
+                        Err(ExecutionError::ZeroAmount)
+                    } else {
+                        let attacker = db.get_or_create_account(&refund.attacker);
+                        if attacker.balance < refund.amount {
+                            Err(ExecutionError::InsufficientBalance {
+                                account: hex::encode(refund.attacker),
+                                available: attacker.balance,
+                                required: refund.amount,
+                            })
+                        } else {
+                            attacker.balance -= refund.amount;
+                            // No nonce increment — refund is protocol-issued.
+                            attacker.last_touched_epoch = block.epoch;
+                            let victim = db.get_or_create_account(&refund.victim);
+                            victim.balance = victim.balance.saturating_add(refund.amount);
+                            victim.last_touched_epoch = block.epoch;
+                            Ok(())
+                        }
+                    }
+                }
                 _ => unreachable!("only serial-phase txs expected here"),
             };
 
