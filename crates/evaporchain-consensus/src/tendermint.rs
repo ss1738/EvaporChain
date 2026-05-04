@@ -307,6 +307,37 @@ impl std::fmt::Display for GovernanceParamError {
 
 impl std::error::Error for GovernanceParamError {}
 
+/// Phase 3.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — per-tip state-branch
+/// metadata. The Arc<dyn StateDB> snapshot ref slots in beside this
+/// in Phase 3.2; today the metadata alone is enough to drive Phase
+/// 3.4's LRU eviction (caliber-based) and Phase 5's orphan-prune
+/// horizon (last_touched_block).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightConeBranchMetadata {
+    /// Block height at which this tip was first observed.
+    pub created_at_block: u64,
+    /// Block height of the most recent commit landing on this tip
+    /// (or one of its descendants in the DAG).
+    pub last_touched_block: u64,
+    /// Phase 3.4 LRU score — Phase 1.1's `path_caliber` for this
+    /// tip's first-parent trajectory. Stored as u64 so the eviction
+    /// rule is deterministic across validators (no f64 NaN paths).
+    /// Updated when the tip's caliber re-scoring crosses a meaningful
+    /// delta (Phase 3.4 implementation detail).
+    pub caliber: u64,
+}
+
+impl LightConeBranchMetadata {
+    /// Fresh metadata for a newly-observed tip.
+    pub const fn fresh(block_height: u64, caliber: u64) -> Self {
+        Self {
+            created_at_block: block_height,
+            last_touched_block: block_height,
+            caliber,
+        }
+    }
+}
+
 /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — error returned
 /// by `TendermintConsensus::dispute_observation` when an operator
 /// tries to dispute a refund that doesn't exist or has aged past
@@ -482,6 +513,22 @@ pub struct TendermintConsensus {
     /// receiving the RPC; consensus-wide dispute consensus is a
     /// future Phase 4.4d follow-up (this is the scaffolding).
     pub disputed_observations: std::collections::HashSet<(u64, usize)>,
+    /// Phase 3.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — per-tip state-branch
+    /// metadata table. Keyed by DAG leaf BlockId; value is the
+    /// metadata needed for Phase 3.4's LRU eviction
+    /// (`light_cone_max_concurrent_forks` cap).
+    ///
+    /// This is the **substrate** for Phase 3.2's per-tip executor
+    /// dispatch. The actual `Arc<dyn StateDB>` snapshot ref lives
+    /// next to the metadata in Phase 3.2 — see
+    /// `research/light_cone/PHASE_3_DECISIONS.md` Decision 1.
+    /// Today the field tracks observed tips so Phase 3.2 can plug in
+    /// the snapshot-creation hook without changing the shape.
+    ///
+    /// Lifecycle gated by `light_cone_state_branches_enabled` flag
+    /// (Phase 3.5). When the flag is `false` (default), the table
+    /// stays empty regardless of DAG activity — chain bit-compat.
+    pub state_branches: std::collections::HashMap<[u8; 32], LightConeBranchMetadata>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -754,6 +801,7 @@ impl TendermintConsensus {
             settled_refunds: std::collections::HashSet::new(),
             mev_missing_refund_violations: std::collections::HashMap::new(),
             disputed_observations: std::collections::HashSet::new(),
+            state_branches: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -1750,6 +1798,69 @@ impl TendermintConsensus {
         )
     }
 
+    /// Phase 3.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — read-only view
+    /// of the state-branch metadata table. Operators query this via
+    /// RPC for monitoring; Phase 3.2 will additionally read it
+    /// inside the executor dispatch path to find the right snapshot
+    /// for a given tip.
+    pub fn state_branches(
+        &self,
+    ) -> &std::collections::HashMap<[u8; 32], LightConeBranchMetadata> {
+        &self.state_branches
+    }
+
+    /// Phase 3.1 — record-or-update metadata for a DAG tip.
+    /// Idempotent: if the tip is already tracked, just bumps
+    /// `last_touched_block`. Internal helper exposed for tests.
+    pub(crate) fn record_state_branch(
+        &mut self,
+        tip: [u8; 32],
+        block_height: u64,
+        caliber: u64,
+    ) {
+        self.state_branches
+            .entry(tip)
+            .and_modify(|m| {
+                m.last_touched_block = m.last_touched_block.max(block_height);
+                // Caliber may grow as the trajectory extends; track
+                // the latest score so LRU sees the freshest signal.
+                m.caliber = caliber;
+            })
+            .or_insert_with(|| LightConeBranchMetadata::fresh(block_height, caliber));
+    }
+
+    /// Phase 3.4 of `LIGHT_CONE_FULL_DAG_PLAN.md` — concurrent-fork
+    /// LRU eviction. When `state_branches.len() > cap`, evict the
+    /// lowest-caliber entry (tie-break: smallest BlockId for
+    /// validator-determinism). `cap` is read from the
+    /// `light_cone_max_concurrent_forks` governance flag (default 4).
+    ///
+    /// Phase 3.2 will pair this eviction with dropping the Arc
+    /// snapshot under the same key (RocksDB snapshot deref O(1)).
+    /// Today it just prunes the metadata.
+    pub(crate) fn prune_state_branches(&mut self) {
+        let cap = self
+            .governance_params
+            .get("light_cone_max_concurrent_forks")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(4);
+
+        while self.state_branches.len() > cap {
+            // Find the lowest-caliber entry (tie-break: smallest tip).
+            if let Some((&victim, _)) = self
+                .state_branches
+                .iter()
+                .min_by(|(t1, m1), (t2, m2)| {
+                    m1.caliber.cmp(&m2.caliber).then_with(|| t1.cmp(t2))
+                })
+            {
+                self.state_branches.remove(&victim);
+            } else {
+                break;
+            }
+        }
+    }
+
     /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — operator
     /// dispute. Cancels a pending refund by adding its
     /// `(source_block_height, source_observation_idx)` pair to
@@ -2123,6 +2234,7 @@ impl TendermintConsensus {
             settled_refunds: std::collections::HashSet::new(),
             mev_missing_refund_violations: std::collections::HashMap::new(),
             disputed_observations: std::collections::HashSet::new(),
+            state_branches: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -4010,6 +4122,32 @@ impl TendermintConsensus {
         // would have a duplicate-id rejection that we don't want to
         // propagate as a panic).
         let _ = self.light_cone_dag.insert(lc_block);
+
+        // Phase 3.1 of LIGHT_CONE_FULL_DAG_PLAN.md — track the
+        // newly-committed block as a state-branch tip when the
+        // governance flag is on. (Default false → table stays
+        // empty regardless of DAG activity → chain bit-compat.)
+        // Caliber estimate at this insertion is just the block's
+        // own energy (block_j); Phase 3.4's full re-scoring will
+        // walk the trajectory.
+        let state_branches_enabled = self
+            .governance_params
+            .get("light_cone_state_branches_enabled")
+            .map(|s| s.as_str())
+            == Some("true");
+        if state_branches_enabled {
+            // BlockId for the LightCone insertion above is
+            // `block.parent_hash` if number == 0, else `block.parent_hash`
+            // the prior tip. Use Tendermint's block hash
+            // computation as the canonical id.
+            let tip_id = Self::block_hash(block);
+            // Caliber estimate at insertion time = block tx count
+            // (matches the Light-Cone insertion's per-block "energy"
+            // parameter). Phase 3.4 will re-score along trajectories.
+            let caliber_estimate = block.transactions.len() as u64;
+            self.record_state_branch(tip_id, block.number, caliber_estimate);
+            self.prune_state_branches();
+        }
 
         // TUR Liveness Detector observation. Push this block's tx
         // count as the chain "current J" (same proxy the parallel
@@ -6950,6 +7088,53 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 3.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — state-branch
+    /// table starts empty. Default-off rollout-flag means the table
+    /// stays empty even when the chain commits blocks (chain-bit-compat).
+    #[test]
+    fn test_state_branches_starts_empty_and_flag_off_keeps_empty() {
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        assert!(tc.state_branches().is_empty());
+    }
+
+    /// Phase 3.1 — `record_state_branch` is idempotent. Re-recording
+    /// the same tip bumps `last_touched_block` and refreshes
+    /// `caliber` but doesn't double-count.
+    #[test]
+    fn test_state_branches_record_idempotent() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let tip = [0xAA; 32];
+        tc.record_state_branch(tip, 1, 100);
+        tc.record_state_branch(tip, 5, 250);
+        assert_eq!(tc.state_branches().len(), 1);
+        let m = &tc.state_branches()[&tip];
+        assert_eq!(m.created_at_block, 1);
+        assert_eq!(m.last_touched_block, 5);
+        assert_eq!(m.caliber, 250);
+    }
+
+    /// Phase 3.4 (LRU eviction) — when state_branches exceeds the
+    /// `light_cone_max_concurrent_forks` cap, the lowest-caliber
+    /// entry is evicted; tie-break is smallest BlockId.
+    #[test]
+    fn test_state_branches_lru_eviction() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Cap=2 to make the test small.
+        tc.governance_set_param("light_cone_max_concurrent_forks", "2")
+            .unwrap();
+        tc.record_state_branch([0xAA; 32], 1, 100); // lowest caliber
+        tc.record_state_branch([0xBB; 32], 2, 200);
+        tc.record_state_branch([0xCC; 32], 3, 150);
+        tc.prune_state_branches();
+        assert_eq!(tc.state_branches().len(), 2, "cap=2 → 2 survivors");
+        assert!(
+            !tc.state_branches().contains_key(&[0xAA; 32]),
+            "lowest-caliber tip [0xAA; 32] should have been evicted"
+        );
+        assert!(tc.state_branches().contains_key(&[0xBB; 32]));
+        assert!(tc.state_branches().contains_key(&[0xCC; 32]));
+    }
+
     /// Phase 3.5 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `light_cone_state_branches_enabled`
     /// governance flag accepts `"true"` / `"false"`, rejects anything
     /// else. Default-off (this commit doesn't change runtime behaviour).

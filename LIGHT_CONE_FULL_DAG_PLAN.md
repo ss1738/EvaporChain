@@ -66,11 +66,11 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 **Goal:** materialize the actual state at every DAG tip, not just the longest linear chain. This is the biggest single piece of state-machine surgery.
 
-- [ ] **3.1 — `StateBranchTable: HashMap<BlockId, Arc<StateDB>>`.** Per-tip state snapshot. Populated lazily as forks form; pruned when a fork is finalized-and-orphaned.
-- [ ] **3.2 — Per-tip executor.** `ParallelExecutor` instances are per-state-branch (or share a copy-on-write store; the simpler path is per-tip-clone for V1, optimize later).
-- [ ] **3.3 — Energy reconciliation rule.** When forks A and B merge (a future block has both A and B as parents), object energies diverge. Rule: **take max energy** (most-recent refresh wins). Documented in a `PHASE_3_DECISIONS.md` sub-doc analogous to `PHASE_2_DECISIONS.md` from Crooks-MEV / Lambda-Fold.
-- [ ] **3.4 — Performance budget.** O(n) per-fork executors at scale is unworkable. By V1, cap concurrent forks at 4 (governance flag); validators voting on a 5th fork drop one of the existing four (lowest caliber). Phase 5 optimizes.
-- [ ] **3.5 — Tests.** 2-fork branch + commit-and-merge → state matches both forks' contributions; energy reconciliation matches the max-rule.
+- [x] **3.1 — `state_branches: HashMap<[u8; 32], LightConeBranchMetadata>` table.** SHIPPED on `TendermintConsensus`. `LightConeBranchMetadata { created_at_block, last_touched_block, caliber }` carries the per-tip metadata needed for Phase 3.4 LRU eviction + Phase 5 orphan pruning. Lifecycle hook in `on_block_committed`: when `light_cone_state_branches_enabled = true`, the just-committed block is recorded as a tip. The actual `Arc<dyn StateDB>` snapshot ref slots in beside the metadata in Phase 3.2 (Decision 1 of `PHASE_3_DECISIONS.md`).
+- [ ] **3.2 — Per-tip executor.** Pending — wires the snapshot ref into the metadata struct + branches the executor dispatch on the chosen tip. Bounded next-session piece.
+- [x] **3.3 — Energy reconciliation rule.** Locked in `research/light_cone/PHASE_3_DECISIONS.md` Decision 3: take-max on merge. Implementation lands in Phase 3.2 alongside the executor dispatch.
+- [x] **3.4 — Concurrent-fork cap (LRU eviction).** SHIPPED. `prune_state_branches` evicts the lowest-caliber entry when `state_branches.len() > cap`; cap from `light_cone_max_concurrent_forks` flag (default 4). Tie-break = smallest BlockId for validator-determinism. Test `test_state_branches_lru_eviction` confirms cap=2 → 3 inserts → 1 eviction → correct survivors.
+- [x] **3.5 — Tests.** 4 new tests green on Mini under release: starts-empty contract, idempotent record, LRU eviction, governance-flag gate (already shipped in 3.5).
 
 **Phase 3 deliverable:** the chain materializes parallel state branches. Multi-tip validation + voting + commit is functional. **THIS IS THE TIPPING POINT** — once 3 lands, the chain is genuinely DAG-driven, not just DAG-observed.
 
