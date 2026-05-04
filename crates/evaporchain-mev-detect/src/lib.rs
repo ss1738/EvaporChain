@@ -140,13 +140,24 @@ pub struct MevObservation {
 pub fn scan_block(txs: &[Transaction], block_height: u64) -> Vec<MevObservation> {
     let mut out = Vec::new();
 
-    // Project txs to (idx, from, to, amount) tuples for Transfer
-    // variants only — every other tx variant is skipped in Phase 1.
-    let transfers: Vec<(usize, AccountAddress, AccountAddress, u64)> = txs
+    // Project txs to (idx, from, to, amount, opted_out) tuples for
+    // Transfer variants only — every other tx variant is skipped in
+    // Phase 1.
+    //
+    // Phase 4.2 of CROOKS_MEV_INTEGRATION_PLAN.md adds the
+    // `opted_out` flag: when a Transfer's `mev_refund_eligible =
+    // Some(false)`, the sender has opted out of MEV refunds. The
+    // detector still considers the tx as a potential ATTACKER leg
+    // (we don't let attackers self-exempt from detection), but
+    // SKIPS observations where the VICTIM tx is opted out.
+    let transfers: Vec<(usize, AccountAddress, AccountAddress, u64, bool)> = txs
         .iter()
         .enumerate()
         .filter_map(|(i, tx)| match tx {
-            Transaction::Transfer(t) => Some((i, t.from, t.to, t.amount)),
+            Transaction::Transfer(t) => {
+                let opted_out = matches!(t.mev_refund_eligible, Some(false));
+                Some((i, t.from, t.to, t.amount, opted_out))
+            }
             _ => None,
         })
         .collect();
@@ -160,8 +171,8 @@ pub fn scan_block(txs: &[Transaction], block_height: u64) -> Vec<MevObservation>
     // attacker's and whose to matches the attacker's target.
     for ai in 0..transfers.len() {
         for ak in (ai + 2)..transfers.len() {
-            let (idx_i, from_i, to_i, amt_i) = transfers[ai];
-            let (idx_k, from_k, to_k, amt_k) = transfers[ak];
+            let (idx_i, from_i, to_i, amt_i, _opt_i) = transfers[ai];
+            let (idx_k, from_k, to_k, amt_k, _opt_k) = transfers[ak];
             if from_i != from_k {
                 continue;
             }
@@ -172,12 +183,21 @@ pub fn scan_block(txs: &[Transaction], block_height: u64) -> Vec<MevObservation>
             }
             // Find a victim slot between ai and ak.
             for aj in (ai + 1)..ak {
-                let (idx_j, from_j, to_j, _amt_j) = transfers[aj];
+                let (idx_j, from_j, to_j, _amt_j, opt_j) = transfers[aj];
                 if from_j == from_i {
                     // Self-MEV — skip per Phase 4.3 anti-gaming.
                     continue;
                 }
                 if to_j != to_i {
+                    continue;
+                }
+                if opt_j {
+                    // Phase 4.2 — victim opted out via
+                    // mev_refund_eligible = Some(false). Detector
+                    // doesn't surface the observation, so no refund
+                    // and no monitoring entry. Honest victims who
+                    // explicitly waive auto-refund stay out of the
+                    // ring buffer entirely.
                     continue;
                 }
                 out.push(MevObservation {
@@ -538,6 +558,7 @@ mod tests {
             nonce,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 
@@ -545,6 +566,47 @@ mod tests {
     fn empty_block_yields_no_observations() {
         let out = scan_block(&[], 1);
         assert!(out.is_empty());
+    }
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "MEV-detect's `scan_block` finds sandwich-shaped
+    /// triples (attacker → victim → attacker) targeting the same
+    /// `to` account. Phase-1 detector emits placeholder
+    /// `confidence_score = 1.0` (or its ppm equivalent post-audit).
+    /// Empty blocks and short tx lists (<3 transfers) emit nothing.
+    /// Output is deterministic and ordered by `attacker_pre_idx`."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Empty block: no output.
+        assert!(scan_block(&[], 1).is_empty());
+
+        // 2 transfers: too short for a sandwich.
+        let two = vec![transfer(1, 2, 100, 0), transfer(3, 4, 50, 0)];
+        assert!(scan_block(&two, 1).is_empty());
+
+        // Canonical sandwich: attacker(1) → target(99), victim(2) →
+        // target(99), attacker(1) → target(99).
+        let sandwich = vec![
+            transfer(1, 99, 100, 0), // attacker_pre
+            transfer(2, 99, 50, 0),  // victim
+            transfer(1, 99, 150, 1), // attacker_post
+        ];
+        let obs = scan_block(&sandwich, 7);
+        assert_eq!(obs.len(), 1);
+        let o = &obs[0];
+        assert_eq!(o.block_height, 7);
+        assert_eq!(o.attacker_pre_idx, 0);
+        assert_eq!(o.victim_idx, 1);
+        assert_eq!(o.attacker_post_idx, 2);
+        assert_eq!(o.attacker, addr(1));
+        assert_eq!(o.victim, addr(2));
+        assert_eq!(o.target, addr(99));
+
+        // Determinism: scan_block on the same input twice → same output.
+        let obs2 = scan_block(&sandwich, 7);
+        assert_eq!(obs, obs2);
     }
 
     #[test]
@@ -1144,6 +1206,51 @@ mod tests {
         ];
         let out = scan_block(&txs, 1);
         assert!(out.is_empty(), "self-MEV must not register");
+    }
+
+    /// Phase 4.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — victim
+    /// opt-out via `mev_refund_eligible = Some(false)`. Detector
+    /// skips the entire observation: no buffer entry, no auto-refund.
+    #[test]
+    fn victim_opt_out_skips_observation() {
+        // Standard sandwich shape, but the victim has set
+        // `mev_refund_eligible: Some(false)` to opt out.
+        let mut victim_tx = TransferTx {
+            from: addr(0xBB),
+            to: addr(0x99),
+            amount: 200,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: Some(false),
+        };
+        let txs = vec![
+            transfer(0xAA, 0x99, 100, 0),
+            Transaction::Transfer(victim_tx.clone()),
+            transfer(0xAA, 0x99, 150, 1),
+        ];
+        let out = scan_block(&txs, 1);
+        assert!(out.is_empty(), "opted-out victim must not register");
+
+        // None (default) → still detects.
+        victim_tx.mev_refund_eligible = None;
+        let txs_default = vec![
+            transfer(0xAA, 0x99, 100, 0),
+            Transaction::Transfer(victim_tx.clone()),
+            transfer(0xAA, 0x99, 150, 1),
+        ];
+        let out_default = scan_block(&txs_default, 1);
+        assert_eq!(out_default.len(), 1);
+
+        // Some(true) → also detects (explicit opt-IN).
+        victim_tx.mev_refund_eligible = Some(true);
+        let txs_optin = vec![
+            transfer(0xAA, 0x99, 100, 0),
+            Transaction::Transfer(victim_tx),
+            transfer(0xAA, 0x99, 150, 1),
+        ];
+        let out_optin = scan_block(&txs_optin, 1);
+        assert_eq!(out_optin.len(), 1);
     }
 
     #[test]

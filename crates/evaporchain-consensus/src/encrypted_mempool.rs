@@ -404,6 +404,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 

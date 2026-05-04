@@ -111,6 +111,47 @@ pub fn evaluate_conservation_gate(
     }
 }
 
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use evaporchain_energy_kernel::ConservationViolation;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "evaluate_conservation_gate centralises the
+    /// observe-vs-enforce branching for the energy-conservation
+    /// audit. (a) Honest audit verdict (Ok) returns Ok(Ok(())) under
+    /// either policy. (b) Violation under observe-mode returns
+    /// Ok(Err(v)) so the executor records the err and commits. (c)
+    /// Violation under enforce-mode returns Err(ExecutionError::
+    /// ConservationViolation) so the block is rejected."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // (a) Honest verdict — both modes pass.
+        let ok = evaluate_conservation_gate(Ok(()), false).unwrap();
+        assert!(ok.is_ok());
+        let ok2 = evaluate_conservation_gate(Ok(()), true).unwrap();
+        assert!(ok2.is_ok());
+
+        // (b) Violation in observe mode — returns Ok(Err(v)).
+        let observe = evaluate_conservation_gate(
+            Err(ConservationViolation::RedirectChangedTotal { before: 100, after: 90 }),
+            false,
+        )
+        .unwrap();
+        assert!(matches!(observe, Err(ConservationViolation::RedirectChangedTotal { .. })));
+
+        // (c) Violation in enforce mode — propagates as ExecutionError.
+        let enforce_err = evaluate_conservation_gate(
+            Err(ConservationViolation::RedirectChangedTotal { before: 100, after: 90 }),
+            true,
+        )
+        .unwrap_err();
+        assert!(matches!(enforce_err, ExecutionError::ConservationViolation(_)));
+    }
+}
+
 /// Contract event emitted during block execution, tagged with origin.
 #[derive(Debug, Clone)]
 pub struct BlockContractEvent {
@@ -3412,6 +3453,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -3445,6 +3487,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -3581,6 +3624,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -3607,6 +3651,7 @@ mod tests {
                 nonce: 5,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -3630,6 +3675,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let tx2 = Transaction::Transfer(TransferTx {
             from: addr(1),
@@ -3638,6 +3684,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let block = make_block(1, 1, vec![tx1, tx2]);
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -3659,6 +3706,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let tx2 = Transaction::Transfer(TransferTx {
             from: addr(1),
@@ -3667,6 +3715,7 @@ mod tests {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let block = make_block(1, 1, vec![tx1, tx2]);
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -3802,6 +3851,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 Transaction::Transfer(TransferTx {
                     from: addr(2),
@@ -3810,6 +3860,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 Transaction::CreateObject(CreateObjectTx {
                     creator: addr(1),
@@ -3829,6 +3880,7 @@ mod tests {
                     nonce: 1,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
             ],
         );
@@ -3867,6 +3919,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 Transaction::Transfer(TransferTx {
                     from: addr(1),
@@ -3875,6 +3928,7 @@ mod tests {
                     nonce: 1,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 Transaction::Transfer(TransferTx {
                     from: addr(1),
@@ -3883,6 +3937,7 @@ mod tests {
                     nonce: 1,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
             ],
         );
@@ -4045,6 +4100,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
@@ -4059,6 +4115,7 @@ mod tests {
                 nonce: 1,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         let r2 = executor.execute_block(&mut db, &block2).unwrap();
@@ -4086,6 +4143,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -4132,6 +4190,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -4159,6 +4218,7 @@ mod tests {
                 nonce: 0,
                 signature: None, // no signature
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -4184,6 +4244,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -4217,6 +4278,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         // Sign with kp1 but replace public key with kp2's
         sign_tx(&mut tx, &kp1);
@@ -4519,6 +4581,7 @@ contract Counter {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -4541,6 +4604,7 @@ contract Counter {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
@@ -4563,6 +4627,7 @@ contract Counter {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -4594,6 +4659,7 @@ contract Counter {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         // Sign with kp1 but attach kp2's public key
         let msg = tx.signing_message("");
@@ -4624,6 +4690,7 @@ contract Counter {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -4651,6 +4718,7 @@ contract Counter {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
 
         // SimpleExecutor::new() has verify_signatures: false
@@ -4681,6 +4749,7 @@ contract Counter {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -4715,6 +4784,7 @@ contract Counter {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -4744,6 +4814,7 @@ contract Counter {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -4820,6 +4891,7 @@ contract Counter {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -4851,6 +4923,7 @@ contract Counter {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -4894,6 +4967,7 @@ contract Counter {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }));
             *nonces.entry(from_idx).or_insert(0) += 1;
         }
@@ -5057,6 +5131,7 @@ contract Counter {
                     nonce: i,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 })
             })
             .collect();

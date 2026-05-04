@@ -58,3 +58,57 @@ pub mod token;
 pub use coupling::{effective_half_life, CouplingError, CouplingParams};
 pub use engagement::{EngagementWindow, EngagementWindowError};
 pub use token::{ResonanceToken, TokenError, TokenId};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Resonance attention is **subtractive**:
+    /// the EngagementWindow is itself a decaying energy. Yesterday's
+    /// engagement evaporates just like the token it's trying to save.
+    /// Backwards time is rejected; zero half-life is rejected at
+    /// construction; lifetime_total is a non-decaying audit trail."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let mut w = EngagementWindow::new(10, 0).unwrap();
+
+        // Fresh window: zero attention.
+        assert_eq!(w.attention_at(0), 0);
+
+        // Register 1000 units at epoch 0.
+        w.register(0, 1_000).unwrap();
+        assert_eq!(w.attention_at(0), 1_000);
+        assert_eq!(w.lifetime_total, 1_000);
+
+        // After one half-life (10 epochs), attention has decayed by half.
+        let attn_h1 = w.attention_at(10);
+        assert!(attn_h1 < 1_000, "attention must decay over time");
+        assert!(attn_h1 <= 500 + 50, "≈ 500 after one half-life");
+
+        // After two half-lives, decayed by ≈ 4×.
+        let attn_h2 = w.attention_at(20);
+        assert!(attn_h2 < attn_h1, "attention monotonically decreasing");
+
+        // Backwards time → typed error.
+        let err = w.register(0, 100); // anchor moved to 0; epoch_now=0 OK
+        assert!(err.is_ok());
+        // Now anchor is at 0, lifetime_total bumped.
+        assert_eq!(w.lifetime_total, 1_100);
+        // Try epoch BEFORE the new anchor → reject. First advance anchor.
+        w.register(50, 1).unwrap();
+        let backwards = w.register(10, 1);
+        assert!(matches!(
+            backwards,
+            Err(EngagementWindowError::BackwardsTime { .. })
+        ));
+
+        // Zero half-life rejected at construction.
+        assert!(matches!(
+            EngagementWindow::new(0, 0),
+            Err(EngagementWindowError::ZeroHalfLife)
+        ));
+    }
+}

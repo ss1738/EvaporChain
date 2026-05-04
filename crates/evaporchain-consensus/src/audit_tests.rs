@@ -455,6 +455,7 @@ mod adversarial_tests {
                 nonce: i as u64,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             });
             node.mempool.submit(tx);
         }

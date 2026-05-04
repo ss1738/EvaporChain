@@ -42,3 +42,55 @@ pub use bound::{
     ContributorWithVariance,
 };
 pub use compare::{bernstein_strictly_tighter, BernsteinAdvantage};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Inequality V2 ships an energy-weighted
+    /// Bernstein bound. When the observed variance is small, the
+    /// integer gate `3·ε² ≥ K·(6·σ² + 2·M·ε)` admits deviations
+    /// that the (variance-blind) Singh-Hoeffding bound would not.
+    /// Popoviciu's quadratic guard is enforced; degenerate inputs
+    /// fail closed."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Two low-variance contributors. (hi−lo)=10 → range²=100;
+        // variance_proxy=4 (well below Popoviciu's bound of 25).
+        let low_var = vec![
+            ContributorWithVariance { lo: 0, hi: 10, energy: 1_000, variance_proxy: 4 },
+            ContributorWithVariance { lo: 0, hi: 10, energy: 1_000, variance_proxy: 4 },
+        ];
+
+        // σ²_SB = 8 (sum of (1)² · 4 + (1)² · 4); M = 10.
+        let var = singh_bernstein_variance(&low_var).unwrap();
+        assert_eq!(var, 8);
+
+        // Gate admits ε=10 with K=1: 3·100 = 300 ≥ 1·(6·8 + 2·10·10) = 248 ✓.
+        assert!(passes_singh_bernstein_gate(10, &low_var, 1).unwrap());
+
+        // Gate refuses ε=2 with K=1: 3·4 = 12 < 1·(48 + 40) = 88 ✗.
+        assert!(!passes_singh_bernstein_gate(2, &low_var, 1).unwrap());
+
+        // Popoviciu guard: variance_proxy > range² is rejected.
+        let bad = vec![ContributorWithVariance {
+            lo: 0,
+            hi: 10,
+            energy: 1_000,
+            variance_proxy: 200,
+        }];
+        assert!(matches!(
+            singh_bernstein_variance(&bad),
+            Err(BernsteinError::VarianceExceedsRangeSquared { .. })
+        ));
+
+        // Empty input fails closed.
+        assert!(matches!(
+            singh_bernstein_variance(&[]),
+            Err(BernsteinError::Empty)
+        ));
+    }
+}

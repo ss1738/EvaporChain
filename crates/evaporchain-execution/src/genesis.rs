@@ -106,6 +106,7 @@ pub fn initialize_genesis(
         submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
+        parents: vec![],
     };
 
     Ok(GenesisResult {

@@ -55,3 +55,69 @@ pub mod graph;
 pub use graph::{
     Curation, EdgeKind, GraveGraph, GraveGraphError, NodeId, NodeState,
 };
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "GraveGraph is the chain's first social structure
+    /// where DEATH ADDS CONNECTIVITY. Living edges between alive
+    /// parties go inert when one dies; Legacy edges declared by the
+    /// living invert to Dedications on certified death of the source.
+    /// Dedications cannot be created directly. Self-loops, unknown
+    /// nodes, and dead-source edge-creation are all rejected."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let alice = NodeId([0xAAu8; 32]);
+        let bob = NodeId([0xBBu8; 32]);
+
+        let mut g = GraveGraph::new();
+        g.register_node(alice);
+        g.register_node(bob);
+
+        // Self-loop rejected.
+        assert!(matches!(
+            g.add_edge(alice, alice, EdgeKind::Living, 0),
+            Err(GraveGraphError::SelfLoop)
+        ));
+
+        // Unknown node rejected.
+        let stranger = NodeId([0x99u8; 32]);
+        assert!(matches!(
+            g.add_edge(alice, stranger, EdgeKind::Living, 0),
+            Err(GraveGraphError::UnknownNode(_))
+        ));
+
+        // Direct Dedication creation forbidden.
+        assert!(g
+            .add_edge(alice, bob, EdgeKind::Dedication { died_at_epoch: 0 }, 0)
+            .is_err());
+
+        // Legacy edge alice→bob declared while both alive.
+        g.add_edge(alice, bob, EdgeKind::Legacy, 0).unwrap();
+
+        // Certify alice dead → legacy edge inverts to Dedication.
+        g.certify_death(alice, 100).unwrap();
+        assert!(matches!(
+            g.node_state(&alice),
+            Some(NodeState::Dead { died_at_epoch: 100 })
+        ));
+        let dedications: Vec<_> = g.dedications_for(bob).collect();
+        assert_eq!(dedications.len(), 1, "alice's legacy edge → dedication for bob");
+        assert!(matches!(
+            dedications[0].kind,
+            EdgeKind::Dedication { died_at_epoch: 100 }
+        ));
+
+        // Cannot add new edges from a dead source.
+        let carol = NodeId([0xCCu8; 32]);
+        g.register_node(carol);
+        assert!(matches!(
+            g.add_edge(alice, carol, EdgeKind::Living, 200),
+            Err(GraveGraphError::DeadSource(_))
+        ));
+    }
+}

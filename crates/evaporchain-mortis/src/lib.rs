@@ -39,3 +39,34 @@ pub mod monitor;
 pub use certificate::{mint_certificate, CertificateError, MortisCertificate};
 pub use condition::MortisCondition;
 pub use monitor::{MortisMonitor, TickOutcome};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Mortis triggers when the refresh pool stays at-
+    /// or-below ε for N consecutive epochs. The trigger is latched —
+    /// once fired, subsequent ticks are no-ops and the chain has
+    /// signed its own death certificate."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let cond = MortisCondition::new(1_000, 3);
+        let mut m = MortisMonitor::new(cond);
+        let r = m.tick(1, 5_000);
+        assert!(matches!(r, TickOutcome::Healthy));
+        assert!(!m.is_triggered());
+
+        let _ = m.tick(2, 500);
+        let _ = m.tick(3, 500);
+        let r = m.tick(4, 500);
+        assert!(matches!(r, TickOutcome::JustTriggered));
+        assert!(m.is_triggered());
+
+        let r = m.tick(5, 999_999_999);
+        assert!(matches!(r, TickOutcome::AlreadyTriggered));
+        assert!(m.is_triggered());
+    }
+}

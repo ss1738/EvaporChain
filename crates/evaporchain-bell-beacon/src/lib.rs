@@ -38,3 +38,49 @@ pub mod gate;
 
 pub use chsh::{chsh_s_value, ChshError};
 pub use gate::{bell_certified, LOCAL_REALISM_S_MILLI};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Bell-Beacon V1 ships pure-integer milli-unit
+    /// CHSH S computation. Local-realism boundary = 2000 milli;
+    /// `bell_certified` admits beacon emissions ONLY when S exceeds
+    /// the threshold strictly (no equal-to-boundary aliasing).
+    /// Out-of-range correlations fail closed; quantum Bell state at
+    /// standard angles produces ≈2828 (Tsirelson)."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Local-realism boundary is the hard-coded threshold.
+        assert_eq!(LOCAL_REALISM_S_MILLI, 2000);
+
+        // Quantum Bell state at standard angles: ±707 milli
+        // correlations → S ≈ 2828 (Tsirelson bound).
+        let s_quantum = chsh_s_value(707, -707, 707, 707).unwrap();
+        assert_eq!(s_quantum, 2828);
+        // Quantum violation passes the gate.
+        assert!(bell_certified(s_quantum, LOCAL_REALISM_S_MILLI));
+
+        // Classical realisable correlations stay below the boundary.
+        let s_classical = chsh_s_value(500, -500, 500, 500).unwrap();
+        assert_eq!(s_classical, 2000);
+        // Boundary-equal does NOT certify (must be strictly greater).
+        assert!(!bell_certified(s_classical, LOCAL_REALISM_S_MILLI));
+
+        // Uncorrelated → S = 0 → not certified.
+        assert!(!bell_certified(chsh_s_value(0, 0, 0, 0).unwrap(), LOCAL_REALISM_S_MILLI));
+
+        // Out-of-range correlations fail closed.
+        assert!(matches!(
+            chsh_s_value(1_500, 0, 0, 0),
+            Err(ChshError::OutOfRange(_))
+        ));
+        assert!(matches!(
+            chsh_s_value(0, 0, 0, -1_500),
+            Err(ChshError::OutOfRange(_))
+        ));
+    }
+}

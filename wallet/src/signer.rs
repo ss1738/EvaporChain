@@ -242,6 +242,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
 
         signer.sign_transaction(&mut tx);
@@ -265,6 +266,7 @@ mod tests {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
 
         let signed = signer.sign(&tx);
@@ -316,6 +318,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
 
         signer.sign_transaction(&mut tx);

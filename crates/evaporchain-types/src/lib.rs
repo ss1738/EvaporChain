@@ -983,6 +983,23 @@ pub struct TransferTx {
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_key: Option<Vec<u8>>,
+    /// Phase 4.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — victim
+    /// opt-out flag for the Crooks-MEV refund pipeline. `None`
+    /// (default) means standard behaviour: if this tx is detected
+    /// as the victim leg of a sandwich, a `RefundTx` is auto-issued.
+    /// `Some(false)` opts the sender OUT of MEV refunds — the
+    /// detector still records the observation (for monitoring) but
+    /// no refund settles. `Some(true)` is reserved for future
+    /// "explicitly opt-in" semantics if the chain ever switches the
+    /// default.
+    ///
+    /// Wire-format: `serde(default, skip_serializing_if =
+    /// "Option::is_none")` so legacy single-purpose Transfer txs
+    /// serialize bit-identically (the field is omitted when None).
+    /// Hash-stability gate: `signable_bytes` does NOT include this
+    /// field — chain-id continuity preserved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mev_refund_eligible: Option<bool>,
 }
 
 /// Energy refresh transaction (prevents evaporation or resurrects a ghost).
@@ -1917,6 +1934,7 @@ mod tests {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         assert_eq!(tx.sender(), Some(&[0xAA; 32]));
     }
@@ -2139,6 +2157,7 @@ mod tests {
             nonce: 42,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         assert_eq!(tx.nonce(), Some(42));
     }
@@ -2165,6 +2184,7 @@ mod tests {
             nonce: 7,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let json = serde_json::to_vec(&tx).unwrap();
         let back: Transaction = serde_json::from_slice(&json).unwrap();

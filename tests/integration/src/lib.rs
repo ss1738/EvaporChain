@@ -205,6 +205,7 @@ mod tests {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         for node in nodes.iter_mut() {
             node.mempool.submit(tx.clone());
@@ -273,6 +274,7 @@ mod tests {
                 nonce: height,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             });
             for node in nodes.iter_mut() {
                 node.mempool.submit(tx.clone());
@@ -749,6 +751,7 @@ mod tests {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
 
         // Sign with ML-DSA
@@ -835,6 +838,7 @@ mod tests {
             nonce: 1,
             signature: Some(keypair.sign(b"wrong message")),
             public_key: Some(pk_bytes),
+            mev_refund_eligible: None,
         });
 
         let block = Block {
@@ -5669,6 +5673,7 @@ mod mempool_mev_integration {
             nonce,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 
@@ -5763,6 +5768,7 @@ mod encrypted_mempool_integration {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 

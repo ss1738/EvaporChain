@@ -71,3 +71,66 @@ pub mod registry;
 
 pub use proposal::{ALPHA_MICROS_DEFAULT, Proposal, ProposalError, ProposalId, MICROS};
 pub use registry::{ConvictionRegistry, RegistryError, VoterId};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Evaporating Conviction Vote uses pure-integer
+    /// fixed-point conviction (no f64). Sustained stake makes
+    /// conviction grow toward the threshold; once Passed, it
+    /// STAYS passed even if subsequent decay drops conviction
+    /// below threshold (no flapping). Non-monotone ticks rejected;
+    /// alpha out of (0, MICROS) range rejected at construction."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let id = ProposalId([1u8; 32]);
+        // Threshold below the asymptote (10×stake = 100_000_000) so
+        // it's reached in finite ticks.
+        let mut p = Proposal::new(id, ALPHA_MICROS_DEFAULT, 50_000_000, 0).unwrap();
+        assert!(!p.is_passed());
+
+        // Sustained stake — conviction grows.
+        let mut last_conviction = 0u128;
+        for t in 1u64..50 {
+            p.tick(t, 10_000_000).unwrap();
+            assert!(p.conviction_micros >= last_conviction, "conviction monotone with constant stake");
+            last_conviction = p.conviction_micros;
+        }
+        // After enough ticks, threshold is crossed.
+        assert!(p.is_passed());
+        let passed_conviction = p.conviction_micros;
+
+        // Stake decays to 0; conviction now decreases — but Passed
+        // status is sticky (no flapping back to Pending).
+        for t in 50u64..200 {
+            p.tick(t, 0).unwrap();
+        }
+        assert!(p.is_passed(), "Passed status must be sticky");
+        assert!(p.conviction_micros < passed_conviction, "decay shrinks conviction");
+
+        // Non-monotone tick rejected.
+        assert!(matches!(
+            p.tick(100, 0),
+            Err(ProposalError::NonMonotoneTick { .. })
+        ));
+
+        // Construction guards: alpha must be in (0, MICROS).
+        assert!(matches!(
+            Proposal::new(id, 0, 100, 0),
+            Err(ProposalError::InvalidAlpha(0))
+        ));
+        assert!(matches!(
+            Proposal::new(id, MICROS as u64, 100, 0),
+            Err(ProposalError::InvalidAlpha(_))
+        ));
+        // Zero threshold rejected.
+        assert!(matches!(
+            Proposal::new(id, ALPHA_MICROS_DEFAULT, 0, 0),
+            Err(ProposalError::InvalidThreshold)
+        ));
+    }
+}

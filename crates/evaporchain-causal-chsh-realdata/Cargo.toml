@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-causal-chsh-realdata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lane O.2 real-data gate runner for evaporchain-causal-chsh. Consumes a LightCone-DAG trace export (concurrent-block-pair tuples with their per-block stats), bins observables under the four CHSH setting-pairs, runs the synthetic gate, and writes a GATE_RESULT.md-shaped verdict report. Cartel-injection harness included so real honest data can be paired with synthetic coordinated traffic without re-running the chain."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-causal-chsh = { path = "../evaporchain-causal-chsh" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

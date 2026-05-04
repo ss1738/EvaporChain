@@ -69,3 +69,68 @@ pub mod bound;
 pub use bound::{
     hoeffding_variance_bound, passes_singh_gate, singh_variance_bound, BoundError, Contributor,
 };
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Inequality V1 ships the energy-weighted
+    /// Hoeffding bound. (a) `singh_variance_bound ≤
+    /// hoeffding_variance_bound` always (Singh is at least as tight).
+    /// (b) At full energy across all contributors the two bounds
+    /// COINCIDE. (c) Decay collapses the bound: dropping one
+    /// contributor's energy to 0 strictly shrinks σ². Empty inputs
+    /// fail closed."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Three contributors, range=10 each. Mixed energies.
+        let mixed = vec![
+            Contributor { lo: 0, hi: 10, energy: 1_000 },
+            Contributor { lo: 0, hi: 10, energy: 500 },
+            Contributor { lo: 0, hi: 10, energy: 100 },
+        ];
+        let h = hoeffding_variance_bound(&mixed).unwrap();
+        let s = singh_variance_bound(&mixed).unwrap();
+        assert!(s <= h, "Singh ({s}) must be ≤ Hoeffding ({h})");
+        assert!(s < h, "with mixed energies Singh is strictly tighter");
+
+        // (b) Full energy across all → bounds COINCIDE.
+        let full = vec![
+            Contributor { lo: 0, hi: 10, energy: 1_000 },
+            Contributor { lo: 0, hi: 10, energy: 1_000 },
+            Contributor { lo: 0, hi: 10, energy: 1_000 },
+        ];
+        let h_full = hoeffding_variance_bound(&full).unwrap();
+        let s_full = singh_variance_bound(&full).unwrap();
+        assert_eq!(h_full, s_full, "at full energy Singh ≡ Hoeffding");
+
+        // (c) Decay collapses: zero one contributor's energy →
+        // σ² strictly smaller.
+        let decayed = vec![
+            Contributor { lo: 0, hi: 10, energy: 1_000 },
+            Contributor { lo: 0, hi: 10, energy: 1_000 },
+            Contributor { lo: 0, hi: 10, energy: 0 }, // fully decayed
+        ];
+        let s_decayed = singh_variance_bound(&decayed).unwrap();
+        assert!(s_decayed < s_full, "decayed contributor must shrink σ²");
+
+        // (d) Gate admits large deviations under tight σ².
+        // 2·ε² ≥ K·σ². With σ²=200, ε=20, K=1: 2·400 ≥ 200 ✓.
+        assert!(passes_singh_gate(20, &full, 1).unwrap());
+        // ε=2, K=1: 2·4 < 200 ✗.
+        assert!(!passes_singh_gate(2, &full, 1).unwrap());
+
+        // Empty/invalid inputs fail closed.
+        assert!(matches!(
+            singh_variance_bound(&[]),
+            Err(BoundError::Empty)
+        ));
+        assert!(matches!(
+            singh_variance_bound(&[Contributor { lo: 10, hi: 5, energy: 100 }]),
+            Err(BoundError::InvalidRange { .. })
+        ));
+    }
+}

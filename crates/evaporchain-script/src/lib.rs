@@ -488,6 +488,63 @@ pub enum UpgradeAuth {
     Governance,
 }
 
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "ScriptEngine deploys EvaporScript contracts with
+    /// deploy-time bytecode validation: every Jump/JumpIf target must
+    /// lie within the opcode list, opcode count is capped, and every
+    /// method-start offset must be in range. A malformed bytecode
+    /// rejects at deploy with no contract persisted."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let mut engine = ScriptEngine::new();
+        let creator: AccountAddress = [1u8; 32];
+
+        // Honest deploy: tiny contract with one method.
+        let source = "\
+contract HelloPress {
+    state {
+        counter: u64 = 0
+    }
+
+    fn bump(by: u64) {
+        self.counter = self.counter + by
+    }
+}
+";
+        let id = engine.deploy(source, creator, 1_000, 100, 0).unwrap();
+        assert_eq!(id, 1);
+
+        // Repeat deploy → fresh id, both contracts coexist.
+        let id2 = engine.deploy(source, creator, 1_000, 100, 0).unwrap();
+        assert_eq!(id2, 2);
+        assert_ne!(id, id2);
+
+        // Malformed source → ScriptError, no contract persisted.
+        let bad = "contract Broken { state { x: u64 method } }";
+        assert!(engine.deploy(bad, creator, 1_000, 100, 0).is_err());
+
+        // Out-of-range jump in hand-crafted bytecode rejects at the
+        // validator gate (deploy-time hardening).
+        use compiler::{EvaporBytecode, Op};
+        use std::collections::HashMap;
+        let mut methods = HashMap::new();
+        methods.insert("oops".to_string(), 0usize);
+        let bytecode = EvaporBytecode {
+            opcodes: vec![Op::Jump(999)], // off-the-end target
+            methods,
+            state_schema: StateSchema { fields: vec![] },
+            name: "Bad".into(),
+        };
+        assert!(validate_deploy_bytecode(&bytecode).is_err());
+    }
+}
+
 /// Engine managing all deployed script contracts.
 pub struct ScriptEngine {
     contracts: HashMap<u64, ScriptContract>,

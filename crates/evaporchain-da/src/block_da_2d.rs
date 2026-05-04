@@ -378,6 +378,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Transfer(TransferTx {
                 from: [3u8; 32],
@@ -386,6 +387,7 @@ mod tests {
                 nonce: 1,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
         ];
         let (tx_bytes, blobs) = build_block_da_inputs(&txs).expect("non-empty txs");

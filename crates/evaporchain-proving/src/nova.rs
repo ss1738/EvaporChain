@@ -2208,6 +2208,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         }
@@ -2322,6 +2323,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }));
         }
         Block {
@@ -2347,6 +2349,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         }

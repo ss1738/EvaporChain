@@ -33,6 +33,7 @@ fn make_transfer_block(num_txs: usize, block_num: u64) -> Block {
                 nonce: (i / 100) as u64,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         })
         .collect();
@@ -60,6 +61,7 @@ fn make_transfer_block(num_txs: usize, block_num: u64) -> Block {
         protocol_version: 0,
         state_root_version: 0,
         submit_epoch_hints: vec![],
+        parents: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
     }

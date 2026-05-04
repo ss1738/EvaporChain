@@ -110,3 +110,46 @@ mod tests {
         assert!(select_attractor(1000, &[]).is_none());
     }
 }
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh Attractor V1 generalises the single-
+    /// equilibrium Lyapunov fee controller to multi-equilibrium
+    /// regime selection. `select_attractor` returns the FIRST basin
+    /// containing the state, with deterministic nearest-centre
+    /// fallback when none does. Empty attractor list returns None."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let attractors = [
+            Attractor::new(100, 10),
+            Attractor::new(1_000, 100),
+            Attractor::new(10_000, 1_000),
+        ];
+
+        // In-basin: 1050 lands inside the 1000±100 basin.
+        let a = select_attractor(1_050, &attractors).unwrap();
+        assert_eq!(a.center, 1_000);
+        assert!(a.contains(1_050));
+
+        // Out-of-basin fallback: 500 has no basin; closer to 100
+        // (dist 400) than 1000 (dist 500), so 100 wins.
+        let f = select_attractor(500, &attractors).unwrap();
+        assert_eq!(f.center, 100);
+        assert!(!f.contains(500));
+
+        // Empty list → None.
+        assert!(select_attractor(1_000, &[]).is_none());
+
+        // contains is symmetric around centre.
+        let c = Attractor::new(1_000, 100);
+        assert!(c.contains(900));
+        assert!(c.contains(1_100));
+        assert!(!c.contains(899));
+        assert!(!c.contains(1_101));
+    }
+}

@@ -37,6 +37,7 @@ impl TxBuilder {
             nonce,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 

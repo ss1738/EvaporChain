@@ -43,3 +43,43 @@ pub mod evaluate;
 pub use beacon::{compute_beacon, verify_modular_identity, Beacon, BeaconError};
 pub use coeffs::{DELTA_COEFFS, E4_COEFFS, E6_COEFFS, TRUNCATION_DEPTH};
 pub use evaluate::{evaluate_delta, evaluate_e4, evaluate_e6};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Modular-Form Beacon emits the (E_4, E_6, Δ)
+    /// triple at a per-epoch τ. The triple satisfies the modular
+    /// relation E_4³ − E_6² = 1728·Δ EXACTLY at τ=0 (the substrate's
+    /// canonical zero point). Different τs yield different triples
+    /// (no aliasing), and `compute_beacon` is pure (same τ → same
+    /// triple)."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Modular identity exact at τ=0.
+        let b0 = compute_beacon(0);
+        assert_eq!(b0.tau, 0);
+        verify_modular_identity(&b0, 0).expect("modular identity exact at τ=0");
+
+        // Determinism: same input → same triple.
+        let b0_again = compute_beacon(0);
+        assert_eq!(b0, b0_again);
+
+        // Distinct τs produce distinct beacons (no aliasing on small τ).
+        let b1 = compute_beacon(1);
+        let b2 = compute_beacon(2);
+        assert_ne!(b0, b1);
+        assert_ne!(b1, b2);
+
+        // Tight tolerance fails past truncation regime — verifier
+        // gets a typed error, not silent acceptance.
+        let b_far = compute_beacon(2);
+        assert!(matches!(
+            verify_modular_identity(&b_far, 0),
+            Err(BeaconError::IdentityFailed { .. })
+        ));
+    }
+}

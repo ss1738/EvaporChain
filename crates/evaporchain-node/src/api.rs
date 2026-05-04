@@ -8574,6 +8574,7 @@ async fn post_transfer(
             nonce: req.nonce,
             signature: req.signature.and_then(|s| hex::decode(s).ok()),
             public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
+            mev_refund_eligible: None,
         });
         let sender_addr = format!("0x{}", hex::encode(from));
         sign_transaction(&mut tx, &state, Some(&sender_addr));
@@ -9186,6 +9187,7 @@ async fn post_batch(
                         nonce,
                         signature: None,
                         public_key: None,
+                        mev_refund_eligible: None,
                     });
                     sign_transaction(&mut tx, &state, None);
                     state.submit_tx(tx);
@@ -10256,6 +10258,7 @@ async fn post_faucet(
         nonce,
         signature: None,
         public_key: None,
+        mev_refund_eligible: None,
     });
     sign_transaction(&mut tx, &state, None);
     state.submit_tx(tx);
@@ -14572,6 +14575,7 @@ async fn post_signable_bytes(
                     nonce,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }))
             }
             "create_object" => {
@@ -15781,6 +15785,7 @@ mod tx_status_tests {
             nonce,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 

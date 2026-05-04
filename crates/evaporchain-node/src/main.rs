@@ -730,6 +730,7 @@ fn parse_stdin_command(line: &str, signer: &MlDsaKeypair, chain_id: &str) -> Opt
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             StdinCommand::CreateObject {
                 creator,
@@ -872,6 +873,7 @@ fn generate_demo_tx(
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             });
             let msg = tx.signing_message(chain_id);
             let sig = my_keypairs[fi].sign(&msg);

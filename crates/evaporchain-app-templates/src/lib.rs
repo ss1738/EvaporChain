@@ -59,3 +59,39 @@ pub mod descriptor;
 pub use catalogue::{catalogue, find, CatalogueError};
 pub use class::{TemplateClass, APP_TEMPLATE_RANGE_END, APP_TEMPLATE_RANGE_START};
 pub use descriptor::{TemplateDescriptor, DescriptorError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "evaporchain-app-templates ships the deployable-
+    /// template catalogue for all A5.* primitives. dApps/wallets
+    /// enumerate `catalogue()`, look up specific classes via
+    /// `find(class)`, and render deploy forms from each template's
+    /// `default_params`. Catalogue is non-empty; every template
+    /// belongs to the reserved A5.* class range; lookup is total
+    /// (every catalogue entry is findable by its class)."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let cat = catalogue();
+        assert!(!cat.is_empty(), "catalogue must not be empty");
+        for t in cat.iter() {
+            // Every template's class is in the reserved A5.* range.
+            let cls_id = t.class.0;
+            assert!(
+                cls_id >= APP_TEMPLATE_RANGE_START && cls_id <= APP_TEMPLATE_RANGE_END,
+                "template class {:?} ({:#x}) out of A5.* range [{:#x}, {:#x}]",
+                t.class,
+                cls_id,
+                APP_TEMPLATE_RANGE_START,
+                APP_TEMPLATE_RANGE_END
+            );
+            // find(class) is total: every catalogued template is
+            // findable by its class.
+            assert!(find(t.class).is_ok(), "find({:?}) failed", t.class);
+        }
+    }
+}

@@ -59,3 +59,43 @@ pub mod oracle;
 
 pub use obs::{Observation, PriceMicros};
 pub use oracle::{EwTwapOracle, OracleError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "EW-TWAP weights observations by energy-at-
+    /// observation, not elapsed time. A short, high-energy attestation
+    /// outweighs a longer, low-energy one — so manipulation cost
+    /// scales with the chain's decay rate, not duration. The oracle
+    /// is pure-integer fixed-point and validator-deterministic; an
+    /// empty window is an explicit error, never a silent zero."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let mut o = EwTwapOracle::new(100);
+
+        // Three observations: two low-energy quotes at price 1.0 and
+        // one high-energy quote at price 2.0. EW-TWAP must weight the
+        // high-energy observation more — answer should be > naive
+        // mean (1.33), closer to 2.0.
+        o.observe(Observation::new(10, 1_000_000, 100)).unwrap();
+        o.observe(Observation::new(11, 1_000_000, 100)).unwrap();
+        o.observe(Observation::new(12, 2_000_000, 1_000)).unwrap();
+
+        let twap = o.read().unwrap();
+        // weighted mean = (1e6 * 100 + 1e6 * 100 + 2e6 * 1000) / 1200
+        //               = 2_200_000_000 / 1200 = 1_833_333
+        assert_eq!(twap, 1_833_333);
+
+        // Strict-monotone epoch enforced.
+        let res = o.observe(Observation::new(12, 1_000_000, 100));
+        assert!(matches!(res, Err(OracleError::NonMonotoneEpoch { .. })));
+
+        // Empty oracle returns NoObservations, not 0.
+        let empty = EwTwapOracle::new(100);
+        assert!(matches!(empty.read(), Err(OracleError::NoObservations)));
+    }
+}

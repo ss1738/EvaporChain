@@ -39,3 +39,39 @@ pub mod tombstone;
 pub use cause::CauseOfDeath;
 pub use eulogy_trie::{EulogyError, EulogyTrie};
 pub use tombstone::{mint, Tombstone};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Tombstone is the deliberate exception to
+    /// EvaporChain's anti-immortality rule. Every evaporated account
+    /// is memorialised with a 32-byte BLAKE3 commitment in a
+    /// non-decaying eulogy trie. Mint is deterministic and
+    /// domain-separated; double-insertion for the same address is
+    /// rejected (tombstones are forever)."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let addr = [7u8; 32];
+        let t1 = mint(addr, 100, 1_000, CauseOfDeath::Evaporated);
+        let t2 = mint(addr, 100, 1_000, CauseOfDeath::Evaporated);
+        // Determinism: same inputs → byte-identical commitment.
+        assert_eq!(t1, t2);
+        // Domain separation by cause: different cause → different
+        // commitment (CauseOfDeath::SlashedToZero has a distinct
+        // discriminant).
+        let t3 = mint(addr, 100, 1_000, CauseOfDeath::SlashedToZero);
+        assert_ne!(t1, t3);
+
+        // Eulogy trie: tombstones are forever — double insert rejects.
+        let mut trie = EulogyTrie::new();
+        trie.insert(addr, t1).unwrap();
+        let err = trie.insert(addr, t1).unwrap_err();
+        let _ = err;
+        assert!(trie.contains(&addr));
+        assert_eq!(trie.len(), 1);
+    }
+}

@@ -50,3 +50,84 @@
 pub mod intent;
 
 pub use intent::{Intent, IntentError, IntentId, Verb, KNOWN_VERBS};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Counsel never executes free-form chat:
+    /// every intent is grammar-validated at construction (verb in
+    /// known set, object non-empty + bounded, constraint parseable)
+    /// AND admission-gated at execution (deadline, confidence floor,
+    /// energy budget). Anti-replay commitment changes when any
+    /// field changes."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let id = IntentId([1u8; 32]);
+        let holder = [2u8; 32];
+
+        // Honest intent: valid Send, non-empty object, parseable
+        // constraint, future deadline, positive budget, high
+        // confidence.
+        let intent = Intent::new(
+            id,
+            holder,
+            Verb::Send,
+            vec![3u8; 32],          // recipient address
+            b"{}".to_vec(),         // minimal valid constraint
+            1_000,                  // deadline_epoch
+            500,                    // energy_budget
+            9_500,                  // 95% confidence
+        )
+        .unwrap();
+
+        // Admission at now=10 with floor=5000, required=400 → OK.
+        intent.admit(10, 5_000, 400).unwrap();
+
+        // Past deadline rejected.
+        assert!(matches!(
+            intent.admit(2_000, 5_000, 400),
+            Err(IntentError::DeadlinePassed { .. })
+        ));
+        // Below confidence floor rejected.
+        assert!(matches!(
+            intent.admit(10, 9_999, 400),
+            Err(IntentError::LowConfidence { .. })
+        ));
+        // Over budget rejected.
+        assert!(matches!(
+            intent.admit(10, 5_000, 600),
+            Err(IntentError::BudgetExceeded { .. })
+        ));
+
+        // Construction guards.
+        // Empty object → rejected.
+        assert!(matches!(
+            Intent::new(id, holder, Verb::Send, vec![], b"{}".to_vec(), 1, 1, 1),
+            Err(IntentError::EmptyObject)
+        ));
+        // Object too long (>1024) → rejected.
+        assert!(matches!(
+            Intent::new(id, holder, Verb::Send, vec![0u8; 2_000], b"{}".to_vec(), 1, 1, 1),
+            Err(IntentError::ObjectTooLong)
+        ));
+        // Zero deadline → rejected.
+        assert!(matches!(
+            Intent::new(id, holder, Verb::Send, vec![1], b"{}".to_vec(), 0, 1, 1),
+            Err(IntentError::ZeroDeadline)
+        ));
+
+        // Anti-replay: changing the verb changes the commitment.
+        let mut other = intent.clone();
+        other.verb = Verb::Stake;
+        assert_ne!(intent.commitment(), other.commitment());
+
+        // KNOWN_VERBS coverage: every variant in the constant.
+        assert!(KNOWN_VERBS.contains(&Verb::Send));
+        assert!(KNOWN_VERBS.contains(&Verb::Stake));
+        assert!(KNOWN_VERBS.contains(&Verb::Reanchor));
+    }
+}

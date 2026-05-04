@@ -48,3 +48,53 @@ pub use arrow::time_arrow_holds_at;
 pub use block::{Block, BlockId};
 pub use concurrency::{comparable, is_concurrent, precedes};
 pub use dag::{causal_future, causal_past, LightCone, LightConeError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    fn id(b: u8) -> BlockId {
+        let mut x = [0u8; 32];
+        x[31] = b;
+        x
+    }
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Light-Cone exposes blocks as a DAG with a partial
+    /// order: causal_past/causal_future close transitively under parent
+    /// edges; precedes is anti-symmetric (no cycles); concurrent blocks
+    /// (no path either way) are unordered."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // DAG:    g(0)
+        //        /    \
+        //      a(1)   b(2)      <- concurrent: no path between a and b
+        //        \    /
+        //         m(3)          <- merge: parents are {a, b}
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1_000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 1_000, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 1_000, 1)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 1_000, 2)).unwrap();
+
+        // Transitive past closure: causal_past(m) = {g, a, b}.
+        let past_m = causal_past(&lc, id(3));
+        assert!(past_m.contains(&id(0)));
+        assert!(past_m.contains(&id(1)));
+        assert!(past_m.contains(&id(2)));
+
+        // precedes is anti-symmetric: g→m holds, m→g does NOT.
+        assert!(precedes(&lc, id(0), id(3)));
+        assert!(!precedes(&lc, id(3), id(0)));
+
+        // Concurrent siblings: a and b have no path either way.
+        assert!(is_concurrent(&lc, id(1), id(2)));
+        assert!(!comparable(&lc, id(1), id(2)));
+
+        // Genesis comparable to every descendant.
+        assert!(comparable(&lc, id(0), id(3)));
+        assert!(!is_concurrent(&lc, id(0), id(3)));
+    }
+}

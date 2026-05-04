@@ -46,3 +46,75 @@
 pub mod token;
 
 pub use token::{HeirloomNft, HeirloomError, TokenId};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use token::{HeirState, KinEdge};
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Heir applies a HARD inheritance-tax
+    /// half-life: each inheritance hop halves the token's energy.
+    /// Inheritance walks the kin list in priority order, skipping
+    /// Dead/Refused heirs. If no live heir exists, the token
+    /// escheats (returns to commons). Inheriting requires the
+    /// holder to be certified dead first."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let alice = [0xAAu8; 32];
+        let bob = [0xBBu8; 32];
+        let carol = [0xCCu8; 32];
+        let dave = [0xDDu8; 32];
+
+        // Mint with 3 heirs: bob (Live), carol (Dead), dave (Refused).
+        // Inheritance must skip carol+dave and land on bob.
+        // Wait — bob is Live so that's the path. Let me also test that
+        // priority-0 dead heirs are skipped.
+        let kin = vec![
+            KinEdge { heir: bob, state: HeirState::Dead },
+            KinEdge { heir: carol, state: HeirState::Live },
+            KinEdge { heir: dave, state: HeirState::Refused },
+        ];
+        let mut nft = HeirloomNft::mint(TokenId([1; 32]), alice, 1_000, kin, 0).unwrap();
+        assert_eq!(nft.energy, 1_000);
+        assert_eq!(nft.generation, 0);
+
+        // Cannot inherit while holder still alive.
+        assert!(matches!(
+            nft.inherit(),
+            Err(HeirloomError::HolderStillAlive)
+        ));
+
+        // Certify holder death; now inheritance proceeds.
+        nft.certify_holder_death().unwrap();
+        let new_holder = nft.inherit().unwrap();
+
+        // Highest-priority LIVE heir is carol (bob is Dead).
+        assert_eq!(new_holder, carol);
+        // Energy halved (1000 → 500).
+        assert_eq!(nft.energy, 500);
+        // Generation bumped.
+        assert_eq!(nft.generation, 1);
+        // Kin list cleared for the new holder.
+        assert!(nft.kin.is_empty());
+
+        // Self-loop kin is rejected at mint (founder can't list self).
+        let bad_kin = vec![KinEdge { heir: alice, state: HeirState::Live }];
+        assert!(matches!(
+            HeirloomNft::mint(TokenId([2; 32]), alice, 1_000, bad_kin, 0),
+            Err(HeirloomError::SelfLoopKin)
+        ));
+
+        // No live heirs → escheat.
+        let dead_kin = vec![
+            KinEdge { heir: bob, state: HeirState::Dead },
+            KinEdge { heir: carol, state: HeirState::Refused },
+        ];
+        let mut nft2 = HeirloomNft::mint(TokenId([3; 32]), alice, 1_000, dead_kin, 0).unwrap();
+        nft2.certify_holder_death().unwrap();
+        assert!(matches!(nft2.inherit(), Err(HeirloomError::NoLiveHeirs)));
+        assert!(nft2.escheated);
+    }
+}

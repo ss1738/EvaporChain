@@ -51,3 +51,39 @@ pub mod signature;
 
 pub use ib::{ib_vote, IbParams, IbVote};
 pub use signature::{StateSignature, N_BINS};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "IB Validators implement Tishby-Pereira-Bialek
+    /// 1999 with β = lambda_mb / 1_000_000 tied to the chain's λ.
+    /// Identical local/prior views (KL = 0) ALWAYS abstain — no
+    /// information-free vote can ride the threshold. Strictly
+    /// divergent views commit when KL exceeds lambda_mb. The
+    /// boundary is strict (>, not ≥)."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let uniform_energies: Vec<u64> = (0..16).map(|i| i as u64 * 100).collect();
+        let uniform = StateSignature::from_energies(&uniform_energies, 1_600);
+        let concentrated = StateSignature::from_energies(&vec![0u64; 16], 1_000_000);
+
+        // (a) Identical views: KL = 0 → ABSTAIN even at threshold=0.
+        let p_zero = IbParams { lambda_mb: 0 };
+        assert_eq!(ib_vote(&uniform, &uniform, &p_zero), IbVote::Abstain);
+
+        // (b) Divergent views with low threshold → COMMIT.
+        assert_eq!(ib_vote(&concentrated, &uniform, &p_zero), IbVote::Commit);
+
+        // (c) High threshold forces abstain even on identical views.
+        let p_high = IbParams { lambda_mb: 1_000_000_000 };
+        assert_eq!(ib_vote(&uniform, &uniform, &p_high), IbVote::Abstain);
+
+        // (d) Bottleneck width: N_BINS = 16 (the canonical signature
+        // discretisation).
+        assert_eq!(N_BINS, 16);
+    }
+}

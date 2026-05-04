@@ -852,6 +852,7 @@ mod tests {
             nonce,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 
@@ -942,6 +943,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let tx_b = Transaction::Transfer(TransferTx {
             from: [1u8; 32],
@@ -950,6 +952,7 @@ mod tests {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let tx_c = Transaction::Transfer(TransferTx {
             from: [1u8; 32],
@@ -958,6 +961,7 @@ mod tests {
             nonce: 2,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
 
         // Submit in one order
@@ -993,6 +997,7 @@ mod tests {
                 nonce: i,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }));
         }
         let taken = pool.take(3);
@@ -1020,6 +1025,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let tx2 = Transaction::Transfer(TransferTx {
             from: [1u8; 32],
@@ -1028,6 +1034,7 @@ mod tests {
             nonce: 1,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         assert!(pool.submit(tx1));
         assert!(pool.submit(tx2));
@@ -1242,6 +1249,7 @@ mod tests {
             nonce,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 

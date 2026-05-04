@@ -45,3 +45,37 @@ pub use controller::{base_fee, Drift, FeeController};
 pub use lyapunov::{lyapunov_value, signed_diff};
 pub use params::FeeControllerParams;
 pub use state::FeeState;
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Lyapunov fee controller admits monotone
+    /// convergence under decay: V(E) = ½(E−E*)² is non-increasing on
+    /// empty-block trajectories, and `base_fee` does not grow.
+    /// Pure-integer i128 math; validator-deterministic."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let p = FeeControllerParams::default_genesis();
+        // Start above equilibrium so empty-block decay drives V down.
+        let s0 = FeeState::new(p.target_energy.saturating_add(p.target_gas));
+        let f0 = base_fee(&s0, &p);
+        let v0 = lyapunov_value(s0.energy, p.target_energy);
+
+        // Empty block: fee + Lyapunov both monotone non-increasing.
+        let (s1, _) = FeeController::step(&p, &s0, 0, 1).unwrap();
+        let f1 = base_fee(&s1, &p);
+        let v1 = lyapunov_value(s1.energy, p.target_energy);
+        assert!(f1 <= f0, "fee must not grow on empty-block decay");
+        assert!(v1 <= v0, "Lyapunov must not grow on empty-block decay");
+
+        let (s2, _) = FeeController::step(&p, &s1, 0, 2).unwrap();
+        let f2 = base_fee(&s2, &p);
+        let v2 = lyapunov_value(s2.energy, p.target_energy);
+        assert!(f2 <= f1);
+        assert!(v2 <= v1);
+    }
+}

@@ -440,6 +440,75 @@ pub struct TickResult {
     pub events: Vec<String>,
 }
 
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "ContractEngine deploys decay-native contract
+    /// templates: every instance carries (energy, half_life,
+    /// last_refreshed) so it evaporates if not refreshed. Calls to
+    /// evaporated contracts fail closed with Evaporated; unknown
+    /// contract IDs fail closed with NotFound; method dispatch
+    /// rejects unknown method names."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let mut engine = ContractEngine::new();
+        let creator: AccountAddress = [1u8; 32];
+
+        // Deploy a DecayingToken with init params.
+        let params = serde_json::json!({
+            "name": "PRESS",
+            "symbol": "PRS",
+            "total_supply": 1_000u64,
+            "decay_half_life": 1_000u64,
+            "owner": format!("0x{}", hex::encode([1u8; 32])),
+        });
+        let id = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                params,
+                vec![],
+                creator,
+                1_000,
+                100,
+                0,
+            )
+            .unwrap();
+        assert_eq!(id, 1);
+
+        // Unknown contract id fails closed.
+        let res = engine.call(999, "balance_of", &serde_json::json!({}), &creator, 0);
+        assert!(matches!(res, Err(ContractError::NotFound(999))));
+
+        // Unknown method on a real contract fails closed.
+        let res2 = engine.call(id, "nonexistent_method", &serde_json::json!({}), &creator, 0);
+        assert!(matches!(res2, Err(ContractError::UnknownMethod(_))));
+
+        // Two deploys → distinct ids (engine assigns monotonically).
+        let id2 = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                serde_json::json!({
+                    "name": "TWO",
+                    "symbol": "TW",
+                    "total_supply": 10u64,
+                    "decay_half_life": 1_000u64,
+                    "owner": format!("0x{}", hex::encode([2u8; 32])),
+                }),
+                vec![],
+                creator,
+                1_000,
+                100,
+                0,
+            )
+            .unwrap();
+        assert_ne!(id, id2);
+    }
+}
+
 /// The contract engine managing all deployed contracts.
 #[derive(Debug, Clone)]
 pub struct ContractEngine {

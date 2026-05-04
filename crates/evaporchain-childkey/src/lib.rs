@@ -54,3 +54,73 @@ pub mod vault;
 pub use letter::{LetterError, LetterId, SealedLetter, SealedLetterStatus};
 pub use unlock::{epochs_until_unlock, is_unlockable, mark_opened, UnlockError};
 pub use vault::{KeyShareCommitment, VaultBlob, VaultError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "ChildKey unlocks a sealed letter when chain
+    /// time exceeds `recipient_birth_epoch + unlock_age_epochs` —
+    /// inverted decay (energy-to-unlock GROWS with time toward a
+    /// threshold). Pre-unlock attempts to mark opened fail closed;
+    /// once unlocked, the lifecycle moves Sealed → Opened
+    /// idempotently."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Vault: 2-of-3 threshold over a fresh committee.
+        let committee = vec![
+            KeyShareCommitment { validator: [10u8; 32] },
+            KeyShareCommitment { validator: [11u8; 32] },
+            KeyShareCommitment { validator: [12u8; 32] },
+        ];
+        let vault = VaultBlob::new([0xAA; 32], 1024, 2, committee).unwrap();
+
+        // Sealed letter: birth at epoch 0, unlocks at age 18 with
+        // 100 epochs/year → unlock_epoch = 1800.
+        let mut letter = SealedLetter::seal(
+            [1u8; 32],     // id
+            [2u8; 32],     // sender
+            [3u8; 32],     // recipient_did
+            0,             // recipient_birth_epoch
+            18,            // unlock_age_years
+            100,           // epochs_per_year
+            vault,
+            0,             // sealed_at_epoch
+        )
+        .unwrap();
+        assert_eq!(letter.unlock_epoch(), 1_800);
+
+        // Pre-unlock: not unlockable; positive countdown.
+        assert!(!is_unlockable(&letter, 1_000));
+        assert_eq!(epochs_until_unlock(&letter, 1_000), 800);
+
+        // Pre-unlock mark_opened fails closed.
+        assert!(mark_opened(&mut letter, 1_000).is_err());
+        assert!(letter.is_sealed());
+
+        // At/after unlock_epoch: unlockable; countdown is 0.
+        assert!(is_unlockable(&letter, 1_800));
+        assert!(is_unlockable(&letter, 9_999));
+        assert_eq!(epochs_until_unlock(&letter, 1_800), 0);
+
+        // Mark opened succeeds; sealed → opened.
+        mark_opened(&mut letter, 1_800).unwrap();
+        assert!(!letter.is_sealed());
+
+        // Zero unlock-age fails closed at construction.
+        let v2 = VaultBlob::new(
+            [0u8; 32],
+            1,
+            1,
+            vec![KeyShareCommitment { validator: [9u8; 32] }],
+        )
+        .unwrap();
+        assert!(matches!(
+            SealedLetter::seal([0u8; 32], [0u8; 32], [0u8; 32], 0, 0, 100, v2, 0),
+            Err(LetterError::ZeroUnlockAge)
+        ));
+    }
+}

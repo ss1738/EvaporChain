@@ -76,3 +76,60 @@ pub mod client;
 pub use barcode::{Bar, Barcode, BarcodeError, BARCODE_TAG};
 pub use bottleneck::bottleneck_distance;
 pub use client::{BlockHeader, LightClient, LightClientError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Topological Light Client verifies block-to-block
+    /// barcode transitions against the chain-committed `bd_max` per
+    /// the CSEH stability theorem. A transition exceeding `bd_max` is
+    /// rejected even when the barcode hash is internally consistent —
+    /// tampering shows up as out-of-bound topology change."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let genesis = Barcode::from_bars(vec![Bar::new(1, 10).unwrap()]);
+        let mut lc = LightClient::new(0, genesis);
+
+        // Valid step: bottleneck distance well within bd_max=5.
+        let next = Barcode::from_bars(vec![Bar::new(1, 11).unwrap()]);
+        let header = BlockHeader {
+            height: 1,
+            barcode_hash: next.hash(),
+            bd_max: 5,
+        };
+        lc.ingest(&header, next).unwrap();
+        assert_eq!(lc.current_height(), 1);
+
+        // Tampered step: barcode wildly different, bd_max claims 1.
+        // Stability bound MUST reject even though hash matches.
+        let leap = Barcode::from_bars(vec![Bar::new(1_000, 2_000).unwrap()]);
+        let leap_header = BlockHeader {
+            height: 2,
+            barcode_hash: leap.hash(),
+            bd_max: 1,
+        };
+        let res = lc.ingest(&leap_header, leap);
+        assert!(matches!(
+            res,
+            Err(LightClientError::StabilityBoundViolated { .. })
+        ));
+
+        // Hash-mismatch detection: header commits to one barcode,
+        // supplied barcode hashes to another → rejected.
+        let other = Barcode::from_bars(vec![Bar::new(2, 12).unwrap()]);
+        let mismatched = BlockHeader {
+            height: 2,
+            barcode_hash: [0u8; 32], // wrong hash
+            bd_max: 100,
+        };
+        let res2 = lc.ingest(&mismatched, other);
+        assert!(matches!(
+            res2,
+            Err(LightClientError::BarcodeHashMismatch { .. })
+        ));
+    }
+}

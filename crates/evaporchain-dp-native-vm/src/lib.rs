@@ -64,3 +64,39 @@ pub use composition::{
     BasicComposition, CompositionError,
 };
 pub use noise::{NoiseError, NoiseMechanism, NoiseSeed};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "DP-Native VM tracks (ε, δ) budgets per dataset.
+    /// Spending is monotone — once exhausted, identical queries fail
+    /// closed. Re-registering an existing dataset is forbidden so the
+    /// consumption history cannot be erased."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let id = DatasetId([0xAA; 32]);
+        let mut r = BudgetRegistry::new();
+        r.register(id, 1_000_000, 1_000).unwrap();
+
+        // Two queries within budget succeed.
+        r.consume(id, 400_000, 400).unwrap();
+        r.consume(id, 500_000, 500).unwrap();
+
+        // Third query exceeds remaining ε — refused, no consumption.
+        let res = r.consume(id, 200_000, 50);
+        assert!(matches!(res, Err(BudgetError::BudgetExhausted { .. })));
+
+        // Re-registering forbidden — would erase history.
+        let res2 = r.register(id, 1_000_000, 1_000);
+        assert!(matches!(res2, Err(BudgetError::AlreadyRegistered(_))));
+
+        // Unknown dataset → UnknownDataset, not silent allow.
+        let other = DatasetId([0xBB; 32]);
+        let res3 = r.consume(other, 1, 0);
+        assert!(matches!(res3, Err(BudgetError::UnknownDataset(_))));
+    }
+}

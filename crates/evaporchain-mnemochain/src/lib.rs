@@ -50,3 +50,49 @@ pub mod trie;
 pub use card::{Card, CardError, CardId, CredentialAttestation, ReviewOutcome};
 pub use curve::{update_stability, Grade, SinghCurveError};
 pub use trie::{MnemoTriePtr, TrieError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use curve::{MULT_AGAIN_BP, MULT_EASY_BP, MULT_GOOD_BP, MULT_HARD_BP, STABILITY_FLOOR};
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "MnemoChain ships the Singh-curve FSRS-style
+    /// stability update. Grade order strictly increases stability
+    /// growth: Again < Hard < Good < Easy. Lapses (Again) collapse
+    /// stability hard but never below STABILITY_FLOOR — a card can
+    /// be punished but not erased. Zero-stability inputs fail closed."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Grade-tier monotonicity (basis-point multipliers).
+        assert!(MULT_AGAIN_BP < MULT_HARD_BP);
+        assert!(MULT_HARD_BP < MULT_GOOD_BP);
+        assert!(MULT_GOOD_BP < MULT_EASY_BP);
+
+        let s_again = update_stability(100, Grade::Again).unwrap();
+        let s_hard = update_stability(100, Grade::Hard).unwrap();
+        let s_good = update_stability(100, Grade::Good).unwrap();
+        let s_easy = update_stability(100, Grade::Easy).unwrap();
+        assert!(s_again < s_hard, "Again must shrink most");
+        assert!(s_hard < s_good);
+        assert!(s_good < s_easy, "Easy must grow most");
+
+        // Floor: even a lapse on tiny stability cannot drop below floor.
+        let lapsed = update_stability(1, Grade::Again).unwrap();
+        assert!(lapsed >= STABILITY_FLOOR);
+
+        // Zero stability fails closed.
+        assert!(matches!(
+            update_stability(0, Grade::Good),
+            Err(SinghCurveError::ZeroStability)
+        ));
+
+        // Determinism: same inputs → same output.
+        assert_eq!(
+            update_stability(123, Grade::Good).unwrap(),
+            update_stability(123, Grade::Good).unwrap()
+        );
+    }
+}

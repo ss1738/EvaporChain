@@ -47,3 +47,56 @@ pub use matrix::TropicalMatrix;
 pub use scalar::TropicalScalar;
 pub use star::star_tree_distances;
 pub use weight::tropical_weight;
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "evaporchain-tropical implements the (min, +)
+    /// semiring with `Infinity` as tropical zero. Tropical add = min,
+    /// tropical mul = saturating-add. ZERO_T is the additive identity
+    /// and ONE_T is the multiplicative identity. The evaporative star
+    /// tree's pairwise distance matrix satisfies Buneman's four-point
+    /// condition and produces a deterministic Plücker commitment."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Tropical semiring axioms.
+        let x = TropicalScalar::finite(42);
+        // Additive identity: x ⊕ ZERO_T = x.
+        assert_eq!(x.add(TropicalScalar::ZERO_T), x);
+        // Multiplicative identity: x ⊗ ONE_T = x.
+        assert_eq!(x.mul(TropicalScalar::ONE_T), x);
+        // Add is min, mul is plus.
+        assert_eq!(
+            TropicalScalar::finite(3).add(TropicalScalar::finite(5)),
+            TropicalScalar::finite(3)
+        );
+        assert_eq!(
+            TropicalScalar::finite(3).mul(TropicalScalar::finite(5)),
+            TropicalScalar::finite(8)
+        );
+        // Infinity absorbs under multiplication (tropical zero).
+        assert_eq!(x.mul(TropicalScalar::ZERO_T), TropicalScalar::ZERO_T);
+
+        // Star tree on real energies: pairwise distance matrix
+        // satisfies Buneman's four-point condition.
+        let energies = vec![1_000u64, 2_000, 4_000, 8_000];
+        let m = star_tree_distances(&energies);
+        assert!(satisfies_four_point(&m), "star tree must be a tree-metric");
+
+        // Plücker commitment is deterministic.
+        let c1 = plucker_commitment(&m);
+        let c2 = plucker_commitment(&m);
+        assert_eq!(c1, c2);
+
+        // Permuting energies → different commitment (canonical
+        // serialisation is order-sensitive at the leaf level).
+        let permuted = vec![8_000u64, 4_000, 2_000, 1_000];
+        let m_p = star_tree_distances(&permuted);
+        let c_p = plucker_commitment(&m_p);
+        assert_ne!(c1, c_p);
+    }
+}

@@ -39,3 +39,51 @@ pub mod verify;
 pub use proof::{DecayForgetProof, ForgetProofError};
 pub use prove::prove_forgotten;
 pub use verify::verify_forget_proof;
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Decay-Forget Proofs are GDPR-native: a record's
+    /// recoverability commitment decays with λ; once below the
+    /// forget threshold, the chain produces a proof anyone can
+    /// verify in O(1) that the record is cryptographically
+    /// un-recoverable. Witness binds (record_id, original, activated,
+    /// query, threshold, decayed) — tampering with ANY field fails."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let lambda = ChainLambda::new(Lambda::from_epochs(100));
+
+        // Late query: 10 half-lives → decayed ≪ threshold → proof verifies.
+        let late = prove_forgotten([7u8; 32], 1_000, lambda, 0, 1_000, 10);
+        verify_forget_proof(&late).unwrap();
+        assert!(late.decayed_commitment <= late.forget_threshold);
+
+        // Early query: 1 epoch → decayed ≈ original → NotForgotten.
+        let early = prove_forgotten([7u8; 32], 1_000, lambda, 0, 1, 10);
+        assert!(matches!(
+            verify_forget_proof(&early),
+            Err(ForgetProofError::NotForgotten { .. })
+        ));
+
+        // Tamper with witness → rejected.
+        let mut tampered = late.clone();
+        tampered.witness[0] ^= 0xFF;
+        assert!(matches!(
+            verify_forget_proof(&tampered),
+            Err(ForgetProofError::WitnessMismatch { .. })
+        ));
+
+        // Tamper with threshold → witness no longer binds → rejected.
+        let mut t2 = late.clone();
+        t2.forget_threshold = 99_999;
+        assert!(matches!(
+            verify_forget_proof(&t2),
+            Err(ForgetProofError::WitnessMismatch { .. })
+        ));
+    }
+}

@@ -54,3 +54,51 @@
 pub mod receipt;
 
 pub use receipt::{DeployReceipt, ReceiptError, RECEIPT_DOMAIN_TAG};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use evaporchain_app_templates::class::MAYFLY;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "DeployReceipt is the OUTPUT analogue of
+    /// DeployRequest. It carries the request's commitment as a back-
+    /// pointer plus the resulting instance_id, fee_paid, and block_
+    /// height. canonical_bytes() is fixed-width domain-tagged;
+    /// event_id() is BLAKE3 of those bytes. Receipts only exist for
+    /// successful deploys (no status field). Out-of-range template
+    /// classes are rejected at construction."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let r = DeployReceipt::new(
+            [1u8; 32],   // request commitment
+            [2u8; 32],   // instance_id
+            MAYFLY,
+            [7u8; 32],   // deployer
+            500,         // fee_paid
+            100,         // deployed_at_epoch
+            42,          // block_height
+        )
+        .unwrap();
+        // Determinism.
+        assert_eq!(r.event_id(), r.event_id());
+        // Domain-tagged canonical bytes start with the receipt tag.
+        let bytes = r.canonical_bytes();
+        assert!(bytes.starts_with(RECEIPT_DOMAIN_TAG));
+
+        // Out-of-range class rejected.
+        let bad = evaporchain_app_templates::TemplateClass(0xFFFF_FFFF);
+        assert!(DeployReceipt::new(
+            [1u8; 32],
+            [2u8; 32],
+            bad,
+            [7u8; 32],
+            500,
+            100,
+            42,
+        )
+        .is_err());
+    }
+}

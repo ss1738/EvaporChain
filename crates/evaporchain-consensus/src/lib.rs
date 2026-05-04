@@ -974,6 +974,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
         consensus.mempool.submit(tx);
@@ -1084,6 +1085,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
         producer.mempool.submit(tx);
@@ -1160,6 +1162,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx1, &kp1);
         producer.mempool.submit(tx1);
@@ -1605,6 +1608,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         sign_tx(&mut tx, &kp);
         rc.mempool.submit(tx);

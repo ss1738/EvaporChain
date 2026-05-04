@@ -65,3 +65,41 @@ pub mod proof;
 pub use leaf::{leaf_hash, EnergyLeaf, LEAF_TAG};
 pub use mmr::{EpaMmr, MmrError};
 pub use proof::{verify_inclusion, InclusionProof, ProofError, INNER_TAG, PEAK_BAG_TAG};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "EPA-MMR is an append-only log with O(log N)
+    /// inclusion proofs that become STRUCTURALLY INVALID once a
+    /// leaf's energy decays below a verifier-supplied floor.
+    /// Decayed leaves are unprovable, not just hidden."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let mut mmr = EpaMmr::new();
+        for i in 0u8..7 {
+            mmr.append(EnergyLeaf::new([i; 32], 1_000, 0));
+        }
+        let root = mmr.root().unwrap();
+
+        // Inclusion proof for leaf 3 with floor=500 verifies.
+        let proof = InclusionProof::build(&mmr, 3).unwrap();
+        verify_inclusion(&proof, &root, 500).unwrap();
+
+        // After energy decays below the floor, the same structural
+        // proof is rejected — the leaf is unprovable above floor=2000.
+        verify_inclusion(&proof, &root, 2_000).unwrap_err();
+
+        // Decay tick simulation: drop the leaf's energy below floor.
+        // Re-built proof carries the new leaf, still rejected when
+        // floor exceeds it.
+        mmr.update_energy(3, 100).unwrap();
+        let stale_root = mmr.root().unwrap();
+        let new_proof = InclusionProof::build(&mmr, 3).unwrap();
+        let res = verify_inclusion(&new_proof, &stale_root, 500);
+        assert!(matches!(res, Err(ProofError::EnergyBelowFloor { .. })));
+    }
+}

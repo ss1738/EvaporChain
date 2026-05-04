@@ -2350,6 +2350,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Transfer(TransferTx {
                 from: addr(3),
@@ -2358,6 +2359,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
         ];
 
@@ -2380,6 +2382,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Transfer(TransferTx {
                 from: addr(2),
@@ -2388,6 +2391,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
         ];
 
@@ -2407,6 +2411,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Transfer(TransferTx {
                 from: addr(2),
@@ -2415,6 +2420,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Transfer(TransferTx {
                 from: addr(4),
@@ -2423,6 +2429,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
         ];
 
@@ -2445,6 +2452,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Refresh(RefreshTx {
                 object_id: obj_id(10),
@@ -2498,6 +2506,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 })
             })
             .collect();
@@ -2535,6 +2544,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         block.producer_id = Some(producer_id);
@@ -2588,6 +2598,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         block.producer_id = Some(producer_id);
@@ -2641,6 +2652,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -2694,6 +2706,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         block.producer_id = Some(producer_id);
@@ -2739,6 +2752,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
         block.producer_id = Some(producer_id);
@@ -2766,6 +2780,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 Transaction::Transfer(TransferTx {
                     from: addr(3),
@@ -2774,6 +2789,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
             ],
         );
@@ -2800,6 +2816,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Transfer(TransferTx {
                 from: addr(3),
@@ -2808,6 +2825,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::Transfer(TransferTx {
                 from: addr(5),
@@ -2816,6 +2834,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }),
             Transaction::CreateObject(CreateObjectTx {
                 creator: addr(7),
@@ -2930,6 +2949,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 Transaction::Transfer(TransferTx {
                     from: addr(2),
@@ -2938,6 +2958,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
             ],
         );
@@ -2967,6 +2988,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 
@@ -3011,6 +3033,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 // Partition 2: transfer C→D
                 Transaction::Transfer(TransferTx {
@@ -3020,6 +3043,7 @@ mod tests {
                     nonce: 0,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 }),
                 // Partition 3: refresh object 10
                 Transaction::Refresh(RefreshTx {
@@ -3075,6 +3099,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             }));
         }
 
@@ -3160,6 +3185,7 @@ mod tests {
                 nonce: 0,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })],
         );
 

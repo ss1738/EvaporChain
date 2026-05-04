@@ -72,3 +72,80 @@ pub use testament::{
     MemorialMarker, Testament, TestamentError, TestamentId, TestamentStatus,
 };
 pub use vault::{SealedVault, VaultError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use evaporchain_types::AccountAddress;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Posthuma testaments suspend decay while
+    /// Sealed (issuer presumed alive). Visible energy stays at the
+    /// initial value indefinitely. After a verified DeathCertificate,
+    /// status flips Sealed → Revealed and the half-life clock starts
+    /// from `cert.death_epoch` — not from mint, not from now.
+    /// Re-revealing a Revealed testament fails closed."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let issuer: AccountAddress = [1u8; 32];
+        let committee: Vec<AccountAddress> = (10u8..15u8).map(|b| [b; 32]).collect();
+
+        let vault = SealedVault::new(
+            [0xAA; 32],          // ciphertext_hash
+            1024,                // ciphertext_len
+            3,                   // 3-of-5 threshold
+            committee,
+            [0xBB; 32],          // pubkey_commitment
+        )
+        .unwrap();
+        assert_eq!(vault.committee_size(), 5);
+
+        let mut t = Testament::seal(
+            [7u8; 32], issuer, vault, 100, 1_000, 0,
+        )
+        .unwrap();
+
+        // Sealed: decay is suspended — visible energy stays at initial
+        // even after many half-lives elapse.
+        assert!(t.is_sealed());
+        assert_eq!(t.visible_energy_at(0), 1_000);
+        assert_eq!(t.visible_energy_at(10_000), 1_000);
+
+        // Pre-reveal fade rejected.
+        assert!(t.fade_to_memorial(10_000).is_err());
+
+        // Construction guards on the vault.
+        assert!(matches!(
+            SealedVault::new([0u8; 32], 1, 1, vec![[1u8; 32]], [0xBB; 32]),
+            Err(VaultError::EmptyCiphertextHash)
+        ));
+        assert!(matches!(
+            SealedVault::new([0xAA; 32], 0, 1, vec![[1u8; 32]], [0xBB; 32]),
+            Err(VaultError::ZeroCiphertextLen)
+        ));
+        assert!(matches!(
+            SealedVault::new([0xAA; 32], 1, 5, vec![[1u8; 32]], [0xBB; 32]),
+            Err(VaultError::ThresholdAboveCommittee { .. })
+        ));
+
+        // Testament construction guards.
+        let v2 = SealedVault::new(
+            [0xAA; 32], 1, 1, vec![[1u8; 32]], [0xBB; 32],
+        )
+        .unwrap();
+        assert!(matches!(
+            Testament::seal([0u8; 32], issuer, v2.clone(), 0, 1_000, 0),
+            Err(TestamentError::ZeroHalfLife)
+        ));
+        assert!(matches!(
+            Testament::seal([0u8; 32], issuer, v2, 100, 0, 0),
+            Err(TestamentError::ZeroInitialEnergy)
+        ));
+
+        // Sanity: a sealed testament is neither Revealed nor Memorial.
+        assert!(!t.is_revealed());
+        assert!(!t.is_memorial());
+    }
+}

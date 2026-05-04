@@ -116,6 +116,7 @@ fn bench_transaction_throughput() -> f64 {
                 nonce: (i / 100) as u64,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         })
         .collect();
@@ -145,6 +146,7 @@ fn bench_transaction_throughput() -> f64 {
         submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
+        parents: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -199,6 +201,7 @@ fn bench_block_execution() -> f64 {
                     nonce: (block_num * txs_per_block / 10 + i / 10) as u64,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 })
             })
             .collect();
@@ -228,6 +231,7 @@ fn bench_block_execution() -> f64 {
             submit_epoch_hints: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
+            parents: vec![],
         };
 
         let _ = executor.execute_block(&mut db, &block);
@@ -341,6 +345,7 @@ fn bench_object_creation() -> f64 {
         submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
+        parents: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -430,6 +435,7 @@ fn bench_refresh_throughput() -> f64 {
         submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
+        parents: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -481,6 +487,7 @@ fn bench_stress_test() -> f64 {
                 nonce: (i as u64) / num_accounts,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         })
         .collect();
@@ -510,6 +517,7 @@ fn bench_stress_test() -> f64 {
         submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
+        parents: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -583,6 +591,7 @@ fn bench_mixed_workload() -> f64 {
             nonce: (i as u64) / num_accounts,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         }));
     }
 
@@ -643,6 +652,7 @@ fn bench_mixed_workload() -> f64 {
         submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
+        parents: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -702,6 +712,7 @@ fn bench_multi_block_sustained() -> f64 {
                         + i / num_accounts as usize) as u64,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 })
             })
             .collect();
@@ -731,6 +742,7 @@ fn bench_multi_block_sustained() -> f64 {
             submit_epoch_hints: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
+            parents: vec![],
         };
 
         let result = executor.execute_block(&mut db, &block);

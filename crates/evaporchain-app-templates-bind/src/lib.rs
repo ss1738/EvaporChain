@@ -45,3 +45,34 @@ pub mod context;
 
 pub use bind::{bind, Bound, BindError};
 pub use context::BindContext;
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use evaporchain_app_templates_engine::{init_mayfly, TypedInit};
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Bind is the per-primitive value-shaped
+    /// invariant gate between the engine's type-shaped TypedInit
+    /// and the chain's per-primitive constructors. A valid Mayfly
+    /// init binds; an invalid one (zero half_life, etc.) is
+    /// rejected with a typed BindError before any state is touched."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Valid Mayfly init: positive initial_energy + half_life.
+        let valid = TypedInit::Mayfly(init_mayfly::InitConfig {
+            initial_energy: 1_000,
+            half_life: 100,
+        });
+        assert!(bind(valid).is_ok());
+
+        // Invalid: zero half_life violates the per-primitive bound.
+        let invalid = TypedInit::Mayfly(init_mayfly::InitConfig {
+            initial_energy: 1_000,
+            half_life: 0,
+        });
+        assert!(bind(invalid).is_err());
+    }
+}

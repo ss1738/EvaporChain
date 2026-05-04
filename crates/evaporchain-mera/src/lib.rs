@@ -109,3 +109,41 @@ pub fn verify_account(
 ) -> Result<(), ProofVerifyError> {
     proof.verify(account_index, energy, commitment)
 }
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "MERA tensor-network state commitment is retained
+    /// as a research artefact (gate FAILED on real Ethereum data
+    /// 2026-05-03 — chain ships Energy-Verkle Trie instead). The
+    /// commitment math is correct: per-account proofs round-trip
+    /// against the commitment; tampering with the energy or the
+    /// account index causes verification to reject."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let energies: Vec<u64> = (0..16u64).map(|i| 1_000 + i * 100).collect();
+        let (commitment, tree) = commit(&energies, 100, 50);
+
+        // Honest round-trip: every account's proof verifies against
+        // its own (index, energy) under the commitment.
+        for (i, &e) in energies.iter().enumerate() {
+            let proof = MeraProof::generate(&tree, i);
+            verify_account(i, e, &proof, &commitment).unwrap();
+        }
+
+        // Tampered energy is rejected.
+        let i = 3;
+        let proof = MeraProof::generate(&tree, i);
+        let res = verify_account(i, energies[i] + 1, &proof, &commitment);
+        assert!(res.is_err(), "tampered energy must reject");
+
+        // Wrong account index using another account's proof: rejected.
+        let proof_other = MeraProof::generate(&tree, 5);
+        let res2 = verify_account(i, energies[i], &proof_other, &commitment);
+        assert!(res2.is_err(), "swapped proof must reject");
+    }
+}

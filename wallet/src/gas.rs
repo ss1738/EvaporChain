@@ -304,6 +304,7 @@ mod tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         });
         let est = e.estimate(&tx);
         assert_eq!(est.gas_used, GAS_TRANSFER);

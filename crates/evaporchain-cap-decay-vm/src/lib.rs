@@ -55,3 +55,88 @@ pub mod registry;
 
 pub use cap::{Authority, Capability, CapabilityId, ENERGY_FLOOR};
 pub use registry::{CapRegistry, RegistryError};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Capability-Decay VM is ocap with structural
+    /// energy-bound authority. Mint produces an invocable root.
+    /// Attenuate creates a strict-subset descendant; the issuer's
+    /// `revoke` propagates STRUCTURALLY to that descendant via the
+    /// parent-chain walk — no holder enumeration."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let issuer = [0xAA; 32];
+        let bob = [0xBB; 32];
+        let carol = [0xCC; 32];
+        let parent_authority = Authority {
+            verb: "read".into(),
+            object: [1; 32],
+            max_invokes_per_epoch: 100,
+        };
+        let child_authority = Authority {
+            verb: "read".into(),
+            object: [1; 32],
+            max_invokes_per_epoch: 50, // strict subset
+        };
+
+        let mut r = CapRegistry::new();
+        let parent_id = r
+            .mint(issuer, parent_authority, 1_000, [1u8; 32], 0)
+            .unwrap();
+        // Root is invocable.
+        r.invoke_gate(parent_id).unwrap();
+
+        // Attenuate: parent → child, holder = bob.
+        let child_id = r
+            .attenuate(issuer, parent_id, child_authority.clone(), 500, bob, [2u8; 32], 0)
+            .unwrap();
+        r.invoke_gate(child_id).unwrap();
+
+        // Bob can transfer the child to carol.
+        r.transfer(bob, child_id, carol).unwrap();
+
+        // Issuer revokes the PARENT — descendant must now fail
+        // invocation through the parent-chain walk.
+        r.revoke(issuer, parent_id).unwrap();
+        assert!(matches!(
+            r.invoke_gate(child_id),
+            Err(RegistryError::AncestorRevoked)
+        ));
+
+        // Wrong-shape attenuation rejected: child must be a strict
+        // subset of parent.
+        let mut r2 = CapRegistry::new();
+        let pid = r2
+            .mint(
+                issuer,
+                Authority {
+                    verb: "read".into(),
+                    object: [1; 32],
+                    max_invokes_per_epoch: 100,
+                },
+                1_000,
+                [1u8; 32],
+                0,
+            )
+            .unwrap();
+        let res = r2.attenuate(
+            issuer,
+            pid,
+            Authority {
+                verb: "read".into(),
+                object: [1; 32],
+                max_invokes_per_epoch: 100, // equal, not strict subset
+            },
+            500,
+            bob,
+            [3u8; 32],
+            0,
+        );
+        assert!(matches!(res, Err(RegistryError::AttenuationNotStrictSubset)));
+    }
+}

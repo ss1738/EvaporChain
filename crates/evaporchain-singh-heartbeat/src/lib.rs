@@ -55,3 +55,39 @@ pub mod vitals;
 pub use color::{color_for_health, PulseColor};
 pub use sparkline::{sparkline_24h, SparklinePoint};
 pub use vitals::{pulse_at, Vitals};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Heartbeat ships traffic-light qualitative
+    /// state — Green (≥0.75), Amber ([0.40, 0.75)), Red (<0.40) — so
+    /// validators agree on STATE, not pixels. The wallet maps colours
+    /// to brand-specific hex; the chain agrees only on the qualitative
+    /// bucket. Out-of-range health values clamp into the closest
+    /// valid bucket."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Boundaries: 0.75 = Green, 0.74 = Amber, 0.40 = Amber, 0.39 = Red.
+        assert_eq!(color_for_health(1.0), PulseColor::Green);
+        assert_eq!(color_for_health(0.75), PulseColor::Green);
+        assert_eq!(color_for_health(0.74), PulseColor::Amber);
+        assert_eq!(color_for_health(0.50), PulseColor::Amber);
+        assert_eq!(color_for_health(0.40), PulseColor::Amber);
+        assert_eq!(color_for_health(0.39), PulseColor::Red);
+        assert_eq!(color_for_health(0.0), PulseColor::Red);
+
+        // Out-of-range values clamp.
+        assert_eq!(color_for_health(-0.5), PulseColor::Red);
+        assert_eq!(color_for_health(2.0), PulseColor::Green);
+
+        // Determinism: same health → same colour.
+        assert_eq!(
+            color_for_health(0.5),
+            color_for_health(0.5),
+        );
+    }
+}

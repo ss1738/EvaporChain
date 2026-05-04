@@ -58,3 +58,62 @@ pub mod token;
 pub use entropy::{derive_state, PatinaState};
 pub use patina::{patina_score, PatinaError, PatinaParams};
 pub use token::{PatinaToken, TokenError, TokenId};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Singh-Sabi tokens decay toward a NON-ZERO floor
+    /// (`patina(t) = floor + (initial − floor) · 2^(−t/H)`). The
+    /// token never evaporates — it asymptotes to ruined-beautiful.
+    /// Score is monotonically non-increasing in elapsed time and
+    /// validators agree on the entropy state without rendering pixels.
+    /// Zero-initial / zero-half-life / floor>initial are rejected at
+    /// construction."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Doctrine convenience: 15% floor.
+        let p = PatinaParams::ruined_beautiful(1_000, 100).unwrap();
+        assert_eq!(p.floor, 150);
+
+        // At mint: full energy.
+        assert_eq!(patina_score(&p, 0, 0), 1_000);
+
+        // Score is monotonically non-increasing as time elapses.
+        let s_h1 = patina_score(&p, 0, 100);
+        let s_h2 = patina_score(&p, 0, 200);
+        let s_h10 = patina_score(&p, 0, 1_000);
+        assert!(s_h1 <= 1_000);
+        assert!(s_h2 <= s_h1);
+        assert!(s_h10 <= s_h2);
+
+        // FLOOR is the asymptote: after many half-lives, score still
+        // ≥ floor and never reaches 0.
+        let s_far = patina_score(&p, 0, 1_000_000);
+        assert!(s_far >= p.floor, "score must never drop below floor");
+        assert!(s_far > 0, "token never evaporates");
+
+        // Determinism: validators agree on entropy state from
+        // (params, score) alone.
+        let st1 = derive_state(&p, s_h1);
+        let st2 = derive_state(&p, s_h1);
+        assert_eq!(st1, st2);
+
+        // Construction guards.
+        assert!(matches!(
+            PatinaParams::new(0, 0, 100),
+            Err(PatinaError::ZeroInitial)
+        ));
+        assert!(matches!(
+            PatinaParams::new(1_000, 100, 0),
+            Err(PatinaError::ZeroHalfLife)
+        ));
+        assert!(matches!(
+            PatinaParams::new(100, 200, 50),
+            Err(PatinaError::FloorAboveInitial { .. })
+        ));
+    }
+}

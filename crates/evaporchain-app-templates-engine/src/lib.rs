@@ -67,3 +67,60 @@ pub mod init_ssm;
 pub mod init_witnessfit;
 
 pub use dispatch::{materialise, EngineError, TypedInit};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use evaporchain_app_templates::class::MAYFLY;
+    use evaporchain_app_templates_materialise::MaterialiseInstruction;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "engine::materialise dispatches a
+    /// MaterialiseInstruction to the registered typed handler for
+    /// its template_class. Valid Mayfly init JSON parses; unknown
+    /// classes produce EngineError::UnknownTemplate; malformed JSON
+    /// produces EngineError::ParseFailed. Per-handler InitConfig is
+    /// type-shaped after dispatch."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Valid Mayfly init JSON.
+        let cd = serde_json::to_vec(&serde_json::json!({
+            "initial_energy": 1000u64,
+            "half_life": 100u64,
+        }))
+        .unwrap();
+        let mut iid = [0u8; 32];
+        iid[0] = 0xAA;
+        let instr = MaterialiseInstruction {
+            template_class: MAYFLY,
+            instance_id: evaporchain_app_templates_materialise::InstanceId(iid),
+            init_calldata: cd,
+        };
+        let typed = materialise(&instr).unwrap();
+        assert!(matches!(typed, TypedInit::Mayfly(_)));
+
+        // Unknown template class.
+        let bogus = MaterialiseInstruction {
+            template_class: evaporchain_app_templates::TemplateClass(0xFFFF_FFFF),
+            instance_id: evaporchain_app_templates_materialise::InstanceId(iid),
+            init_calldata: vec![],
+        };
+        assert!(matches!(
+            materialise(&bogus),
+            Err(EngineError::UnknownTemplate(_))
+        ));
+
+        // Malformed JSON for valid class.
+        let bad_json = MaterialiseInstruction {
+            template_class: MAYFLY,
+            instance_id: evaporchain_app_templates_materialise::InstanceId(iid),
+            init_calldata: vec![b'!'],
+        };
+        assert!(matches!(
+            materialise(&bad_json),
+            Err(EngineError::ParseFailed(_))
+        ));
+    }
+}

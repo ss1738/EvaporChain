@@ -154,6 +154,79 @@ impl ProvingEngine for MockProver {
     }
 }
 
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use evaporchain_types::Block;
+
+    fn block(num: u64, epoch: u64) -> Block {
+        Block {
+            number: num,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "ProvingEngine is the chain's IVC contract:
+    /// fold_block accumulates per-block transitions, get_proof
+    /// produces a CompressedProof carrying num_steps == num_folded,
+    /// and verify_proof checks that the claimed num_blocks matches.
+    /// `get_proof` before any fold fails closed with NoBlocksFolded;
+    /// verify_proof with the wrong num_blocks rejects."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let mut prover = MockProver::new();
+
+        // Empty prover: no proof obtainable.
+        assert!(matches!(
+            prover.get_proof(),
+            Err(ProvingError::NoBlocksFolded)
+        ));
+
+        // Fold three blocks → proof carries num_steps=3.
+        for i in 1u64..=3 {
+            prover.fold_block(&block(i, i), [0; 32], [1; 32]).unwrap();
+        }
+        let proof = prover.get_proof().unwrap();
+        assert_eq!(proof.num_steps, 3);
+        assert_eq!(prover.num_blocks_folded(), 3);
+
+        // Honest verification: claimed num_blocks matches.
+        assert!(prover.verify_proof(&proof, 3, [0; 32]).unwrap());
+
+        // Wrong claimed num_blocks rejects (no silent acceptance).
+        assert!(!prover.verify_proof(&proof, 5, [0; 32]).unwrap());
+
+        // CompressedProof.size == proof_bytes.len.
+        assert_eq!(proof.size(), proof.proof_bytes.len());
+    }
+}
+
 // ─────────────────────────── Tests ───────────────────────────────────────
 
 #[cfg(test)]

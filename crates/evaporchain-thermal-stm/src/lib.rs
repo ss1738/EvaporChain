@@ -63,3 +63,46 @@ pub mod tx;
 pub use order::compare_thermal;
 pub use scheduler::{CommitOutcome, ScheduleError, ThermalScheduler};
 pub use tx::{StateKey, StateValue, Tx, TxId, TxOutcome};
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Thermal STM is the first L1 STM where deadlocks
+    /// are STRUCTURALLY IMPOSSIBLE. Conflicts resolve by the strict
+    /// total order (energy desc, tx_id asc); the same batch in any
+    /// submission order produces byte-identical commits — required
+    /// for validator-determinism."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let s = ThermalScheduler::new();
+
+        let mut ws_a = BTreeMap::new();
+        ws_a.insert(StateKey([0; 32]), b"a".to_vec());
+        let high = Tx::new(TxId([1; 32]), 1_000, vec![], ws_a);
+
+        let mut ws_b = BTreeMap::new();
+        ws_b.insert(StateKey([0; 32]), b"b".to_vec());
+        let low = Tx::new(TxId([2; 32]), 500, vec![], ws_b);
+
+        // Forward order: low first.
+        let forward = s.run(BTreeMap::new(), vec![low.clone(), high.clone()]).unwrap();
+        // Reverse order: high first.
+        let reverse = s.run(BTreeMap::new(), vec![high, low]).unwrap();
+        // Submission-order independence (validator-determinism).
+        assert_eq!(forward, reverse);
+
+        // Exactly one commit on the contended key.
+        let committed = forward
+            .outcomes
+            .iter()
+            .filter(|o| matches!(o, TxOutcome::Committed { .. }))
+            .count();
+        assert_eq!(committed, 1);
+        assert_eq!(forward.state.get(&StateKey([0; 32])).unwrap(), b"a");
+    }
+}

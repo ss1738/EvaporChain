@@ -8159,6 +8159,7 @@ mod tests {
                     nonce: num,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 })],
                 producer_id: Some(0),
                 timestamp: 0,
@@ -8309,6 +8310,7 @@ mod tests {
                     nonce: num,
                     signature: None,
                     public_key: None,
+                    mev_refund_eligible: None,
                 })],
                 producer_id: Some(0),
                 timestamp: 0,
@@ -8667,6 +8669,7 @@ mod tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         }
         fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
@@ -8781,6 +8784,7 @@ mod tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         }
         fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
@@ -8867,6 +8871,7 @@ mod tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         }
         fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
@@ -9004,6 +9009,7 @@ mod tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         }
         fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
@@ -9111,6 +9117,7 @@ mod tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         }
         fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
@@ -9225,6 +9232,7 @@ mod tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         }
         fn make_block(num: u64, txs: Vec<Transaction>) -> Block {
@@ -11507,6 +11515,7 @@ mod mev_tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 
@@ -11743,6 +11752,7 @@ mod da_tests {
             nonce: 0,
             signature: None,
             public_key: None,
+            mev_refund_eligible: None,
         })
     }
 
@@ -12222,6 +12232,7 @@ mod da_tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         };
         tc.mempool.set_epoch(0);
@@ -12290,6 +12301,7 @@ mod da_tests {
                 nonce,
                 signature: None,
                 public_key: None,
+                mev_refund_eligible: None,
             })
         };
         tc.mempool.set_epoch(0);

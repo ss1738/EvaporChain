@@ -31,6 +31,7 @@ fn make_transfer_tx(from: u64, to: u64, amount: u64, nonce: u64) -> Transaction 
         nonce,
         signature: None,
         public_key: None,
+        mev_refund_eligible: None,
     })
 }
 
@@ -67,6 +68,7 @@ fn make_block_with_transfers(height: u64, num_txs: usize, account_count: u64) ->
         protocol_version: 0,
         state_root_version: 0,
         submit_epoch_hints: vec![],
+        parents: vec![],
     }
 }
 
@@ -159,6 +161,7 @@ fn bench_parallel_vs_sequential(c: &mut Criterion) {
                     protocol_version: 0,
                     state_root_version: 0,
                     submit_epoch_hints: vec![],
+                    parents: vec![],
                 };
                 (db, executor, block)
             },

@@ -97,3 +97,44 @@ mod tests {
         assert_eq!(s, 100);
     }
 }
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "Entropic Slashing weights the slash magnitude
+    /// by the Shannon entropy of the observed misbehaviour
+    /// distribution. (a) Deterministic patterns (entropy=0) get
+    /// ZERO slash — the chain doesn't punish trivially-detectable
+    /// behaviour twice. (b) Higher-entropy distributions yield
+    /// larger slashes. (c) Slash is always capped at stake — never
+    /// inflates."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        // Deterministic distribution (mass on one outcome) → 0 slash.
+        assert_eq!(
+            entropic_slash(1_000_000, &[500_000, 0, 0]).unwrap(),
+            0
+        );
+
+        // Skewed (80/20) gives partial slash > 0 but ≤ stake.
+        let skewed = entropic_slash(1_000, &[800, 200]).unwrap();
+        assert!(skewed > 0);
+        assert!(skewed <= 1_000);
+
+        // Uniform 50/50 → 1 bit entropy → full-stake slash.
+        let uniform_2 = entropic_slash(500, &[500, 500]).unwrap();
+        assert_eq!(uniform_2, 500);
+
+        // Higher-entropy (uniform 4-way, 2 bits) → also capped at stake.
+        let uniform_4 = entropic_slash(1_000, &[250, 250, 250, 250]).unwrap();
+        assert_eq!(uniform_4, 1_000);
+
+        // Cap invariant: slash never exceeds stake regardless of entropy.
+        let small_stake = entropic_slash(100, &[25, 25, 25, 25]).unwrap();
+        assert!(small_stake <= 100);
+    }
+}
