@@ -2403,11 +2403,12 @@ impl SimpleExecutor {
             if let Some(val) = db.get_governance_param("target_gas_utilization") {
                 if let Ok(target) = val.parse::<f64>() {
                     if (0.0..=1.0).contains(&target) {
-                        // f64 → ppm boundary at the governance-param parse boundary.
-                        // Same conversion across all validators given the same
-                        // string-encoded governance param.
-                        fc.target_utilization_ppm =
-                            (target * crate::fees::FEE_PPM_DENOMINATOR as f64) as u32;
+                        // PidFeeController stores target_utilization as
+                        // f64 in [0.0, 1.0]. (Parallel-session draft
+                        // referenced a `_ppm: u32` shape that was never
+                        // landed on the struct — fall back to the
+                        // actual field.)
+                        fc.target_utilization = target;
                     }
                 }
             }

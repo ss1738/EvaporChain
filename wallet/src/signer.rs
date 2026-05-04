@@ -200,6 +200,8 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             c.signature = Some(sig);
             c.public_key = Some(pk);
         }
+        // Refund is protocol-issued — no caller signature to set.
+        Transaction::Refund(_) => {}
     }
 }
 
