@@ -436,6 +436,14 @@ pub struct TendermintConsensus {
         evaporchain_types::AccountAddress,
         evaporchain_mev_detect::AttackerStat,
     >,
+    /// Phase 3.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — set of
+    /// (source_block_height, source_observation_idx) pairs that
+    /// have already been settled via a `RefundTx` in some prior
+    /// committed block. Replay-protection: `due_refund_txs` skips
+    /// pairs in this set so a single observation settles at most
+    /// once. Populated in `on_block_committed` by walking the
+    /// block's `Transaction::Refund` variants.
+    pub settled_refunds: std::collections::HashSet<(u64, usize)>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -1284,15 +1292,31 @@ impl TendermintConsensus {
         if st.s_honest_milli < ceiling_milli {
             return;
         }
-        self.pending_cartel_alarms
-            .push(evaporchain_causal_chsh::CartelAlarmEvent {
-                at_height: st.last_run_at_height,
-                s_honest_milli: st.s_honest_milli,
-                s_cartel_synthetic_milli: st.s_cartel_synthetic_milli,
-                gap_milli: st.gap_milli,
-                honest_ceiling_milli_at_fire: ceiling_milli,
-                samples_per_bucket: st.samples_per_bucket,
-            });
+        let event = evaporchain_causal_chsh::CartelAlarmEvent {
+            at_height: st.last_run_at_height,
+            s_honest_milli: st.s_honest_milli,
+            s_cartel_synthetic_milli: st.s_cartel_synthetic_milli,
+            gap_milli: st.gap_milli,
+            honest_ceiling_milli_at_fire: ceiling_milli,
+            samples_per_bucket: st.samples_per_bucket,
+        };
+        // Lane O.8.2e: structured tracing on emission. Operators tailing
+        // node logs (journalctl, Loki, structured-log shippers) see the
+        // alarm instantly without polling /api/cartel_alarm/pending_events.
+        // Level WARN — this is by definition an unusual event (chain's
+        // own honest-source S crossed the doctrine ceiling); we want it
+        // to surface above default INFO log filters.
+        warn!(
+            target: "cartel_alarm",
+            at_height = event.at_height,
+            s_honest_milli = event.s_honest_milli,
+            s_cartel_synthetic_milli = event.s_cartel_synthetic_milli,
+            gap_milli = event.gap_milli,
+            honest_ceiling_milli_at_fire = event.honest_ceiling_milli_at_fire,
+            samples_per_bucket = ?event.samples_per_bucket,
+            "Causal-CHSH cartel alarm fired (chain self-monitor crossed doctrine ceiling)"
+        );
+        self.pending_cartel_alarms.push(event);
     }
 
     /// in `governance_params`, plus a small set of documented keys with
