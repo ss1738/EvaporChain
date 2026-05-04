@@ -2593,6 +2593,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         }

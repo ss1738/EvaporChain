@@ -884,6 +884,12 @@ impl TendermintConsensus {
             // the slashing rule that pairs with `enforce`.
             "crooks_mev_settlement_mode" => &["observe", "enforce"],
             "cartel_alarm_mode" => &["observe", "alarm"],
+            // Phase 3.5 of LIGHT_CONE_FULL_DAG_PLAN.md — Decision 5
+            // rollout gate. `false` (default) keeps the chain in
+            // linear-state mode; `true` activates per-fork state
+            // branches. Off by default — operators flip on testnet
+            // before mainnet.
+            "light_cone_state_branches_enabled" => &["true", "false"],
             // Phase 2.2 of CROOKS_MEV_INTEGRATION_PLAN.md —
             // `crooks_mev_beta_mb` is a u64 ≥ 1; allowlist enforces
             // numeric parseability + lower bound rather than
@@ -901,6 +907,29 @@ impl TendermintConsensus {
                         key: key.to_string(),
                         value: value.to_string(),
                         permitted: vec!["any u64 ≥ 1".to_string()],
+                    });
+                }
+                self.governance_params
+                    .insert(key.to_string(), value.to_string());
+                return Ok(());
+            }
+            // Phase 3 Decision 2 of LIGHT_CONE_FULL_DAG_PLAN.md —
+            // concurrent-fork cap as governance flag, range 1..=8,
+            // default 4. Inert when light_cone_state_branches_enabled
+            // is false (linear-state mode has no branches to cap).
+            "light_cone_max_concurrent_forks" => {
+                let v = value.parse::<u8>().map_err(|_| {
+                    GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u8 in 1..=8".to_string()],
+                    }
+                })?;
+                if !(1..=8).contains(&v) {
+                    return Err(GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u8 in 1..=8".to_string()],
                     });
                 }
                 self.governance_params
@@ -4793,6 +4822,7 @@ impl TendermintConsensus {
             },
             da_row_roots: vec![],
             da_col_roots: vec![],
+            parents: vec![],
         };
 
         // Enforce max block size — drop transactions from the tail until the
@@ -6185,6 +6215,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -6219,6 +6250,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -6381,6 +6413,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let fake_proposal = ConsensusMessage::Proposal {
@@ -6455,6 +6488,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             };
             ConsensusMessage::Proposal {
                 height: 1,
@@ -6628,6 +6662,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -6815,6 +6850,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -6914,6 +6950,53 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 3.5 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `light_cone_state_branches_enabled`
+    /// governance flag accepts `"true"` / `"false"`, rejects anything
+    /// else. Default-off (this commit doesn't change runtime behaviour).
+    #[test]
+    fn test_governance_light_cone_state_branches_flag() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Both values accepted.
+        assert!(tc
+            .governance_set_param("light_cone_state_branches_enabled", "false")
+            .is_ok());
+        assert!(tc
+            .governance_set_param("light_cone_state_branches_enabled", "true")
+            .is_ok());
+        // Junk values rejected.
+        let err = tc
+            .governance_set_param("light_cone_state_branches_enabled", "yes")
+            .unwrap_err();
+        assert!(matches!(err, GovernanceParamError::InvalidValue { .. }));
+    }
+
+    /// Phase 3 Decision 2 — `light_cone_max_concurrent_forks`
+    /// accepts u8 in 1..=8; rejects 0, 9, and non-numeric.
+    #[test]
+    fn test_governance_light_cone_max_concurrent_forks_flag() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Boundary: 1 OK, 8 OK, 4 OK (default).
+        assert!(tc
+            .governance_set_param("light_cone_max_concurrent_forks", "1")
+            .is_ok());
+        assert!(tc
+            .governance_set_param("light_cone_max_concurrent_forks", "8")
+            .is_ok());
+        assert!(tc
+            .governance_set_param("light_cone_max_concurrent_forks", "4")
+            .is_ok());
+        // Out-of-range rejections.
+        for bad in &["0", "9", "256", "-1", "lots"] {
+            let err = tc
+                .governance_set_param("light_cone_max_concurrent_forks", bad)
+                .unwrap_err();
+            assert!(
+                matches!(err, GovernanceParamError::InvalidValue { .. }),
+                "value {bad:?} should be rejected as InvalidValue"
+            );
+        }
+    }
+
     /// Phase 1.3 of `LIGHT_CONE_FULL_DAG_PLAN.md` — under
     /// `parent_acceptance_mode = "mcc"` mode, the proposer's
     /// `current_tip()` returns the DAG-derived head; under default
@@ -7048,6 +7131,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -7161,6 +7245,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -7246,6 +7331,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -7382,6 +7468,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -7488,6 +7575,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -7601,6 +7689,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -7706,6 +7795,7 @@ mod tests {
                 protocol_version: 0,
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
+                parents: vec![],
             }
         }
 
@@ -8079,6 +8169,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
         let proposal = ConsensusMessage::Proposal {
             height: 1,
@@ -8451,6 +8542,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -8504,6 +8596,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -8558,6 +8651,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -9350,6 +9444,7 @@ mod vrf_tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -9580,6 +9675,7 @@ mod epoch_tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         }
     }
 
@@ -11013,6 +11109,7 @@ mod da_tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         }
     }
 

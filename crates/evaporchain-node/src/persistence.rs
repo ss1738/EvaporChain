@@ -1506,6 +1506,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         }
     }
 

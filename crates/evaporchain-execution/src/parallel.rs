@@ -2291,6 +2291,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         }
@@ -2514,9 +2515,9 @@ mod tests {
             total_supply: 10_000_000,
             block_reward: 100,
             reward_half_life: 1000,
-            fee_burn_rate_ppm: 500_000,
-            staker_fee_share_ppm: 500_000,
-            target_staking_apy_bps: 500,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2571,9 +2572,9 @@ mod tests {
             total_supply: 10_000_000,
             block_reward: 100,
             reward_half_life: 1000,
-            fee_burn_rate_ppm: 500_000,
-            staker_fee_share_ppm: 500_000,
-            target_staking_apy_bps: 500,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2675,9 +2676,9 @@ mod tests {
             total_supply: 10_000_000,
             block_reward: 100,
             reward_half_life: 1000,
-            fee_burn_rate_ppm: 500_000,
-            staker_fee_share_ppm: 500_000,
-            target_staking_apy_bps: 500,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
