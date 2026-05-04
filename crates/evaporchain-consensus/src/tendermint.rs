@@ -2467,6 +2467,45 @@ impl TendermintConsensus {
         self.parent_hash
     }
 
+    /// Phase 1.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — DAG-aware
+    /// current chain head. When `parent_acceptance_mode == "mcc"`,
+    /// defers to the LightCone DAG via `MccForkChoice::select_tip`
+    /// (highest path-caliber leaf). When the mode is `"linear"`
+    /// (default) or the DAG is empty / select_tip returns None,
+    /// falls back to `self.parent_hash` — preserves existing chain
+    /// behaviour bit-for-bit.
+    ///
+    /// Phase 1.3 wires this into `create_proposal` so proposers
+    /// build on the DAG-derived head when in mcc mode. For now the
+    /// accessor is read-only; consumers query it for monitoring.
+    pub fn current_tip(&self) -> [u8; 32] {
+        let mode = self
+            .governance_params
+            .get("parent_acceptance_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("linear");
+        if mode == "mcc" {
+            // Build a snapshot MccForkChoice with the chain's current
+            // DAG + β. β source = governance flag; default 1000 mb.
+            let beta_mb = self
+                .governance_params
+                .get("crooks_mev_beta_mb")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(1000);
+            // ForkChoice trait must be in scope for the
+            // `select_tip` method to resolve.
+            use crate::fork_choice::ForkChoice;
+            let fc = crate::fork_choice::MccForkChoice::new(
+                self.light_cone_dag.clone(),
+                beta_mb,
+            );
+            if let Some(tip) = fc.select_tip() {
+                return tip;
+            }
+        }
+        self.parent_hash
+    }
+
     pub fn phase(&self) -> Phase {
         self.round_state.phase
     }
@@ -6868,6 +6907,31 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 1.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `current_tip()`
+    /// defers to the DAG only under `parent_acceptance_mode = "mcc"`.
+    /// In default `linear` mode it returns `parent_hash` unchanged
+    /// (chain behaviour is bit-for-bit preserved).
+    #[test]
+    fn test_current_tip_falls_back_to_parent_hash_in_linear_mode() {
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Default mode: linear. parent_hash = [0u8; 32] at construction.
+        assert_eq!(tc.current_tip(), [0u8; 32]);
+        assert_eq!(tc.current_tip(), tc.parent_hash());
+    }
+
+    /// Phase 1.2 — flipping to mcc mode with an empty DAG still
+    /// returns parent_hash (select_tip is None on empty DAG, which
+    /// is the safe fallback per the docstring contract).
+    #[test]
+    fn test_current_tip_mcc_mode_empty_dag_falls_back() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("parent_acceptance_mode", "mcc")
+            .expect("mcc accepted by allowlist");
+        // No blocks committed yet → DAG empty → select_tip None →
+        // falls back to parent_hash.
+        assert_eq!(tc.current_tip(), tc.parent_hash());
+    }
+
     /// Phase 6.1 of `CROOKS_MEV_INTEGRATION_PLAN.md` — single
     /// end-to-end pipeline test that exercises **every** consensus-
     /// side Crooks-MEV stage in one run:

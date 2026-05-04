@@ -42,13 +42,13 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 **Goal:** make `MccForkChoice` more than just a parent-picker — actually drive the chain's tip selection from the DAG instead of the linear `parent_hash` chain.
 
-- [ ] **1.1 — Tip-selection trait extension.** `ForkChoice::select_tip(&self, dag: &LightCone) -> BlockId` — returns the chain's current head from the DAG view. Today `MccForkChoice::choose_parent` exists; `select_tip` is the dual operation needed for proposers building on the right head.
-- [ ] **1.2 — `tendermint.rs::current_tip()` helper.** When `parent_acceptance_mode == "mcc"`, defers to `fork_choice.select_tip(&self.light_cone_dag)`. Default `linear` keeps using `self.parent_hash` (current behaviour).
-- [ ] **1.3 — Proposer integration.** At `create_proposal`, build the new block on top of `current_tip()` instead of the latest linear `parent_hash`. Validator-side: accept any block whose parent is the result of `current_tip()` *as observed by the validator* (with a tolerance window to handle DAG-seen-by-different-validators skew).
-- [ ] **1.4 — Determinism note.** The DAG-as-seen-by-different-validators may briefly diverge (network delay). Phase 1 accepts this and uses MCC's tie-break to converge. Phase 4 ships the rigorous DAG-state-commitment that closes the residual divergence.
-- [ ] **1.5 — Tests.** Synthetic 2-fork DAG, `select_tip` returns the higher-caliber head; rotation under adversarial caliber injection.
+- [x] **1.1 — Tip-selection trait extension.** SHIPPED. `ForkChoice::select_tip(&self) -> Option<[u8; 32]>` trait method (default `None` for linear mode); `MccForkChoice::select_tip` walks `LightCone::leaves()`, scores each by `path_caliber`, returns max. Tie-break = smaller BlockId (deterministic across validators since `leaves()` is BTreeMap-sorted). 4 tests green: empty DAG, single block, 2-fork DAG, linear default.
+- [x] **1.2 — `tendermint.rs::current_tip()` helper.** SHIPPED. When `parent_acceptance_mode == "mcc"`, builds an `MccForkChoice` snapshot from the chain's DAG + governance β, calls `select_tip`. Falls back to `self.parent_hash` when mode is `linear` (default), DAG is empty, or `select_tip` returns `None`. 2 tests green: `test_current_tip_falls_back_to_parent_hash_in_linear_mode`, `test_current_tip_mcc_mode_empty_dag_falls_back`.
+- [ ] **1.3 — Proposer integration.** Pending — wires `current_tip()` into `create_proposal`. Needs careful attention to validator-side acceptance with skew-tolerance window. Bounded next-session piece.
+- [x] **1.4 — Determinism note.** Encoded in the docstrings of `select_tip` (BTreeMap-sorted leaves + smaller-BlockId tie-break) and `current_tip` (governance-flag-gated, falls back safely).
+- [x] **1.5 — Tests.** SHIPPED at the trait level (4) + accessor level (2) = 6 new tests. Adversarial caliber-injection test deferred to Phase 6.2 perf scenarios.
 
-**Phase 1 deliverable:** the chain's tip is DAG-derived under `mcc` mode, while the linear chain still rules `linear` mode. Soft-fork-safe via the existing governance flag.
+**Phase 1 partial deliverable: 4/5 sub-items shipped, 1.3 (proposer integration) pending.** The substrate + accessor are both in place — Phase 1.3 is just consumer wiring at the proposer call site. The chain's `current_tip()` already returns the DAG-derived head under `mcc` mode; what remains is making `create_proposal` actually USE that head when building blocks. That's a focused next-session piece; the riskier consensus state-machine surgery starts in Phase 3.
 
 ### Phase 2 — Multi-parent block wire format (2-3 weeks)
 
