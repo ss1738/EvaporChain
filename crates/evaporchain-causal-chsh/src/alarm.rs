@@ -110,6 +110,37 @@ pub struct AlarmStatus {
     pub thresholds: GateThresholds,
 }
 
+/// Event emitted when the chain's own rolling Causal-CHSH alarm
+/// reports an honest-source S that crosses the doctrine ceiling.
+///
+/// Surfaced via `TendermintConsensus::take_pending_cartel_alarms()`
+/// when governance has set `cartel_alarm_mode = "alarm"`. Default
+/// `observe` mode never emits — the chain holds the verdict on the
+/// alarm itself, no events.
+///
+/// V1 carries the milli-units S statistics + sample shape so any
+/// downstream consumer (RPC, slashing engine, governance amendment)
+/// can audit the trigger without re-running the gate. **No
+/// validator reaction policy is in-protocol** — V1 is event surface
+/// only. Lane O.8.3+ will design how validators react.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CartelAlarmEvent {
+    /// Block height at which the alarm fired.
+    pub at_height: u64,
+    /// Chain's own honest-source S in validator-deterministic milli
+    /// units (×1000). Crosses the ceiling threshold when this fires.
+    pub s_honest_milli: i64,
+    /// Synthetic-cartel S at the same sample size for context.
+    pub s_cartel_synthetic_milli: i64,
+    /// `s_cartel_synthetic - s_honest` in milli units.
+    pub gap_milli: i64,
+    /// Doctrine ceiling that was crossed (= 1800 under doctrine
+    /// defaults). Echoed for self-contained event payloads.
+    pub honest_ceiling_milli_at_fire: i64,
+    /// Per-setting-pair sample counts at the time of the run.
+    pub samples_per_bucket: [usize; 4],
+}
+
 impl CartelAlarm {
     /// Construct a new alarm with the given capacity, run-interval,
     /// and concurrency-window. Defaults that match the Lane O.3
@@ -267,6 +298,17 @@ impl CartelAlarm {
     /// Total `record_block` calls since construction.
     pub fn records_seen(&self) -> u64 {
         self.records_seen
+    }
+
+    /// Test-only helper for downstream crates that need to drive the
+    /// alarm into a specific status without running the gate (e.g.
+    /// `evaporchain-consensus` Lane O.8.2 emission tests, where the
+    /// synthetic block-summary path can't naturally cross the doctrine
+    /// ceiling). **Not part of the stable API** — name + behaviour may
+    /// change without notice.
+    #[doc(hidden)]
+    pub fn _inject_status_for_test(&mut self, status: AlarmStatus) {
+        self.last_status = Some(status);
     }
 }
 

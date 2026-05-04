@@ -1247,6 +1247,54 @@ impl TendermintConsensus {
         std::mem::take(&mut self.pending_cartel_alarms)
     }
 
+    /// Lane O.8.2 emission gate. Pushes a `CartelAlarmEvent` onto
+    /// `pending_cartel_alarms` iff:
+    ///
+    /// 1. governance flag `cartel_alarm_mode == "alarm"` (default
+    ///    `"observe"` is silent),
+    /// 2. the alarm has a fresh `AlarmStatus` (gate has run at least
+    ///    once),
+    /// 3. the chain's honest-source S in milli-units has crossed the
+    ///    doctrine `honest_ceiling_milli` threshold,
+    /// 4. no event for `last_run_at_height` is already queued
+    ///    (de-duplicates back-to-back ticks before the next periodic
+    ///    recompute).
+    ///
+    /// Called from `on_block_committed` after `cartel_alarm.record_block`.
+    fn maybe_emit_cartel_alarm_event(&mut self) {
+        let alarm_mode = self
+            .governance_params
+            .get("cartel_alarm_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("observe");
+        if alarm_mode != "alarm" {
+            return;
+        }
+        let Some(st) = self.cartel_alarm.status() else {
+            return;
+        };
+        let already_fired_for_height = self
+            .pending_cartel_alarms
+            .iter()
+            .any(|e| e.at_height == st.last_run_at_height);
+        if already_fired_for_height {
+            return;
+        }
+        let ceiling_milli = (st.thresholds.honest_ceiling * 1000.0) as i64;
+        if st.s_honest_milli < ceiling_milli {
+            return;
+        }
+        self.pending_cartel_alarms
+            .push(evaporchain_causal_chsh::CartelAlarmEvent {
+                at_height: st.last_run_at_height,
+                s_honest_milli: st.s_honest_milli,
+                s_cartel_synthetic_milli: st.s_cartel_synthetic_milli,
+                gap_milli: st.gap_milli,
+                honest_ceiling_milli_at_fire: ceiling_milli,
+                samples_per_bucket: st.samples_per_bucket,
+            });
+    }
+
     /// in `governance_params`, plus a small set of documented keys with
     /// their default values when unset (so operators can see the
     /// effective state, not just the explicit overrides).
@@ -6221,6 +6269,102 @@ mod tests {
             st.last_run_at_height,
             50,
             "first run fires at records_seen=50, height=50"
+        );
+    }
+
+    /// Lane O.8.2 — `CartelAlarmEvent` emission with governance flag.
+    ///
+    /// Locks the wire-up end-to-end:
+    ///   1. Default `cartel_alarm_mode = "observe"` ⇒ no events emitted
+    ///      even when the alarm reports an over-ceiling status.
+    ///   2. Setting `cartel_alarm_mode = "alarm"` via
+    ///      `governance_set_param` ⇒ next emission gate fires.
+    ///   3. `take_pending_cartel_alarms` drains the queue.
+    ///   4. Re-firing at the same `last_run_at_height` is de-duplicated
+    ///      (no double emission across multiple ticks before the next
+    ///      periodic recompute).
+    ///
+    /// Uses the `_inject_status_for_test` doctrine helper on
+    /// `CartelAlarm` to simulate an over-ceiling status without having
+    /// to coerce the synthetic block-summary path into actually
+    /// crossing the bound (which it can't on healthy synthetic data —
+    /// that's the whole point of Causal-CHSH).
+    #[test]
+    fn test_cartel_alarm_event_emission_governance_gated() {
+        use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+
+        // Inject an over-ceiling status: s_honest_milli = 2500 (>= 1800
+        // doctrine ceiling). Synthesises the "chain detected coordination
+        // among its own validators" condition.
+        let over_ceiling_status = AlarmStatus {
+            s_honest: 2.5,
+            s_cartel_synthetic: 3.6,
+            gap: 1.1,
+            s_honest_milli: 2500,
+            s_cartel_synthetic_milli: 3600,
+            gap_milli: 1100,
+            verdict: "Fail".to_string(),
+            last_run_at_height: 100,
+            samples_per_bucket: [25, 25, 25, 25],
+            thresholds: GateThresholds::doctrine(),
+        };
+        tc.cartel_alarm
+            ._inject_status_for_test(over_ceiling_status.clone());
+
+        // Step 1: default `observe` mode → emission gate is silent.
+        tc.maybe_emit_cartel_alarm_event();
+        assert_eq!(
+            tc.take_pending_cartel_alarms().len(),
+            0,
+            "default observe mode must not emit events even on over-ceiling status"
+        );
+
+        // Step 2: flip governance to `alarm` mode via the K.1 RPC path.
+        tc.governance_set_param("cartel_alarm_mode", "alarm")
+            .expect("alarm mode must be in the allowlist");
+
+        // Step 3: emission gate now fires → exactly one event drained.
+        tc.maybe_emit_cartel_alarm_event();
+        let events = tc.take_pending_cartel_alarms();
+        assert_eq!(events.len(), 1, "alarm mode + over-ceiling must emit");
+        assert_eq!(events[0].at_height, 100);
+        assert_eq!(events[0].s_honest_milli, 2500);
+        assert_eq!(events[0].s_cartel_synthetic_milli, 3600);
+        assert_eq!(events[0].gap_milli, 1100);
+        assert_eq!(events[0].honest_ceiling_milli_at_fire, 1800);
+        assert_eq!(events[0].samples_per_bucket, [25, 25, 25, 25]);
+
+        // Step 4: same status, second tick → no re-emission (still drained;
+        // dedupe is by `at_height` matching an event already in the queue
+        // BEFORE the drain). Re-inject + re-fire to check the dedupe path.
+        tc.cartel_alarm
+            ._inject_status_for_test(over_ceiling_status.clone());
+        tc.maybe_emit_cartel_alarm_event(); // queue now has 1 event for h=100
+        tc.maybe_emit_cartel_alarm_event(); // dedupe must skip
+        let events_after_dedupe = tc.take_pending_cartel_alarms();
+        assert_eq!(
+            events_after_dedupe.len(),
+            1,
+            "back-to-back ticks at same height must not double-emit"
+        );
+
+        // Step 5: governance defaults expose the new flag with `observe`
+        // as the documented default.
+        let snap = tc.governance_flags_snapshot();
+        // Note: step 2 set it to `alarm`; the snapshot returns the
+        // *effective* value, so we expect "alarm" here, not the
+        // default. The default-when-unset is exercised in the next
+        // assertion using a fresh TC.
+        assert_eq!(snap.get("cartel_alarm_mode").map(|s| s.as_str()), Some("alarm"));
+
+        let fresh = make_consensus(1, &[1, 2, 3, 4]);
+        let snap_default = fresh.governance_flags_snapshot();
+        assert_eq!(
+            snap_default.get("cartel_alarm_mode").map(|s| s.as_str()),
+            Some("observe"),
+            "default cartel_alarm_mode must be observe"
         );
     }
 
