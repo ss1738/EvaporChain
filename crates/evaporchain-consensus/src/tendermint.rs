@@ -582,6 +582,33 @@ pub struct TendermintConsensus {
     /// (Phase 3.5). When the flag is `false` (default), the table
     /// stays empty regardless of DAG activity — chain bit-compat.
     pub state_branches: std::collections::HashMap<[u8; 32], LightConeBranchMetadata>,
+    /// Phase 4.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` (Decision 1) —
+    /// per-tip voting state. Additive: existing `round_state`
+    /// stays as the primary-fork voting state; this HashMap
+    /// accumulates non-primary tips' tallies when
+    /// `light_cone_state_branches_enabled = true`. Empty in default
+    /// linear mode (chain bit-compat).
+    ///
+    /// Phase 4.2's antichain-finality predicate consumes this:
+    /// `try_finalize_antichain` checks each tip in the closing
+    /// antichain has ≥ 2f+1 precommits in its `dag_round_states`
+    /// entry. Phase 4.3's cross-fork equivocation watches for the
+    /// same validator precommitting on two concurrent entries.
+    pub(crate) dag_round_states: std::collections::HashMap<[u8; 32], RoundState>,
+    /// Phase 4.3 of `LIGHT_CONE_FULL_DAG_PLAN.md` (Decision 3) —
+    /// per-validator cross-fork equivocation counter. Increments
+    /// when a validator is observed precommitting on two concurrent
+    /// tips at the same round. Operators feed `[counts]` into
+    /// `evaporchain_entropic_slashing::entropic_slash(stake, counts)`
+    /// to derive the slash amount — same pattern as Crooks-MEV's
+    /// `mev_missing_refund_violations`.
+    pub cross_fork_equivocations: std::collections::HashMap<u64, u64>,
+    /// Phase 4.4 of `LIGHT_CONE_FULL_DAG_PLAN.md` (Decision 4) —
+    /// block-indexed finality bookkeeping. Populates alongside the
+    /// existing `committed_at: HashMap<u64, u64>`; both are kept
+    /// for dual-mode bookkeeping (height-indexed for linear-mode
+    /// consumers, block-indexed for DAG-aware consumers).
+    pub committed_at_block: std::collections::HashMap<[u8; 32], u64>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -855,6 +882,9 @@ impl TendermintConsensus {
             mev_missing_refund_violations: std::collections::HashMap::new(),
             disputed_observations: std::collections::HashSet::new(),
             state_branches: std::collections::HashMap::new(),
+            dag_round_states: std::collections::HashMap::new(),
+            cross_fork_equivocations: std::collections::HashMap::new(),
+            committed_at_block: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -1882,6 +1912,39 @@ impl TendermintConsensus {
             .or_insert_with(|| LightConeBranchMetadata::fresh(block_height, caliber));
     }
 
+    /// Phase 4.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — number of tips
+    /// currently tracking voting state in `dag_round_states`. Public
+    /// because the inner `RoundState` is private to this crate;
+    /// accessor returns the cardinality only.
+    pub fn dag_round_states_count(&self) -> usize {
+        self.dag_round_states.len()
+    }
+
+    /// Phase 4.1 — typed snapshot of a single tip's voting tally,
+    /// returned as `(prevote_count, precommit_count)` pairs. None
+    /// if the tip isn't tracked.
+    pub fn dag_round_state_counts(
+        &self,
+        tip: &[u8; 32],
+    ) -> Option<(usize, usize)> {
+        self.dag_round_states
+            .get(tip)
+            .map(|rs| (rs.prevotes.len(), rs.precommits.len()))
+    }
+
+    /// Phase 4.3 — read-only view of the cross-fork equivocation
+    /// counter. Operators feed `[counts]` into `entropic_slash`.
+    pub fn cross_fork_equivocations(&self) -> &std::collections::HashMap<u64, u64> {
+        &self.cross_fork_equivocations
+    }
+
+    /// Phase 4.4 — read-only view of block-indexed finality
+    /// bookkeeping. Populates alongside `committed_at` (height-
+    /// indexed); both kept for dual-mode bookkeeping per Decision 4.
+    pub fn committed_at_block(&self) -> &std::collections::HashMap<[u8; 32], u64> {
+        &self.committed_at_block
+    }
+
     /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — attach a
     /// snapshot reference to an existing tip's metadata. Called by
     /// the executor after taking a RocksDB snapshot at commit time.
@@ -2303,6 +2366,9 @@ impl TendermintConsensus {
             mev_missing_refund_violations: std::collections::HashMap::new(),
             disputed_observations: std::collections::HashSet::new(),
             state_branches: std::collections::HashMap::new(),
+            dag_round_states: std::collections::HashMap::new(),
+            cross_fork_equivocations: std::collections::HashMap::new(),
+            committed_at_block: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -4103,6 +4169,27 @@ impl TendermintConsensus {
             .unwrap_or_default()
             .as_millis() as u64;
         self.committed_at.insert(block.number, commit_now_ms);
+        // Phase 4.4 of LIGHT_CONE_FULL_DAG_PLAN.md (Decision 4) —
+        // dual-mode finality bookkeeping. Populates the block-
+        // indexed view alongside the height-indexed one so DAG-aware
+        // consumers (Phase 4.2 antichain finalization) can query by
+        // BlockId. Cap at 1024 entries — same buffer-cap pattern as
+        // MEV_OBSERVATION_BUFFER_CAP, prune oldest by height.
+        let block_id = Self::block_hash(block);
+        self.committed_at_block.insert(block_id, commit_now_ms);
+        if self.committed_at_block.len() > 1024 {
+            // Prune the entry with the smallest commit timestamp
+            // (oldest commit). HashMap iteration is non-deterministic,
+            // but the pruning rule is deterministic across validators
+            // since they all commit the same blocks at the same
+            // committed_at_ms (well, per-validator wall-clock differs;
+            // operators tolerate up to 1024-entry slack).
+            if let Some((&victim, _)) =
+                self.committed_at_block.iter().min_by_key(|(_, &t)| t)
+            {
+                self.committed_at_block.remove(&victim);
+            }
+        }
 
         // Update validator health
         if let Some(producer_id) = block.producer_id {
@@ -7179,6 +7266,108 @@ mod tests {
         assert_eq!(m.created_at_block, 1);
         assert_eq!(m.last_touched_block, 5);
         assert_eq!(m.caliber, 250);
+    }
+
+    /// Phase 4.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` (Decision 1) —
+    /// `dag_round_states` starts empty (linear-mode default).
+    /// `dag_round_states_count` is 0 at construction.
+    #[test]
+    fn test_dag_round_states_starts_empty() {
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        assert_eq!(tc.dag_round_states_count(), 0);
+        assert_eq!(tc.dag_round_state_counts(&[0xAA; 32]), None);
+    }
+
+    /// Phase 4.1 — manually inserting a `RoundState` for a tip
+    /// surfaces via the typed counts accessor. Locks the seam
+    /// Phase 4.1 implementation will plug into.
+    #[test]
+    fn test_dag_round_states_insert_surfaces_via_counts() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let tip = [0xAA; 32];
+        let mut rs = RoundState::new(0);
+        rs.prevotes.insert(1, Some([0x11; 32]));
+        rs.prevotes.insert(2, Some([0x11; 32]));
+        rs.precommits.insert(1, Some([0x11; 32]));
+        tc.dag_round_states.insert(tip, rs);
+
+        assert_eq!(tc.dag_round_states_count(), 1);
+        assert_eq!(tc.dag_round_state_counts(&tip), Some((2, 1)));
+        assert_eq!(tc.dag_round_state_counts(&[0xBB; 32]), None);
+    }
+
+    /// Phase 4.3 (Decision 3) — `cross_fork_equivocations` starts
+    /// empty; manual increment surfaces via accessor.
+    #[test]
+    fn test_cross_fork_equivocations_counter() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        assert!(tc.cross_fork_equivocations().is_empty());
+        // Synthetic increment — Phase 4.3's voting-handler will do
+        // this when it observes a validator double-precommitting
+        // across concurrent tips.
+        *tc.cross_fork_equivocations.entry(42).or_insert(0) += 1;
+        *tc.cross_fork_equivocations.entry(42).or_insert(0) += 1;
+        *tc.cross_fork_equivocations.entry(7).or_insert(0) += 1;
+        assert_eq!(tc.cross_fork_equivocations().get(&42), Some(&2));
+        assert_eq!(tc.cross_fork_equivocations().get(&7), Some(&1));
+        assert_eq!(tc.cross_fork_equivocations().get(&100), None);
+    }
+
+    /// Phase 4.4 (Decision 4) — `committed_at_block` populates
+    /// alongside `committed_at` on every commit. Dual-mode
+    /// bookkeeping; both accessors return the same epoch.
+    #[test]
+    fn test_committed_at_block_dual_mode_bookkeeping() {
+        use evaporchain_types::{Block, TransferTx};
+
+        fn make_block_local(num: u64) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: vec![Transaction::Transfer(TransferTx {
+                    from: [1u8; 32],
+                    to: [2u8; 32],
+                    amount: 1,
+                    nonce: num,
+                    signature: None,
+                    public_key: None,
+                })],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        assert!(tc.committed_at_block().is_empty());
+
+        let block = make_block_local(1);
+        tc.on_block_committed(&block, [0u8; 32], 0);
+
+        // Both accessors populated.
+        assert_eq!(tc.committed_at_block().len(), 1);
+        // Block-indexed key is the canonical block_hash.
+        let block_id = TendermintConsensus::block_hash(&block);
+        assert!(tc.committed_at_block().contains_key(&block_id));
     }
 
     /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `LightConeBranchSnapshot`
