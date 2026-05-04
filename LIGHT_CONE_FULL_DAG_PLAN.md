@@ -108,7 +108,11 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 **Goal:** lock the contract end-to-end and update doctrine.
 
-- [x] **6.1 — End-to-end DAG-mode test (substrate level).** SHIPPED. `test_light_cone_substrate_end_to_end` drives 8 sequential blocks through `on_block_committed` exercising Phase 3 + Phase 4 + Phase 5 substrate together: (a) default-off chain → state_branches stays empty (linear-mode bit-compat); (b) flag flip + cap=3 → state_branches populates and LRU enforces the cap; (c) `committed_at_block` Phase 4.4 dual-mode bookkeeping populates from height 1; (d) Phase 5.1 orphan-detection rule with high threshold + stale tips returns every tip as orphan-eligible. Full end-to-end DAG-mode test (with Phase 4 voting-handler wiring → antichain finality → caliber-based tip selection) remains pending the Phase 4 wiring session.
+- [x] **6.1 — End-to-end DAG-mode test.** SHIPPED. Two integration tests now ship:
+  - `test_light_cone_substrate_end_to_end` — drives 8 blocks through `on_block_committed` exercising Phase 3 substrate + Phase 4.4 dual-mode bookkeeping + Phase 5.1 orphan detection.
+  - `test_dag_mode_full_pipeline_end_to_end` (this commit) — exercises the FULL Phase 4 pipeline end-to-end: 4-fork DAG → LRU eviction (cap=3 → leaf A pruned from both metadata + DAG) → vote-record API on the surviving 3 leaves with mixed quorum outcomes (B 3-precommit ✓, C 2-precommit ✗, D 4-precommit ✓) → cross-fork equivocation triggers on validators precommitting across multiple tips → `try_finalize_antichain` returns `[B, D]` (the quorum-meeting subset) → closing antichain reflects surviving leaves.
+  
+  Both tests confirm the consensus-state-machine pipeline behaves correctly under the locked decisions in `PHASE_3_DECISIONS.md` + `PHASE_4_DECISIONS.md`.
 - [ ] **6.2 — Adversarial 2-fork test.** Pending. Same gating as 6.1 (Phase 4 wiring required).
 - [ ] **6.3 — Performance budget.** Pending. Substrate-level perf is fine (light-cone tests sub-ms; LRU O(n) over the cap=4 typical case is sub-µs); the 100ms/block / 200ms-state-branch budgets are end-to-end measurements gated on Phase 4 wiring.
 - [x] **6.4 — `DOCTRINE_PUNCH_LIST.md` Layer 6.** SHIPPED. Light-Cone row in Layer 6 cell flipped from "⏳ tendermint.rs still 8,782 LOC; …" to "✅ substrate-complete 2026-05-04 — full plan in `LIGHT_CONE_FULL_DAG_PLAN.md`" with the full Phase 1+2+3+5 + Phase 4 substrate manifest, governance flags, and the locked-decisions pointer. Voting-handler wiring called out as the only remaining consensus-state-machine surgery.

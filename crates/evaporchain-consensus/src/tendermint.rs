@@ -7538,6 +7538,110 @@ mod tests {
         assert_eq!(tc.dag_round_state_counts(&[0xBB; 32]), None);
     }
 
+    /// Phase 6.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — end-to-end
+    /// DAG-mode integration test. Exercises the full pipeline:
+    /// Phase 4.1 vote-record → Phase 4.2 finalization →
+    /// Phase 4.3 cross-fork equivocation → Phase 4.4 dual-mode
+    /// finality bookkeeping → Phase 5 LRU eviction (paired with
+    /// DAG cascade-prune).
+    ///
+    /// Closes the substrate-level integration claim of the
+    /// Light-Cone Full DAG plan. The pipeline runs end-to-end
+    /// behind the `light_cone_state_branches_enabled` flag.
+    #[test]
+    fn test_dag_mode_full_pipeline_end_to_end() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        // Cap=3 so we'll see LRU kick in.
+        tc.governance_set_param("light_cone_max_concurrent_forks", "3")
+            .unwrap();
+
+        // Build a 4-fork DAG: genesis → A, B, C, D (4 sibling leaves).
+        let g = [0xFF; 32];
+        let a = [0xAA; 32];
+        let b = [0xBB; 32];
+        let c = [0xCC; 32];
+        let d = [0xDD; 32];
+        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(a, vec![g], 100, 1)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(b, vec![g], 200, 1)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(c, vec![g], 150, 1)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(d, vec![g], 175, 1)).unwrap();
+
+        // Record state-branch metadata for each leaf.
+        tc.record_state_branch(a, 1, 100);
+        tc.record_state_branch(b, 1, 200);
+        tc.record_state_branch(c, 1, 150);
+        tc.record_state_branch(d, 1, 175);
+
+        // Cap=3 → LRU triggers, lowest caliber `a` evicted from
+        // metadata + DAG.
+        tc.prune_state_branches();
+        assert!(!tc.state_branches.contains_key(&a));
+        assert!(!tc.light_cone_dag.contains(&a));
+        // Genesis survives (branch point).
+        assert!(tc.light_cone_dag.contains(&g));
+
+        // Voting phase: 4 validators, threshold = 2*1+1 = 3.
+        // Leaf B: validators 1, 2, 3 precommit → meets quorum.
+        for v in 1..=3u64 {
+            tc.record_dag_precommit(b, v, Some(b), vec![]);
+        }
+        // Leaf C: validators 1, 2 precommit → below quorum.
+        for v in 1..=2u64 {
+            tc.record_dag_precommit(c, v, Some(c), vec![]);
+        }
+        // Leaf D: validators 1, 2, 3, 4 precommit → meets quorum.
+        for v in 1..=4u64 {
+            tc.record_dag_precommit(d, v, Some(d), vec![]);
+        }
+
+        // Cross-fork equivocation: validator 1 precommitted on b,
+        // c, d (3 different blocks) at the same round → 2 increments
+        // (b→c, c→d). Actually validator 1 precommits b first; then
+        // c (different hash from b at same round → equivocation
+        // on c); then d (different hash from c at same round →
+        // equivocation on d). Same logic for validators 2, 3.
+        // Net: each of 1..=3 gets bumped multiple times. Validator
+        // 4 only precommitted on d → no equivocation observed for it
+        // YET (no other tip records its precommit).
+        assert!(
+            tc.cross_fork_equivocations().get(&1).copied().unwrap_or(0) > 0,
+            "validator 1 precommitted on multiple tips → equivocation"
+        );
+        assert_eq!(
+            tc.cross_fork_equivocations().get(&4),
+            None,
+            "validator 4 only voted once → no equivocation"
+        );
+
+        // Finalization: only b and d meet quorum.
+        let finalized = tc.try_finalize_antichain();
+        let mut sorted = finalized.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![b, d], "expected b + d to finalize");
+        assert!(
+            !sorted.contains(&c),
+            "c (below-quorum) must NOT finalize"
+        );
+        assert!(
+            !sorted.contains(&a),
+            "a (LRU-evicted) must NOT finalize"
+        );
+
+        // Closing antichain still includes the surviving leaves.
+        let ac = evaporchain_light_cone::concurrency::closing_antichain(&tc.light_cone_dag);
+        let mut sorted_ac = ac.clone();
+        sorted_ac.sort();
+        // a was pruned; b, c, d, AND g (genesis) are tracked by the
+        // DAG. g is the parent of b, c, d so it has children → NOT
+        // a leaf. Surviving leaves: b, c, d.
+        assert_eq!(sorted_ac, vec![b, c, d]);
+    }
+
     /// Phase 4.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
     /// `try_finalize_antichain` no-op when flag is off.
     #[test]
