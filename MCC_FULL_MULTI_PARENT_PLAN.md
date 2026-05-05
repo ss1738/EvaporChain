@@ -327,10 +327,13 @@ budget; soak test runs clean for 72hr.
 
 ### Phase E — Doctrine + operator surfaces (1-2 days)
 
-- [ ] **E.1 — `/api/light_cone/candidate_heads` HTTP endpoint.**
-      Returns all current sibling heads with caliber + selected flag.
-      Operator-debugging surface for "which heads are competing right
-      now."
+- [x] **E.1 — `/api/light_cone/candidate_heads` HTTP endpoint.** ✅ SHIPPED 2026-05-05.
+      Wraps `TendermintConsensus::enumerate_candidate_heads` (Phase A.3)
+      as a GET endpoint returning `{heads:[{block_id, caliber}], count,
+      running_alongside_tendermint}`. First entry is the MCC-chosen
+      authoritative head; downstream entries are the alternatives the
+      fork-choice considered. Pure additive — no hot-path surgery.
+      Doc-entry added to API directory. evaporchain-node builds clean.
 
 - [ ] **E.2 — `/api/light_cone/authoritative_head` HTTP endpoint.**
       Returns current `authoritative_head` BlockId + the trajectory
@@ -453,6 +456,16 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 5)** — Phase E.1 endpoint landed.
+  `/api/light_cone/candidate_heads` exposes
+  `enumerate_candidate_heads` over HTTP with hex-encoded BlockIds +
+  caliber scores. Pure additive substrate — no hot-path surgery.
+  Operator-debug value: `curl http://node:8080/api/light_cone/candidate_heads`
+  returns the MCC-chosen authoritative head and all alternatives
+  the fork-choice considered. Pairs with Phase 4.4's
+  /api/light_cone/antichain_digest_history for cluster-divergence
+  detection. evaporchain-node builds clean.
 
 - **2026-05-05 (late evening cont'd 4)** — Phase B.6 integration test
   landed. Drives the full B.0+B.0++B.1+B.2 substrate through a
