@@ -666,7 +666,16 @@ mod proptest_execution {
             });
 
             let mut executor = ParallelExecutor::new_for_test(5);
-            let result = executor.execute_block(&mut db, &make_block(2, 2, vec![tx]));
+            // Block at epoch 0 — same as account creation epoch — so
+            // no demurrage delta is applied between account creation
+            // and block execution. The conservation invariant tested
+            // below is "Refund alone preserves total balance"; folding
+            // in epoch-boundary demurrage would conflate two
+            // independent invariants and cause spurious failures on
+            // shrunk inputs near demurrage-shift boundaries (e.g.
+            // balance 83334 at 2-epoch interval loses 1 unit to
+            // demurrage's `>> shift` regardless of refund logic).
+            let result = executor.execute_block(&mut db, &make_block(2, 0, vec![tx]));
             // Whatever happens, executor must NOT panic.
             prop_assert!(result.is_ok(), "execute_block must not panic on Refund");
 

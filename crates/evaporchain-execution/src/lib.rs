@@ -1093,8 +1093,17 @@ impl SimpleExecutor {
             Transaction::Undelegate(_) => GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => GAS_ROTATE_VALIDATOR_KEY,
             Transaction::ClaimDelegation(_) => GAS_CLAIM_DELEGATION,
-            // Refund is protocol-issued; charge transfer-equivalent gas.
-            Transaction::Refund(_) => GAS_TRANSFER,
+            // Crooks-MEV Phase 3.5: refund is PROTOCOL-issued — the
+            // proposer pays gas, not the victim or attacker. Charged
+            // at the dedicated `GAS_REFUND = 5_000` (lower than
+            // `GAS_TRANSFER = 21_000`) so proposers aren't
+            // economically deterred from settling observations they're
+            // contractually obligated to settle. Earlier code charged
+            // `GAS_TRANSFER` here — that defeated the Phase 3.5
+            // economic design (Phase 3.5d's missing-refund stake
+            // slash assumes proposers find it cheaper to settle than
+            // to skip).
+            Transaction::Refund(_) => GAS_REFUND,
         }
     }
 
@@ -6555,6 +6564,47 @@ contract Counter {
         assert!(
             matches!(r, Err(ExecutionError::InvalidNonce { .. })),
             "paymaster nonce check should reject replayed sponsorship"
+        );
+    }
+
+    /// Crooks-MEV Phase 3.5 economic-design regression test.
+    ///
+    /// `Transaction::Refund` is protocol-issued — the proposer pays
+    /// gas, not the victim or attacker. The dedicated `GAS_REFUND`
+    /// constant (5_000) is intentionally lower than `GAS_TRANSFER`
+    /// (21_000) so proposers aren't economically deterred from
+    /// settling refunds they're contractually obligated to settle
+    /// under Phase 3.5d's missing-refund stake-slash rule.
+    ///
+    /// **Fix history (2026-05-05):** Earlier code charged
+    /// `GAS_TRANSFER` for Refund txs in both `SimpleExecutor` (lib.rs
+    /// `estimate_gas`) and `ParallelExecutor` (parallel.rs
+    /// `gas_for_local`), which defeated the Phase 3.5 economic design.
+    /// `GAS_REFUND` was declared with a clear docstring but never
+    /// actually wired into the gas-charging path — surfaced as a
+    /// `dead_code` warning and fixed under both executors.
+    ///
+    /// This test locks the contract: the per-tx gas cost for a
+    /// Refund must equal `GAS_REFUND`, not `GAS_TRANSFER`.
+    #[test]
+    fn refund_tx_charges_gas_refund_not_gas_transfer() {
+        let refund = Transaction::Refund(RefundTx {
+            source_block_height: 1,
+            source_observation_idx: 0,
+            attacker: addr(1),
+            victim: addr(2),
+            amount: 100,
+            settle_block_height: 2,
+        });
+        let cost = SimpleExecutor::estimate_gas(&refund);
+        assert_eq!(
+            cost, GAS_REFUND,
+            "refund tx must charge GAS_REFUND ({}), not GAS_TRANSFER ({})",
+            GAS_REFUND, GAS_TRANSFER
+        );
+        assert!(
+            cost < GAS_TRANSFER,
+            "GAS_REFUND must be lower than GAS_TRANSFER to keep proposer settlement economically attractive"
         );
     }
 }

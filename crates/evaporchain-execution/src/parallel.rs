@@ -32,8 +32,8 @@ use tracing::{debug, info};
 use crate::{
     fees, BlockExecutionResult, ExecutionEngine, ExecutionError, GAS_CALL_CONTRACT,
     GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE, GAS_DEPLOY_CONTRACT,
-    GAS_DEPLOY_SCRIPT, GAS_GOVERNANCE, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_CLAIM_STAKE,
-    GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
+    GAS_DEPLOY_SCRIPT, GAS_GOVERNANCE, GAS_REFRESH, GAS_REFUND, GAS_TRANSFER,
+    GAS_VALIDATOR_CLAIM_STAKE, GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
 };
 
 // ─── Access Key & Conflict Detection ───────────────────────────────────────
@@ -927,8 +927,14 @@ impl ParallelExecutor {
             Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
             Transaction::ClaimDelegation(_) => crate::GAS_CLAIM_DELEGATION,
-            // Refund is protocol-issued; gas charged at issuance time.
-            Transaction::Refund(_) => GAS_TRANSFER,
+            // Crooks-MEV Phase 3.5: protocol-issued refund. Charged
+            // at `GAS_REFUND = 5_000` (lower than `GAS_TRANSFER`) so
+            // proposers aren't economically deterred from settling
+            // refunds they're obligated to settle. Mirrors lib.rs
+            // gas_for; see the lib.rs Refund arm for the full
+            // rationale (Phase 3.5d stake-slash assumes proposers
+            // find settling cheaper than skipping).
+            Transaction::Refund(_) => GAS_REFUND,
         }
     }
 
