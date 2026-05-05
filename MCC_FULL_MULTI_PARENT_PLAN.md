@@ -403,9 +403,14 @@ budget; soak test runs clean for 72hr.
       walked + the caliber score. Per-validator (different validators
       may briefly disagree during the round; converge by end of round).
 
-- [ ] **E.3 — `LIGHT_CONE_FULL_DAG_PLAN.md` Phase 8 addendum.**
-      Captures the MCC-full work as a follow-up to the existing
-      Phase 4.x DAG-aware vote tally. Pointer to this plan doc.
+- [x] **E.3 — `LIGHT_CONE_FULL_DAG_PLAN.md` Phase 8 addendum.** ✅ SHIPPED 2026-05-05.
+      New "Phase 8 — MCC full multi-parent enumeration" section
+      added to the Light-Cone plan, cross-referencing this plan doc
+      and explicitly noting which Phase A + B + E items have shipped.
+      Locks the relationship between the two plans: Phases 1-6 of
+      Light-Cone shipped DAG mode as co-existing with Tendermint;
+      Phase 7 added the cross-validator agreement digest; Phase 8
+      (this MCC plan) is the load-bearing hot-path integration.
 
 - [x] **E.4 — `INVENTION_STACK.md §A1.2 T1` update.** ✅ SHIPPED 2026-05-05.
       Reflects Phase A + B completion. T1's "primitive" column now
@@ -527,6 +532,11 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 11)** — Phase E.3 cross-doc
+  addendum. `LIGHT_CONE_FULL_DAG_PLAN.md` now has a Phase 8 section
+  pointing at this plan doc and recording the substrate-complete
+  status. Locks the relationship between the two plans.
 
 - **2026-05-05 (late evening cont'd 10)** — Phase E.5 doctrine doc
   flip. `DOCTRINE_PUNCH_LIST.md` Layer 4 MCC fork-choice row

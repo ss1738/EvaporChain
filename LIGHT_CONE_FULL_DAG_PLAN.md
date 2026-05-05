@@ -144,6 +144,47 @@ explicitly flagged it as the next operator-facing piece beyond the
 
 ---
 
+### Phase 8 — MCC full multi-parent enumeration (2026-05-05 addendum)
+
+Phases 1-6 shipped Light-Cone DAG mode as a co-existing alternative
+to Tendermint behind `parent_acceptance_mode = "mcc"` — but only
+the *single-line trajectory walk* version of MCC, which scores one
+trajectory per leaf and picks the argmax. **The full multi-parent
+enumeration (where the consensus hot path actually selects an
+authoritative head per round, replays state across branch switches,
+and routes votes by head)** is the load-bearing extension.
+
+That work has its own dedicated tracking doc:
+[`MCC_FULL_MULTI_PARENT_PLAN.md`](MCC_FULL_MULTI_PARENT_PLAN.md).
+
+**Status as of 2026-05-05:** Phase A (substrate, 3/4 items, A.2
+deferred) + Phase B (state-replay pipeline, 8/8 items) + Phase E.1
+(`/api/light_cone/candidate_heads` endpoint) + Phase E.4 + E.5
+(doctrine doc updates) shipped. **34 new tests** across
+`evaporchain-light-cone` (10) + `evaporchain-consensus` (24).
+Light-Cone test suite: 51/0 (was 34 after Phase 7). Consensus suite:
+493/0/1 (was 469).
+
+**What that means for this plan's deliverables:** Light-Cone's
+Phase 4.4 antichain commit-cert digest pairs with MCC's
+`enumerate_candidate_heads` to give operators a complete view of
+"which heads are competing right now and is the cluster agreeing
+on antichain finality." The two endpoints
+(`/api/light_cone/antichain_digest_history` + `/api/light_cone/candidate_heads`)
+are designed to be `curl`'d in parallel for cluster-divergence
+diagnosis.
+
+**Remaining work** (per the MCC plan): Phase C (hot-path consensus
+surgery — promote `authoritative_head` from admin-RPC to the
+consensus hot path, route votes by head, proposer multi-parent set
+selection), Phase D (adversarial + perf + 72hr soak), Phase E.2/E.3/E.6
+(remaining endpoints + this addendum + operator runbook).
+
+**Phase 8 deliverable: SUBSTRATE COMPLETE; consensus-hot-path
+integration is the focused next session.**
+
+---
+
 ## Stopping conditions
 
 - **Phase 1 latency > 1.5× linear-mode latency** for the same workload — DAG fork-choice can't hold its own. Reframe: maybe DAG mode is opt-in for high-stake chains, not default.
