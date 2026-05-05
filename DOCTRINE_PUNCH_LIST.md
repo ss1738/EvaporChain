@@ -286,11 +286,25 @@ This is where doctrine primitives stop being shadows and start running the chain
 
 - [x] **Antichain mempool replaces FIFO drain.** ✅ DONE behind governance flag. `TxAntichainMempool` (Lane I.1, commit `842363f`) is the standalone tx-level antichain `BlockSource` impl. The post-FIFO antichain projection (`mempool::antichain_project`, Lane I.5, commit `2bdcdc2`) lets the chain flip via `block_source_mode = "antichain"` governance key without changing storage. Same-sender heuristic = V1; richer heuristics (state read/write set overlap) are a future refinement. Default `"fifo"` stays bit-exact compat. End-to-end integration test at `tendermint.rs::test_block_source_mode_antichain_dedups_same_sender_in_proposal` (Lane J.1, commit `63ed378`); 5-property proptest at `mempool::antichain_project_invariants`; cross-impl proptest at `tx_antichain_mempool::block_source_contract_holds_for_both_impls`.
 - [x] **MCC fork-choice replaces single `parent_hash`.** ✅ DONE behind governance flag (Lane I.3 + I.4 + I.6, commits `c1a05bb`, `ded1a73`, `a45588c`). `MccForkChoice` impl walks first-parent trajectories from both tips back to genesis via the LightCone DAG, scores via `mcc_choose` at β derived from chain CFM (microbits/fee/epoch). At `tendermint.rs:2643` the parent-acceptance check dispatches through the trait when `parent_acceptance_mode = "mcc"`; default `"linear"` keeps bit-exact compat. End-to-end integration test at `tendermint.rs::test_parent_acceptance_mode_mcc_diverges_from_linear_on_diverging_parent` (Lane J.2, commit `07efe97`). Cross-impl proptest (Lane K.3, commit `2279060`). 3-property single-impl proptest (Lane I.3 follow-up, commit `60a7db4`).
-- [ ] **MCC fork-choice (full multi-parent enumeration).** Layer I.4+ extension:
-  - track all sibling heads (today `tendermint.rs:2526` rejects any block off the single line)
-  - replay state per chosen head — biggest engineering risk; needs careful re-execution semantics
-  - dispatcher already exists at `tendermint.rs:954-969` (`authoritative_head`, gated by `governance_params["fork_choice_mode"]`); promote from admin-RPC-only to hot-path
-  - Effort: large (1.5-2.5 weeks).
+- [x] **MCC fork-choice (full multi-parent enumeration) — substrate complete.** ✅ Phases A + B + E.1 + E.4 SHIPPED 2026-05-05; full plan in `MCC_FULL_MULTI_PARENT_PLAN.md`.
+  - **Phase A — Substrate (3/4 items, A.2 deferred to Phase C):**
+    - `TendermintConsensus::candidate_heads()` returns BTreeSet of all active sibling heads (derived from `light_cone_dag.leaves()`, validator-deterministic via BTreeMap-key order).
+    - `TendermintConsensus::enumerate_candidate_heads()` returns Vec of (BlockId, caliber) sorted descending; argmax-equals-`select_tip` lock.
+    - `MccForkChoice::enumerate_with_caliber()` substrate method — `select_tip` refactored to derive its argmax from this list (single source of truth, behaviour preserved bit-for-bit).
+  - **Phase B — State replay pipeline (8/8 items):**
+    - `find_lca` + `block_path_from_to` — pure DAG primitives in `evaporchain-light-cone::dag` (B.0).
+    - `plan_replay_to_head` returns `ReplayWalk { lca, forward_path, rollback_required }` (B.0+).
+    - `StateSnapshotBranch` concrete `LightConeBranchSnapshot` impl wrapping `evaporchain_state::snapshot::StateSnapshot` (capture via `SnapshotBuilder::create`, restore via `SnapshotApplier::apply`) (B.1).
+    - `restore_to_lca` bridge looks up state_branches snapshot + invokes restore (B.2).
+    - `replay_and_apply` umbrella composes plan + restore + caller-provided block_lookup + block_apply closures; closure-driven design avoids consensus-crate coupling to executor type (B.3).
+    - `replay_and_apply_atomic` transactional wrapper: pre-replay snapshot capture + on-error rollback for trait-portable atomicity (B.4).
+    - LRU eviction-drops-snapshot regression lock — verifies `Arc::strong_count` drops on cap-eviction (B.5).
+    - End-to-end branch-switch integration test (B.6).
+  - **Phase E — Operator surfaces (2/6 items):**
+    - `GET /api/light_cone/candidate_heads` HTTP endpoint exposes `enumerate_candidate_heads` (E.1).
+    - `INVENTION_STACK.md §A1.2 T1` doctrine claim updated to reflect shipped substrate (E.4).
+  - **34 new tests across `evaporchain-light-cone` (10) + `evaporchain-consensus` (24).** Consensus suite: 469 → 493 (+24), light-cone: 41 → 51 (+10).
+  - **Remaining (Phases C + D + E.2/E.3/E.5/E.6):** hot-path consensus surgery (C.1-C.6 — promote `authoritative_head` from admin-RPC to consensus hot path, route votes by head, proposer multi-parent set selection, validator-determinism gate); adversarial + perf + 72hr soak (D.1-D.5); remaining endpoints + plan addendum + runbook (E.2/E.3/E.6). Effort: 2-3 weeks of focused integration work.
 - [ ] **Promote conservation audit from gating to mandatory** (sequel to Layer 0 first item — once Layer 4 changes block acceptance semantics, revisit the governance flag).
 
 **Acceptance:** a fresh devnet runs with antichain-mempool + MCC fork-choice as the production block source/fork-choice. Existing Tendermint tests fail cleanly (because the production path has changed) — replace them with antichain-aware analogs.

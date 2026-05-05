@@ -417,9 +417,13 @@ budget; soak test runs clean for 72hr.
       describe the multi-parent enumeration substrate as shipped, with
       the explicit "becomes load-bearing once Phase C lands" caveat.
 
-- [ ] **E.5 — `DOCTRINE_PUNCH_LIST.md` Layer 4 row.**
-      Flip from `[ ]` to `[x]` with full-path references to phases
-      A-E.
+- [x] **E.5 — `DOCTRINE_PUNCH_LIST.md` Layer 4 row update.** ✅ SHIPPED 2026-05-05.
+      Layer 4 "MCC fork-choice (full multi-parent enumeration)" row
+      flipped from `[ ]` to `[x] substrate complete` with full
+      manifest of Phase A (3/4 items, A.2 deferred), Phase B (8/8
+      items), Phase E.1 + E.4. Lists 34 new tests + the consensus
+      suite delta (469 → 493). Honestly scoped: Phases C + D +
+      E.2/E.3/E.6 still listed as remaining work.
 
 - [ ] **E.6 — Operator runbook addendum.**
       Add an `mcc_full` rollout section to
@@ -523,6 +527,12 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 10)** — Phase E.5 doctrine doc
+  flip. `DOCTRINE_PUNCH_LIST.md` Layer 4 MCC fork-choice row
+  updated from `[ ]` to `[x] substrate complete` with full
+  itemized manifest of Phase A (3/4), B (8/8), E.1 + E.4. Honest
+  about Phase C/D/E.2-3-6 remaining as separate workstreams.
 
 - **2026-05-05 (late evening cont'd 9)** — Phase E.4 doctrine update
   shipped. `INVENTION_STACK.md §A1.2 T1` (MCC) row rewritten to
