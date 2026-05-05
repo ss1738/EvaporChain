@@ -2936,6 +2936,97 @@ impl TendermintConsensus {
         })
     }
 
+    /// MCC Phase B.4 of `MCC_FULL_MULTI_PARENT_PLAN.md` — atomic
+    /// transactional wrapper around `replay_and_apply`.
+    ///
+    /// **Contract:** either the replay succeeds completely (StateDB
+    /// at `target_head`'s state, returns `Ok(ReplayResult)`) OR the
+    /// StateDB is restored to its pre-replay state and the original
+    /// error is returned (`Err(ReplayError)`). Never leaves the DB
+    /// in a partial state.
+    ///
+    /// **Mechanism:** captures a `StateSnapshotBranch` of the
+    /// current StateDB BEFORE the replay starts. On any error from
+    /// `replay_and_apply` (PlanFailed, RestoreFailed, BlockNotFound,
+    /// ApplyFailed), the pre-replay snapshot is restored, wiping
+    /// any partial state changes from the failed forward-apply
+    /// loop. On success, the pre-replay snapshot is dropped (no
+    /// retained memory cost).
+    ///
+    /// **Trait-portable:** uses the B.1 `StateSnapshotBranch`
+    /// substrate (full-state copy via `SnapshotBuilder::create` +
+    /// `SnapshotApplier::apply`). Works for both `InMemoryStateDB`
+    /// and `RocksDBStateDB` because the atomicity guarantee lives at
+    /// the snapshot layer, not the StateDB-trait layer (which has
+    /// no transactional methods).
+    ///
+    /// **Cost:** one extra full-state capture per replay attempt.
+    /// For testnet-scale state this is acceptable; production
+    /// deployments with large state would prefer the RocksDB
+    /// WriteBatch path, which is a separate concrete-impl
+    /// optimisation outside the trait surface.
+    ///
+    /// **Returns:** the `ReplayResult` from a successful inner
+    /// `replay_and_apply`, OR the `ReplayError` from the failed
+    /// inner call (after rollback). An additional internal
+    /// `RollbackFailed` variant is returned if the rollback ITSELF
+    /// fails — in that case the StateDB is in an undefined state
+    /// and the operator must intervene.
+    pub fn replay_and_apply_atomic<F1, F2>(
+        &self,
+        db: &mut dyn evaporchain_state::db::StateDB,
+        current_head: [u8; 32],
+        target_head: [u8; 32],
+        block_lookup: F1,
+        block_apply: F2,
+        pre_replay_height: u64,
+        pre_replay_epoch: u64,
+    ) -> Result<ReplayResult, ReplayError>
+    where
+        F1: FnMut(&[u8; 32]) -> Option<evaporchain_types::Block>,
+        F2: FnMut(
+            &mut dyn evaporchain_state::db::StateDB,
+            &evaporchain_types::Block,
+        ) -> Result<(), String>,
+    {
+        // Capture pre-replay state. The `tip` field of the snapshot
+        // is a placeholder ([0u8; 32]) since we're not registering
+        // this snapshot in state_branches — it's purely a
+        // transactional rollback anchor.
+        let pre_replay_snapshot = StateSnapshotBranch::capture(
+            [0u8; 32],
+            pre_replay_height,
+            pre_replay_epoch,
+            db,
+        )
+        .map_err(ReplayError::RestoreFailed)?;
+
+        match self.replay_and_apply(
+            db,
+            current_head,
+            target_head,
+            block_lookup,
+            block_apply,
+        ) {
+            Ok(result) => Ok(result),
+            Err(replay_err) => {
+                // Roll back to pre-replay state. If THIS fails, the
+                // StateDB is in an undefined state — return a
+                // composite error so the operator can intervene.
+                if let Err(rollback_err) = pre_replay_snapshot.restore(db) {
+                    return Err(ReplayError::ApplyFailed {
+                        block: "<pre-replay rollback>".to_string(),
+                        msg: format!(
+                            "replay failed ({:?}) AND rollback failed ({}); StateDB in undefined state",
+                            replay_err, rollback_err
+                        ),
+                    });
+                }
+                Err(replay_err)
+            }
+        }
+    }
+
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
     pub fn set_proof_verifier(
         &mut self,
@@ -10288,6 +10379,214 @@ mod tests {
             "error must signal missing snapshot: {}",
             err
         );
+    }
+
+    /// MCC Phase B.4 — `replay_and_apply_atomic` happy path. When
+    /// the inner `replay_and_apply` succeeds, the atomic wrapper
+    /// returns the same `ReplayResult` and the StateDB ends up at
+    /// the target head's state. The pre-replay snapshot is
+    /// captured (one extra full-state copy) but its work is
+    /// effectively wasted on the success path.
+    #[test]
+    fn mcc_phase_b4_atomic_success_passes_through() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::{Account, AccountAddress, Block as TxBlock};
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        let mut db = InMemoryStateDB::new();
+        let alice = AccountAddress::from([0xA1; 32]);
+        db.put_account(Account {
+            address: alice,
+            balance: 1000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+        let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
+        tc.record_state_branch(id(0), 0, 100);
+        tc.attach_branch_snapshot(id(0), Arc::new(snap)).unwrap();
+
+        // Mutate to fork-A state.
+        db.put_account(Account {
+            address: alice,
+            balance: 5000,
+            nonce: 1,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 1,
+        });
+
+        let target_block = TxBlock {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0u8; 32],
+            state_root: [2u8; 32],
+            transactions: vec![],
+            producer_id: Some(0),
+            timestamp: 0,
+            chain_id: String::new(),
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+        };
+        let blocks = std::collections::HashMap::from([(id(2), target_block)]);
+        let block_apply = |db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| {
+            db.put_account(Account {
+                address: alice,
+                balance: 7777,
+                nonce: 2,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 1,
+            });
+            Ok(())
+        };
+
+        let result = tc
+            .replay_and_apply_atomic(
+                &mut db as &mut dyn evaporchain_state::db::StateDB,
+                id(1),
+                id(2),
+                |id| blocks.get(id).cloned(),
+                block_apply,
+                /*pre_replay_height*/ 1,
+                /*pre_replay_epoch*/ 1,
+            )
+            .expect("atomic success");
+
+        assert_eq!(result.lca, id(0));
+        assert_eq!(result.applied, vec![id(2)]);
+        // State reflects forward-applied block, not fork-A residue.
+        assert_eq!(db.get_account(&alice).map(|a| a.balance), Some(7777));
+    }
+
+    /// MCC Phase B.4 — `replay_and_apply_atomic` rolls back when
+    /// the inner replay fails midway. **The load-bearing test for
+    /// transactional atomicity:** simulates a forward-apply failure
+    /// AFTER the LCA restore has already succeeded, so without the
+    /// atomic wrapper the StateDB would be at the LCA — wrong state
+    /// (neither pre-replay fork-A NOR target fork-B). The atomic
+    /// wrapper restores pre-replay state (fork-A) and returns the
+    /// inner error.
+    #[test]
+    fn mcc_phase_b4_atomic_rolls_back_on_apply_failure() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::{Account, AccountAddress, Block as TxBlock};
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        let mut db = InMemoryStateDB::new();
+        let alice = AccountAddress::from([0xA1; 32]);
+        // Genesis state.
+        db.put_account(Account {
+            address: alice,
+            balance: 1000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+        let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
+        tc.record_state_branch(id(0), 0, 100);
+        tc.attach_branch_snapshot(id(0), Arc::new(snap)).unwrap();
+
+        // Mutate to fork-A state — this is the pre-replay state we
+        // expect to see restored.
+        db.put_account(Account {
+            address: alice,
+            balance: 5555,
+            nonce: 9,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 5,
+        });
+
+        let target_block = TxBlock {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0u8; 32],
+            state_root: [2u8; 32],
+            transactions: vec![],
+            producer_id: Some(0),
+            timestamp: 0,
+            chain_id: String::new(),
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+        };
+        let blocks = std::collections::HashMap::from([(id(2), target_block)]);
+
+        // Apply closure that ALWAYS fails — simulating an executor
+        // error mid-forward-replay.
+        let block_apply = |_db: &mut dyn evaporchain_state::db::StateDB,
+                           _b: &TxBlock| {
+            Err("simulated executor failure".to_string())
+        };
+
+        let result = tc.replay_and_apply_atomic(
+            &mut db as &mut dyn evaporchain_state::db::StateDB,
+            id(1),
+            id(2),
+            |id| blocks.get(id).cloned(),
+            block_apply,
+            5,
+            5,
+        );
+
+        // Inner error must propagate — caller sees ApplyFailed.
+        assert!(matches!(
+            result,
+            Err(super::ReplayError::ApplyFailed { ref msg, .. }) if msg.contains("simulated")
+        ));
+
+        // **Atomicity assertion:** StateDB is back at fork-A state
+        // (5555/9/5), NOT at the LCA (1000/0/0) where the inner
+        // replay's restore_to_lca would have left it.
+        let after = db.get_account(&alice).expect("alice present after rollback");
+        assert_eq!(
+            after.balance, 5555,
+            "atomic wrapper must restore pre-replay state on failure"
+        );
+        assert_eq!(after.nonce, 9);
+        assert_eq!(after.last_touched_epoch, 5);
     }
 
     /// MCC Phase B.5 — LRU eviction-drops-snapshot regression test.

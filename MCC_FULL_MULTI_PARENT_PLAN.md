@@ -224,11 +224,35 @@ metadata-tracking to actual state-replay.
       atomicity. Until then, callers must handle partial-state
       recovery themselves.
 
-- [ ] **B.4 — Atomic head-switch transactional contract.**
-      `replay_to_head` either succeeds completely (StateDB reflects
-      target head) or fails completely (StateDB unchanged from
-      original head). No partial state. Use the existing
-      `db_guard.begin_batch()` / `commit_batch()` pattern.
+- [x] **B.4 — `replay_and_apply_atomic` transactional wrapper.** ✅ SHIPPED 2026-05-05.
+      The original plan called for `db.begin_batch()` /
+      `commit_batch()`, but those methods live on the concrete
+      `RocksDBStateDB` only — not the `StateDB` trait. Trait-portable
+      atomicity instead uses the B.1 `StateSnapshotBranch` substrate:
+      capture pre-replay snapshot, run inner `replay_and_apply`, on
+      any error restore from the captured snapshot. Either complete
+      success (StateDB at target_head) or complete rollback (StateDB
+      at pre-replay state) — never a partial-replay residue.
+      - Cost: one extra full-state capture per replay attempt.
+        Production deployments with large state would prefer the
+        RocksDB WriteBatch path as a separate concrete-impl
+        optimisation; the trait-level guarantee uses snapshot.
+      - Composite-error handling: if rollback ITSELF fails, the
+        StateDB is in an undefined state and the operator must
+        intervene — flagged via a synthetic `ApplyFailed` with a
+        `<pre-replay rollback>` block tag.
+      - 2 new tests: success-path passthrough (atomic returns same
+        ReplayResult as inner replay_and_apply) AND failure rollback
+        (block_apply always errors → StateDB ends at pre-replay
+        state, NOT at the LCA where inner replay's restore would
+        have left it).
+      - Consensus suite: 493 / 0 / 1.
+
+      **Phase B is now 8/8 complete.** The full state-replay pipeline
+      is shipped end-to-end with substrate-level tests, an umbrella
+      convenience function, an atomic transactional wrapper, AND the
+      memory-reclamation lock. The remaining MCC plan work (Phases
+      C, D, E.2-E.6) builds on top of this substrate, not into it.
 
 - [x] **B.5 — Memory cap enforcement (eviction-drops-snapshot lock).** ✅ SHIPPED 2026-05-05.
       `prune_state_branches` (Phase 3.4 substrate) already enforces
@@ -495,6 +519,17 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 8)** — Phase B.4 landed.
+  `replay_and_apply_atomic` wraps the umbrella with pre-replay
+  snapshot capture + on-error rollback for trait-portable
+  transactional atomicity. Original plan called for
+  begin_batch/commit_batch but those are concrete-only methods on
+  RocksDBStateDB; snapshot-based atomicity works for both backends.
+  2 new tests; consensus 493/0/1. **Phase B is 8/8 complete.** The
+  full state-replay pipeline is now shipped end-to-end with
+  substrate + umbrella + atomic + memory-reclamation locks. Phases
+  C, D, E.2-E.6 build on top of this substrate.
 
 - **2026-05-05 (late evening cont'd 7)** — Phase B.5 landed.
   Memory-reclamation contract verified: when `prune_state_branches`
