@@ -474,6 +474,51 @@ impl LightConeBranchSnapshot for StateSnapshotBranch {
     }
 }
 
+/// MCC Phase B.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` — successful
+/// outcome of `replay_and_apply`. Records the LCA the replay
+/// rolled back to (if any) and the sequence of blocks that were
+/// applied forward to reach the target head.
+///
+/// Operators can compare `applied` against
+/// `plan_replay_to_head(...).forward_path` to confirm the executor
+/// completed every step the plan called for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayResult {
+    pub lca: [u8; 32],
+    pub applied: Vec<[u8; 32]>,
+}
+
+/// MCC Phase B.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` — error
+/// returned by `replay_and_apply`.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ReplayError {
+    /// `plan_replay_to_head` returned None — usually means one of
+    /// the heads is missing from the Light-Cone DAG, or the two
+    /// heads have no common ancestor (e.g. they're on independent
+    /// genesis-disjoint subgraphs, which shouldn't happen under
+    /// normal chain operation).
+    #[error("planning failed: from or to head absent, or no common ancestor")]
+    PlanFailed,
+
+    /// `restore_to_lca` failed — most likely the LCA isn't tracked
+    /// in `state_branches` or has no attached snapshot.
+    #[error("restore_to_lca failed: {0}")]
+    RestoreFailed(String),
+
+    /// A block in `plan.forward_path` couldn't be looked up by the
+    /// caller's `block_lookup` closure. The replay halts at this
+    /// block; state is in a partial state (LCA + any earlier
+    /// forward_path entries already applied). Caller is responsible
+    /// for atomic rollback under failure (Phase B.4 separate work).
+    #[error("block_lookup returned None for {0}")]
+    BlockNotFound(String),
+
+    /// `block_apply` returned an error for a specific block. State
+    /// is partial; same atomic-rollback caveat as `BlockNotFound`.
+    #[error("block_apply failed for {block}: {msg}")]
+    ApplyFailed { block: String, msg: String },
+}
+
 /// MCC Phase B.0+ of `MCC_FULL_MULTI_PARENT_PLAN.md` — planning
 /// output of `TendermintConsensus::plan_replay_to_head`.
 ///
@@ -2814,6 +2859,81 @@ impl TendermintConsensus {
             )
         })?;
         snapshot.restore(db)
+    }
+
+    /// MCC Phase B.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` — the
+    /// **umbrella hot-path integration** for state replay. Composes
+    /// the substrate primitives (B.0+ planning + B.2 restore +
+    /// caller-supplied block lookup + caller-supplied block apply)
+    /// into a single call that moves the StateDB from
+    /// `current_head`'s state to `target_head`'s state.
+    ///
+    /// **Closure-driven design** rather than trait-based: callers
+    /// supply `block_lookup` and `block_apply` as closures so the
+    /// consensus crate doesn't need to depend on a specific
+    /// executor type or block-store interface. The closures define
+    /// the integration points:
+    ///   - `block_lookup(&id) -> Option<Block>`: how to fetch a
+    ///     block by its DAG id (typically wraps `chain_store` or
+    ///     `block_history`).
+    ///   - `block_apply(db, &block) -> Result<(), String>`: how to
+    ///     execute the block against the StateDB (typically
+    ///     `executor.execute_block(db, &block)`).
+    ///
+    /// **Sequence:**
+    ///   1. `plan_replay_to_head(current_head, target_head)` — pure
+    ///      planning. Errors out as `PlanFailed` if either head is
+    ///      missing from the DAG.
+    ///   2. `restore_to_lca(&plan, db)` — wipes the StateDB back to
+    ///      the LCA's captured state if `rollback_required`. Errors
+    ///      as `RestoreFailed`.
+    ///   3. For each `block_id in plan.forward_path`:
+    ///      a. `block_lookup(block_id)` — fetch the block. Errors
+    ///         as `BlockNotFound`.
+    ///      b. `block_apply(db, &block)` — execute. Errors as
+    ///         `ApplyFailed { block, msg }`.
+    ///
+    /// **Atomicity caveat (Phase B.4 follow-up):** if step 3 fails
+    /// midway, the StateDB is in a partial state — at the LCA plus
+    /// any earlier `forward_path` entries already applied. Phase B.4
+    /// will wrap the whole thing in `db.begin_batch()` /
+    /// `commit_batch()` for transactional atomicity. For now,
+    /// callers must handle partial-state recovery themselves.
+    pub fn replay_and_apply<F1, F2>(
+        &self,
+        db: &mut dyn evaporchain_state::db::StateDB,
+        current_head: [u8; 32],
+        target_head: [u8; 32],
+        mut block_lookup: F1,
+        mut block_apply: F2,
+    ) -> Result<ReplayResult, ReplayError>
+    where
+        F1: FnMut(&[u8; 32]) -> Option<evaporchain_types::Block>,
+        F2: FnMut(
+            &mut dyn evaporchain_state::db::StateDB,
+            &evaporchain_types::Block,
+        ) -> Result<(), String>,
+    {
+        let plan = self
+            .plan_replay_to_head(current_head, target_head)
+            .ok_or(ReplayError::PlanFailed)?;
+        self.restore_to_lca(&plan, db)
+            .map_err(ReplayError::RestoreFailed)?;
+        let mut applied: Vec<[u8; 32]> = Vec::with_capacity(plan.forward_path.len());
+        for block_id in &plan.forward_path {
+            let block = block_lookup(block_id).ok_or_else(|| {
+                ReplayError::BlockNotFound(hex::encode(block_id))
+            })?;
+            block_apply(db, &block).map_err(|msg| ReplayError::ApplyFailed {
+                block: hex::encode(block_id),
+                msg,
+            })?;
+            applied.push(*block_id);
+        }
+        Ok(ReplayResult {
+            lca: plan.lca,
+            applied,
+        })
     }
 
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
@@ -10168,6 +10288,235 @@ mod tests {
             "error must signal missing snapshot: {}",
             err
         );
+    }
+
+    /// MCC Phase B.3 — `replay_and_apply` happy path: branch switch
+    /// with full closure-driven composition. Asserts the umbrella
+    /// function correctly orchestrates plan + restore + forward-apply
+    /// AND returns a `ReplayResult` listing every applied block.
+    #[test]
+    fn mcc_phase_b3_replay_and_apply_branch_switch_happy_path() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::{Account, AccountAddress, Block as TxBlock};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Diamond: 0 → 1, 0 → 2.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Set up genesis state + capture snapshot at LCA.
+        let mut db = InMemoryStateDB::new();
+        let alice = AccountAddress::from([0xA1; 32]);
+        db.put_account(Account {
+            address: alice,
+            balance: 1000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+        let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
+        tc.record_state_branch(id(0), 0, 100);
+        tc.attach_branch_snapshot(id(0), Arc::new(snap)).unwrap();
+
+        // Mutate to fork-A state.
+        db.put_account(Account {
+            address: alice,
+            balance: 5000,
+            nonce: 1,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 1,
+        });
+
+        // Build a synthetic block-store: id(2) → balance=2222.
+        let block_id_2 = id(2);
+        let mut blocks: HashMap<[u8; 32], TxBlock> = HashMap::new();
+        blocks.insert(
+            block_id_2,
+            TxBlock {
+                number: 1,
+                epoch: 1,
+                parent_hash: [0u8; 32],
+                state_root: [2u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+            },
+        );
+
+        // Closures: lookup from blocks map, apply by mutating alice
+        // to balance=2222 (simulated execute_block).
+        let block_lookup = |id: &[u8; 32]| blocks.get(id).cloned();
+        let block_apply = |db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| {
+            db.put_account(Account {
+                address: alice,
+                balance: 2222,
+                nonce: 1,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 1,
+            });
+            Ok(())
+        };
+
+        // Replay: from id(1) (current fork-A head) → id(2) (target
+        // fork-B head). LCA is genesis, rollback required, forward
+        // path = [id(2)].
+        let result = tc
+            .replay_and_apply(
+                &mut db as &mut dyn evaporchain_state::db::StateDB,
+                id(1),
+                id(2),
+                block_lookup,
+                block_apply,
+            )
+            .expect("replay_and_apply succeeds");
+
+        assert_eq!(result.lca, id(0));
+        assert_eq!(result.applied, vec![id(2)]);
+
+        // State must reflect block_apply's mutation (balance=2222),
+        // NOT fork-A (5000) nor genesis (1000).
+        assert_eq!(
+            db.get_account(&alice).map(|a| a.balance),
+            Some(2222),
+            "final state = forward-applied block, not fork-A residue"
+        );
+    }
+
+    /// MCC Phase B.3 — `replay_and_apply` returns `BlockNotFound`
+    /// when the caller's `block_lookup` returns None. Locks the
+    /// contract: missing blocks fail loudly, not silently.
+    #[test]
+    fn mcc_phase_b3_replay_and_apply_block_not_found() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::Block as TxBlock;
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        let mut db = InMemoryStateDB::new();
+        let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
+        tc.record_state_branch(id(0), 0, 100);
+        tc.attach_branch_snapshot(id(0), Arc::new(snap)).unwrap();
+
+        let result = tc.replay_and_apply(
+            &mut db as &mut dyn evaporchain_state::db::StateDB,
+            id(1),
+            id(2),
+            |_id: &[u8; 32]| -> Option<TxBlock> { None }, // never resolves
+            |_db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| Ok(()),
+        );
+        assert!(matches!(result, Err(super::ReplayError::BlockNotFound(_))));
+    }
+
+    /// MCC Phase B.3 — `replay_and_apply` returns `PlanFailed`
+    /// when one of the heads is missing from the DAG.
+    #[test]
+    fn mcc_phase_b3_replay_and_apply_plan_failed_on_missing_head() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::Block as TxBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+
+        let mut db = InMemoryStateDB::new();
+        let result = tc.replay_and_apply(
+            &mut db as &mut dyn evaporchain_state::db::StateDB,
+            id(0),
+            id(99), // not in DAG
+            |_id: &[u8; 32]| -> Option<TxBlock> { None },
+            |_db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| Ok(()),
+        );
+        assert!(matches!(result, Err(super::ReplayError::PlanFailed)));
+    }
+
+    /// MCC Phase B.3 — `replay_and_apply` propagates `block_apply`
+    /// errors as `ApplyFailed`. Locks the contract: caller-side
+    /// failures don't get swallowed.
+    #[test]
+    fn mcc_phase_b3_replay_and_apply_apply_failed_propagates_error() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::Block as TxBlock;
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+
+        let mut db = InMemoryStateDB::new();
+        let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
+        tc.record_state_branch(id(0), 0, 100);
+        tc.attach_branch_snapshot(id(0), Arc::new(snap)).unwrap();
+
+        let result = tc.replay_and_apply(
+            &mut db as &mut dyn evaporchain_state::db::StateDB,
+            id(0),
+            id(1),
+            |_id: &[u8; 32]| -> Option<TxBlock> {
+                Some(TxBlock {
+                    number: 1,
+                    epoch: 1,
+                    parent_hash: [0u8; 32],
+                    state_root: [0u8; 32],
+                    transactions: vec![],
+                    producer_id: Some(0),
+                    timestamp: 0,
+                    chain_id: String::new(),
+                    commit_certificate: None,
+                    nova_proof: None,
+                    anchor_hash: None,
+                    vrf_output: None,
+                    vrf_proof: None,
+                    data_root: None,
+                    da_row_roots: vec![],
+                    da_col_roots: vec![],
+                    blob_commitments: vec![],
+                    da_certificate: None,
+                    state_function_commitment: None,
+                    oracle_state_root: None,
+                    shard_count: None,
+                    protocol_version: 0,
+                    state_root_version: 0,
+                    submit_epoch_hints: vec![],
+                    parents: vec![],
+                })
+            },
+            |_db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| {
+                Err("simulated executor failure".to_string())
+            },
+        );
+        match result {
+            Err(super::ReplayError::ApplyFailed { ref msg, .. }) => {
+                assert!(msg.contains("simulated executor failure"));
+            }
+            other => panic!("expected ApplyFailed, got {:?}", other),
+        }
     }
 
     /// MCC Phase B.6 — END-TO-END INTEGRATION TEST.

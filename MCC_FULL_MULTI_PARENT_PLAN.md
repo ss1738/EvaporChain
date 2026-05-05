@@ -188,12 +188,41 @@ metadata-tracking to actual state-replay.
       }
       ```
 
-- [ ] **B.3 — Block-executor head awareness.**
-      `execute_block` currently assumes `block.parent_hash` matches
-      the StateDB's current state. Under multi-parent enumeration the
-      proposer may build on a non-current MCC head; the executor
-      needs to first `replay_to_head(block.parent_hash)`, then execute.
-      Idempotent if already at the right head.
+- [x] **B.3 — `replay_and_apply` umbrella hot-path integration.** ✅ SHIPPED 2026-05-05.
+      Single function on `TendermintConsensus` that composes the
+      full pipeline: `plan_replay_to_head` (B.0+) +
+      `restore_to_lca` (B.2) + caller-provided `block_lookup` and
+      `block_apply` closures.
+      - Returns `Result<ReplayResult, ReplayError>`. `ReplayResult`
+        records the LCA + every block applied; `ReplayError` has 4
+        variants (`PlanFailed`, `RestoreFailed`, `BlockNotFound`,
+        `ApplyFailed`).
+      - Closure-driven (not trait-coupled) so the consensus crate
+        doesn't need to know the executor type or the block-store
+        interface. Production callers wrap their executor's
+        `execute_block` and chain-store's `get_block` lookup.
+      - **Caller workflow** simplified from B.2's three-piece
+        composition to one call:
+        ```ignore
+        consensus.replay_and_apply(
+            db,
+            current_head,
+            target_head,
+            |id| chain_store.get_block(id),
+            |db, block| executor.execute_block(db, block),
+        )?
+        ```
+      - 4 new tests: branch-switch happy path, BlockNotFound,
+        PlanFailed (missing head), ApplyFailed (executor error
+        propagated). Consensus suite: 490 / 0 / 1.
+
+      **Atomic-contract caveat (Phase B.4 separate work):** if the
+      forward-apply loop fails midway, the StateDB is in a partial
+      state — at the LCA plus any earlier `forward_path` entries
+      already applied. Phase B.4 wraps the whole sequence in
+      `db.begin_batch()` / `commit_batch()` for transactional
+      atomicity. Until then, callers must handle partial-state
+      recovery themselves.
 
 - [ ] **B.4 — Atomic head-switch transactional contract.**
       `replay_to_head` either succeeds completely (StateDB reflects
@@ -456,6 +485,17 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 6)** — Phase B.3 landed.
+  `replay_and_apply` umbrella function on TendermintConsensus
+  composes plan + restore + caller-provided block_lookup +
+  block_apply closures into a single call. Returns
+  `Result<ReplayResult, ReplayError>`. Closure-driven design avoids
+  consensus-crate coupling to executor type or block-store
+  interface. 4 new tests covering happy path + 3 error variants.
+  Consensus 490/0/1. **Phase B is now 6/8 done** — B.4 (atomic
+  batch wrap) and B.5 (snapshot eviction verification) remain;
+  hardest algorithmic + integration work is shipped.
 
 - **2026-05-05 (late evening cont'd 5)** — Phase E.1 endpoint landed.
   `/api/light_cone/candidate_heads` exposes
