@@ -100,6 +100,22 @@ ships `state_branches: HashMap<BlockId, LightConeBranchMetadata>` and
 the `LightConeBranchSnapshot` trait. Phase B extends that from
 metadata-tracking to actual state-replay.
 
+- [x] **B.0 — LCA + block-path primitives on `LightCone`.** ✅ SHIPPED 2026-05-05.
+      Foundation for B.2 (`replay_to_head`). Pure DAG operations on
+      the existing `evaporchain-light-cone::dag` module:
+      - `find_lca(lc, a, b) -> Option<BlockId>` — Lowest Common
+        Ancestor; deepest (highest `observed_epoch`) common ancestor
+        wins, smaller-`BlockId` tiebreak. None when either block is
+        absent OR no common ancestor.
+      - `block_path_from_to(lc, from, to) -> Option<Vec<BlockId>>` —
+        first-parent path from `from` (excluded) to `to` (included)
+        in chronological order. None when `from` is not a first-parent
+        ancestor of `to`. `from == to` returns `Some(vec![])`.
+      - 10 unit tests across linear / diamond / 3-fork / unrelated /
+        missing-block / self-LCA / replay-walk-composition cases.
+      - Light-cone test suite: 51 / 0 / 0 (was 41).
+      - Re-exported from `evaporchain_light_cone` crate root.
+
 - [ ] **B.1 — Concrete `LightConeBranchSnapshot` impl in `evaporchain-state`.**
       Today the trait is consumed by `attach_branch_snapshot` on
       `TendermintConsensus` but no production impl exists; the trait
@@ -366,6 +382,14 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening)** — Phase B.0 landed. Pure DAG primitives:
+  `find_lca` and `block_path_from_to` added to
+  `evaporchain-light-cone::dag`. 10 new unit tests; light-cone suite
+  51 / 0 / 0. Foundation for B.2 (`replay_to_head`) — the executor
+  side will compose these to derive replay walks. B.2-B.5 (executor
+  integration + RocksDB snapshots + atomic head-switch + memory cap)
+  remain for the next focused session.
 
 - **2026-05-05 (evening)** — Phase A landed. A.1 + A.3 + A.4 shipped;
   A.2 deferred to Phase C.

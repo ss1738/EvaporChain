@@ -213,6 +213,101 @@ pub fn causal_past(lc: &LightCone, start: BlockId) -> BTreeSet<BlockId> {
     visited
 }
 
+/// Phase B.0 of `MCC_FULL_MULTI_PARENT_PLAN.md` — Lowest Common
+/// Ancestor of two blocks in the DAG. The LCA is the deepest (most
+/// recent) ancestor present in both `causal_past(a) ∪ {a}` and
+/// `causal_past(b) ∪ {b}`. Returns `None` if either block is absent
+/// from the DAG OR if no common ancestor exists.
+///
+/// **Why "deepest" ancestor:** for state replay, we want the closest
+/// branch point — replaying from the deeper LCA is cheaper than
+/// replaying from a shallower common ancestor like genesis. "Deepest"
+/// is determined by `observed_epoch` (highest wins); ties are broken
+/// by smallest `BlockId` for validator-determinism.
+///
+/// `find_lca(lc, a, a)` returns `Some(a)` (every block is its own LCA).
+///
+/// Pairs with `block_path_from_to` for the full replay-walk: find the
+/// LCA, walk forward from LCA to the target.
+pub fn find_lca(lc: &LightCone, a: BlockId, b: BlockId) -> Option<BlockId> {
+    if !lc.contains(&a) || !lc.contains(&b) {
+        return None;
+    }
+    let mut ancestors_a = causal_past(lc, a);
+    ancestors_a.insert(a);
+    let mut ancestors_b = causal_past(lc, b);
+    ancestors_b.insert(b);
+    let common: BTreeSet<BlockId> = ancestors_a
+        .intersection(&ancestors_b)
+        .copied()
+        .collect();
+    if common.is_empty() {
+        return None;
+    }
+    let mut best: Option<(BlockId, u64)> = None;
+    for id in &common {
+        if let Some(blk) = lc.get(id) {
+            best = match best {
+                None => Some((*id, blk.observed_epoch)),
+                Some((_, prev_epoch)) if blk.observed_epoch > prev_epoch => {
+                    Some((*id, blk.observed_epoch))
+                }
+                Some((prev_id, prev_epoch))
+                    if blk.observed_epoch == prev_epoch && *id < prev_id =>
+                {
+                    Some((*id, prev_epoch))
+                }
+                Some(prev) => Some(prev),
+            };
+        }
+    }
+    best.map(|(id, _)| id)
+}
+
+/// Phase B.0 of `MCC_FULL_MULTI_PARENT_PLAN.md` — first-parent path
+/// from `from` (exclusive) to `to` (inclusive), in chronological
+/// order. Returns `None` if `from` is not an ancestor of `to` along
+/// the first-parent chain, or if either block is absent from the DAG.
+///
+/// `from == to` returns `Some(vec![])` (empty path; nothing to apply).
+///
+/// **Multi-parent semantics:** walks `parents[0]` only — matches the
+/// existing `first_parent_trajectory` convention in
+/// `evaporchain-consensus::fork_choice`. For Phase B.2's
+/// `replay_to_head`, this is the correct semantics: roll forward
+/// along the canonical first-parent chain. Multi-parent reachability
+/// is the responsibility of antichain finalization (Phase 4.2,
+/// already shipped), not state replay.
+pub fn block_path_from_to(
+    lc: &LightCone,
+    from: BlockId,
+    to: BlockId,
+) -> Option<Vec<BlockId>> {
+    if !lc.contains(&from) || !lc.contains(&to) {
+        return None;
+    }
+    if from == to {
+        return Some(vec![]);
+    }
+    let mut path: Vec<BlockId> = Vec::new();
+    let mut visited: BTreeSet<BlockId> = BTreeSet::new();
+    let mut cur = to;
+    while cur != from {
+        if !visited.insert(cur) {
+            return None; // cycle guard (DAGs shouldn't cycle, but be safe)
+        }
+        path.push(cur);
+        match lc.get(&cur) {
+            Some(b) if !b.parents.is_empty() => {
+                cur = b.parents[0];
+            }
+            _ => return None, // reached genesis or unknown block without finding `from`
+        }
+    }
+    path.reverse();
+    Some(path)
+}
+
 /// All blocks (transitively) reachable via child edges from `start`,
 /// excluding `start` itself. Returns empty set if `start` is absent.
 pub fn causal_future(lc: &LightCone, start: BlockId) -> BTreeSet<BlockId> {
@@ -381,5 +476,157 @@ mod tests {
         let pruned = lc.prune_orphan_branch(id(3));
         assert_eq!(pruned.len(), 4, "all 4 blocks pruned: {:?}", pruned);
         assert!(lc.is_empty());
+    }
+
+    // ── MCC Phase B.0 — find_lca + block_path_from_to ────────────────
+
+    /// MCC Phase B.0 — every block is its own LCA.
+    #[test]
+    fn find_lca_self_is_self() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        assert_eq!(find_lca(&lc, id(0), id(0)), Some(id(0)));
+    }
+
+    /// MCC Phase B.0 — missing block → None.
+    #[test]
+    fn find_lca_missing_block_returns_none() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        assert_eq!(find_lca(&lc, id(0), id(99)), None);
+        assert_eq!(find_lca(&lc, id(99), id(0)), None);
+    }
+
+    /// MCC Phase B.0 — linear chain LCA is the lower of the two.
+    /// Locks the contract: when one is an ancestor of the other,
+    /// the LCA is that ancestor.
+    #[test]
+    fn find_lca_linear_chain_is_lower_of_two() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();        // genesis
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();    // depth 1
+        lc.insert(Block::new(id(2), vec![id(1)], 800, 2)).unwrap();    // depth 2
+        // LCA of depth-2 and depth-1: depth-1 (the deeper of the two).
+        assert_eq!(find_lca(&lc, id(2), id(1)), Some(id(1)));
+        assert_eq!(find_lca(&lc, id(1), id(2)), Some(id(1)));
+        // LCA of depth-2 and genesis: genesis.
+        assert_eq!(find_lca(&lc, id(2), id(0)), Some(id(0)));
+    }
+
+    /// MCC Phase B.0 — diamond DAG. Two children of genesis merge
+    /// into a descendant. LCA of the two children is genesis;
+    /// LCA of either child with the merge node is that child.
+    #[test]
+    fn find_lca_diamond_dag() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();        // genesis
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();    // child A
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();    // child B (sibling of A)
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap(); // merge
+
+        // LCA of A and B: genesis (the only common ancestor).
+        assert_eq!(find_lca(&lc, id(1), id(2)), Some(id(0)));
+        // LCA of merge and A: A (A is on the path to merge).
+        assert_eq!(find_lca(&lc, id(3), id(1)), Some(id(1)));
+        // LCA of merge and B: B.
+        assert_eq!(find_lca(&lc, id(3), id(2)), Some(id(2)));
+    }
+
+    /// MCC Phase B.0 — when multiple common ancestors exist with
+    /// different epochs, the deepest (highest observed_epoch) wins.
+    /// Locks the contract for replay-cost minimisation: replaying
+    /// from a deeper LCA is cheaper than from a shallower one.
+    #[test]
+    fn find_lca_picks_deepest_common_ancestor() {
+        let mut lc = LightCone::new();
+        // Linear chain: 0 → 1 → 2; then 3 forks off 2 and 4 also off 2.
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(1)], 800, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(2)], 700, 3)).unwrap();
+        lc.insert(Block::new(id(4), vec![id(2)], 700, 3)).unwrap();
+        // LCA of 3 and 4 should be 2 (epoch 2) — NOT 0 or 1.
+        assert_eq!(find_lca(&lc, id(3), id(4)), Some(id(2)));
+    }
+
+    /// MCC Phase B.0 — block_path_from_to: empty path when from == to.
+    #[test]
+    fn block_path_from_to_self_is_empty() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        assert_eq!(block_path_from_to(&lc, id(0), id(0)), Some(vec![]));
+    }
+
+    /// MCC Phase B.0 — block_path_from_to: linear ancestor → descendant.
+    /// Returns the chronological path with `from` excluded, `to` included.
+    #[test]
+    fn block_path_from_to_linear_chain() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(1)], 800, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(2)], 700, 3)).unwrap();
+
+        // Path from genesis (excluded) to depth-3 (included): [1, 2, 3].
+        assert_eq!(
+            block_path_from_to(&lc, id(0), id(3)),
+            Some(vec![id(1), id(2), id(3)])
+        );
+        // Path from depth-1 (excluded) to depth-3 (included): [2, 3].
+        assert_eq!(
+            block_path_from_to(&lc, id(1), id(3)),
+            Some(vec![id(2), id(3)])
+        );
+    }
+
+    /// MCC Phase B.0 — when `from` is NOT an ancestor of `to` along
+    /// the first-parent chain, returns None. Locks the contract: the
+    /// caller must verify ancestry (or use `find_lca` first).
+    #[test]
+    fn block_path_from_to_unrelated_returns_none() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap(); // sibling of 1
+
+        // 1 is NOT an ancestor of 2 (siblings of genesis).
+        assert_eq!(block_path_from_to(&lc, id(1), id(2)), None);
+        assert_eq!(block_path_from_to(&lc, id(2), id(1)), None);
+    }
+
+    /// MCC Phase B.0 — missing block → None.
+    #[test]
+    fn block_path_from_to_missing_block_returns_none() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        assert_eq!(block_path_from_to(&lc, id(0), id(99)), None);
+        assert_eq!(block_path_from_to(&lc, id(99), id(0)), None);
+    }
+
+    /// MCC Phase B.0 — composition test: find_lca + block_path_from_to
+    /// give a complete replay walk for the diamond case.
+    /// Locks the intended Phase B.2 usage pattern.
+    #[test]
+    fn find_lca_then_path_gives_replay_walk() {
+        // Diamond: 0 → 1, 0 → 2, both → 3.
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap();
+
+        // To replay from head=1 to head=2: LCA=0, then walk 0 → 2.
+        let lca = find_lca(&lc, id(1), id(2)).unwrap();
+        assert_eq!(lca, id(0));
+        let path = block_path_from_to(&lc, lca, id(2)).unwrap();
+        assert_eq!(path, vec![id(2)], "from genesis to id(2): apply id(2)");
+
+        // The "rollback" half — from id(1) back to LCA — is the
+        // executor's responsibility (Phase B.2). This substrate
+        // gives the path; the executor walks parents of id(1) until
+        // it hits LCA. block_path_from_to(lca, id(1)) reconstructs
+        // the forward direction:
+        let forward = block_path_from_to(&lc, lca, id(1)).unwrap();
+        assert_eq!(forward, vec![id(1)]);
     }
 }

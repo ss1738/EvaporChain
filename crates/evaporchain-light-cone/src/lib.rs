@@ -50,7 +50,9 @@ pub use concurrency::{
     closing_antichain, closing_antichain_digest, comparable, digest_antichain,
     find_first_divergence, is_antichain, is_concurrent, precedes, DivergencePoint,
 };
-pub use dag::{causal_future, causal_past, LightCone, LightConeError};
+pub use dag::{
+    block_path_from_to, causal_future, causal_past, find_lca, LightCone, LightConeError,
+};
 
 #[cfg(test)]
 mod press_claim_tests {
