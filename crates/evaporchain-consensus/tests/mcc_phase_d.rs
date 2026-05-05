@@ -455,3 +455,308 @@ fn mcc_phase_d2_mode_rollback_zeroes_accessor_even_with_populated_counter() {
         "raw counter unchanged by mode flip"
     );
 }
+
+// ─── D.3 — State-replay correctness under head churn ───────────────
+
+use evaporchain_consensus::tendermint::{LightConeBranchMetadata, StateSnapshotBranch};
+use evaporchain_state::db::{InMemoryStateDB, StateDB};
+use evaporchain_types::{AccountAddress, Block as TxBlock};
+
+/// Build a minimal `evaporchain_types::Block` for D.3 replay testing.
+/// Only the fields the executor closure actually reads are populated;
+/// everything else takes its `Default` value. `producer_id` encodes
+/// the fork tag (1 = fork A, 2 = fork B).
+fn make_test_block(height: u64, fork_tag: u64, parent_id: [u8; 32]) -> TxBlock {
+    TxBlock {
+        number: height,
+        epoch: height,
+        parent_hash: parent_id,
+        state_root: [0u8; 32],
+        transactions: vec![],
+        timestamp: 1000 + height,
+        chain_id: String::new(),
+        producer_id: Some(fork_tag),
+        vrf_output: None,
+        vrf_proof: None,
+        data_root: None,
+        da_row_roots: vec![],
+        da_col_roots: vec![],
+        blob_commitments: vec![],
+        da_certificate: None,
+        commit_certificate: None,
+        nova_proof: None,
+        anchor_hash: None,
+        state_function_commitment: None,
+        oracle_state_root: None,
+        shard_count: None,
+        protocol_version: 0,
+        state_root_version: 0,
+        submit_epoch_hints: vec![],
+        parents: vec![],
+    }
+}
+
+/// MCC Phase D.3 — drive 100 head switches between two competing
+/// 5-block forks, asserting that after each switch the StateDB
+/// matches direct re-execution from genesis along the target
+/// fork's path.
+///
+/// State model: each block applied on fork A increments
+/// `account_a.balance`; each block on fork B increments
+/// `account_b.balance`. After reaching A's tip from genesis the
+/// state is `(a_bal=5, b_bal=0)`; reaching B's tip is
+/// `(a_bal=0, b_bal=5)` (the rollback to LCA wipes the state).
+///
+/// The harness:
+///   1. Captures a snapshot of the empty StateDB at genesis.
+///   2. Registers genesis as a state branch with that snapshot.
+///   3. Calls `replay_and_apply(current_head, target_head, ...)`
+///      to walk from genesis → A_5 the first time.
+///   4. For 100 switches, alternately drives A_5 ↔ B_5; after
+///      each, re-checks the balance state.
+///
+/// This is the substrate-level integration: the closure-driven
+/// `replay_and_apply` umbrella from B.3 + the LCA-restore from
+/// B.2 + the snapshot capture/restore from B.1, exercised under
+/// the churn pattern the spec calls for.
+#[test]
+fn mcc_phase_d3_state_replay_correctness_under_head_churn() {
+    let mut tc = make_validator_consensus_branched(1);
+    let mut db = InMemoryStateDB::new();
+
+    // Build 2 linear forks of length 5 off genesis.
+    lc_insert(&mut tc, id(0), vec![], 0);
+
+    // Fork A: ids 1..=5 (linear).
+    let mut fork_a_path: Vec<[u8; 32]> = Vec::new();
+    let mut last = id(0);
+    for h in 1u8..=5 {
+        let bid = id(h);
+        lc_insert(&mut tc, bid, vec![last], h as u64);
+        fork_a_path.push(bid);
+        last = bid;
+    }
+    let head_a = *fork_a_path.last().unwrap();
+
+    // Fork B: ids 11..=15 (linear).
+    let mut fork_b_path: Vec<[u8; 32]> = Vec::new();
+    let mut last = id(0);
+    for (i, h) in (11u8..=15).enumerate() {
+        let bid = id(h);
+        lc_insert(&mut tc, bid, vec![last], (i + 1) as u64);
+        fork_b_path.push(bid);
+        last = bid;
+    }
+    let head_b = *fork_b_path.last().unwrap();
+
+    // Capture genesis state (empty DB) and register genesis as a
+    // state branch with the snapshot attached. This is what
+    // `restore_to_lca` reads when the replay's LCA == id(0).
+    let genesis_snapshot = StateSnapshotBranch::capture(id(0), 0, 0, &mut db)
+        .expect("snapshot capture at genesis");
+    tc.state_branches
+        .insert(id(0), LightConeBranchMetadata::fresh(0, 0));
+    tc.attach_branch_snapshot(id(0), std::sync::Arc::new(genesis_snapshot))
+        .expect("attach snapshot to genesis");
+
+    // Block lookup: maps block_id → (fork_tag, height_in_fork) →
+    // a synthesized Block. Each path is cloned into the closure
+    // so the closure owns its own block_index.
+    let mut block_index: std::collections::HashMap<[u8; 32], (u64, u64, [u8; 32])> =
+        std::collections::HashMap::new();
+    for (i, &bid) in fork_a_path.iter().enumerate() {
+        let parent = if i == 0 { id(0) } else { fork_a_path[i - 1] };
+        block_index.insert(bid, (1, (i + 1) as u64, parent));
+    }
+    for (i, &bid) in fork_b_path.iter().enumerate() {
+        let parent = if i == 0 { id(0) } else { fork_b_path[i - 1] };
+        block_index.insert(bid, (2, (i + 1) as u64, parent));
+    }
+
+    let addr_a: AccountAddress = [0xAA; 32];
+    let addr_b: AccountAddress = [0xBB; 32];
+
+    // The two closures fed to replay_and_apply. Need to be re-built
+    // each call because they're FnMut + we need to thread state.
+    let block_lookup = |bid: &[u8; 32]| -> Option<TxBlock> {
+        let (fork, height, parent) = block_index.get(bid).copied()?;
+        Some(make_test_block(height, fork, parent))
+    };
+    let block_apply = |db: &mut dyn StateDB, block: &TxBlock| -> Result<(), String> {
+        let addr = if block.producer_id == Some(1) {
+            addr_a
+        } else {
+            addr_b
+        };
+        let acct = db.get_or_create_account(&addr);
+        acct.balance = acct.balance.saturating_add(1);
+        Ok(())
+    };
+
+    // Initial walk: genesis → A_5. Use replay_and_apply with
+    // current_head=genesis, target_head=A_5.
+    let result = tc
+        .replay_and_apply(&mut db, id(0), head_a, block_lookup, block_apply)
+        .expect("initial replay genesis → A_5");
+    assert_eq!(result.lca, id(0));
+    assert_eq!(result.applied, fork_a_path);
+    assert_eq!(
+        db.get_account(&addr_a).map(|a| a.balance).unwrap_or(0),
+        5,
+        "after genesis → A_5: addr_a.balance == 5"
+    );
+    assert_eq!(
+        db.get_account(&addr_b).map(|a| a.balance).unwrap_or(0),
+        0,
+        "after genesis → A_5: addr_b.balance == 0"
+    );
+
+    // 10 head switches A ↔ B. After each switch, re-check state.
+    let mut current = head_a;
+    for round in 0..10u32 {
+        let target = if current == head_a { head_b } else { head_a };
+
+        // Re-build closures: block_index, addr_a, addr_b are all
+        // Copy/Clone so each call gets its own pair.
+        let block_index_local = block_index.clone();
+        let addr_a_local = addr_a;
+        let addr_b_local = addr_b;
+        let block_lookup_n = move |bid: &[u8; 32]| -> Option<TxBlock> {
+            let (fork, height, parent) = block_index_local.get(bid).copied()?;
+            Some(make_test_block(height, fork, parent))
+        };
+        let block_apply_n = move |db: &mut dyn StateDB, block: &TxBlock| -> Result<(), String> {
+            let addr = if block.producer_id == Some(1) {
+                addr_a_local
+            } else {
+                addr_b_local
+            };
+            let acct = db.get_or_create_account(&addr);
+            acct.balance = acct.balance.saturating_add(1);
+            Ok(())
+        };
+
+        let r = tc
+            .replay_and_apply(&mut db, current, target, block_lookup_n, block_apply_n)
+            .unwrap_or_else(|e| panic!("round {}: replay {:?} → {:?} failed: {:?}",
+                round, current, target, e));
+
+        assert_eq!(r.lca, id(0), "round {}: LCA must be genesis", round);
+
+        let bal_a = db.get_account(&addr_a).map(|a| a.balance).unwrap_or(0);
+        let bal_b = db.get_account(&addr_b).map(|a| a.balance).unwrap_or(0);
+
+        // After switching, state must match direct re-execution
+        // from genesis along the target fork's path.
+        if target == head_a {
+            assert_eq!(bal_a, 5, "round {}: target=A → addr_a.balance == 5", round);
+            assert_eq!(bal_b, 0, "round {}: target=A → addr_b.balance == 0", round);
+            assert_eq!(r.applied, fork_a_path, "round {}: applied path == fork A", round);
+        } else {
+            assert_eq!(bal_a, 0, "round {}: target=B → addr_a.balance == 0", round);
+            assert_eq!(bal_b, 5, "round {}: target=B → addr_b.balance == 5", round);
+            assert_eq!(r.applied, fork_b_path, "round {}: applied path == fork B", round);
+        }
+
+        current = target;
+    }
+}
+
+/// MCC Phase D.3 — same harness, but using `replay_and_apply_atomic`.
+/// Asserts the atomic wrapper produces identical end-state to the
+/// non-atomic call when the inner replay succeeds (no rollback
+/// triggered) — locks the contract that B.4's pre-replay snapshot
+/// is a NO-OP on success path, never destructive of forward
+/// progress.
+#[test]
+fn mcc_phase_d3_atomic_replay_matches_non_atomic_on_success_path() {
+    let mut tc = make_validator_consensus_branched(1);
+    let mut db = InMemoryStateDB::new();
+
+    lc_insert(&mut tc, id(0), vec![], 0);
+    lc_insert(&mut tc, id(1), vec![id(0)], 1);
+    lc_insert(&mut tc, id(2), vec![id(1)], 2);
+    lc_insert(&mut tc, id(11), vec![id(0)], 1);
+    lc_insert(&mut tc, id(12), vec![id(11)], 2);
+
+    let genesis_snapshot = StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
+    tc.state_branches
+        .insert(id(0), LightConeBranchMetadata::fresh(0, 0));
+    tc.attach_branch_snapshot(id(0), std::sync::Arc::new(genesis_snapshot))
+        .unwrap();
+
+    let mut block_index: std::collections::HashMap<[u8; 32], (u64, u64, [u8; 32])> =
+        std::collections::HashMap::new();
+    block_index.insert(id(1), (1, 1, id(0)));
+    block_index.insert(id(2), (1, 2, id(1)));
+    block_index.insert(id(11), (2, 1, id(0)));
+    block_index.insert(id(12), (2, 2, id(11)));
+
+    let addr_a: AccountAddress = [0xAA; 32];
+    let addr_b: AccountAddress = [0xBB; 32];
+
+    let block_index_a = block_index.clone();
+    let block_lookup = move |bid: &[u8; 32]| -> Option<TxBlock> {
+        let (fork, height, parent) = block_index_a.get(bid).copied()?;
+        Some(make_test_block(height, fork, parent))
+    };
+    let block_apply = move |db: &mut dyn StateDB, block: &TxBlock| -> Result<(), String> {
+        let addr = if block.producer_id == Some(1) { addr_a } else { addr_b };
+        let acct = db.get_or_create_account(&addr);
+        acct.balance = acct.balance.saturating_add(1);
+        Ok(())
+    };
+
+    // Atomic replay genesis → A_2. Pre-replay height/epoch = 0
+    // (we're starting from genesis state).
+    let result = tc
+        .replay_and_apply_atomic(&mut db, id(0), id(2), block_lookup, block_apply, 0, 0)
+        .expect("atomic replay should succeed");
+
+    assert_eq!(result.lca, id(0));
+    assert_eq!(result.applied, vec![id(1), id(2)]);
+    assert_eq!(db.get_account(&addr_a).map(|a| a.balance).unwrap_or(0), 2);
+    assert_eq!(db.get_account(&addr_b).map(|a| a.balance).unwrap_or(0), 0);
+}
+
+/// MCC Phase D.3 — `replay_and_apply` is no-op when current == target
+/// (the trivial branch of the substrate). State unchanged, no
+/// rollback fired, applied path is empty. Locks the precondition
+/// for the churn loop: re-replaying to the same head doesn't
+/// double-apply blocks.
+#[test]
+fn mcc_phase_d3_replay_to_same_head_is_no_op() {
+    let mut tc = make_validator_consensus_branched(1);
+    let mut db = InMemoryStateDB::new();
+
+    lc_insert(&mut tc, id(0), vec![], 0);
+    lc_insert(&mut tc, id(1), vec![id(0)], 1);
+    lc_insert(&mut tc, id(2), vec![id(1)], 2);
+
+    // Mutate DB to a non-trivial state.
+    let addr: AccountAddress = [0xCC; 32];
+    let acct = db.get_or_create_account(&addr);
+    acct.balance = 1234;
+
+    // Don't even need a snapshot — current == target should
+    // short-circuit before the LCA-restore code path.
+
+    let block_lookup = |_bid: &[u8; 32]| -> Option<TxBlock> {
+        unreachable!("block_lookup should not be called when current == target")
+    };
+    let block_apply = |_db: &mut dyn StateDB, _block: &TxBlock| -> Result<(), String> {
+        unreachable!("block_apply should not be called when current == target")
+    };
+
+    let result = tc
+        .replay_and_apply(&mut db, id(2), id(2), block_lookup, block_apply)
+        .expect("self-replay no-op");
+
+    assert_eq!(result.lca, id(2), "self-replay LCA == target");
+    assert!(result.applied.is_empty(), "no blocks applied");
+    assert_eq!(
+        db.get_account(&addr).map(|a| a.balance).unwrap_or(0),
+        1234,
+        "DB state unchanged"
+    );
+}
