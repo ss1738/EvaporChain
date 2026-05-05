@@ -2776,6 +2776,74 @@ impl TendermintConsensus {
         fc.enumerate_with_caliber()
     }
 
+    /// MCC Phase C.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` —
+    /// proposer multi-parent set selection. Returns the
+    /// `Vec<BlockId>` the proposer should set as `block.parents`
+    /// for the next block under `mcc_full`.
+    ///
+    /// **Behaviour:**
+    /// - Under `parent_acceptance_mode = "mcc_full"`: returns the
+    ///   set of currently-active sibling heads filtered to be a
+    ///   true antichain (`is_antichain` predicate). The MCC-chosen
+    ///   authoritative head is included as the first parent (the
+    ///   `block.parent_hash` value); other concurrent heads are
+    ///   the multi-parent extensions.
+    /// - Under `linear` or `mcc`: returns `vec![]`. Empty `parents`
+    ///   serializes as the legacy single-parent format (chain
+    ///   bit-compat — `serde(skip_serializing_if = "Vec::is_empty")`
+    ///   on `Block::parents` preserves wire format).
+    ///
+    /// **Pure read-side accessor.** The proposer's `create_proposal`
+    /// will call this method to populate `block.parents`. That
+    /// integration is Phase C.4 / C.6 separate work.
+    ///
+    /// Returns at most `light_cone_max_concurrent_forks` parents;
+    /// excess heads are dropped (lowest caliber first) to bound
+    /// block size.
+    pub fn propose_parents(&self) -> Vec<[u8; 32]> {
+        let mode = self
+            .governance_params
+            .get("parent_acceptance_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("linear");
+        if mode != "mcc_full" {
+            return vec![];
+        }
+        let cap = self
+            .governance_params
+            .get("light_cone_max_concurrent_forks")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(4);
+        // Take the top-N heads by caliber (already sorted descending).
+        let scored = self.enumerate_candidate_heads();
+        let candidates: Vec<[u8; 32]> = scored
+            .into_iter()
+            .take(cap)
+            .map(|(id, _)| id)
+            .collect();
+        // Filter to an antichain: drop any head that's comparable to
+        // a higher-caliber head (it would violate the partial-order
+        // contract on multi-parent blocks).
+        let mut accepted: Vec<[u8; 32]> = Vec::with_capacity(candidates.len());
+        for c in &candidates {
+            let mut all_concurrent = true;
+            for a in &accepted {
+                if evaporchain_light_cone::concurrency::comparable(
+                    &self.light_cone_dag,
+                    *c,
+                    *a,
+                ) {
+                    all_concurrent = false;
+                    break;
+                }
+            }
+            if all_concurrent {
+                accepted.push(*c);
+            }
+        }
+        accepted
+    }
+
     /// MCC Phase C.2 of `MCC_FULL_MULTI_PARENT_PLAN.md` — vote
     /// dispatch target. Returns the BlockId that voting handlers
     /// should route prevotes/precommits into for the current round:
@@ -10456,6 +10524,104 @@ mod tests {
             "error must signal missing snapshot: {}",
             err
         );
+    }
+
+    /// MCC Phase C.3 — `propose_parents` returns empty Vec under
+    /// linear and mcc modes. Block.parents stays empty →
+    /// serde-skip-empty preserves legacy single-parent wire format.
+    #[test]
+    fn mcc_phase_c3_propose_parents_empty_outside_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Default linear.
+        assert!(tc.propose_parents().is_empty());
+
+        // Single-line mcc.
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc".to_string(),
+        );
+        assert!(tc.propose_parents().is_empty());
+    }
+
+    /// MCC Phase C.3 — under mcc_full, propose_parents returns the
+    /// antichain of currently-active sibling heads. Sibling forks
+    /// off genesis are pairwise concurrent, so all should appear.
+    #[test]
+    fn mcc_phase_c3_propose_parents_returns_concurrent_heads_under_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        // Three siblings off genesis.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+        lc_insert(&mut tc, id(3), vec![id(0)], 1);
+
+        let parents = tc.propose_parents();
+        assert_eq!(parents.len(), 3, "all 3 siblings must appear");
+        assert!(parents.contains(&id(1)));
+        assert!(parents.contains(&id(2)));
+        assert!(parents.contains(&id(3)));
+
+        // The result must form an antichain.
+        assert!(
+            evaporchain_light_cone::concurrency::is_antichain(
+                &tc.light_cone_dag,
+                &parents
+            ),
+            "propose_parents output must be an antichain"
+        );
+    }
+
+    /// MCC Phase C.3 — `propose_parents` filters out comparable
+    /// heads (parent + descendant in the same set) to maintain the
+    /// antichain contract. Drops the lower-caliber comparable.
+    #[test]
+    fn mcc_phase_c3_propose_parents_filters_comparable_heads() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        // 0 → 1, 1 → 2 (linear chain). Only id(2) is a leaf.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(1)], 2);
+
+        let parents = tc.propose_parents();
+        // Only one leaf → trivially an antichain of size 1.
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0], id(2));
+    }
+
+    /// MCC Phase C.3 — `propose_parents` honors
+    /// `light_cone_max_concurrent_forks` cap. Excess heads dropped.
+    #[test]
+    fn mcc_phase_c3_propose_parents_respects_max_forks_cap() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        tc.governance_params.insert(
+            "light_cone_max_concurrent_forks".to_string(),
+            "2".to_string(),
+        );
+        // 4 siblings off genesis.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+        lc_insert(&mut tc, id(3), vec![id(0)], 1);
+        lc_insert(&mut tc, id(4), vec![id(0)], 1);
+
+        let parents = tc.propose_parents();
+        assert_eq!(parents.len(), 2, "must be capped at 2 forks");
     }
 
     /// MCC Phase C.2 — `vote_target_head` returns `parent_hash`

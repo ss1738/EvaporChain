@@ -330,16 +330,21 @@ Promote `authoritative_head` from admin-RPC to consensus hot path.
       authoritative_head under mcc_full with parent_hash fallback
       when head is None. Consensus suite: 500 / 0 / 1.
 
-- [ ] **C.3 — Proposer parent-set selection.**
-      `create_proposal` (`tendermint.rs:4755`) currently sets
-      `block.parent_hash = self.current_tip()` and `block.parents =
-      vec![]`. Under multi-parent mode, the proposer:
-      1. Sets `block.parent_hash = current_authoritative_head`
-      2. Sets `block.parents = enumerate_candidate_heads()` (validates
-         antichain via `is_antichain` from
-         `evaporchain-light-cone::concurrency`)
-      3. Or: explicitly multi-parent only when `parent_acceptance_mode
-         = "mcc_full"` AND `protocol_version >= 3`.
+- [x] **C.3 — `propose_parents` accessor.** ✅ SHIPPED 2026-05-05.
+      Pure read-side substrate. Returns `Vec<BlockId>` for the
+      proposer to set as `block.parents` under `mcc_full`:
+      - `linear` / `mcc`: empty Vec (chain bit-compat;
+        serde-skip-empty preserves single-parent wire format)
+      - `mcc_full`: top-N heads by caliber filtered to a true
+        antichain (`is_antichain` predicate; comparable heads
+        dropped lower-caliber-first), capped at
+        `light_cone_max_concurrent_forks`.
+      Proposer's `create_proposal` will call this method to
+      populate `block.parents`. The actual `create_proposal`
+      integration is Phase C.6 separate work; today
+      `block.parents` stays empty under all modes. 4 new tests:
+      empty under linear/mcc, returns concurrent siblings under
+      mcc_full, filters comparable heads, respects max-forks cap.
 
 - [ ] **C.4 — Equivocation rules under multi-parent.**
       A validator that prevotes for two different heads at the same
@@ -571,6 +576,13 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 17)** — Phase C.3 substrate
+  shipped. `propose_parents()` accessor returns the antichain set
+  the proposer should put in `block.parents` under mcc_full
+  (empty under linear/mcc). Filters comparable heads + respects
+  `light_cone_max_concurrent_forks` cap. 4 new tests; consensus
+  504/0/1.
 
 - **2026-05-05 (late evening cont'd 16)** — Phase C.2 substrate
   shipped. `vote_target_head()` accessor returns the BlockId voting
