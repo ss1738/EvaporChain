@@ -520,11 +520,32 @@ to work as today (single-line trajectory walk).
       release-mode benchmark with 100+ blocks/fork.
       mcc_phase_d crate now 10/10.
 
-- [ ] **D.4 — Performance budget under 4 concurrent heads.**
-      Match the Phase 6.3 Light-Cone perf budget: insertion < 500ns,
-      `current_authoritative_head` < 500µs, state-branch ops < 20µs.
-      Benchmark with `#[ignore]` annotation, run on Mini under
-      release.
+- [x] **D.4 — Performance budget under 4 concurrent heads.** ✅ SHIPPED 2026-05-05.
+      4 new `#[ignore]` benchmarks in `tests/mcc_phase_d.rs`. Run
+      on Mini under release with `--ignored mcc_phase_d4`. Coarse
+      wall-clock loops (1000 iters), no criterion dependency —
+      budget targets are well above the noise floor for simple
+      loop timing.
+      Measured per-call (release mode, Mini M4, 1000 iters):
+      - `update_authoritative_head` (4 leaves):    3.69 µs
+        (budget 500 µs — 135× headroom)
+      - `propose_parents`           (4 leaves):    7.11 µs
+        (budget 500 µs —  70× headroom)
+      - `state_branches` ops (attach + read):    68 ns
+        (budget  20 µs — 294× headroom)
+      - `update_authoritative_head` (4 forks × depth 5):  11.05 µs
+        (budget 500 µs —  45× headroom)
+      All four budgets hit with substantial headroom; no perf
+      surgery needed. The DAG-insertion budget (<500ns) is locked
+      by the light-cone crate's own benchmarks (already-shipped
+      Phase 6.3); D.4 covers the consensus-crate accessors that
+      build on top.
+      Run command:
+      ```
+      cargo test --release -p evaporchain-consensus \
+        --test mcc_phase_d -- --ignored mcc_phase_d4 --nocapture
+      ```
+      mcc_phase_d crate: 10 normal + 4 ignored = 14 total.
 
 - [ ] **D.5 — Soak test on 4-validator local cluster.**
       Cluster runs `parent_acceptance_mode = "mcc_full"` for 72hr.
@@ -691,6 +712,15 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 23)** — Phase D.4 shipped.
+  4 `#[ignore]` benchmarks under release on Mini, all under
+  budget by 45-294×: update_authoritative_head 3.69µs (4 leaves)
+  / 11.05µs (4 forks × depth 5) [budget 500µs]; propose_parents
+  7.11µs (4 leaves) [budget 500µs]; state_branches ops 68ns
+  [budget 20µs]. No perf surgery needed. mcc_phase_d crate:
+  10 normal + 4 ignored = 14 total. Phase D 4/5 done — only the
+  72hr soak (D.5) remains.
 
 - **2026-05-05 (late evening cont'd 22)** — Phase D.3 shipped.
   3 new integration tests exercising the B.0+ → B.2 → B.3 → B.4

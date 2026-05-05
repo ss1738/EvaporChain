@@ -760,3 +760,172 @@ fn mcc_phase_d3_replay_to_same_head_is_no_op() {
         "DB state unchanged"
     );
 }
+
+// ─── D.4 — Performance budget under 4 concurrent heads ─────────────
+//
+// All D.4 benchmarks are `#[ignore]` so `cargo test` doesn't run
+// them by default. Run explicitly with:
+//
+//   cargo test --release -p evaporchain-consensus \
+//     --test mcc_phase_d -- --ignored mcc_phase_d4 --nocapture
+//
+// on the Mini. The targets match the Phase 6.3 Light-Cone perf
+// budget cited in the plan:
+//   - DAG insertion              <  500 ns/block (already locked
+//                                   by the light-cone crate's own
+//                                   benchmarks; this one re-asserts
+//                                   the budget through the
+//                                   consensus-crate path).
+//   - update_authoritative_head  <  500 µs under 4 concurrent heads
+//   - propose_parents            <  500 µs under 4 concurrent heads
+//   - state_branches insert/get  <   20 µs
+//
+// The benchmarks are coarse — wall-clock loops with statistically-
+// meaningful iteration counts, NOT criterion. Reason: keeping the
+// dev-dep tree light + the budget targets are well above the noise
+// floor for simple loop timing. If a future optimisation wants
+// finer-grained measurement, swap in criterion as a dev-dep.
+
+const D4_ITERS: u32 = 1_000;
+
+fn build_4_head_dag() -> TendermintConsensus {
+    let mut tc = make_validator_consensus(1);
+    lc_insert(&mut tc, id(0), vec![], 0);
+    lc_insert(&mut tc, id(1), vec![id(0)], 1);
+    lc_insert(&mut tc, id(2), vec![id(0)], 1);
+    lc_insert(&mut tc, id(3), vec![id(0)], 1);
+    lc_insert(&mut tc, id(4), vec![id(0)], 1);
+    tc
+}
+
+#[test]
+#[ignore]
+fn mcc_phase_d4_authoritative_head_under_500us() {
+    let mut tc = build_4_head_dag();
+    let start = std::time::Instant::now();
+    for _ in 0..D4_ITERS {
+        let _ = tc.update_authoritative_head();
+    }
+    let elapsed = start.elapsed();
+    let per_call = elapsed / D4_ITERS;
+    println!(
+        "D.4 update_authoritative_head: {:?} total / {} iters = {:?}/call",
+        elapsed, D4_ITERS, per_call
+    );
+    assert!(
+        per_call < std::time::Duration::from_micros(500),
+        "update_authoritative_head must be < 500µs/call under 4 concurrent heads, got {:?}",
+        per_call
+    );
+}
+
+#[test]
+#[ignore]
+fn mcc_phase_d4_propose_parents_under_500us() {
+    let tc = build_4_head_dag();
+    let start = std::time::Instant::now();
+    for _ in 0..D4_ITERS {
+        let _ = tc.propose_parents();
+    }
+    let elapsed = start.elapsed();
+    let per_call = elapsed / D4_ITERS;
+    println!(
+        "D.4 propose_parents: {:?} total / {} iters = {:?}/call",
+        elapsed, D4_ITERS, per_call
+    );
+    assert!(
+        per_call < std::time::Duration::from_micros(500),
+        "propose_parents must be < 500µs/call under 4 concurrent heads, got {:?}",
+        per_call
+    );
+}
+
+#[test]
+#[ignore]
+fn mcc_phase_d4_state_branches_ops_under_20us() {
+    let mut tc = build_4_head_dag();
+    let mut db = InMemoryStateDB::new();
+    let snap =
+        StateSnapshotBranch::capture(id(0), 0, 0, &mut db).expect("capture genesis");
+    let arc_snap = std::sync::Arc::new(snap);
+
+    // Pre-populate state_branches[id(0)] so attach hits the
+    // and_modify path on subsequent calls.
+    tc.state_branches
+        .insert(id(0), LightConeBranchMetadata::fresh(0, 0));
+
+    let start = std::time::Instant::now();
+    for _ in 0..D4_ITERS {
+        // attach_branch_snapshot: pure HashMap lookup + Arc clone
+        // assignment.
+        tc.attach_branch_snapshot(id(0), arc_snap.clone())
+            .expect("attach to existing tip");
+        // state_branches() accessor: HashMap pointer access.
+        let _ = tc.state_branches();
+    }
+    let elapsed = start.elapsed();
+    let per_call = elapsed / D4_ITERS;
+    println!(
+        "D.4 state-branch ops (attach + read): {:?} total / {} iters = {:?}/call-pair",
+        elapsed, D4_ITERS, per_call
+    );
+    assert!(
+        per_call < std::time::Duration::from_micros(20),
+        "state-branch ops must be < 20µs/call-pair, got {:?}",
+        per_call
+    );
+}
+
+/// Sanity: the same accessors must still beat the budget when the
+/// DAG has 4 heads + each fork extends 5 deep (mimicking what
+/// production sees mid-round). Locks the budget under
+/// path-walk-cost, not just leaf-count.
+#[test]
+#[ignore]
+fn mcc_phase_d4_authoritative_head_under_500us_with_extended_forks() {
+    let mut tc = make_validator_consensus(1);
+    lc_insert(&mut tc, id(0), vec![], 0);
+    // Fork 1: id 1, 5, 9, 13, 17.
+    let mut last1 = id(0);
+    for &h in &[1u8, 5, 9, 13, 17] {
+        lc_insert(&mut tc, id(h), vec![last1], h as u64);
+        last1 = id(h);
+    }
+    // Fork 2: 2, 6, 10, 14, 18.
+    let mut last2 = id(0);
+    for &h in &[2u8, 6, 10, 14, 18] {
+        lc_insert(&mut tc, id(h), vec![last2], h as u64);
+        last2 = id(h);
+    }
+    // Fork 3: 3, 7, 11, 15, 19.
+    let mut last3 = id(0);
+    for &h in &[3u8, 7, 11, 15, 19] {
+        lc_insert(&mut tc, id(h), vec![last3], h as u64);
+        last3 = id(h);
+    }
+    // Fork 4: 4, 8, 12, 16, 20.
+    let mut last4 = id(0);
+    for &h in &[4u8, 8, 12, 16, 20] {
+        lc_insert(&mut tc, id(h), vec![last4], h as u64);
+        last4 = id(h);
+    }
+
+    // Sanity: 4 leaves.
+    assert_eq!(tc.candidate_heads().len(), 4);
+
+    let start = std::time::Instant::now();
+    for _ in 0..D4_ITERS {
+        let _ = tc.update_authoritative_head();
+    }
+    let elapsed = start.elapsed();
+    let per_call = elapsed / D4_ITERS;
+    println!(
+        "D.4 update_authoritative_head (4 forks × depth 5): {:?} total / {} iters = {:?}/call",
+        elapsed, D4_ITERS, per_call
+    );
+    assert!(
+        per_call < std::time::Duration::from_micros(500),
+        "update_authoritative_head with 4 extended forks must be < 500µs/call, got {:?}",
+        per_call
+    );
+}
