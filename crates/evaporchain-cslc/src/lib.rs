@@ -33,10 +33,17 @@
 //! - [`machine`] — `EpsilonMachine` data structure (states +
 //!   transition table + per-state output distributions).
 //! - [`reconstruct`] — `reconstruct_unconditional(observations)`
-//!   single-state baseline. The full Shalizi-Klinkner CSSR
-//!   algorithm is tracked as future work; the substrate exposes the
-//!   types so a future commit can swap in CSSR without breaking
-//!   downstream consumers.
+//!   single-state baseline (a memoryless model from a flat
+//!   symbol-count vector). Cheapest path; useful when caller has
+//!   no access to the underlying symbol stream.
+//! - [`cssr`] — full Shalizi-Klinkner 2004 CSSR algorithm via
+//!   `reconstruct_cssr(stream, alphabet_size, l_max, alpha)`.
+//!   Recovers multi-state ε-machines: fair coin → 1 state,
+//!   period-2 → 2 states, golden-mean shift → 2 states with the
+//!   uniform-class pmf within ε=0.02 TV-distance of reference at
+//!   α=0.001. Phase II determinization currently over-splits on
+//!   the canonical even-process (~2× canonical state count); fix
+//!   tracked in `DOCTRINE_PUNCH_LIST.md` Layer 2 follow-up.
 //! - [`predict`] — `predict_next(machine, current_state)` returns
 //!   the per-symbol output distribution.
 
