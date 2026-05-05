@@ -2776,6 +2776,65 @@ impl TendermintConsensus {
         fc.enumerate_with_caliber()
     }
 
+    /// MCC Phase C.4 of `MCC_FULL_MULTI_PARENT_PLAN.md` —
+    /// cross-fork equivocation detection accessor. Returns the
+    /// equivocation count for a given validator under mcc_full
+    /// mode.
+    ///
+    /// **Substrate connection:** the Phase 4.3 substrate already
+    /// ships `cross_fork_equivocations: HashMap<u64, u64>` —
+    /// validator_id → count of observed cross-fork double-votes.
+    /// This accessor exposes it as the operator-facing surface
+    /// gated on `parent_acceptance_mode = "mcc_full"`. Under any
+    /// other mode, returns 0 regardless of the underlying counter
+    /// (chain bit-compat — equivocation slashing under MCC requires
+    /// the multi-parent semantics that only mcc_full provides).
+    ///
+    /// Pairs with `evaporchain_entropic_slashing::entropic_slash`
+    /// for slash-amount calculation: large-deviation cost as a
+    /// function of (count, observation window) — Sanov 1957
+    /// theorem-grade slash magnitude.
+    ///
+    /// **Note on certificate-based vs counts-based:** Phase 4.3's
+    /// counter increments on observed double-precommit, which
+    /// cannot perfectly distinguish "honest re-vote after view
+    /// change" from "malicious cross-fork double-sign." A
+    /// certificate-based evidence track is the deferred Phase
+    /// 4.3d follow-up; until then operators should treat
+    /// equivocation counts as a *signal*, not slashing trigger,
+    /// and require certificate-based evidence for actual stake
+    /// deduction.
+    pub fn cross_fork_equivocation_count(&self, validator_id: u64) -> u64 {
+        let mode = self
+            .governance_params
+            .get("parent_acceptance_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("linear");
+        if mode != "mcc_full" {
+            return 0;
+        }
+        self.cross_fork_equivocations
+            .get(&validator_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// MCC Phase C.4 of `MCC_FULL_MULTI_PARENT_PLAN.md` — full
+    /// equivocation snapshot. Returns the entire
+    /// `validator_id -> count` map under mcc_full; empty map
+    /// otherwise.
+    pub fn all_cross_fork_equivocations(&self) -> std::collections::HashMap<u64, u64> {
+        let mode = self
+            .governance_params
+            .get("parent_acceptance_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("linear");
+        if mode != "mcc_full" {
+            return std::collections::HashMap::new();
+        }
+        self.cross_fork_equivocations.clone()
+    }
+
     /// MCC Phase C.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` —
     /// proposer multi-parent set selection. Returns the
     /// `Vec<BlockId>` the proposer should set as `block.parents`
@@ -10524,6 +10583,51 @@ mod tests {
             "error must signal missing snapshot: {}",
             err
         );
+    }
+
+    /// MCC Phase C.4 — `cross_fork_equivocation_count` returns 0
+    /// under linear/mcc regardless of the underlying counter.
+    /// Locks chain bit-compat: equivocation slashing under MCC
+    /// requires multi-parent semantics that only mcc_full provides.
+    #[test]
+    fn mcc_phase_c4_equivocation_count_zero_outside_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Manually populate the underlying counter.
+        tc.cross_fork_equivocations.insert(7, 5);
+
+        // Default linear → returns 0 even though counter is 5.
+        assert_eq!(tc.cross_fork_equivocation_count(7), 0);
+
+        // Single-line mcc → also 0.
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc".to_string(),
+        );
+        assert_eq!(tc.cross_fork_equivocation_count(7), 0);
+        assert!(tc.all_cross_fork_equivocations().is_empty());
+    }
+
+    /// MCC Phase C.4 — under mcc_full, both accessors expose the
+    /// underlying counter.
+    #[test]
+    fn mcc_phase_c4_equivocation_count_exposes_counter_under_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        tc.cross_fork_equivocations.insert(7, 5);
+        tc.cross_fork_equivocations.insert(11, 2);
+
+        assert_eq!(tc.cross_fork_equivocation_count(7), 5);
+        assert_eq!(tc.cross_fork_equivocation_count(11), 2);
+        // Validator with no record returns 0 (default).
+        assert_eq!(tc.cross_fork_equivocation_count(99), 0);
+
+        let snapshot = tc.all_cross_fork_equivocations();
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot.get(&7), Some(&5));
+        assert_eq!(snapshot.get(&11), Some(&2));
     }
 
     /// MCC Phase C.3 — `propose_parents` returns empty Vec under

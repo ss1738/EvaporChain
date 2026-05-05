@@ -346,12 +346,25 @@ Promote `authoritative_head` from admin-RPC to consensus hot path.
       empty under linear/mcc, returns concurrent siblings under
       mcc_full, filters comparable heads, respects max-forks cap.
 
-- [ ] **C.4 — Equivocation rules under multi-parent.**
-      A validator that prevotes for two different heads at the same
-      round is equivocating. Cross-fork equivocation counter
-      (`cross_fork_equivocations` HashMap, shipped Phase 4.3) already
-      counts these; Phase C ensures the counter increments correctly
-      on every observed double-vote at the consensus hot path.
+- [x] **C.4 — Cross-fork equivocation accessors.** ✅ SHIPPED 2026-05-05.
+      Pure read-side substrate. The Phase 4.3 substrate already
+      ships `cross_fork_equivocations: HashMap<u64, u64>` —
+      validator_id → count of observed cross-fork double-votes.
+      Phase C.4 exposes operator-facing accessors:
+      - `cross_fork_equivocation_count(validator_id) -> u64`:
+        per-validator count
+      - `all_cross_fork_equivocations() -> HashMap<u64, u64>`:
+        full snapshot
+      Both gated on `parent_acceptance_mode = "mcc_full"` — return
+      0 / empty under linear/mcc (chain bit-compat). Pairs with
+      `evaporchain_entropic_slashing::entropic_slash` for slash
+      magnitude calculation. Note on certificate-based vs
+      counts-based: counter cannot perfectly distinguish honest
+      re-vote from malicious double-sign; certificate-based
+      evidence track is deferred Phase 4.3d follow-up. Until then
+      treat counts as a *signal*, not a slashing trigger. 2 new
+      tests covering both accessors gated on mode. Consensus
+      506/0/1.
 
 - [x] **C.5 — Validator-determinism property test.** ✅ SHIPPED 2026-05-05.
       `mcc_phase_c5_validator_determinism_under_random_dags`
@@ -576,6 +589,15 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 18)** — Phase C.4 substrate
+  shipped. Two accessors —
+  `cross_fork_equivocation_count(validator_id)` and
+  `all_cross_fork_equivocations()` — expose Phase 4.3's
+  cross_fork_equivocations counter under mcc_full (returns 0/empty
+  under linear/mcc). Substrate-only; certificate-based evidence
+  track for actual slashing remains deferred Phase 4.3d. 2 new
+  tests; consensus 506/0/1.
 
 - **2026-05-05 (late evening cont'd 17)** — Phase C.3 substrate
   shipped. `propose_parents()` accessor returns the antichain set
