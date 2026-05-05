@@ -10290,6 +10290,107 @@ mod tests {
         );
     }
 
+    /// MCC Phase B.5 — LRU eviction-drops-snapshot regression test.
+    /// Locks the memory-reclamation contract: when
+    /// `prune_state_branches` evicts a metadata entry under cap,
+    /// the consensus crate's `Arc<dyn LightConeBranchSnapshot>`
+    /// reference is released. External strong-count drops by 1.
+    ///
+    /// Without this guarantee, snapshot memory would accumulate
+    /// indefinitely as forks come and go — the cap on metadata
+    /// entries would only bound HashMap key count, not actual
+    /// snapshot bytes held.
+    #[test]
+    fn mcc_phase_b5_eviction_drops_snapshot_arc() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Cap at 2 concurrent forks so the third insertion forces
+        // eviction.
+        tc.governance_params.insert(
+            "light_cone_max_concurrent_forks".to_string(),
+            "2".to_string(),
+        );
+
+        // Build 3 sibling heads off genesis with distinct calibers
+        // so eviction order is deterministic.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+        lc_insert(&mut tc, id(3), vec![id(0)], 1);
+
+        let mut db = InMemoryStateDB::new();
+
+        // Capture snapshots for each tip; keep external Arcs so we
+        // can observe strong_count.
+        let snap_lo =
+            Arc::new(super::StateSnapshotBranch::capture(id(1), 1, 0, &mut db).unwrap())
+                as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
+        let snap_mid =
+            Arc::new(super::StateSnapshotBranch::capture(id(2), 1, 0, &mut db).unwrap())
+                as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
+        let snap_hi =
+            Arc::new(super::StateSnapshotBranch::capture(id(3), 1, 0, &mut db).unwrap())
+                as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
+
+        // Initial strong counts: 1 (test holds the Arc).
+        assert_eq!(Arc::strong_count(&snap_lo), 1);
+        assert_eq!(Arc::strong_count(&snap_mid), 1);
+        assert_eq!(Arc::strong_count(&snap_hi), 1);
+
+        // Record + attach with distinct calibers so id(1) is the
+        // lowest (will be evicted first when cap exceeded).
+        tc.record_state_branch(id(1), 1, /*caliber*/ 10);
+        tc.attach_branch_snapshot(id(1), Arc::clone(&snap_lo)).unwrap();
+        tc.record_state_branch(id(2), 1, /*caliber*/ 50);
+        tc.attach_branch_snapshot(id(2), Arc::clone(&snap_mid)).unwrap();
+
+        // After 2 attachments under cap=2: each consensus holds 1
+        // ref → strong_count = 2 (test + consensus).
+        assert_eq!(Arc::strong_count(&snap_lo), 2);
+        assert_eq!(Arc::strong_count(&snap_mid), 2);
+
+        // Add the 3rd branch — cap exceeded → eviction kicks in.
+        tc.record_state_branch(id(3), 1, /*caliber*/ 100);
+        tc.attach_branch_snapshot(id(3), Arc::clone(&snap_hi)).unwrap();
+        tc.prune_state_branches();
+
+        // Cap honored: only 2 metadata entries.
+        assert_eq!(
+            tc.state_branches.len(),
+            2,
+            "prune must enforce cap=2"
+        );
+
+        // The lowest-caliber entry (id(1)) is evicted.
+        assert!(
+            !tc.state_branches.contains_key(&id(1)),
+            "lowest-caliber tip id(1) must be evicted"
+        );
+        assert!(tc.state_branches.contains_key(&id(2)), "id(2) survives");
+        assert!(tc.state_branches.contains_key(&id(3)), "id(3) survives");
+
+        // **The load-bearing assertion:** evicted metadata released
+        // its Arc, so id(1)'s snapshot strong_count drops back to 1
+        // (test only). Surviving snapshots stay at 2.
+        assert_eq!(
+            Arc::strong_count(&snap_lo),
+            1,
+            "evicted snapshot's Arc must be released by consensus"
+        );
+        assert_eq!(
+            Arc::strong_count(&snap_mid),
+            2,
+            "surviving snapshot's Arc still held by consensus"
+        );
+        assert_eq!(
+            Arc::strong_count(&snap_hi),
+            2,
+            "surviving snapshot's Arc still held by consensus"
+        );
+    }
+
     /// MCC Phase B.3 — `replay_and_apply` happy path: branch switch
     /// with full closure-driven composition. Asserts the umbrella
     /// function correctly orchestrates plan + restore + forward-apply

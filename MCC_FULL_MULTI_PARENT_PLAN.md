@@ -230,11 +230,21 @@ metadata-tracking to actual state-replay.
       original head). No partial state. Use the existing
       `db_guard.begin_batch()` / `commit_batch()` pattern.
 
-- [ ] **B.5 — Memory cap enforcement.**
-      `light_cone_max_concurrent_forks` already caps `state_branches`
-      at default 4. Phase B must NOT exceed this — if a 5th head
-      appears, evict the lowest-caliber existing head (and its
-      RocksDB snapshot) before admitting the new one.
+- [x] **B.5 — Memory cap enforcement (eviction-drops-snapshot lock).** ✅ SHIPPED 2026-05-05.
+      `prune_state_branches` (Phase 3.4 substrate) already enforces
+      the cap and removes the metadata HashMap entry. Phase B.5
+      verifies that this also releases the consensus crate's
+      `Arc<dyn LightConeBranchSnapshot>` reference — the
+      load-bearing memory-reclamation contract.
+      - `mcc_phase_b5_eviction_drops_snapshot_arc` test: cap=2, 3
+        snapshots attached with distinct calibers; after eviction,
+        the lowest-caliber snapshot's `Arc::strong_count` drops
+        from 2 (test + consensus) to 1 (test only). Surviving
+        snapshots stay at 2.
+      - Without this guarantee, snapshot memory would accumulate
+        indefinitely as forks come and go — the cap would only
+        bound HashMap key count, not actual snapshot bytes held.
+      - Consensus suite: 491 / 0 / 1.
 
 - [x] **B.6 — Tests** (partial — integration test shipped, unit
       tests integrated alongside B.0/B.0+/B.1/B.2). ✅ INTEGRATION SHIPPED 2026-05-05.
@@ -485,6 +495,15 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 7)** — Phase B.5 landed.
+  Memory-reclamation contract verified: when `prune_state_branches`
+  evicts a metadata entry, the consensus crate's
+  `Arc<LightConeBranchSnapshot>` reference is released. Test uses
+  `Arc::strong_count` to assert evicted snapshot drops from 2 →
+  1, surviving snapshots stay at 2. Consensus 491/0/1. **Phase B is
+  now 7/8 done** — only B.4 (atomic batch wrap for partial-failure
+  recovery) remains.
 
 - **2026-05-05 (late evening cont'd 6)** — Phase B.3 landed.
   `replay_and_apply` umbrella function on TendermintConsensus
