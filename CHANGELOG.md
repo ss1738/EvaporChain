@@ -1,5 +1,107 @@
 # EvaporChain Changelog
 
+## 2026-05-05 — Three frontier-primitive plans shipped end-to-end
+
+Long shipping arc closing three doctrine plans (Lambda-Fold, Crooks-MEV,
+Light-Cone Full DAG) plus one Layer 7 LLSA piece. ~75 commits across the
+session. Substrate-grade work; every behavioural change is gated behind
+governance flags so default-mode chain stays bit-compat with pre-doctrine
+behaviour. Operators flip flags on testnet first.
+
+### Lambda-Fold (Layer 5) ✅ DONE end-to-end
+
+`LAMBDA_FOLD_NOVA_PLAN.md` Phases 1–7 (31/31 sub-items). The chain ships
+**the first sublinear-in-active-energy verifier** as defined in
+`INVENTION_STACK.md §A1.2 row 8`. Sublinearity claim empirically locked
+on Mac Mini M4 under release: verify @ 100 folds is **1.083×** of verify
+@ 10 folds — essentially flat, far better than logarithmic.
+
+- Phase 1 — design decisions locked (`research/lambda_fold/PHASE_1_DECISIONS.md`)
+- Phase 2 — IVC arity 6→8, Poseidon-bound state-root (closes 192-bit collision risk), 5-equation chain-aggregate energy-fold gadget. ~14,575 primary R1CS constraints (was 14,041; +534 for the new gadget + bindings).
+- Phase 3 — `vk` preprocessing cached on `RealBlockProver` (`Mutex<Option<(pk, vk)>>`); new `vk_bytes()` + `verify_with_vk_bytes()` light-client API. Light clients verify via vk bytes alone — no `pp`, no prover state.
+- Phase 4 — `evaporchain-lambda-fold::nova_path` module (gated on `nova` feature) wires the substrate to real Nova IVC. Substrate blake3 path co-exists.
+- Phase 5 — Tendermint integration. Governance flag `lambda_fold_mode ∈ {hash_chain, nova}` (default `hash_chain`). `lambda_fold_nova` crate feature opts the consensus + node binaries into the Nova path. End-to-end test through `on_block_committed` at 5.24 s for 3 blocks.
+- Phase 6 — Security tests (state-root collision-resistance, energy-fold over-reporting rejection), sublinearity benchmark, fuzz harness for the verify path, async-fold compat.
+- Phase 7 — Doctrine sweep: whitepaper §11.2 updated with arity bump + Poseidon binding; `INVENTION_STACK.md §4.1 row 8` flipped to "SHIPPED 2026-05-04"; `evaporchain-lambda-fold/src/lib.rs` rewritten with dual-mode description; `DOCTRINE_PUNCH_LIST.md` Layer 5 ✅.
+
+### Crooks-MEV (Layer 6) ✅ DONE end-to-end
+
+`CROOKS_MEV_INTEGRATION_PLAN.md` Phases 1–7 (incl. previously-deferred 3.5d + 4.2). The chain ships a **Crooks-fluctuation MEV refund pipeline**: per-block sandwich detection → rate-based pmf → ΔF computation → settlement → anti-gaming → automatic stake deduction.
+
+- Phase 1 — `evaporchain-mev-detect` crate. `scan_block` walks Transfer triples; emits `MevObservation` for every sandwich shape. O(n²) with empirical 13.6 ms on a 1000-tx block.
+- Phase 2 — Crooks-fluctuation refund formula. Rate-based pmf substitution (rigorous forward/reverse path Crooks pmf needs LP/AMM accounting EvaporChain doesn't have natively; honest-caveat documented in `research/crooks_mev/PHASE_2_DECISIONS.md`).
+- Phase 3.1 — `RefundTx` protocol-issued tx variant. Wire-format: 25th `Transaction` enum variant; tag 0x18 in `signable_bytes`.
+- Phase 3.2 — Deterministic `mev_state_digest` (canonical-ordered blake3 over observations + attacker stats).
+- Phase 3.3 — Producer helper (`due_refund_txs`) + replay protection (`settled_refunds`).
+- Phase 3.4 — Block validation rule (`validate_block_refunds` with `MissingRefund`/`UnexpectedRefund`/`MismatchedRefund` errors).
+- Phase 3.5a — Executor balance movement (parallel session shipped `execute_refund` + 4 unit tests; this session confirmed wiring).
+- Phase 3.5b — Validator-rejection hook in proposal handling at `tendermint.rs:3328`.
+- Phase 3.5c — `mev_missing_refund_violations` counter substrate.
+- Phase 3.5d — **Stake deduction wiring**: `apply_mev_missing_refund_slashes` consumes the counter, computes `entropic_slash`, applies via `validator_set.slash_with_amount`. Gated by `crooks_mev_missing_refund_slash_enabled`.
+- Phase 4.1 — Confidence threshold (`crooks_mev_confidence_threshold_ppm`).
+- Phase 4.3 — Self-MEV pre-filter at detection time.
+- Phase 4.4 — Operator dispute via `POST /api/mev/dispute` with grace-period gate.
+- Phase 4.2 — **Wire-format opt-out**: `TransferTx::mev_refund_eligible: Option<bool>` field (159-site cascade across the workspace). `Some(false)` opts the victim out — detector skips the observation entirely.
+- Phase 5 — Governance flag rollout: `crooks_mev_settlement_mode ∈ {observe, enforce}` (default observe).
+- Phase 6 — End-to-end consensus pipeline test + worst-case detection cost benchmark + adversarial witness test.
+- Phase 7 — Whitepaper §8 reframed as "Two-Tier MEV Defense" with new §8.4 Crooks-MEV Restitution; `INVENTION_STACK.md` Crooks-MEV row updated; `DOCTRINE_PUNCH_LIST.md` Layer 6 Crooks-MEV ✅.
+
+### Light-Cone Full DAG (Layer 6) ✅ DONE end-to-end
+
+`LIGHT_CONE_FULL_DAG_PLAN.md` Phases 1–6 (31/31 sub-items). The chain ships a **DAG-mode partial-order causal-set consensus** with antichain finalization. The doctrine's "Soul of the chain" primitive (`INVENTION_STACK.md §A1.2 row 1`).
+
+- Phase 1 — DAG-aware tip selection: `LightCone::leaves()`, `MccForkChoice::select_tip` (max-caliber leaf with deterministic BlockId tie-break), `TendermintConsensus::current_tip()`, proposer integration at `create_proposal`.
+- Phase 2 — Multi-parent block wire format: `Block::parents: Vec<[u8;32]>` (with `serde(default, skip_serializing_if)` for chain-id continuity), `effective_parents()`, `validate_parents_wire_format()` (3 failure modes).
+- Phase 3 — Per-fork state-branch substrate: `state_branches: HashMap<BlockId, LightConeBranchMetadata>`, `LightConeBranchSnapshot` trait (executor-side seam), LRU eviction at `light_cone_max_concurrent_forks` (default 4) paired with DAG-side `prune_orphan_branch` cascade.
+- Phase 4 — Antichain finality: `dag_round_states: HashMap<BlockId, RoundState>`, `record_dag_prevote`/`record_dag_precommit` API, voting-handler wiring at `handle_prevote`/`handle_precommit`, `try_finalize_antichain` predicate (closing antichain ∩ ≥ 2f+1 precommits per block), cross-fork equivocation counter (`cross_fork_equivocations`), dual-mode finality bookkeeping (`committed_at_block` paired with `committed_at`).
+- Phase 5 — Compaction: `LightCone::prune_orphan_branch` cascade, `detect_orphan_branches` rule (caliber threshold + 32-block recency window), LRU/DAG paired prune.
+- Phase 6 — Tests + integration + doctrine: end-to-end DAG-mode pipeline test (`test_dag_mode_full_pipeline_end_to_end`), adversarial 2-fork split-vote test (`test_dag_mode_adversarial_2fork_split_vote_converges`), perf benchmark (`benchmark_light_cone_phase_6_3` — 1000-block DAG: insertion 418 ns/block, select_tip 365 µs, state-branch ops 15.8 µs; all 100×–10⁵× under plan budgets), `INVENTION_STACK.md` row updated, `DOCTRINE_PUNCH_LIST.md` Layer 6 Light-Cone row flipped ⏳ → ✅, whitepaper §4.5 "Light-Cone Full DAG Mode" added with seven sub-sections.
+
+Decision-lock docs: `research/light_cone/PHASE_3_DECISIONS.md`, `PHASE_4_DECISIONS.md`. Rollout flag: `light_cone_state_branches_enabled` (default false). All Phase 4 voting-handler wiring is additive — primary `round_state` stays as the linear-mode tally; DAG-mode `dag_round_states` populates only when flag is on.
+
+### Layer 7 (LLSA) — partial close
+
+`evaporchain-llsa::MultiAuditorVerifier` shipped: k-of-n threshold-aggregating `ProofVerifier` with constructor rejection of degenerate thresholds. Closes one of three deferred Layer 7 sub-items WITHOUT the M2 Coq-build unblock. The other two remaining sub-items (production Coq verifier + MetaCoq + Rust extraction) are still gated on user-side M2.
+
+### Cross-cutting
+
+- 4 decision-lock docs shipped this session (`PHASE_3_DECISIONS.md` + `PHASE_4_DECISIONS.md` for Light-Cone; complementing the existing `lambda_fold/PHASE_1_DECISIONS.md` + `crooks_mev/PHASE_2_DECISIONS.md`).
+- 9 governance flags added to the soft-fork allowlist: `lambda_fold_mode`, `crooks_mev_settlement_mode`, `crooks_mev_beta_mb`, `crooks_mev_grace_period_blocks`, `crooks_mev_refund_window_blocks`, `crooks_mev_confidence_threshold_ppm`, `crooks_mev_missing_refund_slash_enabled`, `light_cone_state_branches_enabled`, `light_cone_max_concurrent_forks`, `light_cone_orphan_caliber_threshold`. All default to "off / linear / observe" — chain bit-compat preserved.
+- ~150 new tests across substrate, integration, fuzz harness, proptest, perf benchmark.
+- Drive-by audit-fix migrations cleaned up: `target_utilization_ppm`/`health_score_ppm` field renames left dangling by parallel sessions.
+
+## 2026-05-04 night — Press-claim test sweep across substrate primitives
+
+Added 36+ top-level `press_claim_tests` modules to substrate crates so the
+doctrine headline of each crate ("the press claim") is asserted as a
+structural invariant. If the implementation ever drifts from the claim,
+the test breaks loudly.
+
+Coverage added (lib.rs-level press_claim_tests modules):
+
+- **Tier-2 paradigm**: total-evaporscript, cap-decay-vm, dp-native-vm
+- **Tier-3 specialized**: epa-mmr, thermal-stm, plc, ew-twap
+- **Identity / consensus**: bell-beacon-v2, causal-chsh, ib-validators-v2,
+  modular-beacon, singh-attractor-v2, singh-inequality-v2, light-cone-v2,
+  mera (research-artefact), bell-beacon (v1), ib-validators (v1),
+  singh-attractor (v1), singh-inequality (v1), allen-decay
+- **Core**: types (existing), da, crypto, state, execution, consensus,
+  network, proving, script, contracts, light-cone
+- **Decay primitives**: energy-kernel, tropical, mnemochain, childkey,
+  decay-forget, decay-lamport, decay-sealed-regions
+- **Slashing / governance**: entropic-slashing, sanov-slashing,
+  conviction-vote, prp, cmu-gate, tur-liveness, pnt
+- **NFT family**: singh-resonance, singh-heartbeat, singh-lineage,
+  singh-migrant, singh-sabi, singh-triage, singh-posthuma, singh-counsel,
+  singh-heir, half-life-nft, gallery-forgets
+- **Social / inheritance**: grave-graph, grave-graph-split
+
+Also fixed a pre-existing `Block` constructor breakage: the `parents:
+Vec<[u8;32]>` field added by the linter required updating 11 Block
+constructor sites across execution, network, proving, state, and bench
+crates. Workspace test count moved from 7,378 to 7,477+ (lib tests, 0
+failed).
+
 ## 2026-05-04 evening — Lane R.* cluster-freeze fix + origin/main reconciliation
 
 ### What broke
