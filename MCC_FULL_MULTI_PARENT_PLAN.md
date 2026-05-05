@@ -116,6 +116,22 @@ metadata-tracking to actual state-replay.
       - Light-cone test suite: 51 / 0 / 0 (was 41).
       - Re-exported from `evaporchain_light_cone` crate root.
 
+- [x] **B.0+ — `plan_replay_to_head` planning substrate.** ✅ SHIPPED 2026-05-05.
+      Composes the B.0 primitives into a `ReplayWalk` plan that the
+      executor (Phase B.2) consumes:
+      - `ReplayWalk { lca, forward_path, rollback_required }` struct
+        on the consensus crate's public API.
+      - `TendermintConsensus::plan_replay_to_head(from, to) ->
+        Option<ReplayWalk>` accessor that calls `find_lca` +
+        `block_path_from_to` and sets `rollback_required = lca != from`.
+      - **No execution happens here** — pure planning. The executor
+        consumes the `ReplayWalk` in B.2 to (a) roll back to `lca`
+        if needed (the deferred B.1 snapshot work) and (b) apply
+        `forward_path`'s blocks via `db.execute_block`.
+      - 5 new tests: self→self no-op, forward-only no-rollback,
+        rollback-required on branch switch, missing-head None,
+        validator-determinism convergence. Consensus suite 479/0/1.
+
 - [ ] **B.1 — Concrete `LightConeBranchSnapshot` impl in `evaporchain-state`.**
       Today the trait is consumed by `attach_branch_snapshot` on
       `TendermintConsensus` but no production impl exists; the trait
@@ -382,6 +398,11 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd)** — Phase B.0+ landed:
+  `plan_replay_to_head` accessor on TendermintConsensus + `ReplayWalk`
+  struct. Pure planning — no execution side. 5 new tests; consensus
+  479/0/1. Sets up the API contract Phase B.2 will implement against.
 
 - **2026-05-05 (late evening)** — Phase B.0 landed. Pure DAG primitives:
   `find_lca` and `block_path_from_to` added to

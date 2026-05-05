@@ -395,6 +395,32 @@ pub trait LightConeBranchSnapshot {
     fn created_at_height(&self) -> u64;
 }
 
+/// MCC Phase B.0+ of `MCC_FULL_MULTI_PARENT_PLAN.md` — planning
+/// output of `TendermintConsensus::plan_replay_to_head`.
+///
+/// Describes the work the executor must do to move state from one
+/// MCC head to another:
+///   - `lca`: the deepest common ancestor of the two heads. After
+///     rollback (if needed), state will be at this block.
+///   - `forward_path`: chronological sequence of blocks to apply
+///     after the rollback. Empty if `to_head == lca`.
+///   - `rollback_required`: `true` iff `from_head != lca`. When
+///     false, the executor is already at the LCA and only needs
+///     to apply `forward_path`. When true, the executor must first
+///     unwind state from `from_head` back to `lca` (Phase B.1
+///     snapshot/restore work).
+///
+/// Validator-determinism: every validator with the same DAG state
+/// produces the same `ReplayWalk` for the same `(from_head, to_head)`
+/// pair, because both `find_lca` and `block_path_from_to` are
+/// deterministic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayWalk {
+    pub lca: [u8; 32],
+    pub forward_path: Vec<[u8; 32]>,
+    pub rollback_required: bool,
+}
+
 /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — error returned
 /// by `TendermintConsensus::dispute_observation` when an operator
 /// tries to dispute a refund that doesn't exist or has aged past
@@ -2612,6 +2638,46 @@ impl TendermintConsensus {
             beta_mb,
         );
         fc.enumerate_with_caliber()
+    }
+
+    /// MCC Phase B.0+ of `MCC_FULL_MULTI_PARENT_PLAN.md` —
+    /// **planning** substrate for B.2's `replay_to_head`. Composes
+    /// `find_lca` + `block_path_from_to` to produce a `ReplayWalk`
+    /// describing what the executor must do to move state from
+    /// `from_head` to `to_head`.
+    ///
+    /// Returns `None` if either head is absent from the Light-Cone
+    /// DAG OR no common ancestor exists.
+    ///
+    /// **No execution happens here.** The executor consumes the
+    /// `ReplayWalk` and:
+    ///   1. If `rollback_required`, rolls state back from
+    ///      `from_head` to `lca` (the deferred B.1 snapshot work).
+    ///   2. Applies the blocks in `forward_path` in order, calling
+    ///      `db.execute_block` for each.
+    /// Splitting the planning from the execution lets the planning
+    /// be pure (testable without a StateDB) and keeps the executor
+    /// integration localised to B.2.
+    pub fn plan_replay_to_head(
+        &self,
+        from_head: [u8; 32],
+        to_head: [u8; 32],
+    ) -> Option<ReplayWalk> {
+        let lca = evaporchain_light_cone::dag::find_lca(
+            &self.light_cone_dag,
+            from_head,
+            to_head,
+        )?;
+        let forward_path = evaporchain_light_cone::dag::block_path_from_to(
+            &self.light_cone_dag,
+            lca,
+            to_head,
+        )?;
+        Some(ReplayWalk {
+            lca,
+            forward_path,
+            rollback_required: lca != from_head,
+        })
     }
 
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
@@ -9697,6 +9763,109 @@ mod tests {
         assert!(final_heads.contains(&id(3)));
         assert!(final_heads.contains(&id(4)));
         assert!(final_heads.contains(&id(5)));
+    }
+
+    /// MCC Phase B.0+ — `plan_replay_to_head` no-op when from == to.
+    /// Locks the contract: the LCA of a block with itself is itself,
+    /// the forward path is empty, no rollback required. The executor
+    /// consuming this `ReplayWalk` does nothing.
+    #[test]
+    fn mcc_phase_b_plan_replay_self_to_self_is_noop() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+
+        let plan = tc.plan_replay_to_head(id(1), id(1)).expect("from==to");
+        assert_eq!(plan.lca, id(1));
+        assert!(plan.forward_path.is_empty());
+        assert!(!plan.rollback_required);
+    }
+
+    /// MCC Phase B.0+ — forward-only replay when `to_head` is a
+    /// descendant of `from_head` along the first-parent chain. No
+    /// rollback needed; just apply the forward path's blocks.
+    #[test]
+    fn mcc_phase_b_plan_replay_forward_only_no_rollback() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(1)], 2);
+
+        // from = genesis, to = depth-2: LCA is genesis itself.
+        // No rollback; forward path = [id(1), id(2)].
+        let plan = tc.plan_replay_to_head(id(0), id(2)).expect("ancestor → descendant");
+        assert_eq!(plan.lca, id(0));
+        assert_eq!(plan.forward_path, vec![id(1), id(2)]);
+        assert!(
+            !plan.rollback_required,
+            "from==lca → no rollback needed"
+        );
+    }
+
+    /// MCC Phase B.0+ — rollback case. When `from_head` and `to_head`
+    /// are on different branches, the LCA is their common ancestor,
+    /// the forward path goes LCA → to_head, and `rollback_required`
+    /// flags that the executor must first unwind state from
+    /// from_head back to LCA.
+    #[test]
+    fn mcc_phase_b_plan_replay_rollback_required_on_branch_switch() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Diamond branch points: genesis → id(1), genesis → id(2)
+        // (siblings), no merge yet.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Switch from head id(1) to head id(2): LCA is genesis,
+        // forward path is [id(2)], rollback REQUIRED (current head
+        // id(1) is not the LCA).
+        let plan = tc.plan_replay_to_head(id(1), id(2)).expect("siblings");
+        assert_eq!(plan.lca, id(0));
+        assert_eq!(plan.forward_path, vec![id(2)]);
+        assert!(
+            plan.rollback_required,
+            "branch switch must flag rollback (from id(1) back to genesis)"
+        );
+    }
+
+    /// MCC Phase B.0+ — missing block returns None. Locks the
+    /// contract: caller must validate that both heads are present
+    /// in the DAG before calling.
+    #[test]
+    fn mcc_phase_b_plan_replay_missing_head_returns_none() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        assert!(tc.plan_replay_to_head(id(0), id(99)).is_none());
+        assert!(tc.plan_replay_to_head(id(99), id(0)).is_none());
+    }
+
+    /// MCC Phase B.0+ — validator-determinism. Two `TendermintConsensus`
+    /// instances with the same DAG produce the same `ReplayWalk` for
+    /// the same `(from, to)` pair. Locks the convergence contract for
+    /// when Phase C uses this in the consensus hot path.
+    #[test]
+    fn mcc_phase_b_plan_replay_converges_across_validators() {
+        let mut a = make_consensus(1, &[1, 2, 3, 4]);
+        let mut b = make_consensus(2, &[1, 2, 3, 4]);
+        let inserts: Vec<([u8; 32], Vec<[u8; 32]>, u64)> = vec![
+            (id(0), vec![], 0),
+            (id(1), vec![id(0)], 1),
+            (id(2), vec![id(0)], 1),
+            (id(3), vec![id(1)], 2),
+        ];
+        for (i, parents, epoch) in &inserts {
+            lc_insert(&mut a, *i, parents.clone(), *epoch);
+            lc_insert(&mut b, *i, parents.clone(), *epoch);
+        }
+
+        // Same query on both validators must yield the same plan.
+        let plan_a = a.plan_replay_to_head(id(2), id(3)).expect("plan");
+        let plan_b = b.plan_replay_to_head(id(2), id(3)).expect("plan");
+        assert_eq!(plan_a, plan_b);
+        // Specifically: LCA is genesis, forward = [id(1), id(3)].
+        assert_eq!(plan_a.lca, id(0));
+        assert_eq!(plan_a.forward_path, vec![id(1), id(3)]);
+        assert!(plan_a.rollback_required);
     }
 
     /// MCC Phase A.4 — `enumerate_candidate_heads` returns the
