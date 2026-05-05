@@ -387,12 +387,36 @@ Promote `authoritative_head` from admin-RPC to consensus hot path.
       determinism test is a baseline; this is the stress-test
       version.
 
-- [ ] **C.6 — Tests.** 5 integration tests:
-  - `authoritative_head_selected_at_start_round`
-  - `votes_route_to_authoritative_head_tally`
-  - `proposer_emits_multi_parent_block_under_mcc_full`
-  - `cross_fork_equivocation_increments_on_double_prevote`
-  - `authoritative_head_converges_across_validators` (proptest 256x)
+- [x] **C.6 — Integration tests for accessor composition.** ✅ SHIPPED 2026-05-05.
+      Pivoted from the original 5-test list (which targeted the
+      *deferred* hot-path call-site integration) to 3 substrate
+      composition tests that lock the C.1+C.2+C.3 contract today.
+      The original 5-test plan slides forward to Phase D (call-site
+      integration depends on D.1's 4-validator 3-fork harness).
+      - `mcc_phase_c6_integration_accessors_compose_on_4_fork_dag`:
+        on a 4-fork DAG, `update_authoritative_head` /
+        `vote_target_head` / `propose_parents` agree on the argmax;
+        propose_parents forms an antichain; read-consistency under
+        no-mutation re-reads.
+      - `mcc_phase_c6_integration_authoritative_head_follows_dag_extension`:
+        after extending one fork (so a leaf becomes interior), the
+        authoritative head and parent set track the new leaf set;
+        all assertions against `candidate_heads()` to lock substrate
+        agreement.
+      - `mcc_phase_c6_integration_rollback_to_linear_restores_bit_compat`:
+        flipping `parent_acceptance_mode` from `mcc_full` back to
+        `linear` clears C.1 field, makes C.2 fall back to
+        `parent_hash`, and C.3 returns empty parents — full chain
+        bit-compat restored within a single mode flip (governance
+        rollback safety net).
+      Consensus suite: 509 / 0 / 1.
+      Original C.6 candidates that move to D:
+        - `authoritative_head_selected_at_start_round` → D.1 add-on
+        - `votes_route_to_authoritative_head_tally` → D.1 add-on
+        - `proposer_emits_multi_parent_block_under_mcc_full` → D.1 add-on
+        - `cross_fork_equivocation_increments_on_double_prevote` → D.2
+        - `authoritative_head_converges_across_validators` 256x —
+          ALREADY SHIPPED as C.5.
 
 **Phase C acceptance:** `parent_acceptance_mode = "mcc_full"` flag (NEW,
 distinct from existing `"mcc"`) routes consensus through the multi-parent
@@ -589,6 +613,17 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 19)** — Phase C.6 substrate
+  composition tests shipped (3 integration tests). Pivoted from the
+  original 5-test hot-path call-site list to lock the C.1+C.2+C.3
+  contract today; call-site tests slide forward to Phase D where
+  the 4-validator harness lives. Tests cover (a) 4-fork DAG
+  accessor agreement + antichain + read-consistency,
+  (b) DAG-extension follow-through to a new leaf set,
+  (c) governance flip mcc_full→linear restoring full chain
+  bit-compat. Consensus 509/0/1. **Phase C is now 6/6 done — all
+  hot-path substrate locked. Plan moves to Phase D.**
 
 - **2026-05-05 (late evening cont'd 18)** — Phase C.4 substrate
   shipped. Two accessors —

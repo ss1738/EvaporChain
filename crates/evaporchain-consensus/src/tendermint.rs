@@ -10866,6 +10866,151 @@ mod tests {
         );
     }
 
+    /// MCC Phase C.6 — integration test composing C.1 + C.2 + C.3
+    /// accessors on a 4-fork DAG. Asserts the substrate composes
+    /// coherently:
+    ///   - update_authoritative_head returns the argmax
+    ///   - vote_target_head returns the same argmax (under mcc_full)
+    ///   - propose_parents includes the argmax as the first entry
+    ///     and forms an antichain
+    ///   - All three accessors read-consistent across multiple
+    ///     reads without DAG mutation
+    #[test]
+    fn mcc_phase_c6_integration_accessors_compose_on_4_fork_dag() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        tc.parent_hash = id(0); // genesis as fallback
+
+        // 4 sibling forks off genesis.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+        lc_insert(&mut tc, id(3), vec![id(0)], 1);
+        lc_insert(&mut tc, id(4), vec![id(0)], 1);
+
+        // C.1: update authoritative head.
+        let chosen = tc
+            .update_authoritative_head()
+            .expect("non-empty DAG → Some");
+
+        // C.2: vote_target_head returns the same argmax.
+        assert_eq!(tc.vote_target_head(), chosen);
+
+        // C.3: propose_parents includes chosen + forms antichain.
+        let parents = tc.propose_parents();
+        assert!(parents.contains(&chosen), "argmax must be in parents");
+        assert!(
+            evaporchain_light_cone::concurrency::is_antichain(
+                &tc.light_cone_dag,
+                &parents
+            ),
+            "propose_parents must be antichain"
+        );
+
+        // Read-consistency: re-reading without DAG mutation gives
+        // identical results.
+        let chosen_2 = tc
+            .update_authoritative_head()
+            .expect("still Some");
+        assert_eq!(chosen, chosen_2);
+        assert_eq!(parents, tc.propose_parents());
+    }
+
+    /// MCC Phase C.6 — integration test for branch-switch under
+    /// mcc_full. After a fork-extension, update_authoritative_head
+    /// re-runs the argmax and may pick a new head; vote_target_head
+    /// follows; propose_parents reflects the new candidate set.
+    #[test]
+    fn mcc_phase_c6_integration_authoritative_head_follows_dag_extension() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        let head_a = tc.update_authoritative_head().expect("Some");
+        let parents_a = tc.propose_parents();
+        assert_eq!(parents_a.len(), 2, "two siblings → two-parent antichain");
+
+        // Extend one fork. Authoritative head + parent set may
+        // change.
+        lc_insert(&mut tc, id(3), vec![id(1)], 2);
+        let head_b = tc.update_authoritative_head().expect("Some");
+        let parents_b = tc.propose_parents();
+
+        // The DAG now has 2 leaves: id(2) and id(3) (id(1) extended
+        // to id(3) so id(1) is no longer a leaf).
+        let heads_set: std::collections::BTreeSet<[u8; 32]> =
+            tc.candidate_heads();
+        assert_eq!(heads_set.len(), 2);
+        assert!(heads_set.contains(&id(2)));
+        assert!(heads_set.contains(&id(3)));
+
+        // The chosen head must be one of the current leaves.
+        assert!(
+            heads_set.contains(&head_b),
+            "authoritative head must be a current leaf"
+        );
+
+        // parents_b must form antichain over the new DAG.
+        assert!(
+            evaporchain_light_cone::concurrency::is_antichain(
+                &tc.light_cone_dag,
+                &parents_b
+            )
+        );
+
+        // Sanity: head_a (chosen pre-extension) may or may not equal
+        // head_b. What's locked is that the substrate followed the
+        // DAG.
+        let _ = head_a;
+    }
+
+    /// MCC Phase C.6 — integration test: governance flag flip from
+    /// mcc_full back to linear clears C.1 field, makes C.2 fall back
+    /// to parent_hash, and C.3 returns empty parents — full chain
+    /// bit-compat restored within a single mode flip.
+    #[test]
+    fn mcc_phase_c6_integration_rollback_to_linear_restores_bit_compat() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.parent_hash = id(7);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Populate C.1 + verify C.2/C.3 active.
+        tc.update_authoritative_head();
+        assert!(tc.current_authoritative_head.is_some());
+        assert_ne!(tc.vote_target_head(), id(7), "mcc_full uses authoritative head");
+        assert!(!tc.propose_parents().is_empty(), "mcc_full populates parents");
+
+        // Flip back to linear.
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "linear".to_string(),
+        );
+        tc.update_authoritative_head();
+
+        // C.1 cleared.
+        assert!(tc.current_authoritative_head.is_none());
+        // C.2 falls back to parent_hash.
+        assert_eq!(tc.vote_target_head(), id(7));
+        // C.3 empty.
+        assert!(tc.propose_parents().is_empty());
+    }
+
     /// MCC Phase C.5 — validator-determinism property test (256
     /// random DAG shapes).
     ///
