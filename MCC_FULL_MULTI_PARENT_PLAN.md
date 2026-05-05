@@ -302,12 +302,20 @@ yet (still gated on `parent_acceptance_mode = "mcc"`).
 
 Promote `authoritative_head` from admin-RPC to consensus hot path.
 
-- [ ] **C.1 — `authoritative_head` selection at `start_round`.**
-      Today (`tendermint.rs:954-969`) lives behind admin RPC; no
-      hot-path consumer. Phase C calls
-      `enumerate_candidate_heads().argmax(mcc_choose)` at the top of
-      every consensus round and writes the chosen head to
-      `current_authoritative_head` field.
+- [x] **C.1 — `current_authoritative_head` field + update method.** ✅ SHIPPED 2026-05-05.
+      Pure additive substrate. New field
+      `current_authoritative_head: Option<[u8; 32]>` on
+      TendermintConsensus. New method
+      `update_authoritative_head() -> Option<[u8; 32]>` recomputes
+      via `enumerate_candidate_heads`'s argmax under
+      `parent_acceptance_mode = "mcc_full"`; clears the field under
+      any other mode (chain bit-compat). Governance allowlist now
+      accepts `"mcc_full"` as a valid `parent_acceptance_mode` value.
+      4 new tests: noop-outside-mcc_full, populated-under-mcc_full,
+      cleared-on-rollback, governance-allows-mcc_full. The
+      hot-path call into this method (from start_round / advance_round)
+      is Phase C.2/C.3 separate work — C.1 is the substrate field
+      + method; C.2/C.3 wire it into the consensus lifecycle.
 
 - [ ] **C.2 — Voting handler dispatch by head.**
       `handle_prevote` / `handle_precommit` (already mirrored to
@@ -557,6 +565,14 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 15)** — Phase C.1 substrate
+  shipped. New `current_authoritative_head` field +
+  `update_authoritative_head` method on TendermintConsensus. Pure
+  additive — does NOT yet hook into round lifecycle (Phase C.2/C.3
+  separate). Governance allowlist accepts `mcc_full`. 4 new tests
+  covering no-op outside mcc_full, populated under mcc_full,
+  cleared-on-rollback, governance allowlist. Consensus 498/0/1.
 
 - **2026-05-05 (late evening cont'd 14)** — Phase C.5 proptest
   shipped — `mcc_phase_c5_validator_determinism_under_random_dags`.

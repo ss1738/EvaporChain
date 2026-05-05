@@ -782,6 +782,17 @@ pub struct TendermintConsensus {
     /// gossip is the heavier post-V1 follow-up. Populated when
     /// `light_cone_state_branches_enabled = true`.
     pub antichain_digest_history: std::collections::VecDeque<(u64, [u8; 32])>,
+    /// MCC Phase C.1 of `MCC_FULL_MULTI_PARENT_PLAN.md` — the
+    /// chain's currently-elected authoritative head per round under
+    /// `parent_acceptance_mode = "mcc_full"`. Populated by
+    /// `update_authoritative_head` (called by Phase C.2/C.3 hot-path
+    /// integration when that ships); read by voting handlers to
+    /// dispatch votes to the right per-tip tally.
+    /// `None` means either (a) the flag isn't `mcc_full` or (b) the
+    /// DAG is empty / no candidate exists. Validator-deterministic
+    /// by construction (computed via `enumerate_candidate_heads`'s
+    /// argmax which is itself deterministic per Phase C.5 proptest).
+    pub current_authoritative_head: Option<[u8; 32]>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -1061,6 +1072,7 @@ impl TendermintConsensus {
             antichain_digest_history: std::collections::VecDeque::with_capacity(
                 ANTICHAIN_DIGEST_HISTORY_CAP,
             ),
+            current_authoritative_head: None,
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -1180,7 +1192,7 @@ impl TendermintConsensus {
         value: &str,
     ) -> Result<(), GovernanceParamError> {
         let permitted: &[&str] = match key {
-            "parent_acceptance_mode" => &["linear", "mcc"],
+            "parent_acceptance_mode" => &["linear", "mcc", "mcc_full"],
             "block_source_mode" => &["fifo", "antichain"],
             "conservation_enforcement" => &["observe", "enforce"],
             "lambda_fold_mode" => &["hash_chain", "nova"],
@@ -2764,6 +2776,41 @@ impl TendermintConsensus {
         fc.enumerate_with_caliber()
     }
 
+    /// MCC Phase C.1 of `MCC_FULL_MULTI_PARENT_PLAN.md` —
+    /// recompute and store the authoritative head from the current
+    /// candidate-head set. Pure substrate addition — does NOT yet
+    /// hook into the consensus round lifecycle (that's Phase C.2/C.3
+    /// when the voting handlers + proposer parent-set selection
+    /// route through this field).
+    ///
+    /// **Behaviour:**
+    /// - When `parent_acceptance_mode = "mcc_full"`, recomputes
+    ///   `current_authoritative_head` as the argmax of
+    ///   `enumerate_candidate_heads`. Returns the new value.
+    /// - Otherwise, leaves `current_authoritative_head` as `None`
+    ///   and returns `None`. Default-mode chain bit-compat
+    ///   preserved — the field is observability-only until Phase
+    ///   C.2/C.3 wiring promotes it.
+    /// - Empty DAG → `None`.
+    pub fn update_authoritative_head(&mut self) -> Option<[u8; 32]> {
+        let mode = self
+            .governance_params
+            .get("parent_acceptance_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("linear");
+        if mode != "mcc_full" {
+            self.current_authoritative_head = None;
+            return None;
+        }
+        let chosen = self
+            .enumerate_candidate_heads()
+            .into_iter()
+            .next()
+            .map(|(id, _caliber)| id);
+        self.current_authoritative_head = chosen;
+        chosen
+    }
+
     /// MCC Phase B.0+ of `MCC_FULL_MULTI_PARENT_PLAN.md` —
     /// **planning** substrate for B.2's `replay_to_head`. Composes
     /// `find_lca` + `block_path_from_to` to produce a `ReplayWalk`
@@ -3198,6 +3245,7 @@ impl TendermintConsensus {
             antichain_digest_history: std::collections::VecDeque::with_capacity(
                 ANTICHAIN_DIGEST_HISTORY_CAP,
             ),
+            current_authoritative_head: None,
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -10378,6 +10426,102 @@ mod tests {
             err.contains("no attached snapshot"),
             "error must signal missing snapshot: {}",
             err
+        );
+    }
+
+    /// MCC Phase C.1 — `update_authoritative_head` is a no-op when
+    /// `parent_acceptance_mode != "mcc_full"`. Locks chain
+    /// bit-compat: the field stays `None` under linear and mcc
+    /// modes regardless of DAG state.
+    #[test]
+    fn mcc_phase_c1_authoritative_head_noop_outside_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+
+        // Default mode is "linear" — must be no-op.
+        assert!(tc.update_authoritative_head().is_none());
+        assert!(tc.current_authoritative_head.is_none());
+
+        // Flip to "mcc" (single-line trajectory walk) — still no-op
+        // for the C.1 field; only "mcc_full" populates it.
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc".to_string(),
+        );
+        assert!(tc.update_authoritative_head().is_none());
+        assert!(tc.current_authoritative_head.is_none());
+    }
+
+    /// MCC Phase C.1 — under `parent_acceptance_mode = "mcc_full"`,
+    /// `update_authoritative_head` populates the field with the
+    /// argmax of `enumerate_candidate_heads`. Equals what
+    /// `MccForkChoice::select_tip` would return.
+    #[test]
+    fn mcc_phase_c1_authoritative_head_populated_under_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+
+        // Empty DAG → None even under mcc_full.
+        assert!(tc.update_authoritative_head().is_none());
+
+        // Build a small DAG.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        let chosen = tc.update_authoritative_head().expect("non-empty DAG → Some");
+        assert_eq!(tc.current_authoritative_head, Some(chosen));
+
+        // Choice must equal the argmax: first entry of
+        // enumerate_candidate_heads.
+        let scored = tc.enumerate_candidate_heads();
+        let argmax = scored[0].0;
+        assert_eq!(chosen, argmax);
+    }
+
+    /// MCC Phase C.1 — flipping parent_acceptance_mode FROM mcc_full
+    /// back to linear (or mcc) must clear `current_authoritative_head`
+    /// on next update. Locks rollback contract — operators flipping
+    /// the flag back during emergency rollback get a clean state,
+    /// not a stale authoritative_head reference.
+    #[test]
+    fn mcc_phase_c1_authoritative_head_clears_on_rollback_to_linear() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+
+        // Set to mcc_full + populate.
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        tc.update_authoritative_head();
+        assert!(tc.current_authoritative_head.is_some());
+
+        // Roll back to linear → next update clears.
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "linear".to_string(),
+        );
+        let cleared = tc.update_authoritative_head();
+        assert!(cleared.is_none());
+        assert!(tc.current_authoritative_head.is_none());
+    }
+
+    /// MCC Phase C.1 — governance allowlist accepts mcc_full as a
+    /// valid parent_acceptance_mode value.
+    #[test]
+    fn mcc_phase_c1_governance_allows_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let result = tc.governance_set_param("parent_acceptance_mode", "mcc_full");
+        assert!(result.is_ok(), "mcc_full must be allowlisted");
+        assert_eq!(
+            tc.get_governance_param("parent_acceptance_mode").map(|s| s.to_string()),
+            Some("mcc_full".to_string())
         );
     }
 
