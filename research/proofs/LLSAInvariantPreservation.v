@@ -25,11 +25,14 @@
 *)
 
 Require Import Coq.Arith.Arith.
-Require Import Coq.Arith.Div2.
 (* Coq 8.12 removed Coq.omega.Omega; the modern decision procedure is
    `lia` from `Coq.micromega.Lia`. Layer 2 of the doctrine punch list
    migrated this file from `omega` to `lia` so it can build against
-   the project's pinned Coq 8.18 toolchain (research/coq/Makefile). *)
+   the project's pinned Coq 8.18 toolchain (research/coq/Makefile).
+
+   2026-05-05: Coq 9.0 (Rocq) removed `Coq.Arith.Div2` entirely. The
+   import was unused in this file (`pow2` is defined locally at the
+   top of section 2), so the import is dropped rather than migrated. *)
 Require Import Lia.
 Require Import Coq.Init.Nat.
 
@@ -164,14 +167,11 @@ Proof.
   intros s s' p Hinv Hstep p'.
   destruct Hinv as [Hbound [Hnn [Hmono Hfloor]]].
   destruct Hstep as [Htot_eq Hparts Hepoch_eq].
-  unfold Inv.
-  split.
-  - rewrite Htot_eq. exact Hbound.
-  split.
-  - lia.
-  split.
-  - lia.
-  - rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
+  unfold Inv. simpl.
+  split. { rewrite Htot_eq. exact Hbound. }
+  split. { apply Nat.le_0_l. }
+  split. { apply Nat.le_refl. }
+  rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
 Qed.
 
 Lemma decay_preserves_inv :
@@ -189,18 +189,14 @@ Proof.
   intros s s' p Hinv Hstep p'.
   destruct Hinv as [Hbound [Hnn [Hmono Hfloor]]].
   destruct Hstep as [Hdecay_le Hdecay_ge Hepoch].
-  unfold Inv.
+  unfold Inv. simpl.
   split.
-  - apply Nat.le_trans with (TotalEnergy s).
-    + exact Hdecay_le.
-    + apply Nat.le_trans with (prior_total p).
-      * exact Hmono.
-      * exact Hbound.
-  split.
-  - lia.
-  split.
-  - lia.
-  - rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
+  { apply Nat.le_trans with (TotalEnergy s).
+    - exact Hdecay_le.
+    - exact Hbound. }
+  split. { apply Nat.le_0_l. }
+  split. { apply Nat.le_refl. }
+  rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
 Qed.
 
 Lemma block_produce_preserves_inv :
@@ -217,7 +213,7 @@ Lemma block_produce_preserves_inv :
 Proof.
   intros s s' p Hinv Hstep.
   unfold BlockProduceStep in Hstep.
-  apply decay_preserves_inv; assumption.
+  eapply decay_preserves_inv; eassumption.
 Qed.
 
 (** Main LLSA gate theorem.
@@ -243,9 +239,9 @@ Theorem llsa_conservation_invariant_preservation :
 Proof.
   intros s s' p Hinv Hstep p'.
   destruct Hstep as [Hr | [Hd | Hbp]].
-  - apply redirect_preserves_inv; assumption.
-  - apply decay_preserves_inv; assumption.
-  - apply block_produce_preserves_inv; assumption.
+  - eapply redirect_preserves_inv; eassumption.
+  - eapply decay_preserves_inv; eassumption.
+  - eapply block_produce_preserves_inv; eassumption.
 Qed.
 
 (* ================================================================
