@@ -6881,6 +6881,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/light_cone/antichain_digest", category: "identity", description: "Phase 4.4 antichain commit-cert digest. Deterministic 32-byte blake3 fingerprint of the closing antichain, domain-separated under `evaporchain-antichain-digest-v1`. Operators compare this across cluster validators to confirm cross-validator agreement on antichain finality. Returns {digest, closing_antichain, closing_antichain_size, running_alongside_tendermint}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/light_cone/antichain_digest_history", category: "identity", description: "Phase 4.4 rolling history of (height, digest) pairs (last 128 committed blocks under `light_cone_state_branches_enabled = true`). Operators retrospectively cross-compare per-height digests across cluster validators: divergence at any past height is the freeze-class signal for antichain disagreement. Returns {history:[{block_height, digest}], count, running_alongside_tendermint}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/light_cone/candidate_heads", category: "identity", description: "MCC Phase E.1 — every active sibling head in the Light-Cone DAG with its first-parent trajectory caliber, sorted descending (smaller-BlockId tiebreak). The first entry is the chain's MCC-chosen authoritative head; downstream entries are the alternatives the fork-choice considered. Operators debug 'which heads are competing right now' without a manual trajectory walk. Returns {heads:[{block_id, caliber}], count, running_alongside_tendermint}.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/light_cone/authoritative_head", category: "identity", description: "MCC Phase E.2 — the chain's MCC-chosen authoritative head (the argmax of /api/light_cone/candidate_heads). Single entry rather than the full list. Per-validator — different validators may briefly disagree during a round before converging. Pairs with the antichain-digest-history endpoint for retroactive cross-validator agreement detection. Returns {head, caliber, candidates_considered, running_alongside_tendermint}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/lambda_fold",           category: "identity", description: "Lambda-Fold accumulator (acc_hash, total_energy_remaining, step_count, latest_epoch)", example: None },
     ApiDocEntry { method: "GET",  path: "/api/tur_liveness",          category: "identity", description: "TUR Liveness Detector verdict over the sliding window of per-block J", example: None },
     ApiDocEntry { method: "GET",  path: "/api/lamport_time",          category: "identity", description: "Decay-Lamport energy-driven logical clock", example: None },
@@ -7233,6 +7234,56 @@ struct CandidateHeadsResp {
     pub heads: Vec<CandidateHeadEntry>,
     pub count: usize,
     pub running_alongside_tendermint: bool,
+}
+
+// ── /api/light_cone/authoritative_head — MCC Phase E.2 ──
+//
+// Returns the chain's MCC-chosen authoritative head — the argmax
+// of `enumerate_candidate_heads`. Single entry rather than the full
+// list. Pairs with the candidate-heads endpoint: candidates lets
+// operators see all alternatives competing; authoritative_head
+// shows only the winner.
+//
+// Per-validator: different validators may briefly disagree on the
+// authoritative head during a round before converging by end of
+// round. Use `/api/light_cone/antichain_digest_history` for
+// retroactive cross-validator agreement detection.
+
+#[derive(Serialize)]
+struct AuthoritativeHeadResp {
+    /// Hex-encoded BlockId of the MCC-chosen authoritative head, or
+    /// null if the DAG is empty (no candidates to choose from).
+    pub head: Option<String>,
+    /// Caliber score of the chosen head's first-parent trajectory.
+    pub caliber: Option<u64>,
+    /// Total candidate-head count this validator considered. Useful
+    /// for confirming the choice was made over the expected fork
+    /// count (vs. a degenerate single-head DAG).
+    pub candidates_considered: usize,
+    pub running_alongside_tendermint: bool,
+}
+
+async fn get_light_cone_authoritative_head(
+    State(state): State<Arc<ApiState>>,
+) -> Json<AuthoritativeHeadResp> {
+    let Some(ref tc) = state.tendermint else {
+        return Json(AuthoritativeHeadResp {
+            head: None,
+            caliber: None,
+            candidates_considered: 0,
+            running_alongside_tendermint: false,
+        });
+    };
+    let tc = safe_lock(tc);
+    let scored = tc.enumerate_candidate_heads();
+    let total = scored.len();
+    let chosen = scored.into_iter().next();
+    Json(AuthoritativeHeadResp {
+        head: chosen.as_ref().map(|(id, _)| hex::encode(id)),
+        caliber: chosen.map(|(_, c)| c),
+        candidates_considered: total,
+        running_alongside_tendermint: true,
+    })
 }
 
 async fn get_light_cone_candidate_heads(
@@ -14932,6 +14983,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route(
             "/api/light_cone/candidate_heads",
             get(get_light_cone_candidate_heads),
+        )
+        .route(
+            "/api/light_cone/authoritative_head",
+            get(get_light_cone_authoritative_head),
         )
         .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))

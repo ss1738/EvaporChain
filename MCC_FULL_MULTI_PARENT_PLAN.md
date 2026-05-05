@@ -398,10 +398,14 @@ budget; soak test runs clean for 72hr.
       fork-choice considered. Pure additive — no hot-path surgery.
       Doc-entry added to API directory. evaporchain-node builds clean.
 
-- [ ] **E.2 — `/api/light_cone/authoritative_head` HTTP endpoint.**
-      Returns current `authoritative_head` BlockId + the trajectory
-      walked + the caliber score. Per-validator (different validators
-      may briefly disagree during the round; converge by end of round).
+- [x] **E.2 — `/api/light_cone/authoritative_head` HTTP endpoint.** ✅ SHIPPED 2026-05-05.
+      Returns the argmax of `enumerate_candidate_heads` —
+      `{head, caliber, candidates_considered, running_alongside_tendermint}`.
+      Per-validator — different validators may briefly disagree
+      during a round. Pairs with E.1's candidate-heads endpoint
+      (full list) and Light-Cone Phase 7's antichain-digest-history
+      (retroactive cross-validator agreement detection). Doc-entry
+      added to API directory; node compiles clean.
 
 - [x] **E.3 — `LIGHT_CONE_FULL_DAG_PLAN.md` Phase 8 addendum.** ✅ SHIPPED 2026-05-05.
       New "Phase 8 — MCC full multi-parent enumeration" section
@@ -532,6 +536,11 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 12)** — Phase E.2 endpoint
+  shipped. `/api/light_cone/authoritative_head` returns the
+  MCC-chosen head + caliber + candidates_considered. Pairs with
+  E.1's full candidate list. Node compiles clean.
 
 - **2026-05-05 (late evening cont'd 11)** — Phase E.3 cross-doc
   addendum. `LIGHT_CONE_FULL_DAG_PLAN.md` now has a Phase 8 section
