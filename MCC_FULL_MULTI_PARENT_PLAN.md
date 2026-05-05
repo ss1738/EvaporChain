@@ -317,12 +317,18 @@ Promote `authoritative_head` from admin-RPC to consensus hot path.
       is Phase C.2/C.3 separate work — C.1 is the substrate field
       + method; C.2/C.3 wire it into the consensus lifecycle.
 
-- [ ] **C.2 — Voting handler dispatch by head.**
-      `handle_prevote` / `handle_precommit` (already mirrored to
-      `dag_round_states[tip]` in Phase 4 substrate) need to route
-      votes to `current_authoritative_head`'s tally, not the legacy
-      `parent_hash`'s. Existing per-tip `dag_round_states` HashMap
-      is the receiver; just need to flip the dispatch.
+- [x] **C.2 — `vote_target_head` accessor.** ✅ SHIPPED 2026-05-05.
+      Pure substrate read-side method. Returns
+      `current_authoritative_head` under `mcc_full` (with parent_hash
+      fallback if not yet computed); returns `parent_hash` under
+      `linear` and `mcc` (chain bit-compat). Voting handlers
+      (`handle_prevote`, `handle_precommit`) call this method to
+      know where to route votes; the actual handler dispatch
+      change is the C.4 wiring step. Today the handlers still tally
+      on parent_hash; this method is the substrate they'll call. 2
+      new tests: fall-back-to-parent-hash under linear/mcc, uses
+      authoritative_head under mcc_full with parent_hash fallback
+      when head is None. Consensus suite: 500 / 0 / 1.
 
 - [ ] **C.3 — Proposer parent-set selection.**
       `create_proposal` (`tendermint.rs:4755`) currently sets
@@ -565,6 +571,13 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 16)** — Phase C.2 substrate
+  shipped. `vote_target_head()` accessor returns the BlockId voting
+  handlers should route to (current_authoritative_head under
+  mcc_full with parent_hash fallback; parent_hash under linear/mcc).
+  Pure read-side accessor — handler dispatch wiring is C.4. 2 new
+  tests; consensus 500/0/1.
 
 - **2026-05-05 (late evening cont'd 15)** — Phase C.1 substrate
   shipped. New `current_authoritative_head` field +

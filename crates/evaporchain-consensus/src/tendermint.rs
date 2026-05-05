@@ -2776,6 +2776,35 @@ impl TendermintConsensus {
         fc.enumerate_with_caliber()
     }
 
+    /// MCC Phase C.2 of `MCC_FULL_MULTI_PARENT_PLAN.md` — vote
+    /// dispatch target. Returns the BlockId that voting handlers
+    /// should route prevotes/precommits into for the current round:
+    ///
+    /// - Under `parent_acceptance_mode = "mcc_full"`: the
+    ///   `current_authoritative_head` (computed by
+    ///   `update_authoritative_head`) if present, falling back to
+    ///   `parent_hash` if not yet computed.
+    /// - Under any other mode (`linear`, `mcc`): the legacy
+    ///   `parent_hash` (chain bit-compat preserved).
+    ///
+    /// **Pure read-side accessor.** Phase C.4 + C.6 wire this into
+    /// the voting handlers (`handle_prevote`, `handle_precommit`) so
+    /// votes route to the correct per-tip `dag_round_states` tally.
+    /// Today the handlers still tally on `parent_hash`; this method
+    /// is the substrate they'll call once that wiring lands.
+    pub fn vote_target_head(&self) -> [u8; 32] {
+        let mode = self
+            .governance_params
+            .get("parent_acceptance_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("linear");
+        if mode == "mcc_full" {
+            self.current_authoritative_head.unwrap_or(self.parent_hash)
+        } else {
+            self.parent_hash
+        }
+    }
+
     /// MCC Phase C.1 of `MCC_FULL_MULTI_PARENT_PLAN.md` —
     /// recompute and store the authoritative head from the current
     /// candidate-head set. Pure substrate addition — does NOT yet
@@ -10427,6 +10456,48 @@ mod tests {
             "error must signal missing snapshot: {}",
             err
         );
+    }
+
+    /// MCC Phase C.2 — `vote_target_head` returns `parent_hash`
+    /// under `linear` and `mcc` modes (chain bit-compat preserved).
+    #[test]
+    fn mcc_phase_c2_vote_target_falls_back_to_parent_hash() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.parent_hash = id(42);
+
+        // Default linear mode.
+        assert_eq!(tc.vote_target_head(), id(42));
+
+        // Single-line mcc mode — still parent_hash.
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc".to_string(),
+        );
+        assert_eq!(tc.vote_target_head(), id(42));
+    }
+
+    /// MCC Phase C.2 — under `mcc_full`, `vote_target_head` returns
+    /// the current_authoritative_head if Some, else falls back to
+    /// parent_hash.
+    #[test]
+    fn mcc_phase_c2_vote_target_uses_authoritative_head_under_mcc_full() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.parent_hash = id(42);
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+
+        // No authoritative head set yet → fallback to parent_hash.
+        assert_eq!(tc.vote_target_head(), id(42));
+
+        // Set authoritative head → routes to that.
+        tc.current_authoritative_head = Some(id(99));
+        assert_eq!(tc.vote_target_head(), id(99));
+
+        // Clear → back to fallback.
+        tc.current_authoritative_head = None;
+        assert_eq!(tc.vote_target_head(), id(42));
     }
 
     /// MCC Phase C.1 — `update_authoritative_head` is a no-op when
