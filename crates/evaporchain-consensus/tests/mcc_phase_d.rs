@@ -261,3 +261,197 @@ fn mcc_phase_d1_four_validators_track_fork_extension() {
         assert_eq!(parent_sets[i], parents_ref);
     }
 }
+
+// ─── D.2 — Byzantine vote rejection + slashing ─────────────────────
+
+use evaporchain_entropic_slashing::entropic_slash;
+
+/// Build a 4-validator consensus instance with both `mcc_full` AND
+/// `light_cone_state_branches_enabled` set, so the Phase 4.3
+/// cross-fork equivocation detector at `record_dag_precommit` is
+/// active. (The detector is gated on
+/// `light_cone_state_branches_enabled = true` since the per-tip
+/// state machinery only exists in branched-state mode.)
+fn make_validator_consensus_branched(my_id: u64) -> TendermintConsensus {
+    let mut tc = TendermintConsensus::new_for_test(my_id, 10, make_validator_set_4());
+    tc.governance_set_param("parent_acceptance_mode", "mcc_full")
+        .expect("mcc_full is allowlisted");
+    tc.governance_set_param("light_cone_state_branches_enabled", "true")
+        .expect("branches flag is allowlisted");
+    tc
+}
+
+/// MCC Phase D.2 — Byzantine validator double-precommits across
+/// concurrent forks; cross_fork_equivocation_count increments;
+/// entropic_slash returns a positive slash.
+///
+/// Scenario:
+///   - 3 concurrent forks at h=1 (id 1, 2, 3) off genesis.
+///   - Validators 1, 2, 3 honestly precommit on fork A (id(1)).
+///   - Byzantine validator 4 first precommits on fork A, then
+///     ALSO precommits on fork B (id(2)) with a different
+///     block_hash → cross-fork equivocation.
+///   - Assert: cross_fork_equivocation_count(4) == 1; honest
+///     validators' counts == 0; entropic_slash on the [1,1] count
+///     vector returns a positive slash; honest slash == 0.
+#[test]
+fn mcc_phase_d2_byzantine_double_precommit_increments_counter_and_slash_positive() {
+    let mut tc = make_validator_consensus_branched(1);
+
+    // Build the 3-fork DAG.
+    lc_insert(&mut tc, id(0), vec![], 0);
+    lc_insert(&mut tc, id(1), vec![id(0)], 1);
+    lc_insert(&mut tc, id(2), vec![id(0)], 1);
+    lc_insert(&mut tc, id(3), vec![id(0)], 1);
+
+    let bh_a: [u8; 32] = id(1);
+    let bh_b: [u8; 32] = id(2);
+    let sig = vec![0xAB; 96];
+
+    // Honest validators 1, 2, 3 all precommit on fork A.
+    tc.record_dag_precommit(id(1), 1, Some(bh_a), sig.clone());
+    tc.record_dag_precommit(id(1), 2, Some(bh_a), sig.clone());
+    tc.record_dag_precommit(id(1), 3, Some(bh_a), sig.clone());
+
+    // Byzantine validator 4 first precommits on fork A...
+    tc.record_dag_precommit(id(1), 4, Some(bh_a), sig.clone());
+    // ...then double-precommits on fork B with a different
+    // block_hash. This triggers Phase 4.3's cross-fork equivocation
+    // detector inside record_dag_precommit.
+    tc.record_dag_precommit(id(2), 4, Some(bh_b), sig.clone());
+
+    // Counter: only validator 4 incremented.
+    assert_eq!(
+        tc.cross_fork_equivocation_count(4),
+        1,
+        "Byzantine v4 must have 1 cross-fork equivocation"
+    );
+    assert_eq!(tc.cross_fork_equivocation_count(1), 0);
+    assert_eq!(tc.cross_fork_equivocation_count(2), 0);
+    assert_eq!(tc.cross_fork_equivocation_count(3), 0);
+
+    // Snapshot map: only v4 in keys.
+    let all = tc.all_cross_fork_equivocations();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all.get(&4), Some(&1));
+    assert!(!all.contains_key(&1));
+
+    // Entropic slash: feed [honest_count=1, byzantine_count=1] as
+    // the observed count vector — equal split → 1 bit of entropy →
+    // slash == stake (capped at stake). This is the
+    // worst-case-uniform outcome the Sanov-large-deviation cost
+    // function pegs to its maximum.
+    let stake: u64 = 1_000;
+    let byz_slash = entropic_slash(stake, &[1, 1]).expect("entropic_slash u64 split");
+    assert!(byz_slash > 0, "[1,1] split → positive slash");
+    assert_eq!(byz_slash, stake, "[1,1] uniform → max slash == stake");
+
+    // Honest count vector is degenerate ([1, 0, 0]) → entropy 0 →
+    // slash 0. Locks the contract that the slashing function does
+    // not punish validators with empty equivocation history.
+    let honest_slash = entropic_slash(stake, &[1, 0, 0]).expect("entropic_slash deg");
+    assert_eq!(honest_slash, 0, "deterministic pattern → 0 slash");
+}
+
+/// MCC Phase D.2 — counter accumulates: validator 4 equivocates
+/// twice across three forks. Assert count == 2 after second hit.
+/// Locks the increment-on-each-additional-conflict semantics.
+#[test]
+fn mcc_phase_d2_repeated_equivocation_accumulates_count() {
+    let mut tc = make_validator_consensus_branched(1);
+
+    lc_insert(&mut tc, id(0), vec![], 0);
+    lc_insert(&mut tc, id(1), vec![id(0)], 1);
+    lc_insert(&mut tc, id(2), vec![id(0)], 1);
+    lc_insert(&mut tc, id(3), vec![id(0)], 1);
+
+    let sig = vec![0xCDu8; 96];
+
+    // v4 precommits on fork A. No prior tip → no equivocation yet.
+    tc.record_dag_precommit(id(1), 4, Some(id(1)), sig.clone());
+    assert_eq!(tc.cross_fork_equivocation_count(4), 0);
+
+    // v4 also precommits on fork B, different block_hash → +1.
+    tc.record_dag_precommit(id(2), 4, Some(id(2)), sig.clone());
+    assert_eq!(tc.cross_fork_equivocation_count(4), 1);
+
+    // v4 also precommits on fork C, different block_hash →
+    // increments AGAIN: scan finds 2 prior tips that disagree
+    // (forks A and B) but the equivocation flag is set on the
+    // first conflict found and `break`s, so only 1 increment per
+    // call.
+    tc.record_dag_precommit(id(3), 4, Some(id(3)), sig.clone());
+    assert_eq!(
+        tc.cross_fork_equivocation_count(4),
+        2,
+        "second cross-fork conflict → second increment"
+    );
+}
+
+/// MCC Phase D.2 — equivocation increment is gated on
+/// `light_cone_state_branches_enabled = true`. Without that flag,
+/// `record_dag_precommit` is a no-op even if the validator
+/// double-precommits. Locks the rollout safety contract: operators
+/// can disable the detector without recompiling.
+#[test]
+fn mcc_phase_d2_no_increment_when_state_branches_disabled() {
+    // mcc_full mode but state-branches OFF.
+    let mut tc = TendermintConsensus::new_for_test(1, 10, make_validator_set_4());
+    tc.governance_set_param("parent_acceptance_mode", "mcc_full")
+        .expect("mcc_full");
+    // light_cone_state_branches_enabled NOT set → defaults off.
+
+    lc_insert(&mut tc, id(0), vec![], 0);
+    lc_insert(&mut tc, id(1), vec![id(0)], 1);
+    lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+    let sig = vec![0xEFu8; 96];
+    tc.record_dag_precommit(id(1), 4, Some(id(1)), sig.clone());
+    tc.record_dag_precommit(id(2), 4, Some(id(2)), sig.clone());
+
+    // Detector is no-op → counter is empty.
+    assert_eq!(
+        tc.cross_fork_equivocation_count(4),
+        0,
+        "no equivocation increment without state-branches enabled"
+    );
+    assert!(tc.all_cross_fork_equivocations().is_empty());
+}
+
+/// MCC Phase D.2 — accessor still respects `parent_acceptance_mode`
+/// gate even when the underlying counter is populated. If operators
+/// flip from mcc_full back to linear, the operator-facing accessors
+/// return 0 / empty even though the raw counter has data — this is
+/// the chain-bit-compat invariant from C.4. (D.2 closes the loop:
+/// equivocation pipeline + accessor gate together behave correctly.)
+#[test]
+fn mcc_phase_d2_mode_rollback_zeroes_accessor_even_with_populated_counter() {
+    let mut tc = make_validator_consensus_branched(1);
+
+    lc_insert(&mut tc, id(0), vec![], 0);
+    lc_insert(&mut tc, id(1), vec![id(0)], 1);
+    lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+    let sig = vec![0x12u8; 96];
+    tc.record_dag_precommit(id(1), 4, Some(id(1)), sig.clone());
+    tc.record_dag_precommit(id(2), 4, Some(id(2)), sig.clone());
+    assert_eq!(tc.cross_fork_equivocation_count(4), 1);
+
+    // Flip back to linear. The raw counter is unchanged but the
+    // operator-facing accessor returns 0 (chain bit-compat).
+    tc.governance_set_param("parent_acceptance_mode", "linear")
+        .expect("linear is allowlisted");
+    assert_eq!(
+        tc.cross_fork_equivocation_count(4),
+        0,
+        "accessor gates on mcc_full"
+    );
+    assert!(tc.all_cross_fork_equivocations().is_empty());
+    // The raw counter still has the data — locks that the gate is
+    // accessor-side, not destructive.
+    assert_eq!(
+        tc.cross_fork_equivocations.get(&4).copied().unwrap_or(0),
+        1,
+        "raw counter unchanged by mode flip"
+    );
+}
