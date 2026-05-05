@@ -281,6 +281,154 @@ flag only gates new finalization.
 
 ---
 
+## Lane 4 — MCC full multi-parent enumeration (Phase 8 addendum)
+
+> **Status as of 2026-05-05:** SUBSTRATE COMPLETE behind
+> `parent_acceptance_mode = "mcc"` (single-line trajectory walk).
+> The `mcc_full` value of this flag — which promotes the
+> Light-Cone DAG from co-existing-with-Tendermint to *load-bearing*
+> fork choice across multi-parent forks — is **not yet wired into
+> the consensus hot path**. This lane describes the *intended*
+> rollout; do NOT flip the flag in production until Phase C of
+> [`MCC_FULL_MULTI_PARENT_PLAN.md`](../../MCC_FULL_MULTI_PARENT_PLAN.md)
+> ships (`authoritative_head` selection at `start_round`, vote
+> dispatch by head, proposer multi-parent set selection).
+
+### What changes when active
+
+The chain's fork-choice promotes from single-line MCC trajectory
+walk to **full multi-parent enumeration**. At the start of every
+consensus round, `authoritative_head` is selected as the argmax of
+`enumerate_candidate_heads`. Validators vote on the chosen head;
+if the chosen head changes between rounds (branch switch), the
+executor calls `replay_and_apply_atomic` to roll state back to the
+LCA and forward to the new head atomically. Proposers emit
+multi-parent blocks (`block.parents.len() > 1`) when their parent
+set is an antichain.
+
+### Pre-flight (Lane 4 specific)
+
+- Lane 3 (Light-Cone Full DAG) must be flipped to
+  `light_cone_state_branches_enabled = true` first — Phase 4's
+  per-fork state branches are the substrate Lane 4's replay walks
+  consume.
+- Confirm `state_branches` is populated on every validator:
+  `curl http://node:8080/api/light_cone | jq .block_count` should
+  match across all validators.
+- Confirm every active `state_branch` has an attached snapshot
+  (otherwise rollback fails). Today this is wired in
+  `evaporchain-node` via `attach_branch_snapshot` calls during
+  `on_block_committed`; verify operationally by triggering a fork
+  and checking that a subsequent `replay_and_apply_atomic` doesn't
+  return `RestoreFailed`.
+- Confirm `protocol_version >= 3` chain-wide (multi-parent block
+  wire format). Phase 2 of the Light-Cone plan added the
+  `Block::parents` field with `serde(skip_serializing_if =
+  "Vec::is_empty")` so legacy blocks stay bit-compatible — but
+  emitting `parents.len() > 1` requires v3.
+
+### Rollout
+
+Three-step ladder — **never** skip directly from `linear` to
+`mcc_full`:
+
+#### Step 1 — Confirm linear baseline
+
+```
+curl -X POST http://localhost:8080/api/governance/param \
+  -d '{"key": "parent_acceptance_mode", "value": "linear"}'
+```
+
+This is the default. Verify by checking
+`/api/governance/flags` and `/api/light_cone/candidate_heads`
+returns a single-entry list (no concurrent forks under linear
+mode).
+
+#### Step 2 — Single-line MCC
+
+```
+curl -X POST http://localhost:8080/api/governance/param \
+  -d '{"key": "parent_acceptance_mode", "value": "mcc"}'
+```
+
+The chain now uses MCC for single-line trajectory walking. Watch
+the cluster for at least 7 days — `curl
+http://node-N:8080/api/light_cone/authoritative_head` on each
+validator and confirm:
+- `head` matches across all validators within a few-block window
+- `caliber` is non-zero and roughly stable
+- `candidates_considered` stays low (1-2; under linear-block-rate
+  workload there's typically only one competing head)
+
+If divergence appears in `authoritative_head` reports persisting
+beyond 5 blocks, halt — the cluster has a forking issue that needs
+investigation before promoting further.
+
+#### Step 3 — Full multi-parent enumeration **(POST-PHASE-C ONLY)**
+
+```
+curl -X POST http://localhost:8080/api/governance/param \
+  -d '{"key": "parent_acceptance_mode", "value": "mcc_full"}'
+```
+
+**Do not run this in production until Phase C of
+`MCC_FULL_MULTI_PARENT_PLAN.md` ships.** The substrate is in place
+(B.0/B.1/B.2/B.3/B.4/B.5/B.6 — `replay_and_apply_atomic` works
+end-to-end) but the consensus hot path (`start_round`, voting
+handler dispatch, proposer parent-set selection) does NOT yet
+consume it.
+
+Once Phase C lands, this step:
+- Routes `start_round` through `enumerate_candidate_heads().argmax()`
+- Routes `handle_prevote` / `handle_precommit` to
+  `dag_round_states[authoritative_head]`
+- Has the proposer emit `block.parents` as the antichain of
+  current candidate heads (where `is_antichain` returns true)
+
+### Monitoring
+
+The three Lane-4-relevant operator endpoints to watch:
+
+```
+curl http://node:8080/api/light_cone/candidate_heads
+  # All competing heads + calibers, sorted descending.
+
+curl http://node:8080/api/light_cone/authoritative_head
+  # The MCC-chosen head this validator is building on.
+
+curl http://node:8080/api/light_cone/antichain_digest_history
+  # Past 128 blocks of antichain-digest pairs — cross-compare
+  # across cluster validators to detect any historical divergence.
+```
+
+For cluster-divergence diagnosis:
+
+```
+for node in node1 node2 node3 node4; do
+  echo "--- $node ---"
+  curl -s http://$node:8080/api/light_cone/authoritative_head | jq -r .head
+done
+```
+
+If the heads disagree for more than a few blocks, that's the
+freeze-class signal Lane 4's `replay_and_apply_atomic` was designed
+to recover from cleanly — but recovery requires Phase C's
+hot-path wiring.
+
+### Rollback
+
+```
+curl -X POST http://localhost:8080/api/governance/param \
+  -d '{"key": "parent_acceptance_mode", "value": "mcc"}'
+```
+
+Returns to the single-line MCC trajectory walk. Existing
+state_branches stay populated; replay machinery becomes idle.
+Subsequent rollback to `linear` is bit-immediate via the same
+flag-flip path.
+
+---
+
 ## Composition
 
 The three lanes are designed to compose:

@@ -434,12 +434,20 @@ budget; soak test runs clean for 72hr.
       suite delta (469 → 493). Honestly scoped: Phases C + D +
       E.2/E.3/E.6 still listed as remaining work.
 
-- [ ] **E.6 — Operator runbook addendum.**
-      Add an `mcc_full` rollout section to
-      `docs/runbooks/doctrine-rollout-2026-05.md` covering:
-      pre-flight (governance flag default check), three-step rollout
-      (linear → mcc → mcc_full), monitoring (`/api/light_cone/*`
-      endpoints), rollback procedure (set flag back to `"linear"`).
+- [x] **E.6 — Operator runbook addendum.** ✅ SHIPPED 2026-05-05.
+      New "Lane 4 — MCC full multi-parent enumeration (Phase 8
+      addendum)" section added to
+      `docs/runbooks/doctrine-rollout-2026-05.md`. Includes:
+      - Substrate-vs-hot-path-status warning ("do NOT flip
+        mcc_full in production until Phase C ships")
+      - Pre-flight checks (Lane 3 prereq, snapshot attachment
+        verification, protocol_version ≥ 3)
+      - Three-step ladder: `linear` → `mcc` → `mcc_full`
+      - Monitoring snippets for the three E.1/E.2/Phase-7
+        endpoints (`candidate_heads`, `authoritative_head`,
+        `antichain_digest_history`)
+      - Cross-validator divergence-diagnosis loop
+      - Rollback procedure (back to `mcc`, then `linear` if needed)
 
 **Phase E acceptance:** every doctrine doc reflects shipped state;
 operator can roll out `mcc_full` from a written guide without
@@ -536,6 +544,14 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 13)** — Phase E.6 runbook
+  addendum shipped. New "Lane 4" section in
+  `docs/runbooks/doctrine-rollout-2026-05.md` covers `mcc_full`
+  rollout sequence, pre-flight checks, monitoring endpoints,
+  cluster-divergence diagnosis loop, and rollback. Explicitly
+  flags the substrate-vs-hot-path status: do NOT flip mcc_full
+  in production until Phase C ships. **Phase E is now 6/6 done.**
 
 - **2026-05-05 (late evening cont'd 12)** — Phase E.2 endpoint
   shipped. `/api/light_cone/authoritative_head` returns the
