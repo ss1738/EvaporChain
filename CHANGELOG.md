@@ -70,6 +70,154 @@ Decision-lock docs: `research/light_cone/PHASE_3_DECISIONS.md`, `PHASE_4_DECISIO
 - ~150 new tests across substrate, integration, fuzz harness, proptest, perf benchmark.
 - Drive-by audit-fix migrations cleaned up: `target_utilization_ppm`/`health_score_ppm` field renames left dangling by parallel sessions.
 
+## 2026-05-05 (afternoon) — Post-doctrine consistency + observability + README sweep
+
+Continuation session after the morning doctrine arc closed. Closed the
+remaining post-doctrine punch-list items, fixed a class of
+proposer/follower divergence bugs in the gossip-path block-commit, shipped
+the Phase 4.4 antichain commit-cert digest the doctrine rollout runbook
+flagged as the next operator-facing piece, and swept all in-tree READMEs
+to current state.
+
+### Operator diagnostic — `/api/network/scores`
+
+Lane R.* (cluster freeze 2026-05-04) carry-forward item closed. New
+`SybilState::scores_view()` iterates the full `scores` HashMap including
+ghost entries (peers in `scores` but not `peer_ips`) — the freeze-class
+signal that was invisible to `/api/network/peers`. New `PeerScoreEntry`
+exported from `evaporchain-network`. New `GET /api/network/scores`
+returns `{scores, count, ghost_count}` — `ghost_count > 0` is the
+standing diagnostic for the next freeze-class issue. Regression test
+`test_scores_view_surfaces_ghost_entries`. Network 64/64 green.
+
+### M2 Coq build verification — Rocq 9.1.1
+
+Layer 7 LLSA descope path's last hard gate. `brew install coq` on Mini 1
+(Rocq 9.1.1, the renamed Coq) surfaced four classes of breakage from the
+8.18 → 9.x transition that the prior `omega → lia` migration didn't
+anticipate:
+
+1. `Coq.Arith.Div2` removed in Coq 9.0 — dropped the unused import (`pow2` is defined locally).
+2. Coq 9.0 enforces strict bullet structure between `split`s — replaced `split. - tac. split.` patterns with `split. { tac. } split.` brace-focusing.
+3. `lia` failed on trivial `0 <= n` and `n <= n` — replaced with direct lemmas (`Nat.le_0_l`, `Nat.le_refl`).
+4. `apply X; assumption` no longer leaves evars for later in 9.0 — replaced with `eapply X; eassumption`.
+5. `decay_preserves_inv` had a redundant `le_trans` chain through `prior_total p` — simplified to a single chain.
+
+`research/proofs/LLSAInvariantPreservation.v` now compiles clean
+end-to-end. All 4 lemmas at `Qed.`. The "first chain whose governance is
+a build-verifiable theorem under audit" claim now stands on a re-running
+kernel proof, not on documentation. Layer 7 descope path advanced from
+~70% to ~90%.
+
+### TLA deadlock counter-example resolution
+
+The two `_TTrace_*.tla` files (dated 2026-04-30) were emitted when TLC's
+default deadlock detection fired on the *intended* terminal state of
+bounded model checking (every action guarded by `height[v] <=
+MaxHeight`; once all validators commit up to MaxHeight, no action is
+enabled). Inspection of the trace state confirmed all 7 safety
+invariants (Agreement, Validity, CommitRequiresQuorum, LockSafety,
+EquivocationDetected, StateCommitmentIntegrity, TypeOK) hold at the
+"deadlock". Fix: `CHECK_DEADLOCK FALSE` added to all four `.cfg` files
+with rationale comment. Background documented in `research/tla/README.md`
+"On TLC deadlock reports" section. Punch list closed.
+
+### Proposer/follower divergence fixes — six chain-wide post-commit primitives
+
+The proposer-local block-commit at `main.rs:4205-4242` ticked Mortis,
+Decay-Lamport, Sentinel autonomic governance, DSN nullifiers, PNT phase,
+and the four-act snapshot publisher. The gossip-follower commit at
+`main.rs:5278+` shipped only `tc.on_block_committed` and frontier-state
+updates — every other chain-wide deterministic primitive *did not tick on
+follower validators*. Result: in a 3-validator cluster, only the
+proposer of each block updated these counters; followers' dashboards
+drifted block-by-block.
+
+Symmetric mirror shipped on the gossip path:
+
+- **Decay-Lamport** (§4.1 #3 Tier-1) — clock now ticks per-block on every validator role.
+- **DSN** (Tier-2 Decay-Stamped Nullifiers) — every validator folds the same deterministic per-block nullifier.
+- **PNT** (Phased Nullifier Tree) — phase advances once per epoch on every node.
+- **Mortis** (`tick_mortis_on_executor`) — four-act narrative state machine ticks deterministically.
+- **Sentinel** (`autonomic_sentinel_tick`) — homeostatic governance parameter updates apply consistently.
+- **`/api/four_act` snapshot publisher** — operator dashboard data on follower nodes was stale; now publishes per block.
+
+Two whole classes of "why are validators 2 and 3 reporting stale numbers"
+operator-confusion bugs eliminated.
+
+`evap_getLamportClock` JSON-RPC docstring updated to document both wiring
+sites.
+
+### Phase 4.4 antichain commit-cert digest
+
+The doctrine rollout runbook flagged Phase 4.4 as the "next step" beyond
+the 6/6 LIGHT_CONE_FULL_DAG_PLAN.md Phase 6 deliverable — the missing
+inter-validator agreement digest for the Light-Cone substrate (sibling
+to Crooks-MEV's `mev_state_digest`). Shipped end-to-end:
+
+- `evaporchain-light-cone::concurrency::digest_antichain` + `closing_antichain_digest`. Domain-separated under `evaporchain-antichain-digest-v1`. Sort-before-hash for validator-determinism. 32-byte blake3 output. Empty-set sentinel = blake3-of-domain-tag-alone.
+- `TendermintConsensus::light_cone_antichain_digest()` + `light_cone_closing_antichain()` accessors.
+- `GET /api/light_cone/antichain_digest` HTTP endpoint returns `{digest, closing_antichain, closing_antichain_size, running_alongside_tendermint}`.
+- 6 new substrate tests (order-independence, set-separation, empty-set sentinel, domain separation, composition idiom, diverging-DAG separation). Light-cone tests 34/34 (was 28).
+- Plan addendum: `LIGHT_CONE_FULL_DAG_PLAN.md` Phase 7 (4/4 sub-items shipped). Punch list flipped ⏳ → ✅. Runbook Step 2 of the DAG-mode rollout sequence updated to use the new endpoint for the inter-validator agreement check.
+
+### Doctrine doc reconciliation
+
+`DOCTRINE_PUNCH_LIST.md` checkboxes brought into line with what's
+actually shipped. Layer 1 M3.1 (MCC) + M3.2 (CFM) flipped ✅. Layer 2
+Coq cleanup mostly closed (TLA-trace investigation also flipped ✅
+above). Layer 5 — all 6 sub-items flipped ✅ with arity-8 / Poseidon /
+Nova / sublinearity refs. Layer 6 — Singh-Lyapunov ✅, Crooks-MEV ✅,
+Light-Cone substrate ✅ with explicit post-V1 gap list. Layer 7 descope
+path bumped from ~70% to ~90% (MultiAuditorVerifier shipped + Coq build
+verified); the `AlwaysAcceptVerifier` stub note replaced with the k-of-n
+production-verifier reference. Status snapshot table updated for Layers
+1 and 7. All four "Doctrine amendments needed" items at the bottom of
+the punch list now resolved.
+
+`INVENTION_STACK.md §A1.2 T4` updated: *"the first chain whose governance
+is a build-verifiable theorem under audit"* — honest claim that matches
+shipped state (Coq-build-verified kernel + `MultiAuditorVerifier` k-of-n).
+Tezos-beat comparison preserved (Tezos has neither Coq term nor auditor
+signatures). Full theorem-grade on-chain MetaCoq path preserved as
+post-V1 work.
+
+### `evaporchain-consensus` private_interfaces warning resolved
+
+`RoundState` made `pub(crate)` to match `dag_round_states` field
+visibility introduced by Light-Cone Phase 4 work. Crate builds clean.
+
+### README sweep — 10 files updated to current state
+
+Audit identified 4 actively-misleading READMEs (Tier A) + 8 stale READMEs
+(Tier B) out of 24 in-tree files. 10 fixed:
+
+- **Root `README.md`** — replaced "7,477+ tests across 100+ crates" with accurate "12,500+ test functions across 147 workspace crates", added doctrine-arc status row (Lambda-Fold Nova / Crooks-MEV / Light-Cone DAG / Causal-CHSH / MultiAuditorVerifier / M2 Coq), expanded crate map with 17 named frontier primitives, port `:3000` → `:8080`.
+- **`docs/README.md`** — port `:3000` → `:8080` (all occurrences). Added 5 new endpoint sections: `/api/network/scores`, `/api/light_cone/*` (Phase 4.4 antichain digest), `/api/lambda_fold/nova/*`, `evap_getLamportClock`.
+- **`website/README.md`** — fictional dApp directory list (`nft-marketplace, energy-pool, mortal-messages, governance`) replaced with accurate listing of `dapps/` (singh-pool, validator-analytics, gov-portal, explorer-light + 4 legacy/early-phase apps).
+- **`research/coq/README.md`** — toolchain line updated to "verified clean under Rocq 9.1.1" with the M2 transition-fix note. New row in the file-status table for `LLSAInvariantPreservation.v` showing all 4 lemmas at `Qed.`. Closing paragraph rewritten to reflect that LLSA is now build-verifiable end-to-end.
+- **`research/frontier/README.md`** — expanded from 3 primitives to the full Tier-0 invention stack (5) + Tier-0 supporting (7) + 2026-05 doctrine arc (Lambda-Fold Nova, Crooks-MEV, Light-Cone Full DAG).
+- **`research/tla/README.md`** — Files header now lists all four `.cfg` files (was 3 listed despite body referencing 4 after the `CHECK_DEADLOCK FALSE` sweep).
+- **`docs/architecture/diagrams/README.md`** — replaced "(commit hash to be added at audit kickoff)" placeholder with "kept current with main; auditors should pin a specific commit for their snapshot reference."
+- **`sdk/README.md`** — port `:3000` → `:8080`. New "Frontier endpoints (not yet wrapped)" section listing `/api/light_cone/antichain_digest`, `/api/network/scores`, `/api/mev/*`, `/api/cartel_alarm/*`, `/api/lambda_fold/nova/*`, `evap_getLamportClock` so SDK users know the coverage gap is documented, not accidental.
+- **`extension/README.md`** — new "Reproducible builds" section advertises the deterministic WASM-build pipeline (`scripts/build-wasm.sh`, `scripts/wasm-build-versions.json`, `scripts/verify-wasm.mjs`) so reviewers see the user-protective property: *Chrome-Web-Store wallet is bit-identical to a rebuild from this repo at the tagged commit*.
+- **`prototypes/fold-a-block/README.md`** — historical-status header pointing to the production Nova IVC integration (`crates/evaporchain-proving::nova` + `crates/evaporchain-lambda-fold`) and the empirical sublinearity numbers from the production path that supersede the prototype targets.
+
+External auditors / grant reviewers / new contributors landing on any of
+these now read accurate state.
+
+### Net session ship
+
+| Surface | Change |
+|---|---|
+| Code | `+~250 LOC` across `evaporchain-light-cone::concurrency`, `evaporchain-consensus::tendermint`, `evaporchain-network::service`, `evaporchain-node::api` + `main.rs` + `jsonrpc.rs` |
+| Coq | 5 distinct 8.18→9.0 fix classes in `LLSAInvariantPreservation.v` — build clean under Rocq 9.1.1 |
+| TLA | `CHECK_DEADLOCK FALSE` × 4 cfg files |
+| Tests | +7 (network 64/64, light-cone 34/34) |
+| HTTP endpoints | +2 (`/api/network/scores`, `/api/light_cone/antichain_digest`) |
+| Doc updates | 10 READMEs + 3 doctrine docs (`DOCTRINE_PUNCH_LIST.md`, `LIGHT_CONE_FULL_DAG_PLAN.md`, `INVENTION_STACK.md` §A1.2 T4) + runbook + this CHANGELOG entry |
+| Warnings cleared | `private_interfaces` on `RoundState` |
+
 ## 2026-05-04 night — Press-claim test sweep across substrate primitives
 
 Added 36+ top-level `press_claim_tests` modules to substrate crates so the

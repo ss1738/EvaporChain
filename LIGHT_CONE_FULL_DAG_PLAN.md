@@ -128,6 +128,22 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 ---
 
+### Phase 7 — Cross-validator antichain agreement digest (2026-05-05 addendum)
+
+Originally projected as out-of-scope follow-up; shipped as a small
+substrate addendum 2026-05-05 because the doctrine rollout runbook
+explicitly flagged it as the next operator-facing piece beyond the
+6/6 Phase 6 deliverable.
+
+- [x] **7.1 — `digest_antichain` + `closing_antichain_digest`.** SHIPPED in `evaporchain-light-cone::concurrency`. Domain-separated under `evaporchain-antichain-digest-v1`; sort-before-hash for validator-determinism; 32-byte blake3 output; empty-set sentinel = blake3-of-domain-tag-alone. 6 new substrate tests (order-independence, set-separation, empty-sentinel, domain-separation, composition idiom, diverging-DAG separation).
+- [x] **7.2 — `TendermintConsensus` accessors.** SHIPPED. `light_cone_antichain_digest()` (32-byte digest of current closing antichain) + `light_cone_closing_antichain()` (sorted BlockId list the digest commits to).
+- [x] **7.3 — HTTP endpoint.** SHIPPED. `GET /api/light_cone/antichain_digest` returns `{digest, closing_antichain, closing_antichain_size, running_alongside_tendermint}`. Operators `curl` across all cluster validators and pattern-match the digests; divergence is the freeze-class signal for antichain disagreement. Pairs with Crooks-MEV's `mev_state_digest` (Phase 3.2) as the second canonical inter-validator digest.
+- [x] **7.4 — Operator runbook.** SHIPPED. `docs/runbooks/doctrine-rollout-2026-05.md` Step 2 of the Light-Cone DAG mode rollout sequence updated to use `/api/light_cone/antichain_digest` for the inter-validator agreement check.
+
+**Phase 7 deliverable: SHIPPED end-to-end (4/4 sub-items).** Light-Cone tests now 34/34 green (was 28).
+
+---
+
 ## Stopping conditions
 
 - **Phase 1 latency > 1.5× linear-mode latency** for the same workload — DAG fork-choice can't hold its own. Reframe: maybe DAG mode is opt-in for high-stake chains, not default.
