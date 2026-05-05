@@ -407,11 +407,15 @@ budget; soak test runs clean for 72hr.
       Captures the MCC-full work as a follow-up to the existing
       Phase 4.x DAG-aware vote tally. Pointer to this plan doc.
 
-- [ ] **E.4 — `INVENTION_STACK.md §A1.2 T1` update.**
-      Doctrine claim updated from "argmax exp(−β·E_path) over candidate
-      trajectories" (current Lagrangian re-label) to "argmax exp(−β·E_path)
-      over the FULL multi-parent trajectory enumeration" (matches
-      shipped). Honest about what's now load-bearing.
+- [x] **E.4 — `INVENTION_STACK.md §A1.2 T1` update.** ✅ SHIPPED 2026-05-05.
+      Reflects Phase A + B completion. T1's "primitive" column now
+      enumerates the substrate work (`MccForkChoice`,
+      `enumerate_candidate_heads`, `plan_replay_to_head`,
+      `replay_and_apply_atomic`), 34 tests, and is honest that hot-path
+      integration (Phase C) + adversarial testing (Phase D) remain.
+      The "What EvaporChain alone can state" column expanded to
+      describe the multi-parent enumeration substrate as shipped, with
+      the explicit "becomes load-bearing once Phase C lands" caveat.
 
 - [ ] **E.5 — `DOCTRINE_PUNCH_LIST.md` Layer 4 row.**
       Flip from `[ ]` to `[x]` with full-path references to phases
@@ -519,6 +523,14 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 9)** — Phase E.4 doctrine update
+  shipped. `INVENTION_STACK.md §A1.2 T1` (MCC) row rewritten to
+  reflect Phase A + B substrate completion: enumerate_candidate_heads,
+  plan_replay_to_head, replay_and_apply_atomic, 34 tests. Honest
+  about Phase C (hot-path) + Phase D (adversarial) as remaining
+  work. The doctrine claim now reads accurately against shipped
+  code, not aspirationally.
 
 - **2026-05-05 (late evening cont'd 8)** — Phase B.4 landed.
   `replay_and_apply_atomic` wraps the umbrella with pre-replay
