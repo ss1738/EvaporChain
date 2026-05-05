@@ -2759,6 +2759,63 @@ impl TendermintConsensus {
         })
     }
 
+    /// MCC Phase B.2 of `MCC_FULL_MULTI_PARENT_PLAN.md` — bridge
+    /// between Phase B.0+ (planning) and Phase B.1 (snapshot
+    /// restore). Restores the StateDB to the captured state at
+    /// `plan.lca` so the caller can subsequently apply
+    /// `plan.forward_path` blocks via `execute_block`.
+    ///
+    /// **Caller workflow:**
+    /// ```ignore
+    /// let plan = consensus.plan_replay_to_head(from, to)?;
+    /// if plan.rollback_required {
+    ///     consensus.restore_to_lca(&plan, &mut db)?;
+    /// }
+    /// for block_id in &plan.forward_path {
+    ///     let block = block_store.get(block_id)?;
+    ///     executor.execute_block(&mut db, &block)?;
+    /// }
+    /// ```
+    ///
+    /// **Errors:**
+    /// - `plan.lca` is not tracked in `state_branches` (caller
+    ///   should ensure the LCA was recorded before this call)
+    /// - the LCA has no attached snapshot (use
+    ///   `attach_branch_snapshot` first; without a snapshot, no
+    ///   rollback is possible — only forward replay)
+    /// - the underlying `StateSnapshotBranch::restore` returns an
+    ///   error (e.g. `SnapshotApplier::apply` fails verification)
+    ///
+    /// **No-op when `!plan.rollback_required`** (caller can also
+    /// check `plan.rollback_required` before invoking; this method
+    /// returns `Ok(())` when LCA == from, since no actual restore
+    /// is needed).
+    pub fn restore_to_lca(
+        &self,
+        plan: &ReplayWalk,
+        db: &mut dyn evaporchain_state::db::StateDB,
+    ) -> Result<(), String> {
+        if !plan.rollback_required {
+            return Ok(());
+        }
+        let metadata = self
+            .state_branches
+            .get(&plan.lca)
+            .ok_or_else(|| {
+                format!(
+                    "LCA {} not tracked in state_branches",
+                    hex::encode(plan.lca)
+                )
+            })?;
+        let snapshot = metadata.snapshot.as_ref().ok_or_else(|| {
+            format!(
+                "LCA {} has no attached snapshot — call attach_branch_snapshot first",
+                hex::encode(plan.lca)
+            )
+        })?;
+        snapshot.restore(db)
+    }
+
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
     pub fn set_proof_verifier(
         &mut self,
@@ -9963,6 +10020,153 @@ mod tests {
         assert!(
             result.unwrap_err().contains("does not support restoration"),
             "default impl error message must signal non-support"
+        );
+    }
+
+    /// MCC Phase B.2 — `restore_to_lca` happy path: rollback case
+    /// with attached snapshot at LCA. Captures state at LCA, mutates,
+    /// then restore_to_lca reverts. Locks the bridge between B.0+
+    /// planning and B.1 snapshot restore.
+    #[test]
+    fn mcc_phase_b2_restore_to_lca_happy_path() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::{Account, AccountAddress};
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Diamond: 0 (LCA) → 1, 0 → 2 (siblings).
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Build a state at LCA (id(0)) and capture a snapshot.
+        let mut db = InMemoryStateDB::new();
+        let addr = AccountAddress::from([0xAA; 32]);
+        db.put_account(Account {
+            address: addr,
+            balance: 5000,
+            nonce: 1,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+        let snapshot = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db)
+            .expect("capture at LCA");
+
+        // Record the LCA as a state branch + attach the snapshot.
+        tc.record_state_branch(id(0), 0, 100);
+        tc.attach_branch_snapshot(id(0), Arc::new(snapshot))
+            .expect("attach");
+
+        // Mutate state to simulate having moved past LCA on the
+        // id(1) branch.
+        db.put_account(Account {
+            address: addr,
+            balance: 9999,
+            nonce: 5,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 5,
+        });
+
+        // Plan: from id(1) → id(2). LCA = id(0), rollback_required = true.
+        let plan = tc.plan_replay_to_head(id(1), id(2)).expect("plan");
+        assert!(plan.rollback_required);
+        assert_eq!(plan.lca, id(0));
+
+        // Execute the bridge: restore to LCA.
+        tc.restore_to_lca(
+            &plan,
+            &mut db as &mut dyn evaporchain_state::db::StateDB,
+        )
+        .expect("restore_to_lca");
+
+        // State must reflect the captured-at-LCA values.
+        let after = db.get_account(&addr).expect("account present");
+        assert_eq!(after.balance, 5000, "balance reverted to LCA");
+        assert_eq!(after.nonce, 1, "nonce reverted to LCA");
+    }
+
+    /// MCC Phase B.2 — `restore_to_lca` is a no-op when
+    /// `rollback_required = false` (LCA == from_head). Locks the
+    /// contract: the bridge does nothing on forward-only paths and
+    /// returns Ok regardless of snapshot presence at LCA.
+    #[test]
+    fn mcc_phase_b2_restore_to_lca_noop_when_no_rollback() {
+        use evaporchain_state::db::InMemoryStateDB;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+
+        // from = LCA = id(0); to = id(1) (forward-only).
+        let plan = tc.plan_replay_to_head(id(0), id(1)).expect("plan");
+        assert!(!plan.rollback_required);
+
+        let mut db = InMemoryStateDB::new();
+        // No state_branches entry for id(0) — would normally error,
+        // but rollback_required is false so the function short-circuits.
+        let result =
+            tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
+        assert!(result.is_ok(), "no-op rollback must succeed without LCA snapshot");
+    }
+
+    /// MCC Phase B.2 — `restore_to_lca` errors when the LCA is not
+    /// tracked in state_branches. Locks the contract: caller must
+    /// ensure the LCA was recorded before calling.
+    #[test]
+    fn mcc_phase_b2_restore_to_lca_errors_on_missing_lca() {
+        use evaporchain_state::db::InMemoryStateDB;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Plan with rollback required, but state_branches is empty.
+        let plan = tc.plan_replay_to_head(id(1), id(2)).expect("plan");
+        assert!(plan.rollback_required);
+
+        let mut db = InMemoryStateDB::new();
+        let result =
+            tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("not tracked in state_branches"),
+            "error must signal missing LCA: {}",
+            err
+        );
+    }
+
+    /// MCC Phase B.2 — `restore_to_lca` errors when the LCA is
+    /// tracked but has no attached snapshot. Locks the contract:
+    /// caller must call `attach_branch_snapshot` before relying on
+    /// rollback.
+    #[test]
+    fn mcc_phase_b2_restore_to_lca_errors_on_missing_snapshot() {
+        use evaporchain_state::db::InMemoryStateDB;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Record LCA as a branch but DO NOT attach a snapshot.
+        tc.record_state_branch(id(0), 0, 100);
+
+        let plan = tc.plan_replay_to_head(id(1), id(2)).expect("plan");
+        assert!(plan.rollback_required);
+
+        let mut db = InMemoryStateDB::new();
+        let result =
+            tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("no attached snapshot"),
+            "error must signal missing snapshot: {}",
+            err
         );
     }
 

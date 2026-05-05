@@ -163,12 +163,30 @@ metadata-tracking to actual state-replay.
           error message, not silent state corruption
       - Consensus suite: 481 / 0 / 1.
 
-- [ ] **B.2 — `replay_to_head(target_head: BlockId)` on the executor.**
-      Given the current StateDB (at some tip A) and a target tip B,
-      compute the LCA in the Light-Cone DAG, roll back from A to LCA,
-      then forward from LCA to B by re-executing the block sequence.
-      Must be deterministic and atomic — partial replay leaves a
-      corrupted state.
+- [x] **B.2 — `restore_to_lca` bridge (rollback half).** ✅ SHIPPED 2026-05-05.
+      Bridges B.0+ planning to B.1 snapshot restore. Looks up the
+      `state_branches[plan.lca].snapshot` and calls
+      `LightConeBranchSnapshot::restore` on the StateDB.
+      No-op when `!plan.rollback_required`. Errors when the LCA
+      isn't tracked OR has no attached snapshot.
+      - The forward-replay half is a trivial caller-side loop:
+        `for block_id in &plan.forward_path { executor.execute_block(block_lookup(block_id)?) }`.
+        No bespoke `replay_to_head` umbrella function — the caller
+        composes the planning, restore, and forward-apply pieces
+        directly. Cleaner separation of concerns.
+      - 4 new tests: happy-path roundtrip, no-op when no rollback,
+        errors on missing LCA, errors on missing snapshot.
+      - Consensus suite: 485 / 0 / 1.
+
+      **Caller workflow (the Phase B.2 contract):**
+      ```ignore
+      let plan = consensus.plan_replay_to_head(from, to)?;
+      consensus.restore_to_lca(&plan, &mut db)?;  // no-op if forward-only
+      for block_id in &plan.forward_path {
+          let block = block_store.get(block_id)?;
+          executor.execute_block(&mut db, &block)?;
+      }
+      ```
 
 - [ ] **B.3 — Block-executor head awareness.**
       `execute_block` currently assumes `block.parent_hash` matches
@@ -422,6 +440,15 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 3)** — Phase B.2 landed:
+  `restore_to_lca` bridge accessor on TendermintConsensus. Composes
+  `plan_replay_to_head` (B.0+) with `StateSnapshotBranch::restore`
+  (B.1) — looks up the LCA's snapshot from state_branches and
+  invokes the trait's restore method. The forward-apply half is
+  a caller-side loop (no umbrella `replay_to_head` function — cleaner
+  separation). 4 new tests covering happy-path + 3 error paths.
+  Consensus 485/0/1.
 
 - **2026-05-05 (late evening cont'd 2)** — Phase B.1 landed.
   `LightConeBranchSnapshot` trait extended with `restore` (default
