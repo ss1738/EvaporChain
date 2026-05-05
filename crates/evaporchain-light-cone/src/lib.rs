@@ -43,6 +43,7 @@ pub mod arrow;
 pub mod block;
 pub mod concurrency;
 pub mod dag;
+pub mod decay_lamport;
 
 pub use arrow::time_arrow_holds_at;
 pub use block::{Block, BlockId};
@@ -52,6 +53,9 @@ pub use concurrency::{
 };
 pub use dag::{
     block_path_from_to, causal_future, causal_past, find_lca, LightCone, LightConeError,
+};
+pub use decay_lamport::{
+    all_block_clocks, block_lamport_clock, ClockDerivationError,
 };
 
 #[cfg(test)]

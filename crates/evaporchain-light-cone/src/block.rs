@@ -24,7 +24,13 @@ pub struct Block {
     pub energy: Energy,
     /// The epoch the block was observed/produced. Reads as a Lamport
     /// clock when wall-clock isn't available — see Decay-Lamport Time
-    /// in INVENTION_STACK.md §4.1 #3 (separate crate, weeks 20-24).
+    /// in INVENTION_STACK.md §4.1 #3.
+    ///
+    /// Per-block Decay-Lamport clocks are derivable from this DAG via
+    /// [`crate::decay_lamport::block_lamport_clock`] — the integration
+    /// shipped 2026-05-06 (the previously-deferred "separate crate,
+    /// weeks 20-24" wiring). The substrate is now a pure function of
+    /// `(LightCone, block_id, tick_quantum)`.
     pub observed_epoch: u64,
 }
 

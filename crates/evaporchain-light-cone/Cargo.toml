@@ -9,6 +9,7 @@ description = "Light-Cone Consensus substrate. Causal-set partial-order DAG (Sor
 [dependencies]
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
 blake3 = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
