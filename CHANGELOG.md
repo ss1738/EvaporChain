@@ -1,5 +1,142 @@
 # EvaporChain Changelog
 
+## 2026-05-05 (evening) — MCC full multi-parent enumeration substrate (Phase A + B + E + C.5)
+
+Long shipping arc on `MCC_FULL_MULTI_PARENT_PLAN.md` — the single
+biggest blast-radius engineering item left in
+`DOCTRINE_PUNCH_LIST.md` Layer 4. Today's evening session shipped:
+
+- **Phase A — Substrate (3/4, A.2 deferred to Phase C)** ✅ DONE
+- **Phase B — State-replay pipeline (8/8)** ✅ DONE
+- **Phase E — Doctrine + endpoints + runbook (6/6)** ✅ DONE
+- **Phase C — Validator-determinism gate (1/6)** — C.5 only;
+  C.1-C.4 + C.6 (hot-path consensus surgery + integration tests)
+  remain as the focused next session.
+
+16 commits, 35 new tests (`light-cone` 41 → 51, `consensus` 469 →
+494 + 1 ignored), 3 new HTTP endpoints, 4 doctrine docs reconciled.
+
+### Phase A — substrate accessors
+
+  `TendermintConsensus::candidate_heads()` →
+  `BTreeSet<BlockId>` of all currently-active sibling heads,
+  derived from `light_cone_dag.leaves()` (no redundant field;
+  DAG is the single source of truth). Validator-deterministic
+  via BTreeMap-key iteration order.
+
+  `TendermintConsensus::enumerate_candidate_heads()` →
+  `Vec<(BlockId, caliber)>` sorted descending; smaller-BlockId
+  tiebreak. First entry is the MCC-chosen authoritative head.
+
+  `MccForkChoice::enumerate_with_caliber()` is the substrate
+  method behind the public accessor. `select_tip` refactored to
+  derive its argmax from this list — single source of truth,
+  behaviour preserved bit-for-bit.
+
+### Phase B — full state-replay pipeline
+
+`evaporchain-light-cone::dag` (B.0):
+  - `find_lca(lc, a, b) -> Option<BlockId>` — Lowest Common
+    Ancestor; deepest (highest observed_epoch) common wins,
+    smaller-BlockId tiebreak
+  - `block_path_from_to(lc, from, to) -> Option<Vec<BlockId>>` —
+    first-parent chronological path (`from` excluded, `to`
+    included)
+
+`evaporchain-consensus::tendermint`:
+  - `plan_replay_to_head(from, to) -> Option<ReplayWalk>` (B.0+) —
+    pure planning. Returns `ReplayWalk { lca, forward_path,
+    rollback_required }`.
+  - `StateSnapshotBranch` (B.1) — concrete
+    `LightConeBranchSnapshot` impl wrapping
+    `evaporchain_state::snapshot::StateSnapshot`.
+    `SnapshotBuilder::create` for capture, `SnapshotApplier::apply`
+    for restore.
+  - `restore_to_lca(plan, db) -> Result<(), String>` (B.2) — the
+    bridge between B.0+ planning and B.1 snapshot restore.
+  - `replay_and_apply(db, from, to, block_lookup, block_apply)`
+    (B.3) — closure-driven umbrella function. Composes plan +
+    restore + forward-apply loop. Returns `ReplayResult` /
+    `ReplayError`.
+  - `replay_and_apply_atomic(...)` (B.4) — transactional wrapper.
+    Pre-replay snapshot capture + on-error rollback. Either
+    complete success or complete rollback — never partial.
+    Trait-portable: works for InMemoryStateDB AND RocksDBStateDB.
+
+  B.5 — eviction-drops-snapshot regression lock: verifies
+  `prune_state_branches` releases the consensus crate's Arc when
+  metadata is evicted. Without this, snapshot memory would
+  accumulate indefinitely.
+
+  B.6 — end-to-end branch-switch integration test: 3-block-deep
+  diverging DAG, captures snapshot at genesis, mutates fork A,
+  plans replay A2 → B2 (LCA=genesis, rollback_required=true,
+  forward_path=[B1, B2]), calls restore_to_lca, applies fork B
+  forward path. Asserts final state reflects fork B only — no
+  fork-A residue, no merge artefact, no hybrid state.
+
+### Phase C — validator-determinism gate (C.5)
+
+`mcc_phase_c5_validator_determinism_under_random_dags`: property
+test, 256 random DAG shapes (sizes 1..=20 blocks, 1-2 parents per
+non-genesis), per shape two `TendermintConsensus` instances
+driven through the same block-insertion sequence with FIVE
+properties asserted:
+  1. `candidate_heads()` BTreeSets agree
+  2. `enumerate_candidate_heads()` Vecs agree EXACTLY (order +
+     caliber values)
+  3. `light_cone_antichain_digest()` matches
+  4. `plan_replay_to_head` produces identical `ReplayWalk` for
+     every (from, to) pair drawn from candidate heads
+  5. No caliber values overflow
+
+256 shapes × 5 assertions = ~1280 individual checks; all pass in
+0.76s on Mini. Shipping C.5 BEFORE C.1-C.4 hot-path surgery is the
+forcing function: any future change that breaks
+validator-determinism fails this proptest before reaching
+production.
+
+### Phase E — doctrine + endpoints + runbook
+
+Three new HTTP endpoints:
+  - `GET /api/light_cone/candidate_heads` (E.1)
+  - `GET /api/light_cone/authoritative_head` (E.2)
+  - (Plus existing `/api/light_cone/antichain_digest_history`
+    from Light-Cone Phase 7 — together these three form the
+    cluster-divergence diagnosis surface.)
+
+Four doctrine doc reconciliations:
+  - E.3 — `LIGHT_CONE_FULL_DAG_PLAN.md` Phase 8 cross-doc addendum
+  - E.4 — `INVENTION_STACK.md §A1.2 T1` (MCC) updated to reflect
+    substrate-shipped state
+  - E.5 — `DOCTRINE_PUNCH_LIST.md` Layer 4 row flipped to
+    `[x] substrate complete`
+  - E.6 — `docs/runbooks/doctrine-rollout-2026-05.md` Lane 4
+    `mcc_full` rollout section: pre-flight, three-step ladder
+    (linear → mcc → mcc_full), monitoring, rollback. Status
+    warning at the top: do NOT flip mcc_full in production until
+    Phase C.1-C.4 ships.
+
+### Remaining work
+
+Phases C.1-C.4 + C.6 + Phase D — the consensus hot-path surgery
+and adversarial testing. ~2-3 weeks of focused fresh-session
+engineering:
+
+  - C.1 authoritative_head selection at start_round
+  - C.2 voting handler dispatch by head
+  - C.3 proposer multi-parent set selection
+  - C.4 cross-fork equivocation rules
+  - C.6 4 integration tests (besides C.5 proptest already shipped)
+  - D.1-D.5 4-validator 3-fork integration, byzantine reject,
+    state-replay-under-churn, perf budget under 4 forks, 72hr
+    cluster soak
+
+The substrate + operator surfaces + determinism gate are durable
+on origin and ready for the integration work to compose against.
+
+---
+
 ## 2026-05-05 — Three frontier-primitive plans shipped end-to-end
 
 Long shipping arc closing three doctrine plans (Lambda-Fold, Crooks-MEV,
