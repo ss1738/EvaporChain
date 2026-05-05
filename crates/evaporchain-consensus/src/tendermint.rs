@@ -10170,6 +10170,204 @@ mod tests {
         );
     }
 
+    /// MCC Phase B.6 — END-TO-END INTEGRATION TEST.
+    ///
+    /// Drives the full Phase B substrate composition through a
+    /// realistic 3-block-deep branch switch:
+    ///
+    /// ```text
+    ///       genesis
+    ///        / \
+    ///       /   \
+    ///      A1    B1
+    ///      |     |
+    ///      A2    B2
+    /// ```
+    ///
+    /// **Scenario:**
+    ///   1. Capture snapshot at genesis with accounts in known state.
+    ///   2. Mutate state to simulate having executed fork A's blocks
+    ///      (manual put_account in lieu of full execute_block — the
+    ///      executor wiring is Phase B.3's separate concern; B.6
+    ///      verifies the substrate composition, not executor
+    ///      integration).
+    ///   3. Plan replay from A2 → B2 via plan_replay_to_head.
+    ///      Expected: lca = genesis, forward_path = [B1, B2],
+    ///      rollback_required = true.
+    ///   4. Call restore_to_lca to wipe fork-A's state mutations.
+    ///   5. Iterate forward_path applying fork-B's mutations
+    ///      (caller-side loop — Phase B.2's documented pattern).
+    ///   6. Assert final state reflects fork-B mutations only;
+    ///      fork-A mutations are gone.
+    ///
+    /// **What this validates:**
+    ///   - B.0 primitives (find_lca + block_path_from_to) compose
+    ///     correctly with consensus-level state_branches tracking.
+    ///   - B.0+ planning produces the right ReplayWalk for a
+    ///     non-trivial branch-switch.
+    ///   - B.1's StateSnapshotBranch::restore correctly wipes
+    ///     post-LCA mutations.
+    ///   - B.2's restore_to_lca bridges the planning + restore.
+    ///   - The complete pipeline preserves fork isolation:
+    ///     committing to a branch, then switching, leaves no
+    ///     residue of the old branch's state.
+    ///
+    /// **What this does NOT validate** (Phase B.3+ work):
+    ///   - Real ExecutionEngine (test uses manual put_account,
+    ///     not execute_block).
+    ///   - Atomic transactional contract under failure (B.4).
+    ///   - LRU eviction of snapshots when fork count exceeds cap (B.5).
+    #[test]
+    fn mcc_phase_b6_e2e_branch_switch_substrate_composition() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::{Account, AccountAddress};
+        use std::sync::Arc;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+
+        // ── Build the 3-block-deep diverging DAG ────────────────
+        lc_insert(&mut tc, id(0), vec![], 0);             // genesis
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);        // A1
+        lc_insert(&mut tc, id(2), vec![id(1)], 2);        // A2
+        lc_insert(&mut tc, id(3), vec![id(0)], 1);        // B1 (sibling of A1)
+        lc_insert(&mut tc, id(4), vec![id(3)], 2);        // B2
+
+        // ── Set up genesis state + capture snapshot ─────────────
+        let mut db = InMemoryStateDB::new();
+        let alice = AccountAddress::from([0xA1; 32]);
+        let bob = AccountAddress::from([0xB1; 32]);
+        // Genesis state: alice=1000, bob=2000.
+        db.put_account(Account {
+            address: alice,
+            balance: 1000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+        db.put_account(Account {
+            address: bob,
+            balance: 2000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+
+        // Capture snapshot at genesis.
+        let genesis_snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db)
+            .expect("capture genesis");
+        tc.record_state_branch(id(0), 0, 100);
+        tc.attach_branch_snapshot(id(0), Arc::new(genesis_snap))
+            .expect("attach genesis snapshot");
+
+        // ── Simulate executing fork A: A1 then A2 ───────────────
+        // Block A1 effect: alice += 500 → 1500.
+        // Block A2 effect: bob += 750 → 2750.
+        // (In production these would come from execute_block on
+        // real RefundTx / TransferTx / etc.)
+        db.put_account(Account {
+            address: alice,
+            balance: 1500,
+            nonce: 1,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 1,
+        });
+        db.put_account(Account {
+            address: bob,
+            balance: 2750,
+            nonce: 1,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 2,
+        });
+
+        // Sanity: state reflects fork A's mutations.
+        assert_eq!(db.get_account(&alice).map(|a| a.balance), Some(1500));
+        assert_eq!(db.get_account(&bob).map(|a| a.balance), Some(2750));
+
+        // ── Plan replay from A2 (current head) → B2 (target) ────
+        let plan = tc
+            .plan_replay_to_head(id(2), id(4))
+            .expect("plan A2 → B2");
+        assert_eq!(plan.lca, id(0), "LCA must be genesis (forks share only genesis)");
+        assert_eq!(plan.forward_path, vec![id(3), id(4)], "forward path = [B1, B2]");
+        assert!(plan.rollback_required, "branch switch requires rollback");
+
+        // ── Phase B.2 bridge: restore to LCA (genesis) ──────────
+        tc.restore_to_lca(
+            &plan,
+            &mut db as &mut dyn evaporchain_state::db::StateDB,
+        )
+        .expect("restore to genesis");
+
+        // After restore: state must match genesis. Fork A's
+        // mutations are gone; alice=1000, bob=2000.
+        assert_eq!(
+            db.get_account(&alice).map(|a| a.balance),
+            Some(1000),
+            "alice reverted to genesis state after restore_to_lca"
+        );
+        assert_eq!(
+            db.get_account(&bob).map(|a| a.balance),
+            Some(2000),
+            "bob reverted to genesis state after restore_to_lca"
+        );
+
+        // ── Caller-side loop: apply fork B's forward_path ───────
+        // Block B1 effect: alice += 100 → 1100.
+        // Block B2 effect: bob -= 500 → 1500.
+        // (In production: executor.execute_block(db, block_lookup(block_id)) per id.)
+        for block_id in &plan.forward_path {
+            if *block_id == id(3) {
+                // B1
+                db.put_account(Account {
+                    address: alice,
+                    balance: 1100,
+                    nonce: 1,
+                    storage_deposit: 0,
+                    storage_bytes: 0,
+                    last_touched_epoch: 1,
+                });
+            } else if *block_id == id(4) {
+                // B2
+                db.put_account(Account {
+                    address: bob,
+                    balance: 1500,
+                    nonce: 1,
+                    storage_deposit: 0,
+                    storage_bytes: 0,
+                    last_touched_epoch: 2,
+                });
+            } else {
+                panic!("unexpected block id in forward_path: {:?}", block_id);
+            }
+        }
+
+        // ── Final assertions: fork B's state, no fork A residue ──
+        assert_eq!(
+            db.get_account(&alice).map(|a| a.balance),
+            Some(1100),
+            "alice = fork B's effect (1000 + 100 = 1100), NOT fork A's 1500"
+        );
+        assert_eq!(
+            db.get_account(&bob).map(|a| a.balance),
+            Some(1500),
+            "bob = fork B's effect (2000 - 500 = 1500), NOT fork A's 2750"
+        );
+
+        // Also: fork A's intermediate state (alice=1500, bob=2750) is
+        // completely gone — no merge artefact, no hybrid state.
+        let alice_final = db.get_account(&alice).unwrap();
+        let bob_final = db.get_account(&bob).unwrap();
+        assert_ne!(
+            (alice_final.balance, bob_final.balance),
+            (1500, 2750),
+            "fork A's state must NOT survive the branch switch"
+        );
+    }
+
     /// MCC Phase B.0+ — `plan_replay_to_head` no-op when from == to.
     /// Locks the contract: the LCA of a block with itself is itself,
     /// the forward path is empty, no rollback required. The executor
