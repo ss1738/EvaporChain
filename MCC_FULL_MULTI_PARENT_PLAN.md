@@ -425,11 +425,32 @@ to work as today (single-line trajectory walk).
 
 ### Phase D — Adversarial + performance tests (3-5 days)
 
-- [ ] **D.1 — 4-validator 3-fork integration test.**
-      Genesis → 3 concurrent proposals at h=1 (forks A, B, C). All
-      4 validators vote on MCC-selected head; chain converges within
-      2 rounds. End-state: single committed antichain across A, B, C
-      consistent with Phase 4.2 finality predicate.
+- [x] **D.1 — 4-validator 3-fork integration test.** ✅ SHIPPED 2026-05-05.
+      New test crate `tests/mcc_phase_d.rs` (3 tests, all passing).
+      Each test instantiates 4 independent `TendermintConsensus`
+      instances (validators 1-4, identical 4-validator
+      `ValidatorSet`, all in `mcc_full` mode), feeds them an
+      identical block-insertion sequence, and asserts:
+      - `mcc_phase_d1_four_validators_converge_on_three_forks`:
+        3 concurrent forks (id 1/2/3) off genesis. All 4 validators
+        independently produce: same `candidate_heads` (3 leaves),
+        same `enumerate_candidate_heads` (caliber order + values),
+        same `update_authoritative_head` (argmax), same
+        `vote_target_head`, same `propose_parents`. The
+        proposer's 3-element antichain spans all 3 forks (the
+        "single committed antichain across A, B, C" claim);
+        head is first in parents (highest caliber).
+      - `mcc_phase_d1_late_joining_validator_converges_after_catchup`:
+        v1/v2/v3 see full DAG; v4 joins late and replays the same
+        insertions; final state agrees. Locks substrate
+        path-independence under partial sync.
+      - `mcc_phase_d1_four_validators_track_fork_extension`:
+        After fork-A extends to h=2, all 4 validators shrink to
+        the new leaf set {fork-2, fork-3, fork-A-h2} and converge
+        on the same authoritative head + antichain.
+      Full consensus crate: lib 509/0/1, byzantine 19/0/0,
+      checkpoint 2/0/0, mcc_phase_d 3/0/0, doc 0/0/1 = 533 total.
+      D.1 is the harness D.2/D.3 reuse.
 
 - [ ] **D.2 — Byzantine validator votes for non-MCC head.**
       Validator 4 prevotes for B when MCC selects A. Honest validators
@@ -613,6 +634,18 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 20)** — Phase D.1 shipped.
+  New integration test crate `tests/mcc_phase_d.rs` exercises 4
+  independent `TendermintConsensus` instances under mcc_full,
+  3 concurrent forks at h=1. Asserts validator-determinism at
+  4-validator granularity: candidate_heads, enumerate_candidate_heads,
+  update_authoritative_head, vote_target_head, propose_parents all
+  agree across 4 validators. The proposer's 3-element antichain
+  spans all 3 forks (the "committed antichain across A, B, C"
+  claim from the plan), head is first in parents. Three tests:
+  basic 3-fork convergence, late-joining validator catchup,
+  fork-extension tracking. Total consensus tests: 533/0/2.
 
 - **2026-05-05 (late evening cont'd 19)** — Phase C.6 substrate
   composition tests shipped (3 integration tests). Pivoted from the
