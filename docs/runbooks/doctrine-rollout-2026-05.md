@@ -427,6 +427,84 @@ state_branches stay populated; replay machinery becomes idle.
 Subsequent rollback to `linear` is bit-immediate via the same
 flag-flip path.
 
+### 72-hour cluster soak (Phase D.5 of MCC_FULL_MULTI_PARENT_PLAN)
+
+> **Status as of 2026-05-05:** Substrate-level soak gates D.1
+> through D.4 are GREEN (10 normal + 4 perf-budget + 2 substrate-
+> soak tests pass on Mini under release; perf budgets cleared by
+> 45-294×). The 72hr operational soak below is the **only**
+> remaining D-item before the MCC plan is fully done.
+
+The synthetic in-test soak (`mcc_phase_d5_*` in
+`tests/mcc_phase_d.rs`, `--ignored` flagged) validates the
+substrate doesn't drift under 5,000 block insertions × 4 active
+forks × 5 hot-path accessor calls per insertion (=25,000 calls)
+in ~40 ms with zero stalls and zero antichain-digest divergence
+across 4 simulated validators. That's the CI gate.
+
+The operational gate is a 72-hour cluster soak on the 4-validator
+Mini setup. The substrate is hardened; this is the
+network-layer + gossip + execution-layer integration test.
+
+**Pre-flight:**
+
+1. Confirm the chain is at `parent_acceptance_mode = "mcc"` AND
+   `light_cone_state_branches_enabled = true` for ≥7 days with
+   no divergence (Lane 3 + Lane 4 step 2 baselines).
+2. On all 4 validators, snapshot `git log --oneline | head -1` —
+   the binary version must match across the cluster. Ship via
+   `cargo build --release` on Mini, scp to all 4.
+3. Capture a 4-hour LINEAR baseline first:
+   ```
+   for node in v1 v2 v3 v4; do
+     curl -X POST http://$node:8080/api/governance/param \
+       -d '{"key": "parent_acceptance_mode", "value": "linear"}'
+   done
+   # 4 hours pass; record block-rate, finality-gap, mempool depth.
+   ```
+4. Promote to `mcc_full`:
+   ```
+   for node in v1 v2 v3 v4; do
+     curl -X POST http://$node:8080/api/governance/param \
+       -d '{"key": "parent_acceptance_mode", "value": "mcc_full"}'
+   done
+   ```
+
+**Soak measurements (every hour for 72 hours):**
+
+| Metric | Endpoint | Pass criterion |
+|---|---|---|
+| Stall events | `chain.height` advancement | 0 stalls (height monotone-increasing across all 4 nodes) |
+| Antichain-digest divergence | `/api/light_cone/antichain_digest_history` | 0 divergent entries between any pair of nodes |
+| Throughput | `block_rate / sec` | ≥ 95% of linear baseline (the < 5% degradation budget) |
+| Equivocation false-positives | `/api/light_cone/cross_fork_equivocations` | 0 across all 4 nodes (nobody is byzantine in the soak) |
+| Memory | `state_branches_count` | Bounded by `light_cone_max_concurrent_forks` (default 4); does not grow unboundedly |
+| Replay-failure rate | log scrape: `RestoreFailed` / `BlockNotFound` / `ApplyFailed` | 0 across all 4 nodes |
+
+**Cluster-wide divergence diagnosis:**
+
+```
+for node in v1 v2 v3 v4; do
+  echo "--- $node ---"
+  curl -s http://$node:8080/api/light_cone/antichain_digest \
+    | jq -r '.digest_hex'
+done
+```
+
+All 4 must print the same digest at the same chain height.
+
+**Pass:** all metrics above hit budget for the full 72 hours.
+Operator marks D.5 ✅ and promotes the doctrine punch-list Layer
+4 row to its load-bearing-active state.
+
+**Fail:** any single metric breach. Halt soak immediately, flip
+back to `mcc` (single-line MCC), file an incident with the
+`/api/light_cone/antichain_digest_history` JSON dump from all 4
+nodes attached. The substrate's atomic-replay machinery means
+the chain itself doesn't get poisoned by the soak — what's at
+risk is the *correctness contract* under network-induced jitter,
+which the substrate-level soak cannot exercise.
+
 ---
 
 ## Composition

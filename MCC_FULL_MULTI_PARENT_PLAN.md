@@ -547,11 +547,43 @@ to work as today (single-line trajectory walk).
       ```
       mcc_phase_d crate: 10 normal + 4 ignored = 14 total.
 
-- [ ] **D.5 — Soak test on 4-validator local cluster.**
-      Cluster runs `parent_acceptance_mode = "mcc_full"` for 72hr.
-      Measures: zero stall events, zero divergent antichain digests
-      via `/api/light_cone/antichain_digest`, < 5% throughput
-      degradation vs `parent_acceptance_mode = "linear"` baseline.
+- [⏳] **D.5 — Soak test on 4-validator local cluster.** SUBSTRATE GATE GREEN 2026-05-05; OPERATIONAL GATE PENDING (operator-driven, 72hr).
+      Two parts:
+      - **Substrate soak (CI gate, in-test, ✅ shipped 2026-05-05):**
+        2 new `#[ignore]` tests in `tests/mcc_phase_d.rs` exercising
+        the substrate at scale.
+          - `mcc_phase_d5_substrate_soak_no_drift_under_sustained_load`:
+            5,000 block insertions × 4 active forks × 5 hot-path
+            accessor calls per insertion = 25,000 calls in ~40 ms
+            on Mini under release. Zero stalls (heads always == 4),
+            zero equivocation, state_branches stays empty without
+            explicit attach, antichain digest accessor reachable
+            at every step.
+          - `mcc_phase_d5_antichain_digest_convergence_across_4_validators`:
+            4 simulated validators driven through 1,000 identical
+            insertions; antichain_digest checked at every step.
+            Zero divergence (locks the cluster-soak claim at the
+            substrate layer).
+        Run command:
+        ```
+        cargo test --release -p evaporchain-consensus \
+          --test mcc_phase_d -- --ignored mcc_phase_d5 --nocapture
+        ```
+      - **Operational soak (72hr cluster gate, OPERATOR-DRIVEN):**
+        Documented in `docs/runbooks/doctrine-rollout-2026-05.md`
+        Lane 4 "72-hour cluster soak" section. Pre-flight gates
+        (mcc + state-branches active for 7 days; binary version
+        match across 4 Minis; 4hr linear baseline captured).
+        Hourly measurement table: 6 metrics (stall events,
+        antichain-digest divergence, throughput vs baseline,
+        equivocation false-positives, state_branches memory,
+        replay-failure rate). Pass = all metrics hit budget for 72
+        hours. Fail = halt + flip back to mcc. The substrate is
+        hardened; this exercises the network-layer + gossip +
+        execution-layer integration that the in-test substrate
+        soak can't reach.
+      Total mcc_phase_d crate: 10 normal + 4 perf + 2 substrate-soak
+      = 16 tests (10 default-on, 6 `#[ignore]`).
 
 **Phase D acceptance:** all five tests pass; performance numbers within
 budget; soak test runs clean for 72hr.
@@ -712,6 +744,20 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 24)** — Phase D.5 substrate
+  gate shipped; operational gate documented. 2 new `#[ignore]`
+  substrate-soak tests in `tests/mcc_phase_d.rs`: 5,000 block
+  insertions × 4 forks × 5 accessor calls each = 25,000 hot-path
+  calls in ~40ms with zero stalls; 4-validator antichain-digest
+  convergence over 1,000 insertions with zero divergence. The
+  72hr operational cluster soak is now fully runbookified at
+  docs/runbooks/doctrine-rollout-2026-05.md (pre-flight, hourly
+  measurement table with 6 metrics + pass/fail criteria,
+  diagnosis playbook). **MCC plan substrate is 100% complete
+  (Phases A-E + D.1-D.4 ✅; D.5 substrate ✅, D.5 operational
+  pending operator action).** Total mcc_phase_d crate: 16
+  tests (10 default, 6 ignored).
 
 - **2026-05-05 (late evening cont'd 23)** — Phase D.4 shipped.
   4 `#[ignore]` benchmarks under release on Mini, all under
