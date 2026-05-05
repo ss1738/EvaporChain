@@ -27,6 +27,29 @@ jobs:
       - run: cargo test -p integration-tests -- --include-ignored
         timeout-minutes: 15
 
+  # Coq/Rocq mechanization gate — closes the M2 / Layer 7 LLSA
+  # descope-path tail item ("⏳ CI integration on every PR").
+  # Builds the 5 .v files in research/coq/ (4 + ../proofs/LLSAInvariantPreservation.v)
+  # against the Mini's pinned Rocq 9.1.1 toolchain via the Makefile.
+  # Exit-0 = all proofs accepted by the Rocq kernel; non-zero = a
+  # proof failed to typecheck and must be fixed before merge.
+  coq:
+    name: Coq — Rocq 9.1.1 proof check
+    runs-on: [self-hosted, mini]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Rocq toolchain version
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          rocq -v
+      - name: Build all .v files (must exit 0)
+        working-directory: research/coq
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          make clean
+          make
+        timeout-minutes: 5
+
   audit:
     name: Security — dependency audit
     runs-on: ubuntu-latest
