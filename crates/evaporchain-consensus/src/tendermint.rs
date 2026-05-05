@@ -205,8 +205,12 @@ pub enum Phase {
 }
 
 /// State for a single consensus round.
+///
+/// `pub(crate)` to match the visibility of `dag_round_states` which
+/// holds `HashMap<[u8; 32], RoundState>` at `pub(crate)` (Light-Cone
+/// Phase 4 substrate). The type is not exposed outside the crate.
 #[derive(Debug)]
-struct RoundState {
+pub(crate) struct RoundState {
     round: u32,
     phase: Phase,
     /// The proposed block for this round (if received).
@@ -481,6 +485,14 @@ pub const TUR_WINDOW_BLOCKS: usize = 64;
 /// observations and tolerate drops.
 pub const MEV_OBSERVATION_BUFFER_CAP: usize = 1024;
 
+/// Phase 4.4 — antichain commit-cert digest history buffer cap.
+/// Each committed block (under `light_cone_state_branches_enabled`)
+/// pushes a `(height, digest)` pair; oldest evicted FIFO when the
+/// cap is exceeded. 128 entries covers ~10-30 minutes of recent
+/// history depending on block cadence — long enough for retroactive
+/// cluster-divergence diagnosis without unbounded memory growth.
+pub const ANTICHAIN_DIGEST_HISTORY_CAP: usize = 128;
+
 /// Conversion factor from window-summed gas to entropy production Σ
 /// in TUR's natural units. Launch placeholder: σ = sum(window) / 1000
 /// is order-of-magnitude correct (entropy ∝ flux), calibratable by
@@ -609,6 +621,17 @@ pub struct TendermintConsensus {
     /// for dual-mode bookkeeping (height-indexed for linear-mode
     /// consumers, block-indexed for DAG-aware consumers).
     pub committed_at_block: std::collections::HashMap<[u8; 32], u64>,
+    /// Phase 4.4 — rolling history of `(block_height,
+    /// closing_antichain_digest)` pairs, one per committed block.
+    /// Capped at the most-recent 128 entries (older pruned FIFO).
+    /// Operators retrospectively cross-compare across cluster
+    /// validators via `/api/light_cone/antichain_digest_history`:
+    /// pick a height H, check each validator's reported digest at H;
+    /// divergence at any past height is the freeze-class signal for
+    /// antichain disagreement. Real-time alarm via header-fold or
+    /// gossip is the heavier post-V1 follow-up. Populated when
+    /// `light_cone_state_branches_enabled = true`.
+    pub antichain_digest_history: std::collections::VecDeque<(u64, [u8; 32])>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -885,6 +908,9 @@ impl TendermintConsensus {
             dag_round_states: std::collections::HashMap::new(),
             cross_fork_equivocations: std::collections::HashMap::new(),
             committed_at_block: std::collections::HashMap::new(),
+            antichain_digest_history: std::collections::VecDeque::with_capacity(
+                ANTICHAIN_DIGEST_HISTORY_CAP,
+            ),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -2504,6 +2530,39 @@ impl TendermintConsensus {
         self.light_cone_dag.len()
     }
 
+    /// Phase 4.4 — antichain commit-cert digest of the current
+    /// closing antichain. Deterministic 32-byte fingerprint that
+    /// every validator computes from the same Light-Cone DAG state;
+    /// operators compare across cluster validators (e.g. via
+    /// `/api/light_cone/antichain_digest`) to confirm cross-validator
+    /// agreement on antichain finality without shipping the full
+    /// block-id list around. Pairs with Crooks-MEV's
+    /// `mev_state_digest` as the canonical inter-validator digest
+    /// for the Light-Cone substrate. Domain-separated under
+    /// `evaporchain-antichain-digest-v1`.
+    pub fn light_cone_antichain_digest(&self) -> [u8; 32] {
+        evaporchain_light_cone::concurrency::closing_antichain_digest(&self.light_cone_dag)
+    }
+
+    /// Phase 4.4 — accessor for the closing antichain itself (sorted
+    /// `BlockId` list, validator-deterministic). Returned alongside
+    /// the digest so operators can audit which set the digest
+    /// commits to.
+    pub fn light_cone_closing_antichain(&self) -> Vec<[u8; 32]> {
+        evaporchain_light_cone::concurrency::closing_antichain(&self.light_cone_dag)
+    }
+
+    /// Phase 4.4 — rolling history of `(block_height,
+    /// closing_antichain_digest)` pairs, oldest first. Capped at
+    /// `ANTICHAIN_DIGEST_HISTORY_CAP` (128) entries. Operators
+    /// retroactively cross-compare across cluster validators: pick
+    /// height H, fetch each validator's digest at H, divergence at
+    /// any past height is the freeze-class signal for antichain
+    /// disagreement.
+    pub fn antichain_digest_history(&self) -> Vec<(u64, [u8; 32])> {
+        self.antichain_digest_history.iter().copied().collect()
+    }
+
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
     pub fn set_proof_verifier(
         &mut self,
@@ -2672,6 +2731,9 @@ impl TendermintConsensus {
             dag_round_states: std::collections::HashMap::new(),
             cross_fork_equivocations: std::collections::HashMap::new(),
             committed_at_block: std::collections::HashMap::new(),
+            antichain_digest_history: std::collections::VecDeque::with_capacity(
+                ANTICHAIN_DIGEST_HISTORY_CAP,
+            ),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -4631,6 +4693,23 @@ impl TendermintConsensus {
             let caliber_estimate = block.transactions.len() as u64;
             self.record_state_branch(tip_id, block.number, caliber_estimate);
             self.prune_state_branches();
+
+            // Phase 4.4 — push the now-current closing-antichain digest
+            // into the rolling history. Operators can later
+            // retrospectively cross-compare per-height digests across
+            // cluster validators via
+            // `/api/light_cone/antichain_digest_history`. The digest
+            // is computed AFTER the new block has been inserted into
+            // light_cone_dag (above) so it reflects the post-commit
+            // state. FIFO eviction at `ANTICHAIN_DIGEST_HISTORY_CAP`.
+            let digest =
+                evaporchain_light_cone::concurrency::closing_antichain_digest(
+                    &self.light_cone_dag,
+                );
+            self.antichain_digest_history.push_back((block.number, digest));
+            while self.antichain_digest_history.len() > ANTICHAIN_DIGEST_HISTORY_CAP {
+                self.antichain_digest_history.pop_front();
+            }
         }
 
         // TUR Liveness Detector observation. Push this block's tx
@@ -9208,6 +9287,220 @@ mod tests {
             a.mev_state_digest(),
             c.mev_state_digest(),
             "validators with divergent histories must NOT converge"
+        );
+    }
+
+    /// Phase 4.4 of `LIGHT_CONE_FULL_DAG_PLAN.md` — two
+    /// independently-constructed validators driven through identical
+    /// block sequences must produce identical
+    /// `light_cone_antichain_digest()`; divergent histories must NOT
+    /// converge.
+    ///
+    /// Mirrors `test_mev_state_digest_converges_across_validators`
+    /// for the Light-Cone substrate. Together they cover both halves
+    /// of the inter-validator agreement surface called out in the
+    /// 2026-05 doctrine rollout runbook.
+    #[test]
+    fn test_light_cone_antichain_digest_converges_across_validators() {
+        use evaporchain_types::Block;
+
+        fn make_block_local(num: u64, parent_hash: [u8; 32]) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash,
+                state_root: [num as u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+            }
+        }
+
+        let mut a = make_consensus(1, &[1, 2, 3, 4]);
+        let mut b = make_consensus(2, &[1, 2, 3, 4]);
+
+        // Build a 5-block linear chain. Each validator's
+        // light_cone_dag inserts a vertex per `on_block_committed`,
+        // so after each block their digests must agree.
+        let mut prev_hash = [0u8; 32];
+        for n in 1u64..=5 {
+            let blk = make_block_local(n, prev_hash);
+            let state_root = [n as u8; 32];
+            a.on_block_committed(&blk, state_root, 0);
+            b.on_block_committed(&blk, state_root, 0);
+            assert_eq!(
+                a.light_cone_antichain_digest(),
+                b.light_cone_antichain_digest(),
+                "validators must converge on antichain digest after block {} (Phase 4.4)",
+                n,
+            );
+            prev_hash = state_root;
+        }
+
+        // After non-trivial commits, digest must have moved away
+        // from the empty-set sentinel.
+        let empty_digest =
+            evaporchain_light_cone::concurrency::digest_antichain(&[]);
+        assert_ne!(
+            a.light_cone_antichain_digest(),
+            empty_digest,
+            "after committed blocks digest must diverge from empty-set sentinel"
+        );
+
+        // Validator with a divergent history (different state roots
+        // → different block IDs in the DAG) must NOT produce the
+        // same digest.
+        let mut c = make_consensus(3, &[1, 2, 3, 4]);
+        let mut prev_hash_c = [0u8; 32];
+        for n in 1u64..=5 {
+            let blk = make_block_local(n, prev_hash_c);
+            // Distinct state roots → distinct block IDs in the DAG.
+            let state_root = [(n + 100) as u8; 32];
+            c.on_block_committed(&blk, state_root, 0);
+            prev_hash_c = state_root;
+        }
+        assert_ne!(
+            a.light_cone_antichain_digest(),
+            c.light_cone_antichain_digest(),
+            "validators with divergent block-ID histories must NOT converge"
+        );
+    }
+
+    /// Phase 4.4 — rolling antichain-digest history. Locks four
+    /// properties:
+    ///   1. History only populates when `light_cone_state_branches_enabled = true`.
+    ///   2. History captures one entry per committed block (matches block_number).
+    ///   3. FIFO eviction at `ANTICHAIN_DIGEST_HISTORY_CAP` keeps memory bounded.
+    ///   4. Each entry's digest matches what `light_cone_antichain_digest()`
+    ///      reports at the point it was pushed — i.e. operators retrieving
+    ///      historical digests get the same value the validator computed
+    ///      live at that height.
+    #[test]
+    fn test_antichain_digest_history_captures_per_block_under_flag() {
+        use evaporchain_types::Block;
+
+        fn make_block_local(num: u64, parent_hash: [u8; 32]) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash,
+                state_root: [num as u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+            }
+        }
+
+        // Property 1: flag-off → no history.
+        let mut tc_off = make_consensus(1, &[1, 2, 3, 4]);
+        let mut prev = [0u8; 32];
+        for n in 1u64..=3 {
+            let blk = make_block_local(n, prev);
+            tc_off.on_block_committed(&blk, [n as u8; 32], 0);
+            prev = [n as u8; 32];
+        }
+        assert!(
+            tc_off.antichain_digest_history().is_empty(),
+            "flag-off must leave digest history empty (chain bit-compat)"
+        );
+
+        // Property 2: flag-on → one entry per committed block, in
+        // ascending height order.
+        let mut tc = make_consensus(2, &[1, 2, 3, 4]);
+        tc.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        let mut prev = [0u8; 32];
+        for n in 1u64..=5 {
+            let blk = make_block_local(n, prev);
+            tc.on_block_committed(&blk, [n as u8; 32], 0);
+            prev = [n as u8; 32];
+        }
+        let hist = tc.antichain_digest_history();
+        assert_eq!(hist.len(), 5, "5 commits → 5 history entries");
+        for (i, (height, _)) in hist.iter().enumerate() {
+            assert_eq!(*height, (i + 1) as u64, "heights must be in commit order");
+        }
+
+        // Property 4: latest entry's digest matches the live accessor.
+        let live_digest = tc.light_cone_antichain_digest();
+        let last_history_digest = hist.last().expect("non-empty").1;
+        assert_eq!(
+            live_digest, last_history_digest,
+            "most-recent history digest must match live antichain_digest accessor"
+        );
+
+        // Property 3: FIFO eviction at cap. Push enough commits to
+        // exceed `ANTICHAIN_DIGEST_HISTORY_CAP`; assert oldest is
+        // dropped.
+        let mut tc_cap = make_consensus(3, &[1, 2, 3, 4]);
+        tc_cap.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        let cap = ANTICHAIN_DIGEST_HISTORY_CAP;
+        let n_blocks = (cap + 5) as u64; // exceed cap by 5
+        let mut prev = [0u8; 32];
+        for n in 1..=n_blocks {
+            let blk = make_block_local(n, prev);
+            tc_cap.on_block_committed(&blk, [n as u8; 32], 0);
+            prev = [n as u8; 32];
+        }
+        let hist_capped = tc_cap.antichain_digest_history();
+        assert_eq!(
+            hist_capped.len(),
+            cap,
+            "history must be capped at ANTICHAIN_DIGEST_HISTORY_CAP"
+        );
+        // Oldest entry should be (n_blocks - cap + 1) = block 6 of the
+        // n_blocks=cap+5 run.
+        let expected_oldest_height = n_blocks - cap as u64 + 1;
+        assert_eq!(
+            hist_capped[0].0, expected_oldest_height,
+            "FIFO eviction: oldest surviving height must be block {}",
+            expected_oldest_height
+        );
+        assert_eq!(
+            hist_capped.last().unwrap().0,
+            n_blocks,
+            "newest entry must be the most-recent commit"
         );
     }
 
