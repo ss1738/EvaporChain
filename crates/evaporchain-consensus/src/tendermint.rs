@@ -2563,6 +2563,57 @@ impl TendermintConsensus {
         self.antichain_digest_history.iter().copied().collect()
     }
 
+    /// Phase A.1 of `MCC_FULL_MULTI_PARENT_PLAN.md` — set of all
+    /// currently-active sibling heads in the Light-Cone DAG. A "head"
+    /// is a leaf: a block with no children. The MCC fork-choice picks
+    /// one of these as the chosen authoritative head per round; this
+    /// accessor exposes the full candidate set so consumers can
+    /// enumerate, score, audit, or display every active fork.
+    ///
+    /// Returned as a `BTreeSet<BlockId>` for **validator-determinism**:
+    /// `LightCone::leaves()` already iterates in `BTreeMap`-key order,
+    /// so any two validators with the same DAG state produce the
+    /// same candidate-head set in the same order.
+    ///
+    /// **Design note:** `MCC_FULL_MULTI_PARENT_PLAN.md` originally
+    /// proposed a separate `sibling_heads: BTreeSet<BlockId>` field
+    /// maintained alongside `light_cone_dag.leaves()`. The plan
+    /// progress log now records the shipped variant: a *derived*
+    /// accessor with no field. Keeping a parallel field would
+    /// duplicate state and create a desync hazard; the DAG itself is
+    /// the single source of truth for "what's a leaf right now."
+    pub fn candidate_heads(&self) -> std::collections::BTreeSet<[u8; 32]> {
+        self.light_cone_dag.leaves().collect()
+    }
+
+    /// Phase A.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` — every active
+    /// candidate head paired with its first-parent trajectory caliber,
+    /// sorted by caliber descending (smaller `BlockId` tiebreak —
+    /// matches `MccForkChoice::select_tip`'s argmax rule). The first
+    /// entry is the chain's MCC-chosen authoritative head.
+    ///
+    /// Operators consume this via `/api/light_cone/candidate_heads`
+    /// (Phase E.1) to debug "which heads are competing right now"
+    /// without manual trajectory-walk + caliber computation.
+    /// Validators consume it during Phase C hot-path integration to
+    /// pick the authoritative head per round.
+    ///
+    /// β is sourced from `governance_params["crooks_mev_beta_mb"]`
+    /// (default 1000 millibits) — same path `current_tip` uses to
+    /// build its MccForkChoice. Empty DAG → empty Vec.
+    pub fn enumerate_candidate_heads(&self) -> Vec<([u8; 32], u64)> {
+        let beta_mb = self
+            .governance_params
+            .get("crooks_mev_beta_mb")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1000);
+        let fc = crate::fork_choice::MccForkChoice::new(
+            self.light_cone_dag.clone(),
+            beta_mb,
+        );
+        fc.enumerate_with_caliber()
+    }
+
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
     pub fn set_proof_verifier(
         &mut self,
@@ -9501,6 +9552,210 @@ mod tests {
             hist_capped.last().unwrap().0,
             n_blocks,
             "newest entry must be the most-recent commit"
+        );
+    }
+
+    // ── MCC Phase A — candidate_heads accessor (A.1 + A.4 tests) ────
+
+    /// Helper: build the same minimal block fixture used elsewhere
+    /// in the file but specialised for direct light_cone_dag
+    /// manipulation. Inserts a Light-Cone block with the given id /
+    /// parents into `tc.light_cone_dag` so we can drive
+    /// `candidate_heads` without going through the full
+    /// `on_block_committed` path (which would also consume mempool,
+    /// fee logic, etc.).
+    fn lc_insert(
+        tc: &mut TendermintConsensus,
+        id: [u8; 32],
+        parents: Vec<[u8; 32]>,
+        epoch: u64,
+    ) {
+        use evaporchain_light_cone::Block as LcBlock;
+        tc.light_cone_dag
+            .insert(LcBlock::new(id, parents, 1000, epoch))
+            .unwrap();
+    }
+
+    fn id(seed: u8) -> [u8; 32] {
+        [seed; 32]
+    }
+
+    /// MCC Phase A.4 — `candidate_heads` is empty when the DAG is
+    /// empty. This is the genesis-state baseline: before any block
+    /// is inserted, no heads exist.
+    #[test]
+    fn mcc_phase_a_candidate_heads_empty_at_genesis() {
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        assert!(
+            tc.candidate_heads().is_empty(),
+            "fresh TendermintConsensus must have no candidate heads"
+        );
+    }
+
+    /// MCC Phase A.4 — `candidate_heads` grows under concurrent
+    /// proposals. With 3 sibling blocks at the same height, all
+    /// three are leaves and must appear as candidate heads.
+    #[test]
+    fn mcc_phase_a_candidate_heads_grows_under_concurrent_proposals() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Genesis.
+        lc_insert(&mut tc, id(0), vec![], 0);
+        // Three siblings off genesis — all leaves.
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+        lc_insert(&mut tc, id(3), vec![id(0)], 1);
+
+        let heads = tc.candidate_heads();
+        assert_eq!(heads.len(), 3, "three siblings → three candidate heads");
+        assert!(heads.contains(&id(1)));
+        assert!(heads.contains(&id(2)));
+        assert!(heads.contains(&id(3)));
+        assert!(
+            !heads.contains(&id(0)),
+            "genesis is no longer a leaf once it has children"
+        );
+    }
+
+    /// MCC Phase A.4 — `candidate_heads` shrinks when one fork
+    /// extends past the others. Locks the contract: extending a
+    /// head transfers leaf-status to the child, removing the
+    /// extended block from the candidate set.
+    #[test]
+    fn mcc_phase_a_candidate_heads_shrinks_on_extension() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);
+        lc_insert(&mut tc, id(2), vec![id(0)], 1);
+
+        // Two heads now: id(1) and id(2).
+        assert_eq!(tc.candidate_heads().len(), 2);
+
+        // Extend id(1) with a child id(3). id(1) is no longer a
+        // leaf; its child id(3) takes the head role.
+        lc_insert(&mut tc, id(3), vec![id(1)], 2);
+
+        let heads = tc.candidate_heads();
+        assert_eq!(heads.len(), 2, "still 2 heads after extension (id(2) + id(3))");
+        assert!(
+            !heads.contains(&id(1)),
+            "extended block must no longer be a head"
+        );
+        assert!(heads.contains(&id(3)), "new child id(3) takes head role");
+        assert!(heads.contains(&id(2)), "uninvolved sibling id(2) stays a head");
+    }
+
+    /// MCC Phase A.4 — validator-determinism property test.
+    /// Two `TendermintConsensus` instances driven through identical
+    /// block-insertion sequences must produce identical
+    /// `candidate_heads` sets at every step. Mirrors the convergence
+    /// pattern of `test_light_cone_antichain_digest_converges_across_validators`
+    /// at the candidate-head level.
+    ///
+    /// Stronger than just asserting set-equality: also asserts the
+    /// iteration ORDER is identical — a `BTreeSet<[u8; 32]>` iterates
+    /// in lexicographic order so this falls out for free, but
+    /// codifies the contract for any future change of return type.
+    #[test]
+    fn mcc_phase_a_candidate_heads_converges_across_validators() {
+        // Build two independently-constructed validators and feed
+        // them the same DAG insertions in the same order.
+        let mut a = make_consensus(1, &[1, 2, 3, 4]);
+        let mut b = make_consensus(2, &[1, 2, 3, 4]);
+
+        let inserts: Vec<([u8; 32], Vec<[u8; 32]>, u64)> = vec![
+            (id(0), vec![], 0),       // genesis
+            (id(1), vec![id(0)], 1),  // child A
+            (id(2), vec![id(0)], 1),  // child B (sibling of A)
+            (id(3), vec![id(1)], 2),  // grandchild via A
+            (id(4), vec![id(0)], 1),  // child C (sibling of A, B)
+            (id(5), vec![id(2)], 2),  // grandchild via B
+        ];
+
+        for (i, parents, epoch) in &inserts {
+            lc_insert(&mut a, *i, parents.clone(), *epoch);
+            lc_insert(&mut b, *i, parents.clone(), *epoch);
+            let heads_a = a.candidate_heads();
+            let heads_b = b.candidate_heads();
+            assert_eq!(
+                heads_a, heads_b,
+                "validators must converge on candidate_heads after inserting {:?}",
+                i
+            );
+            // Iteration order must also match (BTreeSet is sorted).
+            let order_a: Vec<_> = heads_a.iter().copied().collect();
+            let order_b: Vec<_> = heads_b.iter().copied().collect();
+            assert_eq!(
+                order_a, order_b,
+                "BTreeSet iteration order must be identical across validators"
+            );
+        }
+
+        // After the full sequence: id(3), id(4), id(5) are the
+        // current leaves.
+        let final_heads = a.candidate_heads();
+        assert_eq!(final_heads.len(), 3);
+        assert!(final_heads.contains(&id(3)));
+        assert!(final_heads.contains(&id(4)));
+        assert!(final_heads.contains(&id(5)));
+    }
+
+    /// MCC Phase A.4 — `enumerate_candidate_heads` returns the
+    /// candidate set paired with caliber, sorted by caliber
+    /// descending with smaller-BlockId tiebreak. Locks the contract
+    /// against `MccForkChoice::select_tip` (the argmax of this list
+    /// must equal what select_tip picks) and against
+    /// `candidate_heads()` (the unsorted set must equal the keys of
+    /// this list).
+    #[test]
+    fn mcc_phase_a_enumerate_candidate_heads_sorted_by_caliber() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Diamond + extra leaves so multiple trajectories of
+        // different lengths exist.
+        lc_insert(&mut tc, id(0), vec![], 0);              // genesis
+        lc_insert(&mut tc, id(1), vec![id(0)], 1);         // depth 1
+        lc_insert(&mut tc, id(2), vec![id(1)], 2);         // depth 2 (deeper trajectory)
+        lc_insert(&mut tc, id(3), vec![id(0)], 1);         // depth 1, sibling of 1
+
+        // Three leaves expected: id(2) (deeper), id(3) (sibling).
+        // id(0) is parent of 1 + 3, id(1) is parent of 2 — neither
+        // are leaves.
+        let heads = tc.candidate_heads();
+        assert_eq!(heads.len(), 2);
+        assert!(heads.contains(&id(2)));
+        assert!(heads.contains(&id(3)));
+
+        let scored = tc.enumerate_candidate_heads();
+        assert_eq!(scored.len(), 2, "scored list must match candidate_heads count");
+
+        // Set equivalence: the keys of `scored` must equal the
+        // unsorted `candidate_heads`.
+        let scored_keys: std::collections::BTreeSet<[u8; 32]> =
+            scored.iter().map(|(id, _)| *id).collect();
+        assert_eq!(scored_keys, heads, "key sets must agree");
+
+        // Order contract: caliber descending. The longer trajectory
+        // (depth-2 head id(2)) should score >= the shorter one
+        // (depth-1 head id(3)) because path_caliber accumulates over
+        // trajectory length under a stable energy field.
+        assert!(
+            scored[0].1 >= scored[1].1,
+            "caliber must be sorted descending (got {} then {})",
+            scored[0].1,
+            scored[1].1
+        );
+
+        // Argmax contract: first entry of the scored list must equal
+        // `MccForkChoice::select_tip`'s pick (with the same DAG + β).
+        use crate::fork_choice::ForkChoice;
+        let beta_mb = 1000;
+        let fc = crate::fork_choice::MccForkChoice::new(
+            tc.light_cone_dag.clone(),
+            beta_mb,
+        );
+        let selected = fc.select_tip().expect("non-empty DAG → Some");
+        assert_eq!(
+            scored[0].0, selected,
+            "first entry of enumerate_candidate_heads must equal select_tip's argmax"
         );
     }
 

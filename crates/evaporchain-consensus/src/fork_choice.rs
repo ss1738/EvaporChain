@@ -237,24 +237,45 @@ impl ForkChoice for MccForkChoice {
     /// since `LightCone::leaves` returns BTreeMap-sorted output).
     /// Returns `None` only when the DAG is empty.
     fn select_tip(&self) -> Option<[u8; 32]> {
-        let leaves: Vec<[u8; 32]> = self.lc.leaves().collect();
-        if leaves.is_empty() {
-            return None;
-        }
-        let mut best: Option<([u8; 32], u64)> = None;
-        for leaf in leaves {
-            let traj = self.first_parent_trajectory(&leaf);
-            let score = evaporchain_mcc::path_caliber(&traj, &self.lc, self.beta_mb);
-            best = match best {
-                None => Some((leaf, score)),
-                Some((_, prev)) if score > prev => Some((leaf, score)),
-                Some((prev_leaf, prev)) if score == prev && leaf < prev_leaf => {
-                    Some((leaf, prev))
-                }
-                Some(b) => Some(b),
-            };
-        }
-        best.map(|(id, _)| id)
+        // Reuse the enumeration done by `enumerate_with_caliber` so
+        // both methods share the same scoring code path. The argmax
+        // is the first entry of the descending-caliber list with
+        // smaller-BlockId tiebreak.
+        self.enumerate_with_caliber()
+            .into_iter()
+            .next()
+            .map(|(id, _)| id)
+    }
+}
+
+impl MccForkChoice {
+    /// Phase A.3 of `MCC_FULL_MULTI_PARENT_PLAN.md` — score-and-sort
+    /// every leaf in the DAG. Returns `Vec<(BlockId, caliber)>`
+    /// sorted by caliber descending; ties broken by smaller BlockId
+    /// first (validator-deterministic).
+    ///
+    /// Powers the multi-parent enumeration: `select_tip` already
+    /// returns the argmax, but Phase B's state-replay and Phase C's
+    /// proposer parent-set selection both need to know the FULL
+    /// candidate ordering, not just the winner. Operators surface
+    /// this via `/api/light_cone/candidate_heads` (Phase E.1).
+    ///
+    /// Empty DAG → empty Vec.
+    pub fn enumerate_with_caliber(&self) -> Vec<([u8; 32], u64)> {
+        let mut scored: Vec<([u8; 32], u64)> = self
+            .lc
+            .leaves()
+            .map(|leaf| {
+                let traj = self.first_parent_trajectory(&leaf);
+                let caliber =
+                    evaporchain_mcc::path_caliber(&traj, &self.lc, self.beta_mb);
+                (leaf, caliber)
+            })
+            .collect();
+        // Sort: caliber descending, then BlockId ascending (smaller
+        // BlockId tiebreak — same rule as `select_tip`'s argmax).
+        scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        scored
     }
 }
 

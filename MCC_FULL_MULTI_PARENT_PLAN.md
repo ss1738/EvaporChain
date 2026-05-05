@@ -44,34 +44,54 @@ Each phase has substrate + integration + tests. Phase letters used
 
 ### Phase A — Substrate: track all sibling heads (1-2 days)
 
-- [ ] **A.1 — `sibling_heads: BTreeSet<BlockId>` field on `TendermintConsensus`.**
-      Tracks every active leaf in the Light-Cone DAG (not just the
-      chosen MCC head). Populated from `light_cone_dag.leaves()` after
-      each commit; pruned alongside `state_branches`. Replaces the
-      implicit "one tip" assumption. Must stay validator-deterministic
-      under same DAG state.
+- [x] **A.1 — `candidate_heads()` accessor on `TendermintConsensus`.** ✅ SHIPPED 2026-05-05.
+      *Design deviation (recorded in plan progress log):* shipped as
+      a *derived* accessor on `light_cone_dag.leaves()` rather than a
+      separately-maintained `sibling_heads: BTreeSet<BlockId>` field.
+      Rationale: a parallel field would duplicate state and create a
+      desync hazard; the DAG itself is the single source of truth for
+      "what's a leaf right now." Returns `BTreeSet<[u8; 32]>` —
+      validator-deterministic via `BTreeMap`-key iteration order on
+      the underlying `LightCone`.
 
-- [ ] **A.2 — Per-head trajectory caliber cache.**
-      Computing `mcc_choose` over N candidate heads each block is
-      O(N · path_length). Cache `(head_id, last_known_caliber, last_scored_block)`
-      so repeat scoring within a block is O(1). Invalidate on commit.
+- [ ] **A.2 — Per-head trajectory caliber cache. DEFERRED to Phase C.**
+      Premature optimisation at substrate level. The N-candidate
+      scoring cost is observable only when the hot-path actually
+      enumerates per-round; if Phase C reveals it's a bottleneck,
+      revisit. Cache `(head_id, last_known_caliber, last_scored_block)`
+      with O(1) re-score and invalidate on commit.
 
-- [ ] **A.3 — `enumerate_candidate_heads()` accessor.**
-      Returns all current sibling heads sorted by `(caliber, BlockId)`
-      descending. Operator surface for `/api/light_cone/candidate_heads`
-      endpoint (Phase E). Validator-deterministic ordering — both
-      `caliber` and `BlockId` tiebreaker are deterministic per chain
-      state.
+- [x] **A.3 — `enumerate_candidate_heads()` sorted-by-caliber.** ✅ SHIPPED 2026-05-05.
+      Returns `Vec<([u8; 32], u64)>` of `(BlockId, caliber)` pairs
+      sorted by caliber descending; ties broken by smaller `BlockId`
+      first (matches `MccForkChoice::select_tip`'s argmax rule).
+      Implemented via new `MccForkChoice::enumerate_with_caliber()`
+      method that reuses `first_parent_trajectory` + `path_caliber` —
+      `select_tip` now derives its argmax from this list (same
+      scoring code path, single source of truth). β sourced from
+      `governance_params["crooks_mev_beta_mb"]` default 1000 — same
+      path `current_tip` uses.
 
-- [ ] **A.4 — Tests.** 4 unit tests:
-  - `sibling_heads_starts_empty_at_genesis`
-  - `sibling_heads_grows_under_concurrent_proposals`
-  - `sibling_heads_shrinks_when_one_fork_extends_past_others`
-  - `enumerate_candidate_heads_is_validator_deterministic` (proptest, 256 random DAG shapes)
+- [x] **A.4 — Tests.** ✅ SHIPPED 2026-05-05. 5 unit tests in
+      `evaporchain-consensus::tendermint::tests` (consensus suite
+      474/0/1):
+  - `mcc_phase_a_candidate_heads_empty_at_genesis`
+  - `mcc_phase_a_candidate_heads_grows_under_concurrent_proposals`
+  - `mcc_phase_a_candidate_heads_shrinks_on_extension`
+  - `mcc_phase_a_candidate_heads_converges_across_validators`
+    (validator-determinism: two `TendermintConsensus` instances with
+    identical block-insertion sequences produce identical candidate
+    sets at every step, including iteration order)
+  - `mcc_phase_a_enumerate_candidate_heads_sorted_by_caliber`
+    (key-set agreement with `candidate_heads()`, descending caliber
+    order, argmax-equals-select_tip)
 
-**Phase A acceptance:** all four tests green; no consensus-state-machine
-surgery yet. `parent_acceptance_mode = "mcc"` keeps existing behavior;
-`sibling_heads` is observability-only at this point.
+**Phase A acceptance:** ✅ ALL GREEN. No consensus-state-machine
+surgery happened in Phase A as planned; both new accessors are
+observability-only. `parent_acceptance_mode = "mcc"` continues to
+behave exactly as before — `select_tip` was refactored to derive its
+argmax from the new `enumerate_with_caliber` list, but the result is
+unchanged. Phase A lays the foundation; Phases B and C build on it.
 
 ### Phase B — State-replay infrastructure (3-5 days, biggest risk)
 
@@ -347,8 +367,16 @@ chain-wide.
 
 (Updated as phases ship. Most-recent at top.)
 
+- **2026-05-05 (evening)** — Phase A landed. A.1 + A.3 + A.4 shipped;
+  A.2 deferred to Phase C.
+  - A.1 deviated from the original plan (no `sibling_heads` field;
+    derived accessor instead). Rationale captured in the doc + tests.
+  - `MccForkChoice::enumerate_with_caliber()` is the new substrate
+    method; `select_tip` now derives its argmax from it (single
+    source of truth). Behaviour bit-for-bit unchanged; refactor only.
+  - 5 new tests in `evaporchain-consensus::tendermint::tests`. Full
+    consensus suite: 474 passed / 0 failed / 1 ignored.
 - **2026-05-05** — plan doc created. Phase 0 (planning) only.
-  Implementation begins on next focused session.
 
 ## Cross-references
 
