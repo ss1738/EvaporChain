@@ -221,11 +221,41 @@ integration is the focused next session.**
 
 Before starting Phase 1:
 
-- [ ] Confirm `evaporchain-light-cone::LightCone::insert` rejects cycles (currently relies on caller-side `MissingParent`; explicit cycle test missing).
-- [ ] Confirm `MccForkChoice::choose_parent` is deterministic across validators with the same DAG view (no HashMap iteration order dependence).
-- [ ] Sanity-check the chain ships `protocol_version: u8` field on `Block` (it does — line 190 of `evaporchain-types/src/lib.rs`).
-- [ ] Sanity-check `LightCone` is `Send + Sync` (it is — used inside the `Arc<Mutex<TendermintConsensus>>` on the API side).
-- [ ] Decide whether Phase 1 ships under a new governance flag (`light_cone_consensus_mode = "dag" | "linear"`) or reuses the existing `parent_acceptance_mode = "mcc"`. Recommendation: new flag — `parent_acceptance_mode` is parent-picking, not full DAG consensus.
+- [x] **Confirm `evaporchain-light-cone::LightCone::insert` rejects cycles.** ✅ DONE 2026-05-06.
+      Cycle prevention is **implicit**: the "parents must already
+      exist" rule precludes any cycle-forming insert. Three explicit
+      tests in `crates/evaporchain-light-cone/src/dag.rs::tests`:
+      - `self_cycle_rejected_via_missing_parent` — block whose
+        parent is itself rejects with `MissingParent { block: x,
+        parent: x }`.
+      - `two_cycle_rejected_via_already_inserted` — A→B→A attempt
+        re-inserts A → `AlreadyInserted`.
+      - `three_cycle_rejected_via_missing_parent` — A→B→C→A
+        attempt fails at the first step with a missing parent.
+      Light-cone suite 55/0/0.
+- [x] **Confirm `MccForkChoice` argmax is deterministic across validators.** ✅ DONE — already locked by MCC Phase C.5
+      (`mcc_phase_c5_validator_determinism_under_random_dags`)
+      256-iteration proptest; +
+      `mcc_phase_a_candidate_heads_converges_across_validators`
+      manual test. The original checklist named `choose_parent`,
+      which never shipped — actual API is `select_tip` +
+      `enumerate_with_caliber`, both proptest-locked.
+- [x] **Sanity-check `Block::protocol_version: u8` field.** ✅ — confirmed at `evaporchain-types/src/lib.rs:190`.
+- [x] **Sanity-check `LightCone: Send + Sync`.** ✅ DONE 2026-05-06.
+      Compile-time check `light_cone_is_send_and_sync` in
+      `dag.rs::tests` via the `assert_send::<T>() / assert_sync::<T>()`
+      idiom — any future field that breaks Send or Sync fails to
+      compile, not at runtime.
+- [x] **Phase 1 governance-flag decision: new flag vs reuse existing.** ✅ DONE — chain ships three independent flags as the layered rollout pathway:
+      `parent_acceptance_mode ∈ {linear, mcc, mcc_full}` (parent-
+      picking + multi-parent enumeration; default `linear`),
+      `light_cone_state_branches_enabled ∈ {true, false}` (per-fork
+      state branches; default `false`),
+      `light_cone_max_concurrent_forks` (1..=8, default 4). The
+      checklist's `light_cone_consensus_mode` proposal was
+      superseded; the actual three-flag layering is the
+      operational tool documented in
+      `docs/runbooks/doctrine-rollout-2026-05.md` Lane 4.
 
 ---
 

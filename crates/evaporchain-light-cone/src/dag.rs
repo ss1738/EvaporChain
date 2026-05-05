@@ -378,6 +378,80 @@ mod tests {
         assert!(matches!(err, LightConeError::MissingParent { .. }));
     }
 
+    /// LIGHT_CONE_FULL_DAG_PLAN pre-flight checklist item #1 —
+    /// `LightCone::insert` rejects cycles. Cycle prevention is
+    /// **implicit**: the "parents must already exist" rule (the
+    /// `MissingParent` check) precludes any block whose parent
+    /// chain forms a cycle, because:
+    ///   - A self-cycle (block whose parent is itself) requires
+    ///     the block to be in the DAG before its own insert →
+    ///     parent is "missing" at insert time → rejected.
+    ///   - A 2-cycle A↔B requires A to reference B as parent
+    ///     before B exists, OR B to reference A as parent and
+    ///     then A to be re-inserted (which trips
+    ///     `AlreadyInserted`).
+    ///   - Same for any longer cycle.
+    /// This test locks the implicit guarantee with explicit
+    /// adversarial inserts.
+    #[test]
+    fn self_cycle_rejected_via_missing_parent() {
+        let mut lc = LightCone::new();
+        // Block id(0) references itself as parent — at insert
+        // time, id(0) is not yet in the DAG, so the parent check
+        // fires.
+        let err = lc.insert(Block::new(id(0), vec![id(0)], 1000, 0)).unwrap_err();
+        assert!(
+            matches!(err, LightConeError::MissingParent { block, parent } if block == id(0) && parent == id(0)),
+            "self-cycle must reject as MissingParent (parent == self), got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn two_cycle_rejected_via_already_inserted() {
+        let mut lc = LightCone::new();
+        // Insert A (genesis).
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        // Insert B with parent A. Legal.
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        // Now try to "complete the cycle" by re-inserting A with
+        // parent B. The duplicate-id check fires before the
+        // parent check.
+        let err = lc.insert(Block::new(id(0), vec![id(1)], 800, 2)).unwrap_err();
+        assert!(
+            matches!(err, LightConeError::AlreadyInserted(b) if b == id(0)),
+            "2-cycle must reject as AlreadyInserted, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn three_cycle_rejected_via_missing_parent() {
+        let mut lc = LightCone::new();
+        // Try to insert C with parent B before B exists. The
+        // intent of constructing A→B→C→A is impossible at the
+        // step where any cycle-completing block tries to insert.
+        let err = lc.insert(Block::new(id(2), vec![id(1)], 1000, 0)).unwrap_err();
+        assert!(
+            matches!(err, LightConeError::MissingParent { .. }),
+            "3-cycle attempt must reject (parent missing), got {:?}",
+            err
+        );
+    }
+
+    /// LIGHT_CONE_FULL_DAG_PLAN pre-flight checklist item #4 —
+    /// `LightCone` is `Send + Sync`. Compile-time check via the
+    /// `assert_traits` idiom; if either trait is dropped from a
+    /// downstream change, this will fail to compile, not at
+    /// runtime.
+    #[test]
+    fn light_cone_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<LightCone>();
+        assert_sync::<LightCone>();
+    }
+
     #[test]
     fn diamond_shape_dag() {
         // A → B, A → C, B → D, C → D (diamond)
