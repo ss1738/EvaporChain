@@ -46,7 +46,10 @@ pub mod dag;
 
 pub use arrow::time_arrow_holds_at;
 pub use block::{Block, BlockId};
-pub use concurrency::{comparable, is_concurrent, precedes};
+pub use concurrency::{
+    closing_antichain, closing_antichain_digest, comparable, digest_antichain,
+    find_first_divergence, is_antichain, is_concurrent, precedes, DivergencePoint,
+};
 pub use dag::{causal_future, causal_past, LightCone, LightConeError};
 
 #[cfg(test)]
