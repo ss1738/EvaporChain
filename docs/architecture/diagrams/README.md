@@ -12,4 +12,4 @@ Mermaid diagram source files. GitHub renders `.mmd` natively. For local renderin
 
 **Audience:** external auditors, validator operators, contributors getting their bearings.
 
-**Scope:** these diagrams describe the protocol design as built in the workspace today (commit hash to be added at audit kickoff). When code drifts from the diagrams, fix the diagrams.
+**Scope:** these diagrams describe the protocol design as built in the workspace today. They are kept current with `main` — when code drifts from the diagrams, fix the diagrams. External-audit engagements should pin a specific commit (see `git log`) for their snapshot reference.

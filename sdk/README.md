@@ -152,7 +152,7 @@ const chain = new EvaporChain("https://testnet.evaporchain.com");
 
 // Options object
 const chain = new EvaporChain({
-  baseUrl: "http://localhost:3000",
+  baseUrl: "http://localhost:8080",
   timeout: 5000,
 });
 
@@ -187,6 +187,23 @@ const chain = new EvaporChain();
 | `getStatsSummary()` | Aggregate chain stats |
 | `getStatsTimeline()` | Epoch-by-epoch timeline |
 | `getNetwork()` | Network peer info |
+
+## Frontier endpoints (not yet wrapped — direct fetch)
+
+The SDK currently covers the core chain surface (status, accounts, objects, transactions, contracts, events). The 2026-05 doctrine arc and operational endpoints are reachable via `chain.fetch(path)` (or any direct HTTP client) until typed wrappers land:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/light_cone/antichain_digest` | Phase 4.4 antichain commit-cert digest — cross-validator agreement check |
+| `GET /api/network/scores` | Sybil score map with ghost-entry detection (`ghost_count > 0` is the freeze-class signal) |
+| `GET /api/mev/observations` | Recent sandwich-pattern detections (Crooks-MEV) |
+| `POST /api/mev/dispute` | Operator dispute path for false-positive observations |
+| `GET /api/cartel_alarm/chain_status` | Causal-CHSH self-monitoring verdict |
+| `GET /api/cartel_alarm/pending_events` | Drain queue of `CartelAlarmEvent`s |
+| `GET /api/lambda_fold/nova` + `/vk_bytes` + `POST /verify` | Nova IVC sublinear chain-proof verification |
+| RPC `evap_getLamportClock()` | Decay-Lamport energy-driven logical clock |
+
+See [`docs/README.md`](../docs/README.md) for the full curl-style reference. Typed SDK wrappers for these are tracked on the post-V1 roadmap.
 
 ## License
 

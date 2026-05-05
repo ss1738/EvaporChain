@@ -20,6 +20,7 @@ These mechanizations close the gap.
 | `EnergyVerkleCompression.v` | #8 — Energy-Verkle compression invariants | leaf-count preservation `Qed.`; energy-sum monotonicity `Qed.`; commitment preservation as named axiom (BLS12-381 dependency) |
 | `PoHAFreeloading.v` | #9 — DA freeloading-resistance theorem | threat model + theorem statement + reduction to blake3 + BFT axioms; final transitivity `Admitted` pending `Q`-modeled `negligible` |
 | `LazyEagerEquivalence.v` | #10 — Rule-Based Consensus `lazy ≡ eager` | `eager_eq_lazy` proven at `Qed.` relative to `decay_step_compose` axiom; integer-drift bound for the real impl tracked as follow-up |
+| `../proofs/LLSAInvariantPreservation.v` | LLSA invariant preservation (§A1.2 T4 descope path) | All 4 lemmas at `Qed.` — `redirect_preserves_inv`, `decay_preserves_inv`, `block_produce_preserves_inv`, `llsa_conservation_invariant_preservation`. Build-verified clean under Rocq 9.1.1 (M2 closure 2026-05-05). |
 
 ## Building
 
@@ -29,7 +30,12 @@ make           # check all *.v files
 make clean     # remove generated artefacts
 ```
 
-Requires Coq ≥ 8.18 (for the modern `Lia` decision procedure).
+Verified clean under **Rocq 9.1.1** (the renamed Coq, available via
+`brew install coq`). Older Coq 8.18+ should also work for these files
+modulo the Coq 9.0 transition fixes documented in the M2 punch-list
+entry (dropped `Coq.Arith.Div2` import, brace-focus instead of bullets
+between splits, direct `Nat.le_0_l`/`Nat.le_refl` in place of `lia` on
+trivial goals, `eapply`/`eassumption` for evar inference).
 
 ## What "machine-checked" means here
 
@@ -40,8 +46,11 @@ have been reduced to standard arithmetic facts but which haven't been
 fully discharged yet.
 
 The aim of this directory is to drive every theorem to `Qed.` before
-mainnet. As of this commit, only the trivial base cases are at `Qed.`;
-the inductive step on `EnergyDecayMonotonicity` is `Admitted.`.
+mainnet. As of 2026-05-05 the LLSA invariant-preservation file
+(`../proofs/LLSAInvariantPreservation.v`) is fully `Qed.` end-to-end
+and the descope-path Layer 7 LLSA claim is therefore build-verifiable.
+`EnergyDecayMonotonicity` cross-halving case + `PoHAFreeloading`
+transitivity remain the open `Admitted.` items.
 
 ## Cross-references
 

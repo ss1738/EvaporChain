@@ -17,7 +17,8 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] ZK proving (Nova recursive proof folding)
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
-- [x] **7,477+ lib tests passing** across 100+ crates (substrate primitives, consensus, execution, proving, DA, networking, plus 36+ doctrine "press-claim" tests asserting headline properties as structural invariants)
+- [x] **Doctrine arc shipped 2026-05** — Lambda-Fold Nova IVC (sublinear light-client verification), Crooks-MEV refund pipeline (sandwich detection → settlement → stake-slash), Light-Cone Full DAG mode (multi-parent blocks, antichain finality, cross-validator commit-cert digest), Causal-CHSH cartel detection (real-Eth gate PASS), MultiAuditorVerifier k-of-n governance attestation, M2 Coq build-verified under Rocq 9.1.1
+- [x] **12,500+ test functions** across **147 workspace crates** (substrate primitives, consensus, execution, proving, DA, networking, frontier primitives, plus doctrine "press-claim" tests asserting headline properties as structural invariants)
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -30,13 +31,13 @@ cd EvaporChain
 cargo test
 
 # Start a node with API + dashboard
-cargo run -p evaporchain-node -- --api --api-port 3000
+cargo run -p evaporchain-node -- --api --api-port 8080
 
 # Open dashboard
-open http://localhost:3000
+open http://localhost:8080
 
 # Get testnet tokens
-open http://localhost:3000/faucet
+open http://localhost:8080/faucet
 ```
 
 ## Connect to Public Testnet
@@ -69,16 +70,18 @@ Coming soon. Infrastructure is Terraform-ready (`deploy/terraform/modules/hetzne
 
 ## Crate Map
 
+147 workspace crates total. The core stack:
+
 ```
-evaporchain-types       Core types (19 tx variants, objects, accounts, energy decay)
+evaporchain-types       Core types (25 tx variants, objects, accounts, energy decay)
 evaporchain-crypto      BLAKE3, BLS, ML-DSA, VRF, Verkle trie, Energy-Verkle, MMR
 evaporchain-state       Evaporation engine, refresh engine, state DB, WAL, RocksDB
-evaporchain-contracts   7 contract templates + rule engine + upgrades
+evaporchain-contracts   8 contract templates + rule engine + upgrades
 evaporchain-script      EvaporScript parser → compiler (constant fold + DCE) → VM (44 ops)
 evaporchain-execution   Block-STM parallel executor, gas, PID fees, privacy execution
 evaporchain-consensus   Tendermint BFT, finality tracker, light client, state sync
 evaporchain-proving     Nova IVC recursive proofs, privacy proofs, evaporation proofs
-evaporchain-network     libp2p gossipsub, block sync, DA shard sampling
+evaporchain-network     libp2p gossipsub, block sync, DA shard sampling, Sybil scoring
 evaporchain-da          2D erasure coding, PoHA, namespace proofs, DA certificates
 evaporchain-oracle      Decentralized oracle with BFT consensus + inclusion proofs
 evaporchain-sharding    Dynamic shard assignment, cross-shard messaging, compaction
@@ -87,14 +90,42 @@ evaporchain-cli         CLI with genesis ceremony + keygen + monitoring
 evaporchain-mcp         MCP server for AI agent interaction (26 tools, 13 resources, 6 prompts)
 ```
 
+Doctrine / frontier primitives:
+
+```
+evaporchain-light-cone        Causal-set partial-order DAG (Sorkin/Pratt) + antichain
+                              primitives + Phase 4.4 commit-cert digest
+evaporchain-lambda-fold       Lambda-Fold Nova IVC accumulator (sublinear light-client
+                              verification)
+evaporchain-mev-detect        Sandwich-attack detector (Crooks-MEV refund pipeline)
+evaporchain-crooks-mev-refund Refund-tx settlement substrate
+evaporchain-causal-chsh       Bell-CHSH cartel detector (frontier theorem #1, gate
+                              PASS on real Ethereum data 2026-05-04)
+evaporchain-llsa              Lambda-Locked Self-Amendment (k-of-n MultiAuditorVerifier
+                              + Coq-build-verified invariant preservation)
+evaporchain-mcc               Maximum-Caliber Consensus (Jaynes Lagrangian fork choice)
+evaporchain-cfm               Crooks-Singh Fee Market (closed-form fee equilibrium)
+evaporchain-decay-lamport     Decay-Lamport Time (energy-driven logical clock)
+evaporchain-fee-controller    Singh-Lyapunov PID fee controller
+evaporchain-entropic-slashing Sanov / large-deviation slashing magnitude
+evaporchain-singh-attractor   Singh attractor consensus primitive
+evaporchain-bell-beacon       Device-independent randomness beacon
+evaporchain-evap-fork-cert    Evaporated-fork certificates
+evaporchain-mortis            Four-act narrative state machine
+evaporchain-autopoietic       Self-maintaining system primitive
+evaporchain-energy-kernel     Coq-verified canonical energy_at_epoch
+... and ~120 supporting crates                  (full list: `ls crates/`)
+```
+
 ## Test Coverage
 
-**7,477+ lib tests passing, 0 failing** across 100+ workspace crates. Coverage spans the core pipeline (consensus → execution → DA → proving → contracts → frontier primitives) plus 80+ substrate modules and 36+ top-level "press-claim" tests that assert each crate's doctrine headline as a structural invariant — so the press claim breaks loudly if the implementation drifts.
+**12,500+ test functions** across 147 workspace crates. Coverage spans the core pipeline (consensus → execution → DA → proving → contracts → frontier primitives) plus substrate-module tests and top-level "press-claim" tests that assert each crate's doctrine headline as a structural invariant — so the press claim breaks loudly if the implementation drifts.
 
 ```bash
 cargo test --workspace
-# 7,477+ passed; 0 failed
 ```
+
+Note: workspace builds and tests are run on the M4 Mini cluster via SSH (build memory + parallelism). The MacBook is for editing only.
 
 ## License
 

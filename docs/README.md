@@ -9,19 +9,19 @@ EvaporChain is a blockchain where state expires by default. Every on-chain objec
 The public testnet API is available at:
 
 ```
-http://<TESTNET_IP>:3000
+http://<TESTNET_IP>:8080
 ```
 
-- **Dashboard:** `http://<TESTNET_IP>:3000/`
-- **Faucet:** `http://<TESTNET_IP>:3000/faucet`
-- **API Base:** `http://<TESTNET_IP>:3000/api/`
+- **Dashboard:** `http://<TESTNET_IP>:8080/`
+- **Faucet:** `http://<TESTNET_IP>:8080/faucet`
+- **API Base:** `http://<TESTNET_IP>:8080/api/`
 
 ## Get Testnet Tokens
 
 Visit the faucet page or use curl:
 
 ```bash
-curl -X POST http://<TESTNET_IP>:3000/api/faucet \
+curl -X POST http://<TESTNET_IP>:8080/api/faucet \
   -H "Content-Type: application/json" \
   -d '{"address": 1}'
 ```
@@ -36,7 +36,7 @@ Each address can request tokens once per hour. You receive 10,000 EVAP per reque
 ## Send a Transfer
 
 ```bash
-curl -X POST http://<TESTNET_IP>:3000/api/tx/transfer \
+curl -X POST http://<TESTNET_IP>:8080/api/tx/transfer \
   -H "Content-Type: application/json" \
   -d '{"from": 1, "to": 2, "amount": 500, "nonce": 0}'
 ```
@@ -51,7 +51,7 @@ Response:
 Objects are the core state primitive. They have energy that decays over time.
 
 ```bash
-curl -X POST http://<TESTNET_IP>:3000/api/tx/create-object \
+curl -X POST http://<TESTNET_IP>:8080/api/tx/create-object \
   -H "Content-Type: application/json" \
   -d '{"creator": 1, "object_id": 42, "energy": 5000, "half_life": 100}'
 ```
@@ -66,7 +66,7 @@ When energy reaches zero, the object enters a grace period, then evaporates.
 Template-based contracts:
 
 ```bash
-curl -X POST http://<TESTNET_IP>:3000/api/tx/deploy-contract \
+curl -X POST http://<TESTNET_IP>:8080/api/tx/deploy-contract \
   -H "Content-Type: application/json" \
   -d '{
     "deployer": 1,
@@ -128,6 +128,28 @@ Available templates: `DecayingToken`, `MortalNFT`, `ThermodynamicEscrow`, `Decay
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/network/peers` | Per-peer summary: `peer_id`, `ip`, `subnet`, `since_ms`, `score`, `age_seconds`, `infractions`, `last_seen_ms`. Lane R.15 added the last two — together they give a one-curl read of all key freeze-class signals (a peer with `score: -100, infractions: 0` got there by idle-decay; with `infractions: high` got there by misbehaviour). |
+| GET | `/api/network/scores` | Diagnostic projection of the full Sybil score map, including ghost-entries (peers with a score but no live connection). `ghost_count > 0` is the freeze-class signal Lane R.* would have caught. Returns `{scores:[{peer_id, connected, ip, since_ms, score, infractions, last_seen_ms}], count, ghost_count}`. |
+
+### Light-Cone DAG (Phase 4.4 antichain commit-cert digest)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/light_cone` | Light-Cone DAG block count + "running alongside Tendermint" flag. |
+| GET | `/api/light_cone/antichain_digest` | Phase 4.4 antichain commit-cert digest. Domain-separated 32-byte blake3 fingerprint of the closing antichain (`evaporchain-antichain-digest-v1`), validator-deterministic via sort-before-hash. Returns `{digest, closing_antichain, closing_antichain_size, running_alongside_tendermint}`. Operators `curl` across all cluster validators and pattern-match the digests; divergence is the freeze-class signal for antichain disagreement. Pairs with `mev_state_digest` (Phase 3.2) as the second canonical inter-validator digest. |
+
+### Lambda-Fold Nova IVC
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/lambda_fold/nova` | Nova IVC accumulator state: `step_count`, `latest_epoch`, `is_identity`, etc. Active when governance flag `lambda_fold_mode = "nova"`. |
+| GET | `/api/lambda_fold/nova/vk_bytes` | Compressed verifying-key bytes for the recursive SNARK. Light clients fetch this once + use it to verify chain proofs in essentially constant time regardless of fold count. |
+| POST | `/api/lambda_fold/nova/verify` | Sublinear chain-proof verification — empirically locked at 23 ms @ 100 folds (1.083× of 23 ms @ 10 folds) on M4 release. |
+
+### Decay-Lamport time
+
+| Method | Endpoint / RPC | Description |
+|--------|----------|-------------|
+| RPC | `evap_getLamportClock()` | Energy-driven logical clock (Decay-Lamport Time, INVENTION_STACK §4.1 #3). Ticks once per `tick_quantum` units of chain-wide gas spent. Wired on both proposer-local AND gossip-follower commit paths so all validators advance in lockstep. |
 
 ### Frontier — Causal-CHSH cartel detector
 
@@ -152,7 +174,7 @@ Refund settlement (`Transaction::Refund`) is governance-gated via `crooks_mev_se
 git clone https://github.com/ss1738/EvaporChain.git
 cd EvaporChain
 cargo build --release
-cargo run -p evaporchain-node -- --api --api-port 3000
+cargo run -p evaporchain-node -- --api --api-port 8080
 ```
 
-Then open `http://localhost:3000` for the dashboard.
+Then open `http://localhost:8080` for the dashboard.

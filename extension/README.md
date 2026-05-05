@@ -32,6 +32,17 @@ npm run build          # writes dist/
 npm run dev
 ```
 
+## Reproducible builds
+
+The signing-critical path (ML-DSA Dilithium3 via `evaporchain-crypto-wasm`) ships with a deterministic build pipeline so any reviewer can rebuild the WASM from source and verify it matches the artifact in `dist/`:
+
+- `scripts/build-wasm.sh` — pinned Rust toolchain + `wasm-pack` invocation
+- `scripts/wasm-build-versions.json` — version-pin manifest (toolchain, deps, output hash)
+- `scripts/verify-wasm.mjs` — verifier that rebuilds, hashes, and compares against the manifest
+- `npm run verify:wasm` — runs the verifier in CI and locally before every release
+
+This is the user-protective property an auditor cares about: *the wallet a user installs from the Chrome Web Store is bit-identical to the wallet rebuilt from this repo at the tagged commit.* See [`scripts/README.md`](./scripts/README.md) for the full pipeline.
+
 ## Load into Chrome
 
 1. `chrome://extensions` → enable **Developer mode**.

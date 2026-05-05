@@ -52,4 +52,11 @@ Deploys to Vercel from the project root. No special build flags needed beyond th
 
 - Node + JSON-RPC: `crates/evaporchain-node`
 - Browser wallet SDK: `wallet-sdk/` (consumed via the workspace)
-- dApps embedded as iframes / linked targets: `dapps/{nft-marketplace,energy-pool,mortal-messages,governance}`
+- dApps embedded as iframes / linked targets — current set in `dapps/`:
+  - `singh-pool` — Singh-Lyapunov staking pool
+  - `validator-analytics` — per-validator dashboard (uptime, slash history, attestations)
+  - `gov-portal` — governance proposals + voting
+  - `explorer-light` — minimal block/tx browser using the sublinear light-client verifier
+  - `governance` — legacy governance app (kept for back-compat)
+  - `nft-marketplace`, `energy-pool`, `mortal-messages` — early-phase reference dApps
+  - `explorer` — full-fat explorer (heavier dep tree than `explorer-light`)
