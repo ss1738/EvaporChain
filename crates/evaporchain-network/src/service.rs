@@ -240,6 +240,7 @@ impl PerIpConnectionTracker {
         }
     }
 
+    #[cfg(test)]
     fn count_for(&self, ip: &std::net::IpAddr) -> usize {
         self.counts.get(ip).copied().unwrap_or(0)
     }
@@ -527,6 +528,26 @@ pub struct PeerInfo {
     pub last_seen_ms: u64,
 }
 
+/// Per-score-entry view for `/api/network/scores`. Unlike `PeerInfo`,
+/// this surfaces *every* entry in the `scores` HashMap including
+/// ghost-entries — peers that have been scored (e.g. via
+/// `adjust_score` on a peer not currently in `peer_ips`) but are
+/// not actively connected. The Lane R.* cluster-freeze root cause
+/// was exactly this class of ghost entry; `scores_view` is the
+/// operator's standing diagnostic for it.
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerScoreEntry {
+    pub peer_id: String,
+    /// `true` iff `peer_id` is also in `peer_ips`. Ghost entries have
+    /// `connected = false` and surface the freeze-class signal.
+    pub connected: bool,
+    pub ip: Option<String>,
+    pub since_ms: Option<u64>,
+    pub score: i32,
+    pub infractions: u32,
+    pub last_seen_ms: u64,
+}
+
 /// Counters surfaced to Prometheus as
 /// `evap_inbound_rejections_total{reason="..."}`.
 #[derive(Default, Debug)]
@@ -751,6 +772,31 @@ impl SybilState {
                     // one endpoint.
                     infractions: score_entry.map(|s| s.infractions).unwrap_or(0),
                     last_seen_ms: score_entry.map(|s| s.last_seen_ms).unwrap_or(*since),
+                }
+            })
+            .collect()
+    }
+
+    /// Diagnostic projection of the `scores` map, including
+    /// ghost-entries (peers in `scores` but not `peer_ips`). The
+    /// Lane R.* freeze-class root cause hinged on a peer being
+    /// scored without being connected; `peer_view()` only iterates
+    /// connected peers, so such ghosts were invisible to
+    /// `/api/network/peers`. `scores_view()` is the operator surface
+    /// that catches the next freeze-class issue without log-grepping.
+    pub fn scores_view(&self) -> Vec<PeerScoreEntry> {
+        self.scores
+            .iter()
+            .map(|(pid, score)| {
+                let connected_ip = self.peer_ips.get(pid);
+                PeerScoreEntry {
+                    peer_id: pid.to_string(),
+                    connected: connected_ip.is_some(),
+                    ip: connected_ip.map(|(ip, _)| ip.to_string()),
+                    since_ms: connected_ip.map(|(_, since)| *since),
+                    score: score.score,
+                    infractions: score.infractions,
+                    last_seen_ms: score.last_seen_ms,
                 }
             })
             .collect()
@@ -1581,7 +1627,7 @@ impl P2pNetworkService {
                             // ── Connection events ──
                             SwarmEvent::ConnectionEstablished { peer_id, ref endpoint, .. } => {
                                 if !peer_authority.is_authorized(&peer_id) {
-                                    if let Ok(mut s) = sybil_state_inner.write() {
+                                    if let Ok(s) = sybil_state_inner.write() {
                                         s.rejections.record(RejectionReason::Unauthorized);
                                     }
                                     warn!("Unauthorized peer {peer_id} — disconnecting");
@@ -2661,5 +2707,57 @@ mod tests {
                 "authorized peer score must not decay when the gate is in place"
             );
         }
+    }
+
+    /// Diagnostic surface regression: `scores_view()` must surface
+    /// every entry in `scores`, including ghost entries (peers in
+    /// `scores` but not `peer_ips`). The Lane R.* freeze-class root
+    /// cause was exactly this hidden state; without `scores_view`
+    /// it stayed invisible to operators.
+    #[test]
+    fn test_scores_view_surfaces_ghost_entries() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(192, 0, 2, 50);
+        let connected = PeerId::random();
+        let ghost = PeerId::random();
+
+        // Connected peer: shows up in both peer_ips and scores.
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(connected, ip);
+
+        // Ghost: scored without ever connecting (e.g. an
+        // adjust_score call on an unconnected peer that hit
+        // `or_default()`). This is the freeze-class signal.
+        s.adjust_score(&ghost, -10);
+        assert!(
+            !s.peer_ips.contains_key(&ghost),
+            "ghost setup: must not be in peer_ips"
+        );
+        assert!(
+            s.scores.contains_key(&ghost),
+            "ghost setup: must be in scores"
+        );
+
+        let view = s.scores_view();
+        assert_eq!(view.len(), 2, "scores_view must include both entries");
+
+        let connected_entry = view
+            .iter()
+            .find(|e| e.peer_id == connected.to_string())
+            .expect("connected peer must be in view");
+        assert!(connected_entry.connected);
+        assert!(connected_entry.ip.is_some());
+        assert!(connected_entry.since_ms.is_some());
+        assert_eq!(connected_entry.score, 0);
+
+        let ghost_entry = view
+            .iter()
+            .find(|e| e.peer_id == ghost.to_string())
+            .expect("ghost peer must be surfaced by scores_view");
+        assert!(!ghost_entry.connected, "ghost must report connected=false");
+        assert!(ghost_entry.ip.is_none(), "ghost must not have an IP");
+        assert!(ghost_entry.since_ms.is_none(), "ghost must not have since_ms");
+        assert_eq!(ghost_entry.score, -10);
+        assert_eq!(ghost_entry.infractions, 1);
     }
 }

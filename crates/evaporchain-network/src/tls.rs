@@ -145,6 +145,7 @@ fn read_pem_secret_inner_with_migration(
 
 /// Inner reader — caller supplies the passphrase explicitly. Used by tests.
 /// Migration is disabled by default to keep tests deterministic.
+#[cfg(test)]
 fn read_pem_secret_inner(path: &Path, passphrase: Option<&[u8]>) -> Result<String, String> {
     read_pem_secret_inner_with_migration(path, passphrase, false)
 }
