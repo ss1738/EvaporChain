@@ -10381,6 +10381,111 @@ mod tests {
         );
     }
 
+    /// MCC Phase C.5 — validator-determinism property test (256
+    /// random DAG shapes).
+    ///
+    /// **The contract:** every honest validator with the same DAG
+    /// state must produce the same MCC fork-choice outputs:
+    ///   1. `candidate_heads()` returns the same `BTreeSet` of leaves
+    ///   2. `enumerate_candidate_heads()` returns the same sorted
+    ///      `Vec<(BlockId, caliber)>` (same order, same scores)
+    ///   3. `light_cone_antichain_digest()` matches
+    ///   4. `plan_replay_to_head` produces the same `ReplayWalk` for
+    ///      every (from, to) pair drawn from the candidate heads
+    ///
+    /// **Why this is a proptest, not a unit test:** the manual
+    /// `mcc_phase_a_candidate_heads_converges_across_validators`
+    /// test (already shipped) covers a 6-block hand-picked sequence.
+    /// This proptest sweeps 256 randomly-generated DAG shapes (linear
+    /// chains, branching, multi-parent merges) at sizes 1..=20
+    /// blocks, catching any non-determinism that depends on a
+    /// specific topology — HashMap iteration order leaking into
+    /// scoring, time-based tie-breaks, etc.
+    proptest::proptest! {
+        #[test]
+        fn mcc_phase_c5_validator_determinism_under_random_dags(
+            seed in 0u64..10_000,
+            n_blocks in 1usize..=20,
+        ) {
+            use proptest::{prop_assert, prop_assert_eq};
+
+            // Deterministic synthetic DAG generator from (seed, n_blocks).
+            // Block i's parents = pick from { 0..i } based on
+            // seed-derived hash. Genesis has no parents.
+            let mut a = make_consensus(1, &[1, 2, 3, 4]);
+            let mut b = make_consensus(2, &[1, 2, 3, 4]);
+            let inserts: Vec<([u8; 32], Vec<[u8; 32]>, u64)> = {
+                let mut out = Vec::with_capacity(n_blocks);
+                out.push((id(0), vec![], 0));  // genesis
+                for i in 1..n_blocks {
+                    let h = (seed.wrapping_mul(i as u64).wrapping_add(31))
+                        .wrapping_mul(2654435761);
+                    let two_parents = (h & 1) == 1 && i >= 2;
+                    let mut parents = Vec::new();
+                    let p1 = (h.wrapping_div(7) as usize) % i;
+                    parents.push(id(p1 as u8));
+                    if two_parents {
+                        let p2 = (h.wrapping_div(11) as usize) % i;
+                        if p2 != p1 {
+                            parents.push(id(p2 as u8));
+                        }
+                    }
+                    out.push((id(i as u8), parents, i as u64));
+                }
+                out
+            };
+
+            for (i, parents, epoch) in &inserts {
+                lc_insert(&mut a, *i, parents.clone(), *epoch);
+                lc_insert(&mut b, *i, parents.clone(), *epoch);
+            }
+
+            // Property 1: candidate_heads BTreeSets must match.
+            let heads_a = a.candidate_heads();
+            let heads_b = b.candidate_heads();
+            prop_assert_eq!(
+                heads_a.clone(), heads_b.clone(),
+                "candidate_heads must agree across validators"
+            );
+
+            // Property 2: enumerate_candidate_heads must match
+            // exactly (same order, same caliber values).
+            let scored_a = a.enumerate_candidate_heads();
+            let scored_b = b.enumerate_candidate_heads();
+            prop_assert_eq!(
+                scored_a.clone(), scored_b.clone(),
+                "enumerate_candidate_heads must match exactly"
+            );
+
+            // Property 3: antichain digest must match.
+            prop_assert_eq!(
+                a.light_cone_antichain_digest(),
+                b.light_cone_antichain_digest(),
+                "antichain digest must match across validators"
+            );
+
+            // Property 4: plan_replay_to_head must produce identical
+            // ReplayWalks for every pair of candidate heads.
+            let heads_vec: Vec<[u8; 32]> = heads_a.into_iter().collect();
+            for from in &heads_vec {
+                for to in &heads_vec {
+                    let plan_a = a.plan_replay_to_head(*from, *to);
+                    let plan_b = b.plan_replay_to_head(*from, *to);
+                    prop_assert_eq!(
+                        plan_a, plan_b,
+                        "plan_replay_to_head must match for every (from, to) pair"
+                    );
+                }
+            }
+
+            // Property 5: every score must be a valid u64 (no
+            // overflow / NaN / sentinel values leaked).
+            for (_, caliber) in &scored_a {
+                prop_assert!(*caliber < u64::MAX, "caliber must not overflow");
+            }
+        }
+    }
+
     /// MCC Phase B.4 — `replay_and_apply_atomic` happy path. When
     /// the inner `replay_and_apply` succeeds, the atomic wrapper
     /// returns the same `ReplayResult` and the StateDB ends up at

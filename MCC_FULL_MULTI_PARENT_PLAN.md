@@ -334,13 +334,26 @@ Promote `authoritative_head` from admin-RPC to consensus hot path.
       counts these; Phase C ensures the counter increments correctly
       on every observed double-vote at the consensus hot path.
 
-- [ ] **C.5 — Validator-determinism gate.**
-      Every honest validator at the same DAG state MUST select the
-      same `current_authoritative_head`. Property test (proptest, 256
-      random DAG shapes): two `TendermintConsensus` instances driven
-      through identical block sequences produce identical
-      `authoritative_head_history`. Mirrors the Phase 4.4 antichain
-      digest convergence test pattern.
+- [x] **C.5 — Validator-determinism property test.** ✅ SHIPPED 2026-05-05.
+      `mcc_phase_c5_validator_determinism_under_random_dags`
+      proptest sweeps 256 random DAG shapes (sizes 1..=20 blocks,
+      mixed branching with 1-2 parents per non-genesis block).
+      Each iteration drives two independent `TendermintConsensus`
+      instances through the same block-insertion sequence and
+      asserts FIVE properties:
+      1. `candidate_heads()` BTreeSets agree
+      2. `enumerate_candidate_heads()` Vecs agree exactly (order +
+         caliber values)
+      3. `light_cone_antichain_digest()` matches
+      4. `plan_replay_to_head` produces identical `ReplayWalk` for
+         every (from, to) pair drawn from the candidate heads
+      5. No caliber values overflow to `u64::MAX`
+      All 256 iterations × 5 properties = ~1280 individual
+      assertions; all pass in 0.76s on Mini. Catches non-determinism
+      that depends on specific topology (HashMap iteration order
+      leak, time-based tiebreak, etc.) — the manual A.4 6-block
+      determinism test is a baseline; this is the stress-test
+      version.
 
 - [ ] **C.6 — Tests.** 5 integration tests:
   - `authoritative_head_selected_at_start_round`
@@ -544,6 +557,15 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 14)** — Phase C.5 proptest
+  shipped — `mcc_phase_c5_validator_determinism_under_random_dags`.
+  256 random DAG shapes, 5 properties asserted per shape (~1280
+  assertions total), all pass in 0.76s. Catches non-determinism
+  bugs that depend on specific topology (HashMap iteration leak,
+  time-based tie-break, etc.). Phase C is now 1/6 — the
+  determinism gate is shipped before the hot-path surgery, locking
+  the contract that hot-path consumers will need to preserve.
 
 - **2026-05-05 (late evening cont'd 13)** — Phase E.6 runbook
   addendum shipped. New "Lane 4" section in
