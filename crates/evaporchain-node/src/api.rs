@@ -6878,6 +6878,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/identity",              category: "identity", description: "Single-call dashboard summary: four-act spine, light-cone count, TUR verdict, lambda-fold accumulator, lamport time, sentinel parameters, HBCT state, wired primitives, headline sentence", example: None },
     ApiDocEntry { method: "GET",  path: "/api/four_act",              category: "identity", description: "Four-act narrative spine snapshot (Birth/Life/Small Deaths/Final Death)", example: None },
     ApiDocEntry { method: "GET",  path: "/api/light_cone",            category: "identity", description: "Light-Cone DAG block count + 'running alongside Tendermint' flag", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/light_cone/antichain_digest", category: "identity", description: "Phase 4.4 antichain commit-cert digest. Deterministic 32-byte blake3 fingerprint of the closing antichain, domain-separated under `evaporchain-antichain-digest-v1`. Operators compare this across cluster validators to confirm cross-validator agreement on antichain finality. Returns {digest, closing_antichain, closing_antichain_size, running_alongside_tendermint}.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/light_cone/antichain_digest_history", category: "identity", description: "Phase 4.4 rolling history of (height, digest) pairs (last 128 committed blocks under `light_cone_state_branches_enabled = true`). Operators retrospectively cross-compare per-height digests across cluster validators: divergence at any past height is the freeze-class signal for antichain disagreement. Returns {history:[{block_height, digest}], count, running_alongside_tendermint}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/lambda_fold",           category: "identity", description: "Lambda-Fold accumulator (acc_hash, total_energy_remaining, step_count, latest_epoch)", example: None },
     ApiDocEntry { method: "GET",  path: "/api/tur_liveness",          category: "identity", description: "TUR Liveness Detector verdict over the sliding window of per-block J", example: None },
     ApiDocEntry { method: "GET",  path: "/api/lamport_time",          category: "identity", description: "Decay-Lamport energy-driven logical clock", example: None },
@@ -6899,7 +6901,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/bell_beacon",           category: "substrate", description: "CHSH S-value + Bell certification (local-realism threshold S=2000mb)", example: Some(r#"{"e_ab":500,"e_ab_prime":-500,"e_a_prime_b":500,"e_a_prime_b_prime":500}"#) },
     ApiDocEntry { method: "POST", path: "/api/allen_relation",        category: "substrate", description: "Allen interval algebra relation between two intervals", example: Some(r#"{"a":{"start":0,"end":10},"b":{"start":5,"end":15}}"#) },
     ApiDocEntry { method: "POST", path: "/api/mdl_optimal",           category: "substrate", description: "Minimum-Description-Length optimal shard partition", example: Some(r#"{"items":[1,2,3,1,2,3],"max_shards":2}"#) },
-    ApiDocEntry { method: "POST", path: "/api/cslc_reconstruct",      category: "substrate", description: "Single-state ε-machine baseline from symbol-count distribution (CSSR per Shalizi-Klinkner 2004 is open work — tracked in DOCTRINE_PUNCH_LIST.md Layer 2)", example: Some(r#"{"counts":[10,20,30]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/cslc_reconstruct",      category: "substrate", description: "Single-state ε-machine baseline from a flat symbol-count distribution. The full Shalizi-Klinkner CSSR algorithm (multi-state ε-machine reconstruction from a stream) ships at the library level via `evaporchain_cslc::reconstruct_cssr`; this HTTP endpoint covers only the cheaper count-based baseline.", example: Some(r#"{"counts":[10,20,30]}"#) },
     ApiDocEntry { method: "POST", path: "/api/padic",                 category: "substrate", description: "2-adic ultrametric distance + valuations", example: Some(r#"{"x":12,"y":20}"#) },
     ApiDocEntry { method: "POST", path: "/api/tropical_weight",       category: "substrate", description: "Tropical-semiring weight of an energy value", example: Some(r#"{"energy":1000}"#) },
     ApiDocEntry { method: "POST", path: "/api/eb_fs_challenge",       category: "substrate", description: "Energy-Bound Fiat-Shamir challenge derivation", example: Some(r#"{"transcript_hex":"deadbeef","epoch":1,"epoch_energy":1000}"#) },
@@ -7079,6 +7081,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/admin/drain/status",           category: "admin", description: "Current drain state: {draining, drain_started_at_epoch}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: None },
     // Sybil resistance (Mainnet P1) — libp2p peer-set hardening surface.
     ApiDocEntry { method: "GET",  path: "/api/network/peers",                category: "explorer", description: "Live peer-set view: [{peer_id, ip, subnet, since_ms, score, age_seconds}]. Read from the in-process libp2p Sybil state. Empty when run without --network-mode.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/network/scores",               category: "explorer", description: "Diagnostic projection of the scores HashMap including ghost-entries (peers in scores but not peer_ips). `ghost_count > 0` is the freeze-class signal Lane R.* would have caught. Returns {scores:[{peer_id, connected, ip, since_ms, score, infractions, last_seen_ms}], count, ghost_count}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/network/banned",               category: "admin", description: "Currently-active IP bans with expiry. Auth: Bearer EVAPORCHAIN_ADMIN_KEY. Returns {bans:[{ip, until_ms, reason}], count}.", example: None },
     ApiDocEntry { method: "POST", path: "/api/network/ban",                  category: "admin", description: "Manually ban a source IP for `duration_secs`. Body: {ip, duration_secs, reason?}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: Some(r#"{"ip":"192.0.2.1","duration_secs":3600,"reason":"manual"}"#) },
     ApiDocEntry { method: "POST", path: "/api/network/unban",                category: "admin", description: "Clear an active ban for the given IP. Body: {ip}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: Some(r#"{"ip":"192.0.2.1"}"#) },
@@ -7124,6 +7127,106 @@ async fn get_light_cone(State(state): State<Arc<ApiState>>) -> Json<LightConeRes
     let tc = safe_lock(tc);
     Json(LightConeResp {
         block_count: tc.light_cone_block_count(),
+        running_alongside_tendermint: true,
+    })
+}
+
+// ── /api/light_cone/antichain_digest — Phase 4.4 commit-cert digest ──
+//
+// Operators compare this digest across cluster validators to confirm
+// cross-validator agreement on antichain finality without having to
+// ship the full block-id list around. Domain-separated 32-byte
+// blake3 over the validator-deterministic sorted BlockId set; pairs
+// with Crooks-MEV's `mev_state_digest` as the canonical
+// inter-validator digest for the Light-Cone substrate.
+
+#[derive(Serialize)]
+struct AntichainDigestResp {
+    /// Hex-encoded 32-byte blake3 digest. Two validators with the
+    /// same Light-Cone DAG state produce the same digest; divergence
+    /// here is the freeze-class signal for antichain disagreement.
+    pub digest: String,
+    /// The sorted BlockId list the digest commits to (hex-encoded
+    /// 32-byte ids). Returned alongside the digest so operators can
+    /// audit which set was hashed.
+    pub closing_antichain: Vec<String>,
+    /// Convenience: number of blocks in the closing antichain.
+    pub closing_antichain_size: usize,
+    /// Whether Tendermint is running (and therefore the Light-Cone
+    /// DAG is being populated). When false the digest is the empty-
+    /// set sentinel (blake3 of the domain tag alone).
+    pub running_alongside_tendermint: bool,
+}
+
+// ── /api/light_cone/antichain_digest_history — Phase 4.4 rolling buffer ──
+//
+// Returns the last 128 (height, digest) pairs from this validator.
+// Operators retrospectively cross-compare across cluster validators:
+// pick height H, fetch each validator's digest at H, divergence at
+// any past height is the freeze-class signal for antichain
+// disagreement. Real-time alarm via header-fold or gossip is the
+// heavier post-V1 follow-up; per-block history is the minimal
+// substrate that enables retroactive divergence detection.
+
+#[derive(Serialize)]
+struct AntichainDigestHistoryEntry {
+    pub block_height: u64,
+    pub digest: String,
+}
+
+#[derive(Serialize)]
+struct AntichainDigestHistoryResp {
+    pub history: Vec<AntichainDigestHistoryEntry>,
+    pub count: usize,
+    pub running_alongside_tendermint: bool,
+}
+
+async fn get_light_cone_antichain_digest_history(
+    State(state): State<Arc<ApiState>>,
+) -> Json<AntichainDigestHistoryResp> {
+    let Some(ref tc) = state.tendermint else {
+        return Json(AntichainDigestHistoryResp {
+            history: vec![],
+            count: 0,
+            running_alongside_tendermint: false,
+        });
+    };
+    let tc = safe_lock(tc);
+    let history = tc.antichain_digest_history();
+    Json(AntichainDigestHistoryResp {
+        count: history.len(),
+        history: history
+            .into_iter()
+            .map(|(h, d)| AntichainDigestHistoryEntry {
+                block_height: h,
+                digest: hex::encode(d),
+            })
+            .collect(),
+        running_alongside_tendermint: true,
+    })
+}
+
+async fn get_light_cone_antichain_digest(
+    State(state): State<Arc<ApiState>>,
+) -> Json<AntichainDigestResp> {
+    let Some(ref tc) = state.tendermint else {
+        // Stable empty-set sentinel digest — recoverable client-side
+        // so operators can pattern-match against it.
+        let empty_digest = evaporchain_light_cone::concurrency::digest_antichain(&[]);
+        return Json(AntichainDigestResp {
+            digest: hex::encode(empty_digest),
+            closing_antichain: vec![],
+            closing_antichain_size: 0,
+            running_alongside_tendermint: false,
+        });
+    };
+    let tc = safe_lock(tc);
+    let digest = tc.light_cone_antichain_digest();
+    let antichain = tc.light_cone_closing_antichain();
+    Json(AntichainDigestResp {
+        digest: hex::encode(digest),
+        closing_antichain_size: antichain.len(),
+        closing_antichain: antichain.iter().map(hex::encode).collect(),
         running_alongside_tendermint: true,
     })
 }
@@ -7726,6 +7829,41 @@ async fn get_network_peers(State(state): State<Arc<ApiState>>) -> Json<PeersResp
     Json(PeersResponse {
         count: peers.len(),
         peers,
+    })
+}
+
+// ── /api/network/scores — diagnostic projection of the scores HashMap ──
+//
+// Unlike `/api/network/peers` which only reports peers in `peer_ips`
+// (i.e. currently connected), this endpoint surfaces every entry in
+// the `scores` HashMap, including ghost entries (peers that have a
+// score but no live connection). The Lane R.* cluster-freeze root
+// cause hinged on a peer being scored without being connected — that
+// state was invisible to `/api/network/peers`. `/api/network/scores`
+// is the standing diagnostic that catches the next freeze-class
+// issue without log-grepping.
+
+#[derive(Serialize)]
+struct ScoresResponse {
+    scores: Vec<evaporchain_network::PeerScoreEntry>,
+    count: usize,
+    /// Ghost-entry count (peers in scores but not peer_ips). A
+    /// non-zero value here is the freeze-class signal Lane R.*
+    /// would have caught.
+    ghost_count: usize,
+}
+
+async fn get_network_scores(State(state): State<Arc<ApiState>>) -> Json<ScoresResponse> {
+    let scores = state
+        .network_sybil
+        .as_ref()
+        .and_then(|s| s.read().ok().map(|g| g.scores_view()))
+        .unwrap_or_default();
+    let ghost_count = scores.iter().filter(|e| !e.connected).count();
+    Json(ScoresResponse {
+        count: scores.len(),
+        ghost_count,
+        scores,
     })
 }
 
@@ -14729,6 +14867,14 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         )
         .route("/api/lamport_time", get(get_lamport_time))
         .route("/api/light_cone", get(get_light_cone))
+        .route(
+            "/api/light_cone/antichain_digest",
+            get(get_light_cone_antichain_digest),
+        )
+        .route(
+            "/api/light_cone/antichain_digest_history",
+            get(get_light_cone_antichain_digest_history),
+        )
         .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
         .route(
@@ -14884,6 +15030,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/network/health", get(get_network_health))
         // Sybil resistance (Mainnet P1)
         .route("/api/network/peers", get(get_network_peers))
+        .route("/api/network/scores", get(get_network_scores))
         .route("/api/network/banned", get(get_network_banned))
         .route("/api/network/ban", post(post_network_ban))
         .route("/api/network/unban", post(post_network_unban))

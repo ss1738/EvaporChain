@@ -5279,6 +5279,99 @@ async fn main() -> Result<()> {
                                         (tc.parent_hash(), tc.checkpoint_bell_reading())
                                     };
 
+                                    // Per-commit side-effect parity (gossip-follower
+                                    // commit path). The proposer-local path ticks
+                                    // these three primitives at its analogous
+                                    // site (main.rs:~4213-4444). Without the
+                                    // mirror here, follower-only validators
+                                    // diverge from proposers on every chain-wide
+                                    // counter, breaking these doctrine claims:
+                                    //   • Decay-Lamport Time (§4.1 #3) — clock
+                                    //     ticks per chain-wide energy spent
+                                    //   • DSN (Tier-2 Decay-Stamped Nullifiers)
+                                    //     — every validator folds the same
+                                    //     deterministic per-block nullifier
+                                    //   • PNT (Phased Nullifier Tree) — phase
+                                    //     advances once per epoch on every node
+                                    // Per-commit side-effect parity (gossip-follower
+                                    // commit path). The proposer-local path ticks
+                                    // these primitives at its analogous site
+                                    // (main.rs:~4205-4242). Without the mirror
+                                    // here, follower-only validators diverge from
+                                    // proposers on every chain-wide counter,
+                                    // breaking these doctrine claims:
+                                    //   • Decay-Lamport Time (§4.1 #3) — clock
+                                    //     ticks per chain-wide energy spent
+                                    //   • DSN (Tier-2 Decay-Stamped Nullifiers)
+                                    //     — every validator folds the same
+                                    //     deterministic per-block nullifier
+                                    //   • PNT (Phased Nullifier Tree) — phase
+                                    //     advances once per epoch on every node
+                                    //   • Mortis four-act narrative state —
+                                    //     tick_mortis_on_executor takes only
+                                    //     block.epoch + state_root as inputs,
+                                    //     deterministic per-block on every
+                                    //     validator
+                                    //   • Sentinel autonomic governance — every
+                                    //     validator applies the same homeostatic
+                                    //     parameter update; without this,
+                                    //     follower validators report stale
+                                    //     governance parameter values
+                                    //   • /api/four_act snapshot — operator
+                                    //     dashboard on follower nodes was empty
+                                    //     because the snapshot publisher only
+                                    //     ran on proposer-local commits
+                                    let four_act_snap = {
+                                        let mut tc = safe_lock(tc_ref);
+                                        let _ = tc.tick_mortis_on_executor(block.epoch, block.state_root);
+                                        tc.four_act_state()
+                                    };
+                                    if let Some(api) = api_state_for_loop.as_ref() {
+                                        // Decay-Lamport tick.
+                                        if let Ok(mut c) = api.lamport_clock.lock() {
+                                            if let Ok(new_c) = c.tick(result.execution.gas_used) {
+                                                *c = new_c;
+                                            }
+                                        }
+                                        // DSN: fold block state_root as the
+                                        // per-block nullifier; advance window
+                                        // on epoch change.
+                                        if let Ok(mut dsn) = api.dsn_window.lock() {
+                                            dsn.fold_nullifier(&result.execution.state_root);
+                                            if block.number > 0 && block.epoch != block.number / 100 {
+                                                dsn.advance_window();
+                                            }
+                                        }
+                                        // PNT: advance phase once per epoch.
+                                        if block.number > 0 && block.epoch != block.number / 100 {
+                                            if let Ok(mut pnt) = api.pnt.lock() {
+                                                pnt.advance_phase();
+                                            }
+                                        }
+                                        // Sentinel autonomic tick: walk every registered
+                                        // parameter and apply the homeostatic update using
+                                        // current votes. Per INVENTION_STACK.md §A2.5.
+                                        autonomic_sentinel_tick(&api.db, block.epoch);
+                                        // Four-act narrative spine: publish the snapshot
+                                        // captured above to /api/four_act.
+                                        api.update_four_act_snapshot(api::FourActSnapshot {
+                                            eulogy_count: four_act_snap.eulogy_count,
+                                            eulogy_trie_root: four_act_snap.eulogy_trie_root.map(hex::encode),
+                                            tombstone_addresses: four_act_snap
+                                                .tombstone_addresses
+                                                .iter()
+                                                .map(hex::encode)
+                                                .collect(),
+                                            refresh_pool_total: four_act_snap.refresh_pool_total,
+                                            mortis_triggered: four_act_snap.mortis_triggered,
+                                            mortis_epoch_of_death: four_act_snap.mortis_epoch_of_death,
+                                            mortis_final_state_root: four_act_snap.mortis_final_state_root.map(hex::encode),
+                                            last_conservation_audit_ok: four_act_snap.last_conservation_audit_ok,
+                                            genesis_amendment_hash: None,
+                                            light_cone_block_count: four_act_snap.light_cone_block_count,
+                                        });
+                                    }
+
                                     // ── Frontier primitives update (gossip path) ──
                                     {
                                         let da_info = block.da_certificate.as_ref().and_then(|_| {

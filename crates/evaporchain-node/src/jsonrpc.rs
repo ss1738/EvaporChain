@@ -1060,10 +1060,19 @@ fn rpc_get_dsn_window(state: &ApiState, id: Value) -> JsonRpcResponse {
 
 /// `evap_getLamportClock()` — energy-driven logical clock surface
 /// (Decay-Lamport Time, INVENTION_STACK §4.1 #3). Ticks once per
-/// `tick_quantum` units of chain-wide gas spent. Pure observability
-/// today — `block.epoch` is still authoritative time. Operators
-/// watch this to anchor the future governance amendment that
-/// promotes Lamport to authoritative time.
+/// `tick_quantum` units of chain-wide gas spent.
+///
+/// Wiring (as of 2026-05-05): the clock advances on every block
+/// commit by `result.execution.gas_used`, on BOTH the proposer-local
+/// path (main.rs:4213) AND the gossip-follower path (main.rs:5278+).
+/// Without the follower-path tick, validators that never proposed a
+/// block would see their local clock stall while proposers' clocks
+/// advanced — a divergence inconsistent with the doctrine claim that
+/// the clock ticks per chain-wide energy spent regardless of role.
+///
+/// Pure observability today — `block.epoch` is still authoritative
+/// time. Operators watch this endpoint to anchor the future
+/// governance amendment that promotes Lamport to authoritative time.
 fn rpc_get_lamport_clock(state: &ApiState, id: Value) -> JsonRpcResponse {
     let clock = match state.lamport_clock.lock() {
         Ok(c) => *c,
