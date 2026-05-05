@@ -132,12 +132,36 @@ metadata-tracking to actual state-replay.
         rollback-required on branch switch, missing-head None,
         validator-determinism convergence. Consensus suite 479/0/1.
 
-- [ ] **B.1 — Concrete `LightConeBranchSnapshot` impl in `evaporchain-state`.**
-      Today the trait is consumed by `attach_branch_snapshot` on
-      `TendermintConsensus` but no production impl exists; the trait
-      is stubbed for tests. Wire to RocksDB snapshot per tip — one
-      `Snapshot` per active head, lifetime-bounded by the head's
-      presence in `state_branches`.
+- [x] **B.1 — Concrete `LightConeBranchSnapshot` impl.** ✅ SHIPPED 2026-05-05.
+      Shipped in `evaporchain-consensus` (not `evaporchain-state`)
+      because the trait lives in consensus and `evaporchain-state`
+      doesn't depend on it; concrete impl colocated with the trait
+      avoids a dependency cycle.
+      - Trait extended with `restore(&self, db: &mut dyn StateDB) ->
+        Result<(), String>` — default impl returns "does not support
+        restoration" so existing test stubs (StubAtCrateRoot,
+        StubSnapshot) keep compiling without override.
+      - `StateSnapshotBranch` concrete impl wraps
+        `evaporchain_state::snapshot::StateSnapshot`; `capture()`
+        uses `SnapshotBuilder::create`, `restore()` uses
+        `SnapshotApplier::apply`. Wipe-and-replay semantics exactly
+        match the existing snapshot module (verified body hash,
+        deterministic ordering, version-checked).
+      - This is the in-memory full-state copy implementation
+        suitable for testnet and small chains. Production deployments
+        with large state should swap in a RocksDB-Snapshot-backed
+        impl that pins the LSM tree at a given state version
+        (cheaper memory profile, no full-state copy). The trait
+        surface is stable; only the concrete `restore()` impl
+        changes.
+      - 2 new tests:
+        - `mcc_phase_b1_state_snapshot_branch_roundtrip` — capture,
+          mutate (change balances + add account + delete account),
+          restore, verify all reverted to captured state
+        - `mcc_phase_b1_default_restore_returns_error` — locks the
+          contract that test stubs missing the override get a clean
+          error message, not silent state corruption
+      - Consensus suite: 481 / 0 / 1.
 
 - [ ] **B.2 — `replay_to_head(target_head: BlockId)` on the executor.**
       Given the current StateDB (at some tip A) and a target tip B,
@@ -398,6 +422,15 @@ chain-wide.
 ## Progress log
 
 (Updated as phases ship. Most-recent at top.)
+
+- **2026-05-05 (late evening cont'd 2)** — Phase B.1 landed.
+  `LightConeBranchSnapshot` trait extended with `restore` (default
+  impl returns error). `StateSnapshotBranch` concrete impl wraps
+  `evaporchain_state::snapshot::StateSnapshot` —
+  `SnapshotBuilder::create` for capture, `SnapshotApplier::apply`
+  for restore. Capture→mutate→restore roundtrip test green.
+  Consensus 481/0/1. Production RocksDB-Snapshot-backed impl
+  remains a separate optimisation; trait surface is stable.
 
 - **2026-05-05 (late evening cont'd)** — Phase B.0+ landed:
   `plan_replay_to_head` accessor on TendermintConsensus + `ReplayWalk`

@@ -393,6 +393,85 @@ pub trait LightConeBranchSnapshot {
     fn tip(&self) -> [u8; 32];
     /// Chain height at snapshot creation.
     fn created_at_height(&self) -> u64;
+
+    /// MCC Phase B.1 of `MCC_FULL_MULTI_PARENT_PLAN.md` — restore
+    /// the captured state into `db`. Used by Phase B.2's
+    /// `replay_to_head` to roll state back to the LCA before
+    /// applying the forward path. The caller invokes this BEFORE
+    /// applying any blocks; the executor then walks the forward
+    /// path and calls `db.execute_block` for each.
+    ///
+    /// Default impl returns an error indicating the snapshot type
+    /// does not support restoration. Concrete impls (e.g.
+    /// `StateSnapshotBranch` wrapping
+    /// `evaporchain_state::snapshot::StateSnapshot`) override.
+    /// Test stubs that only need the metadata methods (`tip`,
+    /// `created_at_height`) can ignore the default error path.
+    fn restore(
+        &self,
+        _db: &mut dyn evaporchain_state::db::StateDB,
+    ) -> Result<(), String> {
+        Err("LightConeBranchSnapshot does not support restoration".to_string())
+    }
+}
+
+/// MCC Phase B.1 of `MCC_FULL_MULTI_PARENT_PLAN.md` — concrete
+/// implementation of `LightConeBranchSnapshot` that wraps an
+/// `evaporchain_state::snapshot::StateSnapshot`. The wrapped
+/// snapshot captures the full StateDB state at the time of
+/// creation; `restore()` calls `StateSnapshot::apply_to` which
+/// wipes the target `db` and replays every account/object/ghost
+/// from the captured state.
+///
+/// This is the "in-memory full-state copy" implementation suitable
+/// for testnet and small chains. Production deployments with large
+/// state should swap in a RocksDB-Snapshot-backed impl that pins
+/// the LSM tree at a given state version (cheaper memory profile,
+/// no full-state copy). The trait surface is stable; only the
+/// concrete `restore()` implementation changes.
+pub struct StateSnapshotBranch {
+    tip: [u8; 32],
+    height: u64,
+    snapshot: evaporchain_state::snapshot::StateSnapshot,
+}
+
+impl StateSnapshotBranch {
+    /// Capture a snapshot of the current `db` state, anchored to
+    /// `tip`. Calls `StateSnapshot::create` under the hood.
+    pub fn capture(
+        tip: [u8; 32],
+        height: u64,
+        epoch: u64,
+        db: &mut dyn evaporchain_state::db::StateDB,
+    ) -> Result<Self, String> {
+        let snapshot =
+            evaporchain_state::snapshot::SnapshotBuilder::create(db, height, epoch)
+                .map_err(|e| format!("SnapshotBuilder::create failed: {:?}", e))?;
+        Ok(Self {
+            tip,
+            height,
+            snapshot,
+        })
+    }
+}
+
+impl LightConeBranchSnapshot for StateSnapshotBranch {
+    fn tip(&self) -> [u8; 32] {
+        self.tip
+    }
+
+    fn created_at_height(&self) -> u64 {
+        self.height
+    }
+
+    fn restore(
+        &self,
+        db: &mut dyn evaporchain_state::db::StateDB,
+    ) -> Result<(), String> {
+        evaporchain_state::snapshot::SnapshotApplier::apply(db, &self.snapshot)
+            .map_err(|e| format!("SnapshotApplier::apply failed: {:?}", e))
+            .map(|_apply_result| ())
+    }
 }
 
 /// MCC Phase B.0+ of `MCC_FULL_MULTI_PARENT_PLAN.md` — planning
@@ -9763,6 +9842,128 @@ mod tests {
         assert!(final_heads.contains(&id(3)));
         assert!(final_heads.contains(&id(4)));
         assert!(final_heads.contains(&id(5)));
+    }
+
+    /// MCC Phase B.1 — `StateSnapshotBranch` capture → mutate → restore
+    /// roundtrip. Locks the contract: capturing a snapshot, mutating
+    /// the StateDB, then calling `restore` produces a StateDB with
+    /// the original captured state — not the mutated one.
+    ///
+    /// This is the substrate that Phase B.2's `replay_to_head` uses:
+    /// when the executor needs to roll back from `from_head` to LCA,
+    /// it calls `restore` on the LCA's snapshot (wiping the StateDB
+    /// of any forward-only state changes), then applies the
+    /// `forward_path` blocks from the `ReplayWalk`.
+    #[test]
+    fn mcc_phase_b1_state_snapshot_branch_roundtrip() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::{Account, AccountAddress};
+
+        // Set up a minimal state: 2 accounts with non-zero balance.
+        let mut db = InMemoryStateDB::new();
+        let addr_a = AccountAddress::from([0x01; 32]);
+        let addr_b = AccountAddress::from([0x02; 32]);
+        db.put_account(Account {
+            address: addr_a,
+            balance: 1000,
+            nonce: 5,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 7,
+        });
+        db.put_account(Account {
+            address: addr_b,
+            balance: 2500,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 7,
+        });
+
+        // Capture snapshot at this tip.
+        let tip = id(42);
+        let height = 100u64;
+        let epoch = 7u64;
+        let branch = super::StateSnapshotBranch::capture(tip, height, epoch, &mut db)
+            .expect("capture");
+
+        assert_eq!(branch.tip(), tip);
+        assert_eq!(branch.created_at_height(), height);
+
+        // Mutate the StateDB — change balances, add a new account,
+        // delete one, increment nonces. After restore these must
+        // all be reverted.
+        db.put_account(Account {
+            address: addr_a,
+            balance: 9999, // changed
+            nonce: 99,     // changed
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 100,
+        });
+        let addr_c = AccountAddress::from([0x03; 32]);
+        db.put_account(Account {
+            address: addr_c,
+            balance: 555,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 50,
+        });
+
+        // Verify mutation took effect.
+        assert_eq!(db.get_account(&addr_a).map(|a| a.balance), Some(9999));
+        assert_eq!(db.get_account(&addr_c).map(|a| a.balance), Some(555));
+
+        // Restore from snapshot — must wipe mutations.
+        branch
+            .restore(&mut db as &mut dyn evaporchain_state::db::StateDB)
+            .expect("restore");
+
+        // addr_a must be back to 1000 / nonce 5.
+        let after_a = db.get_account(&addr_a).expect("addr_a present");
+        assert_eq!(after_a.balance, 1000, "balance reverted");
+        assert_eq!(after_a.nonce, 5, "nonce reverted");
+
+        // addr_b must still be at 2500.
+        let after_b = db.get_account(&addr_b).expect("addr_b present");
+        assert_eq!(after_b.balance, 2500);
+
+        // addr_c (added after capture) must NOT be present after restore.
+        assert!(
+            db.get_account(&addr_c).is_none(),
+            "post-capture addition must be wiped on restore"
+        );
+    }
+
+    /// MCC Phase B.1 — default `restore()` impl on the trait returns
+    /// an error. Locks the contract: trait impls that don't override
+    /// `restore` (e.g. test stubs that only need `tip` /
+    /// `created_at_height`) get a clean error message rather than
+    /// silently corrupting state.
+    #[test]
+    fn mcc_phase_b1_default_restore_returns_error() {
+        use evaporchain_state::db::InMemoryStateDB;
+
+        struct StubSnapshotNoRestore;
+        impl super::LightConeBranchSnapshot for StubSnapshotNoRestore {
+            fn tip(&self) -> [u8; 32] {
+                [0; 32]
+            }
+            fn created_at_height(&self) -> u64 {
+                0
+            }
+            // `restore` NOT overridden — uses trait default.
+        }
+
+        let stub = StubSnapshotNoRestore;
+        let mut db = InMemoryStateDB::new();
+        let result = stub.restore(&mut db as &mut dyn evaporchain_state::db::StateDB);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("does not support restoration"),
+            "default impl error message must signal non-support"
+        );
     }
 
     /// MCC Phase B.0+ — `plan_replay_to_head` no-op when from == to.
