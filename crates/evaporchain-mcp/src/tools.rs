@@ -329,6 +329,24 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
         .ok_or("Missing tool name")?;
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
+    // AUDIT_2026_05_06.md CRITICAL-2 follow-on — every tool
+    // invocation produces a structured audit log line.
+    // call_inner runs the actual dispatch; we wrap it so both
+    // Ok and Err outcomes get logged with the same shape, and
+    // the agent never sees a successful response without the
+    // audit trail being persisted first.
+    let result = call_tool_inner(ctx, name, &args).await;
+    let outcome = match &result {
+        Ok(_) => crate::audit_log::AuditOutcome::Ok,
+        Err(msg) => crate::audit_log::AuditOutcome::Err(msg.clone()),
+    };
+    let event = crate::audit_log::AuditEvent::build(name, &args, outcome);
+    tracing::info!(target: "mcp_audit", "{}", event.to_log_line());
+
+    result
+}
+
+async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Value, String> {
     let result = match name {
         "get_chain_status" => {
             let data = ctx.get_json("/api/status").await?;
@@ -391,13 +409,13 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             // overlarge amounts, and non-integer nonces BEFORE the
             // backend POST. A prompt-injected agent that gets this
             // far still can't push garbage into chain state.
-            let from = validate_address_field(&args, "from").map_err(|e| e.to_string())?;
-            let to = validate_address_field(&args, "to").map_err(|e| e.to_string())?;
-            let amount = validate_amount_field(&args, "amount", MAX_TOKEN_AMOUNT)
+            let from = validate_address_field(args, "from").map_err(|e| e.to_string())?;
+            let to = validate_address_field(args, "to").map_err(|e| e.to_string())?;
+            let amount = validate_amount_field(args, "amount", MAX_TOKEN_AMOUNT)
                 .map_err(|e| e.to_string())?;
             // Nonce defaults to 0 if absent; validate only when present.
             let nonce = if args.get("nonce").is_some() {
-                validate_nonce_field(&args, "nonce").map_err(|e| e.to_string())?
+                validate_nonce_field(args, "nonce").map_err(|e| e.to_string())?
             } else {
                 0
             };
@@ -406,13 +424,13 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             format_text_result(&data)
         }
         "create_object" => {
-            let creator = validate_address_field(&args, "creator")
+            let creator = validate_address_field(args, "creator")
                 .map_err(|e| e.to_string())?;
-            let object_id = validate_address_field(&args, "object_id")
+            let object_id = validate_address_field(args, "object_id")
                 .map_err(|e| e.to_string())?;
-            let energy = validate_amount_field(&args, "energy", MAX_TOKEN_AMOUNT)
+            let energy = validate_amount_field(args, "energy", MAX_TOKEN_AMOUNT)
                 .map_err(|e| e.to_string())?;
-            let half_life = validate_half_life_field(&args, "half_life")
+            let half_life = validate_half_life_field(args, "half_life")
                 .map_err(|e| e.to_string())?;
             let body = json!({
                 "creator": creator,
@@ -424,9 +442,9 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             format_text_result(&data)
         }
         "refresh_object" => {
-            let object_id = validate_address_field(&args, "object_id")
+            let object_id = validate_address_field(args, "object_id")
                 .map_err(|e| e.to_string())?;
-            let energy_deposit = validate_amount_field(&args, "energy_deposit", MAX_TOKEN_AMOUNT)
+            let energy_deposit = validate_amount_field(args, "energy_deposit", MAX_TOKEN_AMOUNT)
                 .map_err(|e| e.to_string())?;
             let body = json!({
                 "object_id": object_id,
@@ -436,9 +454,9 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             format_text_result(&data)
         }
         "resurrect_object" => {
-            let object_id = validate_address_field(&args, "object_id")
+            let object_id = validate_address_field(args, "object_id")
                 .map_err(|e| e.to_string())?;
-            let energy_deposit = validate_amount_field(&args, "energy_deposit", MAX_TOKEN_AMOUNT)
+            let energy_deposit = validate_amount_field(args, "energy_deposit", MAX_TOKEN_AMOUNT)
                 .map_err(|e| e.to_string())?;
             let body = json!({
                 "object_id": object_id,
@@ -448,7 +466,7 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             format_text_result(&data)
         }
         "request_faucet" => {
-            let address = validate_address_field(&args, "address")
+            let address = validate_address_field(args, "address")
                 .map_err(|e| e.to_string())?;
             let body = json!({ "address": address });
             let data = ctx.post_json("/api/faucet", &body).await?;

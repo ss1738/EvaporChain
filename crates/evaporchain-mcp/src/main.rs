@@ -27,6 +27,7 @@
 //!     Default node URL when `--node-url` flag is not supplied.
 //!     Replaces the previous hardcoded `http://37.27.1.1:8080`.
 
+mod audit_log;
 mod prompts;
 mod protocol;
 mod resources;
