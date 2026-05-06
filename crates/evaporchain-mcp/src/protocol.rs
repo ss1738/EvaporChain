@@ -1,4 +1,30 @@
 //! MCP JSON-RPC protocol handler.
+//!
+//! ## Security posture (CRITICAL-2 partial fix, 2026-05-06)
+//!
+//! Per `AUDIT_2026_05_06.md` CRITICAL-2, this MCP server was previously
+//! a zero-auth attack surface for AI agents:
+//!   - hardcoded backend URL `http://37.27.1.1:8080` with no token
+//!   - 26 tools forwarding agent JSON to chain backend without auth
+//!   - any prompt-injected agent could mutate chain state at will
+//!
+//! Mitigations now in place:
+//!   1. Optional [`Context::api_token`] populated from
+//!      `EVAPORCHAIN_MCP_API_TOKEN` env var. When set, every outgoing
+//!      HTTP request adds an `Authorization: Bearer <token>` header.
+//!   2. `EVAPORCHAIN_MCP_REQUIRE_AUTH=true` env var causes the MCP
+//!      binary to refuse startup if the token is unset (fail-fast for
+//!      production deployments where unauth-by-default is unacceptable).
+//!   3. Critical write-tools (`transfer`, `mint`, `burn`, `*_apply`)
+//!      log a stderr warning per call so operators can audit usage.
+//!
+//! Still TODO (deferred to a follow-up commit):
+//!   - per-tool input validation (range checks on amounts, address
+//!     format, schema enforcement)
+//!   - per-tool rate limiting
+//!   - audit log of every tool invocation with caller identification
+//!   - backend-side enforcement of the bearer token (currently
+//!     advisory; the node API does not yet check the header)
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -9,6 +35,10 @@ use crate::{prompts, resources, tools};
 pub struct Context {
     pub node_url: String,
     pub client: reqwest::Client,
+    /// Optional bearer token sent with every backend request.
+    /// Loaded from `EVAPORCHAIN_MCP_API_TOKEN` env var in `main.rs`.
+    /// `None` = no auth header (legacy behaviour, dev-only).
+    pub api_token: Option<String>,
 }
 
 impl Context {
@@ -16,9 +46,18 @@ impl Context {
         format!("{}{}", self.node_url, path)
     }
 
+    /// Build a `RequestBuilder` with the `Authorization: Bearer <token>`
+    /// header attached if a token is configured. All outgoing HTTP
+    /// requests must go through this helper.
+    fn authed(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_token {
+            Some(t) => builder.bearer_auth(t),
+            None => builder,
+        }
+    }
+
     pub async fn get_json(&self, path: &str) -> Result<Value, String> {
-        self.client
-            .get(self.api_url(path))
+        self.authed(self.client.get(self.api_url(path)))
             .send()
             .await
             .map_err(|e| format!("HTTP error: {e}"))?
@@ -28,9 +67,7 @@ impl Context {
     }
 
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<Value, String> {
-        self.client
-            .post(self.api_url(path))
-            .json(body)
+        self.authed(self.client.post(self.api_url(path)).json(body))
             .send()
             .await
             .map_err(|e| format!("HTTP error: {e}"))?
@@ -159,7 +196,47 @@ mod tests {
         Context {
             node_url: "http://127.0.0.1:9999".into(),
             client: reqwest::Client::new(),
+            api_token: None,
         }
+    }
+
+    fn test_ctx_with_token(token: &str) -> Context {
+        Context {
+            node_url: "http://127.0.0.1:9999".into(),
+            client: reqwest::Client::new(),
+            api_token: Some(token.into()),
+        }
+    }
+
+    /// CRITICAL-2 hardening — Context.authed() must inject Authorization
+    /// header when api_token is set, and not when it's None. This test
+    /// exercises the builder shape rather than an end-to-end request
+    /// (no live backend in unit tests).
+    #[tokio::test]
+    async fn test_authed_no_token_omits_header() {
+        let ctx = test_ctx();
+        let req = ctx
+            .authed(ctx.client.get(ctx.api_url("/api/status")))
+            .build()
+            .unwrap();
+        assert!(
+            req.headers().get(reqwest::header::AUTHORIZATION).is_none(),
+            "no token configured -> no Authorization header"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authed_with_token_adds_bearer_header() {
+        let ctx = test_ctx_with_token("test-token-12345");
+        let req = ctx
+            .authed(ctx.client.get(ctx.api_url("/api/status")))
+            .build()
+            .unwrap();
+        let auth = req
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .expect("token configured -> Authorization header present");
+        assert_eq!(auth.to_str().unwrap(), "Bearer test-token-12345");
     }
 
     #[tokio::test]
