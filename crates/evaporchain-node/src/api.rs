@@ -6466,6 +6466,119 @@ async fn post_light_cone_v2_verify_ancestry(
     }
 }
 
+// ─────────────── Singh-Inequality V2 (variance-aware Bernstein) ────
+//
+// V1 (`evaporchain-singh-inequality`) ships an energy-weighted
+// Hoeffding bound `σ²_H = Σ ω_i²` with `ω_i = (b_i − a_i)·e_i / E_max`.
+// That uses range only — worst-case variance for a bounded random
+// variable. Real chain signals concentrate near the centre of their
+// range; V2 (Bernstein 1924) gives a strictly tighter tail bound
+// when the actual variance is small relative to the range:
+//
+//   P(|S − E[S]| ≥ ε) ≤ 2·exp(−ε² / (2σ² + (2/3)·M·ε))
+//
+// V2 ships:
+//  - `singh_bernstein_variance(contribs)` — energy-weighted variance
+//    accumulator with Popoviciu (`var ≤ range²`) guard.
+//  - `passes_singh_bernstein_gate(ε, contribs, K)` — integer gate:
+//    `3·ε² ≥ K·(6·σ² + 2·M·ε)`, equivalent to `ε²/(2σ² + (2/3)Mε) ≥ K`.
+//  - `bernstein_strictly_tighter` — runs both gates side-by-side
+//    so operators can see exactly when V2 admits a claim that V1
+//    rejects (the "concentrated signal" operating region).
+//
+// All u128 values are serialised as decimal strings to avoid the
+// JavaScript safe-integer coercion that would round numbers above
+// 2^53. Inputs accept u64 (which fits the JSON number domain).
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContributorWithVarianceDto {
+    pub lo: u64,
+    pub hi: u64,
+    pub energy: u64,
+    /// σ²_i. Same scale as range². u64 is enough for any realistic
+    /// chain signal: max range² for u32 contributions is 2^64.
+    pub variance_proxy: u64,
+}
+
+impl ContributorWithVarianceDto {
+    fn to_inner(&self) -> evaporchain_singh_inequality_v2::ContributorWithVariance {
+        evaporchain_singh_inequality_v2::ContributorWithVariance {
+            lo: self.lo,
+            hi: self.hi,
+            energy: self.energy,
+            variance_proxy: self.variance_proxy as u128,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SinghBernsteinGateReq {
+    pub contributors: Vec<ContributorWithVarianceDto>,
+    /// Deviation ε (claim magnitude).
+    pub deviation: u64,
+    /// Soundness multiplier K (positive).
+    pub soundness_multiplier: u64,
+}
+
+async fn post_singh_inequality_v2_gate(
+    Json(req): Json<SinghBernsteinGateReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_singh_inequality_v2::{passes_singh_bernstein_gate, singh_bernstein_variance};
+    use evaporchain_singh_inequality_v2::bound::max_range;
+
+    let contribs: Vec<_> = req.contributors.iter().map(|c| c.to_inner()).collect();
+    let var = match singh_bernstein_variance(&contribs) {
+        Ok(v) => v,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    };
+    let m = match max_range(&contribs) {
+        Ok(m) => m,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    };
+    let admits = match passes_singh_bernstein_gate(
+        req.deviation as u128,
+        &contribs,
+        req.soundness_multiplier as u128,
+    ) {
+        Ok(b) => b,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    };
+    Json(serde_json::json!({
+        "status":"ok",
+        "admits": admits,
+        "variance_bound": var.to_string(),
+        "max_range": m.to_string(),
+        "deviation": req.deviation,
+        "soundness_multiplier": req.soundness_multiplier,
+    }))
+}
+
+async fn post_singh_inequality_v2_compare(
+    Json(req): Json<SinghBernsteinGateReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_singh_inequality_v2::bernstein_strictly_tighter;
+
+    let contribs: Vec<_> = req.contributors.iter().map(|c| c.to_inner()).collect();
+    match bernstein_strictly_tighter(
+        req.deviation as u128,
+        &contribs,
+        req.soundness_multiplier as u128,
+    ) {
+        Ok(adv) => Json(serde_json::json!({
+            "status":"ok",
+            "v1_admits": adv.v1_admits,
+            "v2_admits": adv.v2_admits,
+            "v1_variance_bound": adv.v1_variance_bound.to_string(),
+            "v2_variance_bound": adv.v2_variance_bound.to_string(),
+            "v2_strictly_tighter": adv.v2_admits && !adv.v1_admits,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status":"error",
+            "detail": e.to_string(),
+        })),
+    }
+}
+
 // ─────────────── Antichain Mempool ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -7876,6 +7989,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/light_cone_v2/causal_root",   category: "substrate", description: "Light-Cone V2 — compute the BLAKE3 Merkle root over the BTreeSet-sorted causal_past of a block. Stateless: caller submits the DAG.", example: Some(r#"{"blocks":[{"id_hex":"00...00","parent_ids":[],"energy":1000,"observed_epoch":0},{"id_hex":"00...01","parent_ids":["00...00"],"energy":1000,"observed_epoch":1}],"block_id_hex":"00...01"}"#) },
     ApiDocEntry { method: "POST", path: "/api/light_cone_v2/prove_ancestry", category: "substrate", description: "Light-Cone V2 — produce an O(log n) MerklePath proving an ancestor is in a descendant's causal_past. Returns the descendant's causal_root + proof; light clients verify with /api/light_cone_v2/verify_ancestry without needing the DAG.", example: Some(r#"{"blocks":[...],"descendant_hex":"00...04","ancestor_hex":"00...02"}"#) },
     ApiDocEntry { method: "POST", path: "/api/light_cone_v2/verify_ancestry", category: "substrate", description: "Light-Cone V2 — pure light-client verifier. Reproduces the Merkle root from (ancestor_id, proof) and compares to causal_root. No DAG needed. Rejects on tampering, wrong root, path-shape mismatch, or empty-cone sentinel.", example: Some(r#"{"causal_root_hex":"<from prove_ancestry>","ancestor_id_hex":"00...02","proof":{"siblings_hex":[...],"directions":[...]}}"#) },
+    ApiDocEntry { method: "POST", path: "/api/singh_inequality_v2/gate",     category: "substrate", description: "Singh-Inequality V2 — variance-aware Bernstein gate. Returns whether 3·ε² ≥ K·(6·σ² + 2·M·ε) (admits the claim) plus the variance_bound + max_range. u128 numerics returned as decimal strings.", example: Some(r#"{"contributors":[{"lo":0,"hi":10,"energy":1000,"variance_proxy":4}],"deviation":15,"soundness_multiplier":1}"#) },
+    ApiDocEntry { method: "POST", path: "/api/singh_inequality_v2/compare",  category: "substrate", description: "Run V1 (Hoeffding) and V2 (Bernstein) gates side-by-side over the same contributor set. Returns per-gate admission + variance bounds + a v2_strictly_tighter flag (true iff V2 admits a claim V1 rejects — the V2 advantage region for concentrated chain signals).", example: Some(r#"{"contributors":[{"lo":0,"hi":10,"energy":1000,"variance_proxy":4}],"deviation":15,"soundness_multiplier":1}"#) },
 
     // Antichain Mempool — causal-set maximal-antichain transaction ordering
     ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
@@ -16079,6 +16194,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
             "/api/light_cone_v2/verify_ancestry",
             post(post_light_cone_v2_verify_ancestry),
         )
+        .route("/api/singh_inequality_v2/gate", post(post_singh_inequality_v2_gate))
+        .route(
+            "/api/singh_inequality_v2/compare",
+            post(post_singh_inequality_v2_compare),
+        )
         .route("/api/antichain/compute", post(post_antichain_compute))
         .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
         .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))
@@ -17591,6 +17711,133 @@ mod bell_beacon_v2_handler_tests {
         }))
         .await;
         assert_eq!(verify_resp.0["verified"], false);
+    }
+}
+
+#[cfg(test)]
+mod singh_inequality_v2_handler_tests {
+    //! Handler-level tests for Singh-Inequality V2. Substrate is
+    //! fully tested in `evaporchain-singh-inequality-v2`. This mod
+    //! locks the JSON DTO ↔ inner-cert translation, the load-bearing
+    //! V2-strictly-tighter operating region (concentrated signals
+    //! where Bernstein admits and Hoeffding rejects), and the
+    //! degenerate-input rejection paths.
+    use super::*;
+
+    fn cv(lo: u64, hi: u64, energy: u64, var: u64) -> ContributorWithVarianceDto {
+        ContributorWithVarianceDto {
+            lo,
+            hi,
+            energy,
+            variance_proxy: var,
+        }
+    }
+
+    /// Concentrated signals (var=4 ≪ range²=100): V2 admits ε=15
+    /// where V1 rejects. Locks the doctrine claim through the
+    /// handler layer.
+    #[tokio::test]
+    async fn compare_surfaces_v2_strictly_tighter_region() {
+        let resp = post_singh_inequality_v2_compare(Json(SinghBernsteinGateReq {
+            contributors: vec![cv(0, 10, 1000, 4); 5],
+            deviation: 15,
+            soundness_multiplier: 1,
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "ok");
+        assert_eq!(resp.0["v1_admits"], false);
+        assert_eq!(resp.0["v2_admits"], true);
+        assert_eq!(resp.0["v2_strictly_tighter"], true);
+        // V2's variance bound is strictly smaller than V1's for
+        // this contributor set.
+        assert_eq!(resp.0["v1_variance_bound"], "500"); // 5 · 100
+        assert_eq!(resp.0["v2_variance_bound"], "20"); // 5 · 4
+    }
+
+    /// Worst-case (variance_proxy = range²): V2 collapses to V1.
+    /// Both gates match exactly. Locks the soundness contract — V2
+    /// never admits more than V1 when concentration is no better
+    /// than uniform-on-endpoints.
+    #[tokio::test]
+    async fn compare_collapses_to_v1_when_variance_at_popoviciu_max() {
+        let resp = post_singh_inequality_v2_compare(Json(SinghBernsteinGateReq {
+            contributors: vec![cv(0, 10, 1000, 100); 2],
+            deviation: 15,
+            soundness_multiplier: 1,
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "ok");
+        assert_eq!(
+            resp.0["v1_variance_bound"],
+            resp.0["v2_variance_bound"],
+            "V1 and V2 variance bounds must equal at Popoviciu max"
+        );
+    }
+
+    /// Direct gate endpoint: low-variance + matching deviation →
+    /// admits. Returns variance_bound, max_range as decimal strings.
+    #[tokio::test]
+    async fn gate_admits_concentrated_signal() {
+        let resp = post_singh_inequality_v2_gate(Json(SinghBernsteinGateReq {
+            contributors: vec![cv(0, 10, 1000, 4); 5],
+            deviation: 15,
+            soundness_multiplier: 1,
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "ok");
+        assert_eq!(resp.0["admits"], true);
+        assert_eq!(resp.0["variance_bound"], "20");
+        assert_eq!(resp.0["max_range"], "10");
+    }
+
+    /// Tiny deviation → both gates reject regardless of variance.
+    #[tokio::test]
+    async fn gate_rejects_tiny_deviation() {
+        let resp = post_singh_inequality_v2_gate(Json(SinghBernsteinGateReq {
+            contributors: vec![cv(0, 10, 1000, 4); 5],
+            deviation: 1,
+            soundness_multiplier: 1,
+        }))
+        .await;
+        assert_eq!(resp.0["admits"], false);
+    }
+
+    /// Empty contributors → handler propagates the substrate Empty
+    /// error.
+    #[tokio::test]
+    async fn empty_contributors_rejected() {
+        let resp = post_singh_inequality_v2_gate(Json(SinghBernsteinGateReq {
+            contributors: vec![],
+            deviation: 10,
+            soundness_multiplier: 1,
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "error");
+        assert!(resp.0["detail"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("empty"));
+    }
+
+    /// Popoviciu guard: variance_proxy > range² is rejected before
+    /// any gate evaluation.
+    #[tokio::test]
+    async fn variance_exceeding_range_squared_rejected() {
+        // range = 10, range² = 100. variance_proxy = 200 > 100 →
+        // VarianceExceedsRangeSquared.
+        let resp = post_singh_inequality_v2_gate(Json(SinghBernsteinGateReq {
+            contributors: vec![cv(0, 10, 1000, 200)],
+            deviation: 5,
+            soundness_multiplier: 1,
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "error");
+        let detail = resp.0["detail"].as_str().unwrap_or("").to_lowercase();
+        assert!(
+            detail.contains("variance") && detail.contains("range"),
+            "expected Popoviciu guard error, got: {detail}"
+        );
     }
 }
 
