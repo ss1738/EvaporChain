@@ -30,6 +30,7 @@
 mod audit_log;
 mod prompts;
 mod protocol;
+mod rate_limit;
 mod resources;
 mod tools;
 mod validation;

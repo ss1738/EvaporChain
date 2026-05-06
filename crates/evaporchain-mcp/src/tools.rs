@@ -1,12 +1,25 @@
 //! 26 MCP Tools — actions AI agents can take on the EvaporChain blockchain.
 
+use std::sync::OnceLock;
+use std::time::Instant;
+
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
+use crate::rate_limit::McpRateLimiter;
 use crate::validation::{
     validate_address_field, validate_amount_field, validate_half_life_field,
     validate_nonce_field, MAX_TOKEN_AMOUNT,
 };
+
+/// Process-wide rate limiter. Lazily initialised on first
+/// `call_tool` so test setups (which never call `call_tool`)
+/// don't pay the cost.
+static RATE_LIMITER: OnceLock<McpRateLimiter> = OnceLock::new();
+
+fn rate_limiter() -> &'static McpRateLimiter {
+    RATE_LIMITER.get_or_init(McpRateLimiter::new)
+}
 
 /// Return the list of all 26 tools.
 pub fn list_tools() -> Value {
@@ -329,13 +342,26 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
         .ok_or("Missing tool name")?;
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
+    // AUDIT_2026_05_06.md CRITICAL-2 follow-on — per-tool rate
+    // limit BEFORE input validation. Cheaper to reject runaway
+    // callers up front; the audit log still captures the
+    // rejection for forensics.
+    let rate_check = rate_limiter().try_take(name, Instant::now());
+
     // AUDIT_2026_05_06.md CRITICAL-2 follow-on — every tool
     // invocation produces a structured audit log line.
     // call_inner runs the actual dispatch; we wrap it so both
     // Ok and Err outcomes get logged with the same shape, and
     // the agent never sees a successful response without the
     // audit trail being persisted first.
-    let result = call_tool_inner(ctx, name, &args).await;
+    let result = match rate_check {
+        Err(retry_after) => Err(format!(
+            "rate limited: tool '{}' exceeded its per-tool window; retry after {}s",
+            name,
+            retry_after.as_secs().max(1)
+        )),
+        Ok(()) => call_tool_inner(ctx, name, &args).await,
+    };
     let outcome = match &result {
         Ok(_) => crate::audit_log::AuditOutcome::Ok,
         Err(msg) => crate::audit_log::AuditOutcome::Err(msg.clone()),
