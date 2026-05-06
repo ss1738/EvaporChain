@@ -5584,6 +5584,176 @@ async fn post_fork_cert_verify(Json(req): Json<ForkCertVerifyReq>) -> Json<serde
     }
 }
 
+// ─────────────── Evaporated-Fork Certificate V2 (Bell-anchored) ─────
+//
+// V2 closes a pre-computation attack present in V1: a forker who
+// knows the chain's half-life can pre-compute a future V1 cert
+// because the V1 witness is a pure function of public chain state.
+// V2 binds the certificate to a 32-byte chain-supplied seed anchor
+// (typically a `BellCertificate.seed`) plus its issuance epoch, so
+// the witness cannot be derived before the chain has confirmed
+// blocks at the seed-anchor epoch.
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ForkCertV2ProveReq {
+    pub fork_root_hex: String,
+    pub blocks: Vec<ForkBlockDto>,
+    pub evaluated_at_epoch: u64,
+    pub threshold: u128,
+    pub lambda_epochs: u64,
+    /// 32-byte chain-supplied anchor (typically `BellCertificate.seed`).
+    pub bell_seed_anchor_hex: String,
+    /// Epoch the seed anchor was issued at. Must satisfy
+    /// `seed_anchor_epoch ≤ evaluated_at_epoch`.
+    pub seed_anchor_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ForkCertV2VerifyReq {
+    pub fork_root_hex: String,
+    pub evaluated_at_epoch: u64,
+    pub total_seed_energy: u128,
+    pub decayed_energy: u128,
+    pub threshold: u128,
+    pub bell_seed_anchor_hex: String,
+    pub seed_anchor_epoch: u64,
+    pub witness_hex: String,
+}
+
+fn decode_32(hex_str: &str) -> Option<[u8; 32]> {
+    match hex::decode(hex_str) {
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            Some(a)
+        }
+        _ => None,
+    }
+}
+
+async fn post_fork_cert_v2_prove(
+    Json(req): Json<ForkCertV2ProveReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_evap_fork_cert::ForkBlock;
+    use evaporchain_evap_fork_cert_v2::prove_fork_evaporated_v2;
+
+    let fork_root = match decode_32(&req.fork_root_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"fork_root_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let bell_seed_anchor = match decode_32(&req.bell_seed_anchor_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"bell_seed_anchor_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let blocks: Vec<ForkBlock> = req
+        .blocks
+        .iter()
+        .map(|b| ForkBlock {
+            seed_energy: b.seed_energy,
+            observed_epoch: b.observed_epoch,
+        })
+        .collect();
+    let chain_lambda = ChainLambda::new(Lambda::from_epochs(req.lambda_epochs.max(1)));
+    match prove_fork_evaporated_v2(
+        fork_root,
+        &blocks,
+        chain_lambda,
+        req.evaluated_at_epoch,
+        req.threshold,
+        bell_seed_anchor,
+        req.seed_anchor_epoch,
+    ) {
+        Ok(cert) => {
+            let is_evaporated = cert.decayed_energy < cert.threshold;
+            Json(serde_json::json!({
+                "status": "ok",
+                "fork_root_hex": req.fork_root_hex,
+                "total_seed_energy": cert.total_seed_energy,
+                "decayed_energy": cert.decayed_energy,
+                "threshold": cert.threshold,
+                "bell_seed_anchor_hex": hex::encode(cert.bell_seed_anchor),
+                "seed_anchor_epoch": cert.seed_anchor_epoch,
+                "is_evaporated": is_evaporated,
+                "witness_hex": hex::encode(cert.witness),
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "detail": e.to_string(),
+        })),
+    }
+}
+
+async fn post_fork_cert_v2_verify(
+    Json(req): Json<ForkCertV2VerifyReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_evap_fork_cert_v2::{verify_evaporated_cert_v2, EvaporatedForkCertV2};
+
+    let fork_root = match decode_32(&req.fork_root_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"fork_root_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let bell_seed_anchor = match decode_32(&req.bell_seed_anchor_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"bell_seed_anchor_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let witness = match decode_32(&req.witness_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"witness_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let cert = EvaporatedForkCertV2 {
+        fork_root,
+        evaluated_at_epoch: req.evaluated_at_epoch,
+        total_seed_energy: req.total_seed_energy,
+        decayed_energy: req.decayed_energy,
+        threshold: req.threshold,
+        bell_seed_anchor,
+        seed_anchor_epoch: req.seed_anchor_epoch,
+        witness,
+    };
+    match verify_evaporated_cert_v2(&cert) {
+        Ok(()) => Json(serde_json::json!({
+            "status": "ok",
+            "verified": true,
+            "decayed_energy": cert.decayed_energy,
+            "threshold": cert.threshold,
+            "bell_seed_anchor_hex": hex::encode(cert.bell_seed_anchor),
+            "seed_anchor_epoch": cert.seed_anchor_epoch,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status":"error",
+            "detail":e.to_string(),
+            "verified":false
+        })),
+    }
+}
+
 // ─────────────── Antichain Mempool ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -6984,6 +7154,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Evaporated Fork Certificates
     ApiDocEntry { method: "POST", path: "/api/fork_cert/prove",             category: "substrate", description: "Prove a competing fork has λ-decayed below the evaporation threshold. Returns a blake3-bound EvaporatedForkCert + is_evaporated verdict.", example: Some(r#"{"fork_root_hex":"0000000000000000000000000000000000000000000000000000000000000001","blocks":[{"seed_energy":1000,"observed_epoch":0}],"evaluated_at_epoch":200,"threshold":100,"lambda_epochs":100}"#) },
     ApiDocEntry { method: "POST", path: "/api/fork_cert/verify",            category: "substrate", description: "O(1) light-client verify of an EvaporatedForkCert. Checks blake3 witness binding + decayed_energy < threshold.", example: Some(r#"{"fork_root_hex":"0000...","evaluated_at_epoch":200,"total_seed_energy":1000,"decayed_energy":50,"threshold":100,"witness_hex":"<from /api/fork_cert/prove>"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/fork_cert_v2/prove",          category: "substrate", description: "Bell-anchored Evaporated-Fork Certificate V2. Closes V1's pre-computation gap by binding the witness to a chain-supplied seed anchor (typically BellCertificate.seed) plus its issuance epoch. Returns CausalityViolation if seed_anchor_epoch > evaluated_at_epoch.", example: Some(r#"{"fork_root_hex":"00...01","blocks":[{"seed_energy":1000,"observed_epoch":0}],"evaluated_at_epoch":200,"threshold":100,"lambda_epochs":100,"bell_seed_anchor_hex":"00...09","seed_anchor_epoch":150}"#) },
+    ApiDocEntry { method: "POST", path: "/api/fork_cert_v2/verify",         category: "substrate", description: "O(1) light-client verify of an EvaporatedForkCertV2. Checks anchor-bound witness + causality + decayed_energy < threshold.", example: Some(r#"{"fork_root_hex":"00...01","evaluated_at_epoch":200,"total_seed_energy":1000,"decayed_energy":50,"threshold":100,"bell_seed_anchor_hex":"00...09","seed_anchor_epoch":150,"witness_hex":"<from /api/fork_cert_v2/prove>"}"#) },
 
     // Antichain Mempool — causal-set maximal-antichain transaction ordering
     ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
@@ -15168,6 +15340,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/fee_controller/status", get(get_fee_controller_status))
         .route("/api/fork_cert/prove", post(post_fork_cert_prove))
         .route("/api/fork_cert/verify", post(post_fork_cert_verify))
+        .route("/api/fork_cert_v2/prove", post(post_fork_cert_v2_prove))
+        .route("/api/fork_cert_v2/verify", post(post_fork_cert_v2_verify))
         .route("/api/antichain/compute", post(post_antichain_compute))
         .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
         .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))
@@ -16532,5 +16706,140 @@ mod faucet_rate_limit_tests {
         let resolved = client_ip_from(&h, Some(direct));
         assert_eq!(resolved, ip(203, 0, 113, 5));
         std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
+    }
+}
+
+#[cfg(test)]
+mod fork_cert_v2_handler_tests {
+    //! Handler-level smoke tests for the Bell-anchored
+    //! Evaporated-Fork Certificate V2 endpoints. The V2 substrate
+    //! is fully tested in `evaporchain-evap-fork-cert-v2`; this
+    //! mod locks the JSON DTO ↔ inner-cert translation and the
+    //! prove → verify round-trip through the actual handler bodies.
+    use super::*;
+
+    fn fork_root_hex() -> String {
+        let mut a = [0u8; 32];
+        a[31] = 1;
+        hex::encode(a)
+    }
+
+    fn anchor_hex() -> String {
+        let mut a = [0u8; 32];
+        a[0] = 9;
+        hex::encode(a)
+    }
+
+    fn good_prove_req() -> ForkCertV2ProveReq {
+        ForkCertV2ProveReq {
+            fork_root_hex: fork_root_hex(),
+            blocks: vec![ForkBlockDto {
+                seed_energy: 1000,
+                observed_epoch: 0,
+            }],
+            evaluated_at_epoch: 100,
+            threshold: 600, // > decayed (500) → evaporated
+            lambda_epochs: 100,
+            bell_seed_anchor_hex: anchor_hex(),
+            seed_anchor_epoch: 50,
+        }
+    }
+
+    /// Round-trip: prove yields a cert whose witness verifies.
+    #[tokio::test]
+    async fn v2_prove_then_verify_round_trip() {
+        let prove_resp = post_fork_cert_v2_prove(Json(good_prove_req())).await;
+        let body = prove_resp.0;
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["is_evaporated"], true);
+        let witness_hex = body["witness_hex"]
+            .as_str()
+            .expect("witness_hex returned")
+            .to_string();
+        let total_seed = body["total_seed_energy"].as_u64().unwrap() as u128;
+        let decayed = body["decayed_energy"].as_u64().unwrap() as u128;
+
+        let verify_req = ForkCertV2VerifyReq {
+            fork_root_hex: fork_root_hex(),
+            evaluated_at_epoch: 100,
+            total_seed_energy: total_seed,
+            decayed_energy: decayed,
+            threshold: 600,
+            bell_seed_anchor_hex: anchor_hex(),
+            seed_anchor_epoch: 50,
+            witness_hex,
+        };
+        let verify_resp = post_fork_cert_v2_verify(Json(verify_req)).await;
+        let body = verify_resp.0;
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["verified"], true);
+    }
+
+    /// Prove must reject seed_anchor_epoch > evaluated_at_epoch (the
+    /// V2 causality constraint — a future seed cannot witness a past
+    /// evaporation claim).
+    #[tokio::test]
+    async fn v2_prove_rejects_causality_violation() {
+        let mut req = good_prove_req();
+        req.seed_anchor_epoch = req.evaluated_at_epoch + 1;
+        let resp = post_fork_cert_v2_prove(Json(req)).await;
+        let body = resp.0;
+        assert_eq!(body["status"], "error");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("causality"),
+            "error detail must surface causality violation"
+        );
+    }
+
+    /// Verify must reject a tampered witness — the V2 binding is
+    /// what closes V1's pre-computation gap, so witness tampering
+    /// must surface at the handler layer.
+    #[tokio::test]
+    async fn v2_verify_rejects_tampered_witness() {
+        // Build a real cert through prove, then flip a byte.
+        let prove_resp = post_fork_cert_v2_prove(Json(good_prove_req())).await;
+        let body = prove_resp.0;
+        let mut witness = hex::decode(body["witness_hex"].as_str().unwrap()).unwrap();
+        witness[0] ^= 0xff;
+        let total_seed = body["total_seed_energy"].as_u64().unwrap() as u128;
+        let decayed = body["decayed_energy"].as_u64().unwrap() as u128;
+
+        let verify_req = ForkCertV2VerifyReq {
+            fork_root_hex: fork_root_hex(),
+            evaluated_at_epoch: 100,
+            total_seed_energy: total_seed,
+            decayed_energy: decayed,
+            threshold: 600,
+            bell_seed_anchor_hex: anchor_hex(),
+            seed_anchor_epoch: 50,
+            witness_hex: hex::encode(&witness),
+        };
+        let resp = post_fork_cert_v2_verify(Json(verify_req)).await;
+        let body = resp.0;
+        assert_eq!(body["status"], "error");
+        assert_eq!(body["verified"], false);
+    }
+
+    /// Different anchor → different witness → original verification
+    /// fails. Locks the V2 binding contract at the handler layer.
+    #[tokio::test]
+    async fn v2_different_anchor_yields_different_witness() {
+        let resp_a = post_fork_cert_v2_prove(Json(good_prove_req())).await;
+        let mut req_b = good_prove_req();
+        // Same length, different anchor bytes.
+        let mut alt = [0u8; 32];
+        alt[0] = 7;
+        req_b.bell_seed_anchor_hex = hex::encode(alt);
+        let resp_b = post_fork_cert_v2_prove(Json(req_b)).await;
+        let w_a = resp_a.0["witness_hex"].as_str().unwrap().to_string();
+        let w_b = resp_b.0["witness_hex"].as_str().unwrap().to_string();
+        assert_ne!(
+            w_a, w_b,
+            "different anchors must yield different witnesses (V2 binding)"
+        );
     }
 }

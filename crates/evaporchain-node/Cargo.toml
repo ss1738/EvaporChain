@@ -87,6 +87,7 @@ evaporchain-dsn = { path = "../evaporchain-dsn" }
 evaporchain-entropic-slashing = { path = "../evaporchain-entropic-slashing" }
 evaporchain-fee-controller = { path = "../evaporchain-fee-controller" }
 evaporchain-evap-fork-cert = { path = "../evaporchain-evap-fork-cert" }
+evaporchain-evap-fork-cert-v2 = { path = "../evaporchain-evap-fork-cert-v2" }
 evaporchain-hlts = { path = "../evaporchain-hlts" }
 evaporchain-pnt = { path = "../evaporchain-pnt" }
 evaporchain-hlwa = { path = "../evaporchain-hlwa" }
