@@ -137,9 +137,26 @@ pub fn list_tools() -> Value {
                 }
             },
             // ── Write tools ──
+            //
+            // AUDIT_2026_05_06.md CRITICAL-2 follow-on (5/5) —
+            // each write-tool below carries TWO consent signals:
+            //
+            //   1. `"requiresConsent": true` at the tool object's
+            //      top level. MCP-protocol-extension that compliant
+            //      agent UIs (Claude Desktop, custom MCP clients)
+            //      should detect and gate behind an explicit user
+            //      "yes/no" prompt before invoking.
+            //   2. A `⚠️ REQUIRES USER CONSENT — MUTATING TOOL:`
+            //      prefix in the description. Belt-and-braces:
+            //      even agent UIs that don't recognise the custom
+            //      field surface the warning to the model in-band,
+            //      where it should refuse to act without operator
+            //      sign-off (or at minimum disclose the mutation
+            //      before calling).
             {
                 "name": "transfer",
-                "description": "Transfer EVAP tokens from one account to another. Accounts are identified by address number (1=Alice, 2=Bob, 3=Charlie).",
+                "description": "⚠️ REQUIRES USER CONSENT — MUTATING TOOL: Transfer EVAP tokens from one account to another. Accounts are identified by address number (1=Alice, 2=Bob, 3=Charlie).",
+                "requiresConsent": true,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -153,7 +170,8 @@ pub fn list_tools() -> Value {
             },
             {
                 "name": "create_object",
-                "description": "Create a new state object with thermodynamic energy. The object will decay over time based on its half-life — when energy reaches zero, it evaporates into a ghost.",
+                "description": "⚠️ REQUIRES USER CONSENT — MUTATING TOOL: Create a new state object with thermodynamic energy. The object will decay over time based on its half-life — when energy reaches zero, it evaporates into a ghost.",
+                "requiresConsent": true,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -167,7 +185,8 @@ pub fn list_tools() -> Value {
             },
             {
                 "name": "refresh_object",
-                "description": "Deposit energy into an existing state object to extend its lifetime and prevent evaporation.",
+                "description": "⚠️ REQUIRES USER CONSENT — MUTATING TOOL: Deposit energy into an existing state object to extend its lifetime and prevent evaporation.",
+                "requiresConsent": true,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -179,7 +198,8 @@ pub fn list_tools() -> Value {
             },
             {
                 "name": "resurrect_object",
-                "description": "Resurrect an evaporated ghost object by providing a new energy deposit. The object returns to active state with fresh energy.",
+                "description": "⚠️ REQUIRES USER CONSENT — MUTATING TOOL: Resurrect an evaporated ghost object by providing a new energy deposit. The object returns to active state with fresh energy.",
+                "requiresConsent": true,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -191,7 +211,8 @@ pub fn list_tools() -> Value {
             },
             {
                 "name": "request_faucet",
-                "description": "Request free testnet EVAP tokens from the faucet. Rate limited to once per address per hour. Gives 10,000 EVAP.",
+                "description": "⚠️ REQUIRES USER CONSENT — MUTATING TOOL: Request free testnet EVAP tokens from the faucet. Rate limited to once per address per hour. Gives 10,000 EVAP.",
+                "requiresConsent": true,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -680,6 +701,93 @@ mod tests {
             if write_tools.contains(&name) {
                 let required = tool["inputSchema"]["required"].as_array().unwrap();
                 assert!(!required.is_empty(), "{name} should have required params");
+            }
+        }
+    }
+
+    /// CRITICAL-2 follow-on (5/5) — every write-tool carries the
+    /// `requiresConsent: true` MCP-extension field at the tool
+    /// object's top level. Compliant agent UIs detect this field
+    /// and gate behind an explicit user consent prompt.
+    #[test]
+    fn test_write_tools_marked_requires_consent_true() {
+        let tools = list_tools();
+        let write_tools = [
+            "transfer",
+            "create_object",
+            "refresh_object",
+            "resurrect_object",
+            "request_faucet",
+        ];
+        for tool in tools["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            if write_tools.contains(&name) {
+                let consent = tool["requiresConsent"].as_bool();
+                assert_eq!(
+                    consent,
+                    Some(true),
+                    "write-tool {name} must carry requiresConsent: true at the tool top level"
+                );
+            }
+        }
+    }
+
+    /// CRITICAL-2 follow-on (5/5) — read-only tools do NOT carry
+    /// the `requiresConsent` field. Marking everything as
+    /// requiring consent would dilute the signal; read-tools are
+    /// idempotent and chain-safe by definition.
+    #[test]
+    fn test_read_tools_do_not_require_consent() {
+        let tools = list_tools();
+        let write_tools = [
+            "transfer",
+            "create_object",
+            "refresh_object",
+            "resurrect_object",
+            "request_faucet",
+        ];
+        for tool in tools["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            if !write_tools.contains(&name) {
+                // Field is either absent or explicitly false — both
+                // are acceptable; what matters is it isn't `true`.
+                let consent = tool.get("requiresConsent").and_then(|v| v.as_bool());
+                assert!(
+                    consent != Some(true),
+                    "read-tool {name} must NOT carry requiresConsent: true (signal dilution)"
+                );
+            }
+        }
+    }
+
+    /// CRITICAL-2 follow-on (5/5) — every write-tool's description
+    /// begins with the `⚠️ REQUIRES USER CONSENT — MUTATING TOOL:`
+    /// prefix. Belt-and-braces against agent UIs that don't
+    /// recognise the custom `requiresConsent` field — the warning
+    /// shows up in-band where the model itself can read it.
+    #[test]
+    fn test_write_tools_description_carries_consent_prefix() {
+        let tools = list_tools();
+        let write_tools = [
+            "transfer",
+            "create_object",
+            "refresh_object",
+            "resurrect_object",
+            "request_faucet",
+        ];
+        for tool in tools["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            if write_tools.contains(&name) {
+                let description = tool["description"].as_str().unwrap();
+                assert!(
+                    description.contains("REQUIRES USER CONSENT"),
+                    "write-tool {name} description must include 'REQUIRES USER CONSENT' prefix; \
+                     got: {description}"
+                );
+                assert!(
+                    description.contains("MUTATING"),
+                    "write-tool {name} description must flag itself as MUTATING"
+                );
             }
         }
     }
