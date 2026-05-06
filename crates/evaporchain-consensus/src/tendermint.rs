@@ -2725,6 +2725,27 @@ impl TendermintConsensus {
         self.antichain_digest_history.iter().copied().collect()
     }
 
+    /// Decay-Lamport DAG integration (shipped 2026-05-06) — derive
+    /// the Decay-Lamport `LamportClock` at a specific DAG block.
+    /// Returns `None` if `block_id` isn't in the DAG OR `tick_quantum`
+    /// is 0. Pure function of `(light_cone_dag, block_id, tick_quantum)`.
+    /// Pairs with `/api/lamport_time` (chain-global running clock)
+    /// and `/api/light_cone/antichain_digest` (DAG-derived
+    /// cross-validator digest) as the third operator surface for
+    /// the Light-Cone substrate's time semantics.
+    pub fn light_cone_block_lamport_clock(
+        &self,
+        block_id: [u8; 32],
+        tick_quantum: u64,
+    ) -> Option<evaporchain_decay_lamport::LamportClock> {
+        evaporchain_light_cone::decay_lamport::block_lamport_clock(
+            &self.light_cone_dag,
+            block_id,
+            tick_quantum,
+        )
+        .ok()
+    }
+
     /// Phase A.1 of `MCC_FULL_MULTI_PARENT_PLAN.md` — set of all
     /// currently-active sibling heads in the Light-Cone DAG. A "head"
     /// is a leaf: a block with no children. The MCC fork-choice picks
@@ -10195,6 +10216,47 @@ mod tests {
 
     fn id(seed: u8) -> [u8; 32] {
         [seed; 32]
+    }
+
+    /// Decay-Lamport DAG accessor — verify the consensus crate
+    /// passes through to the light-cone module correctly for a
+    /// linear chain. genesis tick=1; each subsequent block ticks +1.
+    #[test]
+    fn light_cone_block_lamport_clock_linear_chain() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // energy=100 per block, quantum=100 → tick advances by 1.
+        // The lc_insert helper uses energy 1000; instead, insert
+        // directly so we control the energy.
+        use evaporchain_light_cone::Block as LcBlock;
+        tc.light_cone_dag
+            .insert(LcBlock::new(id(0), vec![], 100, 0))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(id(1), vec![id(0)], 100, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(id(2), vec![id(1)], 100, 2))
+            .unwrap();
+
+        let g = tc.light_cone_block_lamport_clock(id(0), 100).unwrap();
+        let b1 = tc.light_cone_block_lamport_clock(id(1), 100).unwrap();
+        let b2 = tc.light_cone_block_lamport_clock(id(2), 100).unwrap();
+        assert_eq!(g.current_tick, 1);
+        assert_eq!(b1.current_tick, 2);
+        assert_eq!(b2.current_tick, 3);
+    }
+
+    /// Decay-Lamport DAG accessor — None for missing block + None
+    /// for zero quantum.
+    #[test]
+    fn light_cone_block_lamport_clock_returns_none_on_error() {
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Empty DAG: any block_id is missing.
+        assert!(tc.light_cone_block_lamport_clock(id(0), 100).is_none());
+        // Zero quantum: even genesis returns None.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        lc_insert(&mut tc, id(0), vec![], 0);
+        assert!(tc.light_cone_block_lamport_clock(id(0), 0).is_none());
     }
 
     /// MCC Phase A.4 — `candidate_heads` is empty when the DAG is

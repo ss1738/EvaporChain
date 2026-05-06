@@ -16,6 +16,7 @@ evaporchain-da = { path = "../evaporchain-da" }
 evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-light-cone = { path = "../evaporchain-light-cone" }
+evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
 evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
 evaporchain-antichain-mempool = { path = "../evaporchain-antichain-mempool" }
 evaporchain-wsbf             = { path = "../evaporchain-wsbf" }

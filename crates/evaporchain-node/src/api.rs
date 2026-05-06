@@ -6882,6 +6882,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/light_cone/antichain_digest_history", category: "identity", description: "Phase 4.4 rolling history of (height, digest) pairs (last 128 committed blocks under `light_cone_state_branches_enabled = true`). Operators retrospectively cross-compare per-height digests across cluster validators: divergence at any past height is the freeze-class signal for antichain disagreement. Returns {history:[{block_height, digest}], count, running_alongside_tendermint}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/light_cone/candidate_heads", category: "identity", description: "MCC Phase E.1 — every active sibling head in the Light-Cone DAG with its first-parent trajectory caliber, sorted descending (smaller-BlockId tiebreak). The first entry is the chain's MCC-chosen authoritative head; downstream entries are the alternatives the fork-choice considered. Operators debug 'which heads are competing right now' without a manual trajectory walk. Returns {heads:[{block_id, caliber}], count, running_alongside_tendermint}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/light_cone/authoritative_head", category: "identity", description: "MCC Phase E.2 — the chain's MCC-chosen authoritative head (the argmax of /api/light_cone/candidate_heads). Single entry rather than the full list. Per-validator — different validators may briefly disagree during a round before converging. Pairs with the antichain-digest-history endpoint for retroactive cross-validator agreement detection. Returns {head, caliber, candidates_considered, running_alongside_tendermint}.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/light_cone/block_clock/:block_id_hex", category: "identity", description: "Decay-Lamport DAG accessor. Returns the LamportClock at the named DAG block, derived from the merge of all parent clocks (max tick) plus a tick by the block's energy. Pure function of (DAG, block_id, tick_quantum); tick_quantum is sourced from the chain-global running clock at /api/lamport_time so the per-block and chain-global clocks share time granularity. Operators pin a block_id at a known fork point and compare clocks across all validators — equality is the substrate-level convergence claim. Returns {block_id, found, current_tick, accumulated_energy, tick_quantum, running_alongside_tendermint}.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/lambda_fold",           category: "identity", description: "Lambda-Fold accumulator (acc_hash, total_energy_remaining, step_count, latest_epoch)", example: None },
     ApiDocEntry { method: "GET",  path: "/api/tur_liveness",          category: "identity", description: "TUR Liveness Detector verdict over the sliding window of per-block J", example: None },
     ApiDocEntry { method: "GET",  path: "/api/lamport_time",          category: "identity", description: "Decay-Lamport energy-driven logical clock", example: None },
@@ -7343,6 +7344,106 @@ async fn get_lamport_time(State(state): State<Arc<ApiState>>) -> Json<LamportTim
         accumulated_energy: c.accumulated_energy,
         tick_quantum: c.tick_quantum,
     })
+}
+
+// ── /api/light_cone/block_clock/:block_id_hex ────────────────────
+//
+// Decay-Lamport DAG accessor (shipped 2026-05-06). Returns the
+// LamportClock at a specific DAG block, derived as:
+//   merge of all parent clocks (max tick; Lamport rule)
+//   + tick by block.energy
+//
+// Pure function of (light_cone_dag, block_id, tick_quantum). The
+// `tick_quantum` is sourced from the chain-global running clock
+// (state.lamport_clock.tick_quantum) so the per-block clock and
+// chain-global /api/lamport_time clock share the same time
+// granularity. This makes the per-block clock comparable with
+// /api/lamport_time without query-string parameter shuffling.
+//
+// Returns:
+//   - 200 + {block_id, current_tick, accumulated_energy,
+//            tick_quantum, running_alongside_tendermint} on success
+//   - 200 + {found: false, ...} if block_id isn't in the DAG
+//
+// Pairs with /api/lamport_time (chain-global running clock) +
+// /api/light_cone/antichain_digest (DAG-derived cross-validator
+// digest) as the third operator surface for the Light-Cone
+// substrate's time semantics. Cluster operators can pin a
+// block_id at a known fork point and compare clocks across all
+// validators — equality is the substrate-level convergence claim.
+//
+// Note on tick_quantum mismatch: if validators disagree on
+// tick_quantum, their per-block clocks at the same block_id will
+// differ even though the DAG is identical. The accessor surfaces
+// the quantum so operators can detect this misconfiguration.
+
+#[derive(Serialize)]
+struct BlockClockResp {
+    /// Echoes back the block_id (hex) for client-side pairing.
+    pub block_id: String,
+    /// `true` if the block was found in the DAG.
+    pub found: bool,
+    /// Current tick of the derived clock, or 0 if not found.
+    pub current_tick: u64,
+    /// Energy accumulated since the last tick crossing.
+    pub accumulated_energy: u64,
+    /// Tick quantum used for the derivation. Sourced from the
+    /// chain-global /api/lamport_time clock.
+    pub tick_quantum: u64,
+    pub running_alongside_tendermint: bool,
+}
+
+async fn get_light_cone_block_clock(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Path(block_id_hex): axum::extract::Path<String>,
+) -> Json<BlockClockResp> {
+    let block_id = match parse_hex32(&block_id_hex) {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(BlockClockResp {
+                block_id: block_id_hex,
+                found: false,
+                current_tick: 0,
+                accumulated_energy: 0,
+                tick_quantum: 0,
+                running_alongside_tendermint: state.tendermint.is_some(),
+            });
+        }
+    };
+    let tick_quantum = {
+        let c = safe_lock(&state.lamport_clock);
+        c.tick_quantum
+    };
+    let Some(ref tc) = state.tendermint else {
+        return Json(BlockClockResp {
+            block_id: block_id_hex,
+            found: false,
+            current_tick: 0,
+            accumulated_energy: 0,
+            tick_quantum,
+            running_alongside_tendermint: false,
+        });
+    };
+    let tc = safe_lock(tc);
+    let clock = tc.light_cone_block_lamport_clock(block_id, tick_quantum);
+    match clock {
+        Some(c) => Json(BlockClockResp {
+            block_id: block_id_hex,
+            found: true,
+            current_tick: c.current_tick,
+            accumulated_energy: c.accumulated_energy,
+            tick_quantum: c.tick_quantum,
+            running_alongside_tendermint: true,
+        }),
+        None => Json(BlockClockResp {
+            block_id: block_id_hex,
+            found: false,
+            current_tick: 0,
+            accumulated_energy: 0,
+            tick_quantum,
+            running_alongside_tendermint: true,
+        }),
+    }
 }
 
 async fn get_sentinel_all(State(state): State<Arc<ApiState>>) -> Json<Vec<SentinelParameterResp>> {
@@ -14987,6 +15088,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route(
             "/api/light_cone/authoritative_head",
             get(get_light_cone_authoritative_head),
+        )
+        .route(
+            "/api/light_cone/block_clock/:block_id_hex",
+            get(get_light_cone_block_clock),
         )
         .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
