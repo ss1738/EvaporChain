@@ -5754,6 +5754,213 @@ async fn post_fork_cert_v2_verify(
     }
 }
 
+// ─────────────── Bell-Certified Beacon V2 (chain-attached cert) ────
+//
+// V1 (`/api/bell_beacon`) ships the abstract CHSH gate at integer
+// milli-units. V2 hardens that primitive into a chain-attached
+// `BellCertificate` carrying the window bounds, gate sample stats,
+// and an anti-grinding `seed = BLAKE3(domain || chain_id || pre_seed
+// || sorted pair_tags)` bound to the proposer's `prev_block_hash`.
+// The certificate's `seed` is the canonical chain-supplied anchor
+// for downstream primitives (e.g. `/api/fork_cert_v2/prove`'s
+// `bell_seed_anchor_hex`).
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BellBeaconV2PairDto {
+    pub first_energy: u64,
+    pub first_tx_count: u64,
+    pub second_energy: u64,
+    pub second_tx_count: u64,
+    /// 32-byte canonical pair tag (hex). Reordering pairs cannot
+    /// change the seed, so any stable per-pair tag works.
+    pub tag_hex: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BellBeaconV2IssueReq {
+    pub chain_id: String,
+    pub window_start: u64,
+    pub window_end: u64,
+    pub pairs: Vec<BellBeaconV2PairDto>,
+    pub prev_block_hash_hex: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BellCertDto {
+    pub window_start: u64,
+    pub window_end: u64,
+    pub n_pairs: u64,
+    pub bucket_counts: [u64; 4],
+    pub s_honest_milli: i64,
+    pub s_cartel_milli: i64,
+    pub gap_milli: i64,
+    pub honest_ceiling_milli: u64,
+    pub cartel_floor_milli: u64,
+    pub min_gap_milli: u64,
+    pub prev_block_hash_hex: String,
+    pub seed_hex: String,
+}
+
+impl BellCertDto {
+    fn from_cert(cert: &evaporchain_bell_beacon_v2::BellCertificate) -> Self {
+        Self {
+            window_start: cert.window_start,
+            window_end: cert.window_end,
+            n_pairs: cert.n_pairs,
+            bucket_counts: cert.bucket_counts,
+            s_honest_milli: cert.s_honest_milli,
+            s_cartel_milli: cert.s_cartel_milli,
+            gap_milli: cert.gap_milli,
+            honest_ceiling_milli: cert.honest_ceiling_milli,
+            cartel_floor_milli: cert.cartel_floor_milli,
+            min_gap_milli: cert.min_gap_milli,
+            prev_block_hash_hex: hex::encode(cert.prev_block_hash),
+            seed_hex: hex::encode(cert.seed),
+        }
+    }
+
+    fn to_cert(&self) -> Option<evaporchain_bell_beacon_v2::BellCertificate> {
+        Some(evaporchain_bell_beacon_v2::BellCertificate {
+            window_start: self.window_start,
+            window_end: self.window_end,
+            n_pairs: self.n_pairs,
+            bucket_counts: self.bucket_counts,
+            s_honest_milli: self.s_honest_milli,
+            s_cartel_milli: self.s_cartel_milli,
+            gap_milli: self.gap_milli,
+            honest_ceiling_milli: self.honest_ceiling_milli,
+            cartel_floor_milli: self.cartel_floor_milli,
+            min_gap_milli: self.min_gap_milli,
+            prev_block_hash: decode_32(&self.prev_block_hash_hex)?,
+            seed: decode_32(&self.seed_hex)?,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BellBeaconV2VerifyReq {
+    pub chain_id: String,
+    pub pairs: Vec<BellBeaconV2PairDto>,
+    pub prev_block_hash_hex: String,
+    pub certificate: BellCertDto,
+}
+
+fn dto_to_pairs(
+    pairs: &[BellBeaconV2PairDto],
+) -> Result<Vec<evaporchain_bell_beacon_v2::ConcurrentPair>, String> {
+    pairs
+        .iter()
+        .map(|p| {
+            let tag = decode_32(&p.tag_hex)
+                .ok_or_else(|| format!("tag_hex must be 64 hex chars: {}", p.tag_hex))?;
+            Ok(evaporchain_bell_beacon_v2::ConcurrentPair {
+                first: evaporchain_bell_beacon_v2::PairStats {
+                    energy: p.first_energy,
+                    tx_count: p.first_tx_count,
+                },
+                second: evaporchain_bell_beacon_v2::PairStats {
+                    energy: p.second_energy,
+                    tx_count: p.second_tx_count,
+                },
+                tag,
+            })
+        })
+        .collect()
+}
+
+async fn post_bell_beacon_v2_issue(
+    Json(req): Json<BellBeaconV2IssueReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_bell_beacon_v2::issue_certificate;
+    use evaporchain_causal_chsh::gate::GateThresholds;
+
+    let prev_block_hash = match decode_32(&req.prev_block_hash_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"prev_block_hash_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let pairs = match dto_to_pairs(&req.pairs) {
+        Ok(p) => p,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail": e,
+            }))
+        }
+    };
+
+    match issue_certificate(
+        &req.chain_id,
+        req.window_start,
+        req.window_end,
+        &pairs,
+        GateThresholds::doctrine(),
+        prev_block_hash,
+    ) {
+        Ok(cert) => Json(serde_json::json!({
+            "status": "ok",
+            "certificate": BellCertDto::from_cert(&cert),
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "detail": e.to_string(),
+        })),
+    }
+}
+
+async fn post_bell_beacon_v2_verify(
+    Json(req): Json<BellBeaconV2VerifyReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_bell_beacon_v2::verify_certificate;
+    use evaporchain_causal_chsh::gate::GateThresholds;
+
+    let prev_block_hash = match decode_32(&req.prev_block_hash_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"prev_block_hash_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let pairs = match dto_to_pairs(&req.pairs) {
+        Ok(p) => p,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e})),
+    };
+    let cert = match req.certificate.to_cert() {
+        Some(c) => c,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"certificate.prev_block_hash_hex / seed_hex must each be 64 hex chars"
+            }))
+        }
+    };
+
+    match verify_certificate(
+        &req.chain_id,
+        &pairs,
+        prev_block_hash,
+        GateThresholds::doctrine(),
+        &cert,
+    ) {
+        Ok(()) => Json(serde_json::json!({
+            "status": "ok",
+            "verified": true,
+            "seed_hex": hex::encode(cert.seed),
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "detail": e.to_string(),
+            "verified": false,
+        })),
+    }
+}
+
 // ─────────────── Antichain Mempool ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -7156,6 +7363,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/fork_cert/verify",            category: "substrate", description: "O(1) light-client verify of an EvaporatedForkCert. Checks blake3 witness binding + decayed_energy < threshold.", example: Some(r#"{"fork_root_hex":"0000...","evaluated_at_epoch":200,"total_seed_energy":1000,"decayed_energy":50,"threshold":100,"witness_hex":"<from /api/fork_cert/prove>"}"#) },
     ApiDocEntry { method: "POST", path: "/api/fork_cert_v2/prove",          category: "substrate", description: "Bell-anchored Evaporated-Fork Certificate V2. Closes V1's pre-computation gap by binding the witness to a chain-supplied seed anchor (typically BellCertificate.seed) plus its issuance epoch. Returns CausalityViolation if seed_anchor_epoch > evaluated_at_epoch.", example: Some(r#"{"fork_root_hex":"00...01","blocks":[{"seed_energy":1000,"observed_epoch":0}],"evaluated_at_epoch":200,"threshold":100,"lambda_epochs":100,"bell_seed_anchor_hex":"00...09","seed_anchor_epoch":150}"#) },
     ApiDocEntry { method: "POST", path: "/api/fork_cert_v2/verify",         category: "substrate", description: "O(1) light-client verify of an EvaporatedForkCertV2. Checks anchor-bound witness + causality + decayed_energy < threshold.", example: Some(r#"{"fork_root_hex":"00...01","evaluated_at_epoch":200,"total_seed_energy":1000,"decayed_energy":50,"threshold":100,"bell_seed_anchor_hex":"00...09","seed_anchor_epoch":150,"witness_hex":"<from /api/fork_cert_v2/prove>"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/bell_beacon_v2/issue",        category: "substrate", description: "Issue a Bell-Certified Beacon V2 certificate over a window of concurrent block-pairs. Runs the CHSH gate at integer milli-units against the honest sample plus a synthetic coordinated-subset cartel injection, anchors to prev_block_hash, and emits an anti-grinding seed. The seed is the canonical chain-supplied anchor for /api/fork_cert_v2/prove.", example: Some(r#"{"chain_id":"test-chain-v1","window_start":100,"window_end":200,"prev_block_hash_hex":"00...09","pairs":[{"first_energy":100,"first_tx_count":10,"second_energy":10,"second_tx_count":100,"tag_hex":"00...01"}]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/bell_beacon_v2/verify",       category: "substrate", description: "Verify a BellCertificate by re-running the gate against the supplied pairs and re-deriving the seed. Rejects on any field mismatch (window, prev_hash, threshold, bucket counts, S values, gap, seed).", example: Some(r#"{"chain_id":"test-chain-v1","prev_block_hash_hex":"00...09","pairs":[...],"certificate":{"<from /api/bell_beacon_v2/issue>":""}}"#) },
 
     // Antichain Mempool — causal-set maximal-antichain transaction ordering
     ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
@@ -15342,6 +15551,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/fork_cert/verify", post(post_fork_cert_verify))
         .route("/api/fork_cert_v2/prove", post(post_fork_cert_v2_prove))
         .route("/api/fork_cert_v2/verify", post(post_fork_cert_v2_verify))
+        .route("/api/bell_beacon_v2/issue", post(post_bell_beacon_v2_issue))
+        .route("/api/bell_beacon_v2/verify", post(post_bell_beacon_v2_verify))
         .route("/api/antichain/compute", post(post_antichain_compute))
         .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
         .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))
@@ -16710,6 +16921,154 @@ mod faucet_rate_limit_tests {
 }
 
 #[cfg(test)]
+mod bell_beacon_v2_handler_tests {
+    //! Handler-level smoke tests for the Bell-Certified Beacon V2
+    //! `/api/bell_beacon_v2/{issue,verify}` endpoints. The substrate
+    //! is fully tested in `evaporchain-bell-beacon-v2`; this mod
+    //! locks the JSON DTO ↔ inner-cert translation, the issue →
+    //! verify round-trip through the actual handler bodies, and the
+    //! chain-id binding contract that defeats cross-chain replay.
+    use super::*;
+
+    fn balanced_window() -> Vec<BellBeaconV2PairDto> {
+        let mut out = Vec::new();
+        for i in 0..16u8 {
+            let mut tag = [0u8; 32];
+            tag[0] = i;
+            tag[31] = i;
+            out.push(BellBeaconV2PairDto {
+                first_energy: if i & 1 == 1 { 100 } else { 10 },
+                first_tx_count: if (i >> 1) & 1 == 1 { 100 } else { 10 },
+                second_energy: if (i >> 2) & 1 == 1 { 100 } else { 10 },
+                second_tx_count: if (i >> 3) & 1 == 1 { 100 } else { 10 },
+                tag_hex: hex::encode(tag),
+            });
+        }
+        out
+    }
+
+    fn prev_hex() -> String {
+        let mut a = [0u8; 32];
+        a[0] = 9;
+        hex::encode(a)
+    }
+
+    /// Issue then verify the same certificate against the same inputs
+    /// — must succeed.
+    #[tokio::test]
+    async fn issue_then_verify_round_trip() {
+        let pairs = balanced_window();
+        let issue_resp = post_bell_beacon_v2_issue(Json(BellBeaconV2IssueReq {
+            chain_id: "test-chain-v1".to_string(),
+            window_start: 100,
+            window_end: 200,
+            pairs: pairs.clone(),
+            prev_block_hash_hex: prev_hex(),
+        }))
+        .await;
+        let body = issue_resp.0;
+        assert_eq!(body["status"], "ok", "issue failed: {body:?}");
+        let cert: BellCertDto =
+            serde_json::from_value(body["certificate"].clone()).expect("decode cert");
+
+        let verify_resp = post_bell_beacon_v2_verify(Json(BellBeaconV2VerifyReq {
+            chain_id: "test-chain-v1".to_string(),
+            pairs,
+            prev_block_hash_hex: prev_hex(),
+            certificate: cert,
+        }))
+        .await;
+        assert_eq!(verify_resp.0["status"], "ok");
+        assert_eq!(verify_resp.0["verified"], true);
+    }
+
+    /// Empty window → handler propagates `EmptyWindow` from the
+    /// substrate as a structured error.
+    #[tokio::test]
+    async fn issue_rejects_empty_window() {
+        let resp = post_bell_beacon_v2_issue(Json(BellBeaconV2IssueReq {
+            chain_id: "test-chain-v1".to_string(),
+            window_start: 100,
+            window_end: 200,
+            pairs: vec![],
+            prev_block_hash_hex: prev_hex(),
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "error");
+        assert!(resp.0["detail"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("empty"));
+    }
+
+    /// Chain-id binding (audit fix HIGH H2): a certificate issued
+    /// under chain_id "A" must NOT verify when re-presented under
+    /// chain_id "B" with otherwise identical inputs. The seed
+    /// derivation folds chain_id, so cross-chain replay fails at
+    /// the seed-mismatch check.
+    #[tokio::test]
+    async fn cross_chain_replay_rejected_at_verify() {
+        let pairs = balanced_window();
+        let issue_resp = post_bell_beacon_v2_issue(Json(BellBeaconV2IssueReq {
+            chain_id: "chain-a".to_string(),
+            window_start: 100,
+            window_end: 200,
+            pairs: pairs.clone(),
+            prev_block_hash_hex: prev_hex(),
+        }))
+        .await;
+        assert_eq!(issue_resp.0["status"], "ok");
+        let cert: BellCertDto =
+            serde_json::from_value(issue_resp.0["certificate"].clone()).unwrap();
+
+        // Same cert, same pairs, same prev_hash, but verifier
+        // claims it was issued under "chain-b".
+        let verify_resp = post_bell_beacon_v2_verify(Json(BellBeaconV2VerifyReq {
+            chain_id: "chain-b".to_string(),
+            pairs,
+            prev_block_hash_hex: prev_hex(),
+            certificate: cert,
+        }))
+        .await;
+        assert_eq!(verify_resp.0["status"], "error");
+        assert_eq!(verify_resp.0["verified"], false);
+    }
+
+    /// Tampered seed at verify → rejected. Closes the case where
+    /// an attacker passes an issued cert through the verifier with
+    /// the seed mutated.
+    #[tokio::test]
+    async fn tampered_seed_rejected_at_verify() {
+        let pairs = balanced_window();
+        let issue_resp = post_bell_beacon_v2_issue(Json(BellBeaconV2IssueReq {
+            chain_id: "test-chain-v1".to_string(),
+            window_start: 100,
+            window_end: 200,
+            pairs: pairs.clone(),
+            prev_block_hash_hex: prev_hex(),
+        }))
+        .await;
+        let mut cert: BellCertDto =
+            serde_json::from_value(issue_resp.0["certificate"].clone()).unwrap();
+
+        // Flip a byte in the hex-encoded seed.
+        let mut seed_bytes = hex::decode(&cert.seed_hex).unwrap();
+        seed_bytes[0] ^= 0xff;
+        cert.seed_hex = hex::encode(&seed_bytes);
+
+        let verify_resp = post_bell_beacon_v2_verify(Json(BellBeaconV2VerifyReq {
+            chain_id: "test-chain-v1".to_string(),
+            pairs,
+            prev_block_hash_hex: prev_hex(),
+            certificate: cert,
+        }))
+        .await;
+        assert_eq!(verify_resp.0["verified"], false);
+    }
+}
+
+#[cfg(test)]
 mod fork_cert_v2_handler_tests {
     //! Handler-level smoke tests for the Bell-anchored
     //! Evaporated-Fork Certificate V2 endpoints. The V2 substrate
@@ -16822,6 +17181,84 @@ mod fork_cert_v2_handler_tests {
         let body = resp.0;
         assert_eq!(body["status"], "error");
         assert_eq!(body["verified"], false);
+    }
+
+    /// End-to-end V2 stack: issue a Bell-Beacon V2 certificate, then
+    /// use the returned `seed_hex` as the `bell_seed_anchor_hex` for
+    /// a V2 fork-cert prove → verify round trip. Confirms the two
+    /// V2 surfaces compose — operators don't have to hand-roll the
+    /// anchor.
+    #[tokio::test]
+    async fn v2_fork_cert_consumes_v2_bell_beacon_seed() {
+        // Build a balanced 16-pair window so the Bell-Beacon gate
+        // passes (mirrors the substrate's `balanced_window`).
+        let mut pairs = Vec::new();
+        for i in 0..16u8 {
+            let mut tag = [0u8; 32];
+            tag[0] = i;
+            tag[31] = i;
+            pairs.push(BellBeaconV2PairDto {
+                first_energy: if i & 1 == 1 { 100 } else { 10 },
+                first_tx_count: if (i >> 1) & 1 == 1 { 100 } else { 10 },
+                second_energy: if (i >> 2) & 1 == 1 { 100 } else { 10 },
+                second_tx_count: if (i >> 3) & 1 == 1 { 100 } else { 10 },
+                tag_hex: hex::encode(tag),
+            });
+        }
+        let mut prev = [0u8; 32];
+        prev[0] = 9;
+
+        // Issue the Bell-Beacon V2 certificate.
+        let issue_resp = post_bell_beacon_v2_issue(Json(BellBeaconV2IssueReq {
+            chain_id: "test-chain-v1".to_string(),
+            window_start: 100,
+            window_end: 200,
+            pairs: pairs.clone(),
+            prev_block_hash_hex: hex::encode(prev),
+        }))
+        .await;
+        let body = issue_resp.0;
+        assert_eq!(body["status"], "ok", "bell-beacon issue failed: {body:?}");
+        let seed_hex = body["certificate"]["seed_hex"]
+            .as_str()
+            .expect("seed_hex returned")
+            .to_string();
+        assert_eq!(seed_hex.len(), 64);
+
+        // Feed the seed into V2 fork-cert prove.
+        let prove_resp = post_fork_cert_v2_prove(Json(ForkCertV2ProveReq {
+            fork_root_hex: fork_root_hex(),
+            blocks: vec![ForkBlockDto {
+                seed_energy: 1000,
+                observed_epoch: 0,
+            }],
+            evaluated_at_epoch: 200,
+            threshold: 600,
+            lambda_epochs: 100,
+            bell_seed_anchor_hex: seed_hex.clone(),
+            seed_anchor_epoch: 150,
+        }))
+        .await;
+        let body = prove_resp.0;
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["is_evaporated"], true);
+        let witness_hex = body["witness_hex"].as_str().unwrap().to_string();
+        let total_seed = body["total_seed_energy"].as_u64().unwrap() as u128;
+        let decayed = body["decayed_energy"].as_u64().unwrap() as u128;
+
+        // V2 fork-cert verify with the same seed verifies.
+        let verify_resp = post_fork_cert_v2_verify(Json(ForkCertV2VerifyReq {
+            fork_root_hex: fork_root_hex(),
+            evaluated_at_epoch: 200,
+            total_seed_energy: total_seed,
+            decayed_energy: decayed,
+            threshold: 600,
+            bell_seed_anchor_hex: seed_hex,
+            seed_anchor_epoch: 150,
+            witness_hex,
+        }))
+        .await;
+        assert_eq!(verify_resp.0["verified"], true);
     }
 
     /// Different anchor → different witness → original verification
