@@ -425,5 +425,56 @@ mod tests {
             let clocks_b = all_block_clocks(&b, 100).unwrap();
             prop_assert_eq!(clocks_a, clocks_b);
         }
+
+        /// Doctrine §4.1 time-arrow claim, locked over random
+        /// DAG topologies: if `a` precedes `b` in the DAG (i.e.
+        /// `a` is in `b`'s causal past), then
+        /// `clock(a).current_tick <= clock(b).current_tick`.
+        ///
+        /// This is the substrate-level statement of "the chain
+        /// has a time arrow" — Decay-Lamport time agrees with
+        /// causal precedence, regardless of which fork or
+        /// merge-history `b` was born on.
+        ///
+        /// 64 random DAG topologies; for each, walk every
+        /// (ancestor, descendant) pair via `causal_past` and
+        /// assert tick non-decrease.
+        #[test]
+        fn dag_arrow_implies_tick_non_decrease(spec in arb_dag()) {
+            use crate::dag::causal_past;
+
+            let mut lc = LightCone::new();
+            for (seed, parents, energy, epoch) in &spec {
+                let bid = id(*seed);
+                let parent_ids: Vec<BlockId> = parents.iter().map(|p| id(*p)).collect();
+                let _ = lc.insert(Block::new(bid, parent_ids, *energy, *epoch));
+            }
+            let clocks = all_block_clocks(&lc, 100).unwrap();
+
+            // For every block in the DAG, every member of its
+            // causal past must have a tick <= its tick.
+            let block_ids: Vec<BlockId> = lc.ids().collect();
+            for descendant in &block_ids {
+                let desc_tick = clocks
+                    .get(descendant)
+                    .map(|c| c.current_tick)
+                    .unwrap_or(0);
+                let past = causal_past(&lc, *descendant);
+                for ancestor in past {
+                    let anc_tick = clocks
+                        .get(&ancestor)
+                        .map(|c| c.current_tick)
+                        .unwrap_or(0);
+                    prop_assert!(
+                        anc_tick <= desc_tick,
+                        "DAG arrow violation: ancestor {:?} (tick {}) > descendant {:?} (tick {})",
+                        ancestor,
+                        anc_tick,
+                        descendant,
+                        desc_tick
+                    );
+                }
+            }
+        }
     }
 }

@@ -387,7 +387,7 @@ Once Phase C lands, this step:
 
 ### Monitoring
 
-The three Lane-4-relevant operator endpoints to watch:
+The Lane-4-relevant operator endpoints to watch:
 
 ```
 curl http://node:8080/api/light_cone/candidate_heads
@@ -399,21 +399,65 @@ curl http://node:8080/api/light_cone/authoritative_head
 curl http://node:8080/api/light_cone/antichain_digest_history
   # Past 128 blocks of antichain-digest pairs — cross-compare
   # across cluster validators to detect any historical divergence.
+
+curl http://node:8080/api/light_cone/block_clock/<hex_block_id>
+  # Decay-Lamport clock at a specific DAG block (shipped 2026-05-06).
+  # Pure function of (DAG, block_id, tick_quantum). Pin a known
+  # fork point, ask each validator: equality across all 4
+  # validators is the substrate-level convergence claim;
+  # inequality is either DAG drift OR tick_quantum mismatch.
+  # The response surfaces tick_quantum so operators can
+  # distinguish those two failure modes.
+
+curl http://node:8080/api/lamport_time
+  # Chain-global running clock — pairs with block_clock.
+  # If chain-global ticks agree across nodes but per-block
+  # clocks at the antichain head disagree, the divergence is
+  # in the DAG itself, not the clock.
 ```
 
 For cluster-divergence diagnosis:
 
 ```
+# Authoritative-head agreement (fast).
 for node in node1 node2 node3 node4; do
   echo "--- $node ---"
   curl -s http://$node:8080/api/light_cone/authoritative_head | jq -r .head
 done
+
+# Antichain-digest agreement at a specific past height.
+HEIGHT=12345
+for node in node1 node2 node3 node4; do
+  echo "--- $node ---"
+  curl -s http://$node:8080/api/light_cone/antichain_digest_history \
+    | jq -r ".history[] | select(.block_height == $HEIGHT) | .digest"
+done
+
+# Per-block clock agreement (deepest substrate check). Pick a
+# known fork-point block_id and ask every validator for its
+# Decay-Lamport clock.
+BLOCK=0x<hex_block_id>
+for node in node1 node2 node3 node4; do
+  echo "--- $node ---"
+  curl -s http://$node:8080/api/light_cone/block_clock/$BLOCK \
+    | jq -c '{tick: .current_tick, accum: .accumulated_energy, q: .tick_quantum}'
+done
 ```
 
-If the heads disagree for more than a few blocks, that's the
-freeze-class signal Lane 4's `replay_and_apply_atomic` was designed
-to recover from cleanly — but recovery requires Phase C's
-hot-path wiring.
+The three checks form a layered diagnosis ladder:
+
+1. **Authoritative-head agreement** — fastest signal. If heads
+   disagree for more than a few blocks, the cluster is forking
+   live; `replay_and_apply_atomic` is the recovery path under
+   `mcc_full`.
+2. **Antichain-digest agreement** — historical signal. If past
+   digests diverged at any height, that's a freeze-class flag
+   even if the live state has converged.
+3. **Per-block clock agreement** — deepest substrate signal. If
+   clocks at the same block_id differ, either the DAG topology
+   below that block diverged OR validators are running with
+   different `tick_quantum`. The response surfaces `tick_quantum`
+   for ops to disambiguate.
 
 ### Rollback
 
