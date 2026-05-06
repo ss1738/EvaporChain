@@ -91,6 +91,7 @@ evaporchain-evap-fork-cert-v2 = { path = "../evaporchain-evap-fork-cert-v2" }
 evaporchain-bell-beacon-v2 = { path = "../evaporchain-bell-beacon-v2" }
 evaporchain-singh-attractor-v2 = { path = "../evaporchain-singh-attractor-v2" }
 evaporchain-ib-validators-v2 = { path = "../evaporchain-ib-validators-v2" }
+evaporchain-light-cone-v2 = { path = "../evaporchain-light-cone-v2" }
 evaporchain-hlts = { path = "../evaporchain-hlts" }
 evaporchain-pnt = { path = "../evaporchain-pnt" }
 evaporchain-hlwa = { path = "../evaporchain-hlwa" }

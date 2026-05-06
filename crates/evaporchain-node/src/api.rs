@@ -6267,6 +6267,205 @@ async fn post_ib_validators_v2_jail_chsh_failure(
     }))
 }
 
+// ─────────────── Light-Cone V2 (causal-cone Merkle proofs) ─────────
+//
+// V1 (`/api/light_cone/*`) ships chain-state DAG queries
+// (`candidate_heads`, `authoritative_head`, `antichain_digest`,
+// `block_clock`). V2 closes the gap for light clients: instead of
+// sending the full DAG, the chain commits to each block's causal
+// past via a BLAKE3 Merkle root. Light clients verify ancestry in
+// O(log n) from the root + a proof, never touching the DAG.
+//
+// Three endpoints, all stateless (DAG submitted as input):
+//
+//  - POST /api/light_cone_v2/causal_root: compute the Merkle
+//    commitment over a block's BTreeSet-sorted causal_past.
+//  - POST /api/light_cone_v2/prove_ancestry: produce a MerklePath
+//    proving (descendant has ancestor in its causal past).
+//  - POST /api/light_cone_v2/verify_ancestry: pure light-client
+//    verifier — needs only (causal_root, ancestor_id, proof).
+
+#[derive(Debug, Deserialize)]
+pub struct LightConeV2CausalRootReq {
+    pub blocks: Vec<AntichainBlockDto>,
+    pub block_id_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LightConeV2ProveReq {
+    pub blocks: Vec<AntichainBlockDto>,
+    pub descendant_hex: String,
+    pub ancestor_hex: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MerklePathDto {
+    pub siblings_hex: Vec<String>,
+    pub directions: Vec<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LightConeV2VerifyReq {
+    pub causal_root_hex: String,
+    pub ancestor_id_hex: String,
+    pub proof: MerklePathDto,
+}
+
+/// Build a `LightCone` from the DTO blocks. Mirrors the inline
+/// pattern in `post_antichain_compute`; factoring it here keeps the
+/// V2 handlers thin.
+fn build_light_cone_from_dto(
+    blocks: &[AntichainBlockDto],
+) -> Result<evaporchain_light_cone::LightCone, String> {
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
+    fn parse_id(s: &str) -> Option<BlockId> {
+        let bytes = hex::decode(s).ok()?;
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&bytes);
+        Some(id)
+    }
+    let mut lc = LightCone::new();
+    for b in blocks {
+        let id = parse_id(&b.id_hex).ok_or_else(|| format!("bad id_hex: {}", b.id_hex))?;
+        let mut parents = Vec::new();
+        for ph in &b.parent_ids {
+            parents.push(parse_id(ph).ok_or_else(|| format!("bad parent id: {ph}"))?);
+        }
+        lc.insert(Block::new(id, parents, b.energy, b.observed_epoch))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(lc)
+}
+
+async fn post_light_cone_v2_causal_root(
+    Json(req): Json<LightConeV2CausalRootReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_light_cone_v2::causal_root;
+
+    let lc = match build_light_cone_from_dto(&req.blocks) {
+        Ok(lc) => lc,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e})),
+    };
+    let block_id = match decode_32(&req.block_id_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"block_id_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let root = causal_root(&lc, block_id);
+    Json(serde_json::json!({
+        "status":"ok",
+        "block_id_hex": req.block_id_hex,
+        "causal_root_hex": hex::encode(root),
+    }))
+}
+
+async fn post_light_cone_v2_prove_ancestry(
+    Json(req): Json<LightConeV2ProveReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_light_cone_v2::{causal_root, prove_ancestry};
+
+    let lc = match build_light_cone_from_dto(&req.blocks) {
+        Ok(lc) => lc,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e})),
+    };
+    let descendant = match decode_32(&req.descendant_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"descendant_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let ancestor = match decode_32(&req.ancestor_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"ancestor_hex must be 64 hex chars"
+            }))
+        }
+    };
+    match prove_ancestry(&lc, descendant, ancestor) {
+        Ok(path) => {
+            let root = causal_root(&lc, descendant);
+            Json(serde_json::json!({
+                "status":"ok",
+                "descendant_hex": req.descendant_hex,
+                "ancestor_hex": req.ancestor_hex,
+                "causal_root_hex": hex::encode(root),
+                "proof": MerklePathDto {
+                    siblings_hex: path.siblings.iter().map(hex::encode).collect(),
+                    directions: path.directions,
+                },
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "status":"error",
+            "detail": e.to_string(),
+        })),
+    }
+}
+
+async fn post_light_cone_v2_verify_ancestry(
+    Json(req): Json<LightConeV2VerifyReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_light_cone_v2::{verify_ancestry, MerklePath};
+
+    let root = match decode_32(&req.causal_root_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"causal_root_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let ancestor = match decode_32(&req.ancestor_id_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"ancestor_id_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let mut siblings = Vec::with_capacity(req.proof.siblings_hex.len());
+    for s in &req.proof.siblings_hex {
+        match decode_32(s) {
+            Some(b) => siblings.push(b),
+            None => {
+                return Json(serde_json::json!({
+                    "status":"error",
+                    "detail": format!("proof.siblings_hex entry must be 64 hex chars: {s}"),
+                }))
+            }
+        }
+    }
+    let path = MerklePath {
+        siblings,
+        directions: req.proof.directions.clone(),
+    };
+    match verify_ancestry(&root, &ancestor, &path) {
+        Ok(verified) => Json(serde_json::json!({
+            "status":"ok",
+            "verified": verified,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status":"error",
+            "detail": e.to_string(),
+            "verified": false,
+        })),
+    }
+}
+
 // ─────────────── Antichain Mempool ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -6280,7 +6479,7 @@ pub struct AntichainComputeReq {
     pub current_epoch: u64,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AntichainBlockDto {
     pub id_hex: String,
     pub parent_ids: Vec<String>,
@@ -7674,6 +7873,9 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/singh_attractor_v2/draw",     category: "substrate", description: "Singh-Attractor V2 — Bell-anchored fallback. In-basin selection is V1-deterministic (seed unused). Out-of-basin: inverse-distance weighted sampling seeded by certificate_seed_hex (typically a BellCertificate.seed). Returns selected_center/index, used_fallback flag, and a bounded Lyapunov drift toward the centre.", example: Some(r#"{"state_energy":500,"attractors":[{"center":100,"basin_radius":10,"drift_rate":5},{"center":1000,"basin_radius":100,"drift_rate":10}],"certificate_seed_hex":"<from /api/bell_beacon_v2/issue>"}"#) },
     ApiDocEntry { method: "POST", path: "/api/ib_validators_v2/vote",       category: "substrate", description: "IB Validators V2 vote gate (Immune Validator Set). Wraps Tishby-Pereira-Bialek IB vote with three structural rejection paths: CHSH-failed-window jail, energy-floor jail, explicit slash. Returns commit/abstain/jailed{reason}.", example: Some(r#"{"local_energies":[0,0,0],"prior_energies":[0,64,128],"signature_scale":1024,"lambda_mb":100,"validator_id_hex":"00...01","energy":1000,"energy_floor":10,"current_epoch":5,"jail_state":[]}"#) },
     ApiDocEntry { method: "POST", path: "/api/ib_validators_v2/jail/chsh_failure", category: "substrate", description: "Mass-jail validators active during a window whose BellCertificate failed the CHSH gate. Stateless: caller submits current jail_state, receives updated jail_state with new entries appended.", example: Some(r#"{"participants_hex":["00...01","00...02"],"window_start":100,"window_end":200,"current_epoch":50,"jail_epochs":50,"jail_state":[]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/light_cone_v2/causal_root",   category: "substrate", description: "Light-Cone V2 — compute the BLAKE3 Merkle root over the BTreeSet-sorted causal_past of a block. Stateless: caller submits the DAG.", example: Some(r#"{"blocks":[{"id_hex":"00...00","parent_ids":[],"energy":1000,"observed_epoch":0},{"id_hex":"00...01","parent_ids":["00...00"],"energy":1000,"observed_epoch":1}],"block_id_hex":"00...01"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/light_cone_v2/prove_ancestry", category: "substrate", description: "Light-Cone V2 — produce an O(log n) MerklePath proving an ancestor is in a descendant's causal_past. Returns the descendant's causal_root + proof; light clients verify with /api/light_cone_v2/verify_ancestry without needing the DAG.", example: Some(r#"{"blocks":[...],"descendant_hex":"00...04","ancestor_hex":"00...02"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/light_cone_v2/verify_ancestry", category: "substrate", description: "Light-Cone V2 — pure light-client verifier. Reproduces the Merkle root from (ancestor_id, proof) and compares to causal_root. No DAG needed. Rejects on tampering, wrong root, path-shape mismatch, or empty-cone sentinel.", example: Some(r#"{"causal_root_hex":"<from prove_ancestry>","ancestor_id_hex":"00...02","proof":{"siblings_hex":[...],"directions":[...]}}"#) },
 
     // Antichain Mempool — causal-set maximal-antichain transaction ordering
     ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
@@ -15868,6 +16070,15 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
             "/api/ib_validators_v2/jail/chsh_failure",
             post(post_ib_validators_v2_jail_chsh_failure),
         )
+        .route("/api/light_cone_v2/causal_root", post(post_light_cone_v2_causal_root))
+        .route(
+            "/api/light_cone_v2/prove_ancestry",
+            post(post_light_cone_v2_prove_ancestry),
+        )
+        .route(
+            "/api/light_cone_v2/verify_ancestry",
+            post(post_light_cone_v2_verify_ancestry),
+        )
         .route("/api/antichain/compute", post(post_antichain_compute))
         .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
         .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))
@@ -17380,6 +17591,221 @@ mod bell_beacon_v2_handler_tests {
         }))
         .await;
         assert_eq!(verify_resp.0["verified"], false);
+    }
+}
+
+#[cfg(test)]
+mod light_cone_v2_handler_tests {
+    //! Handler-level tests for Light-Cone V2 causal-cone Merkle
+    //! proofs. Substrate is fully tested in
+    //! `evaporchain-light-cone-v2`. This mod locks the JSON DTO ↔
+    //! `MerklePath` translation, prove → verify round-trip through
+    //! the actual handler bodies, and the load-bearing light-client
+    //! property: verify_ancestry needs only (root, ancestor, proof)
+    //! with no DAG submitted.
+    use super::*;
+
+    fn id_hex(b: u8) -> String {
+        let mut x = [0u8; 32];
+        x[31] = b;
+        hex::encode(x)
+    }
+
+    /// 5-block linear chain 0 → 1 → 2 → 3 → 4.
+    fn linear_chain_blocks() -> Vec<AntichainBlockDto> {
+        let mut out = Vec::new();
+        out.push(AntichainBlockDto {
+            id_hex: id_hex(0),
+            parent_ids: vec![],
+            energy: 1000,
+            observed_epoch: 0,
+        });
+        for i in 1u8..=4 {
+            out.push(AntichainBlockDto {
+                id_hex: id_hex(i),
+                parent_ids: vec![id_hex(i - 1)],
+                energy: 1000,
+                observed_epoch: i as u64,
+            });
+        }
+        out
+    }
+
+    /// causal_root is deterministic over the same DAG + same block.
+    #[tokio::test]
+    async fn causal_root_is_deterministic() {
+        let r1 = post_light_cone_v2_causal_root(Json(LightConeV2CausalRootReq {
+            blocks: linear_chain_blocks(),
+            block_id_hex: id_hex(4),
+        }))
+        .await;
+        let r2 = post_light_cone_v2_causal_root(Json(LightConeV2CausalRootReq {
+            blocks: linear_chain_blocks(),
+            block_id_hex: id_hex(4),
+        }))
+        .await;
+        assert_eq!(r1.0["status"], "ok");
+        assert_eq!(r1.0["causal_root_hex"], r2.0["causal_root_hex"]);
+        assert_ne!(r1.0["causal_root_hex"], "");
+    }
+
+    /// Round-trip prove → verify across every ancestor of block 4.
+    /// Proves the load-bearing claim: verifier needs only the root,
+    /// ancestor id, and proof — no DAG.
+    #[tokio::test]
+    async fn round_trip_prove_then_verify_chain() {
+        for ancestor_byte in 0u8..=3 {
+            let prove = post_light_cone_v2_prove_ancestry(Json(LightConeV2ProveReq {
+                blocks: linear_chain_blocks(),
+                descendant_hex: id_hex(4),
+                ancestor_hex: id_hex(ancestor_byte),
+            }))
+            .await;
+            assert_eq!(
+                prove.0["status"], "ok",
+                "prove failed for ancestor={ancestor_byte}: {:?}",
+                prove.0
+            );
+            let root_hex = prove.0["causal_root_hex"].as_str().unwrap().to_string();
+            let proof: MerklePathDto =
+                serde_json::from_value(prove.0["proof"].clone()).unwrap();
+
+            let verify = post_light_cone_v2_verify_ancestry(Json(LightConeV2VerifyReq {
+                causal_root_hex: root_hex,
+                ancestor_id_hex: id_hex(ancestor_byte),
+                proof,
+            }))
+            .await;
+            assert_eq!(
+                verify.0["verified"], true,
+                "verify failed for ancestor={ancestor_byte}"
+            );
+        }
+    }
+
+    /// prove_ancestry rejects non-ancestors with NotAnAncestor error.
+    #[tokio::test]
+    async fn prove_rejects_non_ancestor() {
+        let resp = post_light_cone_v2_prove_ancestry(Json(LightConeV2ProveReq {
+            blocks: linear_chain_blocks(),
+            // id(0) is genesis; id(2) is descendant. id(2) is NOT in
+            // causal past of id(0).
+            descendant_hex: id_hex(0),
+            ancestor_hex: id_hex(2),
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "error");
+        assert!(resp.0["detail"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("ancestor"));
+    }
+
+    /// Tampered sibling → verify rejects (Merkle path doesn't
+    /// reproduce the root).
+    #[tokio::test]
+    async fn verify_rejects_tampered_sibling() {
+        let prove = post_light_cone_v2_prove_ancestry(Json(LightConeV2ProveReq {
+            blocks: linear_chain_blocks(),
+            descendant_hex: id_hex(4),
+            ancestor_hex: id_hex(2),
+        }))
+        .await;
+        let root_hex = prove.0["causal_root_hex"].as_str().unwrap().to_string();
+        let mut proof: MerklePathDto =
+            serde_json::from_value(prove.0["proof"].clone()).unwrap();
+        if proof.siblings_hex.is_empty() {
+            // Tree of 1 leaf has no siblings — pick a different
+            // ancestor with a real path.
+            return;
+        }
+        let mut bytes = hex::decode(&proof.siblings_hex[0]).unwrap();
+        bytes[0] ^= 0xff;
+        proof.siblings_hex[0] = hex::encode(&bytes);
+
+        let verify = post_light_cone_v2_verify_ancestry(Json(LightConeV2VerifyReq {
+            causal_root_hex: root_hex,
+            ancestor_id_hex: id_hex(2),
+            proof,
+        }))
+        .await;
+        assert_eq!(verify.0["verified"], false);
+    }
+
+    /// Path-shape mismatch (siblings.len ≠ directions.len) → verifier
+    /// returns a structured error rather than a silent false.
+    #[tokio::test]
+    async fn verify_rejects_path_shape_mismatch() {
+        let resp = post_light_cone_v2_verify_ancestry(Json(LightConeV2VerifyReq {
+            causal_root_hex: hex::encode([0u8; 32]),
+            ancestor_id_hex: id_hex(0),
+            proof: MerklePathDto {
+                siblings_hex: vec![hex::encode([0u8; 32]), hex::encode([1u8; 32])],
+                directions: vec![false],
+            },
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "error");
+        assert_eq!(resp.0["verified"], false);
+        assert!(resp.0["detail"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("path"));
+    }
+
+    /// Diamond DAG: 0 ← {1, 2} ← 3. id(3)'s causal_past = {0, 1, 2}.
+    /// Round-trip every ancestor.
+    #[tokio::test]
+    async fn round_trip_diamond_dag() {
+        let blocks = vec![
+            AntichainBlockDto {
+                id_hex: id_hex(0),
+                parent_ids: vec![],
+                energy: 1000,
+                observed_epoch: 0,
+            },
+            AntichainBlockDto {
+                id_hex: id_hex(1),
+                parent_ids: vec![id_hex(0)],
+                energy: 1000,
+                observed_epoch: 1,
+            },
+            AntichainBlockDto {
+                id_hex: id_hex(2),
+                parent_ids: vec![id_hex(0)],
+                energy: 1000,
+                observed_epoch: 1,
+            },
+            AntichainBlockDto {
+                id_hex: id_hex(3),
+                parent_ids: vec![id_hex(1), id_hex(2)],
+                energy: 1000,
+                observed_epoch: 2,
+            },
+        ];
+        for ancestor_byte in 0u8..=2 {
+            let prove = post_light_cone_v2_prove_ancestry(Json(LightConeV2ProveReq {
+                blocks: blocks.clone(),
+                descendant_hex: id_hex(3),
+                ancestor_hex: id_hex(ancestor_byte),
+            }))
+            .await;
+            let root_hex = prove.0["causal_root_hex"].as_str().unwrap().to_string();
+            let proof: MerklePathDto =
+                serde_json::from_value(prove.0["proof"].clone()).unwrap();
+            let verify = post_light_cone_v2_verify_ancestry(Json(LightConeV2VerifyReq {
+                causal_root_hex: root_hex,
+                ancestor_id_hex: id_hex(ancestor_byte),
+                proof,
+            }))
+            .await;
+            assert_eq!(
+                verify.0["verified"], true,
+                "verify failed for diamond ancestor={ancestor_byte}"
+            );
+        }
     }
 }
 
