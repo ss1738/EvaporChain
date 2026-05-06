@@ -9,6 +9,21 @@
 | **Created** | 2026-03-26 |
 | **Network** | EvaporChain Testnet |
 
+## Implementation Status
+
+> ⚠️ **The specification below is the target shape of EVR-20. Not every part is wired into the chain's HTTP API today.** External developers writing against this standard should consult the table below before integrating.
+>
+> | Surface | Status | Where |
+> |---|---|---|
+> | Read queries (token metadata, holder balance, supply with current decay) | ✅ Live | `GET /api/tokens/:id`, `GET /api/tokens/:id/holders/:addr` |
+> | Token deployment (`deploy`) | ✅ Live | `POST /api/tokens` (admin-gated) |
+> | `transfer(from, to, amount)` mutation endpoint | ⏳ Planned — **Phase 4.4** of `DOCTRINE_PUNCH_LIST.md` ecosystem layer | not yet wired into `evaporchain-node::api` |
+> | `burn(amount)` mutation endpoint | ⏳ Planned — **Phase 4.4** | not yet wired |
+> | `refresh(amount)` (counteract decay) | ⏳ Planned — **Phase 4.4** | substrate exists in `evaporchain-execution`; HTTP route not exposed |
+> | Decay arithmetic (Coq-verified `energy_at_epoch`) | ✅ Live and machine-checked | `research/coq/EnergyDecayMonotonicity.v` |
+>
+> The mutation endpoints are deliberately not yet exposed: every code path that mutates token state must first land behind the antichain-mempool / MCC fork-choice promotion to `default` (Layer 4 hot-path wiring per the doctrine roadmap). When that ships, this banner will be replaced with a "✅ Fully implemented as of vX.Y" notice + commit reference.
+
 ## Abstract
 
 EVR-20 defines a standard interface for fungible tokens with thermodynamic supply decay on the EvaporChain network. Unlike ERC-20 tokens which maintain a fixed total supply, EVR-20 tokens have a supply that decays exponentially over time according to a configurable half-life. All holder balances decay proportionally, creating a naturally deflationary token model that mirrors the thermodynamic principle of entropy increase.
