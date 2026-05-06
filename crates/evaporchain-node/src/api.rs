@@ -5961,6 +5961,77 @@ async fn post_bell_beacon_v2_verify(
     }
 }
 
+// ─────────────── Singh-Attractor V2 (Bell-anchored fallback) ───────
+//
+// V1 (`/api/singh_attractor`) ships deterministic in-basin selection
+// + nearest-centre fallback. V1's fallback is predictable: a
+// malicious proposer who can push state into the no-basin region can
+// know in advance which attractor the chain will fall back to.
+//
+// V2 closes that gap by anchoring the fallback to a chain-supplied
+// 32-byte seed (typically `BellCertificate.seed` from
+// `/api/bell_beacon_v2/issue`). Out-of-basin selection becomes
+// inverse-distance-weighted sampling seeded by the certificate;
+// closer attractors are likelier but not deterministic. In-basin
+// selection is unchanged from V1 — the seed is unused.
+//
+// V2 also returns a bounded Lyapunov drift `min(|state − center|,
+// drift_rate)` toward the selected attractor's centre, so the chain
+// can apply it per epoch and the energy state strictly approaches
+// the centre on the basin's interior.
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AttractorV2Dto {
+    pub center: u64,
+    pub basin_radius: u64,
+    /// Maximum per-epoch drift magnitude toward `center`.
+    pub drift_rate: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SinghAttractorV2DrawReq {
+    pub state_energy: u64,
+    pub attractors: Vec<AttractorV2Dto>,
+    /// 32-byte certificate seed (typically from
+    /// `/api/bell_beacon_v2/issue` `seed_hex`).
+    pub certificate_seed_hex: String,
+}
+
+async fn post_singh_attractor_v2_draw(
+    Json(req): Json<SinghAttractorV2DrawReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_singh_attractor_v2::{draw_attractor, AttractorV2};
+
+    let seed = match decode_32(&req.certificate_seed_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"certificate_seed_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let attractors: Vec<AttractorV2> = req
+        .attractors
+        .iter()
+        .map(|a| AttractorV2::new(a.center, a.basin_radius, a.drift_rate))
+        .collect();
+
+    match draw_attractor(req.state_energy, &attractors, &seed) {
+        Ok(r) => Json(serde_json::json!({
+            "status": "ok",
+            "selected_center": r.selected_center,
+            "selected_index": r.selected_index,
+            "drift": r.drift.to_string(), // i128 → string for JSON safety
+            "used_fallback": r.used_fallback,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "detail": e.to_string(),
+        })),
+    }
+}
+
 // ─────────────── Antichain Mempool ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -7365,6 +7436,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/fork_cert_v2/verify",         category: "substrate", description: "O(1) light-client verify of an EvaporatedForkCertV2. Checks anchor-bound witness + causality + decayed_energy < threshold.", example: Some(r#"{"fork_root_hex":"00...01","evaluated_at_epoch":200,"total_seed_energy":1000,"decayed_energy":50,"threshold":100,"bell_seed_anchor_hex":"00...09","seed_anchor_epoch":150,"witness_hex":"<from /api/fork_cert_v2/prove>"}"#) },
     ApiDocEntry { method: "POST", path: "/api/bell_beacon_v2/issue",        category: "substrate", description: "Issue a Bell-Certified Beacon V2 certificate over a window of concurrent block-pairs. Runs the CHSH gate at integer milli-units against the honest sample plus a synthetic coordinated-subset cartel injection, anchors to prev_block_hash, and emits an anti-grinding seed. The seed is the canonical chain-supplied anchor for /api/fork_cert_v2/prove.", example: Some(r#"{"chain_id":"test-chain-v1","window_start":100,"window_end":200,"prev_block_hash_hex":"00...09","pairs":[{"first_energy":100,"first_tx_count":10,"second_energy":10,"second_tx_count":100,"tag_hex":"00...01"}]}"#) },
     ApiDocEntry { method: "POST", path: "/api/bell_beacon_v2/verify",       category: "substrate", description: "Verify a BellCertificate by re-running the gate against the supplied pairs and re-deriving the seed. Rejects on any field mismatch (window, prev_hash, threshold, bucket counts, S values, gap, seed).", example: Some(r#"{"chain_id":"test-chain-v1","prev_block_hash_hex":"00...09","pairs":[...],"certificate":{"<from /api/bell_beacon_v2/issue>":""}}"#) },
+    ApiDocEntry { method: "POST", path: "/api/singh_attractor_v2/draw",     category: "substrate", description: "Singh-Attractor V2 — Bell-anchored fallback. In-basin selection is V1-deterministic (seed unused). Out-of-basin: inverse-distance weighted sampling seeded by certificate_seed_hex (typically a BellCertificate.seed). Returns selected_center/index, used_fallback flag, and a bounded Lyapunov drift toward the centre.", example: Some(r#"{"state_energy":500,"attractors":[{"center":100,"basin_radius":10,"drift_rate":5},{"center":1000,"basin_radius":100,"drift_rate":10}],"certificate_seed_hex":"<from /api/bell_beacon_v2/issue>"}"#) },
 
     // Antichain Mempool — causal-set maximal-antichain transaction ordering
     ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
@@ -15553,6 +15625,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/fork_cert_v2/verify", post(post_fork_cert_v2_verify))
         .route("/api/bell_beacon_v2/issue", post(post_bell_beacon_v2_issue))
         .route("/api/bell_beacon_v2/verify", post(post_bell_beacon_v2_verify))
+        .route("/api/singh_attractor_v2/draw", post(post_singh_attractor_v2_draw))
         .route("/api/antichain/compute", post(post_antichain_compute))
         .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
         .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))
@@ -17065,6 +17138,174 @@ mod bell_beacon_v2_handler_tests {
         }))
         .await;
         assert_eq!(verify_resp.0["verified"], false);
+    }
+}
+
+#[cfg(test)]
+mod singh_attractor_v2_handler_tests {
+    //! Handler-level smoke tests for Singh-Attractor V2 draw. The
+    //! substrate is fully tested in `evaporchain-singh-attractor-v2`
+    //! (in-basin determinism, out-of-basin seed dependence, drift
+    //! bounds, Lyapunov property). This mod locks the JSON DTO ↔
+    //! inner-cert translation, the in-basin / out-of-basin branch
+    //! contract through the actual handler body, and the composition
+    //! with `/api/bell_beacon_v2/issue` (a real chain-supplied seed
+    //! drives the fallback draw).
+    use super::*;
+
+    fn two_attractors() -> Vec<AttractorV2Dto> {
+        vec![
+            AttractorV2Dto {
+                center: 100,
+                basin_radius: 10,
+                drift_rate: 5,
+            },
+            AttractorV2Dto {
+                center: 1000,
+                basin_radius: 100,
+                drift_rate: 10,
+            },
+        ]
+    }
+
+    fn seed_hex(b: u8) -> String {
+        hex::encode([b; 32])
+    }
+
+    /// In-basin selection is V1-deterministic: the seed must be
+    /// ignored, and the same state under different seeds picks the
+    /// same attractor with the same drift.
+    #[tokio::test]
+    async fn in_basin_is_seed_invariant() {
+        let r1 = post_singh_attractor_v2_draw(Json(SinghAttractorV2DrawReq {
+            state_energy: 1050, // inside basin around 1000
+            attractors: two_attractors(),
+            certificate_seed_hex: seed_hex(1),
+        }))
+        .await;
+        let r2 = post_singh_attractor_v2_draw(Json(SinghAttractorV2DrawReq {
+            state_energy: 1050,
+            attractors: two_attractors(),
+            certificate_seed_hex: seed_hex(99),
+        }))
+        .await;
+        assert_eq!(r1.0["status"], "ok");
+        assert_eq!(r2.0["status"], "ok");
+        assert_eq!(r1.0["selected_center"], 1000);
+        assert_eq!(r2.0["selected_center"], 1000);
+        assert_eq!(r1.0["used_fallback"], false);
+        assert_eq!(r1.0["drift"], r2.0["drift"]);
+    }
+
+    /// Out-of-basin: the seed drives selection. Same seed must give
+    /// byte-identical results (validator-determinism).
+    #[tokio::test]
+    async fn out_of_basin_same_seed_is_deterministic() {
+        let r1 = post_singh_attractor_v2_draw(Json(SinghAttractorV2DrawReq {
+            state_energy: 500, // gap between basins
+            attractors: two_attractors(),
+            certificate_seed_hex: seed_hex(7),
+        }))
+        .await;
+        let r2 = post_singh_attractor_v2_draw(Json(SinghAttractorV2DrawReq {
+            state_energy: 500,
+            attractors: two_attractors(),
+            certificate_seed_hex: seed_hex(7),
+        }))
+        .await;
+        assert_eq!(r1.0["used_fallback"], true);
+        assert_eq!(r2.0["used_fallback"], true);
+        assert_eq!(r1.0["selected_center"], r2.0["selected_center"]);
+    }
+
+    /// Out-of-basin sampling spreads across attractors as the seed
+    /// varies — no single attractor wins every seed (the V2 anti-
+    /// grinding contract that V1 lacked).
+    #[tokio::test]
+    async fn out_of_basin_seed_varies_selection() {
+        let mut seen = std::collections::HashSet::new();
+        for s in 0u8..40 {
+            let r = post_singh_attractor_v2_draw(Json(SinghAttractorV2DrawReq {
+                state_energy: 500,
+                attractors: two_attractors(),
+                certificate_seed_hex: seed_hex(s),
+            }))
+            .await;
+            seen.insert(r.0["selected_center"].as_u64().unwrap());
+        }
+        assert!(
+            seen.len() >= 2,
+            "fallback should sample both attractors over varying seeds; saw {seen:?}"
+        );
+    }
+
+    /// Empty attractor list → handler propagates `Empty` as
+    /// structured error.
+    #[tokio::test]
+    async fn empty_attractors_rejected() {
+        let r = post_singh_attractor_v2_draw(Json(SinghAttractorV2DrawReq {
+            state_energy: 100,
+            attractors: vec![],
+            certificate_seed_hex: seed_hex(0),
+        }))
+        .await;
+        assert_eq!(r.0["status"], "error");
+        assert!(r.0["detail"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("empty"));
+    }
+
+    /// End-to-end composition: bell-beacon-v2/issue → take seed_hex →
+    /// singh-attractor-v2/draw with that seed → out-of-basin draw
+    /// uses a real chain-supplied seed. Locks the substrate-to-
+    /// substrate handshake at the network layer.
+    #[tokio::test]
+    async fn singh_attractor_v2_consumes_v2_bell_beacon_seed() {
+        // Build a balanced 16-pair window so Bell-Beacon V2 issues.
+        let mut pairs = Vec::new();
+        for i in 0..16u8 {
+            let mut tag = [0u8; 32];
+            tag[0] = i;
+            tag[31] = i;
+            pairs.push(BellBeaconV2PairDto {
+                first_energy: if i & 1 == 1 { 100 } else { 10 },
+                first_tx_count: if (i >> 1) & 1 == 1 { 100 } else { 10 },
+                second_energy: if (i >> 2) & 1 == 1 { 100 } else { 10 },
+                second_tx_count: if (i >> 3) & 1 == 1 { 100 } else { 10 },
+                tag_hex: hex::encode(tag),
+            });
+        }
+        let mut prev = [0u8; 32];
+        prev[0] = 9;
+
+        let issue_resp = post_bell_beacon_v2_issue(Json(BellBeaconV2IssueReq {
+            chain_id: "test-chain-v1".to_string(),
+            window_start: 100,
+            window_end: 200,
+            pairs,
+            prev_block_hash_hex: hex::encode(prev),
+        }))
+        .await;
+        assert_eq!(issue_resp.0["status"], "ok");
+        let seed = issue_resp.0["certificate"]["seed_hex"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Use that seed to drive an out-of-basin Singh-Attractor V2 draw.
+        let draw_resp = post_singh_attractor_v2_draw(Json(SinghAttractorV2DrawReq {
+            state_energy: 500,
+            attractors: two_attractors(),
+            certificate_seed_hex: seed,
+        }))
+        .await;
+        assert_eq!(draw_resp.0["status"], "ok");
+        assert_eq!(draw_resp.0["used_fallback"], true);
+        // Selection is one of the two attractor centres.
+        let center = draw_resp.0["selected_center"].as_u64().unwrap();
+        assert!(center == 100 || center == 1000);
     }
 }
 
