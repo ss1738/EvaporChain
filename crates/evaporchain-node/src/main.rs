@@ -337,6 +337,25 @@ impl ProofVerifier for ChainProofVerifier {
         block_height: u64,
         genesis_state_root: [u8; 32],
     ) -> bool {
+        // AUDIT_2026_05_06.md H-19 — defence in depth. Reject
+        // MockProver-shaped proofs at the verifier boundary BEFORE
+        // the cryptographic verify path runs. The MockProver
+        // crate-level `#[cfg]` gate is the primary protection
+        // (MockProver doesn't exist in release builds without
+        // `feature = "test-utils"`); this is the catch-all in
+        // case the cfg gate is bypassed by an accidentally-enabled
+        // dependency feature flag in the release tree.
+        if evaporchain_proving::is_mock_prover_proof_bytes(proof_bytes) {
+            tracing::warn!(
+                block_height,
+                "Rejected block proof: MockProver fingerprint detected on wire \
+                 (32 zero bytes). MockProver must never reach production; this \
+                 indicates either a misconfigured release dependency or a \
+                 compromised peer."
+            );
+            return false;
+        }
+
         let p = safe_lock(&self.prover);
         let proof = evaporchain_proving::CompressedProof {
             proof_bytes: proof_bytes.to_vec(),

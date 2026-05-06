@@ -88,6 +88,26 @@ pub fn is_mock_prover_proof(proof: &CompressedProof) -> bool {
         && proof.z0_bytes.iter().all(|&b| b == 0)
 }
 
+/// Wire-layer fingerprint check for the raw `proof_bytes` field
+/// of a chain block (`Block::nova_proof: Option<Vec<u8>>`). This
+/// is the version production verifiers actually call: the consensus
+/// layer holds only `Vec<u8>` (per the trait-only abstraction in
+/// `evaporchain-consensus::ProofVerifier`), not a deserialised
+/// `CompressedProof`.
+///
+/// Returns `true` iff the bytes are exactly 32 zero bytes — the
+/// shape `MockProver::get_proof` emits as `proof_bytes`. Real Nova
+/// proofs are 100s-1000s of pseudo-random hash output bytes, so
+/// length alone discriminates with overwhelming probability.
+///
+/// `ChainProofVerifier::verify_block_proof` in
+/// `evaporchain-node` calls this first; matches are rejected
+/// with a hard error before the cryptographic verify path runs.
+pub fn is_mock_prover_proof_bytes(proof_bytes: &[u8]) -> bool {
+    proof_bytes.len() == MOCK_PROOF_BYTES_LEN
+        && proof_bytes.iter().all(|&b| b == 0)
+}
+
 // ─────────────────────────── Trait ───────────────────────────────────────
 
 /// Trait for IVC/folding-based proving engines.
@@ -468,5 +488,56 @@ mod tests {
             z0_bytes: vec![],
         };
         assert!(!is_mock_prover_proof(&proof));
+    }
+
+    // ── Wire-layer fingerprint guard (is_mock_prover_proof_bytes) ──
+    //
+    // The version production verifiers actually call. Operates on
+    // the raw `Vec<u8>` from `block.nova_proof` because the
+    // consensus layer holds only opaque bytes (per the trait-only
+    // ProofVerifier abstraction).
+
+    /// H-19 wire guard — exactly 32 zero bytes is the MockProver
+    /// signature on the wire. Locks the contract.
+    #[test]
+    fn is_mock_prover_proof_bytes_identifies_mock_signature() {
+        let mock_bytes = vec![0u8; 32];
+        assert!(is_mock_prover_proof_bytes(&mock_bytes));
+    }
+
+    /// H-19 wire guard — actual MockProver output's `proof_bytes`
+    /// field round-trips through the wire predicate.
+    #[test]
+    fn is_mock_prover_proof_bytes_round_trips_with_mock_get_proof() {
+        let mut prover = MockProver::new();
+        prover
+            .fold_block(&dummy_block(1, 1), [0; 32], [1; 32])
+            .unwrap();
+        let proof = prover.get_proof().unwrap();
+        assert!(
+            is_mock_prover_proof_bytes(&proof.proof_bytes),
+            "MockProver proof_bytes field must trip the wire predicate"
+        );
+    }
+
+    /// H-19 wire guard — non-zero bytes of correct length do NOT
+    /// match. Regression guard against length-only matching that
+    /// would catch real proofs of the same size.
+    #[test]
+    fn is_mock_prover_proof_bytes_does_not_flag_random_32_bytes() {
+        let bytes: Vec<u8> = (0u8..32).map(|i| i.wrapping_mul(0x9E)).collect();
+        assert!(!is_mock_prover_proof_bytes(&bytes));
+    }
+
+    /// H-19 wire guard — wrong-length all-zeros (real Nova proofs
+    /// are 100s-1000s of bytes; length alone usually discriminates).
+    #[test]
+    fn is_mock_prover_proof_bytes_does_not_flag_wrong_lengths() {
+        // Real Nova-sized all-zero is a degenerate case but still
+        // not the MockProver fingerprint. Length must be exactly 32.
+        assert!(!is_mock_prover_proof_bytes(&vec![0u8; 1024]));
+        assert!(!is_mock_prover_proof_bytes(&vec![0u8; 31]));
+        assert!(!is_mock_prover_proof_bytes(&vec![0u8; 33]));
+        assert!(!is_mock_prover_proof_bytes(&[]));
     }
 }
