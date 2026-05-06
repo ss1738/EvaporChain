@@ -19,13 +19,15 @@ Ethereum's state exceeds 300GB and grows every block. State expiry (EIP-4444) ha
 4. **Nova IVC Benchmarks**: We benchmarked recursive proof folding at 6.2ms per block on commodity hardware. These benchmarks inform Ethereum's ZK roadmap.
 
 ## What We've Already Built (not planned — BUILT)
-- 6,046 passing tests across 18 core Rust crates + 60 substrate crates
-- Working Verkle trie with Pedersen commitments
-- Working MMR accumulator with energy-stamped nullifiers
-- Nova IVC folding at 6.2ms per block (benchmarked)
-- PID fee controller with Lyapunov stability
-- Live testnet: https://testnet.evaporchain.com
-- 38KB whitepaper with 8 academic citations (`research/whitepaper.md`)
+- **25,435 tests** across **147 workspace crates** (16 core + 131 substrate / supporting).
+- Working Verkle trie with Pedersen commitments.
+- Working MMR accumulator with energy-stamped nullifiers.
+- **Real Nova IVC** at arity 8 with Poseidon-bound state root (per `LAMBDA_FOLD_NOVA_PLAN.md` Phases 1–7). `verify_with_vk_bytes` measured at **23 ms @ 100 folds** on Mac Mini M4 under release — 1.083× of 23 ms @ 10 folds, i.e. essentially flat. **Sublinear-in-active-energy verifier claim is empirically locked.**
+- PID fee controller with Lyapunov stability + integer-arithmetic determinism.
+- Live 2-Mini Tailscale BFT testnet at h=940+ lockstep with R.1/R.3 freeze-fix proven in production. (Public `https://testnet.evaporchain.com` is the operator-facing endpoint; the chain itself runs on a self-hosted Tailscale cluster.)
+- 38 KB whitepaper with 8 academic citations (`research/whitepaper.md`).
+- **5 Coq proof files** mechanized under Rocq 9.1.1 (zero `Admitted.` lemmas; CI-gated on every PR).
+- **5 TLA+ specifications** for safety / liveness / conservation / consensus invariants.
 
 ## What The Grant Funds
 - Cloud infrastructure for public testnet: $6,000/year
