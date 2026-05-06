@@ -383,18 +383,48 @@ Definition Liveness (ss : SystemState) : Prop :=
    11. Helper Lemmas — to be proven across Phases 2–5
    ================================================================ *)
 
-(** [SAFETY-1] Quorum intersection: two stake-weighted quorums of size
-    > 2/3 each must overlap in > 1/3 stake (which is > f, the Byzantine
-    stake). Foundational for safety.
+(** [SAFETY-1] Quorum intersection — arithmetic core.
 
-    Proof: standard inclusion-exclusion on stake measures.
-    Effort: ~30 LOC, 1–2 days. *)
+    Given total stake [T] and two stake-weighted quorums of size [s1]
+    and [s2] each strictly greater than [2*T/3] and bounded above by
+    [T], their stake-weighted intersection (computed via the
+    standard inclusion-exclusion bound [|A ∩ B| ≥ |A| + |B| − |U|])
+    exceeds [T/3] — strictly more than the maximum Byzantine stake
+    under [honest_supermajority].
+
+    Foundational for [SAFETY-3]: any two honest-supermajority quorums
+    must share validators whose total stake exceeds the Byzantine
+    bound. The constructive consequence — that the overlap contains
+    at least one honest validator who cannot vote for conflicting
+    blocks at the same (height, round) — composes through
+    [cross_fork_equivocation_caught] in the consensus-state-machine
+    invariant.
+
+    Effort estimate (skeleton): ~30 LOC, 1–2 days.
+    Reality: discharged in 1 line ([lia]) over the Stake = nat
+    instantiation. The arithmetic is straight linear over the
+    [Stake] type; nat subtraction is safe here because the
+    hypotheses [3*s1 > 2*T] + [3*s2 > 2*T] together imply
+    [s1 + s2 > T] when [T > 0], and the [T = 0] case is killed by
+    [3*s1 > 2*T = 0] forcing [s1 > 0] which contradicts [s1 <= T = 0].
+
+    The follow-on lemma [quorum_intersection_concrete] lifts this
+    arithmetic core to a concrete claim over [ValidatorSet] +
+    [list ValidatorId] sublists; that piece is its own ~50 LOC and
+    is left as a Phase 2 follow-up.
+
+    DISCHARGED 2026-05-06. *)
 Lemma quorum_intersection :
-  forall (vs : ValidatorSet) (q1 q2 : list ValidatorId) (s1 s2 : Stake),
-    (* TODO: state precisely — q1 and q2 each have stake >= quorum_threshold vs *)
-    True.
+  forall (T s1 s2 : Stake),
+    3 * s1 > 2 * T ->
+    3 * s2 > 2 * T ->
+    s1 <= T ->
+    s2 <= T ->
+    3 * (s1 + s2 - T) > T.
 Proof.
-Admitted.
+  intros T s1 s2 H1 H2 Hb1 Hb2.
+  lia.
+Qed.
 
 (** [SAFETY-2] Lock safety: an honest validator that is locked on block
     b in round r will not prevote for any conflicting block b' in any
@@ -428,19 +458,29 @@ Proof.
 Admitted.
 
 (** [LIVENESS-1] Eventual synchrony: under partial synchrony with GST,
-    every message sent by an honest validator at time t > GST is
-    delivered by time t + Δ.
+    every message sent at time t >= GST is delivered by time t + Δ.
 
-    Proof: direct from [is_partial_synchrony] + induction on the
-    pending message queue.
-    Effort: ~25 LOC, 1 day. *)
+    Proof: direct unfolding of [is_partial_synchrony]. This lemma
+    serves as the named handle that downstream liveness proofs use.
+    Effort: ~25 LOC, 1 day.
+
+    DISCHARGED 2026-05-06. The lemma is essentially the definition of
+    [is_partial_synchrony] reified as a named theorem so downstream
+    consumers (e.g., [LIVENESS-2] honest_proposer_eventual) reference
+    it by name rather than unfolding the definition each time. *)
 Lemma eventual_delivery :
-  forall (n : NetworkModel) (sender : ValidatorId) (msg : VoteMsg),
+  forall (n : NetworkModel) (sent_time : nat) (msg : VoteMsg),
     is_partial_synchrony n ->
-    (* TODO: state precisely *)
-    True.
+    In (sent_time, msg) (net_pending n) ->
+    sent_time >= net_gst n ->
+    exists deliver_time,
+      In (deliver_time, msg) (net_delivered n) /\
+      deliver_time <= sent_time + net_delta n.
 Proof.
-Admitted.
+  intros n sent_time msg Hps Hpending Hgst.
+  unfold is_partial_synchrony in Hps.
+  apply Hps; assumption.
+Qed.
 
 (** [LIVENESS-2] Honest proposer eventually selected: the VRF leader
     rotation eventually selects an honest validator as proposer for some
@@ -579,7 +619,7 @@ Admitted.
    ================================================================ *)
 
 (**
-   [SAFETY-1]  quorum_intersection                          ~30 LOC, 1-2 days
+   [SAFETY-1]  quorum_intersection                          DISCHARGED 2026-05-06 (1-line lia)
    [SAFETY-2]  lock_safety                                  ~50 LOC, 2-3 days
    [SAFETY-3]  cross_fork_equivocation_caught               ~40 LOC, 2 days
    [LIVENESS-1] eventual_delivery                            ~25 LOC, 1 day
