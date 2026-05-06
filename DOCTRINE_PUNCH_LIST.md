@@ -343,7 +343,7 @@ Doctrine items absent from the consensus crate's dependency graph entirely. Each
 - [x] **Light-Cone full consensus — substrate complete; full rewrite remains post-V1.** ✅ Substrate DONE 2026-05-04 (`LIGHT_CONE_FULL_DAG_PLAN.md` Phases 1–6, voting-handler wiring + per-tip `dag_round_states` + `try_finalize_antichain` shipped). Full Tendermint replacement (rewrite of 8,782-LOC `tendermint.rs` behind `trait ConsensusEngine`) remains post-mainnet-V1 work. Substrate sub-items shipped:
   - ✅ DAG-aware tip selection (`MccForkChoice::select_tip` + `current_tip` + `create_proposal` integration)
   - ✅ Multi-parent block wire-format with hash continuity (`Block::parents` + `validate_parents_wire_format`)
-  - ✅ Per-fork state-branch substrate (`state_branches` + `LightConeBranchSnapshot` trait + LRU eviction)
+  - ✅ Per-fork state-branch substrate (`state_branches` + `LightConeBranchSnapshot` trait + LRU eviction). **Executor-side wiring closed 2026-05-06**: `capture_committed_branch_snapshot(block, db)` calls `StateSnapshotBranch::capture` and threads it into `attach_branch_snapshot`; `apply_block` invokes it after `on_block_committed` so DAG-mode tips are state-materialized, not metadata-only. 3 regression tests; consensus 514/0/1.
   - ✅ Per-tip voting state via `dag_round_states` (Phase 4 substrate)
   - ✅ Antichain finality predicate (`is_antichain` + `closing_antichain` primitives)
   - ✅ Cross-fork equivocation counting (`cross_fork_equivocations` → `entropic_slash`)

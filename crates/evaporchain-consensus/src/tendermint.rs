@@ -2406,6 +2406,52 @@ impl TendermintConsensus {
         Some(())
     }
 
+    /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — executor-side
+    /// commit hook that closes the deferred wiring. `on_block_committed`
+    /// records the just-committed tip in `state_branches` (metadata
+    /// only); this method captures a `StateSnapshotBranch` of the
+    /// post-execution `db` and attaches it to that tip via
+    /// `attach_branch_snapshot`. After this call returns Ok, the
+    /// branch is materialized — `restore_to_lca` and
+    /// `replay_and_apply_atomic` can roll state back to this tip on
+    /// future fork-switches.
+    ///
+    /// Caller invokes this from the same site that ran the executor,
+    /// immediately after `on_block_committed`, so the snapshot
+    /// reflects the exact post-execution state for `block`.
+    ///
+    /// No-op when `light_cone_state_branches_enabled != "true"` —
+    /// chain bit-compat preserved. No-op when the tip isn't tracked
+    /// in `state_branches` (the flag was flipped off between
+    /// `on_block_committed` and this call).
+    ///
+    /// Errors propagate from `StateSnapshotBranch::capture` (i.e.
+    /// `SnapshotBuilder::create` failure). Callers should log and
+    /// continue — the chain still commits; only DAG-mode rollback
+    /// against this tip is unavailable.
+    pub fn capture_committed_branch_snapshot(
+        &mut self,
+        block: &Block,
+        db: &mut dyn StateDB,
+    ) -> Result<(), String> {
+        let state_branches_enabled = self
+            .governance_params
+            .get("light_cone_state_branches_enabled")
+            .map(|s| s.as_str())
+            == Some("true");
+        if !state_branches_enabled {
+            return Ok(());
+        }
+        let tip_id = Self::block_hash(block);
+        if !self.state_branches.contains_key(&tip_id) {
+            return Ok(());
+        }
+        let snapshot =
+            StateSnapshotBranch::capture(tip_id, block.number, block.epoch, db)?;
+        self.attach_branch_snapshot(tip_id, std::sync::Arc::new(snapshot));
+        Ok(())
+    }
+
     /// Phase 5.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — orphan
     /// detection. Returns the set of state-branch tips that the
     /// chain considers orphaned: tips whose caliber falls below
@@ -5945,6 +5991,19 @@ impl TendermintConsensus {
 
         self.on_block_committed(block, execution.state_root, execution.objects_evaporated);
 
+        // Phase 3.2 of LIGHT_CONE_FULL_DAG_PLAN.md — capture the
+        // post-execution state into the just-recorded tip's branch
+        // metadata so DAG-mode rollback (`replay_and_apply_atomic`)
+        // can restore against this commit. No-op when
+        // `light_cone_state_branches_enabled != "true"`.
+        if let Err(e) = self.capture_committed_branch_snapshot(block, db) {
+            warn!(
+                block = block.number,
+                error = %e,
+                "Light-Cone state-branch snapshot capture failed; chain still committed but DAG-mode rollback against this tip is unavailable"
+            );
+        }
+
         info!(
             block = block.number,
             epoch = block.epoch,
@@ -9260,6 +9319,161 @@ mod tests {
         let s = m.snapshot.as_ref().expect("snapshot attached");
         assert_eq!(s.tip(), tip);
         assert_eq!(s.created_at_height(), 1);
+    }
+
+    /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
+    /// `capture_committed_branch_snapshot` closes the executor-side
+    /// wiring: under `light_cone_state_branches_enabled = "true"`,
+    /// after `record_state_branch` has registered the tip, calling
+    /// the capture method materializes a `StateSnapshotBranch` from
+    /// the executor's `db` and attaches it to the metadata. The
+    /// branch is now restorable via `replay_and_apply_atomic`.
+    #[test]
+    fn test_capture_committed_branch_snapshot_attaches_to_recorded_tip() {
+        fn block_at(height: u64) -> Block {
+            Block {
+                number: height,
+                epoch: height / 10,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: height * 12,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+
+        let block = block_at(7);
+        let tip = TendermintConsensus::block_hash(&block);
+        // The on_block_committed path normally records this; do it
+        // directly to keep the test focused on the capture method.
+        tc.record_state_branch(tip, block.number, /*caliber*/ 1);
+
+        let mut db = InMemoryStateDB::new();
+        tc.capture_committed_branch_snapshot(&block, &mut db)
+            .expect("capture must succeed under enabled flag");
+
+        let m = &tc.state_branches()[&tip];
+        let s = m.snapshot.as_ref().expect("snapshot must be attached");
+        assert_eq!(s.tip(), tip);
+        assert_eq!(s.created_at_height(), block.number);
+    }
+
+    /// Phase 3.2 — flag-off: capture is a no-op (chain bit-compat).
+    /// `state_branches` is empty (because `record_state_branch` is
+    /// also gated by the flag in `on_block_committed`); the capture
+    /// method returns Ok without touching anything.
+    #[test]
+    fn test_capture_committed_branch_snapshot_noop_when_flag_off() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Flag intentionally NOT set → default off.
+        let mut block = Block {
+            number: 1,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            producer_id: Some(0),
+            timestamp: 12,
+            chain_id: String::new(),
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+        };
+        block.timestamp = 24;
+
+        let mut db = InMemoryStateDB::new();
+        tc.capture_committed_branch_snapshot(&block, &mut db)
+            .expect("flag-off capture must return Ok (no-op)");
+
+        assert!(
+            tc.state_branches().is_empty(),
+            "flag-off path must not populate state_branches"
+        );
+    }
+
+    /// Phase 3.2 — defensive no-op when the tip isn't recorded
+    /// (operator flipped the flag on AFTER on_block_committed
+    /// registered the tip — race window). Capture must return Ok
+    /// without panic and without inserting a stub metadata entry.
+    #[test]
+    fn test_capture_committed_branch_snapshot_noop_when_tip_not_tracked() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        let block = Block {
+            number: 2,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            producer_id: Some(0),
+            timestamp: 24,
+            chain_id: String::new(),
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+        };
+
+        // Deliberately skip record_state_branch.
+        let mut db = InMemoryStateDB::new();
+        tc.capture_committed_branch_snapshot(&block, &mut db)
+            .expect("untracked-tip capture must return Ok (no-op)");
+
+        let tip = TendermintConsensus::block_hash(&block);
+        assert!(
+            !tc.state_branches().contains_key(&tip),
+            "no-op must not insert a stub metadata entry"
+        );
     }
 
     /// Phase 3.4 (LRU eviction) — when state_branches exceeds the
