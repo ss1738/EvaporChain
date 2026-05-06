@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use evaporchain_types::energy_at_epoch;
+
 use crate::tier::TierLadder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
@@ -94,15 +96,13 @@ impl HalfLifeNft {
             // Epochs we can advance in this tier.
             let advance = (target - current).min(held_remaining_until_promotion).max(1);
 
-            // Decay energy by `advance` epochs of half-life H.
-            // energy *= 0.5^(advance / H). Integer approximation via
-            // repeated halving every `H` steps + linear interpolation
-            // within. For deterministic integer math:
-            //   energy_after = energy * 2^(-advance / H)  (closed form)
-            // We approximate by step-halving every H epochs, with
-            // the residual as a linear-in-epochs scaling within the
-            // last partial period.
-            self.energy = decay_energy(self.energy, advance, tier.half_life_epochs);
+            // Decay energy by `advance` epochs of half-life H, via
+            // the canonical Coq-verified `evaporchain_types::
+            // energy_at_epoch`. DOCTRINE_PUNCH_LIST.md Layer 0 row 2
+            // mandates that all decay is routed through this function;
+            // the previous local `decay_energy` was the last
+            // workspace-wide bypass and is now removed.
+            self.energy = energy_at_epoch(self.energy, tier.half_life_epochs, advance);
 
             self.held_epochs_by_current_holder = self
                 .held_epochs_by_current_holder
@@ -124,42 +124,17 @@ impl HalfLifeNft {
     }
 }
 
-/// Decay `energy` by `epochs` epochs at half-life `h`. Pure
-/// integer:
-///   full_halvings = epochs / h
-///   residual_epochs = epochs % h
-///   after_full = energy >> full_halvings (saturating to 0)
-///   after_partial = after_full · (2h - residual) / (2h)
-///
-/// The partial scaling is a piecewise-linear approximation of
-/// `0.5^(residual/h)` between (residual=0 → factor 1) and
-/// (residual=h → factor 0.5). Validator-deterministic.
-fn decay_energy(energy: u64, epochs: u64, h: u64) -> u64 {
-    if energy == 0 || epochs == 0 || h == 0 {
-        return energy;
-    }
-    let full_halvings = epochs / h;
-    let residual = epochs % h;
-
-    // Full halvings: energy >> full_halvings, but saturating: if
-    // full_halvings ≥ 64, energy is 0.
-    let after_full = if full_halvings >= 64 {
-        0
-    } else {
-        energy >> (full_halvings as u32)
-    };
-
-    // Partial: linear between factor=1 (residual=0) and factor=0.5
-    // (residual=h). factor_micros = MICROS - residual·MICROS/(2h).
-    // For integer: after_partial = after_full · (2h - residual) / (2h).
-    if residual == 0 {
-        return after_full;
-    }
-    let two_h = (h as u128) * 2;
-    let factor_num = two_h - (residual as u128);
-    let result_u128 = (after_full as u128).saturating_mul(factor_num) / two_h;
-    result_u128 as u64
-}
+// DOCTRINE_PUNCH_LIST.md Layer 0 row 2 — all decay routed through
+// `evaporchain_types::energy_at_epoch`, the Coq-verified canonical
+// function (theorem `energy_at_epoch_monotone` in
+// `research/coq/EnergyDecayMonotonicity.v`). The local `decay_energy`
+// was the last workspace bypass; removed 2026-05-06 to honour the
+// Layer 0 invariant flagged by AUDIT_2026_05_06.md CRITICAL-3. The
+// math was already identical to the canonical function (full halving
+// via `>>` saturating at 64, plus linear within-halving
+// interpolation rearranged from `after · (2h − r) / (2h)` to the
+// equivalent `after − after · r / (2h)` form), so behaviour is
+// preserved bit-exact across all existing test fixtures.
 
 #[cfg(test)]
 mod tests {
@@ -294,35 +269,42 @@ mod tests {
         assert!(matches!(err, NftError::NonMonotoneTick { .. }));
     }
 
-    // ── decay-energy math ────────────────────────────────────────
+    // ── decay-energy math (now via canonical energy_at_epoch) ────
+    //
+    // These tests previously called the local `decay_energy(energy,
+    // epochs, h)` helper that was removed per AUDIT_2026_05_06.md
+    // CRITICAL-3. They now exercise the canonical
+    // `evaporchain_types::energy_at_epoch(initial, half_life,
+    // epochs_elapsed)` directly. Argument order differs (swap
+    // epochs ↔ half_life); fixed-point integer values are
+    // bit-identical because the math is the same.
 
     #[test]
     fn decay_energy_zero_input_zero() {
-        assert_eq!(decay_energy(0, 100, 50), 0);
+        assert_eq!(energy_at_epoch(0, 50, 100), 0);
     }
 
     #[test]
     fn decay_energy_zero_epochs_unchanged() {
-        assert_eq!(decay_energy(1_000_000, 0, 100), 1_000_000);
+        assert_eq!(energy_at_epoch(1_000_000, 100, 0), 1_000_000);
     }
 
     #[test]
     fn decay_energy_one_half_life_halves() {
-        let r = decay_energy(1_000_000, 100, 100);
+        let r = energy_at_epoch(1_000_000, 100, 100);
         assert_eq!(r, 500_000);
     }
 
     #[test]
     fn decay_energy_many_half_lives_decays_to_zero() {
-        let r = decay_energy(1_000_000, 10_000, 100);
+        let r = energy_at_epoch(1_000_000, 100, 10_000);
         assert_eq!(r, 0);
     }
 
     #[test]
     fn decay_energy_partial_period_interpolates() {
-        // At exactly half a half-life: factor = (2h - h/2) / (2h)
-        //                                     = (200 - 50) / 200 = 0.75
-        let r = decay_energy(1_000_000, 50, 100);
+        // At exactly half a half-life: factor = 1 - 50/(2·100) = 0.75
+        let r = energy_at_epoch(1_000_000, 100, 50);
         assert_eq!(r, 750_000);
     }
 
