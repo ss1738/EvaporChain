@@ -31,6 +31,7 @@ mod prompts;
 mod protocol;
 mod resources;
 mod tools;
+mod validation;
 
 use std::env;
 use tokio::io::{self, AsyncBufReadExt, BufReader};

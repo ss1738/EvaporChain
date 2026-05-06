@@ -3,6 +3,10 @@
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
+use crate::validation::{
+    validate_address_field, validate_amount_field, validate_half_life_field,
+    validate_nonce_field, MAX_TOKEN_AMOUNT,
+};
 
 /// Return the list of all 26 tools.
 pub fn list_tools() -> Value {
@@ -382,45 +386,71 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             format_text_result(&data)
         }
         "transfer" => {
-            let body = json!({
-                "from": args.get("from").ok_or("Missing 'from'")?,
-                "to": args.get("to").ok_or("Missing 'to'")?,
-                "amount": args.get("amount").ok_or("Missing 'amount'")?,
-                "nonce": args.get("nonce").unwrap_or(&json!(0))
-            });
+            // AUDIT_2026_05_06.md CRITICAL-2 follow-on — write-tool
+            // input validation. Reject malformed addresses, zero or
+            // overlarge amounts, and non-integer nonces BEFORE the
+            // backend POST. A prompt-injected agent that gets this
+            // far still can't push garbage into chain state.
+            let from = validate_address_field(&args, "from").map_err(|e| e.to_string())?;
+            let to = validate_address_field(&args, "to").map_err(|e| e.to_string())?;
+            let amount = validate_amount_field(&args, "amount", MAX_TOKEN_AMOUNT)
+                .map_err(|e| e.to_string())?;
+            // Nonce defaults to 0 if absent; validate only when present.
+            let nonce = if args.get("nonce").is_some() {
+                validate_nonce_field(&args, "nonce").map_err(|e| e.to_string())?
+            } else {
+                0
+            };
+            let body = json!({ "from": from, "to": to, "amount": amount, "nonce": nonce });
             let data = ctx.post_json("/api/tx/transfer", &body).await?;
             format_text_result(&data)
         }
         "create_object" => {
+            let creator = validate_address_field(&args, "creator")
+                .map_err(|e| e.to_string())?;
+            let object_id = validate_address_field(&args, "object_id")
+                .map_err(|e| e.to_string())?;
+            let energy = validate_amount_field(&args, "energy", MAX_TOKEN_AMOUNT)
+                .map_err(|e| e.to_string())?;
+            let half_life = validate_half_life_field(&args, "half_life")
+                .map_err(|e| e.to_string())?;
             let body = json!({
-                "creator": args.get("creator").ok_or("Missing 'creator'")?,
-                "object_id": args.get("object_id").ok_or("Missing 'object_id'")?,
-                "energy": args.get("energy").ok_or("Missing 'energy'")?,
-                "half_life": args.get("half_life").ok_or("Missing 'half_life'")?,
+                "creator": creator,
+                "object_id": object_id,
+                "energy": energy,
+                "half_life": half_life,
             });
             let data = ctx.post_json("/api/tx/create-object", &body).await?;
             format_text_result(&data)
         }
         "refresh_object" => {
+            let object_id = validate_address_field(&args, "object_id")
+                .map_err(|e| e.to_string())?;
+            let energy_deposit = validate_amount_field(&args, "energy_deposit", MAX_TOKEN_AMOUNT)
+                .map_err(|e| e.to_string())?;
             let body = json!({
-                "object_id": args.get("object_id").ok_or("Missing 'object_id'")?,
-                "energy_deposit": args.get("energy_deposit").ok_or("Missing 'energy_deposit'")?,
+                "object_id": object_id,
+                "energy_deposit": energy_deposit,
             });
             let data = ctx.post_json("/api/tx/refresh", &body).await?;
             format_text_result(&data)
         }
         "resurrect_object" => {
+            let object_id = validate_address_field(&args, "object_id")
+                .map_err(|e| e.to_string())?;
+            let energy_deposit = validate_amount_field(&args, "energy_deposit", MAX_TOKEN_AMOUNT)
+                .map_err(|e| e.to_string())?;
             let body = json!({
-                "object_id": args.get("object_id").ok_or("Missing 'object_id'")?,
-                "energy_deposit": args.get("energy_deposit").ok_or("Missing 'energy_deposit'")?,
+                "object_id": object_id,
+                "energy_deposit": energy_deposit,
             });
             let data = ctx.post_json("/api/tx/resurrect", &body).await?;
             format_text_result(&data)
         }
         "request_faucet" => {
-            let body = json!({
-                "address": args.get("address").ok_or("Missing 'address'")?,
-            });
+            let address = validate_address_field(&args, "address")
+                .map_err(|e| e.to_string())?;
+            let body = json!({ "address": address });
             let data = ctx.post_json("/api/faucet", &body).await?;
             format_text_result(&data)
         }
