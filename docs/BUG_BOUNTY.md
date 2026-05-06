@@ -1,5 +1,15 @@
 # EvaporChain Bug Bounty Program — Scoping Document
 
+> **⚠️ THIS PROGRAM IS NOT YET ACTIVE (as of 2026-05-06).**
+>
+> **Reports submitted today will not receive a response.** No triage queue, escrow account, or payment rails are operational yet. This document is a scoping draft — it describes what the program *will* be once §10's open questions are resolved.
+>
+> **For active disclosures**, follow the process in `SECURITY.md` at the repo root: send to `security@evaporchain.io` (PGP key in that file). Disclosures sent there will be acknowledged on a best-effort basis pending the program's launch; **payment is not guaranteed** for any finding submitted before the program goes live.
+>
+> Watch this banner: it will be replaced with a "PROGRAM ACTIVE" notice + go-live date when the operational infrastructure is in place.
+
+---
+
 Companion to `SECURITY.md` at the repo root, which is normative for disclosure process and severity. This document defines the **scope, reward structure, and operational policy** of the formal bug-bounty program planned to launch ahead of mainnet.
 
 **Status:** scoping draft, not yet active. Gap A code items are merged as of 2026-04-29. Program goes live when operational infrastructure (triage queue, escrow, payment rails) is in place — see §10 open questions.
