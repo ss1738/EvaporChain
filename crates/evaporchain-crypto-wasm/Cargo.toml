@@ -15,6 +15,7 @@ js-sys = "0.3"
 pqc_dilithium = { version = "=0.2.0", features = ["mode3"] }
 getrandom = { version = "0.2", features = ["js"] }
 sha2 = "0.10"
+zeroize = "1"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
