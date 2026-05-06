@@ -16542,16 +16542,7 @@ pub async fn start_api_server(
         .layer(axum::Extension(limiter))
         .into_make_service_with_connect_info::<std::net::SocketAddr>();
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let is_localhost = port != 443 && std::env::var("EVAPORCHAIN_TLS_CERT").is_err();
-    if is_localhost {
-        eprintln!(
-            "\x1b[33m⚠ Dashboard serving over HTTP (plaintext). \
-             For production, use a TLS-terminating reverse proxy \
-             or set EVAPORCHAIN_TLS_CERT + EVAPORCHAIN_TLS_KEY.\x1b[0m"
-        );
-    }
     // Loud warning when admin endpoints (drain / metrics / proof_replay)
     // are open. EVAPORCHAIN_ADMIN_KEY=<secret> in env locks them down.
     if std::env::var("EVAPORCHAIN_ADMIN_KEY")
@@ -16564,10 +16555,50 @@ pub async fn start_api_server(
              Set EVAPORCHAIN_ADMIN_KEY=<random-32-bytes> for production.\x1b[0m"
         );
     }
+
+    // AUDIT_2026_05_06.md MEDIUM — Dashboard TLS. When both
+    // EVAPORCHAIN_TLS_CERT and EVAPORCHAIN_TLS_KEY are set,
+    // terminate TLS in-process via axum-server + rustls. The
+    // env-var pair points at PEM file paths (cert chain + private
+    // key). When either is unset, fall through to plain HTTP for
+    // localhost dev — the operational warning makes the choice
+    // explicit.
+    let tls_cert_path = std::env::var("EVAPORCHAIN_TLS_CERT").ok();
+    let tls_key_path = std::env::var("EVAPORCHAIN_TLS_KEY").ok();
+    if let (Some(cert_path), Some(key_path)) = (tls_cert_path, tls_key_path) {
+        println!(
+            "\x1b[1;32m━━━ Dashboard: https://localhost:{} (TLS) ━━━\x1b[0m",
+            port
+        );
+        let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            std::path::PathBuf::from(&cert_path),
+            std::path::PathBuf::from(&key_path),
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "EVAPORCHAIN_TLS_CERT={cert_path} / EVAPORCHAIN_TLS_KEY={key_path} \
+                 failed to load: {e}. PEM files must be readable + parsable."
+            )
+        })?;
+        axum_server::bind_rustls(addr, config)
+            .serve(app)
+            .await?;
+        return Ok(());
+    }
+
+    // Plain HTTP fall-through for dev / localhost.
+    eprintln!(
+        "\x1b[33m⚠ Dashboard serving over HTTP (plaintext). \
+         For production, use a TLS-terminating reverse proxy \
+         or set EVAPORCHAIN_TLS_CERT + EVAPORCHAIN_TLS_KEY \
+         (PEM file paths).\x1b[0m"
+    );
     println!(
         "\x1b[1;36m━━━ Dashboard: http://localhost:{} ━━━\x1b[0m",
         port
     );
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }

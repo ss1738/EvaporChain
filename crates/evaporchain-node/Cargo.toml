@@ -107,6 +107,10 @@ rand = { workspace = true }
 hex = { workspace = true }
 axum = { version = "0.7", features = ["ws"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
+# AUDIT_2026_05_06.md MEDIUM — Dashboard TLS. Used only when
+# EVAPORCHAIN_TLS_CERT + EVAPORCHAIN_TLS_KEY are set; the plain
+# HTTP path stays as the default for localhost dev.
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 tower = "0.4"
 rusqlite = { version = "0.31", features = ["bundled"] }
