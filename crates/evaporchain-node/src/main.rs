@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod autopoietic_integration;
 mod bench;
+mod da_http_client;
 mod elexon_integration;
 mod frontier;
 mod jsonrpc;
