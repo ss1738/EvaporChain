@@ -41,7 +41,6 @@ Require Import Coq.Arith.PeanoNat.
 Require Import Lia.
 Require Import Coq.Init.Nat.
 Require Import Coq.Lists.List.
-Require Import Coq.Sets.Ensembles.
 Import ListNotations.
 
 (* ================================================================
