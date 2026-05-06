@@ -503,8 +503,13 @@ Admitted.
 (** [DAG-2] Multi-parent blocks preserve causal ordering: a block
     with multiple parents respects the union of their causal pasts.
 
-    Proof: direct from [causal_trans] + DAG well-formedness.
-    Effort: ~30 LOC, 1–2 days. *)
+    Proof: direct from [causal_trans] + [causal_parent] of the
+    Inductive [causal_precedes].
+    Effort: ~30 LOC, 1–2 days.
+
+    DISCHARGED 2026-05-06. Proof is two-step: extend the existing
+    chain [h_anc ≼ h_parent] by one step via [causal_parent], using
+    [causal_trans] to compose. *)
 Lemma multi_parent_preserves_causality :
   forall (dag : DAG) (b : Block) (h_parent h_anc : BlockHash),
     In b dag ->
@@ -512,7 +517,11 @@ Lemma multi_parent_preserves_causality :
     causal_precedes dag h_anc h_parent ->
     causal_precedes dag h_anc (b_hash b).
 Proof.
-Admitted.
+  intros dag b h_parent h_anc Hin_b Hin_parent Hcausal.
+  apply causal_trans with (h2 := h_parent).
+  - exact Hcausal.
+  - apply causal_parent; assumption.
+Qed.
 
 (* ================================================================
    12. THE BIG THEOREM
