@@ -45,6 +45,49 @@ impl CompressedProof {
     }
 }
 
+// ─────────────────────────── MockProver Fingerprint Guard ───────────────
+//
+// AUDIT_2026_05_06.md H-19 — defence in depth on top of the
+// `#[cfg(any(test, feature = "test-utils"))]` gate.
+//
+// `MockProver::get_proof` produces a recognisable byte-pattern
+// (`proof_bytes = [0u8; PROOF_LEN]` + `z0_bytes = [0u8; Z0_LEN]`)
+// because it skips actual cryptographic work. If MockProver ever
+// leaked into a release build (e.g. via accidentally enabling the
+// `test-utils` feature in a release dependency tree), the proofs
+// it emits would still be detectable on the wire by the
+// `is_mock_prover_proof` predicate.
+//
+// Production verifiers SHOULD call `is_mock_prover_proof` on every
+// inbound `CompressedProof` and reject matches with a hard error
+// before forwarding to the cryptographic verify path. This is
+// belt-and-braces — the cfg gate is the primary protection; the
+// fingerprint is the catch-all.
+
+/// Length of `MockProver`-emitted `proof_bytes`. Matches the
+/// vector size in `MockProver::get_proof` impl below.
+const MOCK_PROOF_BYTES_LEN: usize = 32;
+
+/// Length of `MockProver`-emitted `z0_bytes`. Matches the vector
+/// size in `MockProver::get_proof` impl below.
+const MOCK_Z0_BYTES_LEN: usize = 16;
+
+/// Detect whether a `CompressedProof` carries the all-zeros
+/// fingerprint that `MockProver` emits. Returns `true` iff the
+/// proof matches MockProver's output shape exactly.
+///
+/// Production verifiers should reject any proof for which this
+/// returns `true`. False positives are extremely unlikely against
+/// a real Nova-folded proof (proof_bytes from `nova-snark` are
+/// hundreds-to-thousands of pseudo-random hash output bytes; the
+/// chance of all-zeros is `2^(-8 * proof_bytes.len())`).
+pub fn is_mock_prover_proof(proof: &CompressedProof) -> bool {
+    proof.proof_bytes.len() == MOCK_PROOF_BYTES_LEN
+        && proof.z0_bytes.len() == MOCK_Z0_BYTES_LEN
+        && proof.proof_bytes.iter().all(|&b| b == 0)
+        && proof.z0_bytes.iter().all(|&b| b == 0)
+}
+
 // ─────────────────────────── Trait ───────────────────────────────────────
 
 /// Trait for IVC/folding-based proving engines.
@@ -349,5 +392,81 @@ mod tests {
             prover.verify_proof(&proof, 1, [0; 32]).unwrap(),
             "MockProver should accept valid proofs in test context"
         );
+    }
+
+    /// H-19 fingerprint guard — `is_mock_prover_proof` correctly
+    /// identifies the all-zeros pattern that `MockProver::get_proof`
+    /// emits. This is the production-side defence in depth on top
+    /// of the `#[cfg]` gate: if MockProver ever leaked into a
+    /// release build, its output would still be detectable on the
+    /// wire and rejectable by any verifier that calls this
+    /// predicate.
+    #[test]
+    fn is_mock_prover_proof_identifies_mock_output() {
+        let mut prover = MockProver::new();
+        prover
+            .fold_block(&dummy_block(1, 1), [0; 32], [1; 32])
+            .unwrap();
+        let proof = prover.get_proof().unwrap();
+        assert!(
+            is_mock_prover_proof(&proof),
+            "MockProver output must trip the fingerprint guard"
+        );
+    }
+
+    /// H-19 fingerprint guard — well-formed non-mock proofs (here
+    /// simulated by hand-crafted random-looking bytes at the right
+    /// lengths) do NOT trigger the fingerprint. This is the false-
+    /// positive regression guard: tightening the predicate to
+    /// "all zeros + exact length" must not catch real proofs.
+    #[test]
+    fn is_mock_prover_proof_does_not_flag_random_bytes() {
+        let proof = CompressedProof {
+            proof_bytes: (0u8..32).map(|i| i.wrapping_mul(0x9E)).collect(),
+            num_steps: 1,
+            z0_bytes: (0u8..16).map(|i| i.wrapping_mul(0x39)).collect(),
+        };
+        assert!(
+            !is_mock_prover_proof(&proof),
+            "non-mock proof of correct shape must not match fingerprint"
+        );
+    }
+
+    /// H-19 fingerprint guard — different-length proofs (what a
+    /// real Nova-folded proof would produce — 100s-1000s of bytes)
+    /// do not match the mock fingerprint regardless of content.
+    #[test]
+    fn is_mock_prover_proof_does_not_flag_long_proofs() {
+        // All-zero but at lengths that don't match MockProver's
+        // exact emission (32 + 16). A real Nova proof's lengths
+        // wouldn't match either, even in the unlikely event of
+        // all-zero output.
+        let proof_long = CompressedProof {
+            proof_bytes: vec![0u8; 1024],
+            num_steps: 1,
+            z0_bytes: vec![0u8; 16],
+        };
+        assert!(!is_mock_prover_proof(&proof_long));
+
+        let proof_short = CompressedProof {
+            proof_bytes: vec![0u8; 32],
+            num_steps: 1,
+            z0_bytes: vec![0u8; 8],
+        };
+        assert!(!is_mock_prover_proof(&proof_short));
+    }
+
+    /// H-19 fingerprint guard — empty proof bytes (degenerate case
+    /// that wouldn't pass any real verifier anyway) is not
+    /// flagged as MockProver output. The predicate is precise:
+    /// only the exact MockProver shape trips it.
+    #[test]
+    fn is_mock_prover_proof_does_not_flag_empty_bytes() {
+        let proof = CompressedProof {
+            proof_bytes: vec![],
+            num_steps: 0,
+            z0_bytes: vec![],
+        };
+        assert!(!is_mock_prover_proof(&proof));
     }
 }
