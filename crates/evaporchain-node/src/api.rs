@@ -6032,6 +6032,241 @@ async fn post_singh_attractor_v2_draw(
     }
 }
 
+// ─────────────── IB Validators V2 (Immune Validator Set) ───────────
+//
+// V1 (`evaporchain-ib-validators`) ships the Tishby-Pereira-Bialek
+// Information-Bottleneck vote gate `ib_vote(local, prior, params)
+// → Commit | Abstain` based on KL divergence. V1 says nothing about
+// *which* validators are eligible to vote.
+//
+// V2 wraps V1 with three structural rejection paths into a unified
+// `Jailed{reason}` outcome:
+//
+//  1. CHSH-failed-window jail — validators active during a window
+//     whose `BellCertificate` failed the gate are jailed for
+//     `jail_epochs`. Closes the doctrine link from Bell-Beacon V2
+//     to validator immunity: a failing Bell-Beacon gate doesn't
+//     just signal anomaly, it actively removes the implicated
+//     validators from the voting set.
+//  2. Energy-floor jail — validators below `energy_floor` cannot
+//     vote until refresh.
+//  3. Explicit slash — operator jails with a typed code.
+//
+// JailState is BTreeMap-canonical so iteration is validator-
+// deterministic. Both endpoints are stateless: callers submit the
+// current jail state + inputs; handlers return the gate verdict
+// or the updated jail state.
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum JailReasonDto {
+    ChshFailedWindow { window_start: u64, window_end: u64 },
+    EnergyBelowFloor { observed: u64, floor: u64 },
+    Slashed { code: u32 },
+}
+
+impl JailReasonDto {
+    fn to_inner(&self) -> evaporchain_ib_validators_v2::JailReason {
+        use evaporchain_ib_validators_v2::JailReason as R;
+        match *self {
+            JailReasonDto::ChshFailedWindow {
+                window_start,
+                window_end,
+            } => R::ChshFailedWindow {
+                window_start,
+                window_end,
+            },
+            JailReasonDto::EnergyBelowFloor { observed, floor } => {
+                R::EnergyBelowFloor { observed, floor }
+            }
+            JailReasonDto::Slashed { code } => R::Slashed { code },
+        }
+    }
+
+    fn from_inner(r: &evaporchain_ib_validators_v2::JailReason) -> Self {
+        use evaporchain_ib_validators_v2::JailReason as R;
+        match *r {
+            R::ChshFailedWindow {
+                window_start,
+                window_end,
+            } => JailReasonDto::ChshFailedWindow {
+                window_start,
+                window_end,
+            },
+            R::EnergyBelowFloor { observed, floor } => {
+                JailReasonDto::EnergyBelowFloor { observed, floor }
+            }
+            R::Slashed { code } => JailReasonDto::Slashed { code },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct JailEntryDto {
+    pub validator_id_hex: String,
+    pub reason: JailReasonDto,
+    pub expires_at_epoch: u64,
+}
+
+fn dto_to_jail_state(
+    entries: &[JailEntryDto],
+) -> Result<evaporchain_ib_validators_v2::JailState, String> {
+    use evaporchain_ib_validators_v2::{JailEntry, JailState};
+    let mut js = JailState::new();
+    for e in entries {
+        let id = decode_32(&e.validator_id_hex).ok_or_else(|| {
+            format!(
+                "validator_id_hex must be 64 hex chars: {}",
+                e.validator_id_hex
+            )
+        })?;
+        js.insert(
+            id,
+            JailEntry {
+                reason: e.reason.to_inner(),
+                expires_at_epoch: e.expires_at_epoch,
+            },
+        );
+    }
+    Ok(js)
+}
+
+fn jail_state_to_dto(js: &evaporchain_ib_validators_v2::JailState) -> Vec<JailEntryDto> {
+    js.iter()
+        .map(|(id, entry)| JailEntryDto {
+            validator_id_hex: hex::encode(id),
+            reason: JailReasonDto::from_inner(&entry.reason),
+            expires_at_epoch: entry.expires_at_epoch,
+        })
+        .collect()
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IbV2VoteReq {
+    /// Per-account energies forming the local validator's state
+    /// signature. Histogram-binned via V1 `StateSignature::from_energies`.
+    pub local_energies: Vec<u64>,
+    /// Per-account energies forming the prior signature.
+    pub prior_energies: Vec<u64>,
+    /// Histogram scale for both signatures (max energy in the
+    /// binning range).
+    pub signature_scale: u64,
+    /// IB tradeoff parameter — KL-divergence threshold in milli-bits.
+    pub lambda_mb: u64,
+    pub validator_id_hex: String,
+    pub energy: u64,
+    pub energy_floor: u64,
+    pub current_epoch: u64,
+    /// Current jail state. Submit empty list if the chain has no
+    /// jailed validators.
+    pub jail_state: Vec<JailEntryDto>,
+}
+
+async fn post_ib_validators_v2_vote(
+    Json(req): Json<IbV2VoteReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_ib_validators::{IbParams, StateSignature};
+    use evaporchain_ib_validators_v2::{ib_vote_v2, VoteV2};
+
+    let validator_id = match decode_32(&req.validator_id_hex) {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "status":"error",
+                "detail":"validator_id_hex must be 64 hex chars"
+            }))
+        }
+    };
+    let jail_state = match dto_to_jail_state(&req.jail_state) {
+        Ok(js) => js,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e})),
+    };
+    let local_sig = StateSignature::from_energies(&req.local_energies, req.signature_scale);
+    let prior_sig = StateSignature::from_energies(&req.prior_energies, req.signature_scale);
+    let params = IbParams {
+        lambda_mb: req.lambda_mb,
+    };
+
+    match ib_vote_v2(
+        &local_sig,
+        &prior_sig,
+        &params,
+        &validator_id,
+        req.energy,
+        req.energy_floor,
+        &jail_state,
+        req.current_epoch,
+    ) {
+        Ok(VoteV2::Commit) => Json(serde_json::json!({
+            "status":"ok",
+            "vote":"commit",
+        })),
+        Ok(VoteV2::Abstain) => Json(serde_json::json!({
+            "status":"ok",
+            "vote":"abstain",
+        })),
+        Ok(VoteV2::Jailed { reason }) => Json(serde_json::json!({
+            "status":"ok",
+            "vote":"jailed",
+            "reason": JailReasonDto::from_inner(&reason),
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status":"error",
+            "detail": e.to_string(),
+        })),
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IbV2ChshJailReq {
+    /// Validators that were active during the failing CHSH window.
+    /// Each entry is a 32-byte hex validator id.
+    pub participants_hex: Vec<String>,
+    pub window_start: u64,
+    pub window_end: u64,
+    pub current_epoch: u64,
+    /// Jail expires at `current_epoch + jail_epochs`.
+    pub jail_epochs: u64,
+    /// Pre-existing jail state to mutate. Empty list = fresh state.
+    pub jail_state: Vec<JailEntryDto>,
+}
+
+async fn post_ib_validators_v2_jail_chsh_failure(
+    Json(req): Json<IbV2ChshJailReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_ib_validators_v2::vote::apply_chsh_failure_jail;
+
+    let participants: Vec<[u8; 32]> = match req
+        .participants_hex
+        .iter()
+        .map(|h| {
+            decode_32(h)
+                .ok_or_else(|| format!("participant id must be 64 hex chars: {h}"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(v) => v,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e})),
+    };
+    let mut jail_state = match dto_to_jail_state(&req.jail_state) {
+        Ok(js) => js,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e})),
+    };
+    apply_chsh_failure_jail(
+        &mut jail_state,
+        &participants,
+        req.window_start,
+        req.window_end,
+        req.current_epoch,
+        req.jail_epochs,
+    );
+    Json(serde_json::json!({
+        "status":"ok",
+        "jailed_count": participants.len(),
+        "jail_state": jail_state_to_dto(&jail_state),
+    }))
+}
+
 // ─────────────── Antichain Mempool ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -7437,6 +7672,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/bell_beacon_v2/issue",        category: "substrate", description: "Issue a Bell-Certified Beacon V2 certificate over a window of concurrent block-pairs. Runs the CHSH gate at integer milli-units against the honest sample plus a synthetic coordinated-subset cartel injection, anchors to prev_block_hash, and emits an anti-grinding seed. The seed is the canonical chain-supplied anchor for /api/fork_cert_v2/prove.", example: Some(r#"{"chain_id":"test-chain-v1","window_start":100,"window_end":200,"prev_block_hash_hex":"00...09","pairs":[{"first_energy":100,"first_tx_count":10,"second_energy":10,"second_tx_count":100,"tag_hex":"00...01"}]}"#) },
     ApiDocEntry { method: "POST", path: "/api/bell_beacon_v2/verify",       category: "substrate", description: "Verify a BellCertificate by re-running the gate against the supplied pairs and re-deriving the seed. Rejects on any field mismatch (window, prev_hash, threshold, bucket counts, S values, gap, seed).", example: Some(r#"{"chain_id":"test-chain-v1","prev_block_hash_hex":"00...09","pairs":[...],"certificate":{"<from /api/bell_beacon_v2/issue>":""}}"#) },
     ApiDocEntry { method: "POST", path: "/api/singh_attractor_v2/draw",     category: "substrate", description: "Singh-Attractor V2 — Bell-anchored fallback. In-basin selection is V1-deterministic (seed unused). Out-of-basin: inverse-distance weighted sampling seeded by certificate_seed_hex (typically a BellCertificate.seed). Returns selected_center/index, used_fallback flag, and a bounded Lyapunov drift toward the centre.", example: Some(r#"{"state_energy":500,"attractors":[{"center":100,"basin_radius":10,"drift_rate":5},{"center":1000,"basin_radius":100,"drift_rate":10}],"certificate_seed_hex":"<from /api/bell_beacon_v2/issue>"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/ib_validators_v2/vote",       category: "substrate", description: "IB Validators V2 vote gate (Immune Validator Set). Wraps Tishby-Pereira-Bialek IB vote with three structural rejection paths: CHSH-failed-window jail, energy-floor jail, explicit slash. Returns commit/abstain/jailed{reason}.", example: Some(r#"{"local_energies":[0,0,0],"prior_energies":[0,64,128],"signature_scale":1024,"lambda_mb":100,"validator_id_hex":"00...01","energy":1000,"energy_floor":10,"current_epoch":5,"jail_state":[]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/ib_validators_v2/jail/chsh_failure", category: "substrate", description: "Mass-jail validators active during a window whose BellCertificate failed the CHSH gate. Stateless: caller submits current jail_state, receives updated jail_state with new entries appended.", example: Some(r#"{"participants_hex":["00...01","00...02"],"window_start":100,"window_end":200,"current_epoch":50,"jail_epochs":50,"jail_state":[]}"#) },
 
     // Antichain Mempool — causal-set maximal-antichain transaction ordering
     ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
@@ -15626,6 +15863,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/bell_beacon_v2/issue", post(post_bell_beacon_v2_issue))
         .route("/api/bell_beacon_v2/verify", post(post_bell_beacon_v2_verify))
         .route("/api/singh_attractor_v2/draw", post(post_singh_attractor_v2_draw))
+        .route("/api/ib_validators_v2/vote", post(post_ib_validators_v2_vote))
+        .route(
+            "/api/ib_validators_v2/jail/chsh_failure",
+            post(post_ib_validators_v2_jail_chsh_failure),
+        )
         .route("/api/antichain/compute", post(post_antichain_compute))
         .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
         .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))
@@ -17138,6 +17380,210 @@ mod bell_beacon_v2_handler_tests {
         }))
         .await;
         assert_eq!(verify_resp.0["verified"], false);
+    }
+}
+
+#[cfg(test)]
+mod ib_validators_v2_handler_tests {
+    //! Handler-level smoke tests for IB Validators V2 — the Immune
+    //! Validator Set primitive. The substrate is fully tested in
+    //! `evaporchain-ib-validators-v2`. This mod locks the JSON DTO
+    //! ↔ inner-state translation, the three jail rejection paths
+    //! through the actual handler bodies, and the doctrine-critical
+    //! flow: a CHSH-failure mass-jail mutates the state such that
+    //! the subsequent vote gate rejects the jailed validators.
+    use super::*;
+
+    fn id_hex(b: u8) -> String {
+        hex::encode([b; 32])
+    }
+
+    /// Local energies all-zero + prior with spread → high KL → V1
+    /// `ib_vote` returns Commit. No jail, energy above floor → V2
+    /// returns commit too.
+    fn high_kl_local() -> Vec<u64> {
+        vec![0u64; 16]
+    }
+    fn spread_prior() -> Vec<u64> {
+        (0..16).map(|i| i as u64 * 64).collect()
+    }
+
+    #[tokio::test]
+    async fn vote_unjailed_high_kl_commits() {
+        let resp = post_ib_validators_v2_vote(Json(IbV2VoteReq {
+            local_energies: high_kl_local(),
+            prior_energies: spread_prior(),
+            signature_scale: 1024,
+            lambda_mb: 100,
+            validator_id_hex: id_hex(1),
+            energy: 1000,
+            energy_floor: 10,
+            current_epoch: 0,
+            jail_state: vec![],
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "ok");
+        assert_eq!(resp.0["vote"], "commit");
+    }
+
+    /// Energy below floor → handler returns jailed with the
+    /// EnergyBelowFloor reason carrying observed/floor values.
+    #[tokio::test]
+    async fn vote_below_energy_floor_returns_jailed() {
+        let resp = post_ib_validators_v2_vote(Json(IbV2VoteReq {
+            local_energies: high_kl_local(),
+            prior_energies: spread_prior(),
+            signature_scale: 1024,
+            lambda_mb: 100,
+            validator_id_hex: id_hex(1),
+            energy: 5,
+            energy_floor: 10,
+            current_epoch: 0,
+            jail_state: vec![],
+        }))
+        .await;
+        assert_eq!(resp.0["vote"], "jailed");
+        assert_eq!(resp.0["reason"]["kind"], "energy_below_floor");
+        assert_eq!(resp.0["reason"]["observed"], 5);
+        assert_eq!(resp.0["reason"]["floor"], 10);
+    }
+
+    /// Pre-existing slash entry in jail_state → vote rejected with
+    /// matching Slashed reason.
+    #[tokio::test]
+    async fn vote_with_existing_slash_returns_jailed() {
+        let resp = post_ib_validators_v2_vote(Json(IbV2VoteReq {
+            local_energies: high_kl_local(),
+            prior_energies: spread_prior(),
+            signature_scale: 1024,
+            lambda_mb: 100,
+            validator_id_hex: id_hex(1),
+            energy: 1000,
+            energy_floor: 10,
+            current_epoch: 50,
+            jail_state: vec![JailEntryDto {
+                validator_id_hex: id_hex(1),
+                reason: JailReasonDto::Slashed { code: 7 },
+                expires_at_epoch: 100,
+            }],
+        }))
+        .await;
+        assert_eq!(resp.0["vote"], "jailed");
+        assert_eq!(resp.0["reason"]["kind"], "slashed");
+        assert_eq!(resp.0["reason"]["code"], 7);
+    }
+
+    /// Zero energy_floor is rejected — handler propagates the
+    /// substrate error.
+    #[tokio::test]
+    async fn vote_zero_floor_rejected() {
+        let resp = post_ib_validators_v2_vote(Json(IbV2VoteReq {
+            local_energies: high_kl_local(),
+            prior_energies: spread_prior(),
+            signature_scale: 1024,
+            lambda_mb: 100,
+            validator_id_hex: id_hex(1),
+            energy: 1000,
+            energy_floor: 0,
+            current_epoch: 0,
+            jail_state: vec![],
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "error");
+        assert!(resp.0["detail"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("floor"));
+    }
+
+    /// Mass-jail handler writes ChshFailedWindow entries for every
+    /// participant. Returned jailed_count matches participants.len()
+    /// and the returned jail_state contains those entries with
+    /// expires_at_epoch = current_epoch + jail_epochs.
+    #[tokio::test]
+    async fn chsh_failure_jail_marks_all_participants() {
+        let resp = post_ib_validators_v2_jail_chsh_failure(Json(IbV2ChshJailReq {
+            participants_hex: vec![id_hex(1), id_hex(2), id_hex(3)],
+            window_start: 100,
+            window_end: 200,
+            current_epoch: 10,
+            jail_epochs: 50,
+            jail_state: vec![],
+        }))
+        .await;
+        assert_eq!(resp.0["status"], "ok");
+        assert_eq!(resp.0["jailed_count"], 3);
+        let returned: Vec<JailEntryDto> =
+            serde_json::from_value(resp.0["jail_state"].clone()).unwrap();
+        assert_eq!(returned.len(), 3);
+        for e in &returned {
+            assert_eq!(e.expires_at_epoch, 60); // 10 + 50
+            assert!(matches!(
+                e.reason,
+                JailReasonDto::ChshFailedWindow {
+                    window_start: 100,
+                    window_end: 200,
+                }
+            ));
+        }
+    }
+
+    /// Doctrine-critical end-to-end: CHSH-failure mass-jail mutates
+    /// state → subsequent vote on a jailed validator is rejected
+    /// with the matching ChshFailedWindow reason. This is the
+    /// load-bearing flow that ties the Bell-Beacon V2 gate-failure
+    /// signal to validator immunity.
+    #[tokio::test]
+    async fn chsh_failure_jail_blocks_subsequent_vote() {
+        // Mass-jail validator 1 over window [100, 200) for 50 epochs
+        // starting at epoch 10. Jail expires at epoch 60.
+        let jail_resp = post_ib_validators_v2_jail_chsh_failure(Json(IbV2ChshJailReq {
+            participants_hex: vec![id_hex(1)],
+            window_start: 100,
+            window_end: 200,
+            current_epoch: 10,
+            jail_epochs: 50,
+            jail_state: vec![],
+        }))
+        .await;
+        let updated: Vec<JailEntryDto> =
+            serde_json::from_value(jail_resp.0["jail_state"].clone()).unwrap();
+
+        // Submit vote at epoch 30 (within jail window) — must
+        // reject with ChshFailedWindow.
+        let vote_resp = post_ib_validators_v2_vote(Json(IbV2VoteReq {
+            local_energies: high_kl_local(),
+            prior_energies: spread_prior(),
+            signature_scale: 1024,
+            lambda_mb: 100,
+            validator_id_hex: id_hex(1),
+            energy: 1000,
+            energy_floor: 10,
+            current_epoch: 30,
+            jail_state: updated.clone(),
+        }))
+        .await;
+        assert_eq!(vote_resp.0["vote"], "jailed");
+        assert_eq!(vote_resp.0["reason"]["kind"], "chsh_failed_window");
+        assert_eq!(vote_resp.0["reason"]["window_start"], 100);
+        assert_eq!(vote_resp.0["reason"]["window_end"], 200);
+
+        // Same vote at epoch 60 (jail expired exclusively) — V1 gate
+        // applies and high-KL local commits.
+        let vote_resp = post_ib_validators_v2_vote(Json(IbV2VoteReq {
+            local_energies: high_kl_local(),
+            prior_energies: spread_prior(),
+            signature_scale: 1024,
+            lambda_mb: 100,
+            validator_id_hex: id_hex(1),
+            energy: 1000,
+            energy_floor: 10,
+            current_epoch: 60,
+            jail_state: updated,
+        }))
+        .await;
+        assert_eq!(vote_resp.0["vote"], "commit");
     }
 }
 
