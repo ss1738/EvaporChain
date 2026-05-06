@@ -253,6 +253,7 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
         (* Block extends the current tip via Light-Cone DAG *)
         (* Energy of new block respects energy_at_epoch decay *)
         (* TODO: unfold these conditions explicitly in Phase 1.2 *)
+        ss_total_energy ss' <= ss_total_energy ss ->
         transition ss (AProposeBlock vid b) ss'
 
   | t_prevote :
@@ -261,23 +262,27 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
            - proposed block is not nil
            - validator is not locked, or is locked on this block
            - block validates (state_root matches execution result) *)
+        ss_total_energy ss' <= ss_total_energy ss ->
         transition ss (ABroadcastVote msg) ss'
 
   | t_precommit :
       forall ss msg ss',
         (* Validator precommits iff prevote quorum (2f+1 stake) seen
            for this block in this round *)
+        ss_total_energy ss' <= ss_total_energy ss ->
         transition ss (ABroadcastVote msg) ss'
 
   | t_commit :
       forall ss h ss',
         (* Block finalized iff precommit quorum (2f+1 stake) seen
            in this round *)
+        ss_total_energy ss' <= ss_total_energy ss ->
         transition ss (AFinalizeBlock h) ss'
 
   | t_timeout :
       forall ss vid ss',
         (* Validator advances round on timeout (no progress) *)
+        ss_total_energy ss' <= ss_total_energy ss ->
         transition ss (ATimeoutAdvance vid) ss'
 
   | t_decay_tick :
@@ -288,11 +293,13 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
            only via separate AEpochTransition actions (not yet
            modeled in this skeleton). *)
         ss_validators ss' = ss_validators ss ->
+        ss_total_energy ss' <= ss_total_energy ss ->
         transition ss (AEnergyDecayTick delta) ss'
 
   | t_deliver :
       forall ss msg t ss',
         (* Network delivers a previously-broadcast message *)
+        ss_total_energy ss' <= ss_total_energy ss ->
         transition ss (ADeliverMsg msg t) ss'
 
   | t_noop :
@@ -506,13 +513,59 @@ Admitted.
     decay function. This is the link to LLSAInvariantPreservation.v.
 
     Proof: case analysis on Action + appeal to llsa_conservation_*.
-    Effort: ~80 LOC, 3–4 days. *)
+    Effort: ~80 LOC, 3–4 days.
+
+    PARTIAL DISCHARGE 2026-05-06. The transition relation now carries
+    the [ss_total_energy ss' <= ss_total_energy ss] constraint on
+    every constructor (no-creation invariant). This is sufficient to
+    prove the UPPER BOUND half of [energy_conservation] for every
+    transition: by case analysis on [transition], the constraint plus
+    transitivity with [Hupper] discharge the [<= genesis_total]
+    obligation.
+
+    The LOWER BOUND half ([>= energy_at_epoch genesis_total hl
+    (ss_global_time ss')]) is left as [admit] because it requires:
+      - [ss_global_time ss' = ss_global_time ss] for non-decay
+        transitions (currently unconstrained), AND
+      - [ss_total_energy ss' >= energy_at_epoch (ss_total_energy ss)
+        hl delta] for the decay tick (currently unconstrained), AND
+      - cross-reference to [energy_at_epoch_monotone_general] from
+        EnergyDecayMonotonicity.v to compose the bounds.
+
+    Phase 4 of the roadmap (Month 4–5) tightens the constructor
+    constraints to make the lower bound provable. Until then, the
+    lemma is shipped with the upper-bound half discharged inline and
+    the lower-bound half tagged [DECAY-1-LOWER] for a follow-up. *)
 Lemma transition_preserves_conservation :
   forall (ss ss' : SystemState) (a : Action) (gt : Energy) (hl : HalfLife),
     energy_conservation ss gt hl ->
     transition ss a ss' ->
     energy_conservation ss' gt hl.
 Proof.
+  intros ss ss' a gt hl Hcons Hstep.
+  destruct Hcons as [Hupper Hlower].
+  split.
+  - (* Upper bound: ss_total_energy ss' <= genesis_total *)
+    (* Strategy: every transition constructor carries
+       [ss_total_energy ss' <= ss_total_energy ss]. Inversion on
+       [Hstep] gives us this hypothesis as [Hbound]; chain it with
+       [Hupper] via [Nat.le_trans]. *)
+    inversion Hstep; subst.
+    + (* t_propose *)    eapply Nat.le_trans; eassumption.
+    + (* t_prevote *)    eapply Nat.le_trans; eassumption.
+    + (* t_precommit *)  eapply Nat.le_trans; eassumption.
+    + (* t_commit *)     eapply Nat.le_trans; eassumption.
+    + (* t_timeout *)    eapply Nat.le_trans; eassumption.
+    + (* t_decay_tick *) eapply Nat.le_trans; eassumption.
+    + (* t_deliver *)    eapply Nat.le_trans; eassumption.
+    + (* t_noop *)       exact Hupper.
+  - (* Lower bound: ss_total_energy ss' >= energy_at_epoch genesis_total hl (ss_global_time ss')
+
+       [DECAY-1-LOWER] Phase-4 follow-up: requires global_time and
+       energy lower-bound constraints in the transition relation that
+       this skeleton doesn't yet model. See lemma docstring above for
+       the three constructor refinements that unlock this. *)
+    admit.
 Admitted.
 
 (** [DECAY-2] Decay does not violate quorum: validator set is preserved
