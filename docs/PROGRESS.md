@@ -2,7 +2,7 @@
 
 ## Overview
 
-Novel L1 blockchain with energy-based state decay. 85 Rust workspace crates (18 core + 60 substrate + 7 Tier-2 starts), 6,202 native tests passing (+ ~3,491 WASM bindings), post-quantum signatures (ML-DSA), Tendermint BFT consensus with BLS12-381 aggregate signatures, browser extension, mobile wallet, SDK, 4 dApps.
+Novel L1 blockchain with energy-based state decay. 147 Rust workspace crates (per `Cargo.toml` members + filesystem; full 5-Tier-0 + 7-Tier-0-supporting frontier-primitive corpus shipped 2026-05), 25,435+ native test markers (`#[test]` + `#[tokio::test]` + `#[proptest]`), post-quantum signatures (ML-DSA), Tendermint BFT + Light-Cone Full DAG consensus with BLS12-381 aggregate signatures, browser extension, mobile wallet, SDK, 4 dApps.
 
 **Repo:** github.com/ss1738/EvaporChain
 
@@ -139,7 +139,7 @@ Novel L1 blockchain with energy-based state decay. 85 Rust workspace crates (18 
 | Singh Attractor Consensus | `evaporchain-singh-attractor` | Live |
 | Evaporated-Fork Certificates | `evaporchain-evap-fork-cert` | Live |
 | Immune Validator Set | `evaporchain-ib-validators` | Live |
-| MERA gate | `evaporchain-mera` | Tier-2 (week-25+) |
+| ~~MERA gate~~ | `evaporchain-mera` | **DOES NOT SHIP** — empirical gate FAILED on real Ethereum 2026-05-03 (R²=0.66 across 3 independent runs vs threshold 0.85). Per doctrine §A1.8 contingency, Energy-Verkle Trie ships instead (already in `evaporchain-state`). Crate retained as research artefact only. |
 
 ### Marketplace + cultural-launch lanes
 SDDC (`evaporchain-sddc`) → SFSV future-self vault, SHLM skill half-life market, Singh-Sabi & Singh-Migrant patina NFTs, MnemoChain (Anki + FSRS on-chain), Gallery That Forgets (Mayfly NFTs), all on the SDDC pattern. SGB (Girard !/?) + SBAV (Bennett reversible VM) + SSM (Hyland-Ong arenas) close the smart-contract paradigm trifecta.
