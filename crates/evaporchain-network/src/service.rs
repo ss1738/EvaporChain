@@ -79,6 +79,55 @@ pub struct ShardSampleResponse {
 /// Maximum number of blocks to serve in a single sync response.
 const MAX_SYNC_BATCH: u64 = 100;
 
+/// Reason a `BlockSyncResponse` was rejected at the network layer.
+/// Pure-function output of [`validate_sync_response_structure`].
+/// Audit 2026-05-06 H-21 — these are cheap structural checks the
+/// network layer enforces before forwarding to consensus, so a
+/// malformed peer response doesn't reach the cryptographic
+/// verification path.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SyncResponseRejection {
+    /// Response carries more than [`MAX_SYNC_BATCH`] blocks.
+    OversizedBatch { len: usize, cap: u64 },
+    /// Block heights are not monotonically non-decreasing.
+    NonMonotoneHeights,
+    /// `tip_height` is below the maximum height in the response —
+    /// the peer is self-contradicting.
+    TipBelowMaxHeight { tip: u64, max: u64 },
+}
+
+/// Validate a `BlockSyncResponse` at the network layer. Does the
+/// three cheap structural checks (size cap, monotone heights, tip
+/// consistency) before consensus runs the expensive cryptographic
+/// verification. Pure function — testable without async/swarm
+/// scaffolding.
+pub fn validate_sync_response_structure(
+    response: &BlockSyncResponse,
+) -> Result<(), SyncResponseRejection> {
+    if response.blocks.len() as u64 > MAX_SYNC_BATCH {
+        return Err(SyncResponseRejection::OversizedBatch {
+            len: response.blocks.len(),
+            cap: MAX_SYNC_BATCH,
+        });
+    }
+    let monotone = response
+        .blocks
+        .windows(2)
+        .all(|w| w[0].number <= w[1].number);
+    if !monotone {
+        return Err(SyncResponseRejection::NonMonotoneHeights);
+    }
+    if let Some(max_h) = response.blocks.iter().map(|b| b.number).max() {
+        if response.tip_height < max_h {
+            return Err(SyncResponseRejection::TipBelowMaxHeight {
+                tip: response.tip_height,
+                max: max_h,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Maximum number of blocks to keep in the cache.
 const MAX_CACHE_SIZE: usize = 2000;
 
@@ -1502,6 +1551,14 @@ impl P2pNetworkService {
                                 }
                             }
                             // ── Block sync: outbound response (received blocks) ──
+                            //
+                            // Network-layer validation (audit 2026-05-06 H-21).
+                            // Cheap structural checks before forwarding to
+                            // consensus — consensus does the cryptographic
+                            // verification, but forwarding obviously-malformed
+                            // responses is a DoS amplifier we can avoid here.
+                            // Each failure records a peer violation so
+                            // chronically-malformed peers get banned.
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
                                 request_response::Event::Message {
                                     peer,
@@ -1512,6 +1569,22 @@ impl P2pNetworkService {
                                     "Received {} sync blocks from peer {peer} (tip={})",
                                     response.blocks.len(), response.tip_height
                                 );
+
+                                // Cheap structural validation before forwarding
+                                // to consensus (audit 2026-05-06 H-21). The
+                                // pure helper returns a typed
+                                // SyncResponseRejection on failure; we log it
+                                // and record a peer violation so chronically
+                                // malformed peers get banned.
+                                if let Err(rej) = validate_sync_response_structure(&response) {
+                                    warn!(
+                                        "Peer {peer} returned malformed sync response: \
+                                         {rej:?}; recording violation"
+                                    );
+                                    ban_list.record_violation(peer);
+                                    continue;
+                                }
+
                                 if !response.blocks.is_empty() {
                                     let _ = sync_blocks_sender.send(response.blocks).await;
                                 }
@@ -1943,6 +2016,104 @@ mod tests {
         let c = cache.read().unwrap();
         let keys: Vec<u64> = c.keys().copied().collect();
         assert_eq!(keys, (0..10).collect::<Vec<_>>());
+    }
+
+    // ─── H-21 sync-response structural validation ────────────────
+    //
+    // Pure-function tests for `validate_sync_response_structure`.
+    // No async/swarm needed — these are the cheap structural checks
+    // the network layer enforces before forwarding bytes to the
+    // consensus layer.
+
+    #[test]
+    fn validate_sync_accepts_empty_response() {
+        let r = BlockSyncResponse {
+            blocks: vec![],
+            tip_height: 0,
+        };
+        assert_eq!(validate_sync_response_structure(&r), Ok(()));
+    }
+
+    #[test]
+    fn validate_sync_accepts_well_formed_batch() {
+        let blocks: Vec<Block> = (10..=15).map(dummy_block).collect();
+        let r = BlockSyncResponse {
+            blocks,
+            tip_height: 100,
+        };
+        assert_eq!(validate_sync_response_structure(&r), Ok(()));
+    }
+
+    #[test]
+    fn validate_sync_rejects_oversized_batch() {
+        let blocks: Vec<Block> = (1..=(MAX_SYNC_BATCH + 1)).map(dummy_block).collect();
+        let r = BlockSyncResponse {
+            blocks,
+            tip_height: 1000,
+        };
+        match validate_sync_response_structure(&r) {
+            Err(SyncResponseRejection::OversizedBatch { len, cap }) => {
+                assert_eq!(len, (MAX_SYNC_BATCH + 1) as usize);
+                assert_eq!(cap, MAX_SYNC_BATCH);
+            }
+            other => panic!("expected OversizedBatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_sync_rejects_non_monotone_heights() {
+        // 10, 11, 9 — second pair regresses.
+        let blocks = vec![dummy_block(10), dummy_block(11), dummy_block(9)];
+        let r = BlockSyncResponse {
+            blocks,
+            tip_height: 100,
+        };
+        assert_eq!(
+            validate_sync_response_structure(&r),
+            Err(SyncResponseRejection::NonMonotoneHeights)
+        );
+    }
+
+    #[test]
+    fn validate_sync_accepts_repeated_heights() {
+        // Equal heights are allowed (non-decreasing, not strictly
+        // increasing) — concurrent forks of the DAG can produce
+        // multiple blocks at the same height.
+        let blocks = vec![dummy_block(10), dummy_block(10), dummy_block(11)];
+        let r = BlockSyncResponse {
+            blocks,
+            tip_height: 100,
+        };
+        assert_eq!(validate_sync_response_structure(&r), Ok(()));
+    }
+
+    #[test]
+    fn validate_sync_rejects_tip_below_max_height() {
+        // Peer says tip=10 but ships block at height 50 — self-
+        // contradicting; tip must be ≥ every block's height.
+        let blocks = vec![dummy_block(40), dummy_block(50)];
+        let r = BlockSyncResponse {
+            blocks,
+            tip_height: 10,
+        };
+        match validate_sync_response_structure(&r) {
+            Err(SyncResponseRejection::TipBelowMaxHeight { tip, max }) => {
+                assert_eq!(tip, 10);
+                assert_eq!(max, 50);
+            }
+            other => panic!("expected TipBelowMaxHeight, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_sync_accepts_tip_equal_to_max_height() {
+        // tip == max is the typical "you're caught up to me" case.
+        let blocks = vec![dummy_block(40), dummy_block(50)];
+        let r = BlockSyncResponse {
+            blocks,
+            tip_height: 50,
+        };
+        assert_eq!(validate_sync_response_structure(&r), Ok(()));
     }
 
     #[tokio::test]
