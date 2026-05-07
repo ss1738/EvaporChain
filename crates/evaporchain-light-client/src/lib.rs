@@ -58,9 +58,13 @@
 pub mod client;
 pub mod error;
 pub mod state_query;
+pub mod sync;
+pub mod transport;
 
 #[cfg(feature = "nova")]
 pub mod nova;
+
+pub use transport::{RpcTransport, TransportError};
 
 pub use client::LightClient;
 pub use error::LightClientError;
