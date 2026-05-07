@@ -1,3 +1,11 @@
 [toolchain]
-channel = "stable"
+# Pinned 2026-05-07 to lock the clippy lint-set after rolling-stable
+# 1.94 added ~12 new style lints in one bump that broke our
+# `cargo clippy --workspace -- -D warnings` CI gate. Pinning to the
+# same 1.94.0 we're already running locally so behaviour matches
+# between dev machines and the self-hosted runner. To upgrade:
+# bump the version explicitly here, audit any new clippy lints
+# against `-D warnings`, then merge — manual upgrades are cheaper
+# than surprise breaks every time stable releases.
+channel = "1.94.0"
 components = ["rustfmt", "clippy"]
