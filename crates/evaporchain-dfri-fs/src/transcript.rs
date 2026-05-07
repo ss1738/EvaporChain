@@ -1,6 +1,6 @@
 //! Fiat-Shamir transcript + query-position derivation.
 
-use evaporchain_dfri::{EnergyCodeword, FieldElem, MOD_P};
+use evaporchain_dfri::{EnergyCodeword, FieldElem};
 
 pub const TRANSCRIPT_TAG: &[u8] = b"evaporchain:dfri-fs:transcript:v1\0";
 
@@ -79,8 +79,7 @@ pub fn derive_query_positions(
     }
     let domain_size = input.positions.len();
     let mut chosen: Vec<usize> = Vec::with_capacity(n);
-    let mut chosen_set: std::collections::BTreeSet<usize> =
-        std::collections::BTreeSet::new();
+    let mut chosen_set: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
     let max_distinct = domain_size;
     while chosen.len() < n.min(max_distinct) {
         let bytes = transcript.challenge();
@@ -90,10 +89,7 @@ pub fn derive_query_positions(
             chosen.push(idx);
         }
     }
-    chosen
-        .into_iter()
-        .map(|i| input.positions[i].x)
-        .collect()
+    chosen.into_iter().map(|i| input.positions[i].x).collect()
 }
 
 #[cfg(test)]

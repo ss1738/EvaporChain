@@ -170,11 +170,7 @@ impl CapRegistry {
     /// can revoke. Revocation is structural — descendants
     /// invoking will fail at the parent-chain walk in
     /// [`invoke_gate`].
-    pub fn revoke(
-        &mut self,
-        caller: [u8; 32],
-        cap_id: CapabilityId,
-    ) -> Result<(), RegistryError> {
+    pub fn revoke(&mut self, caller: [u8; 32], cap_id: CapabilityId) -> Result<(), RegistryError> {
         let cap = self
             .caps
             .get_mut(&cap_id)
@@ -189,11 +185,7 @@ impl CapRegistry {
     /// Mutate a capability's energy directly — used by the chain's
     /// decay tick. The chain calls this once per epoch with the
     /// post-decay energy.
-    pub fn set_energy(
-        &mut self,
-        cap_id: CapabilityId,
-        energy: u64,
-    ) -> Result<(), RegistryError> {
+    pub fn set_energy(&mut self, cap_id: CapabilityId, energy: u64) -> Result<(), RegistryError> {
         let cap = self
             .caps
             .get_mut(&cap_id)
@@ -217,7 +209,10 @@ impl CapRegistry {
                 .caps
                 .get(&current_id)
                 .ok_or(RegistryError::NotFound(current_id))?;
-            if cap.energy <= ENERGY_FLOOR {
+            // ENERGY_FLOOR is 0 for u64, so `<=` is equivalent to `==`
+            // — clippy's absurd_extreme_comparisons lint flagged the
+            // inequality as misleading. Equality preserves semantics.
+            if cap.energy == ENERGY_FLOOR {
                 if current_id == cap_id {
                     return Err(RegistryError::NonInvocable(cap_id));
                 } else {
@@ -244,18 +239,28 @@ mod tests {
         }
     }
 
-    fn alice() -> [u8; 32] { [0xAA; 32] }
-    fn bob()   -> [u8; 32] { [0xBB; 32] }
-    fn carol() -> [u8; 32] { [0xCC; 32] }
+    fn alice() -> [u8; 32] {
+        [0xAA; 32]
+    }
+    fn bob() -> [u8; 32] {
+        [0xBB; 32]
+    }
+    fn carol() -> [u8; 32] {
+        [0xCC; 32]
+    }
 
-    fn nonce(byte: u8) -> [u8; 32] { [byte; 32] }
+    fn nonce(byte: u8) -> [u8; 32] {
+        [byte; 32]
+    }
 
     // ── mint + invoke ─────────────────────────────────────────────
 
     #[test]
     fn mint_creates_invocable_capability() {
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
         r.invoke_gate(id).unwrap();
         assert_eq!(r.get(&id).unwrap().holder, alice());
     }
@@ -263,8 +268,11 @@ mod tests {
     #[test]
     fn duplicate_mint_rejected() {
         let mut r = CapRegistry::new();
-        r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let err = r.mint(alice(), auth("read", 1, 100), 500, nonce(1), 0).unwrap_err();
+        r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let err = r
+            .mint(alice(), auth("read", 1, 100), 500, nonce(1), 0)
+            .unwrap_err();
         assert!(matches!(err, RegistryError::AlreadyExists(_)));
     }
 
@@ -280,7 +288,9 @@ mod tests {
     #[test]
     fn transfer_changes_holder() {
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
         r.transfer(alice(), id, bob()).unwrap();
         assert_eq!(r.get(&id).unwrap().holder, bob());
     }
@@ -288,7 +298,9 @@ mod tests {
     #[test]
     fn transfer_by_non_holder_rejected() {
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
         let err = r.transfer(bob(), id, carol()).unwrap_err();
         assert!(matches!(err, RegistryError::NotHolder(_)));
     }
@@ -296,7 +308,9 @@ mod tests {
     #[test]
     fn transfer_does_not_change_authority_or_energy() {
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
         r.transfer(alice(), id, bob()).unwrap();
         let cap = r.get(&id).unwrap();
         assert_eq!(cap.energy, 1000);
@@ -308,16 +322,20 @@ mod tests {
     #[test]
     fn attenuation_to_strict_subset_succeeds() {
         let mut r = CapRegistry::new();
-        let parent_id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let child_id = r.attenuate(
-            alice(),
-            parent_id,
-            auth("read", 1, 50),
-            500,
-            bob(),
-            nonce(2),
-            10,
-        ).unwrap();
+        let parent_id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let child_id = r
+            .attenuate(
+                alice(),
+                parent_id,
+                auth("read", 1, 50),
+                500,
+                bob(),
+                nonce(2),
+                10,
+            )
+            .unwrap();
         assert_ne!(parent_id, child_id);
         assert_eq!(r.get(&child_id).unwrap().holder, bob());
         // Attenuated child preserves the root issuer.
@@ -328,50 +346,100 @@ mod tests {
     fn attenuation_equal_authority_rejected() {
         // Equal is NOT strict subset — keeps the graph minimal.
         let mut r = CapRegistry::new();
-        let parent_id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let err = r.attenuate(
-            alice(), parent_id, auth("read", 1, 100), 500, bob(), nonce(2), 10,
-        ).unwrap_err();
+        let parent_id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let err = r
+            .attenuate(
+                alice(),
+                parent_id,
+                auth("read", 1, 100),
+                500,
+                bob(),
+                nonce(2),
+                10,
+            )
+            .unwrap_err();
         assert_eq!(err, RegistryError::AttenuationNotStrictSubset);
     }
 
     #[test]
     fn attenuation_more_authority_rejected() {
         let mut r = CapRegistry::new();
-        let parent_id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let err = r.attenuate(
-            alice(), parent_id, auth("read", 1, 200), 500, bob(), nonce(2), 10,
-        ).unwrap_err();
+        let parent_id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let err = r
+            .attenuate(
+                alice(),
+                parent_id,
+                auth("read", 1, 200),
+                500,
+                bob(),
+                nonce(2),
+                10,
+            )
+            .unwrap_err();
         assert_eq!(err, RegistryError::AttenuationNotStrictSubset);
     }
 
     #[test]
     fn attenuation_different_verb_rejected() {
         let mut r = CapRegistry::new();
-        let parent_id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let err = r.attenuate(
-            alice(), parent_id, auth("write", 1, 50), 500, bob(), nonce(2), 10,
-        ).unwrap_err();
+        let parent_id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let err = r
+            .attenuate(
+                alice(),
+                parent_id,
+                auth("write", 1, 50),
+                500,
+                bob(),
+                nonce(2),
+                10,
+            )
+            .unwrap_err();
         assert_eq!(err, RegistryError::AttenuationNotStrictSubset);
     }
 
     #[test]
     fn attenuation_energy_over_parent_rejected() {
         let mut r = CapRegistry::new();
-        let parent_id = r.mint(alice(), auth("read", 1, 100), 500, nonce(1), 0).unwrap();
-        let err = r.attenuate(
-            alice(), parent_id, auth("read", 1, 50), 600, bob(), nonce(2), 10,
-        ).unwrap_err();
+        let parent_id = r
+            .mint(alice(), auth("read", 1, 100), 500, nonce(1), 0)
+            .unwrap();
+        let err = r
+            .attenuate(
+                alice(),
+                parent_id,
+                auth("read", 1, 50),
+                600,
+                bob(),
+                nonce(2),
+                10,
+            )
+            .unwrap_err();
         assert_eq!(err, RegistryError::AttenuationEnergyExceedsParent);
     }
 
     #[test]
     fn attenuation_by_non_holder_rejected() {
         let mut r = CapRegistry::new();
-        let parent_id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let err = r.attenuate(
-            bob(), parent_id, auth("read", 1, 50), 500, carol(), nonce(2), 10,
-        ).unwrap_err();
+        let parent_id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let err = r
+            .attenuate(
+                bob(),
+                parent_id,
+                auth("read", 1, 50),
+                500,
+                carol(),
+                nonce(2),
+                10,
+            )
+            .unwrap_err();
         assert!(matches!(err, RegistryError::NotHolder(_)));
     }
 
@@ -380,7 +448,9 @@ mod tests {
     #[test]
     fn revoke_zeros_energy() {
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
         r.revoke(alice(), id).unwrap();
         assert_eq!(r.get(&id).unwrap().energy, 0);
         let err = r.invoke_gate(id).unwrap_err();
@@ -390,7 +460,9 @@ mod tests {
     #[test]
     fn non_issuer_cannot_revoke() {
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
         // Even bob, the holder after a transfer, cannot revoke.
         r.transfer(alice(), id, bob()).unwrap();
         let err = r.revoke(bob(), id).unwrap_err();
@@ -403,10 +475,20 @@ mod tests {
         // the parent. Bob's child capability becomes
         // unforgeably non-invocable WITHOUT touching the child.
         let mut r = CapRegistry::new();
-        let parent = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let child = r.attenuate(
-            alice(), parent, auth("read", 1, 50), 500, bob(), nonce(2), 10,
-        ).unwrap();
+        let parent = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let child = r
+            .attenuate(
+                alice(),
+                parent,
+                auth("read", 1, 50),
+                500,
+                bob(),
+                nonce(2),
+                10,
+            )
+            .unwrap();
         r.invoke_gate(child).unwrap(); // child is live before revocation
         r.revoke(alice(), parent).unwrap();
         let err = r.invoke_gate(child).unwrap_err();
@@ -418,9 +500,15 @@ mod tests {
         // Alice → Bob → Carol. Alice revokes the root; Carol's
         // grandchild is also dead.
         let mut r = CapRegistry::new();
-        let l0 = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let l1 = r.attenuate(alice(), l0, auth("read", 1, 50), 500, bob(), nonce(2), 0).unwrap();
-        let l2 = r.attenuate(bob(), l1, auth("read", 1, 25), 250, carol(), nonce(3), 0).unwrap();
+        let l0 = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let l1 = r
+            .attenuate(alice(), l0, auth("read", 1, 50), 500, bob(), nonce(2), 0)
+            .unwrap();
+        let l2 = r
+            .attenuate(bob(), l1, auth("read", 1, 25), 250, carol(), nonce(3), 0)
+            .unwrap();
         r.invoke_gate(l2).unwrap();
         r.revoke(alice(), l0).unwrap();
         let err = r.invoke_gate(l2).unwrap_err();
@@ -435,7 +523,9 @@ mod tests {
         // command was issued. The capability is structurally
         // dead anyway.
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
         r.set_energy(id, 0).unwrap();
         let err = r.invoke_gate(id).unwrap_err();
         assert!(matches!(err, RegistryError::NonInvocable(_)));
@@ -444,10 +534,20 @@ mod tests {
     #[test]
     fn decay_propagates_to_descendants_too() {
         let mut r = CapRegistry::new();
-        let parent = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let child = r.attenuate(
-            alice(), parent, auth("read", 1, 50), 500, bob(), nonce(2), 10,
-        ).unwrap();
+        let parent = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let child = r
+            .attenuate(
+                alice(),
+                parent,
+                auth("read", 1, 50),
+                500,
+                bob(),
+                nonce(2),
+                10,
+            )
+            .unwrap();
         // Parent decays to 0 — the child is structurally dead
         // even though its own energy is 500.
         r.set_energy(parent, 0).unwrap();
@@ -466,9 +566,15 @@ mod tests {
         // Alice → Bob. Alice's root is fine; Bob's intermediate
         // dies. Alice's root stays invocable.
         let mut r = CapRegistry::new();
-        let l0 = r.mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0).unwrap();
-        let l1 = r.attenuate(alice(), l0, auth("read", 1, 50), 500, bob(), nonce(2), 0).unwrap();
-        let l2 = r.attenuate(bob(), l1, auth("read", 1, 25), 250, carol(), nonce(3), 0).unwrap();
+        let l0 = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        let l1 = r
+            .attenuate(alice(), l0, auth("read", 1, 50), 500, bob(), nonce(2), 0)
+            .unwrap();
+        let l2 = r
+            .attenuate(bob(), l1, auth("read", 1, 25), 250, carol(), nonce(3), 0)
+            .unwrap();
         r.set_energy(l1, 0).unwrap();
         // l0 is still alive — root is unaffected by l1 decay.
         r.invoke_gate(l0).unwrap();
@@ -488,7 +594,9 @@ mod tests {
         // re-check on every call. The capability simply ceases
         // to exist as an authority."
         let mut r = CapRegistry::new();
-        let id = r.mint(alice(), auth("read", 1, 100), 100, nonce(1), 0).unwrap();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 100, nonce(1), 0)
+            .unwrap();
         // Initially invocable.
         r.invoke_gate(id).unwrap();
         // Time passes; the chain's decay model writes the energy
