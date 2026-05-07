@@ -1,3 +1,4 @@
+pub mod emission;
 pub mod genesis;
 
 use serde::{Deserialize, Serialize};

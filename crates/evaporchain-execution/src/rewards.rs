@@ -99,14 +99,16 @@ impl RewardAccumulator {
     ) -> u64 {
         let mut producer_credit = 0u64;
 
-        // 1. Block reward (minted) — clipped against the optional
-        //    `Tokenomics::max_supply_cap` using cumulative
-        //    `total_minted` so emissions never exceed the cap by
-        //    even one base unit. Audit 2026-05-06 MEDIUM (block
-        //    reward / emission schedule).
-        let block_reward = self
-            .tokenomics
-            .reward_at_epoch_capped(epoch, self.total_minted);
+        // 1. Block reward (minted). Dispatches via
+        //    `Tokenomics::block_reward`:
+        //      * `emission: Some(_)` ⇒ rich schedule (Constant /
+        //        Halving / LinearDecay) via
+        //        `evaporchain_types::emission::block_reward_at` —
+        //        TOKENOMICS §2.4 / Q4 closure.
+        //      * `emission: None` (default for existing genesis files)
+        //        ⇒ legacy `reward_at_epoch_capped` path. Both
+        //        respect their own cap mechanism.
+        let block_reward = self.tokenomics.block_reward(epoch, self.total_minted);
         if block_reward > 0 {
             let acct = db.get_or_create_account(producer);
             acct.balance = acct.balance.saturating_add(block_reward);
@@ -285,7 +287,128 @@ mod tests {
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
             max_supply_cap: None,
+            emission: None,
         }
+    }
+
+    /// TOKENOMICS §2.4 / Q4 — when `emission: Some(LinearDecay)`,
+    /// rewards must follow the linear curve, not the legacy halving
+    /// path. Producer at epoch 0 gets `initial_reward`, at midpoint
+    /// gets ~half, post-window gets 0.
+    #[test]
+    fn test_block_reward_uses_linear_decay_when_emission_set() {
+        use evaporchain_types::emission::{EmissionParams, EmissionSchedule};
+
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut tk = test_tokenomics();
+        tk.emission = Some(
+            EmissionParams::new(
+                1000,
+                EmissionSchedule::LinearDecay { decay_epochs: 100 },
+                None,
+            )
+            .unwrap(),
+        );
+        let mut acc = RewardAccumulator::new(tk);
+
+        // Epoch 0: full reward.
+        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        assert_eq!(r0, 1000);
+
+        // Epoch 50 (midpoint): ~half. linear: 1000 * (100-50) / 100 = 500.
+        // Use a fresh accumulator so total_minted doesn't compound.
+        let mut tk2 = test_tokenomics();
+        tk2.emission = Some(
+            EmissionParams::new(
+                1000,
+                EmissionSchedule::LinearDecay { decay_epochs: 100 },
+                None,
+            )
+            .unwrap(),
+        );
+        let mut acc2 = RewardAccumulator::new(tk2);
+        let r50 = acc2.process_block_rewards(&mut db, &addr(1), 50, 0);
+        assert_eq!(r50, 500);
+
+        // Epoch 100 (post-window): 0.
+        let mut acc3 = RewardAccumulator::new(test_tokenomics());
+        acc3.tokenomics.emission = Some(
+            EmissionParams::new(
+                1000,
+                EmissionSchedule::LinearDecay { decay_epochs: 100 },
+                None,
+            )
+            .unwrap(),
+        );
+        let r100 = acc3.process_block_rewards(&mut db, &addr(1), 100, 0);
+        assert_eq!(r100, 0);
+    }
+
+    /// TOKENOMICS §2.4 / Q5 — emission's max_supply cap fires
+    /// independently of the legacy max_supply_cap field.
+    #[test]
+    fn test_block_reward_respects_emission_max_supply() {
+        use evaporchain_types::emission::{EmissionParams, EmissionSchedule};
+
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut tk = test_tokenomics();
+        tk.emission = Some(
+            EmissionParams::new(
+                100,
+                EmissionSchedule::Constant,
+                Some(150), // cap at 150 — second block partial, third block 0
+            )
+            .unwrap(),
+        );
+        let mut acc = RewardAccumulator::new(tk);
+
+        // Block 0: full 100.
+        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        assert_eq!(r0, 100);
+        assert_eq!(acc.total_minted, 100);
+
+        // Block 1: clipped to 50 (only 50 headroom left).
+        let r1 = acc.process_block_rewards(&mut db, &addr(1), 1, 0);
+        assert_eq!(r1, 50);
+        assert_eq!(acc.total_minted, 150);
+
+        // Block 2: 0 (cap reached).
+        let r2 = acc.process_block_rewards(&mut db, &addr(1), 2, 0);
+        assert_eq!(r2, 0);
+        assert_eq!(acc.total_minted, 150);
+    }
+
+    /// Regression — emission: None must preserve the legacy
+    /// reward_at_epoch_capped behavior verbatim. Critical for
+    /// running cluster non-disruption when the new binary deploys.
+    #[test]
+    fn test_block_reward_none_emission_matches_legacy() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let tk = test_tokenomics(); // emission: None by helper default
+        let mut acc = RewardAccumulator::new(tk.clone());
+
+        // Standard legacy path: block_reward=100, half_life=1000, no cap
+        // → at epoch 0 reward=100, at epoch 1000 reward=50.
+        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        assert_eq!(r0, 100);
+
+        // Verify Tokenomics::block_reward dispatcher equals
+        // reward_at_epoch_capped when emission=None.
+        assert_eq!(
+            tk.block_reward(0, 0),
+            tk.reward_at_epoch_capped(0, 0)
+        );
+        assert_eq!(
+            tk.block_reward(500, 0),
+            tk.reward_at_epoch_capped(500, 0)
+        );
+        assert_eq!(
+            tk.block_reward(1000, 0),
+            tk.reward_at_epoch_capped(1000, 0)
+        );
     }
 
     #[test]

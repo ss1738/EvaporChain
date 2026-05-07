@@ -290,6 +290,7 @@ pub fn cmd_build_genesis(
         staker_fee_share: 0.50,
         target_staking_apy: 0.05,
         max_supply_cap: None,
+        emission: None,
     };
 
     let coordinator_pk_hex = hex::encode(kp.public_key());

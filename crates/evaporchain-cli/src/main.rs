@@ -1660,6 +1660,7 @@ fn cmd_testnet_init(
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
             max_supply_cap: None,
+            emission: None,
         },
         genesis_time: format!("{}", now_secs),
         validators: genesis_validators,
@@ -2266,6 +2267,7 @@ fn cmd_genesis_create(
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
             max_supply_cap: None,
+            emission: None,
         },
         genesis_time: {
             let secs = std::time::SystemTime::now()

@@ -108,6 +108,19 @@ pub struct Tokenomics {
     /// (chain emits forever per the schedule). Audit 2026-05-06 MEDIUM.
     #[serde(default)]
     pub max_supply_cap: Option<u64>,
+
+    /// Optional richer emission schedule (TOKENOMICS §2.4 / Q4 closure).
+    /// `None` ⇒ legacy path: `reward_at_epoch_capped` (block_reward +
+    /// reward_half_life simple halving). `Some(_)` ⇒ takes precedence:
+    /// callers MUST use [`crate::emission::block_reward_at`] with
+    /// these params, ignoring `block_reward` / `reward_half_life` /
+    /// `max_supply_cap` (the cap travels inside `EmissionParams`).
+    ///
+    /// Backwards-compatible: existing genesis files without an
+    /// `emission` block deserialise to `None` and behave identically
+    /// to pre-feature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emission: Option<crate::emission::EmissionParams>,
 }
 
 impl Default for Tokenomics {
@@ -120,6 +133,7 @@ impl Default for Tokenomics {
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
             max_supply_cap: None,
+            emission: None,
         }
     }
 }
@@ -158,6 +172,29 @@ impl Tokenomics {
                     raw.min(headroom)
                 }
             }
+        }
+    }
+
+    /// Compute the per-block reward at `epoch`. Dispatches based on
+    /// the `emission` field:
+    ///
+    ///   * `Some(params)` — use the rich schedule via
+    ///     [`crate::emission::block_reward_at`]. Supports Constant /
+    ///     Halving / LinearDecay shapes plus a `max_supply` cap.
+    ///   * `None` — fall through to the legacy
+    ///     [`Self::reward_at_epoch_capped`] (block_reward +
+    ///     reward_half_life + max_supply_cap).
+    ///
+    /// `total_minted` is the running cumulative emission. Only the
+    /// `Some` path uses it for cap enforcement; the `None` path
+    /// already respects `max_supply_cap` via
+    /// `reward_at_epoch_capped`.
+    pub fn block_reward(&self, epoch: Epoch, total_minted: u64) -> u64 {
+        match self.emission.as_ref() {
+            Some(params) => {
+                crate::emission::block_reward_at(params, epoch, total_minted as u128)
+            }
+            None => self.reward_at_epoch_capped(epoch, total_minted),
         }
     }
 
@@ -410,6 +447,7 @@ impl GenesisConfig {
                 staker_fee_share: 0.50,
                 target_staking_apy: 0.05,
                 max_supply_cap: None,
+                emission: None,
             },
             genesis_time: "2026-04-06T00:00:00Z".to_string(),
             validators: vec![
