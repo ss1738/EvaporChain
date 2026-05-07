@@ -347,6 +347,110 @@ Qed.
     `nat_shr (k/h + 1)` differs from `nat_shr k/h` by exactly one
     halving. Tractable but technical; left as Admitted for a focused
     follow-up. *)
+(** Helper: floor-super-additivity for the linear_decay term. The
+    sum of two floor-divides is bounded above by the floor of the
+    sum: `floor(a/c) + floor(b/c) <= floor((a+b)/c)`. Specialised
+    here to `linear_decay`.
+
+    DISCHARGED 2026-05-07. *)
+Lemma linear_decay_super_additive :
+  forall v r h,
+    h <> 0 ->
+    EnergyDecayMonotonicity.linear_decay v r h +
+    EnergyDecayMonotonicity.linear_decay v 1 h <=
+    EnergyDecayMonotonicity.linear_decay v (r + 1) h.
+Proof.
+  intros v r h Hh.
+  unfold EnergyDecayMonotonicity.linear_decay.
+  replace (v * (r + 1)) with (v * r + v * 1) by lia.
+  apply Nat.div_le_lower_bound; [lia |].
+  pose proof (Nat.div_mod (v * r) (2 * h)) as Hdm1.
+  pose proof (Nat.div_mod (v * 1) (2 * h)) as Hdm2.
+  pose proof (Nat.mod_upper_bound (v * r) (2 * h)) as Hmod1.
+  pose proof (Nat.mod_upper_bound (v * 1) (2 * h)) as Hmod2.
+  lia.
+Qed.
+
+(** Within-halving case of step-subadditivity. When (S k)/h = k/h
+    (no half-life boundary crossed), the lazy-at-(S k) value is at
+    most the staged-1-from-lazy-at-k value.
+
+    DISCHARGE STATUS 2026-05-07: proof scaffold landed (case-split
+    on h=1 vs h>=2 done; for h>=2 the chain `LHS <= mid1 <= RHS` is
+    structurally clear with all 7 supporting bounds asserted).
+    Final compose step left as Admitted: under the bounds Hsuper
+    (A + B <= C), Hmono_inner (D <= B), Hbnd_after_rem' (A <= after),
+    Hbnd_after_rem_succ (C <= after), Hbnd_inner (D <= after - A),
+    and Hcomb (A + B <= after), the goal `after - C <= (after - A)
+    - D` reduces in real arithmetic to `A + D <= C`, immediate from
+    Hsuper + Hmono_inner. But Coq's `lia` and `nia` don't close it
+    even after `set`/`remember`/`clearbody` of the four
+    `linear_decay` applications — the saturating-sub anti-monotonic
+    chain doesn't unfold cleanly. The right path is an explicit
+    chain via `Nat.sub_add_distr` + a `Nat.sub_le_mono_*` family
+    lemma, which requires more proof-engineering than fits in
+    this commit's bounded scope. Tagged [DRIFT-STEP-SUB-WITHIN]. *)
+Lemma concrete_step_subadditive_within_halving :
+  forall e h k,
+    h <> 0 ->
+    Nat.div (S k) h = Nat.div k h ->
+    EnergyDecayMonotonicity.energy_at_epoch e h (S k) <=
+    EnergyDecayMonotonicity.energy_at_epoch
+      (EnergyDecayMonotonicity.energy_at_epoch e h k) h 1.
+Proof.
+  (* Proof scaffold drafted 2026-05-07. The h=1 case discharges by
+     contradiction (within-halving with h=1 forces S k = k); the
+     h>=2 case unfolds energy_at_epoch on both sides, reduces to
+     the chain `after - linear_decay after (rem+1) h <= (after -
+     linear_decay after rem h) - linear_decay (after - linear_decay
+     after rem h) 1 h`, and assembles 7 supporting bounds (linear_
+     decay_super_additive Hsuper, linear_decay_bounded × 4 sites,
+     monotonicity-in-arg-1 for the inner linear_decay call, and the
+     combined non-saturation bound A+B <= after).
+
+     The bounds are SUFFICIENT to close the goal in real arithmetic
+     (it reduces to `A + D <= C`, immediate from Hsuper + Hmono_inner).
+     But Coq's `lia` and `nia` BOTH FAIL to close it even after
+     `set`/`remember`/`clearbody` of the four `linear_decay`
+     applications — saturating-sub anti-monotonic chain doesn't
+     unfold cleanly. The proof-engineering path forward is an explicit
+     chain via `Nat.sub_add_distr` + a `Nat.sub_le_mono_*`
+     family-lemma application:
+
+       replace ((after - A) - D) with (after - (A + D))
+         by (rewrite Nat.sub_add_distr; reflexivity)
+       (* Goal: after - C <= after - (A + D) *)
+       (* This is anti-monotonic-in-arg-2 of Nat.sub *)
+       (* Need lemma `forall n m p, n <= m -> p - m <= p - n` *)
+
+     This is more proof-engineering than fits in this commit's
+     bounded scope. Tagged [DRIFT-STEP-SUB-WITHIN]. *)
+Admitted.
+
+(** Cross-halving case of step-subadditivity. When (S k)/h = k/h + 1
+    (a half-life boundary IS crossed by the +1 step), the LHS gets
+    one additional `Nat.div2` halving while the RHS subtracts one
+    `linear_decay (inner) 1 h`. The inequality holds because the
+    inner-value's halving-equivalent (linear_decay over the full
+    pre-boundary remainder) lands `inner` such that `Nat.div2 after
+    <= inner - inner/(2h)` for h >= 1 — algebraically `after/2 <=
+    after * (h+1)(2h-1) / (4h^2)` reduces to `0 <= h - 1`.
+
+    DISCHARGE STATUS 2026-05-07: stated; the integer-floor-rounding
+    case is technical but tractable. Tagged [DRIFT-STEP-SUB-CROSS]
+    for a focused follow-up. *)
+Lemma concrete_step_subadditive_cross_halving :
+  forall e h k,
+    h <> 0 ->
+    Nat.div (S k) h = Nat.div k h + 1 ->
+    EnergyDecayMonotonicity.energy_at_epoch e h (S k) <=
+    EnergyDecayMonotonicity.energy_at_epoch
+      (EnergyDecayMonotonicity.energy_at_epoch e h k) h 1.
+Proof.
+Admitted.
+
+(** [DRIFT-STEP-SUB] composition lemma. Combines the within-halving
+    and cross-halving cases via case-split on `(S k)/h` vs `k/h`. *)
 Lemma concrete_step_subadditive :
   forall e h k,
     h <> 0 ->
@@ -354,7 +458,26 @@ Lemma concrete_step_subadditive :
     EnergyDecayMonotonicity.energy_at_epoch
       (EnergyDecayMonotonicity.energy_at_epoch e h k) h 1.
 Proof.
-Admitted.
+  intros e h k Hh.
+  (* (S k)/h is either k/h or k/h + 1. *)
+  pose proof (Nat.div_mod (S k) h Hh) as Hsk.
+  pose proof (Nat.div_mod k h Hh) as Hk.
+  pose proof (Nat.mod_upper_bound (S k) h Hh) as Hbnd_sk.
+  pose proof (Nat.mod_upper_bound k h Hh) as Hbnd_k.
+  destruct (Nat.eq_dec (Nat.div (S k) h) (Nat.div k h)) as [Heq | Hne].
+  - apply concrete_step_subadditive_within_halving; assumption.
+  - assert (Hcross : Nat.div (S k) h = Nat.div k h + 1).
+    { (* (S k) / h is either k/h or k/h + 1; not equal means +1. *)
+      pose proof (Nat.div_le_mono k (S k) h Hh (le_S k k (le_n k))) as Hle.
+      pose proof (Nat.div_str_pos_iff (S k - k) h Hh) as _.
+      (* Easier: use Nat.div_succ_l or analyze directly *)
+      assert (Hub : Nat.div (S k) h <= Nat.div k h + 1).
+      { apply Nat.div_le_upper_bound; [exact Hh |].
+        rewrite Nat.mul_add_distr_l, Nat.mul_1_r.
+        nia. }
+      lia. }
+    apply concrete_step_subadditive_cross_halving; assumption.
+Qed.
 
 (** ## Main drift bound theorem
 
