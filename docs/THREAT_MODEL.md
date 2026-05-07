@@ -49,8 +49,18 @@ leaving only cryptographic ghost records. The system uses:
 
 **Cannot:**
 - Break NIST-standardized cryptographic primitives
-- Compromise honest validator private keys
+- Compromise honest validator private keys *via the network*, assuming the
+  validator runs a hardened deployment with:
+  - Encrypted at-rest validator keys (Argon2id + XChaCha20-Poly1305 EVPL format) — implemented
+  - File system isolation (validator `data_dir` not readable by other users)
+  - No backup of `data_dir` to untrusted storage
+  - Operational hygiene around log redaction (no key bytes in logs)
 - Violate physical network constraints
+
+**Out-of-scope (operator surface, not protocol):** local-host attacks
+(lateral movement, container escape, backup leak, supply-chain). Mainnet
+operator runbook must enumerate these. See `docs/GENESIS_CEREMONY.md` and
+the key-rotation runbook for the operator-side mitigations.
 
 ### 3.2 Malicious Validator
 
@@ -84,6 +94,7 @@ leaving only cryptographic ghost records. The system uses:
 | **Eclipse attack** | Isolate a node from honest peers | Peer diversity, gossip protocol | Partial |
 | **Double-vote** | Validator signs conflicting blocks | Equivocation detection + slashing (10% stake) | Implemented |
 | **Liveness attack** | f+1 validators go offline | Consensus halts safely (BFT guarantee) | By design |
+| **Finality records pollution** | Backfill `FinalityTracker.records` at gap heights with old valid certs to mislead light clients | 6 layered guards in `on_block_finalized_with_active`: active-signer, duplicate-finalization, superseded-floor watermark, seen-proposals, empty-signer rejection, 2/3 stake quorum | Implemented |
 
 ### 4.2 Transaction Execution
 
@@ -150,6 +161,28 @@ leaving only cryptographic ghost records. The system uses:
 | **Verkle binding break** | Find collision in commitments | Pallas ECDLP hardness | By design |
 | **Hash collision** | BLAKE3 collision | 256-bit output, no known attacks | By design |
 
+### 4.8 Oracle Layer
+
+| Attack | Description | Mitigation | Status |
+|--------|-------------|------------|--------|
+| **Oracle vote impersonation** | Anyone with network access submits oracle votes claiming any validator's identity (no cryptographic check) | `oracle/consensus.rs` invokes `HybridVerifier::verify` against the validator pubkey looked up by `vote.validator_id` from the validator set; empty-signature short-circuit removed | Implemented |
+
+### 4.9 Governance Layer
+
+| Attack | Description | Mitigation | Status |
+|--------|-------------|------------|--------|
+| **Whale-pass** | Single account holding plurality of supply (e.g. Foundation Treasury at 35%) passes any proposal alone with vote-weight = balance | Stake-weighted voting (vote weight = `min(balance, stake)`) + quorum threshold + 2:1 pass condition | Implemented |
+| **Out-of-range parameter set** | Compromised proposal sets `block_gas_limit = u64::MAX` or `block_reward = u64::MAX` | Parameter range validation at proposal application time | Implemented |
+| **Pass-then-apply atomic abuse** | Proposal passes and applies in same block, no opportunity for response | Timelock between pass and apply | Implemented |
+| **Contract upgrade by anyone** | `Transaction::UpgradeContract` either silently no-ops or upgrades bytecode without governance approval | Handler now reads `governance_approved` and refuses without an executed governance proposal of matching scope; bytecode swap path implemented behind the gate | Implemented |
+
+### 4.10 Persistence Layer
+
+| Attack | Description | Mitigation | Status |
+|--------|-------------|------------|--------|
+| **Disk-full / permission-revoke induced panic** | Adversary fills disk or revokes write perms on validator host; persistence write `.expect()` panics mid-block, generating slashable downtime | All persistence write sites use `if let Err(e) = ... { fatal_persistence_error(op, e); }` pattern in `rocksdb_backend.rs`; structured `tracing::error!` with op name + I/O error, 100ms flush sleep, then `std::process::exit(2)` (graceful halt rather than mid-block panic) | Implemented |
+| **Programmer-invariant `.expect()` exploitation** | Adversary triggers an `.expect()` on programmer-invariant paths (just-inserted-HashMap-lookup, startup-time CF handle) | Audit-verified that remaining `.expect()` calls are on programmer-invariant non-I/O paths; no adversary-reachable trigger | By design |
+
 ## 5. Data Flow Diagram
 
 ```
@@ -187,6 +220,11 @@ User → [ML-DSA Sign] → Transaction → [Gossip Network] → Validator Pool
 | DA-2D wiring drift | Medium | **Closed** — `data_root` derived from `build_block_da_inputs(txs)`, identical at proposal-time and serve-time |
 | BLS key-at-rest plaintext | Medium | **Closed** — Encrypted-Validator-Private-Key-Layout (EVPL): Argon2id + XChaCha20-Poly1305; magic-byte auto-detection for plaintext-format migration |
 | Coordinator pubkey size validation | Low | **Closed** — `MAINNET_COORDINATOR_PK` length-checked at startup; `Option<&[u8]>` API with explicit None default |
+| Oracle authentication | Critical | **Closed** — `oracle/consensus.rs` invokes `HybridVerifier::verify` against the validator pubkey looked up by `vote.validator_id`; empty-signature short-circuit removed |
+| Governance whale-pass | Critical | **Closed** — stake-weighted voting (`min(balance, stake)`), quorum threshold, parameter range validation, timelock between pass and apply |
+| Contract upgrade authorization | High | **Closed** — `Transaction::UpgradeContract` handler reads `governance_approved` and refuses without an executed governance proposal of matching scope |
+| Finality records pollution | High | **Closed** — 6 layered guards in `FinalityTracker::on_block_finalized_with_active` (active-signer, duplicate-finalization, superseded-floor watermark, seen-proposals, empty-signer rejection, 2/3 stake quorum) |
+| Persistence panic on write failure | High | **Closed** — every persistence write site uses `fatal_persistence_error` helper (structured tracing + graceful `exit(2)` rather than mid-block panic); remaining `.expect()` calls are on programmer-invariant non-I/O paths |
 | No weak subjectivity checkpoints | Medium | Open — pre-mainnet implementation |
 | No formal verification of circuits | Medium | Open — engage audit firm for R1CS review |
 | Block-STM O(N²) under high contention | Medium | **Closed** — `BLOCK_ABORT_CEILING_MULTIPLIER = 2` in `evaporchain-execution/src/block_stm.rs:1265`; once cumulative aborts exceed `2 × num_txs` the wave loop drains every remaining unconverged tx through the serial path, capping total re-execution at `O(N × 2)`. Determinism preserved by test (parallel-with-drain final state == pure-serial state). |

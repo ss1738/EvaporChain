@@ -52,7 +52,7 @@
 | Community Airdrop | 100,000,000 | 10% |
 | Validator Operators (×4) | 50,000,000 each | 20% combined |
 
-⚠ **Centralization note (status 2026-05-03):** Foundation Treasury alone holds 35% of supply. The "Foundation passes anything solo" path is now closed in code: governance enforces stake-weighted vote-weight (`min(balance, stake)`), a quorum threshold, parameter range validation against §8 floor bounds, and a timelock between proposal pass and apply. The supply-distribution centralization itself remains an operational concern for genesis ceremony — see `audit/end_to_end_audit_2026_04_27.md` and the closure-annotated `THREAT_MODEL_2026_04_27_supplement.md` §2.2.
+⚠ **Centralization note (status 2026-05-03):** Foundation Treasury alone holds 35% of supply. The "Foundation passes anything solo" path is now closed in code: governance enforces stake-weighted vote-weight (`min(balance, stake)`), a quorum threshold, parameter range validation against §8 floor bounds, and a timelock between proposal pass and apply. The supply-distribution centralization itself remains an operational concern for genesis ceremony — see `audit/end_to_end_audit_2026_04_27.md` and `docs/THREAT_MODEL.md` §4.9 (Governance Layer).
 
 ## 4. Execution + smart contract limits
 
