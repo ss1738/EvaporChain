@@ -124,11 +124,7 @@ mod tests {
     fn diagonal_match_picks_max_diagonal() {
         // 3x3, identity matrix is the optimal matching.
         // Costs: (0,0)=1, (1,1)=2, (2,2)=3 → bottleneck = 3.
-        let cost = vec![
-            vec![1, 100, 100],
-            vec![100, 2, 100],
-            vec![100, 100, 3],
-        ];
+        let cost = vec![vec![1, 100, 100], vec![100, 2, 100], vec![100, 100, 3]];
         assert_eq!(bottleneck_exact(&cost).unwrap(), 3);
     }
 
@@ -136,11 +132,7 @@ mod tests {
     fn off_diagonal_match_can_beat_diagonal() {
         // Diagonal: max(5, 5, 5) = 5.
         // Off-diagonal (0→2, 1→1, 2→0): max(1, 1, 1) = 1.
-        let cost = vec![
-            vec![5, 100, 1],
-            vec![100, 1, 100],
-            vec![1, 100, 5],
-        ];
+        let cost = vec![vec![5, 100, 1], vec![100, 1, 100], vec![1, 100, 5]];
         assert_eq!(bottleneck_exact(&cost).unwrap(), 1);
     }
 
@@ -148,10 +140,7 @@ mod tests {
     fn rectangular_n_less_than_m() {
         // 2x4: match the two left vertices to their cheapest
         // available right vertices.
-        let cost = vec![
-            vec![10, 1, 100, 100],
-            vec![100, 100, 2, 100],
-        ];
+        let cost = vec![vec![10, 1, 100, 100], vec![100, 100, 2, 100]];
         assert_eq!(bottleneck_exact(&cost).unwrap(), 2);
     }
 
@@ -159,12 +148,7 @@ mod tests {
     fn rectangular_n_greater_than_m() {
         // 4x2: only 2 right vertices, so 2 left vertices match.
         // Best 2-vertex bottleneck: (0,0)=1, (3,1)=1 → bottleneck=1.
-        let cost = vec![
-            vec![1, 100],
-            vec![100, 100],
-            vec![100, 100],
-            vec![100, 1],
-        ];
+        let cost = vec![vec![1, 100], vec![100, 100], vec![100, 100], vec![100, 1]];
         assert_eq!(bottleneck_exact(&cost).unwrap(), 1);
     }
 
@@ -194,11 +178,7 @@ mod tests {
         // them to all (m choose k) right subsets — but our case
         // has either n=k or m=k (since k=min). Enumerate
         // permutations of indices on the larger side.
-        let (rows, cols, transpose) = if n <= m {
-            (n, m, false)
-        } else {
-            (m, n, true)
-        };
+        let (rows, cols, transpose) = if n <= m { (n, m, false) } else { (m, n, true) };
         let mut chosen: Vec<usize> = (0..cols).collect();
         // Generate all k-permutations of cols.
         permute_k(&mut chosen, 0, rows, &mut |perm| {
@@ -220,12 +200,7 @@ mod tests {
         best
     }
 
-    fn permute_k<F: FnMut(&[usize])>(
-        arr: &mut [usize],
-        depth: usize,
-        k: usize,
-        visit: &mut F,
-    ) {
+    fn permute_k<F: FnMut(&[usize])>(arr: &mut [usize], depth: usize, k: usize, visit: &mut F) {
         if depth == k {
             visit(&arr[..k]);
             return;
@@ -255,10 +230,16 @@ mod tests {
     #[test]
     fn matches_brute_force_2x4_and_4x2() {
         let cost = vec![vec![10u64, 1, 100, 100], vec![100, 100, 2, 100]];
-        assert_eq!(bottleneck_exact(&cost).unwrap(), brute_force_bottleneck(&cost));
+        assert_eq!(
+            bottleneck_exact(&cost).unwrap(),
+            brute_force_bottleneck(&cost)
+        );
 
         let cost_t = vec![vec![10u64, 100], vec![1, 100], vec![100, 2], vec![100, 100]];
-        assert_eq!(bottleneck_exact(&cost_t).unwrap(), brute_force_bottleneck(&cost_t));
+        assert_eq!(
+            bottleneck_exact(&cost_t).unwrap(),
+            brute_force_bottleneck(&cost_t)
+        );
     }
 
     // ── doctrine claim ────────────────────────────────────────────

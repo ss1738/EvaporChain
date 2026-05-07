@@ -208,9 +208,7 @@ mod tests {
         let s = CheckpointStore::new();
         assert!(s.is_empty());
         assert_eq!(s.latest_trusted_height(), None);
-        assert!(s
-            .verify_against_trusted(42, &[0u8; 32], &[0u8; 32])
-            .is_ok());
+        assert!(s.verify_against_trusted(42, &[0u8; 32], &[0u8; 32]).is_ok());
         assert!(s.reject_below_trusted(0).is_ok());
     }
 

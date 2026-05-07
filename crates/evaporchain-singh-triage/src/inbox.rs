@@ -73,9 +73,9 @@ mod tests {
         // - Decayed: energy=1 with stale last_refreshed ⇒ already
         //   sub-threshold at the read epoch.
         let items = vec![
-            item(8, 1, 100),               // refreshed at 100; ~3 epochs to threshold
-            item(1_000_000, 1000, 100),    // healthy — first halving after 1000 epochs
-            item(1, 100, 0),               // decayed — already at the death floor
+            item(8, 1, 100),            // refreshed at 100; ~3 epochs to threshold
+            item(1_000_000, 1000, 100), // healthy — first halving after 1000 epochs
+            item(1, 100, 0),            // decayed — already at the death floor
         ];
         let inbox = bucket_counts(&items, 100, 5, 10, 100);
         assert_eq!(inbox.today, 1);

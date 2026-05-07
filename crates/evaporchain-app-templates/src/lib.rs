@@ -58,7 +58,7 @@ pub mod descriptor;
 
 pub use catalogue::{catalogue, find, CatalogueError};
 pub use class::{TemplateClass, APP_TEMPLATE_RANGE_END, APP_TEMPLATE_RANGE_START};
-pub use descriptor::{TemplateDescriptor, DescriptorError};
+pub use descriptor::{DescriptorError, TemplateDescriptor};
 
 #[cfg(test)]
 mod press_claim_tests {

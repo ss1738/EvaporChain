@@ -276,9 +276,7 @@ pub fn run_realdata_gate(
             gap,
             reasons,
         } => (GateVerdictKind::Fail, s_honest, s_cartel, gap, reasons),
-        GateVerdict::InputError(msg) => {
-            (GateVerdictKind::InputError, 0.0, 0.0, 0.0, vec![msg])
-        }
+        GateVerdict::InputError(msg) => (GateVerdictKind::InputError, 0.0, 0.0, 0.0, vec![msg]),
     };
 
     Ok(GateReport {
@@ -383,16 +381,46 @@ mod tests {
     #[test]
     fn energy_above_median_returns_pm1() {
         let obs = energy_above_median_observable(50);
-        assert_eq!(obs(&BlockStats { energy: 100, tx_count: 0 }), 1);
-        assert_eq!(obs(&BlockStats { energy: 10, tx_count: 0 }), -1);
-        assert_eq!(obs(&BlockStats { energy: 50, tx_count: 0 }), 1);
+        assert_eq!(
+            obs(&BlockStats {
+                energy: 100,
+                tx_count: 0
+            }),
+            1
+        );
+        assert_eq!(
+            obs(&BlockStats {
+                energy: 10,
+                tx_count: 0
+            }),
+            -1
+        );
+        assert_eq!(
+            obs(&BlockStats {
+                energy: 50,
+                tx_count: 0
+            }),
+            1
+        );
     }
 
     #[test]
     fn tx_above_median_returns_pm1() {
         let obs = tx_count_above_median_observable(50);
-        assert_eq!(obs(&BlockStats { energy: 0, tx_count: 100 }), 1);
-        assert_eq!(obs(&BlockStats { energy: 0, tx_count: 10 }), -1);
+        assert_eq!(
+            obs(&BlockStats {
+                energy: 0,
+                tx_count: 100
+            }),
+            1
+        );
+        assert_eq!(
+            obs(&BlockStats {
+                energy: 0,
+                tx_count: 10
+            }),
+            -1
+        );
     }
 
     #[test]
@@ -401,7 +429,12 @@ mod tests {
         let (obs_a, obs_a_prime, obs_b, obs_b_prime) = doctrine_observables(&trace);
         // Sanity: each observable returns ±1 on every block.
         for p in &trace {
-            for v in [obs_a(&p.first), obs_a_prime(&p.first), obs_b(&p.second), obs_b_prime(&p.second)] {
+            for v in [
+                obs_a(&p.first),
+                obs_a_prime(&p.first),
+                obs_b(&p.second),
+                obs_b_prime(&p.second),
+            ] {
                 assert!(v == 1 || v == -1);
             }
         }
@@ -427,7 +460,10 @@ mod tests {
         ];
         let obs = energy_above_median_observable(50);
         let err = build_samples(&trace, &obs, &obs, &obs, &obs).unwrap_err();
-        assert!(matches!(err, RealDataGateError::InsufficientCoverage { n: 3 }));
+        assert!(matches!(
+            err,
+            RealDataGateError::InsufficientCoverage { n: 3 }
+        ));
     }
 
     #[test]
@@ -457,7 +493,10 @@ mod tests {
         let cartel = default_cartel_injection(&honest);
         assert_eq!(honest.samples_ab.len(), cartel.samples_ab.len());
         assert_eq!(honest.samples_ab_prime.len(), cartel.samples_ab_prime.len());
-        assert_eq!(honest.samples_a_prime_b.len(), cartel.samples_a_prime_b.len());
+        assert_eq!(
+            honest.samples_a_prime_b.len(),
+            cartel.samples_a_prime_b.len()
+        );
         assert_eq!(
             honest.samples_a_prime_b_prime.len(),
             cartel.samples_a_prime_b_prime.len()

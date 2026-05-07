@@ -10,9 +10,7 @@ pub struct SplitId(pub [u8; 32]);
 pub enum SplitError {
     #[error("split spec is empty — at least one recipient required")]
     EmptySplit,
-    #[error(
-        "split shares sum to {sum}bp but must sum to exactly 10_000bp (= 100%)"
-    )]
+    #[error("split shares sum to {sum}bp but must sum to exactly 10_000bp (= 100%)")]
     SplitDoesNotSumToFull { sum: u64 },
     #[error("zero share for recipient at index {0}")]
     ZeroShare(usize),
@@ -95,7 +93,9 @@ impl SplitLegacy {
             if *recipient == source {
                 return Err(SplitError::SelfRecipient);
             }
-            sum = sum.checked_add(*share_bp).ok_or(SplitError::SplitDoesNotSumToFull { sum: u64::MAX })?;
+            sum = sum
+                .checked_add(*share_bp)
+                .ok_or(SplitError::SplitDoesNotSumToFull { sum: u64::MAX })?;
         }
         if sum != 10_000 {
             return Err(SplitError::SplitDoesNotSumToFull { sum });
@@ -127,11 +127,7 @@ impl SplitLegacy {
 
     /// Survivor curates their share. Marks it Accepted/Rejected/
     /// Hidden and counts it as claimed (regardless of curation).
-    pub fn curate(
-        &mut self,
-        recipient: [u8; 32],
-        choice: Curation,
-    ) -> Result<(), SplitError> {
+    pub fn curate(&mut self, recipient: [u8; 32], choice: Curation) -> Result<(), SplitError> {
         if !matches!(self.state, SplitState::Inverted { .. }) {
             return Err(SplitError::NotInverted);
         }
@@ -177,10 +173,18 @@ mod tests {
     fn sid(b: u8) -> SplitId {
         SplitId([b; 32])
     }
-    fn alice() -> [u8; 32] { [0xAA; 32] }
-    fn bob() -> [u8; 32] { [0xBB; 32] }
-    fn carol() -> [u8; 32] { [0xCC; 32] }
-    fn dan() -> [u8; 32] { [0xDD; 32] }
+    fn alice() -> [u8; 32] {
+        [0xAA; 32]
+    }
+    fn bob() -> [u8; 32] {
+        [0xBB; 32]
+    }
+    fn carol() -> [u8; 32] {
+        [0xCC; 32]
+    }
+    fn dan() -> [u8; 32] {
+        [0xDD; 32]
+    }
 
     fn fresh_balanced() -> SplitLegacy {
         // 60/30/10 split.
@@ -211,73 +215,47 @@ mod tests {
 
     #[test]
     fn split_below_full_rejected() {
-        let err = SplitLegacy::declare(
-            sid(1),
-            alice(),
-            vec![(bob(), 5_000), (carol(), 4_000)],
-            0,
-        )
-        .unwrap_err();
-        assert!(matches!(err, SplitError::SplitDoesNotSumToFull { sum: 9_000 }));
+        let err = SplitLegacy::declare(sid(1), alice(), vec![(bob(), 5_000), (carol(), 4_000)], 0)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SplitError::SplitDoesNotSumToFull { sum: 9_000 }
+        ));
     }
 
     #[test]
     fn split_above_full_rejected() {
-        let err = SplitLegacy::declare(
-            sid(1),
-            alice(),
-            vec![(bob(), 6_000), (carol(), 5_000)],
-            0,
-        )
-        .unwrap_err();
-        assert!(matches!(err, SplitError::SplitDoesNotSumToFull { sum: 11_000 }));
+        let err = SplitLegacy::declare(sid(1), alice(), vec![(bob(), 6_000), (carol(), 5_000)], 0)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SplitError::SplitDoesNotSumToFull { sum: 11_000 }
+        ));
     }
 
     #[test]
     fn zero_share_rejected() {
-        let err = SplitLegacy::declare(
-            sid(1),
-            alice(),
-            vec![(bob(), 10_000), (carol(), 0)],
-            0,
-        )
-        .unwrap_err();
+        let err = SplitLegacy::declare(sid(1), alice(), vec![(bob(), 10_000), (carol(), 0)], 0)
+            .unwrap_err();
         assert!(matches!(err, SplitError::ZeroShare(1)));
     }
 
     #[test]
     fn duplicate_recipient_rejected() {
-        let err = SplitLegacy::declare(
-            sid(1),
-            alice(),
-            vec![(bob(), 5_000), (bob(), 5_000)],
-            0,
-        )
-        .unwrap_err();
+        let err = SplitLegacy::declare(sid(1), alice(), vec![(bob(), 5_000), (bob(), 5_000)], 0)
+            .unwrap_err();
         assert_eq!(err, SplitError::DuplicateRecipient(bob()));
     }
 
     #[test]
     fn self_recipient_rejected() {
-        let err = SplitLegacy::declare(
-            sid(1),
-            alice(),
-            vec![(alice(), 10_000)],
-            0,
-        )
-        .unwrap_err();
+        let err = SplitLegacy::declare(sid(1), alice(), vec![(alice(), 10_000)], 0).unwrap_err();
         assert_eq!(err, SplitError::SelfRecipient);
     }
 
     #[test]
     fn single_recipient_full_share_succeeds() {
-        let l = SplitLegacy::declare(
-            sid(1),
-            alice(),
-            vec![(bob(), 10_000)],
-            0,
-        )
-        .unwrap();
+        let l = SplitLegacy::declare(sid(1), alice(), vec![(bob(), 10_000)], 0).unwrap();
         assert_eq!(l.dedications.len(), 1);
         assert_eq!(l.dedications[0].share_bp, 10_000);
     }
@@ -297,7 +275,13 @@ mod tests {
         l.certify_source_death(100);
         l.curate(bob(), Curation::Accepted).unwrap();
         assert_eq!(l.total_share_paid_bp, 6_000);
-        assert!(l.dedications.iter().find(|d| d.recipient == bob()).unwrap().claimed);
+        assert!(
+            l.dedications
+                .iter()
+                .find(|d| d.recipient == bob())
+                .unwrap()
+                .claimed
+        );
     }
 
     #[test]
@@ -344,7 +328,13 @@ mod tests {
         l.certify_source_death(100);
         l.curate(bob(), Curation::Pending).unwrap();
         assert_eq!(l.total_share_paid_bp, 0);
-        assert!(!l.dedications.iter().find(|d| d.recipient == bob()).unwrap().claimed);
+        assert!(
+            !l.dedications
+                .iter()
+                .find(|d| d.recipient == bob())
+                .unwrap()
+                .claimed
+        );
     }
 
     // ── full distribution ────────────────────────────────────────

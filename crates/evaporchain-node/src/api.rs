@@ -170,8 +170,7 @@ pub struct ApiState {
     /// libp2p Sybil-resistance state (peer IPs, scores, ban list,
     /// rejection counters). `None` when the node was started without
     /// `--network-mode` and the in-process libp2p swarm is absent.
-    pub network_sybil:
-        Option<Arc<std::sync::RwLock<evaporchain_network::SybilState>>>,
+    pub network_sybil: Option<Arc<std::sync::RwLock<evaporchain_network::SybilState>>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -244,7 +243,10 @@ impl ApiState {
         if cache.len() >= NONCE_CACHE_HARD_CAP {
             let db_lock = safe_lock(&self.db);
             cache.retain(|cached_addr, cached_next| {
-                let on_chain = db_lock.get_account(cached_addr).map(|a| a.nonce).unwrap_or(0);
+                let on_chain = db_lock
+                    .get_account(cached_addr)
+                    .map(|a| a.nonce)
+                    .unwrap_or(0);
                 *cached_next > on_chain
             });
             drop(db_lock);
@@ -326,9 +328,9 @@ impl ApiState {
     /// by `/api/tx/:hash` so the wallet can render "12 of 80 ahead".
     pub fn mempool_position(&self, hash: &[u8; 32]) -> Option<(usize, usize)> {
         let scan = |pending: &std::collections::VecDeque<Transaction>| -> Option<usize> {
-            pending.iter().position(|tx| {
-                &crate::persistence::ChainStore::compute_tx_hash(tx) == hash
-            })
+            pending
+                .iter()
+                .position(|tx| &crate::persistence::ChainStore::compute_tx_hash(tx) == hash)
         };
         if let Some(ref tc) = self.tendermint {
             let c = safe_lock(tc);
@@ -2410,9 +2412,7 @@ async fn post_governance_param(
 /// (`parent_acceptance_mode`, `block_source_mode`, `conservation_enforcement`)
 /// that operators need to inspect to verify which doctrine claims are
 /// live. This RPC surfaces them all in one call.
-async fn get_governance_flags(
-    State(state): State<Arc<ApiState>>,
-) -> Json<serde_json::Value> {
+async fn get_governance_flags(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     if let Some(tc_arc) = &state.tendermint {
         let tc = safe_lock(tc_arc);
         let flags = tc.governance_flags_snapshot();
@@ -4202,9 +4202,7 @@ pub struct MevObservationsResp {
 /// GET /api/mev/observations — read-only view of the consensus
 /// engine's MEV-observation ring buffer (Phase 1.3 of the plan).
 /// Phase 1 is observe-only; no settlement runs yet.
-async fn get_mev_observations(
-    State(state): State<Arc<ApiState>>,
-) -> Json<MevObservationsResp> {
+async fn get_mev_observations(State(state): State<Arc<ApiState>>) -> Json<MevObservationsResp> {
     let tc = match state.tendermint.as_ref() {
         Some(tc) => tc,
         None => {
@@ -4284,8 +4282,11 @@ async fn post_mev_dispute(
             });
         }
     };
-    match tc.dispute_observation(q.source_block_height, q.source_observation_idx, q.current_height)
-    {
+    match tc.dispute_observation(
+        q.source_block_height,
+        q.source_observation_idx,
+        q.current_height,
+    ) {
         Ok(()) => Json(MevDisputeResp {
             status: "ok",
             detail: format!(
@@ -4318,9 +4319,7 @@ pub struct LambdaFoldNovaResp {
 }
 
 #[cfg(feature = "lambda_fold_nova")]
-async fn get_lambda_fold_nova(
-    State(state): State<Arc<ApiState>>,
-) -> Json<LambdaFoldNovaResp> {
+async fn get_lambda_fold_nova(State(state): State<Arc<ApiState>>) -> Json<LambdaFoldNovaResp> {
     let tc = match state.tendermint.as_ref() {
         Some(tc) => tc,
         None => {
@@ -4397,14 +4396,16 @@ async fn post_lambda_fold_nova_verify(
         None => {
             return Json(LambdaFoldNovaVerifyResp {
                 status: "error",
-                detail: "nova folder not initialised — chain has not folded a nova-mode block yet".into(),
+                detail: "nova folder not initialised — chain has not folded a nova-mode block yet"
+                    .into(),
                 step_count: inst.step_count,
             });
         }
     };
     drop(tc);
 
-    match evaporchain_lambda_fold::verify_nova_folded(&inst, &vk_bytes, q.expected_remaining_energy) {
+    match evaporchain_lambda_fold::verify_nova_folded(&inst, &vk_bytes, q.expected_remaining_energy)
+    {
         Ok(()) => Json(LambdaFoldNovaVerifyResp {
             status: "ok",
             detail: String::new(),
@@ -5631,9 +5632,7 @@ fn decode_32(hex_str: &str) -> Option<[u8; 32]> {
     }
 }
 
-async fn post_fork_cert_v2_prove(
-    Json(req): Json<ForkCertV2ProveReq>,
-) -> Json<serde_json::Value> {
+async fn post_fork_cert_v2_prove(Json(req): Json<ForkCertV2ProveReq>) -> Json<serde_json::Value> {
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_evap_fork_cert::ForkBlock;
     use evaporchain_evap_fork_cert_v2::prove_fork_evaporated_v2;
@@ -5695,9 +5694,7 @@ async fn post_fork_cert_v2_prove(
     }
 }
 
-async fn post_fork_cert_v2_verify(
-    Json(req): Json<ForkCertV2VerifyReq>,
-) -> Json<serde_json::Value> {
+async fn post_fork_cert_v2_verify(Json(req): Json<ForkCertV2VerifyReq>) -> Json<serde_json::Value> {
     use evaporchain_evap_fork_cert_v2::{verify_evaporated_cert_v2, EvaporatedForkCertV2};
 
     let fork_root = match decode_32(&req.fork_root_hex) {
@@ -6162,9 +6159,7 @@ pub struct IbV2VoteReq {
     pub jail_state: Vec<JailEntryDto>,
 }
 
-async fn post_ib_validators_v2_vote(
-    Json(req): Json<IbV2VoteReq>,
-) -> Json<serde_json::Value> {
+async fn post_ib_validators_v2_vote(Json(req): Json<IbV2VoteReq>) -> Json<serde_json::Value> {
     use evaporchain_ib_validators::{IbParams, StateSignature};
     use evaporchain_ib_validators_v2::{ib_vote_v2, VoteV2};
 
@@ -6239,10 +6234,7 @@ async fn post_ib_validators_v2_jail_chsh_failure(
     let participants: Vec<[u8; 32]> = match req
         .participants_hex
         .iter()
-        .map(|h| {
-            decode_32(h)
-                .ok_or_else(|| format!("participant id must be 64 hex chars: {h}"))
-        })
+        .map(|h| decode_32(h).ok_or_else(|| format!("participant id must be 64 hex chars: {h}")))
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(v) => v,
@@ -6523,8 +6515,8 @@ pub struct SinghBernsteinGateReq {
 async fn post_singh_inequality_v2_gate(
     Json(req): Json<SinghBernsteinGateReq>,
 ) -> Json<serde_json::Value> {
-    use evaporchain_singh_inequality_v2::{passes_singh_bernstein_gate, singh_bernstein_variance};
     use evaporchain_singh_inequality_v2::bound::max_range;
+    use evaporchain_singh_inequality_v2::{passes_singh_bernstein_gate, singh_bernstein_variance};
 
     let contribs: Vec<_> = req.contributors.iter().map(|c| c.to_inner()).collect();
     let var = match singh_bernstein_variance(&contribs) {
@@ -8886,17 +8878,14 @@ async fn get_tx_by_hash(
                 other => ("rejected", Some(other.to_string())),
             };
             let contract_id = if state_label != "rejected" {
-                receipt
-                    .from
-                    .as_deref()
-                    .and_then(|from| {
-                        resolve_deploy_contract_id(
-                            &receipt.tx_type,
-                            &receipt.tx_hash,
-                            from,
-                            receipt.epoch,
-                        )
-                    })
+                receipt.from.as_deref().and_then(|from| {
+                    resolve_deploy_contract_id(
+                        &receipt.tx_type,
+                        &receipt.tx_hash,
+                        from,
+                        receipt.epoch,
+                    )
+                })
             } else {
                 None
             };
@@ -8908,7 +8897,11 @@ async fn get_tx_by_hash(
                 error: error.or(receipt.revert_reason),
                 confirmations: confirmations_for(receipt.block_number),
                 tx_index: Some(receipt.tx_index),
-                gas_used: if receipt.gas_used > 0 { Some(receipt.gas_used) } else { None },
+                gas_used: if receipt.gas_used > 0 {
+                    Some(receipt.gas_used)
+                } else {
+                    None
+                },
                 mempool_position: None,
                 mempool_size: None,
                 contract_id,
@@ -9308,9 +9301,7 @@ pub struct NetworkHealthResponse {
 /// What an oncall would want to see at a glance from one node:
 /// height, last-block-age, peer count, mempool depth, validator/jail
 /// counts, finality lag, and a one-word verdict.
-async fn get_network_health(
-    State(state): State<Arc<ApiState>>,
-) -> Json<NetworkHealthResponse> {
+async fn get_network_health(State(state): State<Arc<ApiState>>) -> Json<NetworkHealthResponse> {
     let mut db = safe_lock(&state.db);
     let history = safe_lock(&state.block_history);
     let latest = history.back();
@@ -9327,18 +9318,18 @@ async fn get_network_health(
 
     let peer_count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
-    let (validator_count, jailed_count, mempool_size) =
-        if let Some(tc) = state.tendermint.as_ref() {
-            let tc = safe_lock(tc);
-            let vs = tc.validator_set();
-            (
-                vs.len(),
-                vs.validators().iter().filter(|v| v.jailed).count(),
-                tc.mempool.len(),
-            )
-        } else {
-            (0, 0, 0)
-        };
+    let (validator_count, jailed_count, mempool_size) = if let Some(tc) = state.tendermint.as_ref()
+    {
+        let tc = safe_lock(tc);
+        let vs = tc.validator_set();
+        (
+            vs.len(),
+            vs.validators().iter().filter(|v| v.jailed).count(),
+            tc.mempool.len(),
+        )
+    } else {
+        (0, 0, 0)
+    };
 
     let finalised_height = safe_lock(&state.finality_tracker).latest_finalized_height();
     let finality_lag_blocks = block_height.saturating_sub(finalised_height);
@@ -9719,8 +9710,10 @@ async fn get_mera_activations(
 
     // Walk the ring once, recording (account → set-of-block-indices touched).
     // Block index is dense within [from, to] so the matrix is rectangular.
-    let blocks_in_range: Vec<&BlockRecord> =
-        history.iter().filter(|b| b.number >= from && b.number <= to).collect();
+    let blocks_in_range: Vec<&BlockRecord> = history
+        .iter()
+        .filter(|b| b.number >= from && b.number <= to)
+        .collect();
     let n_blocks = blocks_in_range.len();
     if n_blocks == 0 {
         return (
@@ -10256,9 +10249,7 @@ async fn post_claim_delegation(
     ));
     let is_dup = state.mempool_contains(|tx| {
         if let Transaction::ClaimDelegation(t) = tx {
-            t.delegator == delegator
-                && t.validator_id == req.validator_id
-                && t.nonce == req.nonce
+            t.delegator == delegator && t.validator_id == req.validator_id && t.nonce == req.nonce
         } else {
             false
         }
@@ -11412,10 +11403,7 @@ fn client_ip_from(
     if depth > 0 {
         // Right-most depth-th entry. The leftmost entries are
         // attacker-supplied; the operator's proxies append on the right.
-        if let Some(raw) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-        {
+        if let Some(raw) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
             let entries: Vec<&str> = raw.split(',').map(|s| s.trim()).collect();
             if entries.len() >= depth {
                 let target = &entries[entries.len() - depth];
@@ -11440,9 +11428,7 @@ fn client_ip_from(
     if let Some(sock) = connect_info {
         return sock.ip();
     }
-    tracing::warn!(
-        "faucet: could not resolve client IP (no ConnectInfo); falling back to 0.0.0.0"
-    );
+    tracing::warn!("faucet: could not resolve client IP (no ConnectInfo); falling back to 0.0.0.0");
     std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
 }
 
@@ -14193,8 +14179,7 @@ async fn get_prometheus_metrics(
                 let tc = safe_lock(tc);
                 let vs = tc.validator_set();
                 let total = vs.len() as u64;
-                let active =
-                    vs.validators().iter().filter(|v| !v.jailed).count() as u64;
+                let active = vs.validators().iter().filter(|v| !v.jailed).count() as u64;
                 (total, active, tc.round() as u64)
             } else {
                 // MockConsensus path — single-node dev mode.
@@ -14280,9 +14265,7 @@ async fn get_prometheus_metrics(
         // Grafana heatmap: group by `producer` to render one row per
         // validator; rate(evap_block_production_seconds_bucket[5m])
         // gives the per-validator commit-latency distribution.
-        let buckets: [f64; 10] = [
-            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
-        ];
+        let buckets: [f64; 10] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0];
         out.push_str(
             "# HELP evap_block_production_seconds Block execution wall-time histogram (per producer)\n",
         );
@@ -14367,8 +14350,7 @@ async fn get_prometheus_metrics(
                 out.push_str("# HELP evap_peer_score Reputation score per connected peer (label = peer_id prefix)\n");
                 out.push_str("# TYPE evap_peer_score gauge\n");
                 for (pid, score) in g.scores.iter() {
-                    let pid_short: String =
-                        pid.to_string().chars().take(12).collect();
+                    let pid_short: String = pid.to_string().chars().take(12).collect();
                     out.push_str(&format!(
                         "evap_peer_score{{peer_id=\"{}\"}} {}\n",
                         pid_short, score.score
@@ -14376,7 +14358,10 @@ async fn get_prometheus_metrics(
                 }
                 out.push_str("# HELP evap_active_bans Number of currently-active IP bans\n");
                 out.push_str("# TYPE evap_active_bans gauge\n");
-                out.push_str(&format!("evap_active_bans {}\n", g.bans.active_bans().len()));
+                out.push_str(&format!(
+                    "evap_active_bans {}\n",
+                    g.bans.active_bans().len()
+                ));
                 out.push_str("# HELP evap_inbound_rejections_total Inbound libp2p connections refused, by reason\n");
                 out.push_str("# TYPE evap_inbound_rejections_total counter\n");
                 for (reason, count) in g.rejections.snapshot().iter() {
@@ -14425,18 +14410,12 @@ async fn get_prometheus_metrics(
                 "# HELP evap_fee_controller_base_fee Base fee (ppm) from the Singh-Lyapunov fee controller\n",
             );
             out.push_str("# TYPE evap_fee_controller_base_fee gauge\n");
-            out.push_str(&format!(
-                "evap_fee_controller_base_fee {}\n",
-                base_fee_ppm
-            ));
+            out.push_str(&format!("evap_fee_controller_base_fee {}\n", base_fee_ppm));
             out.push_str(
                 "# HELP evap_fee_controller_lyapunov_drift Signed E - E* drift; |drift| -> 0 means controller has converged\n",
             );
             out.push_str("# TYPE evap_fee_controller_lyapunov_drift gauge\n");
-            out.push_str(&format!(
-                "evap_fee_controller_lyapunov_drift {}\n",
-                drift
-            ));
+            out.push_str(&format!("evap_fee_controller_lyapunov_drift {}\n", drift));
         }
 
         // Bell-Certified Beacon — latest CHSH S-value (×1000)
@@ -15866,7 +15845,10 @@ async fn get_snapshot_download(
     (
         StatusCode::OK,
         [
-            (axum::http::header::CONTENT_TYPE, "application/zstd".to_string()),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/zstd".to_string(),
+            ),
             (axum::http::header::CONTENT_LENGTH, len.to_string()),
         ],
         bytes,
@@ -16140,9 +16122,18 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/patronage/immune", get(get_patronage_immune))
         .route("/api/governance/flags", get(get_governance_flags))
         .route("/api/governance/param", post(post_governance_param))
-        .route("/api/cartel_alarm/run_gate", post(post_cartel_alarm_run_gate))
-        .route("/api/cartel_alarm/chain_status", get(get_cartel_alarm_chain_status))
-        .route("/api/cartel_alarm/pending_events", get(get_cartel_alarm_pending_events))
+        .route(
+            "/api/cartel_alarm/run_gate",
+            post(post_cartel_alarm_run_gate),
+        )
+        .route(
+            "/api/cartel_alarm/chain_status",
+            get(get_cartel_alarm_chain_status),
+        )
+        .route(
+            "/api/cartel_alarm/pending_events",
+            get(get_cartel_alarm_pending_events),
+        )
         .route(
             "/api/governance/fork_choice_mode",
             get(get_governance_fork_choice_mode),
@@ -16178,14 +16169,26 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/fork_cert_v2/prove", post(post_fork_cert_v2_prove))
         .route("/api/fork_cert_v2/verify", post(post_fork_cert_v2_verify))
         .route("/api/bell_beacon_v2/issue", post(post_bell_beacon_v2_issue))
-        .route("/api/bell_beacon_v2/verify", post(post_bell_beacon_v2_verify))
-        .route("/api/singh_attractor_v2/draw", post(post_singh_attractor_v2_draw))
-        .route("/api/ib_validators_v2/vote", post(post_ib_validators_v2_vote))
+        .route(
+            "/api/bell_beacon_v2/verify",
+            post(post_bell_beacon_v2_verify),
+        )
+        .route(
+            "/api/singh_attractor_v2/draw",
+            post(post_singh_attractor_v2_draw),
+        )
+        .route(
+            "/api/ib_validators_v2/vote",
+            post(post_ib_validators_v2_vote),
+        )
         .route(
             "/api/ib_validators_v2/jail/chsh_failure",
             post(post_ib_validators_v2_jail_chsh_failure),
         )
-        .route("/api/light_cone_v2/causal_root", post(post_light_cone_v2_causal_root))
+        .route(
+            "/api/light_cone_v2/causal_root",
+            post(post_light_cone_v2_causal_root),
+        )
         .route(
             "/api/light_cone_v2/prove_ancestry",
             post(post_light_cone_v2_prove_ancestry),
@@ -16194,7 +16197,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
             "/api/light_cone_v2/verify_ancestry",
             post(post_light_cone_v2_verify_ancestry),
         )
-        .route("/api/singh_inequality_v2/gate", post(post_singh_inequality_v2_gate))
+        .route(
+            "/api/singh_inequality_v2/gate",
+            post(post_singh_inequality_v2_gate),
+        )
         .route(
             "/api/singh_inequality_v2/compare",
             post(post_singh_inequality_v2_compare),
@@ -16258,9 +16264,15 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/blocks/latest", get(get_latest_block))
         .route("/api/block/latest", get(get_latest_block))
         .route("/api/block/:number", get(get_single_block))
-        .route("/api/block/:number/transactions", get(get_block_transactions))
+        .route(
+            "/api/block/:number/transactions",
+            get(get_block_transactions),
+        )
         .route("/api/account/:address", get(get_account_detail))
-        .route("/api/account/:address/transactions", get(get_account_transactions))
+        .route(
+            "/api/account/:address/transactions",
+            get(get_account_transactions),
+        )
         .route("/api/search/:query", get(explorer_search))
         .route("/api/mera/activations", get(get_mera_activations))
         .route("/api/tx/:hash", get(get_tx_by_hash))
@@ -16581,9 +16593,7 @@ pub async fn start_api_server(
                  failed to load: {e}. PEM files must be readable + parsable."
             )
         })?;
-        axum_server::bind_rustls(addr, config)
-            .serve(app)
-            .await?;
+        axum_server::bind_rustls(addr, config).serve(app).await?;
         return Ok(());
     }
 
@@ -17234,10 +17244,7 @@ mod tx_status_tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].status, "rejected");
         // Hash alignment must hold so the API can map outcomes back to txs.
-        assert_eq!(
-            exec.tx_outcomes[0].tx_hash,
-            block.transactions[0].tx_hash()
-        );
+        assert_eq!(exec.tx_outcomes[0].tx_hash, block.transactions[0].tx_hash());
     }
 
     /// A rejected Transfer must surface the executor error string on
@@ -17548,7 +17555,10 @@ mod faucet_rate_limit_tests {
         // Make sure no test elsewhere has set the env var.
         std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
         let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "203.0.113.5, 198.51.100.7".parse().unwrap());
+        h.insert(
+            "x-forwarded-for",
+            "203.0.113.5, 198.51.100.7".parse().unwrap(),
+        );
         let direct = SocketAddr::new(ip(10, 0, 0, 1), 12345);
         let resolved = client_ip_from(&h, Some(direct));
         // With depth=0, the spoofable header is ignored — the direct
@@ -17586,10 +17596,7 @@ mod faucet_rate_limit_tests {
         let mut h = HeaderMap::new();
         // Attacker prefixes "9.9.9.9, " in front; the operator's proxy
         // appends "203.0.113.5". Rightmost = trusted client.
-        h.insert(
-            "x-forwarded-for",
-            "9.9.9.9, 203.0.113.5".parse().unwrap(),
-        );
+        h.insert("x-forwarded-for", "9.9.9.9, 203.0.113.5".parse().unwrap());
         let direct = SocketAddr::new(ip(10, 0, 0, 1), 12345);
         let resolved = client_ip_from(&h, Some(direct));
         assert_eq!(resolved, ip(203, 0, 113, 5));
@@ -17799,8 +17806,7 @@ mod singh_inequality_v2_handler_tests {
         .await;
         assert_eq!(resp.0["status"], "ok");
         assert_eq!(
-            resp.0["v1_variance_bound"],
-            resp.0["v2_variance_bound"],
+            resp.0["v1_variance_bound"], resp.0["v2_variance_bound"],
             "V1 and V2 variance bounds must equal at Popoviciu max"
         );
     }
@@ -17945,8 +17951,7 @@ mod light_cone_v2_handler_tests {
                 prove.0
             );
             let root_hex = prove.0["causal_root_hex"].as_str().unwrap().to_string();
-            let proof: MerklePathDto =
-                serde_json::from_value(prove.0["proof"].clone()).unwrap();
+            let proof: MerklePathDto = serde_json::from_value(prove.0["proof"].clone()).unwrap();
 
             let verify = post_light_cone_v2_verify_ancestry(Json(LightConeV2VerifyReq {
                 causal_root_hex: root_hex,
@@ -17991,8 +17996,7 @@ mod light_cone_v2_handler_tests {
         }))
         .await;
         let root_hex = prove.0["causal_root_hex"].as_str().unwrap().to_string();
-        let mut proof: MerklePathDto =
-            serde_json::from_value(prove.0["proof"].clone()).unwrap();
+        let mut proof: MerklePathDto = serde_json::from_value(prove.0["proof"].clone()).unwrap();
         if proof.siblings_hex.is_empty() {
             // Tree of 1 leaf has no siblings — pick a different
             // ancestor with a real path.
@@ -18071,8 +18075,7 @@ mod light_cone_v2_handler_tests {
             }))
             .await;
             let root_hex = prove.0["causal_root_hex"].as_str().unwrap().to_string();
-            let proof: MerklePathDto =
-                serde_json::from_value(prove.0["proof"].clone()).unwrap();
+            let proof: MerklePathDto = serde_json::from_value(prove.0["proof"].clone()).unwrap();
             let verify = post_light_cone_v2_verify_ancestry(Json(LightConeV2VerifyReq {
                 causal_root_hex: root_hex,
                 ancestor_id_hex: id_hex(ancestor_byte),

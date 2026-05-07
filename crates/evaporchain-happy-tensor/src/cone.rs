@@ -32,7 +32,9 @@ pub fn causal_cone(
     // Validate that every member of boundary_subset is actually a
     // boundary cell.
     for id in boundary_subset {
-        let cell = disk.cell(id).ok_or(ConeError::Disk(HaPPYDiskError::UnknownCell(*id)))?;
+        let cell = disk
+            .cell(id)
+            .ok_or(ConeError::Disk(HaPPYDiskError::UnknownCell(*id)))?;
         if !cell.is_boundary {
             return Err(ConeError::NotBoundary(*id));
         }
@@ -157,7 +159,10 @@ mod tests {
         subset.insert(cid(99));
         let err = causal_cone(&d, &subset).unwrap_err();
         // The 99 cell is unknown → NotBoundary or UnknownCell wrap.
-        assert!(matches!(err, ConeError::Disk(HaPPYDiskError::UnknownCell(_))));
+        assert!(matches!(
+            err,
+            ConeError::Disk(HaPPYDiskError::UnknownCell(_))
+        ));
     }
 
     // ── disconnected boundary subsets fail to cover ──────────────

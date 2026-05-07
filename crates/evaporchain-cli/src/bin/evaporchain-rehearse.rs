@@ -147,19 +147,13 @@ impl StepReporter {
 /// Run a subprocess to completion. Tail stdout/stderr line-by-line through
 /// `live` so the operator sees progress; capture all stderr for failure
 /// reporting. Returns Ok(()) on exit-0, Err(stderr_text) on anything else.
-async fn run_capture<I, S>(
-    bin: &str,
-    args: I,
-    live_prefix: Option<&str>,
-) -> Result<String, String>
+async fn run_capture<I, S>(bin: &str, args: I, live_prefix: Option<&str>) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
     let mut cmd = Command::new(bin);
-    cmd.args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return Err(format!("failed to spawn {}: {}", bin, e)),
@@ -331,8 +325,7 @@ impl WorkDir {
     fn create(keep: Option<PathBuf>) -> Result<Self> {
         match keep {
             Some(p) => {
-                std::fs::create_dir_all(&p)
-                    .with_context(|| format!("create {}", p.display()))?;
+                std::fs::create_dir_all(&p).with_context(|| format!("create {}", p.display()))?;
                 Ok(Self {
                     path: p,
                     keep_on_drop: true,
@@ -343,10 +336,8 @@ impl WorkDir {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_nanos();
-                let p = std::env::temp_dir()
-                    .join(format!("evaporchain-rehearse-{}", nonce));
-                std::fs::create_dir_all(&p)
-                    .with_context(|| format!("create {}", p.display()))?;
+                let p = std::env::temp_dir().join(format!("evaporchain-rehearse-{}", nonce));
+                std::fs::create_dir_all(&p).with_context(|| format!("create {}", p.display()))?;
                 Ok(Self {
                     path: p,
                     keep_on_drop: false,
@@ -487,7 +478,10 @@ async fn run(cli: Cli) -> i32 {
     //      need MlDsa keys for the smoke flow (BLS pks are written into
     //      the manifest deterministically), but we still touch a file per
     //      operator so the structure mirrors a real ceremony.
-    rep.begin(1, &format!("Generating {} operator keypairs...", cli.operators));
+    rep.begin(
+        1,
+        &format!("Generating {} operator keypairs...", cli.operators),
+    );
     if let Err(e) = std::fs::create_dir_all(&ops_dir) {
         rep.fail("could not create ops/", Some(&e.to_string()));
         return 1;
@@ -514,8 +508,12 @@ async fn run(cli: Cli) -> i32 {
     }
     match run_capture(
         &cli_binary,
-        ["onboarding", "generate-coordinator", "--out-dir",
-         coord_dir.to_str().unwrap()],
+        [
+            "onboarding",
+            "generate-coordinator",
+            "--out-dir",
+            coord_dir.to_str().unwrap(),
+        ],
         None,
     )
     .await
@@ -587,7 +585,10 @@ async fn run(cli: Cli) -> i32 {
     //      They all see identical bytes, so this is a loop, not a quorum.
     rep.begin(
         5,
-        &format!("Verifying genesis as each of {} operators...", cli.operators),
+        &format!(
+            "Verifying genesis as each of {} operators...",
+            cli.operators
+        ),
     );
     for id in 1..=cli.operators {
         match run_capture(
@@ -734,17 +735,18 @@ async fn run(cli: Cli) -> i32 {
         Err(err) => {
             // Don't flip overall success on a tear-down warning, but
             // surface it so the operator can clean up by hand.
-            println!("{}  ({})", "\u{26A0}".yellow().bold(), err.lines().next().unwrap_or(""));
+            println!(
+                "{}  ({})",
+                "\u{26A0}".yellow().bold(),
+                err.lines().next().unwrap_or("")
+            );
         }
     }
 
     if !smoke_ok {
         if cli.keep_dir.is_none() {
             eprintln!();
-            eprintln!(
-                "  workdir kept for inspection: {}",
-                workdir.path.display()
-            );
+            eprintln!("  workdir kept for inspection: {}", workdir.path.display());
             workdir.keep();
         }
         return 1;

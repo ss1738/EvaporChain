@@ -78,7 +78,10 @@ mod press_claim_tests {
         // conventions; here we use the canonical strong-form check.)
         let mut ds = [d_xy, d_yz, d_xz];
         ds.sort();
-        assert_eq!(ds[0], ds[1], "ultrametric: smallest two distances must be equal");
+        assert_eq!(
+            ds[0], ds[1],
+            "ultrametric: smallest two distances must be equal"
+        );
 
         // Build a tree, insert keys, prove inclusion.
         let mut tree = PAdicMerkleTree::<2>::new(6).unwrap();

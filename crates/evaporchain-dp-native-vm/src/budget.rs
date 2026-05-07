@@ -63,9 +63,7 @@ impl PrivacyBudget {
             .checked_add(query_epsilon_micros);
         let new_delta = self.consumed_delta_ppb.checked_add(query_delta_ppb);
         match (new_eps, new_delta) {
-            (Some(e), Some(d)) => {
-                e <= self.initial_epsilon_micros && d <= self.initial_delta_ppb
-            }
+            (Some(e), Some(d)) => e <= self.initial_epsilon_micros && d <= self.initial_delta_ppb,
             _ => false,
         }
     }
@@ -135,8 +133,10 @@ impl BudgetRegistry {
         if self.budgets.contains_key(&id) {
             return Err(BudgetError::AlreadyRegistered(id));
         }
-        self.budgets
-            .insert(id, PrivacyBudget::new(initial_epsilon_micros, initial_delta_ppb));
+        self.budgets.insert(
+            id,
+            PrivacyBudget::new(initial_epsilon_micros, initial_delta_ppb),
+        );
         Ok(())
     }
 

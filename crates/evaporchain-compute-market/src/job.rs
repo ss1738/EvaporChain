@@ -120,7 +120,10 @@ impl Job {
                 required: self.bond_required_micros,
             });
         }
-        self.state = JobState::Claimed { worker, claimed_at: now };
+        self.state = JobState::Claimed {
+            worker,
+            claimed_at: now,
+        };
         self.locked_bond_micros = bond_provided;
         Ok(())
     }
@@ -170,7 +173,10 @@ impl Job {
                 JobError::Terminal(JobState::Slashed { reason_at: now })
             })?;
         self.locked_bond_micros = 0;
-        self.state = JobState::Paid { worker, paid_at: now };
+        self.state = JobState::Paid {
+            worker,
+            paid_at: now,
+        };
         Ok((payout_worker, 0))
     }
 
@@ -178,10 +184,7 @@ impl Job {
     /// Returns the (bond_to_buyer, bounty_to_buyer) amounts.
     /// Open jobs past deadline are also closed: bounty refunded
     /// to buyer, no bond to slash.
-    pub fn expire_overdue(
-        &mut self,
-        now: u64,
-    ) -> Result<(u128, u128), JobError> {
+    pub fn expire_overdue(&mut self, now: u64) -> Result<(u128, u128), JobError> {
         if now <= self.deadline_epoch {
             return Err(JobError::NotYetExpired {
                 now,
@@ -216,20 +219,28 @@ impl Job {
 mod tests {
     use super::*;
 
-    fn jid(b: u8) -> JobId { JobId([b; 32]) }
-    fn buyer() -> [u8; 32] { [0xBB; 32] }
-    fn worker() -> [u8; 32] { [0xCC; 32] }
-    fn worker2() -> [u8; 32] { [0xEE; 32] }
+    fn jid(b: u8) -> JobId {
+        JobId([b; 32])
+    }
+    fn buyer() -> [u8; 32] {
+        [0xBB; 32]
+    }
+    fn worker() -> [u8; 32] {
+        [0xCC; 32]
+    }
+    fn worker2() -> [u8; 32] {
+        [0xEE; 32]
+    }
 
     fn fresh() -> Job {
         Job::post(
             jid(1),
             buyer(),
             [0x11; 32],
-            1_000_000,    // bounty 1.0
-            100_000,      // bond 0.1
-            100,          // deadline 100 epochs
-            500,          // proof_energy_floor
+            1_000_000, // bounty 1.0
+            100_000,   // bond 0.1
+            100,       // deadline 100 epochs
+            500,       // proof_energy_floor
             0,
         )
         .unwrap()
@@ -247,10 +258,22 @@ mod tests {
 
     #[test]
     fn post_rejects_zero_params() {
-        assert_eq!(Job::post(jid(1), buyer(), [0;32], 0, 1, 1, 1, 0).unwrap_err(), JobError::ZeroBounty);
-        assert_eq!(Job::post(jid(1), buyer(), [0;32], 1, 0, 1, 1, 0).unwrap_err(), JobError::ZeroBond);
-        assert_eq!(Job::post(jid(1), buyer(), [0;32], 1, 1, 0, 1, 0).unwrap_err(), JobError::ZeroDeadline);
-        assert_eq!(Job::post(jid(1), buyer(), [0;32], 1, 1, 1, 0, 0).unwrap_err(), JobError::ZeroFloor);
+        assert_eq!(
+            Job::post(jid(1), buyer(), [0; 32], 0, 1, 1, 1, 0).unwrap_err(),
+            JobError::ZeroBounty
+        );
+        assert_eq!(
+            Job::post(jid(1), buyer(), [0; 32], 1, 0, 1, 1, 0).unwrap_err(),
+            JobError::ZeroBond
+        );
+        assert_eq!(
+            Job::post(jid(1), buyer(), [0; 32], 1, 1, 0, 1, 0).unwrap_err(),
+            JobError::ZeroDeadline
+        );
+        assert_eq!(
+            Job::post(jid(1), buyer(), [0; 32], 1, 1, 1, 0, 0).unwrap_err(),
+            JobError::ZeroFloor
+        );
     }
 
     // ── claim ────────────────────────────────────────────────────
@@ -259,7 +282,9 @@ mod tests {
     fn claim_locks_bond_and_records_worker() {
         let mut j = fresh();
         j.claim(worker(), 100_000, 50).unwrap();
-        assert!(matches!(j.state, JobState::Claimed { worker: w, claimed_at: 50 } if w == worker()));
+        assert!(
+            matches!(j.state, JobState::Claimed { worker: w, claimed_at: 50 } if w == worker())
+        );
         assert_eq!(j.locked_bond_micros, 100_000);
     }
 

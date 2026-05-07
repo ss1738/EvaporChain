@@ -68,9 +68,7 @@ pub mod testament;
 pub mod vault;
 
 pub use certificate::{verify_certificate, Attestation, CertificateError, DeathCertificate};
-pub use testament::{
-    MemorialMarker, Testament, TestamentError, TestamentId, TestamentStatus,
-};
+pub use testament::{MemorialMarker, Testament, TestamentError, TestamentId, TestamentStatus};
 pub use vault::{SealedVault, VaultError};
 
 #[cfg(test)]
@@ -93,19 +91,15 @@ mod press_claim_tests {
         let committee: Vec<AccountAddress> = (10u8..15u8).map(|b| [b; 32]).collect();
 
         let vault = SealedVault::new(
-            [0xAA; 32],          // ciphertext_hash
-            1024,                // ciphertext_len
-            3,                   // 3-of-5 threshold
-            committee,
-            [0xBB; 32],          // pubkey_commitment
+            [0xAA; 32], // ciphertext_hash
+            1024,       // ciphertext_len
+            3,          // 3-of-5 threshold
+            committee, [0xBB; 32], // pubkey_commitment
         )
         .unwrap();
         assert_eq!(vault.committee_size(), 5);
 
-        let mut t = Testament::seal(
-            [7u8; 32], issuer, vault, 100, 1_000, 0,
-        )
-        .unwrap();
+        let mut t = Testament::seal([7u8; 32], issuer, vault, 100, 1_000, 0).unwrap();
 
         // Sealed: decay is suspended — visible energy stays at initial
         // even after many half-lives elapse.
@@ -131,10 +125,7 @@ mod press_claim_tests {
         ));
 
         // Testament construction guards.
-        let v2 = SealedVault::new(
-            [0xAA; 32], 1, 1, vec![[1u8; 32]], [0xBB; 32],
-        )
-        .unwrap();
+        let v2 = SealedVault::new([0xAA; 32], 1, 1, vec![[1u8; 32]], [0xBB; 32]).unwrap();
         assert!(matches!(
             Testament::seal([0u8; 32], issuer, v2.clone(), 0, 1_000, 0),
             Err(TestamentError::ZeroHalfLife)

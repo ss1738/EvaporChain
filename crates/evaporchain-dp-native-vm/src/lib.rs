@@ -60,8 +60,8 @@ pub mod noise;
 
 pub use budget::{BudgetError, BudgetRegistry, DatasetId, PrivacyBudget};
 pub use composition::{
-    advanced_composition_epsilon, basic_composition_epsilon, AdvancedComposition,
-    BasicComposition, CompositionError,
+    advanced_composition_epsilon, basic_composition_epsilon, AdvancedComposition, BasicComposition,
+    CompositionError,
 };
 pub use noise::{NoiseError, NoiseMechanism, NoiseSeed};
 

@@ -83,7 +83,10 @@ impl std::fmt::Debug for HttpCellSource {
         f.debug_struct("HttpCellSource")
             .field("peers", &self.peers)
             .field("cursor", &cur)
-            .field("on_fault_set", &self.on_fault.lock().map(|g| g.is_some()).unwrap_or(false))
+            .field(
+                "on_fault_set",
+                &self.on_fault.lock().map(|g| g.is_some()).unwrap_or(false),
+            )
             .field("fault_count", &*self.fault_count.borrow())
             .finish()
     }
@@ -192,9 +195,7 @@ impl CellSource for HttpCellSource {
             return Err(CellSourceError::NotFound);
         }
         if !status.is_success() {
-            return Err(CellSourceError::Transport(format!(
-                "{peer}: HTTP {status}"
-            )));
+            return Err(CellSourceError::Transport(format!("{peer}: HTTP {status}")));
         }
         let body: CellResponse = resp
             .json()

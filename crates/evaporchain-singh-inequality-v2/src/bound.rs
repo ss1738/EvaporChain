@@ -67,9 +67,7 @@ pub fn singh_bernstein_variance(
             });
         }
         let range = (c.hi - c.lo) as u128;
-        let range_sq = range
-            .checked_mul(range)
-            .ok_or(BernsteinError::Overflow)?;
+        let range_sq = range.checked_mul(range).ok_or(BernsteinError::Overflow)?;
         if c.variance_proxy > range_sq {
             return Err(BernsteinError::VarianceExceedsRangeSquared {
                 idx: i,
@@ -83,9 +81,7 @@ pub fn singh_bernstein_variance(
     if e_max == 0 {
         return Err(BernsteinError::ZeroEMax);
     }
-    let e_max_sq = e_max
-        .checked_mul(e_max)
-        .ok_or(BernsteinError::Overflow)?;
+    let e_max_sq = e_max.checked_mul(e_max).ok_or(BernsteinError::Overflow)?;
 
     let mut acc: u128 = 0;
     for c in contribs.iter() {
@@ -152,9 +148,7 @@ pub fn passes_singh_bernstein_gate(
         .ok_or(BernsteinError::Overflow)?
         .checked_mul(3)
         .ok_or(BernsteinError::Overflow)?;
-    let six_sigma_sq = var
-        .checked_mul(6)
-        .ok_or(BernsteinError::Overflow)?;
+    let six_sigma_sq = var.checked_mul(6).ok_or(BernsteinError::Overflow)?;
     let two_m_eps = m
         .checked_mul(2)
         .ok_or(BernsteinError::Overflow)?
@@ -229,19 +223,14 @@ mod tests {
         // Anchor E_max with a fresh contributor (var=0, energy=1000).
         // Decayed contributor has energy = E_max/2 → weight = 1/4 →
         // 25 · 1/4 = 6 (integer floor). Total = 6 + 0 = 6.
-        let r = singh_bernstein_variance(&[
-            cv(0, 10, 500, 25),
-            cv(0, 10, 1000, 0),
-        ])
-        .unwrap();
+        let r = singh_bernstein_variance(&[cv(0, 10, 500, 25), cv(0, 10, 1000, 0)]).unwrap();
         assert_eq!(r, 6);
     }
 
     #[test]
     fn singh_bernstein_zero_variance_yields_zero() {
         // Concentrated signal (e.g. constant) → variance 0 → bound 0.
-        let r =
-            singh_bernstein_variance(&[cv(0, 10, 1000, 0), cv(0, 10, 1000, 0)]).unwrap();
+        let r = singh_bernstein_variance(&[cv(0, 10, 1000, 0), cv(0, 10, 1000, 0)]).unwrap();
         assert_eq!(r, 0);
     }
 
@@ -294,12 +283,7 @@ mod tests {
 
     #[test]
     fn max_range_returns_largest_range() {
-        let m = max_range(&[
-            cv(0, 5, 100, 0),
-            cv(0, 20, 100, 0),
-            cv(10, 15, 100, 0),
-        ])
-        .unwrap();
+        let m = max_range(&[cv(0, 5, 100, 0), cv(0, 20, 100, 0), cv(10, 15, 100, 0)]).unwrap();
         assert_eq!(m, 20);
     }
 

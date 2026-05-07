@@ -24,9 +24,7 @@ pub enum PosthumaTombstoneError {
 /// Mint a Tombstone for a testament that has reached `Memorial`
 /// status. Errors on Sealed and Revealed testaments — only fully
 /// faded testaments qualify.
-pub fn tombstone_for_memorial(
-    testament: &Testament,
-) -> Result<Tombstone, PosthumaTombstoneError> {
+pub fn tombstone_for_memorial(testament: &Testament) -> Result<Tombstone, PosthumaTombstoneError> {
     let revealed_at = match &testament.status {
         TestamentStatus::Memorial(m) => m.revealed_at_epoch,
         _ => return Err(PosthumaTombstoneError::NotMemorial),
@@ -42,9 +40,7 @@ pub fn tombstone_for_memorial(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_singh_posthuma::{
-        Attestation, DeathCertificate, SealedVault, Testament,
-    };
+    use evaporchain_singh_posthuma::{Attestation, DeathCertificate, SealedVault, Testament};
     use evaporchain_types::AccountAddress;
 
     fn id(b: u8) -> [u8; 32] {
@@ -58,14 +54,7 @@ mod tests {
     }
 
     fn vault() -> SealedVault {
-        SealedVault::new(
-            [0xAB; 32],
-            1024,
-            1,
-            vec![addr(1)],
-            [0xCD; 32],
-        )
-        .unwrap()
+        SealedVault::new([0xAB; 32], 1024, 1, vec![addr(1)], [0xCD; 32]).unwrap()
     }
 
     fn always_valid(_v: &AccountAddress, _b: &[u8], _s: &[u8]) -> bool {
@@ -99,15 +88,7 @@ mod tests {
 
     #[test]
     fn sealed_testament_cannot_be_memorialised() {
-        let t = Testament::seal(
-            id(1),
-            addr(0xAA),
-            vault(),
-            100,
-            1000,
-            0,
-        )
-        .unwrap();
+        let t = Testament::seal(id(1), addr(0xAA), vault(), 100, 1000, 0).unwrap();
         let err = tombstone_for_memorial(&t).unwrap_err();
         assert_eq!(err, PosthumaTombstoneError::NotMemorial);
     }
@@ -115,15 +96,7 @@ mod tests {
     #[test]
     fn revealed_but_not_faded_cannot_be_memorialised() {
         // Just-revealed testament still has visible energy.
-        let mut t = Testament::seal(
-            id(1),
-            addr(0xAA),
-            vault(),
-            100,
-            1000,
-            0,
-        )
-        .unwrap();
+        let mut t = Testament::seal(id(1), addr(0xAA), vault(), 100, 1000, 0).unwrap();
         let cert = DeathCertificate {
             testament_id: id(1),
             death_epoch: 50,

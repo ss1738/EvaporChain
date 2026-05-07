@@ -32,7 +32,9 @@ pub enum PolicyError {
 pub enum PolicyState {
     Open,
     /// Closed by claim or by expiry / cancellation.
-    Closed { closed_at_tick: u64 },
+    Closed {
+        closed_at_tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,7 +90,8 @@ impl Policy {
     }
 
     pub fn remaining_coverage_micros(&self) -> u128 {
-        self.coverage_max_micros.saturating_sub(self.paid_out_micros)
+        self.coverage_max_micros
+            .saturating_sub(self.paid_out_micros)
     }
 
     /// Advance the policy by one or more ticks. Charges premium
@@ -180,7 +183,9 @@ impl Policy {
             .paid_out_micros
             .checked_add(payout)
             .ok_or(PolicyError::Overflow)?;
-        self.state = PolicyState::Closed { closed_at_tick: now };
+        self.state = PolicyState::Closed {
+            closed_at_tick: now,
+        };
         Ok(payout)
     }
 
@@ -193,15 +198,19 @@ impl Policy {
 mod tests {
     use super::*;
 
-    fn pid(b: u8) -> PolicyId { PolicyId([b; 32]) }
-    fn holder(b: u8) -> [u8; 32] { [b; 32] }
+    fn pid(b: u8) -> PolicyId {
+        PolicyId([b; 32])
+    }
+    fn holder(b: u8) -> [u8; 32] {
+        [b; 32]
+    }
 
     fn fresh(claim_floor: u64) -> Policy {
         Policy::open(
             pid(1),
             holder(0xAA),
-            100_000,        // premium_per_epoch = 0.1
-            10_000_000,     // coverage_max = 10.0
+            100_000,    // premium_per_epoch = 0.1
+            10_000_000, // coverage_max = 10.0
             claim_floor,
             0,
         )
@@ -221,9 +230,18 @@ mod tests {
 
     #[test]
     fn open_rejects_zero_params() {
-        assert_eq!(Policy::open(pid(1), holder(0), 0, 1000, 100, 0).unwrap_err(), PolicyError::ZeroPremium);
-        assert_eq!(Policy::open(pid(1), holder(0), 100, 0, 100, 0).unwrap_err(), PolicyError::ZeroCoverage);
-        assert_eq!(Policy::open(pid(1), holder(0), 100, 1000, 0, 0).unwrap_err(), PolicyError::ZeroClaimFloor);
+        assert_eq!(
+            Policy::open(pid(1), holder(0), 0, 1000, 100, 0).unwrap_err(),
+            PolicyError::ZeroPremium
+        );
+        assert_eq!(
+            Policy::open(pid(1), holder(0), 100, 0, 100, 0).unwrap_err(),
+            PolicyError::ZeroCoverage
+        );
+        assert_eq!(
+            Policy::open(pid(1), holder(0), 100, 1000, 0, 0).unwrap_err(),
+            PolicyError::ZeroClaimFloor
+        );
     }
 
     // ── premium accumulation ─────────────────────────────────────
@@ -360,9 +378,12 @@ mod tests {
         p_stale.tick(50).unwrap();
         let stale_err = p_stale.file_claim(50, 30, 50, 1_000_000).unwrap_err();
 
-        assert_eq!(pay_fresh, 1_000_000);   // full
-        assert_eq!(pay_partial, 500_000);   // half
-        assert!(matches!(stale_err, PolicyError::ClaimEnergyBelowFloor { .. })); // none
+        assert_eq!(pay_fresh, 1_000_000); // full
+        assert_eq!(pay_partial, 500_000); // half
+        assert!(matches!(
+            stale_err,
+            PolicyError::ClaimEnergyBelowFloor { .. }
+        )); // none
     }
 
     proptest::proptest! {

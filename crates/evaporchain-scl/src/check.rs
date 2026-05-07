@@ -108,8 +108,7 @@ mod tests {
         // needs to act for the capability to disappear.
         let l = active_lease();
         // Far past expiry — no chain action between lease and `now`.
-        let err =
-            is_authorised(&l, &cap(), [0xAA; 32], 999_999).unwrap_err();
+        let err = is_authorised(&l, &cap(), [0xAA; 32], 999_999).unwrap_err();
         assert!(matches!(err, AuthError::Expired { .. }));
     }
 }

@@ -225,7 +225,13 @@ mod tests {
             [0xAB; 32],
             1024,
             threshold,
-            vec![validator(1), validator(2), validator(3), validator(4), validator(5)],
+            vec![
+                validator(1),
+                validator(2),
+                validator(3),
+                validator(4),
+                validator(5),
+            ],
             [0xCD; 32],
         )
         .unwrap()
@@ -398,7 +404,7 @@ mod tests {
         // 3. Testament reveals + half-life clock starts.
         // 4. Visible form fades; permanent marker remains.
         let mut t = fresh(1, 0xAA, 1); // fast decay so the test is cheap
-        // Step 1: while alive, energy preserved indefinitely.
+                                       // Step 1: while alive, energy preserved indefinitely.
         assert_eq!(t.visible_energy_at(1_000_000), 1000);
         // Step 2 + 3: committee certifies death; reveal happens.
         let mut id = [0u8; 32];

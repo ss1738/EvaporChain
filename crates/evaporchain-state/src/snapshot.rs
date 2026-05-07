@@ -930,9 +930,9 @@ mod tests {
             address: addr(b),
             balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         }
     }
 
@@ -1384,10 +1384,7 @@ mod tests {
         // Mutate the on-disk version byte to a future value.
         bytes[4] = SNAPSHOT_FILE_VERSION + 1;
         let result = SnapshotFile::from_bytes(&bytes);
-        assert!(matches!(
-            result,
-            Err(SnapshotError::VersionMismatch { .. })
-        ));
+        assert!(matches!(result, Err(SnapshotError::VersionMismatch { .. })));
     }
 
     #[test]
@@ -1499,10 +1496,8 @@ mod tests {
 
     #[test]
     fn snapshot_file_path_round_trip() {
-        let dir = std::env::temp_dir().join(format!(
-            "evaporchain-snap-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("evaporchain-snap-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("snap-100.zst");
 

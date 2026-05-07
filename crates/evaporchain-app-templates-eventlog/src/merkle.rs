@@ -134,7 +134,10 @@ mod tests {
         // different roots.
         let r1 = receipt(1, 100, 1);
         let r2 = receipt(2, 100, 2);
-        assert_ne!(merkle_root(&[r1.clone(), r2.clone()]), merkle_root(&[r2, r1]));
+        assert_ne!(
+            merkle_root(&[r1.clone(), r2.clone()]),
+            merkle_root(&[r2, r1])
+        );
     }
 
     #[test]
@@ -221,8 +224,9 @@ mod tests {
     #[test]
     fn inclusion_proof_four_leaves() {
         // Tree with 4 leaves — leaf-to-root path has 2 siblings.
-        let leaves: Vec<DeployReceipt> =
-            (0..4).map(|i| receipt(i + 1, 100 + i as u64, i + 1)).collect();
+        let leaves: Vec<DeployReceipt> = (0..4)
+            .map(|i| receipt(i + 1, 100 + i as u64, i + 1))
+            .collect();
         let root = merkle_root(&leaves);
 
         // Reconstruct the path for leaf index 1 by hand:

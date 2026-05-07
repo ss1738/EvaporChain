@@ -240,10 +240,7 @@ fn dijkstra_reduced(g: &Graph, pi: &[i128], src: usize, v_count: usize) -> Vec<i
                 continue;
             }
             // Reduced cost = e.cost + pi[u] − pi[e.to]
-            let red_cost = e
-                .cost
-                .saturating_add(pi[u])
-                .saturating_sub(pi[e.to]);
+            let red_cost = e.cost.saturating_add(pi[u]).saturating_sub(pi[e.to]);
             // Reduced cost should be ≥ 0 if potentials are
             // maintained correctly. Defensive clamp.
             let red_cost = red_cost.max(0);
@@ -281,10 +278,7 @@ fn dijkstra_with_parent(
             if e.cap == 0 {
                 continue;
             }
-            let red_cost = e
-                .cost
-                .saturating_add(pi[u])
-                .saturating_sub(pi[e.to]);
+            let red_cost = e.cost.saturating_add(pi[u]).saturating_sub(pi[e.to]);
             let red_cost = red_cost.max(0);
             let nd = d.saturating_add(red_cost);
             if nd < dist[e.to] {
@@ -370,11 +364,7 @@ mod tests {
 
     #[test]
     fn diagonal_cost_picks_diagonal() {
-        let cost = vec![
-            vec![1u128, 100, 100],
-            vec![100, 1, 100],
-            vec![100, 100, 1],
-        ];
+        let cost = vec![vec![1u128, 100, 100], vec![100, 1, 100], vec![100, 100, 1]];
         let sol = solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost).unwrap();
         assert_eq!(sol.total_cost, 30);
         assert_eq!(sol.flow[0][0], 10);
@@ -384,11 +374,7 @@ mod tests {
 
     #[test]
     fn flow_satisfies_marginals() {
-        let cost = vec![
-            vec![3u128, 7, 2],
-            vec![4, 1, 5],
-            vec![6, 8, 9],
-        ];
+        let cost = vec![vec![3u128, 7, 2], vec![4, 1, 5], vec![6, 8, 9]];
         let sol = solve_transportation(&[10, 20, 30], &[15, 25, 20], &cost).unwrap();
         for i in 0..3 {
             let row_sum: u128 = sol.flow[i].iter().sum();
@@ -417,11 +403,7 @@ mod tests {
         // Greedy picks min globally: (0,2) cost=1, (1,0) cost=1,
         //   (2,1) cost=1 → sum = 3 (same here, by luck).
         // Try a tougher instance:
-        vec![
-            vec![1u128, 2, 4],
-            vec![3, 1, 2],
-            vec![5, 3, 1],
-        ]
+        vec![vec![1u128, 2, 4], vec![3, 1, 2], vec![5, 3, 1]]
         // Greedy: scan all cells, min is (0,0)=1. Ship 10 from 0→0.
         //   Remaining demand[0]=0, supply[0]=0.
         //   Next min in remaining cells: (1,1)=1. Ship 10 from 1→1.
@@ -485,11 +467,7 @@ mod tests {
         // Same cost. Need a more aggressive case. But for our
         // purposes, the V2 SSP must give the optimal cost on EVERY
         // input, so even matching V1 is correctness-confirming.
-        vec![
-            vec![10u128, 1, 100],
-            vec![100, 100, 1],
-            vec![1, 100, 100],
-        ]
+        vec![vec![10u128, 1, 100], vec![100, 100, 1], vec![1, 100, 100]]
     }
 
     #[test]
@@ -542,16 +520,13 @@ mod tests {
         // and (1,1) before considering (0,2) at cost 5.
         //
         // V2 SSP should find the 110 optimum.
-        let cost = vec![
-            vec![1u128, 5, 5],
-            vec![5, 1, 5],
-            vec![5, 5, 100],
-        ];
+        let cost = vec![vec![1u128, 5, 5], vec![5, 1, 5], vec![5, 5, 100]];
         let supplies = vec![10u128; 3];
         let demands = vec![10u128; 3];
 
         let v2 = solve_transportation(&supplies, &demands, &cost).unwrap();
-        let v1 = evaporchain_network_simplex::solve_transportation(&supplies, &demands, &cost).unwrap();
+        let v1 =
+            evaporchain_network_simplex::solve_transportation(&supplies, &demands, &cost).unwrap();
 
         assert!(
             v2.total_cost <= v1.total_cost,
@@ -650,27 +625,24 @@ mod tests {
         // gets stuck, V2 finds the true optimum."
 
         // V2 = V1 on diagonal-cheap (V1 already optimal there).
-        let cost_easy = vec![
-            vec![1u128, 100, 100],
-            vec![100, 1, 100],
-            vec![100, 100, 1],
-        ];
-        let v1_easy =
-            evaporchain_network_simplex::solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost_easy)
-                .unwrap();
-        let v2_easy =
-            solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost_easy).unwrap();
+        let cost_easy = vec![vec![1u128, 100, 100], vec![100, 1, 100], vec![100, 100, 1]];
+        let v1_easy = evaporchain_network_simplex::solve_transportation(
+            &[10, 10, 10],
+            &[10, 10, 10],
+            &cost_easy,
+        )
+        .unwrap();
+        let v2_easy = solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost_easy).unwrap();
         assert_eq!(v1_easy.total_cost, v2_easy.total_cost);
 
         // V2 < V1 on adversarial input.
-        let cost_adv = vec![
-            vec![1u128, 5, 5],
-            vec![5, 1, 5],
-            vec![5, 5, 100],
-        ];
-        let v1_adv =
-            evaporchain_network_simplex::solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost_adv)
-                .unwrap();
+        let cost_adv = vec![vec![1u128, 5, 5], vec![5, 1, 5], vec![5, 5, 100]];
+        let v1_adv = evaporchain_network_simplex::solve_transportation(
+            &[10, 10, 10],
+            &[10, 10, 10],
+            &cost_adv,
+        )
+        .unwrap();
         let v2_adv = solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost_adv).unwrap();
         assert!(v2_adv.total_cost < v1_adv.total_cost);
 

@@ -58,7 +58,8 @@ impl HalfLifeNft {
 
     /// Current tier index based on cumulative held-time.
     pub fn current_tier_index(&self) -> usize {
-        self.ladder.tier_index_for(self.held_epochs_by_current_holder)
+        self.ladder
+            .tier_index_for(self.held_epochs_by_current_holder)
     }
 
     /// Advance the token's state to `now`. Energy decays each
@@ -94,7 +95,9 @@ impl HalfLifeNft {
                 next_threshold_held.saturating_sub(self.held_epochs_by_current_holder);
 
             // Epochs we can advance in this tier.
-            let advance = (target - current).min(held_remaining_until_promotion).max(1);
+            let advance = (target - current)
+                .min(held_remaining_until_promotion)
+                .max(1);
 
             // Decay energy by `advance` epochs of half-life H, via
             // the canonical Coq-verified `evaporchain_types::
@@ -104,9 +107,8 @@ impl HalfLifeNft {
             // workspace-wide bypass and is now removed.
             self.energy = energy_at_epoch(self.energy, tier.half_life_epochs, advance);
 
-            self.held_epochs_by_current_holder = self
-                .held_epochs_by_current_holder
-                .saturating_add(advance);
+            self.held_epochs_by_current_holder =
+                self.held_epochs_by_current_holder.saturating_add(advance);
             current = current.saturating_add(advance);
         }
         self.last_tick = now;
@@ -141,9 +143,15 @@ mod tests {
     use super::*;
     use crate::tier::default_ladder;
 
-    fn tid(b: u8) -> TokenId { TokenId([b; 32]) }
-    fn alice() -> [u8; 32] { [0xAA; 32] }
-    fn bob() -> [u8; 32] { [0xBB; 32] }
+    fn tid(b: u8) -> TokenId {
+        TokenId([b; 32])
+    }
+    fn alice() -> [u8; 32] {
+        [0xAA; 32]
+    }
+    fn bob() -> [u8; 32] {
+        [0xBB; 32]
+    }
 
     fn fresh_token(initial_energy: u64) -> HalfLifeNft {
         HalfLifeNft::mint(tid(1), alice(), initial_energy, 0, default_ladder()).unwrap()
@@ -348,7 +356,8 @@ mod tests {
         assert!(
             lina_token.energy > mike_token.energy * 100,
             "lina={} mike={} — loyal collector should be 100x healthier",
-            lina_token.energy, mike_token.energy
+            lina_token.energy,
+            mike_token.energy
         );
     }
 

@@ -484,7 +484,13 @@ mod press_claim_tests {
         assert!(matches!(res, Err(ContractError::NotFound(999))));
 
         // Unknown method on a real contract fails closed.
-        let res2 = engine.call(id, "nonexistent_method", &serde_json::json!({}), &creator, 0);
+        let res2 = engine.call(
+            id,
+            "nonexistent_method",
+            &serde_json::json!({}),
+            &creator,
+            0,
+        );
         assert!(matches!(res2, Err(ContractError::UnknownMethod(_))));
 
         // Two deploys → distinct ids (engine assigns monotonically).
@@ -1333,14 +1339,11 @@ fn exec_nft(
             // a fresh start, and clear grace/ghost fields. The
             // original owner stays the owner — Ghost-state
             // tokens cannot be reassigned by resurrection.
-            let resurrect_path = !ns.tokens.contains_key(&token_id)
-                && ns.ghost_records.contains_key(&token_id);
+            let resurrect_path =
+                !ns.tokens.contains_key(&token_id) && ns.ghost_records.contains_key(&token_id);
 
             if resurrect_path {
-                let gr = ns
-                    .ghost_records
-                    .remove(&token_id)
-                    .expect("checked above");
+                let gr = ns.ghost_records.remove(&token_id).expect("checked above");
                 // Auth on Ghost refresh: still require caller to be
                 // the original owner OR the contract creator.
                 if !gr.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
@@ -1921,7 +1924,10 @@ fn tick_nft(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<String> 
                 to_grace.push(id);
             }
             NftLifecycleState::Grace => {
-                let cutoff = info.grace_epoch.unwrap_or(current_epoch).saturating_add(grace_period);
+                let cutoff = info
+                    .grace_epoch
+                    .unwrap_or(current_epoch)
+                    .saturating_add(grace_period);
                 if current_epoch >= cutoff {
                     to_ghost.push(id);
                 }
@@ -1968,7 +1974,9 @@ fn tick_nft(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<String> 
             );
             events.push(format!(
                 "Evaporated: token={} epoch={} ghost_proof={}",
-                id, current_epoch, &ghost_proof[..16]
+                id,
+                current_epoch,
+                &ghost_proof[..16]
             ));
         }
     }

@@ -46,6 +46,6 @@ pub mod trace;
 pub mod vm;
 
 pub use op::{Op, OpError};
-pub use reversible::{Reversible, ReversibilityError};
+pub use reversible::{ReversibilityError, Reversible};
 pub use trace::{Trace, TraceError};
 pub use vm::{Sbav, VmError};

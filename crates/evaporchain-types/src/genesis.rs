@@ -558,10 +558,7 @@ mod tests {
         let tok = Tokenomics::default(); // max_supply_cap = None
         let total = 0;
         // No cap → matches uncapped reward exactly.
-        assert_eq!(
-            tok.reward_at_epoch_capped(0, total),
-            tok.reward_at_epoch(0)
-        );
+        assert_eq!(tok.reward_at_epoch_capped(0, total), tok.reward_at_epoch(0));
         assert_eq!(
             tok.reward_at_epoch_capped(1_000_000, u64::MAX / 2),
             tok.reward_at_epoch(1_000_000)

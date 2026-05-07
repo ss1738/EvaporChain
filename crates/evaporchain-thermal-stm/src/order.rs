@@ -84,13 +84,7 @@ mod tests {
     fn sort_is_validator_deterministic() {
         // Sort the same set in different submission orders;
         // result must match.
-        let mut a = vec![
-            tx(5, 100),
-            tx(2, 500),
-            tx(8, 1000),
-            tx(1, 100),
-            tx(7, 500),
-        ];
+        let mut a = vec![tx(5, 100), tx(2, 500), tx(8, 1000), tx(1, 100), tx(7, 500)];
         let mut b = a.clone();
         b.reverse();
         a.sort_by(compare_thermal);

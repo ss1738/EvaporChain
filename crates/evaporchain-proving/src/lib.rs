@@ -104,8 +104,7 @@ pub fn is_mock_prover_proof(proof: &CompressedProof) -> bool {
 /// `evaporchain-node` calls this first; matches are rejected
 /// with a hard error before the cryptographic verify path runs.
 pub fn is_mock_prover_proof_bytes(proof_bytes: &[u8]) -> bool {
-    proof_bytes.len() == MOCK_PROOF_BYTES_LEN
-        && proof_bytes.iter().all(|&b| b == 0)
+    proof_bytes.len() == MOCK_PROOF_BYTES_LEN && proof_bytes.iter().all(|&b| b == 0)
 }
 
 // ─────────────────────────── Trait ───────────────────────────────────────

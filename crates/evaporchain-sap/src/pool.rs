@@ -24,9 +24,7 @@ pub enum PoolError {
     ZeroMaxAq,
     #[error("window_epochs must be > 0")]
     ZeroWindow,
-    #[error(
-        "wallet {wallet:?} has hit the rate cap: {minted_in_window} of {cap} in window"
-    )]
+    #[error("wallet {wallet:?} has hit the rate cap: {minted_in_window} of {cap} in window")]
     RateCapped {
         wallet: AccountAddress,
         minted_in_window: u64,
@@ -137,18 +135,12 @@ mod tests {
 
     #[test]
     fn rejects_zero_cap() {
-        assert_eq!(
-            AttentionPool::new(0, 60).unwrap_err(),
-            PoolError::ZeroMaxAq
-        );
+        assert_eq!(AttentionPool::new(0, 60).unwrap_err(), PoolError::ZeroMaxAq);
     }
 
     #[test]
     fn rejects_zero_window() {
-        assert_eq!(
-            AttentionPool::new(5, 0).unwrap_err(),
-            PoolError::ZeroWindow
-        );
+        assert_eq!(AttentionPool::new(5, 0).unwrap_err(), PoolError::ZeroWindow);
     }
 
     #[test]

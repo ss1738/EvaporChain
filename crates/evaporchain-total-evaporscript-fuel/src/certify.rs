@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use evaporchain_total_evaporscript::Term;
 
-use crate::evaluator::{evaluate, EvalError, Env};
+use crate::evaluator::{evaluate, Env, EvalError};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum FuelCertError {
@@ -14,9 +14,7 @@ pub enum FuelCertError {
     FuelVarMissing(String),
     #[error("body evaluation failed: {0}")]
     EvalFailed(EvalError),
-    #[error(
-        "fuel did NOT strictly decrease: before={before}, after={after}"
-    )]
+    #[error("fuel did NOT strictly decrease: before={before}, after={after}")]
     FuelDidNotDecrease { before: i64, after: i64 },
     #[error("fuel variable {0} disappeared from environment after body executed")]
     FuelVarLostInBody(String),
@@ -57,13 +55,24 @@ mod tests {
     use super::*;
     use evaporchain_total_evaporscript::{BinOp, Expr, Term};
 
-    fn lit(k: i64) -> Expr { Expr::Lit(k) }
-    fn var(s: &str) -> Expr { Expr::Var(s.into()) }
+    fn lit(k: i64) -> Expr {
+        Expr::Lit(k)
+    }
+    fn var(s: &str) -> Expr {
+        Expr::Var(s.into())
+    }
     fn bin(op: BinOp, l: Expr, r: Expr) -> Expr {
-        Expr::Bin { op, lhs: Box::new(l), rhs: Box::new(r) }
+        Expr::Bin {
+            op,
+            lhs: Box::new(l),
+            rhs: Box::new(r),
+        }
     }
     fn assign(target: &str, value: Expr) -> Term {
-        Term::Assign { target: target.into(), value }
+        Term::Assign {
+            target: target.into(),
+            value,
+        }
     }
     fn seq(items: Vec<Term>) -> Term {
         Term::Seq(items)
@@ -132,14 +141,26 @@ mod tests {
         // r = r — no change. Strictly decrease check fires.
         let body = assign("r", var("r"));
         let err = certify_fuel(&body, "r", state(&[("r", 5)])).unwrap_err();
-        assert!(matches!(err, FuelCertError::FuelDidNotDecrease { before: 5, after: 5 }));
+        assert!(matches!(
+            err,
+            FuelCertError::FuelDidNotDecrease {
+                before: 5,
+                after: 5
+            }
+        ));
     }
 
     #[test]
     fn growing_fuel_rejected() {
         let body = assign("r", bin(BinOp::Add, var("r"), lit(1)));
         let err = certify_fuel(&body, "r", state(&[("r", 5)])).unwrap_err();
-        assert!(matches!(err, FuelCertError::FuelDidNotDecrease { before: 5, after: 6 }));
+        assert!(matches!(
+            err,
+            FuelCertError::FuelDidNotDecrease {
+                before: 5,
+                after: 6
+            }
+        ));
     }
 
     #[test]
@@ -184,14 +205,20 @@ mod tests {
             body: Box::new(Term::Skip),
         };
         let err = certify_fuel(&body, "r", state(&[("r", 5)])).unwrap_err();
-        assert!(matches!(err, FuelCertError::EvalFailed(EvalError::NestedLoop)));
+        assert!(matches!(
+            err,
+            FuelCertError::EvalFailed(EvalError::NestedLoop)
+        ));
     }
 
     #[test]
     fn body_with_div_by_zero_errors() {
         let body = assign("r", bin(BinOp::Div, var("r"), lit(0)));
         let err = certify_fuel(&body, "r", state(&[("r", 10)])).unwrap_err();
-        assert!(matches!(err, FuelCertError::EvalFailed(EvalError::DivByZero)));
+        assert!(matches!(
+            err,
+            FuelCertError::EvalFailed(EvalError::DivByZero)
+        ));
     }
 
     // ── doctrine claim ────────────────────────────────────────────

@@ -29,7 +29,11 @@ impl Rng {
     /// Construct from an arbitrary seed. Maps zero into a known non-zero
     /// state so the all-zero degenerate case can't escape.
     pub fn new(seed: u64) -> Self {
-        Self(if seed == 0 { 0xDEAD_BEEF_CAFE_BABE } else { seed })
+        Self(if seed == 0 {
+            0xDEAD_BEEF_CAFE_BABE
+        } else {
+            seed
+        })
     }
 
     /// Next raw 64-bit output.
@@ -92,7 +96,9 @@ impl Default for LogCorrelatedParams {
 pub fn log_correlated(n_accounts: usize, params: &LogCorrelatedParams, seed: u64) -> Vec<u64> {
     assert!(n_accounts > 0, "n_accounts must be > 0");
     let mut rng = Rng::new(seed);
-    let popularity: Vec<f64> = (0..n_accounts).map(|_| rng.next_pareto(params.alpha)).collect();
+    let popularity: Vec<f64> = (0..n_accounts)
+        .map(|_| rng.next_pareto(params.alpha))
+        .collect();
     let mut energies = vec![0u64; n_accounts];
     for b in 0..params.n_blocks {
         let block_idx = (b + 1) as f64;
@@ -159,13 +165,16 @@ pub fn area_law(n_accounts: usize, params: &AreaLawParams, seed: u64) -> Vec<u64
             // Probability this segment receives energy is the max over
             // active segments of `decay^|distance|`. Captures locality
             // without a full pairwise loop.
-            let mut prob = if active[seg] { params.intra_segment_prob } else { 0.0 };
+            let mut prob = if active[seg] {
+                params.intra_segment_prob
+            } else {
+                0.0
+            };
             if params.cross_segment_decay > 0.0 {
                 for (other, &fired) in active.iter().enumerate() {
                     if fired && other != seg {
                         let d = other.abs_diff(seg) as i32;
-                        let leak =
-                            params.intra_segment_prob * params.cross_segment_decay.powi(d);
+                        let leak = params.intra_segment_prob * params.cross_segment_decay.powi(d);
                         if leak > prob {
                             prob = leak;
                         }
@@ -235,7 +244,9 @@ pub fn log_correlated_matrix(
 ) -> Vec<Vec<f64>> {
     assert!(n_accounts > 0, "n_accounts must be > 0");
     let mut rng = Rng::new(seed);
-    let popularity: Vec<f64> = (0..n_accounts).map(|_| rng.next_pareto(params.alpha)).collect();
+    let popularity: Vec<f64> = (0..n_accounts)
+        .map(|_| rng.next_pareto(params.alpha))
+        .collect();
     let mut mat = vec![vec![0.0f64; params.n_blocks]; n_accounts];
     for b in 0..params.n_blocks {
         let block_idx = (b + 1) as f64;
@@ -248,11 +259,7 @@ pub fn log_correlated_matrix(
 }
 
 /// Activation matrix variant of [`area_law`].
-pub fn area_law_matrix(
-    n_accounts: usize,
-    params: &AreaLawParams,
-    seed: u64,
-) -> Vec<Vec<f64>> {
+pub fn area_law_matrix(n_accounts: usize, params: &AreaLawParams, seed: u64) -> Vec<Vec<f64>> {
     assert!(n_accounts > 0, "n_accounts must be > 0");
     assert!(params.segment_size > 0, "segment_size must be > 0");
     let mut rng = Rng::new(seed);
@@ -264,13 +271,16 @@ pub fn area_law_matrix(
             .map(|_| rng.next_f64() < params.block_activation_rate)
             .collect();
         for seg in 0..n_segments {
-            let mut prob = if active[seg] { params.intra_segment_prob } else { 0.0 };
+            let mut prob = if active[seg] {
+                params.intra_segment_prob
+            } else {
+                0.0
+            };
             if params.cross_segment_decay > 0.0 {
                 for (other, &fired) in active.iter().enumerate() {
                     if fired && other != seg {
                         let d = other.abs_diff(seg) as i32;
-                        let leak =
-                            params.intra_segment_prob * params.cross_segment_decay.powi(d);
+                        let leak = params.intra_segment_prob * params.cross_segment_decay.powi(d);
                         if leak > prob {
                             prob = leak;
                         }
@@ -301,7 +311,11 @@ pub fn flat_random_matrix(
     let mut mat = vec![vec![0.0f64; params.n_blocks]; n_accounts];
     for row in &mut mat {
         for cell in row.iter_mut() {
-            *cell = if rng.next_f64() < params.touch_prob { 1.0 } else { 0.0 };
+            *cell = if rng.next_f64() < params.touch_prob {
+                1.0
+            } else {
+                0.0
+            };
         }
     }
     mat
@@ -350,7 +364,11 @@ mod tests {
         let total: u128 = energies.iter().copied().map(|e| e as u128).sum();
         energies.sort_unstable();
         let threshold = energies.len() * 4 / 5;
-        let top_quintile: u128 = energies[threshold..].iter().copied().map(|e| e as u128).sum();
+        let top_quintile: u128 = energies[threshold..]
+            .iter()
+            .copied()
+            .map(|e| e as u128)
+            .sum();
         assert!(
             top_quintile * 2 > total,
             "top 20% of accounts hold {} of {} total — distribution isn't heavy-tailed",
@@ -379,8 +397,7 @@ mod tests {
                 sum as f64 / params.segment_size as f64
             })
             .collect();
-        let overall_mean: f64 =
-            segment_means.iter().sum::<f64>() / segment_means.len() as f64;
+        let overall_mean: f64 = segment_means.iter().sum::<f64>() / segment_means.len() as f64;
         let between_var: f64 = segment_means
             .iter()
             .map(|m| (m - overall_mean).powi(2))

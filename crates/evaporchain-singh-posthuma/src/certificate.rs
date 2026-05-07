@@ -65,8 +65,7 @@ impl DeathCertificate {
     /// Canonical bytes that committee members signed. Deterministic;
     /// stable across validators.
     pub fn signing_bytes(&self) -> Vec<u8> {
-        let mut bytes =
-            Vec::with_capacity(32 + 8 + 32 + 4);
+        let mut bytes = Vec::with_capacity(32 + 8 + 32 + 4);
         bytes.extend_from_slice(&self.testament_id);
         bytes.extend_from_slice(&self.death_epoch.to_le_bytes());
         bytes.extend_from_slice(&self.nonce);
@@ -139,16 +138,19 @@ mod tests {
             [0xAB; 32],
             1024,
             threshold,
-            vec![validator(1), validator(2), validator(3), validator(4), validator(5)],
+            vec![
+                validator(1),
+                validator(2),
+                validator(3),
+                validator(4),
+                validator(5),
+            ],
             [0xCD; 32],
         )
         .unwrap()
     }
 
-    fn cert_with(
-        testament: TestamentId,
-        signers: Vec<u8>,
-    ) -> DeathCertificate {
+    fn cert_with(testament: TestamentId, signers: Vec<u8>) -> DeathCertificate {
         let attestations = signers
             .into_iter()
             .map(|b| Attestation {
@@ -180,7 +182,13 @@ mod tests {
         let v = vault(3);
         let c = cert_with([0xAA; 32], vec![1, 2]);
         let err = verify_certificate(&c, [0xAA; 32], &v, always_valid).unwrap_err();
-        assert!(matches!(err, CertificateError::BelowThreshold { valid: 2, threshold: 3 }));
+        assert!(matches!(
+            err,
+            CertificateError::BelowThreshold {
+                valid: 2,
+                threshold: 3
+            }
+        ));
     }
 
     #[test]

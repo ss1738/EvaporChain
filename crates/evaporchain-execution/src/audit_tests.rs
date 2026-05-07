@@ -50,9 +50,9 @@ mod invariant_tests {
             address: addr(byte),
             balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -281,7 +281,14 @@ mod invariant_tests {
         for i in 0..200u8 {
             let mut a = [0u8; 32];
             a[0] = i;
-            db.put_account(Account { address: a, balance: 1_000_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+            db.put_account(Account {
+                address: a,
+                balance: 1_000_000_000,
+                nonce: 0,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 0,
+            });
         }
 
         // Create many transactions that consume gas

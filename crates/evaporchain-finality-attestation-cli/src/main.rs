@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use evaporchain_finality_attestation_cli::{run_cli, cli::StdIo};
+use evaporchain_finality_attestation_cli::{cli::StdIo, run_cli};
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();

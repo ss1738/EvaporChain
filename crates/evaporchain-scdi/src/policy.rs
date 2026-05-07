@@ -165,7 +165,9 @@ impl Policy {
             .paid_out_micros
             .checked_add(requested_micros)
             .ok_or(PolicyError::Overflow)?;
-        self.state = PolicyState::Closed { closed_at_tick: now };
+        self.state = PolicyState::Closed {
+            closed_at_tick: now,
+        };
         Ok(requested_micros)
     }
 
@@ -178,17 +180,21 @@ impl Policy {
 mod tests {
     use super::*;
 
-    fn pid(b: u8) -> PolicyId { PolicyId([b; 32]) }
-    fn holder() -> [u8; 32] { [0xAA; 32] }
+    fn pid(b: u8) -> PolicyId {
+        PolicyId([b; 32])
+    }
+    fn holder() -> [u8; 32] {
+        [0xAA; 32]
+    }
 
     fn fresh() -> Policy {
         Policy::open(
             pid(1),
             holder(),
-            100_000,        // premium_per_epoch = 0.1
-            1_000_000,      // base_cap = 1.0
-            10_000,         // cap_slope = 0.01 per epoch
-            100,            // claim_floor
+            100_000,   // premium_per_epoch = 0.1
+            1_000_000, // base_cap = 1.0
+            10_000,    // cap_slope = 0.01 per epoch
+            100,       // claim_floor
             0,
         )
         .unwrap()
@@ -374,7 +380,10 @@ mod tests {
         let mut older = fresh();
         older.tick(1000).unwrap();
         let stale_err = older.file_claim(1000, 999, 50, 100_000).unwrap_err();
-        assert!(matches!(stale_err, PolicyError::ClaimEnergyBelowFloor { .. }));
+        assert!(matches!(
+            stale_err,
+            PolicyError::ClaimEnergyBelowFloor { .. }
+        ));
     }
 
     proptest::proptest! {

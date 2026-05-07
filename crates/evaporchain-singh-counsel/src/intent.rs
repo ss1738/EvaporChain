@@ -46,17 +46,12 @@ pub enum IntentError {
     ZeroDeadline,
     #[error("zero energy_budget — must specify a positive budget")]
     ZeroBudget,
-    #[error(
-        "execution would exceed energy budget: required {required} > budget {budget}"
-    )]
+    #[error("execution would exceed energy budget: required {required} > budget {budget}")]
     BudgetExceeded { required: u64, budget: u64 },
     #[error(
         "confidence {confidence_bp}bp below floor {floor_bp}bp — chain refuses low-confidence chat translations"
     )]
-    LowConfidence {
-        confidence_bp: u64,
-        floor_bp: u64,
-    },
+    LowConfidence { confidence_bp: u64, floor_bp: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,12 +116,7 @@ impl Intent {
     /// Pre-execution gate: deadline + confidence + budget checks.
     /// Caller passes the chain's current epoch and minimum-confidence
     /// floor.
-    pub fn admit(
-        &self,
-        now: u64,
-        floor_bp: u64,
-        required_energy: u64,
-    ) -> Result<(), IntentError> {
+    pub fn admit(&self, now: u64, floor_bp: u64, required_energy: u64) -> Result<(), IntentError> {
         if now > self.deadline_epoch {
             return Err(IntentError::DeadlinePassed {
                 now,
@@ -176,18 +166,17 @@ fn validate_constraint(c: &[u8]) -> Result<(), IntentError> {
         return Ok(());
     }
     // Reject obviously malformed bytes: must be valid UTF-8.
-    let s = std::str::from_utf8(c).map_err(|_| {
-        IntentError::BadConstraint("constraint must be valid UTF-8".into())
-    })?;
+    let s = std::str::from_utf8(c)
+        .map_err(|_| IntentError::BadConstraint("constraint must be valid UTF-8".into()))?;
     // V1: must start and end with matching JSON braces { } or
     // brackets [ ]. (Real grammar parser is V2.)
     let trimmed = s.trim();
     let valid_shape = (trimmed.starts_with('{') && trimmed.ends_with('}'))
         || (trimmed.starts_with('[') && trimmed.ends_with(']'));
     if !valid_shape {
-        return Err(IntentError::BadConstraint(
-            format!("constraint must be wrapped in {{ }} or [ ]; got: {trimmed:.64}")
-        ));
+        return Err(IntentError::BadConstraint(format!(
+            "constraint must be wrapped in {{ }} or [ ]; got: {trimmed:.64}"
+        )));
     }
     Ok(())
 }
@@ -196,8 +185,12 @@ fn validate_constraint(c: &[u8]) -> Result<(), IntentError> {
 mod tests {
     use super::*;
 
-    fn iid(b: u8) -> IntentId { IntentId([b; 32]) }
-    fn alice() -> [u8; 32] { [0xAA; 32] }
+    fn iid(b: u8) -> IntentId {
+        IntentId([b; 32])
+    }
+    fn alice() -> [u8; 32] {
+        [0xAA; 32]
+    }
 
     fn fresh(verb: Verb) -> Intent {
         Intent::new(
@@ -224,7 +217,14 @@ mod tests {
     #[test]
     fn empty_object_rejected() {
         let err = Intent::new(
-            iid(1), alice(), Verb::Send, vec![], b"{}".to_vec(), 100, 1000, 9500,
+            iid(1),
+            alice(),
+            Verb::Send,
+            vec![],
+            b"{}".to_vec(),
+            100,
+            1000,
+            9500,
         )
         .unwrap_err();
         assert_eq!(err, IntentError::EmptyObject);
@@ -234,7 +234,14 @@ mod tests {
     fn over_long_object_rejected() {
         let big = vec![0u8; 1025];
         let err = Intent::new(
-            iid(1), alice(), Verb::Send, big, b"{}".to_vec(), 100, 1000, 9500,
+            iid(1),
+            alice(),
+            Verb::Send,
+            big,
+            b"{}".to_vec(),
+            100,
+            1000,
+            9500,
         )
         .unwrap_err();
         assert_eq!(err, IntentError::ObjectTooLong);
@@ -248,7 +255,9 @@ mod tests {
             Verb::Send,
             b"target".to_vec(),
             b"not-json-shape".to_vec(),
-            100, 1000, 9500,
+            100,
+            1000,
+            9500,
         )
         .unwrap_err();
         assert!(matches!(err, IntentError::BadConstraint(_)));
@@ -257,8 +266,14 @@ mod tests {
     #[test]
     fn empty_constraint_is_allowed() {
         Intent::new(
-            iid(1), alice(), Verb::Send, b"target".to_vec(), vec![],
-            100, 1000, 9500,
+            iid(1),
+            alice(),
+            Verb::Send,
+            b"target".to_vec(),
+            vec![],
+            100,
+            1000,
+            9500,
         )
         .unwrap();
     }
@@ -266,8 +281,14 @@ mod tests {
     #[test]
     fn array_constraint_is_allowed() {
         Intent::new(
-            iid(1), alice(), Verb::Send, b"target".to_vec(), b"[1,2,3]".to_vec(),
-            100, 1000, 9500,
+            iid(1),
+            alice(),
+            Verb::Send,
+            b"target".to_vec(),
+            b"[1,2,3]".to_vec(),
+            100,
+            1000,
+            9500,
         )
         .unwrap();
     }
@@ -276,8 +297,14 @@ mod tests {
     fn non_utf8_constraint_rejected() {
         // 0xFF is not a valid UTF-8 start byte.
         let err = Intent::new(
-            iid(1), alice(), Verb::Send, b"target".to_vec(), vec![0xFF, 0xFE],
-            100, 1000, 9500,
+            iid(1),
+            alice(),
+            Verb::Send,
+            b"target".to_vec(),
+            vec![0xFF, 0xFE],
+            100,
+            1000,
+            9500,
         )
         .unwrap_err();
         assert!(matches!(err, IntentError::BadConstraint(_)));
@@ -286,8 +313,14 @@ mod tests {
     #[test]
     fn zero_deadline_rejected() {
         let err = Intent::new(
-            iid(1), alice(), Verb::Send, b"target".to_vec(), b"{}".to_vec(),
-            0, 1000, 9500,
+            iid(1),
+            alice(),
+            Verb::Send,
+            b"target".to_vec(),
+            b"{}".to_vec(),
+            0,
+            1000,
+            9500,
         )
         .unwrap_err();
         assert_eq!(err, IntentError::ZeroDeadline);
@@ -296,8 +329,14 @@ mod tests {
     #[test]
     fn zero_budget_rejected() {
         let err = Intent::new(
-            iid(1), alice(), Verb::Send, b"target".to_vec(), b"{}".to_vec(),
-            100, 0, 9500,
+            iid(1),
+            alice(),
+            Verb::Send,
+            b"target".to_vec(),
+            b"{}".to_vec(),
+            100,
+            0,
+            9500,
         )
         .unwrap_err();
         assert_eq!(err, IntentError::ZeroBudget);
@@ -399,7 +438,9 @@ mod tests {
             Verb::Send,
             b"target".to_vec(),
             b"send all my money lol".to_vec(), // chat noise as constraint
-            100, 1000, 9500,
+            100,
+            1000,
+            9500,
         )
         .unwrap_err();
         assert!(matches!(err, IntentError::BadConstraint(_)));

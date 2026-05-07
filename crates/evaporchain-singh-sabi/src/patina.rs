@@ -46,11 +46,7 @@ pub struct PatinaParams {
 }
 
 impl PatinaParams {
-    pub fn new(
-        initial: Energy,
-        floor: Energy,
-        half_life: HalfLife,
-    ) -> Result<Self, PatinaError> {
+    pub fn new(initial: Energy, floor: Energy, half_life: HalfLife) -> Result<Self, PatinaError> {
         if initial == 0 {
             return Err(PatinaError::ZeroInitial);
         }
@@ -78,11 +74,7 @@ impl PatinaParams {
 ///
 /// Returns `params.initial` if `epoch_now ≤ minted_at_epoch` (clock
 /// skew defensive).
-pub fn patina_score(
-    params: &PatinaParams,
-    minted_at_epoch: Epoch,
-    epoch_now: Epoch,
-) -> Energy {
+pub fn patina_score(params: &PatinaParams, minted_at_epoch: Epoch, epoch_now: Epoch) -> Energy {
     let elapsed = epoch_now.saturating_sub(minted_at_epoch);
     let decayable = params.initial - params.floor;
     let decayed_remainder = energy_at_epoch(decayable, params.half_life, elapsed);

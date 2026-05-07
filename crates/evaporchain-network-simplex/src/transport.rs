@@ -189,11 +189,7 @@ mod tests {
     fn diagonal_cost_picks_diagonal() {
         // 3x3 with cheap diagonal: each supplier ships exclusively
         // to their matching demander.
-        let cost = vec![
-            vec![1u128, 100, 100],
-            vec![100, 1, 100],
-            vec![100, 100, 1],
-        ];
+        let cost = vec![vec![1u128, 100, 100], vec![100, 1, 100], vec![100, 100, 1]];
         let sol = solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost).unwrap();
         assert_eq!(sol.total_cost, 30);
         assert_eq!(sol.flow[0][0], 10);
@@ -205,11 +201,7 @@ mod tests {
     fn off_diagonal_can_beat_diagonal() {
         // Diagonal cost = 5+5+5 = 15.
         // Off-diagonal (0→2, 1→1, 2→0): 1+1+1 = 3.
-        let cost = vec![
-            vec![5u128, 100, 1],
-            vec![100, 1, 100],
-            vec![1, 100, 5],
-        ];
+        let cost = vec![vec![5u128, 100, 1], vec![100, 1, 100], vec![1, 100, 5]];
         let sol = solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost).unwrap();
         assert_eq!(sol.total_cost, 30); // 10·1 + 10·1 + 10·1
     }
@@ -235,11 +227,7 @@ mod tests {
 
     #[test]
     fn flow_satisfies_supply_marginals() {
-        let cost = vec![
-            vec![3u128, 7, 2],
-            vec![4, 1, 5],
-            vec![6, 8, 9],
-        ];
+        let cost = vec![vec![3u128, 7, 2], vec![4, 1, 5], vec![6, 8, 9]];
         let sol = solve_transportation(&[10, 20, 30], &[15, 25, 20], &cost).unwrap();
         for i in 0..3 {
             let row_sum: u128 = sol.flow[i].iter().sum();
@@ -249,11 +237,7 @@ mod tests {
 
     #[test]
     fn flow_satisfies_demand_marginals() {
-        let cost = vec![
-            vec![3u128, 7, 2],
-            vec![4, 1, 5],
-            vec![6, 8, 9],
-        ];
+        let cost = vec![vec![3u128, 7, 2], vec![4, 1, 5], vec![6, 8, 9]];
         let sol = solve_transportation(&[10, 20, 30], &[15, 25, 20], &cost).unwrap();
         for j in 0..3 {
             let col_sum: u128 = (0..3).map(|i| sol.flow[i][j]).sum();
@@ -263,11 +247,7 @@ mod tests {
 
     // ── brute-force agreement on small Monge-style inputs ────────
 
-    fn brute_force_min_cost(
-        supplies: &[u128],
-        demands: &[u128],
-        cost: &[Vec<u128>],
-    ) -> u128 {
+    fn brute_force_min_cost(supplies: &[u128], demands: &[u128], cost: &[Vec<u128>]) -> u128 {
         // Only feasible for very small unit-flow instances. We only
         // call this on supplies = vec![1; n], demands = vec![1; m],
         // so it's a min-cost bipartite matching.
@@ -302,11 +282,7 @@ mod tests {
         // Hand-picked 3x3 cost; greedy minimum-cell may not always
         // match brute-force in adversarial cases — this test checks
         // a "well-behaved" cost matrix where the greedy IS optimal.
-        let cost = vec![
-            vec![1u128, 2, 3],
-            vec![4, 5, 6],
-            vec![7, 8, 9],
-        ];
+        let cost = vec![vec![1u128, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
         let supplies = vec![1u128; 3];
         let demands = vec![1u128; 3];
         let sol = solve_transportation(&supplies, &demands, &cost).unwrap();
@@ -320,16 +296,8 @@ mod tests {
     #[test]
     fn agrees_with_brute_force_on_diagonal_cheap_matrices() {
         let cases = vec![
-            vec![
-                vec![1u128, 100, 100],
-                vec![100, 1, 100],
-                vec![100, 100, 1],
-            ],
-            vec![
-                vec![5u128, 100, 1],
-                vec![100, 1, 100],
-                vec![1, 100, 5],
-            ],
+            vec![vec![1u128, 100, 100], vec![100, 1, 100], vec![100, 100, 1]],
+            vec![vec![5u128, 100, 1], vec![100, 1, 100], vec![1, 100, 5]],
         ];
         for cost in cases {
             let n = cost.len();
@@ -355,11 +323,7 @@ mod tests {
 
         // Honest scenario: mass at three suppliers must reach three
         // demanders; cheapest mass-to-demand pairing is diagonal.
-        let cost = vec![
-            vec![1u128, 100, 100],
-            vec![100, 1, 100],
-            vec![100, 100, 1],
-        ];
+        let cost = vec![vec![1u128, 100, 100], vec![100, 1, 100], vec![100, 100, 1]];
         let sol = solve_transportation(&[10, 10, 10], &[10, 10, 10], &cost).unwrap();
         assert_eq!(sol.total_cost, 30);
 

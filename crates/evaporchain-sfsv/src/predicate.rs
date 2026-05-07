@@ -104,7 +104,12 @@ mod tests {
             created_at_epoch: 0,
             threshold: 0,
         };
-        assert!(!evaluate(&p, PredicateContext { epoch_now: u64::MAX }));
+        assert!(!evaluate(
+            &p,
+            PredicateContext {
+                epoch_now: u64::MAX
+            }
+        ));
     }
 
     #[test]

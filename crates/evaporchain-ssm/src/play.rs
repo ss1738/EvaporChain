@@ -43,9 +43,7 @@ pub enum PlayError {
         expected: Option<MoveId>,
         actual: MoveId,
     },
-    #[error(
-        "well-bracketing violation: Answer attempted with no open Question to close"
-    )]
+    #[error("well-bracketing violation: Answer attempted with no open Question to close")]
     BracketingNoOpenQuestion,
     #[error(
         "well-bracketing violation: Answer must close the most recent unanswered Question of the opposite owner"
@@ -73,9 +71,9 @@ impl Play {
 
     /// Append a move, validating against the arena.
     pub fn append(&mut self, arena: &Arena, mv: Move) -> Result<(), PlayError> {
-        let decl = arena
-            .lookup(mv.move_id)
-            .ok_or(PlayError::UnknownMove { move_id: mv.move_id })?;
+        let decl = arena.lookup(mv.move_id).ok_or(PlayError::UnknownMove {
+            move_id: mv.move_id,
+        })?;
 
         if self.moves.is_empty() {
             // Initial move: must be arena root with justifier=None.
@@ -131,8 +129,7 @@ impl Play {
         target_owner: Owner,
     ) -> Option<MoveId> {
         // Build the set of answered-question ids.
-        let mut answered: std::collections::HashSet<MoveId> =
-            std::collections::HashSet::new();
+        let mut answered: std::collections::HashSet<MoveId> = std::collections::HashSet::new();
         for m in &self.moves {
             if let Some(decl) = arena.lookup(m.move_id) {
                 if decl.label == crate::arena::MoveLabel::Answer {
@@ -173,10 +170,30 @@ mod tests {
         //   └─ P-Q (id=3) — sub-question
         //         └─ O-A (id=4) — answer to sub
         Arena::build(vec![
-            MoveDecl { id: id(1), owner: Owner::Opponent, label: MoveLabel::Question, parent: None },
-            MoveDecl { id: id(2), owner: Owner::Proponent, label: MoveLabel::Answer, parent: Some(id(1)) },
-            MoveDecl { id: id(3), owner: Owner::Proponent, label: MoveLabel::Question, parent: Some(id(1)) },
-            MoveDecl { id: id(4), owner: Owner::Opponent, label: MoveLabel::Answer, parent: Some(id(3)) },
+            MoveDecl {
+                id: id(1),
+                owner: Owner::Opponent,
+                label: MoveLabel::Question,
+                parent: None,
+            },
+            MoveDecl {
+                id: id(2),
+                owner: Owner::Proponent,
+                label: MoveLabel::Answer,
+                parent: Some(id(1)),
+            },
+            MoveDecl {
+                id: id(3),
+                owner: Owner::Proponent,
+                label: MoveLabel::Question,
+                parent: Some(id(1)),
+            },
+            MoveDecl {
+                id: id(4),
+                owner: Owner::Opponent,
+                label: MoveLabel::Answer,
+                parent: Some(id(3)),
+            },
         ])
         .unwrap()
     }
@@ -194,16 +211,35 @@ mod tests {
         let mut p = Play::new();
         // Wrong: not the root.
         let err = p
-            .append(&arena, Move { move_id: id(2), justifier: None })
+            .append(
+                &arena,
+                Move {
+                    move_id: id(2),
+                    justifier: None,
+                },
+            )
             .unwrap_err();
         assert_eq!(err, PlayError::BadInitialMove);
         // Wrong: root but with a justifier.
         let err = p
-            .append(&arena, Move { move_id: id(1), justifier: Some(id(99)) })
+            .append(
+                &arena,
+                Move {
+                    move_id: id(1),
+                    justifier: Some(id(99)),
+                },
+            )
             .unwrap_err();
         assert_eq!(err, PlayError::BadInitialMove);
         // Correct.
-        p.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
         assert_eq!(p.len(), 1);
     }
 
@@ -212,7 +248,13 @@ mod tests {
         let arena = arena_simple();
         let mut p = Play::new();
         let err = p
-            .append(&arena, Move { move_id: id(99), justifier: None })
+            .append(
+                &arena,
+                Move {
+                    move_id: id(99),
+                    justifier: None,
+                },
+            )
             .unwrap_err();
         assert!(matches!(err, PlayError::UnknownMove { .. }));
     }
@@ -221,9 +263,22 @@ mod tests {
     fn non_root_requires_justifier() {
         let arena = arena_simple();
         let mut p = Play::new();
-        p.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
         let err = p
-            .append(&arena, Move { move_id: id(2), justifier: None })
+            .append(
+                &arena,
+                Move {
+                    move_id: id(2),
+                    justifier: None,
+                },
+            )
             .unwrap_err();
         assert!(matches!(err, PlayError::MissingJustifier { .. }));
     }
@@ -232,10 +287,23 @@ mod tests {
     fn justifier_must_be_in_play() {
         let arena = arena_simple();
         let mut p = Play::new();
-        p.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
         // Try to justify by id(99) — not yet played and not in arena.
         let err = p
-            .append(&arena, Move { move_id: id(2), justifier: Some(id(99)) })
+            .append(
+                &arena,
+                Move {
+                    move_id: id(2),
+                    justifier: Some(id(99)),
+                },
+            )
             .unwrap_err();
         assert!(matches!(err, PlayError::JustifierNotInPlay { .. }));
     }
@@ -244,11 +312,31 @@ mod tests {
     fn justifier_must_match_arena_parent() {
         let arena = arena_simple();
         let mut p = Play::new();
-        p.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
-        p.append(&arena, Move { move_id: id(3), justifier: Some(id(1)) }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(3),
+                justifier: Some(id(1)),
+            },
+        )
+        .unwrap();
         // Try to justify (4) by (1) — but arena parent of (4) is (3).
         let err = p
-            .append(&arena, Move { move_id: id(4), justifier: Some(id(1)) })
+            .append(
+                &arena,
+                Move {
+                    move_id: id(4),
+                    justifier: Some(id(1)),
+                },
+            )
             .unwrap_err();
         assert!(matches!(err, PlayError::JustifierMismatch { .. }));
     }
@@ -257,15 +345,43 @@ mod tests {
     fn well_bracketed_play_accepted() {
         let arena = arena_simple();
         let mut p = Play::new();
-        p.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
         // P sub-question to root.
-        p.append(&arena, Move { move_id: id(3), justifier: Some(id(1)) }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(3),
+                justifier: Some(id(1)),
+            },
+        )
+        .unwrap();
         // O answers the sub-question (id(3) was the most recent
         // unanswered P question — bracket nesting respected).
-        p.append(&arena, Move { move_id: id(4), justifier: Some(id(3)) }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(4),
+                justifier: Some(id(3)),
+            },
+        )
+        .unwrap();
         // P now answers the root (id(1) was the most recent
         // unanswered O question).
-        p.append(&arena, Move { move_id: id(2), justifier: Some(id(1)) }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(2),
+                justifier: Some(id(1)),
+            },
+        )
+        .unwrap();
         assert_eq!(p.len(), 4);
     }
 
@@ -275,11 +391,31 @@ mod tests {
         // P-A2-clone: there's no open question to close.
         let arena = arena_simple();
         let mut p = Play::new();
-        p.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
-        p.append(&arena, Move { move_id: id(2), justifier: Some(id(1)) }).unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
+        p.append(
+            &arena,
+            Move {
+                move_id: id(2),
+                justifier: Some(id(1)),
+            },
+        )
+        .unwrap();
         // Append a second answer with no open Q — caught.
         let err = p
-            .append(&arena, Move { move_id: id(2), justifier: Some(id(1)) })
+            .append(
+                &arena,
+                Move {
+                    move_id: id(2),
+                    justifier: Some(id(1)),
+                },
+            )
             .unwrap_err();
         assert_eq!(err, PlayError::BracketingNoOpenQuestion);
     }

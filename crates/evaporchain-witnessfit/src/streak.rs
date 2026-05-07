@@ -94,22 +94,14 @@ impl Streak {
     /// cached strength via the standard half-life rule.
     pub fn strength_at(&self, epoch_now: Epoch) -> f64 {
         let elapsed = epoch_now.saturating_sub(self.anchor_epoch);
-        let decayed_bp = energy_at_epoch(
-            self.cached_strength_bp as u64,
-            self.half_life,
-            elapsed,
-        );
+        let decayed_bp = energy_at_epoch(self.cached_strength_bp as u64, self.half_life, elapsed);
         (decayed_bp as f64 / FULL_STRENGTH_BP as f64).clamp(0.0, 1.0)
     }
 
     /// Strength in basis points at `epoch_now` — integer counterpart.
     pub fn strength_bp_at(&self, epoch_now: Epoch) -> u32 {
         let elapsed = epoch_now.saturating_sub(self.anchor_epoch);
-        let decayed = energy_at_epoch(
-            self.cached_strength_bp as u64,
-            self.half_life,
-            elapsed,
-        );
+        let decayed = energy_at_epoch(self.cached_strength_bp as u64, self.half_life, elapsed);
         decayed.min(FULL_STRENGTH_BP as u64) as u32
     }
 
@@ -148,14 +140,11 @@ impl Streak {
         }
         // Decay current to attestation epoch, then boost.
         let now_bp = self.strength_bp_at(att.epoch);
-        let new_bp = now_bp
-            .saturating_add(boost_bp)
-            .min(FULL_STRENGTH_BP);
+        let new_bp = now_bp.saturating_add(boost_bp).min(FULL_STRENGTH_BP);
         self.cached_strength_bp = new_bp;
         self.anchor_epoch = att.epoch;
         self.total_check_ins = self.total_check_ins.saturating_add(1);
-        self.lifetime_witness_hash =
-            chain_hash(&self.lifetime_witness_hash, &att.payload_hash);
+        self.lifetime_witness_hash = chain_hash(&self.lifetime_witness_hash, &att.payload_hash);
         Ok(())
     }
 }
@@ -210,7 +199,8 @@ mod tests {
     #[test]
     fn check_in_boosts_strength() {
         let mut s = Streak::mint(id(1), addr(0xAA), 100, 0).unwrap();
-        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid).unwrap();
+        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid)
+            .unwrap();
         assert_eq!(s.strength_bp_at(0), FULL_STRENGTH_BP);
         assert_eq!(s.bucket_at(0), StrengthBucket::Healthy);
         assert_eq!(s.total_check_ins, 1);
@@ -219,7 +209,8 @@ mod tests {
     #[test]
     fn strength_decays_between_check_ins() {
         let mut s = Streak::mint(id(1), addr(0xAA), 100, 0).unwrap();
-        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid).unwrap();
+        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid)
+            .unwrap();
         // After one half-life, strength ≈ 5000 bp = 0.5.
         let mid = s.strength_at(100);
         assert!(mid < 1.0 && mid > 0.0);
@@ -236,7 +227,8 @@ mod tests {
         // Singh-Streak fades. Build up to full, miss a "day", verify
         // strength is degraded but NOT zero.
         let mut s = Streak::mint(id(1), addr(0xAA), 1000, 0).unwrap();
-        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid).unwrap();
+        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid)
+            .unwrap();
         // Miss a single epoch (much less than half-life). Strength
         // should be slightly degraded but well above Broken.
         let after_miss = s.strength_at(1);
@@ -247,9 +239,11 @@ mod tests {
     #[test]
     fn check_in_boost_caps_at_full_strength() {
         let mut s = Streak::mint(id(1), addr(0xAA), 100, 0).unwrap();
-        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid).unwrap();
+        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid)
+            .unwrap();
         // Boost again at the same epoch — already full, can't go higher.
-        s.record(att(1, 0, 0xCD), FULL_STRENGTH_BP, always_valid).unwrap();
+        s.record(att(1, 0, 0xCD), FULL_STRENGTH_BP, always_valid)
+            .unwrap();
         assert_eq!(s.cached_strength_bp, FULL_STRENGTH_BP);
         assert_eq!(s.total_check_ins, 2);
     }
@@ -260,7 +254,8 @@ mod tests {
         // check-in puts you back near full." Build up, decay a bit,
         // check in again, verify recovery.
         let mut s = Streak::mint(id(1), addr(0xAA), 1000, 0).unwrap();
-        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid).unwrap();
+        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid)
+            .unwrap();
         // After 2 epochs of silence (much less than half-life=1000):
         let pre = s.strength_at(2);
         assert!(pre < 1.0);
@@ -330,7 +325,8 @@ mod tests {
         for i in 0..10u64 {
             // Offset payload byte by 1 so the first attestation isn't
             // payload=0 (rejected by WitnessAttestation::new).
-            s.record(att(1, i, (i + 1) as u8), 1000, always_valid).unwrap();
+            s.record(att(1, i, (i + 1) as u8), 1000, always_valid)
+                .unwrap();
         }
         assert_eq!(s.total_check_ins, 10);
         assert_ne!(s.lifetime_witness_hash, [0; 32]);
@@ -343,7 +339,8 @@ mod tests {
         // check-in restores it. Operationalised:
         let mut s = Streak::mint(id(1), addr(0xAA), 100, 0).unwrap();
         // Build up to full strength.
-        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid).unwrap();
+        s.record(att(1, 0, 0xAB), FULL_STRENGTH_BP, always_valid)
+            .unwrap();
         assert_eq!(s.bucket_at(0), StrengthBucket::Healthy);
         // Miss "two days" — strength degrades but is NOT zero (no
         // cliff). With half_life=100 and 2 epochs elapsed, strength

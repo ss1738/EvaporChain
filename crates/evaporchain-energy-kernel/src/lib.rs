@@ -69,7 +69,7 @@ mod press_claim_tests {
         // ConservationCheck::redirect rejects total drift.
         let before = EnergyAccumulator::new(1_000, 0, 0, 0);
         let after_ok = EnergyAccumulator::new(900, 100, 0, 0); // total preserved
-        let after_bad = EnergyAccumulator::new(900, 0, 0, 0);  // 100 disappeared
+        let after_bad = EnergyAccumulator::new(900, 0, 0, 0); // 100 disappeared
         ConservationCheck::redirect(&before, &after_ok).unwrap();
         assert!(matches!(
             ConservationCheck::redirect(&before, &after_bad),

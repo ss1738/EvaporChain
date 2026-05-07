@@ -321,9 +321,7 @@ fn index_block_deploys_via_consensus(
     };
     log_persist_err(
         "deploy_index",
-        chain_store
-            .index_block_deploys(block, resolve)
-            .map(|_| ()),
+        chain_store.index_block_deploys(block, resolve).map(|_| ()),
     );
 }
 
@@ -438,7 +436,14 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
     for (hex, balance) in &accounts {
         let address = parse_hex_address(hex).expect("invalid demo address");
         if db.get_account(&address).is_none() {
-            db.put_account(Account { address, balance: *balance, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+            db.put_account(Account {
+                address,
+                balance: *balance,
+                nonce: 0,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 0,
+            });
         }
     }
     println!(
@@ -562,9 +567,9 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
         address: faucet_addr,
         balance: u64::MAX / 2,
         nonce: 0,
-    storage_deposit: 0,
-    storage_bytes: 0,
-    last_touched_epoch: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
+        last_touched_epoch: 0,
     });
     println!(
         "{} \x1b[36mFaucet (0x0000...)\x1b[0m  balance=MAX/2",
@@ -585,9 +590,9 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
             address,
             balance: *balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
         println!("{} \x1b[36m0x{}\x1b[0m  balance={}", node_tag, hex, balance);
     }
@@ -1336,12 +1341,11 @@ fn validate_genesis_coordinator_signature(
             return Ok(()); // testnet: silently allow legacy unsigned configs
         }
     };
-    let sig =
-        hex::decode(sig_hex.trim_start_matches("0x")).map_err(|e| format!("coordinator_signature is not valid hex: {e}"))?;
+    let sig = hex::decode(sig_hex.trim_start_matches("0x"))
+        .map_err(|e| format!("coordinator_signature is not valid hex: {e}"))?;
 
     let claimed_pk_hex = config.coordinator_pk.as_deref().ok_or_else(|| {
-        "genesis-config has coordinator_signature but no coordinator_pk; cannot verify"
-            .to_string()
+        "genesis-config has coordinator_signature but no coordinator_pk; cannot verify".to_string()
     })?;
     let claimed_pk = hex::decode(claimed_pk_hex.trim_start_matches("0x"))
         .map_err(|e| format!("coordinator_pk is not valid hex: {e}"))?;
@@ -1707,11 +1711,7 @@ fn record_block(
         stats.total_transactions += block.transactions.len() as u64;
         // Per-tx outcomes drive the failed bucket on
         // /metrics::evap_finalised_txs_total{result="failed"}.
-        let rejected_in_block = execution
-            .tx_outcomes
-            .iter()
-            .filter(|o| !o.success)
-            .count() as u64;
+        let rejected_in_block = execution.tx_outcomes.iter().filter(|o| !o.success).count() as u64;
         stats.total_rejected_transactions += rejected_in_block;
 
         // Compute total energy across active objects (approximate from active count * avg)
@@ -2259,7 +2259,9 @@ async fn main() -> Result<()> {
     } else if args.faucet_rate_limit_secs != api::FAUCET_RATE_LIMIT_SECS {
         println!(
             "{} \x1b[1;36mFaucet cooldown overridden:\x1b[0m {}s (default {}s)",
-            node_tag, args.faucet_rate_limit_secs, api::FAUCET_RATE_LIMIT_SECS
+            node_tag,
+            args.faucet_rate_limit_secs,
+            api::FAUCET_RATE_LIMIT_SECS
         );
     }
 
@@ -2369,9 +2371,7 @@ async fn main() -> Result<()> {
             // K-07/K-08: every multi-validator genesis must be coordinator-signed
             // so all operators verify byte-equality of the validator set + chain
             // params before any state is written.
-            if let Err(e) =
-                validate_genesis_coordinator_signature(&config, args.mainnet_strict)
-            {
+            if let Err(e) = validate_genesis_coordinator_signature(&config, args.mainnet_strict) {
                 panic!("genesis-config signature check failed: {}", e);
             }
             let result = evaporchain_execution::genesis::initialize_genesis(&mut *db, &config)
@@ -2553,8 +2553,8 @@ async fn main() -> Result<()> {
         if !net_data_dir.exists() {
             std::fs::create_dir_all(&net_data_dir).ok();
         }
-        let local_identity =
-            evaporchain_network::load_or_generate_identity(&net_data_dir).map_err(|e| {
+        let local_identity = evaporchain_network::load_or_generate_identity(&net_data_dir)
+            .map_err(|e| {
                 anyhow::anyhow!("load_or_generate_identity({}): {e}", net_data_dir.display())
             })?;
         let local_peer_id_str = local_identity.public().to_peer_id().to_string();
@@ -2719,7 +2719,10 @@ async fn main() -> Result<()> {
                             Ok(pk_bytes) => {
                                 with_bls += 1;
                                 let mut vi = ValidatorInfo::with_bls_key(
-                                    gv.id, gv.stake, gv.address, pk_bytes.clone(),
+                                    gv.id,
+                                    gv.stake,
+                                    gv.address,
+                                    pk_bytes.clone(),
                                 );
                                 // Audit fix 2026-05-02 (rogue-key attack
                                 // surface): the genesis-registration path
@@ -2857,28 +2860,25 @@ async fn main() -> Result<()> {
                 // ciphertext silently relocated to a different file
                 // path fails to decrypt. The canonical_path_bytes
                 // helper below normalises symlinks / relative paths.
-                let aad = evaporchain_crypto::bls_key_store::path_aad(
-                    path.as_bytes(),
-                );
-                match evaporchain_crypto::bls_key_store::encrypt_bls_secret_with_aad(
-                    sk, pass, &aad,
-                ) {
-                Ok(blob) => {
-                    write_secret_file(path, &blob);
-                    println!(
+                let aad = evaporchain_crypto::bls_key_store::path_aad(path.as_bytes());
+                match evaporchain_crypto::bls_key_store::encrypt_bls_secret_with_aad(sk, pass, &aad)
+                {
+                    Ok(blob) => {
+                        write_secret_file(path, &blob);
+                        println!(
                             "{} \x1b[1;36mBLS validator key encrypted at rest\x1b[0m (Argon2id+XChaCha20-Poly1305, path-bound AAD)",
                             node_tag
                         );
-                }
-                Err(e) => {
-                    eprintln!(
+                    }
+                    Err(e) => {
+                        eprintln!(
                             "{} \x1b[31mFailed to encrypt BLS key ({}); falling back to plaintext\x1b[0m",
                             node_tag, e
                         );
-                    write_secret_file(path, sk);
+                        write_secret_file(path, sk);
+                    }
                 }
-                }
-            },
+            }
             None => {
                 write_secret_file(path, sk);
                 eprintln!(
@@ -2929,25 +2929,31 @@ async fn main() -> Result<()> {
                             let aad = evaporchain_crypto::bls_key_store::path_aad(
                                 bls_key_path.as_bytes(),
                             );
-                            let result = evaporchain_crypto::bls_key_store::decrypt_bls_secret_with_aad(
-                                &file_bytes, pass, &aad,
-                            )
-                            .or_else(|_| evaporchain_crypto::bls_key_store::decrypt_bls_secret(
-                                &file_bytes, pass,
-                            ));
+                            let result =
+                                evaporchain_crypto::bls_key_store::decrypt_bls_secret_with_aad(
+                                    &file_bytes,
+                                    pass,
+                                    &aad,
+                                )
+                                .or_else(|_| {
+                                    evaporchain_crypto::bls_key_store::decrypt_bls_secret(
+                                        &file_bytes,
+                                        pass,
+                                    )
+                                });
                             match result {
-                            Ok(plain) => Some(plain.to_vec()),
-                            Err(e) => {
-                                eprintln!(
+                                Ok(plain) => Some(plain.to_vec()),
+                                Err(e) => {
+                                    eprintln!(
                                 "{} \x1b[31mBLS key decryption failed ({}); refusing to overwrite — set the correct {} or remove {}\x1b[0m",
                                 node_tag,
                                 e,
                                 evaporchain_crypto::bls_key_store::ENV_PASSPHRASE,
                                 bls_key_path
                             );
-                                std::process::exit(1);
+                                    std::process::exit(1);
+                                }
                             }
-                        }
                         }
                         None => {
                             eprintln!(
@@ -3794,13 +3800,11 @@ async fn main() -> Result<()> {
                 // moves into the worker — no per-block log here.
                 {
                     use evaporchain_proving::async_fold::SubmitOutcome;
-                    let outcome = fold_queue
-                        .submit(result.block.clone(), result.execution.state_root);
+                    let outcome =
+                        fold_queue.submit(result.block.clone(), result.execution.state_root);
                     if let SubmitOutcome::QueueFull | SubmitOutcome::WorkerGone = outcome {
                         let mut p = safe_lock(prover);
-                        if let Err(e) =
-                            p.fold_block(&result.block, result.execution.state_root)
-                        {
+                        if let Err(e) = p.fold_block(&result.block, result.execution.state_root) {
                             eprintln!(
                                 "{} \x1b[31mProving error (sync fallback): {}\x1b[0m",
                                 node_tag, e

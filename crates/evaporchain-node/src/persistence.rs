@@ -629,11 +629,7 @@ impl ChainStore {
     ///
     /// Returns the count of deploys indexed. Block applier should call
     /// this exactly once per block, after `index_block_transactions`.
-    pub fn index_block_deploys<F>(
-        &self,
-        block: &Block,
-        mut lookup: F,
-    ) -> Result<usize, String>
+    pub fn index_block_deploys<F>(&self, block: &Block, mut lookup: F) -> Result<usize, String>
     where
         F: FnMut(&str, &[u8; 32], u64) -> Option<u64>,
     {

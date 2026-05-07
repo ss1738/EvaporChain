@@ -7,7 +7,9 @@ use crate::snapshot::Snapshot;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RewindError {
-    #[error("rewind target {target} > head_height {head} — debugger refuses to extrapolate forward")]
+    #[error(
+        "rewind target {target} > head_height {head} — debugger refuses to extrapolate forward"
+    )]
     BeyondHead { target: u64, head: u64 },
     #[error(transparent)]
     Tree(#[from] FoldTreeError),
@@ -34,9 +36,7 @@ impl<'a> Debugger<'a> {
             });
         }
         let snap = self.tree.nearest_snapshot_le(target_height)?;
-        let steps = self
-            .tree
-            .steps_in_range(snap.height, target_height)?;
+        let steps = self.tree.steps_in_range(snap.height, target_height)?;
         Ok(RewindResult {
             anchor: snap.clone(),
             replay_steps: steps,
@@ -117,7 +117,13 @@ mod tests {
     fn rewind_beyond_head_rejected() {
         let t = build_tree();
         let err = rewind_to(&t, 100).unwrap_err();
-        assert!(matches!(err, RewindError::BeyondHead { target: 100, head: 16 }));
+        assert!(matches!(
+            err,
+            RewindError::BeyondHead {
+                target: 100,
+                head: 16
+            }
+        ));
     }
 
     #[test]
@@ -126,7 +132,10 @@ mod tests {
         t.insert_snapshot(snap(10, 0, 0)).unwrap();
         // (no steps below 10)
         let err = rewind_to(&t, 5).unwrap_err();
-        assert!(matches!(err, RewindError::Tree(FoldTreeError::NoSnapshotForHeight(5))));
+        assert!(matches!(
+            err,
+            RewindError::Tree(FoldTreeError::NoSnapshotForHeight(5))
+        ));
     }
 
     // ── determinism ──────────────────────────────────────────────

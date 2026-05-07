@@ -52,11 +52,7 @@ pub trait ForkChoice: Send + Sync {
     /// The linear-chain default returns `accept = (local_tip ==
     /// candidate_parent)`. Richer impls (MCC, sumset, AVPL) compute a
     /// path-entropy score over both candidates and accept the higher.
-    fn evaluate(
-        &self,
-        local_tip: &[u8; 32],
-        candidate_parent: &[u8; 32],
-    ) -> ForkChoiceVerdict;
+    fn evaluate(&self, local_tip: &[u8; 32], candidate_parent: &[u8; 32]) -> ForkChoiceVerdict;
 
     /// A human-readable label for the active fork-choice rule. Mirrors
     /// `TendermintConsensus::fork_choice_mode()` but lives on the impl,
@@ -83,11 +79,7 @@ pub trait ForkChoice: Send + Sync {
 pub struct LinearForkChoice;
 
 impl ForkChoice for LinearForkChoice {
-    fn evaluate(
-        &self,
-        local_tip: &[u8; 32],
-        candidate_parent: &[u8; 32],
-    ) -> ForkChoiceVerdict {
+    fn evaluate(&self, local_tip: &[u8; 32], candidate_parent: &[u8; 32]) -> ForkChoiceVerdict {
         ForkChoiceVerdict {
             accept: local_tip == candidate_parent,
             score: 0,
@@ -121,7 +113,7 @@ impl ForkChoice for LinearForkChoice {
 // snapshot cheaply; the production wiring (Lane I.5) can shrink to
 // `Arc<RwLock<LightCone>>` if measurements warrant.
 
-use crate::mempool::BlockSource;  // Re-export anchor — keeps the seam group co-located in lib.rs.
+use crate::mempool::BlockSource; // Re-export anchor — keeps the seam group co-located in lib.rs.
 use evaporchain_light_cone::LightCone;
 use evaporchain_mcc::{mcc_choose, Trajectory};
 use std::collections::HashSet;
@@ -184,11 +176,7 @@ impl MccForkChoice {
 }
 
 impl ForkChoice for MccForkChoice {
-    fn evaluate(
-        &self,
-        local_tip: &[u8; 32],
-        candidate_parent: &[u8; 32],
-    ) -> ForkChoiceVerdict {
+    fn evaluate(&self, local_tip: &[u8; 32], candidate_parent: &[u8; 32]) -> ForkChoiceVerdict {
         // Trivial linear case: local and candidate match → accept,
         // skip the trajectory work. Score is the candidate trajectory's
         // caliber so callers can audit it.
@@ -208,8 +196,7 @@ impl ForkChoice for MccForkChoice {
         let trajectories = vec![&local_traj, &cand_traj];
         match mcc_choose(trajectories.into_iter(), &self.lc, self.beta_mb) {
             Ok(winner) => {
-                let score =
-                    evaporchain_mcc::path_caliber(winner, &self.lc, self.beta_mb);
+                let score = evaporchain_mcc::path_caliber(winner, &self.lc, self.beta_mb);
                 ForkChoiceVerdict {
                     accept: winner.head() == Some(candidate_parent),
                     score,
@@ -267,8 +254,7 @@ impl MccForkChoice {
             .leaves()
             .map(|leaf| {
                 let traj = self.first_parent_trajectory(&leaf);
-                let caliber =
-                    evaporchain_mcc::path_caliber(&traj, &self.lc, self.beta_mb);
+                let caliber = evaporchain_mcc::path_caliber(&traj, &self.lc, self.beta_mb);
                 (leaf, caliber)
             })
             .collect();

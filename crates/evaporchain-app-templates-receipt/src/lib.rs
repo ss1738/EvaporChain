@@ -73,13 +73,12 @@ mod press_claim_tests {
     #[test]
     fn the_press_claim_lives_as_a_test() {
         let r = DeployReceipt::new(
-            [1u8; 32],   // request commitment
-            [2u8; 32],   // instance_id
-            MAYFLY,
-            [7u8; 32],   // deployer
-            500,         // fee_paid
-            100,         // deployed_at_epoch
-            42,          // block_height
+            [1u8; 32], // request commitment
+            [2u8; 32], // instance_id
+            MAYFLY, [7u8; 32], // deployer
+            500,       // fee_paid
+            100,       // deployed_at_epoch
+            42,        // block_height
         )
         .unwrap();
         // Determinism.
@@ -90,15 +89,6 @@ mod press_claim_tests {
 
         // Out-of-range class rejected.
         let bad = evaporchain_app_templates::TemplateClass(0xFFFF_FFFF);
-        assert!(DeployReceipt::new(
-            [1u8; 32],
-            [2u8; 32],
-            bad,
-            [7u8; 32],
-            500,
-            100,
-            42,
-        )
-        .is_err());
+        assert!(DeployReceipt::new([1u8; 32], [2u8; 32], bad, [7u8; 32], 500, 100, 42,).is_err());
     }
 }

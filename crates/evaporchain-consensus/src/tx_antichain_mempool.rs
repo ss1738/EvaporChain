@@ -52,9 +52,7 @@
 //! `evaporchain-antichain-mempool` crate is the block-level one
 //! (LightCone DAG). Both shapes ship in V1.
 
-use crate::mempool::{
-    BlockSource, BASE_INCLUSION_ENERGY, MEV_INCLUSION_HALF_LIFE_BLOCKS,
-};
+use crate::mempool::{BlockSource, BASE_INCLUSION_ENERGY, MEV_INCLUSION_HALF_LIFE_BLOCKS};
 use evaporchain_types::{energy_at_epoch, AccountAddress, Transaction};
 use std::collections::HashSet;
 
@@ -383,7 +381,10 @@ mod tests {
         let (txs, _sum, hints) = bs.take_with_priority_sum_and_hints(n, current_block);
         prop_assert_eq!(txs.len(), hints.len(), "hints index-parallel to txs");
         prop_assert!(txs.len() <= n, "must respect n cap");
-        prop_assert!(txs.len() <= pre_len, "cannot return more than was submitted");
+        prop_assert!(
+            txs.len() <= pre_len,
+            "cannot return more than was submitted"
+        );
         Ok(())
     }
 

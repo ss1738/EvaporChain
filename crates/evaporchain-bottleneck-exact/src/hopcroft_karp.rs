@@ -51,12 +51,7 @@ pub fn max_matching_size(g: &MatchingGraph) -> usize {
     matching
 }
 
-fn bfs(
-    g: &MatchingGraph,
-    pair_u: &[usize],
-    pair_v: &[usize],
-    dist: &mut [usize],
-) -> bool {
+fn bfs(g: &MatchingGraph, pair_u: &[usize], pair_v: &[usize], dist: &mut [usize]) -> bool {
     let nil_idx = g.n_left;
     let mut q: VecDeque<usize> = VecDeque::new();
     for u in 0..g.n_left {

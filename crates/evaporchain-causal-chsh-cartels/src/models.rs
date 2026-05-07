@@ -37,10 +37,18 @@ pub enum CartelError {
 
 /// The cartel target value for each setting-pair (algebraic-max
 /// violation pattern, S = 4).
-fn cartel_value_ab() -> i8 { 1 }
-fn cartel_value_ab_prime() -> i8 { 1 }
-fn cartel_value_a_prime_b() -> i8 { 1 }
-fn cartel_value_a_prime_b_prime() -> i8 { -1 }
+fn cartel_value_ab() -> i8 {
+    1
+}
+fn cartel_value_ab_prime() -> i8 {
+    1
+}
+fn cartel_value_a_prime_b() -> i8 {
+    1
+}
+fn cartel_value_a_prime_b_prime() -> i8 {
+    -1
+}
 
 fn check_binary(v: i8) -> Result<(), CartelError> {
     if v == 1 || v == -1 {
@@ -72,7 +80,9 @@ fn check_non_empty(s: &ConcurrentPairSamples) -> Result<(), CartelError> {
 }
 
 fn check_all_binary(s: &ConcurrentPairSamples) -> Result<(), CartelError> {
-    for v in s.samples_ab.iter()
+    for v in s
+        .samples_ab
+        .iter()
         .chain(s.samples_ab_prime.iter())
         .chain(s.samples_a_prime_b.iter())
         .chain(s.samples_a_prime_b_prime.iter())
@@ -122,10 +132,30 @@ pub fn coordinated_subset_cartel(
         out
     };
 
-    let samples_ab = inject(b"bucket:ab", &honest.samples_ab, cartel_value_ab(), &mut rng);
-    let samples_ab_prime = inject(b"bucket:ab_prime", &honest.samples_ab_prime, cartel_value_ab_prime(), &mut rng);
-    let samples_a_prime_b = inject(b"bucket:a_prime_b", &honest.samples_a_prime_b, cartel_value_a_prime_b(), &mut rng);
-    let samples_a_prime_b_prime = inject(b"bucket:a_prime_b_prime", &honest.samples_a_prime_b_prime, cartel_value_a_prime_b_prime(), &mut rng);
+    let samples_ab = inject(
+        b"bucket:ab",
+        &honest.samples_ab,
+        cartel_value_ab(),
+        &mut rng,
+    );
+    let samples_ab_prime = inject(
+        b"bucket:ab_prime",
+        &honest.samples_ab_prime,
+        cartel_value_ab_prime(),
+        &mut rng,
+    );
+    let samples_a_prime_b = inject(
+        b"bucket:a_prime_b",
+        &honest.samples_a_prime_b,
+        cartel_value_a_prime_b(),
+        &mut rng,
+    );
+    let samples_a_prime_b_prime = inject(
+        b"bucket:a_prime_b_prime",
+        &honest.samples_a_prime_b_prime,
+        cartel_value_a_prime_b_prime(),
+        &mut rng,
+    );
 
     Ok(ConcurrentPairSamples {
         samples_ab,
@@ -177,7 +207,10 @@ pub fn biased_coin_cartel(
     let samples_ab = flip(&honest.samples_ab, cartel_value_ab());
     let samples_ab_prime = flip(&honest.samples_ab_prime, cartel_value_ab_prime());
     let samples_a_prime_b = flip(&honest.samples_a_prime_b, cartel_value_a_prime_b());
-    let samples_a_prime_b_prime = flip(&honest.samples_a_prime_b_prime, cartel_value_a_prime_b_prime());
+    let samples_a_prime_b_prime = flip(
+        &honest.samples_a_prime_b_prime,
+        cartel_value_a_prime_b_prime(),
+    );
 
     Ok(ConcurrentPairSamples {
         samples_ab,
@@ -231,7 +264,10 @@ pub fn pr_box_cartel(
     let samples_ab = sample(honest.samples_ab.len(), cartel_value_ab());
     let samples_ab_prime = sample(honest.samples_ab_prime.len(), cartel_value_ab_prime());
     let samples_a_prime_b = sample(honest.samples_a_prime_b.len(), cartel_value_a_prime_b());
-    let samples_a_prime_b_prime = sample(honest.samples_a_prime_b_prime.len(), cartel_value_a_prime_b_prime());
+    let samples_a_prime_b_prime = sample(
+        honest.samples_a_prime_b_prime.len(),
+        cartel_value_a_prime_b_prime(),
+    );
 
     Ok(ConcurrentPairSamples {
         samples_ab,
@@ -275,7 +311,10 @@ mod tests {
             assert_eq!(c.samples_ab.len(), h.samples_ab.len());
             assert_eq!(c.samples_ab_prime.len(), h.samples_ab_prime.len());
             assert_eq!(c.samples_a_prime_b.len(), h.samples_a_prime_b.len());
-            assert_eq!(c.samples_a_prime_b_prime.len(), h.samples_a_prime_b_prime.len());
+            assert_eq!(
+                c.samples_a_prime_b_prime.len(),
+                h.samples_a_prime_b_prime.len()
+            );
         }
     }
 
@@ -286,7 +325,9 @@ mod tests {
         let c2 = biased_coin_cartel(&h, 3, 7, seed(2)).unwrap();
         let c3 = pr_box_cartel(&h, 3, 7, seed(2)).unwrap();
         for c in [&c1, &c2, &c3] {
-            for v in c.samples_ab.iter()
+            for v in c
+                .samples_ab
+                .iter()
                 .chain(c.samples_ab_prime.iter())
                 .chain(c.samples_a_prime_b.iter())
                 .chain(c.samples_a_prime_b_prime.iter())
@@ -467,7 +508,8 @@ mod tests {
         // BLAKE3-keyed XOF — same seed, same output on every node.
         // At full strength (k=n, p=1, v=1) all three reach S = 4."
         let h = balanced_honest(64);
-        let s_coord = compute_chsh_s(&coordinated_subset_cartel(&h, 1, 1, seed(0)).unwrap()).unwrap();
+        let s_coord =
+            compute_chsh_s(&coordinated_subset_cartel(&h, 1, 1, seed(0)).unwrap()).unwrap();
         let s_bias = compute_chsh_s(&biased_coin_cartel(&h, 1, 1, seed(0)).unwrap()).unwrap();
         let s_pr = compute_chsh_s(&pr_box_cartel(&h, 1, 1, seed(0)).unwrap()).unwrap();
         for s in [s_coord, s_bias, s_pr] {

@@ -114,7 +114,9 @@ mod tests {
             addr(creator),
             addr(future_self),
             1_000,
-            Predicate::EpochReached { release_epoch: 1_000 },
+            Predicate::EpochReached {
+                release_epoch: 1_000,
+            },
             0,
         )
         .unwrap()
@@ -125,29 +127,27 @@ mod tests {
         let v = locked_vault(0xAA, 0xBB);
         // Future-self is the holder; the creator (different address)
         // cannot list someone else's claim.
-        let err =
-            list_for_sale(&v, addr(0xAA), id(1), 500, 50, 10, 0, 100).unwrap_err();
+        let err = list_for_sale(&v, addr(0xAA), id(1), 500, 50, 10, 0, 100).unwrap_err();
         assert_eq!(err, MarketError::NotCurrentHolder);
     }
 
     #[test]
     fn list_for_sale_opens_auction_for_holder() {
         let v = locked_vault(0xAA, 0xBB);
-        let auction =
-            list_for_sale(&v, addr(0xBB), id(1), 500, 50, 10, 0, 100).unwrap();
+        let auction = list_for_sale(&v, addr(0xBB), id(1), 500, 50, 10, 0, 100).unwrap();
         assert!(auction.is_open());
     }
 
     #[test]
     fn settle_secondary_clears_and_transfers_claim() {
         let mut v = locked_vault(0xAA, 0xBB);
-        let mut a =
-            list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 20, 0, 100).unwrap();
+        let mut a = list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 20, 0, 100).unwrap();
 
         // Bid at epoch 50 → price = 550. max_price=600, λ_tol=30 ≥ lot λ=20.
         let bid = Bid::new(addr(0xCC), 600, 30, 50).unwrap();
-        let cleared =
-            settle_secondary(&mut v, &mut a, &[bid], 50).unwrap().unwrap();
+        let cleared = settle_secondary(&mut v, &mut a, &[bid], 50)
+            .unwrap()
+            .unwrap();
         assert_eq!(cleared.winner, addr(0xCC));
         assert_eq!(cleared.price_paid, 550);
         // Vault claim is now held by the bidder.
@@ -157,8 +157,7 @@ mod tests {
     #[test]
     fn settle_secondary_no_clear_keeps_holder() {
         let mut v = locked_vault(0xAA, 0xBB);
-        let mut a =
-            list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 20, 0, 100).unwrap();
+        let mut a = list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 20, 0, 100).unwrap();
         // Bid below market (max_price=99 at epoch 0 with price=1000) — no clear.
         let bid = Bid::new(addr(0xCC), 99, 100, 0).unwrap();
         let res = settle_secondary(&mut v, &mut a, &[bid], 50).unwrap();
@@ -170,8 +169,7 @@ mod tests {
     fn list_for_sale_after_release_errors() {
         let mut v = locked_vault(0xAA, 0xBB);
         v.mark_released(addr(0xBB), 100);
-        let err =
-            list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 10, 0, 100).unwrap_err();
+        let err = list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 10, 0, 100).unwrap_err();
         assert_eq!(err, MarketError::VaultReleased);
     }
 
@@ -181,23 +179,20 @@ mod tests {
         let mut v = locked_vault(0xAA, 0xBB);
 
         // First sale: 0xBB → 0xCC.
-        let mut a1 =
-            list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 20, 0, 100).unwrap();
+        let mut a1 = list_for_sale(&v, addr(0xBB), id(1), 1000, 100, 20, 0, 100).unwrap();
         let bid1 = Bid::new(addr(0xCC), 700, 30, 50).unwrap();
         settle_secondary(&mut v, &mut a1, &[bid1], 50).unwrap();
         assert_eq!(v.current_holder(), Some(addr(0xCC)));
 
         // Second sale: 0xCC → 0xDD. Notice listing requires holder=0xCC
         // now — the original future_self lost the right to sell.
-        let mut a2 =
-            list_for_sale(&v, addr(0xCC), id(2), 800, 80, 15, 200, 100).unwrap();
+        let mut a2 = list_for_sale(&v, addr(0xCC), id(2), 800, 80, 15, 200, 100).unwrap();
         let bid2 = Bid::new(addr(0xDD), 500, 20, 250).unwrap();
         settle_secondary(&mut v, &mut a2, &[bid2], 250).unwrap();
         assert_eq!(v.current_holder(), Some(addr(0xDD)));
 
         // 0xBB cannot list any more — the claim has moved on.
-        let err =
-            list_for_sale(&v, addr(0xBB), id(3), 600, 60, 10, 400, 100).unwrap_err();
+        let err = list_for_sale(&v, addr(0xBB), id(3), 600, 60, 10, 400, 100).unwrap_err();
         assert_eq!(err, MarketError::NotCurrentHolder);
     }
 }

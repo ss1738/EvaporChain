@@ -111,9 +111,10 @@ impl Arena {
         // Every non-root parent must exist; polarity must alternate.
         for m in &moves {
             if let Some(p) = m.parent {
-                let parent = seen
-                    .get(&p)
-                    .ok_or(ArenaError::ParentNotFound { parent: p, child: m.id })?;
+                let parent = seen.get(&p).ok_or(ArenaError::ParentNotFound {
+                    parent: p,
+                    child: m.id,
+                })?;
                 if parent.owner == m.owner {
                     return Err(ArenaError::PolarityViolation {
                         parent_owner: parent.owner,
@@ -225,9 +226,9 @@ mod tests {
     #[test]
     fn build_accepts_well_formed_arena() {
         let arena = Arena::build(vec![
-            opp_q(1, None),               // root: O Q
-            prop_a(2, Some(id(1))),       // P A — answers root
-            prop_q(3, Some(id(1))),       // P Q — also justified by root
+            opp_q(1, None),         // root: O Q
+            prop_a(2, Some(id(1))), // P A — answers root
+            prop_q(3, Some(id(1))), // P Q — also justified by root
         ])
         .unwrap();
         assert_eq!(arena.root, id(1));

@@ -72,8 +72,7 @@ pub fn current_energy(
     epoch_now: Epoch,
 ) -> Result<Energy, DecayError> {
     let rest = epoch_now.saturating_sub(rested_at_epoch);
-    let h_eff =
-        effective_half_life(base_half_life, rest, resting_threshold_epochs)?;
+    let h_eff = effective_half_life(base_half_life, rest, resting_threshold_epochs)?;
     Ok(energy_at_epoch(initial, h_eff, rest))
 }
 

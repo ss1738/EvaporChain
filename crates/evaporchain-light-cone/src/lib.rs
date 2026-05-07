@@ -61,9 +61,7 @@ pub use concurrency::{
 pub use dag::{
     block_path_from_to, causal_future, causal_past, find_lca, LightCone, LightConeError,
 };
-pub use decay_lamport::{
-    all_block_clocks, block_lamport_clock, ClockDerivationError,
-};
+pub use decay_lamport::{all_block_clocks, block_lamport_clock, ClockDerivationError};
 
 #[cfg(test)]
 mod press_claim_tests {
@@ -93,7 +91,8 @@ mod press_claim_tests {
         lc.insert(Block::new(id(0), vec![], 1_000, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 1_000, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 1_000, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 1_000, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 1_000, 2))
+            .unwrap();
 
         // Transitive past closure: causal_past(m) = {g, a, b}.
         let past_m = causal_past(&lc, id(3));

@@ -147,7 +147,10 @@ impl BanList {
                 return bl;
             }
             Err(e) => {
-                warn!("ban list read error at {}: {e}; starting empty", path.display());
+                warn!(
+                    "ban list read error at {}: {e}; starting empty",
+                    path.display()
+                );
                 return bl;
             }
         };
@@ -160,7 +163,10 @@ impl BanList {
                 debug!("loaded {} ban(s) from {}", bl.bans.len(), path.display());
             }
             Err(e) => {
-                warn!("ban list parse error at {}: {e}; starting empty", path.display());
+                warn!(
+                    "ban list parse error at {}: {e}; starting empty",
+                    path.display()
+                );
             }
         }
         bl

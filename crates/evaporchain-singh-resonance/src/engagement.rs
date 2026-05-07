@@ -44,7 +44,10 @@ pub struct EngagementWindow {
 }
 
 impl EngagementWindow {
-    pub fn new(attention_half_life: HalfLife, anchor_epoch: Epoch) -> Result<Self, EngagementWindowError> {
+    pub fn new(
+        attention_half_life: HalfLife,
+        anchor_epoch: Epoch,
+    ) -> Result<Self, EngagementWindowError> {
         if attention_half_life == 0 {
             return Err(EngagementWindowError::ZeroHalfLife);
         }
@@ -65,7 +68,11 @@ impl EngagementWindow {
     /// Register `weight` units of engagement at `epoch_now`. Decays
     /// the cached attention to `epoch_now` first, then adds the
     /// weight, then re-anchors. Errors on backward time or overflow.
-    pub fn register(&mut self, epoch_now: Epoch, weight: Energy) -> Result<(), EngagementWindowError> {
+    pub fn register(
+        &mut self,
+        epoch_now: Epoch,
+        weight: Energy,
+    ) -> Result<(), EngagementWindowError> {
         if epoch_now < self.anchor_epoch {
             return Err(EngagementWindowError::BackwardsTime {
                 epoch: epoch_now,

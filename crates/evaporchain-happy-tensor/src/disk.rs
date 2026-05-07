@@ -45,12 +45,7 @@ impl HaPPYDisk {
         Self::default()
     }
 
-    pub fn add_cell(
-        &mut self,
-        id: CellId,
-        is_boundary: bool,
-        is_bulk: bool,
-    ) {
+    pub fn add_cell(&mut self, id: CellId, is_boundary: bool, is_bulk: bool) {
         self.cells.insert(
             id,
             Cell {

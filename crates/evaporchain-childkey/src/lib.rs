@@ -72,23 +72,28 @@ mod press_claim_tests {
     fn the_press_claim_lives_as_a_test() {
         // Vault: 2-of-3 threshold over a fresh committee.
         let committee = vec![
-            KeyShareCommitment { validator: [10u8; 32] },
-            KeyShareCommitment { validator: [11u8; 32] },
-            KeyShareCommitment { validator: [12u8; 32] },
+            KeyShareCommitment {
+                validator: [10u8; 32],
+            },
+            KeyShareCommitment {
+                validator: [11u8; 32],
+            },
+            KeyShareCommitment {
+                validator: [12u8; 32],
+            },
         ];
         let vault = VaultBlob::new([0xAA; 32], 1024, 2, committee).unwrap();
 
         // Sealed letter: birth at epoch 0, unlocks at age 18 with
         // 100 epochs/year → unlock_epoch = 1800.
         let mut letter = SealedLetter::seal(
-            [1u8; 32],     // id
-            [2u8; 32],     // sender
-            [3u8; 32],     // recipient_did
-            0,             // recipient_birth_epoch
-            18,            // unlock_age_years
-            100,           // epochs_per_year
-            vault,
-            0,             // sealed_at_epoch
+            [1u8; 32], // id
+            [2u8; 32], // sender
+            [3u8; 32], // recipient_did
+            0,         // recipient_birth_epoch
+            18,        // unlock_age_years
+            100,       // epochs_per_year
+            vault, 0, // sealed_at_epoch
         )
         .unwrap();
         assert_eq!(letter.unlock_epoch(), 1_800);
@@ -115,7 +120,9 @@ mod press_claim_tests {
             [0u8; 32],
             1,
             1,
-            vec![KeyShareCommitment { validator: [9u8; 32] }],
+            vec![KeyShareCommitment {
+                validator: [9u8; 32],
+            }],
         )
         .unwrap();
         assert!(matches!(

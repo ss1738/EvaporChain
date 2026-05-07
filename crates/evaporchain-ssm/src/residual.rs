@@ -60,7 +60,9 @@ impl Residual {
     /// **The λ-visibility predicate.** A justification is legal iff
     /// the justifier's residual is strictly positive.
     pub fn is_visible(&self, move_id: MoveId) -> Result<bool, ResidualError> {
-        let e = self.get(move_id).ok_or(ResidualError::Unknown { move_id })?;
+        let e = self
+            .get(move_id)
+            .ok_or(ResidualError::Unknown { move_id })?;
         Ok(e > 0)
     }
 

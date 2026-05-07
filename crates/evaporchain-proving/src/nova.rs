@@ -16,8 +16,10 @@ use nova_snark::{
         num::AllocatedNum,
         ConstraintSystem, SynthesisError,
     },
-    nova::{CompressedSNARK, ProverKey as NovaProverKey, PublicParams, RecursiveSNARK,
-           VerifierKey as NovaVerifierKey},
+    nova::{
+        CompressedSNARK, ProverKey as NovaProverKey, PublicParams, RecursiveSNARK,
+        VerifierKey as NovaVerifierKey,
+    },
     provider::{Bn256EngineKZG, GrumpkinEngine},
     traits::{circuit::StepCircuit, snark::RelaxedR1CSSNARKTrait, Engine, Group},
 };
@@ -943,7 +945,10 @@ fn range_check_bits_u128<G: Group, CS: ConstraintSystem<G::Scalar>>(
     value_u128: u128,
     num_bits: usize,
 ) -> Result<(), SynthesisError> {
-    debug_assert!(num_bits <= 128, "range_check_bits_u128 supports up to 128 bits");
+    debug_assert!(
+        num_bits <= 128,
+        "range_check_bits_u128 supports up to 128 bits"
+    );
     let two_32 = G::Scalar::from(1u64 << 32);
     let mut bit_vars = Vec::with_capacity(num_bits);
     for bit_idx in 0..num_bits {
@@ -1708,11 +1713,9 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         // the constraint relationships alone, but defence-in-depth
         // range-checking will land with the helper.
         // ═══════════════════════════════════════════════════════════════
-        let two_64 =
-            G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
+        let two_64 = G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
         let u128_to_scalar = |v: u128| -> G::Scalar {
-            G::Scalar::from(v as u64)
-                + G::Scalar::from((v >> 64) as u64) * two_64
+            G::Scalar::from(v as u64) + G::Scalar::from((v >> 64) as u64) * two_64
         };
 
         // Allocate prev_total_energy from witness, bind to z[6].
@@ -1810,10 +1813,9 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             .energy_after_halvings
             .saturating_sub(self.witness.energy_frac_decay)
             .saturating_add(self.witness.step_energy as u128);
-        let new_total_energy =
-            AllocatedNum::alloc(cs.namespace(|| "new_total_energy"), || {
-                Ok(u128_to_scalar(new_total_energy_u128))
-            })?;
+        let new_total_energy = AllocatedNum::alloc(cs.namespace(|| "new_total_energy"), || {
+            Ok(u128_to_scalar(new_total_energy_u128))
+        })?;
         cs.enforce(
             || "new_total_energy_sum",
             |lc| lc + new_total_energy.get_variable(),
@@ -2099,8 +2101,9 @@ impl RealBlockProver {
         vk_bytes: &[u8],
     ) -> Result<bool, ProvingError> {
         let vk: NovaVerifierKey<E1, E2, RealBlockCircuit<G1>, S1, S2> =
-            bincode::deserialize(vk_bytes)
-                .map_err(|e| ProvingError::VerificationFailed(format!("vk deserialize: {:?}", e)))?;
+            bincode::deserialize(vk_bytes).map_err(|e| {
+                ProvingError::VerificationFailed(format!("vk deserialize: {:?}", e))
+            })?;
 
         let compressed: CompressedSNARK<E1, E2, RealBlockCircuit<G1>, S1, S2> =
             bincode::deserialize(&proof.proof_bytes)
@@ -2658,20 +2661,19 @@ mod tests {
 
         let mut prev_state = genesis.clone();
 
-        let mut sample_at = |fold_count: u64,
-                             prover: &mut RealBlockProver|
-         -> std::time::Duration {
-            // Get a fresh proof at the current fold count and time
-            // the verify call. Verify is what matters — prove time
-            // is expected to scale linearly in fold count, but
-            // verify is the sublinearity claim.
-            let proof = prover.get_proof().expect("get_proof");
-            let start = std::time::Instant::now();
-            let _ = prover
-                .verify_proof(&proof, fold_count as usize)
-                .expect("verify");
-            start.elapsed()
-        };
+        let mut sample_at =
+            |fold_count: u64, prover: &mut RealBlockProver| -> std::time::Duration {
+                // Get a fresh proof at the current fold count and time
+                // the verify call. Verify is what matters — prove time
+                // is expected to scale linearly in fold count, but
+                // verify is the sublinearity claim.
+                let proof = prover.get_proof().expect("get_proof");
+                let start = std::time::Instant::now();
+                let _ = prover
+                    .verify_proof(&proof, fold_count as usize)
+                    .expect("verify");
+                start.elapsed()
+            };
 
         // Fold blocks up to each sampling point and record verify time.
         let sample_points = [10u64, 50, 100];
@@ -2686,14 +2688,9 @@ mod tests {
                 .expect("fold");
             prev_state = new_state;
 
-            if next_sample_idx < sample_points.len()
-                && h == sample_points[next_sample_idx]
-            {
+            if next_sample_idx < sample_points.len() && h == sample_points[next_sample_idx] {
                 let elapsed = sample_at(h, &mut prover);
-                eprintln!(
-                    "[sublinearity] verify @ {} folds: {:?}",
-                    h, elapsed
-                );
+                eprintln!("[sublinearity] verify @ {} folds: {:?}", h, elapsed);
                 samples.push((h, elapsed));
                 next_sample_idx += 1;
             }
@@ -2749,7 +2746,7 @@ mod tests {
         witness.step_energy = 0;
         witness.epochs_elapsed_at_step = 50;
         witness.energy_two_half_life = 200; // 2 × half_life=100
-        // Adversarial: claim after_halvings=5_000 (honest=10_000).
+                                            // Adversarial: claim after_halvings=5_000 (honest=10_000).
         witness.energy_shift_factor = 1;
         witness.energy_after_halvings = 5_000;
         witness.energy_shift_remainder = 0;
@@ -3162,7 +3159,9 @@ mod tests {
         for i in 1..=100u64 {
             let block = make_block_with_txs(i, i, 0);
             let new_root = make_state_root((i % 251) as u8 + 1);
-            prover.fold_block(&block, [0u8; 32], new_root).expect("fold");
+            prover
+                .fold_block(&block, [0u8; 32], new_root)
+                .expect("fold");
         }
 
         // Per the cluster log, this is where it errs:
@@ -3192,7 +3191,9 @@ mod tests {
         for i in 1..=5u64 {
             let block = make_block_with_txs(i, i, 1);
             let new_root = make_state_root(i as u8);
-            prover.fold_block(&block, [0u8; 32], new_root).expect("fold");
+            prover
+                .fold_block(&block, [0u8; 32], new_root)
+                .expect("fold");
         }
 
         // Pre-fix, this path always failed `get_proof` with

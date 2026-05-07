@@ -227,7 +227,10 @@ mod tests {
         let err = o.observe(obs(10, 2_000_000, 1000)).unwrap_err();
         assert_eq!(
             err,
-            OracleError::NonMonotoneEpoch { incoming: 10, last: 10 }
+            OracleError::NonMonotoneEpoch {
+                incoming: 10,
+                last: 10
+            }
         );
         let err = o.observe(obs(5, 2_000_000, 1000)).unwrap_err();
         assert!(matches!(err, OracleError::NonMonotoneEpoch { .. }));
@@ -289,7 +292,8 @@ mod tests {
     fn read_is_deterministic() {
         let mut o = EwTwapOracle::new(100);
         for i in 1..=5 {
-            o.observe(obs(i, 1_000_000 + i * 100_000, 1000 + i * 100)).unwrap();
+            o.observe(obs(i, 1_000_000 + i * 100_000, 1000 + i * 100))
+                .unwrap();
         }
         let r1 = o.read().unwrap();
         let r2 = o.read().unwrap();
@@ -300,7 +304,8 @@ mod tests {
     fn read_at_is_deterministic() {
         let mut o = EwTwapOracle::new(100);
         for i in 1..=5 {
-            o.observe(obs(i, 1_000_000 + i * 100_000, 1000 + i * 100)).unwrap();
+            o.observe(obs(i, 1_000_000 + i * 100_000, 1000 + i * 100))
+                .unwrap();
         }
         let r1 = o.read_at(50).unwrap();
         let r2 = o.read_at(50).unwrap();
@@ -339,9 +344,20 @@ mod tests {
         let r = o.read().unwrap();
         // The honest observation dominates; the EW-TWAP is much
         // closer to the honest price than the attacker price.
-        let dist_to_honest = if r >= honest_price { r - honest_price } else { honest_price - r };
-        let dist_to_attacker = if r >= attacker_price { r - attacker_price } else { attacker_price - r };
-        assert!(dist_to_honest < dist_to_attacker, "EW-TWAP should be closer to honest");
+        let dist_to_honest = if r >= honest_price {
+            r - honest_price
+        } else {
+            honest_price - r
+        };
+        let dist_to_attacker = if r >= attacker_price {
+            r - attacker_price
+        } else {
+            attacker_price - r
+        };
+        assert!(
+            dist_to_honest < dist_to_attacker,
+            "EW-TWAP should be closer to honest"
+        );
     }
 
     proptest::proptest! {

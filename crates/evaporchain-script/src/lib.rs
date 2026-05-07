@@ -195,9 +195,7 @@ const MAX_DEPLOY_OPCODES: usize = 65_536;
 ///   - any Jump/JumpIf/JumpIfFalse whose target is `>= opcodes.len()`.
 ///   - any method-start offset (in `bytecode.methods`) that is
 ///     `>= opcodes.len()`.
-fn validate_deploy_bytecode(
-    bytecode: &compiler::EvaporBytecode,
-) -> Result<(), ScriptError> {
+fn validate_deploy_bytecode(bytecode: &compiler::EvaporBytecode) -> Result<(), ScriptError> {
     use compiler::Op;
     let n = bytecode.opcodes.len();
     if n > MAX_DEPLOY_OPCODES {
@@ -1317,14 +1315,12 @@ contract MapTest {
     fn test_value_display_map_keys_sorted_deterministic() {
         // Map iteration is non-deterministic in HashMap, but Display sorts
         // keys. Same input map → same string regardless of insertion order.
-        let mut m1: std::collections::HashMap<String, Value> =
-            std::collections::HashMap::new();
+        let mut m1: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         m1.insert("zebra".into(), Value::U64(1));
         m1.insert("alpha".into(), Value::U64(2));
         m1.insert("middle".into(), Value::U64(3));
 
-        let mut m2: std::collections::HashMap<String, Value> =
-            std::collections::HashMap::new();
+        let mut m2: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         m2.insert("middle".into(), Value::U64(3));
         m2.insert("alpha".into(), Value::U64(2));
         m2.insert("zebra".into(), Value::U64(1));

@@ -25,9 +25,7 @@
 //! honest sample fully determines the cartel sample. RNG is BLAKE3 in
 //! XOF mode keyed by seed; no `rand` crate dependency.
 
-pub mod rng;
 pub mod models;
+pub mod rng;
 
-pub use models::{
-    biased_coin_cartel, coordinated_subset_cartel, pr_box_cartel, CartelError,
-};
+pub use models::{biased_coin_cartel, coordinated_subset_cartel, pr_box_cartel, CartelError};

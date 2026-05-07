@@ -30,11 +30,11 @@ use crate::required_keys::required_keys_for;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ValidationError {
-    #[error(
-        "request class {req_class:#010x} does not match descriptor class {desc_class:#010x}"
-    )]
+    #[error("request class {req_class:#010x} does not match descriptor class {desc_class:#010x}")]
     ClassMismatch { req_class: u32, desc_class: u32 },
-    #[error("request params is not a JSON object (validator should have rejected at construction)")]
+    #[error(
+        "request params is not a JSON object (validator should have rejected at construction)"
+    )]
     ParamsNotObject,
     #[error("required parameter key '{0}' is missing from request params")]
     MissingRequiredKey(&'static str),
@@ -164,14 +164,8 @@ mod tests {
         // dangerous direction is the other way (required key not in
         // defaults), which this catches.
         for desc in catalogue() {
-            let req = DeployRequest::new(
-                desc.class,
-                desc.default_params.clone(),
-                [0; 32],
-                0,
-                0,
-            )
-            .expect("default_params is a JSON object");
+            let req = DeployRequest::new(desc.class, desc.default_params.clone(), [0; 32], 0, 0)
+                .expect("default_params is a JSON object");
             validate_against_descriptor(&req, &desc).unwrap_or_else(|e| {
                 panic!(
                     "catalogue entry {:#010x} ({}) failed self-validation: {:?}",

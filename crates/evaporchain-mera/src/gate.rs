@@ -94,12 +94,18 @@ fn marginal_entropy(row: &[f64], bins: usize) -> f64 {
 
 fn joint_entropy(a: &[f64], b: &[f64], bins: usize) -> f64 {
     debug_assert_eq!(a.len(), b.len());
-    let (a_lo, a_hi) = a.iter().copied().fold((f64::INFINITY, f64::NEG_INFINITY), |(p, q), x| {
-        (p.min(x), q.max(x))
-    });
-    let (b_lo, b_hi) = b.iter().copied().fold((f64::INFINITY, f64::NEG_INFINITY), |(p, q), x| {
-        (p.min(x), q.max(x))
-    });
+    let (a_lo, a_hi) = a
+        .iter()
+        .copied()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(p, q), x| {
+            (p.min(x), q.max(x))
+        });
+    let (b_lo, b_hi) = b
+        .iter()
+        .copied()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(p, q), x| {
+            (p.min(x), q.max(x))
+        });
     if !(a_hi > a_lo && b_hi > b_lo) {
         return 0.0;
     }
@@ -285,7 +291,11 @@ fn linear_regression(xs: &[f64], ys: &[f64]) -> (f64, f64) {
 fn r_squared(ys: &[f64], preds: &[f64]) -> f64 {
     debug_assert_eq!(ys.len(), preds.len());
     let mean = ys.iter().sum::<f64>() / ys.len() as f64;
-    let ss_res: f64 = ys.iter().zip(preds.iter()).map(|(y, p)| (y - p).powi(2)).sum();
+    let ss_res: f64 = ys
+        .iter()
+        .zip(preds.iter())
+        .map(|(y, p)| (y - p).powi(2))
+        .sum();
     let ss_tot: f64 = ys.iter().map(|y| (y - mean).powi(2)).sum();
     if ss_tot < 1e-15 {
         return 0.0;
@@ -317,13 +327,19 @@ pub fn classify_spectrum(eigvals: &[f64]) -> GateResult {
 
     // Power-law fit: log(λ_i) = a − b·log(i). Slope = decay rate.
     let (pl_slope_raw, pl_intercept) = linear_regression(&log_idx, &log_eig);
-    let pl_pred: Vec<f64> = log_idx.iter().map(|x| pl_intercept + pl_slope_raw * x).collect();
+    let pl_pred: Vec<f64> = log_idx
+        .iter()
+        .map(|x| pl_intercept + pl_slope_raw * x)
+        .collect();
     let pl_r2 = r_squared(&log_eig, &pl_pred);
     let pl_slope = -pl_slope_raw;
 
     // Exponential fit: log(λ_i) = a − b·i. Rate = decay rate.
     let (exp_slope_raw, exp_intercept) = linear_regression(&indices, &log_eig);
-    let exp_pred: Vec<f64> = indices.iter().map(|x| exp_intercept + exp_slope_raw * x).collect();
+    let exp_pred: Vec<f64> = indices
+        .iter()
+        .map(|x| exp_intercept + exp_slope_raw * x)
+        .collect();
     let exp_r2 = r_squared(&log_eig, &exp_pred);
     let exp_rate = -exp_slope_raw;
 
@@ -449,9 +465,7 @@ mod tests {
     #[test]
     fn classify_flat_spectrum_picks_verkle() {
         // Slight noise around 1.0 — neither fit exceeds the R² threshold.
-        let eigvals: Vec<f64> = (1..=40)
-            .map(|i| 1.0 + 0.001 * ((i as f64).sin()))
-            .collect();
+        let eigvals: Vec<f64> = (1..=40).map(|i| 1.0 + 0.001 * ((i as f64).sin())).collect();
         let r = classify_spectrum(&eigvals);
         assert_eq!(r.decision, GateDecision::Verkle);
     }

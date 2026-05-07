@@ -45,7 +45,7 @@
 
 pub mod token;
 
-pub use token::{HeirloomNft, HeirloomError, TokenId};
+pub use token::{HeirloomError, HeirloomNft, TokenId};
 
 #[cfg(test)]
 mod press_claim_tests {
@@ -73,9 +73,18 @@ mod press_claim_tests {
         // Wait — bob is Live so that's the path. Let me also test that
         // priority-0 dead heirs are skipped.
         let kin = vec![
-            KinEdge { heir: bob, state: HeirState::Dead },
-            KinEdge { heir: carol, state: HeirState::Live },
-            KinEdge { heir: dave, state: HeirState::Refused },
+            KinEdge {
+                heir: bob,
+                state: HeirState::Dead,
+            },
+            KinEdge {
+                heir: carol,
+                state: HeirState::Live,
+            },
+            KinEdge {
+                heir: dave,
+                state: HeirState::Refused,
+            },
         ];
         let mut nft = HeirloomNft::mint(TokenId([1; 32]), alice, 1_000, kin, 0).unwrap();
         assert_eq!(nft.energy, 1_000);
@@ -101,7 +110,10 @@ mod press_claim_tests {
         assert!(nft.kin.is_empty());
 
         // Self-loop kin is rejected at mint (founder can't list self).
-        let bad_kin = vec![KinEdge { heir: alice, state: HeirState::Live }];
+        let bad_kin = vec![KinEdge {
+            heir: alice,
+            state: HeirState::Live,
+        }];
         assert!(matches!(
             HeirloomNft::mint(TokenId([2; 32]), alice, 1_000, bad_kin, 0),
             Err(HeirloomError::SelfLoopKin)
@@ -109,8 +121,14 @@ mod press_claim_tests {
 
         // No live heirs → escheat.
         let dead_kin = vec![
-            KinEdge { heir: bob, state: HeirState::Dead },
-            KinEdge { heir: carol, state: HeirState::Refused },
+            KinEdge {
+                heir: bob,
+                state: HeirState::Dead,
+            },
+            KinEdge {
+                heir: carol,
+                state: HeirState::Refused,
+            },
         ];
         let mut nft2 = HeirloomNft::mint(TokenId([3; 32]), alice, 1_000, dead_kin, 0).unwrap();
         nft2.certify_holder_death().unwrap();

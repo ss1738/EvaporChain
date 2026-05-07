@@ -2,9 +2,7 @@
 
 use std::fmt::Write;
 
-use evaporchain_causal_chsh_sweep::{
-    CartelKind, GridPoint, SweepCell, SweepReport, SweepRow,
-};
+use evaporchain_causal_chsh_sweep::{CartelKind, GridPoint, SweepCell, SweepReport, SweepRow};
 
 /// Operator-facing rendering knobs.
 #[derive(Debug, Clone, Copy)]
@@ -59,11 +57,7 @@ fn write_header(out: &mut String, report: &SweepReport, opts: RenderOptions) {
     let _ = writeln!(out);
     let _ = writeln!(out, "## Summary");
     let _ = writeln!(out);
-    let _ = writeln!(
-        out,
-        "- S_honest = {:.*}",
-        opts.decimals, report.s_honest
-    );
+    let _ = writeln!(out, "- S_honest = {:.*}", opts.decimals, report.s_honest);
     let t = report.thresholds;
     let _ = writeln!(
         out,
@@ -227,9 +221,7 @@ mod tests {
     use evaporchain_causal_chsh_sweep::{run_sweep, SweepGrid};
 
     fn balanced_honest(n: usize) -> ConcurrentPairSamples {
-        let bal: Vec<i8> = (0..n)
-            .map(|i| if i % 2 == 0 { 1 } else { -1 })
-            .collect();
+        let bal: Vec<i8> = (0..n).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect();
         ConcurrentPairSamples {
             samples_ab: bal.clone(),
             samples_ab_prime: bal.clone(),

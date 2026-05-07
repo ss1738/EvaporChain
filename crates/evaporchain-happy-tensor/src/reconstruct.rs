@@ -12,9 +12,7 @@ use crate::disk::{CellId, HaPPYDisk};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReconstructV2Error {
-    #[error(
-        "boundary subset is insufficient — its causal cone does not cover the bulk"
-    )]
+    #[error("boundary subset is insufficient — its causal cone does not cover the bulk")]
     CauseConeMissesBulk,
     #[error(transparent)]
     Cone(#[from] ConeError),

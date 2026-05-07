@@ -825,8 +825,7 @@ mod tests {
         let mut keys = Vec::new();
 
         // 256 keys, all sharing a 30-byte prefix.
-        let prefix = blake3::hash(b"adversarial-prefix").as_bytes()[..30]
-            .to_vec();
+        let prefix = blake3::hash(b"adversarial-prefix").as_bytes()[..30].to_vec();
         for low in 0u16..=255 {
             let mut key = [0u8; 32];
             key[..30].copy_from_slice(&prefix);
@@ -851,7 +850,10 @@ mod tests {
             let proof = trie.prove(key);
             // Depth respects MAX_DEPTH bound even with collision-
             // heavy adversarial keys.
-            assert!(proof.depth <= MAX_DEPTH, "collision-heavy proof depth bound");
+            assert!(
+                proof.depth <= MAX_DEPTH,
+                "collision-heavy proof depth bound"
+            );
             assert!(
                 VerkleTrie::verify(&proof, &root),
                 "collision-heavy proof must verify against root"
@@ -884,7 +886,10 @@ mod tests {
         let root = trie.root();
 
         // Exclusion proof on empty trie: value = None, verifies.
-        assert_eq!(proof.value, None, "empty-trie proof must be exclusion-shaped");
+        assert_eq!(
+            proof.value, None,
+            "empty-trie proof must be exclusion-shaped"
+        );
         assert!(
             VerkleTrie::verify(&proof, &root),
             "empty-trie exclusion proof must verify against empty root"

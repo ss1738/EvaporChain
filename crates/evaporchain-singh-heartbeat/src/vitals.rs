@@ -186,7 +186,7 @@ mod tests {
         // One large healthy item should dominate many small dead ones.
         let items = vec![
             item(1, 1_000_000, 1_000_000, 0), // huge energy, huge half-life
-            item(2, 1, 1, 0),                  // dies fast
+            item(2, 1, 1, 0),                 // dies fast
             item(3, 1, 1, 0),
             item(4, 1, 1, 0),
         ];
@@ -208,7 +208,11 @@ mod tests {
             item(4, 4, 1, 0), // tiny dying item
         ];
         let v = pulse_at(&items, 100);
-        assert!(v.arrhythmia_amp >= 90, "expected high arrhythmia, got {}", v.arrhythmia_amp);
+        assert!(
+            v.arrhythmia_amp >= 90,
+            "expected high arrhythmia, got {}",
+            v.arrhythmia_amp
+        );
         // Aggregate is fine because the giants dominate.
         assert_eq!(v.color, PulseColor::Green);
     }

@@ -80,7 +80,10 @@ mod press_claim_tests {
         assert!(!bell_certified(s_classical, LOCAL_REALISM_S_MILLI));
 
         // Uncorrelated → S = 0 → not certified.
-        assert!(!bell_certified(chsh_s_value(0, 0, 0, 0).unwrap(), LOCAL_REALISM_S_MILLI));
+        assert!(!bell_certified(
+            chsh_s_value(0, 0, 0, 0).unwrap(),
+            LOCAL_REALISM_S_MILLI
+        ));
 
         // Out-of-range correlations fail closed.
         assert!(matches!(

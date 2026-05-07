@@ -52,9 +52,7 @@
 
 pub mod graph;
 
-pub use graph::{
-    Curation, EdgeKind, GraveGraph, GraveGraphError, NodeId, NodeState,
-};
+pub use graph::{Curation, EdgeKind, GraveGraph, GraveGraphError, NodeId, NodeState};
 
 #[cfg(test)]
 mod press_claim_tests {
@@ -106,7 +104,11 @@ mod press_claim_tests {
             Some(NodeState::Dead { died_at_epoch: 100 })
         ));
         let dedications: Vec<_> = g.dedications_for(bob).collect();
-        assert_eq!(dedications.len(), 1, "alice's legacy edge → dedication for bob");
+        assert_eq!(
+            dedications.len(),
+            1,
+            "alice's legacy edge → dedication for bob"
+        );
         assert!(matches!(
             dedications[0].kind,
             EdgeKind::Dedication { died_at_epoch: 100 }

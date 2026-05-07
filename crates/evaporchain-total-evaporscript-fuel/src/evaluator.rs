@@ -57,7 +57,11 @@ pub fn evaluate(term: &Term, env: &mut Env) -> Result<(), EvalError> {
             }
             Ok(())
         }
-        Term::If { cond, then_body, else_body } => {
+        Term::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
             let c = eval_expr(cond, env)?;
             // Treat any non-zero as true (consistent with C-style
             // boolean integers used in V1).
@@ -134,13 +138,24 @@ mod tests {
     use super::*;
     use evaporchain_total_evaporscript::{BinOp, Expr, Term};
 
-    fn lit(k: i64) -> Expr { Expr::Lit(k) }
-    fn var(s: &str) -> Expr { Expr::Var(s.into()) }
+    fn lit(k: i64) -> Expr {
+        Expr::Lit(k)
+    }
+    fn var(s: &str) -> Expr {
+        Expr::Var(s.into())
+    }
     fn bin(op: BinOp, l: Expr, r: Expr) -> Expr {
-        Expr::Bin { op, lhs: Box::new(l), rhs: Box::new(r) }
+        Expr::Bin {
+            op,
+            lhs: Box::new(l),
+            rhs: Box::new(r),
+        }
     }
     fn assign(target: &str, value: Expr) -> Term {
-        Term::Assign { target: target.into(), value }
+        Term::Assign {
+            target: target.into(),
+            value,
+        }
     }
     fn seq(items: Vec<Term>) -> Term {
         Term::Seq(items)
@@ -283,6 +298,9 @@ mod tests {
             body: Box::new(Term::Skip),
         };
         let _ = empty_else();
-        assert_eq!(evaluate(&nested_w, &mut env).unwrap_err(), EvalError::NestedLoop);
+        assert_eq!(
+            evaluate(&nested_w, &mut env).unwrap_err(),
+            EvalError::NestedLoop
+        );
     }
 }

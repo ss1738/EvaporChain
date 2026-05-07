@@ -12,9 +12,7 @@ pub const MICROS: i64 = 1_000_000;
 pub enum CurvatureError {
     #[error("graph error: {0}")]
     Graph(#[from] GraphError),
-    #[error(
-        "curvature {kappa_micros} below floor {floor_micros} on edge ({u:?}, {v:?})"
-    )]
+    #[error("curvature {kappa_micros} below floor {floor_micros} on edge ({u:?}, {v:?})")]
     BelowFloor {
         u: NodeId,
         v: NodeId,

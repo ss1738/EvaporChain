@@ -37,10 +37,9 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("MortalMessage failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("MortalMessage failed to compile: {e:?}"))
+    let ast =
+        parser::parse(SOURCE).unwrap_or_else(|e| panic!("MortalMessage failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("MortalMessage failed to compile: {e:?}"))
 }
 
 /// Seed initial state with the schema's declared defaults. Without this,
@@ -77,7 +76,14 @@ fn parses_and_compiles_cleanly() {
         .iter()
         .map(|f| f.name.as_str())
         .collect();
-    for f in &["body", "recipient", "sender", "sealed", "boost_count", "last_boost_epoch"] {
+    for f in &[
+        "body",
+        "recipient",
+        "sender",
+        "sealed",
+        "boost_count",
+        "last_boost_epoch",
+    ] {
         assert!(
             names.contains(f),
             "state field `{f}` missing from schema (have: {names:?})"
@@ -104,10 +110,7 @@ fn set_payload_seals_then_read_returns_body() {
     )
     .expect("set_payload from owner must succeed");
     assert!(
-        result
-            .events
-            .iter()
-            .any(|e| e.contains("sealed")),
+        result.events.iter().any(|e| e.contains("sealed")),
         "set_payload must emit `message sealed`, events: {:?}",
         result.events
     );
@@ -210,10 +213,7 @@ fn double_seal_reverts() {
     let err = EvaporVM::execute(
         &bc,
         "set_payload",
-        vec![
-            Value::Str("rewrite".to_string()),
-            Value::Address(recipient),
-        ],
+        vec![Value::Str("rewrite".to_string()), Value::Address(recipient)],
         first.state_changes,
         &ctx(sender, sender, 200, 800),
     )
@@ -235,10 +235,7 @@ fn unauthorized_reader_reverts() {
     let sealed = EvaporVM::execute(
         &bc,
         "set_payload",
-        vec![
-            Value::Str("private".to_string()),
-            Value::Address(recipient),
-        ],
+        vec![Value::Str("private".to_string()), Value::Address(recipient)],
         initial_state(&bc),
         &ctx(sender, sender, 100, 1000),
     )
@@ -269,10 +266,7 @@ fn record_boost_increments_counter() {
     let sealed = EvaporVM::execute(
         &bc,
         "set_payload",
-        vec![
-            Value::Str("body".to_string()),
-            Value::Address(recipient),
-        ],
+        vec![Value::Str("body".to_string()), Value::Address(recipient)],
         initial_state(&bc),
         &ctx(sender, sender, 100, 1000),
     )
@@ -315,10 +309,7 @@ fn lifecycle_hooks_execute_cleanly() {
     let sealed = EvaporVM::execute(
         &bc,
         "set_payload",
-        vec![
-            Value::Str("body".to_string()),
-            Value::Address(recipient),
-        ],
+        vec![Value::Str("body".to_string()), Value::Address(recipient)],
         initial_state(&bc),
         &ctx(sender, sender, 100, 1000),
     )

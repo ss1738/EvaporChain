@@ -213,7 +213,12 @@ mod tests {
             50,
         )
         .unwrap();
-        assert!(matches!(r, VoteV2::Jailed { reason: JailReason::Slashed { code: 7 } }));
+        assert!(matches!(
+            r,
+            VoteV2::Jailed {
+                reason: JailReason::Slashed { code: 7 }
+            }
+        ));
     }
 
     #[test]

@@ -174,9 +174,7 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
         }
         // ── Wallet UX lane ──────────────────────────────────────────
         TypedInit::SinghTriage(c) => {
-            if !(c.horizon_today < c.horizon_tomorrow
-                && c.horizon_tomorrow < c.horizon_week)
-            {
+            if !(c.horizon_today < c.horizon_tomorrow && c.horizon_tomorrow < c.horizon_week) {
                 return Err(invariant(
                     "Singh-Triage",
                     "horizons must be strictly increasing (today < tomorrow < week)",
@@ -301,10 +299,7 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_app_templates::{
-        catalogue,
-        class::*,
-    };
+    use evaporchain_app_templates::{catalogue, class::*};
     use evaporchain_app_templates_deploy::DeployRequest;
     use evaporchain_app_templates_engine::*;
     use evaporchain_app_templates_materialise::materialise_request;
@@ -343,7 +338,13 @@ mod tests {
             half_life: 365,
         });
         let err = bind(typed).unwrap_err();
-        assert!(matches!(err, BindError::Invariant { primitive: "Singh-Sabi", .. }));
+        assert!(matches!(
+            err,
+            BindError::Invariant {
+                primitive: "Singh-Sabi",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -365,7 +366,13 @@ mod tests {
             n_committee: 3,
         });
         let err = bind(typed).unwrap_err();
-        assert!(matches!(err, BindError::Invariant { primitive: "Singh-Posthuma", .. }));
+        assert!(matches!(
+            err,
+            BindError::Invariant {
+                primitive: "Singh-Posthuma",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -404,8 +411,14 @@ mod tests {
     fn singh_lineage_unsorted_ladder_rejected() {
         let typed = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
             ladder: vec![
-                init_singh_lineage::LadderRung { days: 90, share_bp: 2500 },
-                init_singh_lineage::LadderRung { days: 30, share_bp: 5000 },
+                init_singh_lineage::LadderRung {
+                    days: 90,
+                    share_bp: 2500,
+                },
+                init_singh_lineage::LadderRung {
+                    days: 30,
+                    share_bp: 5000,
+                },
             ],
         });
         assert!(bind(typed).is_err());
@@ -415,8 +428,14 @@ mod tests {
     fn singh_lineage_decreasing_share_rejected() {
         let typed = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
             ladder: vec![
-                init_singh_lineage::LadderRung { days: 90, share_bp: 5000 },
-                init_singh_lineage::LadderRung { days: 180, share_bp: 2500 },
+                init_singh_lineage::LadderRung {
+                    days: 90,
+                    share_bp: 5000,
+                },
+                init_singh_lineage::LadderRung {
+                    days: 180,
+                    share_bp: 2500,
+                },
             ],
         });
         assert!(bind(typed).is_err());
@@ -425,7 +444,10 @@ mod tests {
     #[test]
     fn singh_lineage_share_over_10000_rejected() {
         let typed = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
-            ladder: vec![init_singh_lineage::LadderRung { days: 90, share_bp: 12000 }],
+            ladder: vec![init_singh_lineage::LadderRung {
+                days: 90,
+                share_bp: 12000,
+            }],
         });
         assert!(bind(typed).is_err());
     }
@@ -463,9 +485,8 @@ mod tests {
     fn gallery_forgets_zero_epoch_accepted() {
         // Cultural lane: opened_at_epoch=0 is a legitimate "opens at
         // genesis" sentinel, not an error.
-        let typed = TypedInit::GalleryForgets(init_gallery_forgets::InitConfig {
-            opened_at_epoch: 0,
-        });
+        let typed =
+            TypedInit::GalleryForgets(init_gallery_forgets::InitConfig { opened_at_epoch: 0 });
         bind(typed).unwrap();
     }
 

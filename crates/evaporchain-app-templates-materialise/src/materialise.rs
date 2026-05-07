@@ -239,14 +239,8 @@ mod tests {
         // shape should be materialise-valid. If a future PR drops a
         // required key from defaults this catches it.
         for desc in catalogue() {
-            let req = DeployRequest::new(
-                desc.class,
-                desc.default_params.clone(),
-                [0xAB; 32],
-                0,
-                1,
-            )
-            .expect("default_params is a JSON object");
+            let req = DeployRequest::new(desc.class, desc.default_params.clone(), [0xAB; 32], 0, 1)
+                .expect("default_params is a JSON object");
             let instr = materialise_request(&req).unwrap_or_else(|e| {
                 panic!(
                     "catalogue entry {:#010x} ({}) failed materialise: {:?}",

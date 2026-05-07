@@ -96,9 +96,9 @@ fn bench_transaction_throughput() -> f64 {
             address: addr,
             balance: 1_000_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -178,9 +178,9 @@ fn bench_block_execution() -> f64 {
             address: addr,
             balance: 1_000_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -297,9 +297,9 @@ fn bench_object_creation() -> f64 {
         address: creator,
         balance: 1_000_000_000,
         nonce: 0,
-    storage_deposit: 0,
-    storage_bytes: 0,
-    last_touched_epoch: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
+        last_touched_epoch: 0,
     });
 
     let txs: Vec<Transaction> = (0..num_objects)
@@ -374,9 +374,9 @@ fn bench_refresh_throughput() -> f64 {
         address: owner,
         balance: 1_000_000_000,
         nonce: 0,
-    storage_deposit: 0,
-    storage_bytes: 0,
-    last_touched_epoch: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
+        last_touched_epoch: 0,
     });
 
     for i in 0..num_refreshes {
@@ -466,9 +466,9 @@ fn bench_stress_test() -> f64 {
             address: addr,
             balance: 10_000_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -547,9 +547,9 @@ fn bench_mixed_workload() -> f64 {
             address: addr,
             balance: 10_000_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -685,9 +685,9 @@ fn bench_multi_block_sustained() -> f64 {
             address: addr,
             balance: 100_000_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 

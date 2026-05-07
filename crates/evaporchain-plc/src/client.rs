@@ -13,7 +13,10 @@ use crate::bottleneck::bottleneck_distance;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LightClientError {
     #[error("barcode hash mismatch: header committed {expected:?}, supplied barcode hashes to {actual:?}")]
-    BarcodeHashMismatch { expected: [u8; 32], actual: [u8; 32] },
+    BarcodeHashMismatch {
+        expected: [u8; 32],
+        actual: [u8; 32],
+    },
     #[error(
         "stability bound violated at height {height}: bottleneck distance {observed} > committed bd_max {bd_max}"
     )]
@@ -156,7 +159,10 @@ mod tests {
         let err = lc.ingest(&header, next).unwrap_err();
         assert!(matches!(
             err,
-            LightClientError::NonMonotoneHeight { incoming: 5, current: 5 }
+            LightClientError::NonMonotoneHeight {
+                incoming: 5,
+                current: 5
+            }
         ));
     }
 

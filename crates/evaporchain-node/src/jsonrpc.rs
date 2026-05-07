@@ -354,9 +354,7 @@ fn rpc_get_object(state: &ApiState, params: &Value, id: Value) -> JsonRpcRespons
 /// Pure formatter for MMR-proof responses. Extracted so the JSON
 /// shape is unit-testable without a full ApiState (which carries
 /// 30+ fields including RocksDB).
-fn format_mmr_proof_response(
-    proof: &evaporchain_crypto::accumulator::MMRProof,
-) -> Value {
+fn format_mmr_proof_response(proof: &evaporchain_crypto::accumulator::MMRProof) -> Value {
     serde_json::json!({
         "leaf_index": json_hex_u64(proof.leaf_index),
         "mmr_size": json_hex_u64(proof.mmr_size),
@@ -507,12 +505,7 @@ fn rpc_decay_forget_proof(state: &ApiState, params: &Value, id: Value) -> JsonRp
     };
     let half_life = match parse_u64(&arr[5]) {
         Some(n) if n > 0 => n,
-        _ => {
-            return JsonRpcResponse::invalid_params(
-                id,
-                "half_life must be hex u64 > 0",
-            )
-        }
+        _ => return JsonRpcResponse::invalid_params(id, "half_life must be hex u64 > 0"),
     };
     match compute_decay_forget_response(
         record_bytes,
@@ -677,10 +670,7 @@ fn rpc_get_light_client_status(state: &ApiState, id: Value) -> JsonRpcResponse {
             );
         }
     };
-    JsonRpcResponse::ok(
-        id,
-        format_light_client_status_response(latest, count),
-    )
+    JsonRpcResponse::ok(id, format_light_client_status_response(latest, count))
 }
 
 /// Pure formatter for the weak-subjectivity checkpoint store RPC.
@@ -716,10 +706,7 @@ fn format_checkpoint_store_response(
 fn rpc_get_checkpoint_store(state: &ApiState, id: Value) -> JsonRpcResponse {
     let Some(ref tc_arc) = state.tendermint else {
         // Mock-consensus / single-node path doesn't track WS checkpoints.
-        return JsonRpcResponse::ok(
-            id,
-            serde_json::json!({ "tendermint_disabled": true }),
-        );
+        return JsonRpcResponse::ok(id, serde_json::json!({ "tendermint_disabled": true }));
     };
     let (operator_pinned, history, ws_period) = {
         let tc = safe_lock(tc_arc);
@@ -775,10 +762,7 @@ fn rpc_get_patronage_status(state: &ApiState, id: Value) -> JsonRpcResponse {
     let (book, pool) = match (book_lock, pool_lock) {
         (Ok(b), Ok(p)) => (b, p),
         _ => {
-            return JsonRpcResponse::ok(
-                id,
-                serde_json::json!({ "patronage_unavailable": true }),
-            );
+            return JsonRpcResponse::ok(id, serde_json::json!({ "patronage_unavailable": true }));
         }
     };
     // We need a current_epoch to compute `active_covenants`. Pull it
@@ -797,8 +781,7 @@ fn rpc_get_patronage_status(state: &ApiState, id: Value) -> JsonRpcResponse {
             active_covenants += 1;
         }
         total_pre_funded = total_pre_funded.saturating_add(cv.pre_funded);
-        total_patronage_score =
-            total_patronage_score.saturating_add(cv.patronage_score);
+        total_patronage_score = total_patronage_score.saturating_add(cv.patronage_score);
     }
     let pool_total = pool.total_accrued();
     let pool_credit_count = pool.credits().count();
@@ -840,37 +823,28 @@ fn format_hbct_status_response(
 /// (holder, slot) cardinality so an operator can see the chain's
 /// capacity-token-market footprint without enumerating every entry.
 fn rpc_get_hbct_status(state: &ApiState, id: Value) -> JsonRpcResponse {
-    let (entry_count, total_mwh, distinct_holders, distinct_slots) =
-        match state.hbct_book.lock() {
-            Ok(book) => {
-                let total: u64 = book
-                    .entries
-                    .values()
-                    .copied()
-                    .fold(0u64, u64::saturating_add);
-                let mut holders = std::collections::BTreeSet::new();
-                let mut slots = std::collections::BTreeSet::new();
-                for (loc, slot, holder) in book.entries.keys() {
-                    holders.insert(*holder);
-                    slots.insert((loc.clone(), *slot));
-                }
-                (book.entries.len(), total, holders.len(), slots.len())
+    let (entry_count, total_mwh, distinct_holders, distinct_slots) = match state.hbct_book.lock() {
+        Ok(book) => {
+            let total: u64 = book
+                .entries
+                .values()
+                .copied()
+                .fold(0u64, u64::saturating_add);
+            let mut holders = std::collections::BTreeSet::new();
+            let mut slots = std::collections::BTreeSet::new();
+            for (loc, slot, holder) in book.entries.keys() {
+                holders.insert(*holder);
+                slots.insert((loc.clone(), *slot));
             }
-            Err(_) => {
-                return JsonRpcResponse::ok(
-                    id,
-                    serde_json::json!({ "hbct_book_unavailable": true }),
-                );
-            }
-        };
+            (book.entries.len(), total, holders.len(), slots.len())
+        }
+        Err(_) => {
+            return JsonRpcResponse::ok(id, serde_json::json!({ "hbct_book_unavailable": true }));
+        }
+    };
     JsonRpcResponse::ok(
         id,
-        format_hbct_status_response(
-            entry_count,
-            total_mwh,
-            distinct_holders,
-            distinct_slots,
-        ),
+        format_hbct_status_response(entry_count, total_mwh, distinct_holders, distinct_slots),
     )
 }
 
@@ -962,10 +936,7 @@ fn rpc_get_fee_state(state: &ApiState, id: Value) -> JsonRpcResponse {
     let energy = match state.fee_state.lock() {
         Ok(s) => s.energy,
         Err(_) => {
-            return JsonRpcResponse::ok(
-                id,
-                serde_json::json!({ "fee_state_unavailable": true }),
-            );
+            return JsonRpcResponse::ok(id, serde_json::json!({ "fee_state_unavailable": true }));
         }
     };
     JsonRpcResponse::ok(id, format_fee_state_response(energy))
@@ -1040,10 +1011,7 @@ fn rpc_get_dsn_window(state: &ApiState, id: Value) -> JsonRpcResponse {
     let dsn = match state.dsn_window.lock() {
         Ok(w) => w.clone(),
         Err(_) => {
-            return JsonRpcResponse::ok(
-                id,
-                serde_json::json!({ "dsn_window_unavailable": true }),
-            );
+            return JsonRpcResponse::ok(id, serde_json::json!({ "dsn_window_unavailable": true }));
         }
     };
     JsonRpcResponse::ok(
@@ -1099,10 +1067,7 @@ fn rpc_get_lamport_clock(state: &ApiState, id: Value) -> JsonRpcResponse {
 /// is wired (i.e. the operator didn't construct one in main.rs).
 fn rpc_get_frontier_status(state: &ApiState, id: Value) -> JsonRpcResponse {
     let Some(ref fs_arc) = state.frontier_state else {
-        return JsonRpcResponse::ok(
-            id,
-            serde_json::json!({ "frontier_state_disabled": true }),
-        );
+        return JsonRpcResponse::ok(id, serde_json::json!({ "frontier_state_disabled": true }));
     };
     let fs = safe_lock(fs_arc);
     let dist = fs.poha.temperature_distribution();
@@ -1603,9 +1568,7 @@ mod tests {
 
     #[test]
     fn test_format_frontier_status_basic() {
-        let v = format_frontier_status_response(
-            7, 12, 3, 4, 5, 2, 1, 100, 8, 116, 5, 1, 9,
-        );
+        let v = format_frontier_status_response(7, 12, 3, 4, 5, 2, 1, 100, 8, 116, 5, 1, 9);
         assert_eq!(v["anchor_count"], "0x7");
         assert_eq!(v["poha"]["active"], "0xc"); // 12
         assert_eq!(v["poha"]["ghosts"], "0x3");
@@ -1753,9 +1716,7 @@ mod tests {
     #[test]
     fn test_format_four_act_snapshot_genesis_zero() {
         // Fresh chain: no tombstones, no Mortis, no audit yet.
-        let v = format_four_act_snapshot_response(
-            0, None, 0, false, None, None, None, None, 0,
-        );
+        let v = format_four_act_snapshot_response(0, None, 0, false, None, None, None, None, 0);
         assert_eq!(v["eulogy_count"], "0x0");
         assert_eq!(v["eulogy_trie_root"], serde_json::Value::Null);
         assert_eq!(v["refresh_pool_total"], "0x0");
@@ -1777,10 +1738,7 @@ mod tests {
 
     #[test]
     fn test_format_epv_registry_two_versions() {
-        let v = format_epv_registry_response(vec![
-            (1, 1_000_000, 0),
-            (2, 500_000, 100),
-        ]);
+        let v = format_epv_registry_response(vec![(1, 1_000_000, 0), (2, 500_000, 100)]);
         assert_eq!(v["active_count"], 2);
         let arr = v["versions"].as_array().unwrap();
         assert_eq!(arr.len(), 2);
@@ -1887,10 +1845,7 @@ mod tests {
         );
         let peaks = v["peak_hashes"].as_array().unwrap();
         assert_eq!(peaks.len(), 1);
-        assert_eq!(
-            peaks[0].as_str().unwrap(),
-            format!("0x{}", "33".repeat(32))
-        );
+        assert_eq!(peaks[0].as_str().unwrap(), format!("0x{}", "33".repeat(32)));
     }
 
     #[test]

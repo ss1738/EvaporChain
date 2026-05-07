@@ -33,9 +33,9 @@ use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
     Block, CallContractTx, CallScriptTx, ClaimDelegationTx, CreateObjectTx, DelegateTx,
     DelegationRecord, DeployContractTx, DeployScriptTx, Epoch, GovernanceAction,
-    GovernanceProposal, GovernanceTx, MultiSigTx, ObjectState, ProposalStatus, RefreshTx,
-    RefundTx, StakeRecord, StateObject, Transaction, TransferTx, UndelegateTx,
-    ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
+    GovernanceProposal, GovernanceTx, MultiSigTx, ObjectState, ProposalStatus, RefreshTx, RefundTx,
+    StakeRecord, StateObject, Transaction, TransferTx, UndelegateTx, ValidatorClaimStakeTx,
+    ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
 use tracing::{debug, info};
@@ -137,19 +137,31 @@ mod press_claim_tests {
 
         // (b) Violation in observe mode — returns Ok(Err(v)).
         let observe = evaluate_conservation_gate(
-            Err(ConservationViolation::RedirectChangedTotal { before: 100, after: 90 }),
+            Err(ConservationViolation::RedirectChangedTotal {
+                before: 100,
+                after: 90,
+            }),
             false,
         )
         .unwrap();
-        assert!(matches!(observe, Err(ConservationViolation::RedirectChangedTotal { .. })));
+        assert!(matches!(
+            observe,
+            Err(ConservationViolation::RedirectChangedTotal { .. })
+        ));
 
         // (c) Violation in enforce mode — propagates as ExecutionError.
         let enforce_err = evaluate_conservation_gate(
-            Err(ConservationViolation::RedirectChangedTotal { before: 100, after: 90 }),
+            Err(ConservationViolation::RedirectChangedTotal {
+                before: 100,
+                after: 90,
+            }),
             true,
         )
         .unwrap_err();
-        assert!(matches!(enforce_err, ExecutionError::ConservationViolation(_)));
+        assert!(matches!(
+            enforce_err,
+            ExecutionError::ConservationViolation(_)
+        ));
     }
 }
 
@@ -271,10 +283,7 @@ pub trait ExecutionEngine: Send + Sync {
     /// the current MMR head. Light clients use this to verify that a
     /// specific object's evaporation was actually accumulated, without
     /// downloading the full MMR.
-    fn mmr_proof(
-        &self,
-        leaf_index: u64,
-    ) -> Option<evaporchain_crypto::accumulator::MMRProof>;
+    fn mmr_proof(&self, leaf_index: u64) -> Option<evaporchain_crypto::accumulator::MMRProof>;
 }
 
 /// Gas cost constants for transaction types.
@@ -2725,9 +2734,7 @@ impl ExecutionEngine for SimpleExecutor {
                 .and_then(|addr| db.get_account(addr).map(|acct| (acct.balance, acct.nonce)));
 
             let result = match tx {
-                Transaction::Transfer(transfer) => {
-                    self.execute_transfer(db, transfer, block.epoch)
-                }
+                Transaction::Transfer(transfer) => self.execute_transfer(db, transfer, block.epoch),
                 Transaction::CreateObject(create) => {
                     self.execute_create_object(db, create, block.epoch)
                 }
@@ -2763,8 +2770,12 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::ValidatorStake(stake) => {
                     self.execute_validator_stake(db, stake, block.epoch)
                 }
-                Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit, block.epoch),
-                Transaction::ValidatorClaimStake(claim) => self.execute_validator_claim_stake(db, claim, block.epoch),
+                Transaction::ValidatorExit(exit) => {
+                    self.execute_validator_exit(db, exit, block.epoch)
+                }
+                Transaction::ValidatorClaimStake(claim) => {
+                    self.execute_validator_claim_stake(db, claim, block.epoch)
+                }
                 Transaction::Shield(shield) => {
                     self.privacy_executor.set_epoch(block.epoch);
                     self.privacy_executor
@@ -2813,7 +2824,9 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
                 Transaction::MultiSig(msig) => self.execute_multisig(db, msig, block.epoch),
                 Transaction::UserOp(uop) => self.execute_user_op(db, uop, block.epoch),
-                Transaction::UpgradeContract(up) => self.execute_upgrade_contract(db, up, block.epoch),
+                Transaction::UpgradeContract(up) => {
+                    self.execute_upgrade_contract(db, up, block.epoch)
+                }
                 Transaction::Delegate(d) => self.execute_delegate(db, d, block.epoch),
                 Transaction::Undelegate(u) => self.execute_undelegate(db, u, block.epoch),
                 Transaction::RotateValidatorKey(rot) => {
@@ -2899,9 +2912,7 @@ impl ExecutionEngine for SimpleExecutor {
                 // `mev_observations` + `mev_attacker_stats`) is
                 // enforced at the consensus layer; this execution path
                 // only handles balance movement.
-                Transaction::Refund(refund) => {
-                    self.execute_refund(db, refund, block.epoch)
-                }
+                Transaction::Refund(refund) => self.execute_refund(db, refund, block.epoch),
             };
 
             match result {
@@ -3012,7 +3023,9 @@ impl ExecutionEngine for SimpleExecutor {
                 Ok(inner_tx) => {
                     let result = match &inner_tx {
                         Transaction::Transfer(t) => self.execute_transfer(db, t, block.epoch),
-                        Transaction::CreateObject(c) => self.execute_create_object(db, c, block.epoch),
+                        Transaction::CreateObject(c) => {
+                            self.execute_create_object(db, c, block.epoch)
+                        }
                         Transaction::CallContract(c) => self.execute_call_contract(c),
                         Transaction::CallScript(c) => self.execute_call_script(c),
                         _ => Err(ExecutionError::ContractError(
@@ -3077,13 +3090,7 @@ impl ExecutionEngine for SimpleExecutor {
                     })
                     .fold(0u64, u64::saturating_add);
                 let bonus_scale = evaporchain_types::BASE_INCLUSION_ENERGY;
-                ra.apply_priority_bonus(
-                    db,
-                    &producer_addr,
-                    block.epoch,
-                    priority_sum,
-                    bonus_scale,
-                );
+                ra.apply_priority_bonus(db, &producer_addr, block.epoch, priority_sum, bonus_scale);
             }
 
             // Distribute staker rewards every 100 blocks
@@ -3283,10 +3290,7 @@ impl ExecutionEngine for SimpleExecutor {
         self.mmr.size()
     }
 
-    fn mmr_proof(
-        &self,
-        leaf_index: u64,
-    ) -> Option<evaporchain_crypto::accumulator::MMRProof> {
+    fn mmr_proof(&self, leaf_index: u64) -> Option<evaporchain_crypto::accumulator::MMRProof> {
         self.mmr.prove(leaf_index)
     }
 }
@@ -3345,9 +3349,9 @@ mod tests {
             address: addr(byte),
             balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -3515,7 +3519,7 @@ mod tests {
     fn test_refund_moves_balance_attacker_to_victim() {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000); // attacker
-        fund_account(&mut db, 2, 100);  // victim
+        fund_account(&mut db, 2, 100); // victim
 
         let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
@@ -5225,7 +5229,14 @@ contract Counter {
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let owner = addr(1);
-        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+        db.put_account(Account {
+            address: owner,
+            balance: 1_000_000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
         let obj = evaporchain_types::StateObject {
             id: obj_id(1),
             owner,
@@ -5274,7 +5285,14 @@ contract Counter {
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let owner = addr(1);
-        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+        db.put_account(Account {
+            address: owner,
+            balance: 1_000_000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
 
         for i in 1..=3u8 {
             let obj = evaporchain_types::StateObject {
@@ -6355,15 +6373,7 @@ contract Counter {
         let id = deploy_counter_with_admin(&mut executor, addr(1), 1);
 
         // Build a valid governance-path tx, then corrupt the hash.
-        let mut tx = build_upgrade_tx(
-            addr(1),
-            id,
-            COUNTER_SCRIPT_V2,
-            0,
-            None,
-            vec![2000],
-            1000,
-        );
+        let mut tx = build_upgrade_tx(addr(1), id, COUNTER_SCRIPT_V2, 0, None, vec![2000], 1000);
         tx.new_bytecode_hash[0] ^= 0xFF;
 
         let err = executor
@@ -6523,14 +6533,19 @@ contract Counter {
         fund_account(&mut db, 2, 1_000_000);
         let executor = SimpleExecutor::new_for_test(7);
         let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
-        executor.execute_user_op(&mut db, &tx, 0).expect("first exec");
+        executor
+            .execute_user_op(&mut db, &tx, 0)
+            .expect("first exec");
 
         let pm = db.get_account(&addr(2)).expect("paymaster exists").clone();
         assert_eq!(
             pm.nonce, 1,
             "paymaster nonce should bump from 0 to 1 after successful sponsorship"
         );
-        assert!(pm.balance < 1_000_000, "paymaster balance should be debited");
+        assert!(
+            pm.balance < 1_000_000,
+            "paymaster balance should be debited"
+        );
     }
 
     #[test]
@@ -6544,7 +6559,9 @@ contract Counter {
         let executor = SimpleExecutor::new_for_test(7);
         let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
 
-        executor.execute_user_op(&mut db, &tx, 0).expect("first exec");
+        executor
+            .execute_user_op(&mut db, &tx, 0)
+            .expect("first exec");
 
         // Replay the same tx — sender nonce check catches it first.
         let r = executor.execute_user_op(&mut db, &tx, 0);

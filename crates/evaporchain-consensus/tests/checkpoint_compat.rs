@@ -39,7 +39,9 @@ fn new_format_round_trips_with_bell_reading() {
 
     assert_eq!(back.version, CHECKPOINT_VERSION);
     assert_eq!(back.height, 4242);
-    let r = back.last_bell_reading.expect("bell reading must round-trip");
+    let r = back
+        .last_bell_reading
+        .expect("bell reading must round-trip");
     assert_eq!(r.s_value_milli, 2415);
     assert_eq!(r.block_height, 4242);
     assert_eq!(r.epoch, 17);

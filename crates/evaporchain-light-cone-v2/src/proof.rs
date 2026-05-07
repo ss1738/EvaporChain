@@ -25,11 +25,10 @@ pub enum AncestryError {
         descendant: BlockId,
         ancestor: BlockId,
     },
-    #[error("Merkle path length mismatch: siblings has {siblings} entries, directions has {directions}")]
-    PathShapeMismatch {
-        siblings: usize,
-        directions: usize,
-    },
+    #[error(
+        "Merkle path length mismatch: siblings has {siblings} entries, directions has {directions}"
+    )]
+    PathShapeMismatch { siblings: usize, directions: usize },
 }
 
 /// Build a Merkle path proving that `ancestor ∈ causal_past(descendant)`.
@@ -168,7 +167,8 @@ mod tests {
         lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 1000, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 1000, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 1000, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 1000, 2))
+            .unwrap();
         lc
     }
 

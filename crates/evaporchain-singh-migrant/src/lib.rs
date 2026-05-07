@@ -69,9 +69,9 @@ mod press_claim_tests {
     #[test]
     fn the_press_claim_lives_as_a_test() {
         // Effective half-life tiers.
-        assert_eq!(effective_half_life(1_000, 50, 100).unwrap(), 1_000);   // tier 1
-        assert_eq!(effective_half_life(1_000, 100, 100).unwrap(), 500);    // tier 2
-        assert_eq!(effective_half_life(1_000, 250, 100).unwrap(), 250);    // tier 3
+        assert_eq!(effective_half_life(1_000, 50, 100).unwrap(), 1_000); // tier 1
+        assert_eq!(effective_half_life(1_000, 100, 100).unwrap(), 500); // tier 2
+        assert_eq!(effective_half_life(1_000, 250, 100).unwrap(), 250); // tier 3
 
         // Tier ordering: tier-1 ≥ tier-2 ≥ tier-3.
         let h1 = effective_half_life(1_000, 50, 100).unwrap();

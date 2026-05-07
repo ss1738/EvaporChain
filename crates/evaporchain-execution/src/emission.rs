@@ -111,9 +111,7 @@ impl EmissionParams {
         }
         match schedule {
             EmissionSchedule::Constant => {}
-            EmissionSchedule::Halving {
-                epochs_per_halving,
-            } => {
+            EmissionSchedule::Halving { epochs_per_halving } => {
                 if epochs_per_halving == 0 {
                     return Err(EmissionError::ZeroHalvingPeriod);
                 }
@@ -149,11 +147,7 @@ impl EmissionParams {
 /// enforcement). Pure function; the chain calls this from the
 /// executor's commit hook with `cumulative_emitted` read from
 /// StateDB.
-pub fn block_reward_at(
-    params: &EmissionParams,
-    epoch: u64,
-    cumulative_emitted: u128,
-) -> u64 {
+pub fn block_reward_at(params: &EmissionParams, epoch: u64, cumulative_emitted: u128) -> u64 {
     // Cap check — if we've hit max_supply, no further emissions.
     if let Some(cap) = params.max_supply {
         if cumulative_emitted >= cap {
@@ -163,9 +157,7 @@ pub fn block_reward_at(
 
     let raw = match params.schedule {
         EmissionSchedule::Constant => params.initial_reward,
-        EmissionSchedule::Halving {
-            epochs_per_halving,
-        } => {
+        EmissionSchedule::Halving { epochs_per_halving } => {
             // halvings = epoch / epochs_per_halving. Saturate at
             // 64 to prevent u64 shift overflow.
             let halvings = epoch / epochs_per_halving;
@@ -224,7 +216,9 @@ mod tests {
     fn halving_with_zero_period_rejected() {
         let err = EmissionParams::new(
             100,
-            EmissionSchedule::Halving { epochs_per_halving: 0 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 0,
+            },
             None,
         )
         .unwrap_err();
@@ -233,12 +227,8 @@ mod tests {
 
     #[test]
     fn linear_decay_with_zero_window_rejected() {
-        let err = EmissionParams::new(
-            100,
-            EmissionSchedule::LinearDecay { decay_epochs: 0 },
-            None,
-        )
-        .unwrap_err();
+        let err = EmissionParams::new(100, EmissionSchedule::LinearDecay { decay_epochs: 0 }, None)
+            .unwrap_err();
         assert_eq!(err, EmissionError::ZeroDecayWindow);
     }
 
@@ -258,7 +248,9 @@ mod tests {
     fn halving_halves_at_each_period_boundary() {
         let p = EmissionParams::new(
             1024,
-            EmissionSchedule::Halving { epochs_per_halving: 100 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 100,
+            },
             None,
         )
         .unwrap();
@@ -274,7 +266,9 @@ mod tests {
     fn halving_saturates_at_zero_after_64_halvings() {
         let p = EmissionParams::new(
             1024,
-            EmissionSchedule::Halving { epochs_per_halving: 1 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 1,
+            },
             None,
         )
         .unwrap();
@@ -296,7 +290,7 @@ mod tests {
         assert_eq!(block_reward_at(&p, 250, 0), 750); // 75% remaining
         assert_eq!(block_reward_at(&p, 500, 0), 500); // halfway
         assert_eq!(block_reward_at(&p, 750, 0), 250); // 25% remaining
-        // At epoch == decay_epochs, the explicit zero branch kicks in.
+                                                      // At epoch == decay_epochs, the explicit zero branch kicks in.
         assert_eq!(block_reward_at(&p, 1000, 0), 0);
         assert_eq!(block_reward_at(&p, 999, 0), 1); // last block before zero
         assert_eq!(block_reward_at(&p, 10_000, 0), 0); // far past window
@@ -306,12 +300,7 @@ mod tests {
 
     #[test]
     fn max_supply_zero_emissions_after_cap() {
-        let p = EmissionParams::new(
-            100,
-            EmissionSchedule::Constant,
-            Some(1_000_000),
-        )
-        .unwrap();
+        let p = EmissionParams::new(100, EmissionSchedule::Constant, Some(1_000_000)).unwrap();
         assert_eq!(block_reward_at(&p, 0, 999_999), 1); // headroom = 1
         assert_eq!(block_reward_at(&p, 0, 1_000_000), 0); // exactly at cap
         assert_eq!(block_reward_at(&p, 0, 2_000_000), 0); // beyond cap
@@ -321,12 +310,7 @@ mod tests {
     fn max_supply_clips_final_block_to_headroom() {
         // Cap at 1050; constant reward 100. At 1000 cumulative,
         // headroom = 50, so reward should be clipped from 100 to 50.
-        let p = EmissionParams::new(
-            100,
-            EmissionSchedule::Constant,
-            Some(1050),
-        )
-        .unwrap();
+        let p = EmissionParams::new(100, EmissionSchedule::Constant, Some(1050)).unwrap();
         assert_eq!(block_reward_at(&p, 0, 1000), 50);
     }
 
@@ -352,7 +336,9 @@ mod tests {
     fn emission_params_serde_round_trip_halving() {
         let p = EmissionParams::new(
             1024,
-            EmissionSchedule::Halving { epochs_per_halving: 210_000 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 210_000,
+            },
             None,
         )
         .unwrap();
@@ -365,7 +351,9 @@ mod tests {
     fn emission_params_serde_round_trip_linear_decay() {
         let p = EmissionParams::new(
             1000,
-            EmissionSchedule::LinearDecay { decay_epochs: 10_000_000 },
+            EmissionSchedule::LinearDecay {
+                decay_epochs: 10_000_000,
+            },
             Some(10_000_000_000),
         )
         .unwrap();
@@ -381,7 +369,9 @@ mod tests {
         // Bitcoin-style halving every 210K blocks, capped at 21M.
         let halving = EmissionParams::new(
             50,
-            EmissionSchedule::Halving { epochs_per_halving: 210_000 },
+            EmissionSchedule::Halving {
+                epochs_per_halving: 210_000,
+            },
             Some(21_000_000),
         )
         .unwrap();
@@ -391,19 +381,16 @@ mod tests {
         // Linear decay over 10M epochs (10-year sunset).
         let linear = EmissionParams::new(
             1000,
-            EmissionSchedule::LinearDecay { decay_epochs: 10_000_000 },
+            EmissionSchedule::LinearDecay {
+                decay_epochs: 10_000_000,
+            },
             None,
         )
         .unwrap();
         assert_eq!(block_reward_at(&linear, 5_000_000, 0), 500);
 
         // Flat with cap.
-        let flat = EmissionParams::new(
-            100,
-            EmissionSchedule::Constant,
-            Some(1_000),
-        )
-        .unwrap();
+        let flat = EmissionParams::new(100, EmissionSchedule::Constant, Some(1_000)).unwrap();
         assert_eq!(block_reward_at(&flat, 0, 950), 50); // clipped to headroom
         assert_eq!(block_reward_at(&flat, 0, 1000), 0); // post-cap
     }

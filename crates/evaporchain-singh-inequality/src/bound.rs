@@ -71,7 +71,11 @@ pub fn singh_variance_bound(contributors: &[Contributor]) -> Result<u128, BoundE
             });
         }
     }
-    let e_max: u128 = contributors.iter().map(|c| c.energy as u128).max().unwrap_or(0);
+    let e_max: u128 = contributors
+        .iter()
+        .map(|c| c.energy as u128)
+        .max()
+        .unwrap_or(0);
     if e_max == 0 {
         return Err(BoundError::ZeroEMax);
     }

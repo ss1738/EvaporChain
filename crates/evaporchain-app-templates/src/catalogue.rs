@@ -273,10 +273,16 @@ mod tests {
     #[test]
     fn catalogue_covers_all_six_lanes() {
         let cat = catalogue();
-        let lanes: std::collections::BTreeSet<&str> =
-            cat.iter().map(|d| d.lane.as_str()).collect();
+        let lanes: std::collections::BTreeSet<&str> = cat.iter().map(|d| d.lane.as_str()).collect();
         // The 6 lanes the doctrine ships.
-        for l in ["NFT", "Marketplace", "Wallet UX", "Consumer", "Cultural", "Paradigm"] {
+        for l in [
+            "NFT",
+            "Marketplace",
+            "Wallet UX",
+            "Consumer",
+            "Cultural",
+            "Paradigm",
+        ] {
             assert!(lanes.contains(l), "lane {l} missing from catalogue");
         }
     }

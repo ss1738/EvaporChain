@@ -88,7 +88,9 @@ mod press_claim_tests {
         assert_eq!(ib_vote(&concentrated, &uniform, &p_zero), IbVote::Commit);
 
         // (c) High threshold forces abstain even on identical views.
-        let p_high = IbParams { lambda_mb: 1_000_000_000 };
+        let p_high = IbParams {
+            lambda_mb: 1_000_000_000,
+        };
         assert_eq!(ib_vote(&uniform, &uniform, &p_high), IbVote::Abstain);
 
         // (d) Bottleneck width: N_BINS = 16 (the canonical signature

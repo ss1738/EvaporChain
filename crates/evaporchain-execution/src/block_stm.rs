@@ -283,9 +283,9 @@ impl<'a> TxView<'a> {
                         address: *addr,
                         balance: 0,
                         nonce: 0,
-                    storage_deposit: 0,
-                    storage_bytes: 0,
-                    last_touched_epoch: 0,
+                        storage_deposit: 0,
+                        storage_bytes: 0,
+                        last_touched_epoch: 0,
                     });
                     acct.balance = *bal;
                 }
@@ -294,9 +294,9 @@ impl<'a> TxView<'a> {
                         address: *addr,
                         balance: 0,
                         nonce: 0,
-                    storage_deposit: 0,
-                    storage_bytes: 0,
-                    last_touched_epoch: 0,
+                        storage_deposit: 0,
+                        storage_bytes: 0,
+                        last_touched_epoch: 0,
                     });
                     acct.nonce = *nonce;
                 }
@@ -674,11 +674,9 @@ fn execute_tx(
         Transaction::Refresh(t) => exec_refresh(view, t, epoch),
         Transaction::ValidatorStake(t) => exec_validator_stake(view, t, epoch),
         Transaction::ValidatorExit(t) => exec_validator_exit(view, t, epoch),
-        Transaction::ValidatorClaimStake(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "validator claim stake executes in serial phase".into(),
-            )))
-        }
+        Transaction::ValidatorClaimStake(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("validator claim stake executes in serial phase".into()),
+        )),
         // Contract/script/privacy txs cannot run in parallel (global mutable state)
         Transaction::DeployContract(_)
         | Transaction::CallContract(_)
@@ -737,9 +735,9 @@ fn execute_tx(
         Transaction::ClaimDelegation(_) => Err(TxViewError::ExecutionError(
             ExecutionError::ContractError("delegation txs execute in serial phase".into()),
         )),
-        Transaction::Refund(_) => Err(TxViewError::ExecutionError(
-            ExecutionError::ContractError("refund txs execute in serial phase".into()),
-        )),
+        Transaction::Refund(_) => Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+            "refund txs execute in serial phase".into(),
+        ))),
     };
 
     match result {
@@ -907,7 +905,12 @@ fn exec_create_object(
         .into());
     }
     let nonce = view.read_nonce(&tx.creator).map_err(TxViewError::Blocked)?;
-    view.write_account(tx.creator, bal - evaporchain_types::MIN_STORAGE_DEPOSIT, nonce, epoch);
+    view.write_account(
+        tx.creator,
+        bal - evaporchain_types::MIN_STORAGE_DEPOSIT,
+        nonce,
+        epoch,
+    );
 
     let cur_deposit = view
         .read_storage_deposit(&tx.creator)
@@ -984,7 +987,11 @@ fn exec_refresh(view: &mut TxView, tx: &RefreshTx, epoch: Epoch) -> Result<(), T
     Err(ExecutionError::ObjectNotFound(hex::encode(tx.object_id)).into())
 }
 
-fn exec_validator_stake(view: &mut TxView, tx: &ValidatorStakeTx, epoch: Epoch) -> Result<(), TxViewError> {
+fn exec_validator_stake(
+    view: &mut TxView,
+    tx: &ValidatorStakeTx,
+    epoch: Epoch,
+) -> Result<(), TxViewError> {
     if tx.stake_amount == 0 {
         return Err(ExecutionError::ZeroAmount.into());
     }
@@ -1026,7 +1033,11 @@ fn exec_validator_stake(view: &mut TxView, tx: &ValidatorStakeTx, epoch: Epoch) 
     Ok(())
 }
 
-fn exec_validator_exit(view: &mut TxView, tx: &ValidatorExitTx, epoch: Epoch) -> Result<(), TxViewError> {
+fn exec_validator_exit(
+    view: &mut TxView,
+    tx: &ValidatorExitTx,
+    epoch: Epoch,
+) -> Result<(), TxViewError> {
     let balance = view
         .read_balance(&tx.validator_address)
         .map_err(TxViewError::Blocked)?;
@@ -1350,8 +1361,7 @@ impl BlockStmExecutor {
             // total re-execution work at O(N × BLOCK_ABORT_CEILING_MULTIPLIER)
             // and prevents the O(N²) retry storm under high write-contention
             // (audit fix #9.3, 2026-05-03).
-            cumulative_aborts =
-                cumulative_aborts.saturating_add(needs_reexec.len() as u64);
+            cumulative_aborts = cumulative_aborts.saturating_add(needs_reexec.len() as u64);
             if cumulative_aborts > block_abort_ceiling {
                 block_serial_drain = true;
             }
@@ -1360,9 +1370,7 @@ impl BlockStmExecutor {
             let mut parallel_reexec = Vec::new();
             for &tx_idx in &needs_reexec {
                 abort_counts[tx_idx as usize] += 1;
-                if block_serial_drain
-                    || abort_counts[tx_idx as usize] >= MAX_ABORTS_BEFORE_SERIAL
-                {
+                if block_serial_drain || abort_counts[tx_idx as usize] >= MAX_ABORTS_BEFORE_SERIAL {
                     serial_txs.push(tx_idx);
                 } else {
                     parallel_reexec.push(tx_idx);
@@ -2232,10 +2240,7 @@ impl ExecutionEngine for BlockStmExecutor {
         self.mmr.size()
     }
 
-    fn mmr_proof(
-        &self,
-        leaf_index: u64,
-    ) -> Option<evaporchain_crypto::accumulator::MMRProof> {
+    fn mmr_proof(&self, leaf_index: u64) -> Option<evaporchain_crypto::accumulator::MMRProof> {
         self.mmr.prove(leaf_index)
     }
 }
@@ -2369,8 +2374,8 @@ impl BlockStmExecutor {
                                             address: t.from,
                                             balance: new_sb,
                                             nonce: new_sn,
-                            storage_deposit: 0,
-                            storage_bytes: 0,
+                                            storage_deposit: 0,
+                                            storage_bytes: 0,
                                             // Sender balance + nonce mutated.
                                             last_touched_epoch: epoch,
                                         },
@@ -2385,8 +2390,8 @@ impl BlockStmExecutor {
                                                     address: t.to,
                                                     balance: new_rb,
                                                     nonce: rn,
-                            storage_deposit: 0,
-                            storage_bytes: 0,
+                                                    storage_deposit: 0,
+                                                    storage_bytes: 0,
                                                     // Receiver balance mutated.
                                                     last_touched_epoch: epoch,
                                                 },
@@ -2459,8 +2464,8 @@ impl BlockStmExecutor {
                                         address: t.validator_address,
                                         balance: new_bal,
                                         nonce: new_nonce,
-                            storage_deposit: 0,
-                            storage_bytes: 0,
+                                        storage_deposit: 0,
+                                        storage_bytes: 0,
                                         // Stake locks balance + bumps nonce.
                                         last_touched_epoch: epoch,
                                     },
@@ -2485,8 +2490,8 @@ impl BlockStmExecutor {
                                         address: t.validator_address,
                                         balance: bal,
                                         nonce: new_nonce,
-                            storage_deposit: 0,
-                            storage_bytes: 0,
+                                        storage_deposit: 0,
+                                        storage_bytes: 0,
                                         // Validator-exit bumps nonce.
                                         last_touched_epoch: epoch,
                                     },
@@ -2604,9 +2609,9 @@ mod tests {
             address: addr(byte),
             balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -3050,8 +3055,10 @@ mod tests {
         let seq_result = seq_exec.execute_block(&mut db_seq, &block_seq).unwrap();
 
         assert_eq!(par_result.txs_executed as u64, N);
-        assert_eq!(par_result.state_root, seq_result.state_root,
-            "parallel + serial-drain final state must equal pure-serial state");
+        assert_eq!(
+            par_result.state_root, seq_result.state_root,
+            "parallel + serial-drain final state must equal pure-serial state"
+        );
         assert_eq!(
             db_par.get_account(&addr(1)).unwrap().balance,
             db_seq.get_account(&addr(1)).unwrap().balance
@@ -3279,9 +3286,9 @@ mod tests {
             address: addr(2),
             balance: u64::MAX,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -3299,8 +3306,7 @@ mod tests {
         // u64::MAX-balance overflow test — disable demurrage so the
         // assertion about receiver's exact balance isn't perturbed by
         // the per-epoch sweep on the huge holding.
-        executor.demurrage_params =
-            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
+        executor.demurrage_params = evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 1; // Force parallel path
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -3326,9 +3332,9 @@ mod tests {
             address: addr(2),
             balance: u64::MAX,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -3343,8 +3349,7 @@ mod tests {
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
-        executor.demurrage_params =
-            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
+        executor.demurrage_params = evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 100; // Force sequential path
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -3374,9 +3379,9 @@ mod tests {
             address: addr(1),
             balance: u64::MAX - 100,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
         fund_account(&mut db, 2, 0);
 
@@ -3392,8 +3397,7 @@ mod tests {
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
-        executor.demurrage_params =
-            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
+        executor.demurrage_params = evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -3416,9 +3420,9 @@ mod tests {
             address: addr(2),
             balance: u64::MAX - 5_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         // Two independent senders both transferring to addr(2)
@@ -3447,8 +3451,7 @@ mod tests {
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
-        executor.demurrage_params =
-            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
+        executor.demurrage_params = evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 

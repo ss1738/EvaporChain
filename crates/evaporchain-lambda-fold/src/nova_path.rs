@@ -230,12 +230,9 @@ pub fn verify_nova_folded(
     let proof: CompressedProof = bincode::deserialize(&instance.proof_bytes)
         .map_err(|e| NovaVerifyError::Deserialize(format!("{:?}", e)))?;
 
-    let valid = RealBlockProver::verify_with_vk_bytes(
-        &proof,
-        instance.step_count as usize,
-        vk_bytes,
-    )
-    .map_err(|e| NovaVerifyError::Proving(format!("{:?}", e)))?;
+    let valid =
+        RealBlockProver::verify_with_vk_bytes(&proof, instance.step_count as usize, vk_bytes)
+            .map_err(|e| NovaVerifyError::Proving(format!("{:?}", e)))?;
 
     if valid {
         Ok(())

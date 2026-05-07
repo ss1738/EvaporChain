@@ -114,20 +114,13 @@ mod tests {
 
     #[test]
     fn rejects_zero_threshold() {
-        let err =
-            VaultBlob::new([0; 32], 100, 0, vec![validator(1)]).unwrap_err();
+        let err = VaultBlob::new([0; 32], 100, 0, vec![validator(1)]).unwrap_err();
         assert_eq!(err, VaultError::ZeroThreshold);
     }
 
     #[test]
     fn rejects_threshold_above_committee() {
-        let err = VaultBlob::new(
-            [0; 32],
-            100,
-            5,
-            vec![validator(1), validator(2)],
-        )
-        .unwrap_err();
+        let err = VaultBlob::new([0; 32], 100, 5, vec![validator(1), validator(2)]).unwrap_err();
         assert!(matches!(
             err,
             VaultError::ThresholdAboveCommittee { m: 5, n: 2 }
@@ -152,7 +145,13 @@ mod tests {
             [0xAB; 32],
             1024,
             3,
-            vec![validator(1), validator(2), validator(3), validator(4), validator(5)],
+            vec![
+                validator(1),
+                validator(2),
+                validator(3),
+                validator(4),
+                validator(5),
+            ],
         )
         .unwrap();
         assert_eq!(v.committee_size(), 5);

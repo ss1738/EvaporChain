@@ -63,7 +63,10 @@ mod press_claim_tests {
         t.advance_phase(); // [phase 0, phase 1]
         assert!(t.is_spent_in_window(&n1));
         t.advance_phase(); // [phase 1, phase 2]; phase 0 dropped
-        assert!(!t.is_spent_in_window(&n1), "aged-out nullifier must be forgotten");
+        assert!(
+            !t.is_spent_in_window(&n1),
+            "aged-out nullifier must be forgotten"
+        );
 
         // Now re-inserting the same nullifier succeeds (chain forgot).
         t.insert_nullifier(n1).unwrap();

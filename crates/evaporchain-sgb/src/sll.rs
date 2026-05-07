@@ -93,8 +93,7 @@ mod tests {
     #[test]
     fn nested_bang_is_rejected() {
         // !!T — SLL stratification says polytime bound goes superlinear.
-        let t: Type<Base> =
-            Type::bang(Type::bang(Type::Lin(Base::Energy)));
+        let t: Type<Base> = Type::bang(Type::bang(Type::Lin(Base::Energy)));
         let err = is_sll_fragment(&t).unwrap_err();
         assert_eq!(err, SllReason::NestedBang);
     }
@@ -105,10 +104,7 @@ mod tests {
         // arm has a bang. That's fine. But !(L ⊗ R) where L is itself a
         // bang IS rejected.
         let inner_bang: Type<Base> = Type::bang(Type::Lin(Base::Energy));
-        let outer_bang: Type<Base> = Type::bang(Type::tensor(
-            inner_bang,
-            Type::Lin(Base::Account),
-        ));
+        let outer_bang: Type<Base> = Type::bang(Type::tensor(inner_bang, Type::Lin(Base::Account)));
         let err = is_sll_fragment(&outer_bang).unwrap_err();
         assert_eq!(err, SllReason::NestedBang);
     }
@@ -126,9 +122,7 @@ mod tests {
     #[test]
     fn whimper_does_not_count_toward_bang_depth() {
         // ?(?(?T)) — nested whimpers, no bangs. Fine.
-        let t: Type<Base> = Type::whimper(Type::whimper(Type::whimper(Type::Lin(
-            Base::Energy,
-        ))));
+        let t: Type<Base> = Type::whimper(Type::whimper(Type::whimper(Type::Lin(Base::Energy))));
         is_sll_fragment(&t).unwrap();
     }
 }

@@ -31,9 +31,9 @@ use std::path::PathBuf;
 
 use evaporchain_causal_chsh::{
     chsh::compute_chsh_s,
-    extract_chsh_samples, synthesize_max_cartel_samples,
+    extract_chsh_samples,
     gate::{run_synthetic_gate, GateThresholds, GateVerdict},
-    BlockSummary,
+    synthesize_max_cartel_samples, BlockSummary,
 };
 
 const REPORT_PATH: &str = "/Users/satyawansingh/EvaporChain/research/causal-chsh/GATE_RESULT.md";
@@ -54,10 +54,7 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--window-secs" => {
-                window_secs = args
-                    .get(i + 1)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(60);
+                window_secs = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(60);
                 i += 2;
             }
             "--report" => {
@@ -80,7 +77,10 @@ fn main() {
     let trace = read_csv(&csv_path);
     println!("loaded {} blocks", trace.len());
     if trace.len() < 50 {
-        eprintln!("too few blocks ({} < 50) — gate verdict would be noise-bound", trace.len());
+        eprintln!(
+            "too few blocks ({} < 50) — gate verdict would be noise-bound",
+            trace.len()
+        );
         std::process::exit(3);
     }
 
@@ -100,7 +100,10 @@ fn main() {
     );
 
     if n_per_bucket < 5 {
-        eprintln!("under-populated buckets ({} per setting-pair) — widen --window-secs", n_per_bucket);
+        eprintln!(
+            "under-populated buckets ({} per setting-pair) — widen --window-secs",
+            n_per_bucket
+        );
         std::process::exit(3);
     }
 
@@ -208,8 +211,16 @@ fn render_report(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let gap = s_cartel - s_honest;
-    let pass_ceiling = if s_honest < th.honest_ceiling { "✓" } else { "✗" };
-    let pass_floor = if s_cartel > th.cartel_floor { "✓" } else { "✗" };
+    let pass_ceiling = if s_honest < th.honest_ceiling {
+        "✓"
+    } else {
+        "✗"
+    };
+    let pass_floor = if s_cartel > th.cartel_floor {
+        "✓"
+    } else {
+        "✗"
+    };
     let pass_gap = if gap > th.min_gap { "✓" } else { "✗" };
 
     let mut report = format!(
@@ -230,9 +241,15 @@ fn render_report(
          | gap (S_cartel − S_honest) | {:.4} | > {:.2} | {} |\n\n",
         csv_path.display(),
         n_samples_total / 4,
-        s_honest, th.honest_ceiling, pass_ceiling,
-        s_cartel, th.cartel_floor, pass_floor,
-        gap, th.min_gap, pass_gap,
+        s_honest,
+        th.honest_ceiling,
+        pass_ceiling,
+        s_cartel,
+        th.cartel_floor,
+        pass_floor,
+        gap,
+        th.min_gap,
+        pass_gap,
     );
 
     match verdict {

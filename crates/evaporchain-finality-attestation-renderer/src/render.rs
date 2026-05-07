@@ -56,11 +56,7 @@ fn write_header(
         "- block_hash         = {}",
         format_hex(&att.block_hash, opts.hex_with_prefix)
     );
-    let _ = writeln!(
-        out,
-        "- finalised_at_epoch = {}",
-        att.finalised_at_epoch
-    );
+    let _ = writeln!(out, "- finalised_at_epoch = {}", att.finalised_at_epoch);
 
     let root_repr = match precomputed_root {
         Some(r) => format_hex(r, opts.hex_with_prefix),
@@ -70,11 +66,7 @@ fn write_header(
         },
     };
     let _ = writeln!(out, "- attestation_root   = {}", root_repr);
-    let _ = writeln!(
-        out,
-        "- evaporated_forks   = {}",
-        att.evaporated_forks.len()
-    );
+    let _ = writeln!(out, "- evaporated_forks   = {}", att.evaporated_forks.len());
     let _ = writeln!(out);
 }
 

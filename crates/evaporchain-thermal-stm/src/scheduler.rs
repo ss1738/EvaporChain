@@ -204,13 +204,13 @@ mod tests {
         let r = s.run(BTreeMap::new(), vec![low, high]).unwrap();
 
         // Sorted: high first.
-        assert_eq!(
-            r.outcomes[0],
-            TxOutcome::Committed { tx_id: id(1) }
-        );
+        assert_eq!(r.outcomes[0], TxOutcome::Committed { tx_id: id(1) });
         let TxOutcome::AbortedConflict {
-            tx_id, winner, contended_keys
-        } = &r.outcomes[1] else {
+            tx_id,
+            winner,
+            contended_keys,
+        } = &r.outcomes[1]
+        else {
             panic!("expected AbortedConflict, got {:?}", r.outcomes[1]);
         };
         assert_eq!(*tx_id, id(2));
@@ -229,10 +229,7 @@ mod tests {
         let low = read_then_write(2, 100, key(0), key(1), b"derived");
         let r = s.run(BTreeMap::new(), vec![low, high]).unwrap();
         assert_eq!(r.outcomes[0], TxOutcome::Committed { tx_id: id(1) });
-        assert!(matches!(
-            r.outcomes[1],
-            TxOutcome::AbortedConflict { .. }
-        ));
+        assert!(matches!(r.outcomes[1], TxOutcome::AbortedConflict { .. }));
     }
 
     #[test]
@@ -242,7 +239,9 @@ mod tests {
         let s = ThermalScheduler::new();
         let high = write_only(1, 1000, key(0), b"high");
         let low = write_only(2, 100, key(0), b"low");
-        let r1 = s.run(BTreeMap::new(), vec![high.clone(), low.clone()]).unwrap();
+        let r1 = s
+            .run(BTreeMap::new(), vec![high.clone(), low.clone()])
+            .unwrap();
         let r2 = s.run(BTreeMap::new(), vec![low, high]).unwrap();
         assert_eq!(r1, r2);
     }
@@ -257,10 +256,7 @@ mod tests {
         let r = s.run(BTreeMap::new(), vec![b, a]).unwrap();
         // A commits (lower id wins on equal energy).
         assert_eq!(r.outcomes[0], TxOutcome::Committed { tx_id: id(1) });
-        assert!(matches!(
-            r.outcomes[1],
-            TxOutcome::AbortedConflict { .. }
-        ));
+        assert!(matches!(r.outcomes[1], TxOutcome::AbortedConflict { .. }));
         assert_eq!(r.state.get(&key(0)).unwrap(), b"A");
     }
 
@@ -276,10 +272,7 @@ mod tests {
         let t2 = read_then_write(2, 500, key(1), key(0), b"v2");
         let r = s.run(BTreeMap::new(), vec![t1, t2]).unwrap();
         assert_eq!(r.outcomes[0], TxOutcome::Committed { tx_id: id(1) });
-        assert!(matches!(
-            r.outcomes[1],
-            TxOutcome::AbortedConflict { .. }
-        ));
+        assert!(matches!(r.outcomes[1], TxOutcome::AbortedConflict { .. }));
     }
 
     // ── validator determinism ─────────────────────────────────────

@@ -85,9 +85,6 @@ mod press_claim_tests {
         assert_eq!(color_for_health(2.0), PulseColor::Green);
 
         // Determinism: same health → same colour.
-        assert_eq!(
-            color_for_health(0.5),
-            color_for_health(0.5),
-        );
+        assert_eq!(color_for_health(0.5), color_for_health(0.5),);
     }
 }

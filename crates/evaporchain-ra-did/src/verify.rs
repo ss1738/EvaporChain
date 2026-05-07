@@ -9,9 +9,7 @@ use crate::did::Presentation;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum VerifyError {
-    #[error(
-        "attribute {key:?} energy {energy} below verifier floor {floor} — non-presentable"
-    )]
+    #[error("attribute {key:?} energy {energy} below verifier floor {floor} — non-presentable")]
     EnergyBelowFloor {
         key: AttributeKey,
         energy: u64,
@@ -103,8 +101,12 @@ mod tests {
     use crate::attr::Attribute;
     use crate::did::{Did, DidId};
 
-    fn did(b: u8) -> DidId { DidId([b; 32]) }
-    fn k(b: u8) -> AttributeKey { AttributeKey([b; 32]) }
+    fn did(b: u8) -> DidId {
+        DidId([b; 32])
+    }
+    fn k(b: u8) -> AttributeKey {
+        AttributeKey([b; 32])
+    }
 
     fn attr_at(key: AttributeKey, energy: u64, issuer_byte: u8) -> Attribute {
         Attribute::new(key, b"value".to_vec(), [issuer_byte; 32], energy, 100)
@@ -178,7 +180,7 @@ mod tests {
         let _ = &mut d;
         let p = d.present(&[k(1), k(2)]).unwrap();
         let policy = VerifierPolicy::new()
-            .with_min_energy(k(1), 10)   // permissive floor
+            .with_min_energy(k(1), 10) // permissive floor
             .with_min_energy(k(2), 500); // strict floor
         verify_presentation(&p, &policy).unwrap();
     }
@@ -202,8 +204,7 @@ mod tests {
     fn issuer_in_allow_list_passes() {
         let d = build_did(did(1), vec![attr_at(k(1), 1000, 0xAB)]);
         let p = d.present(&[k(1)]).unwrap();
-        let policy = VerifierPolicy::new()
-            .with_allowed_issuers(k(1), vec![[0xAB; 32]]);
+        let policy = VerifierPolicy::new().with_allowed_issuers(k(1), vec![[0xAB; 32]]);
         verify_presentation(&p, &policy).unwrap();
     }
 
@@ -211,8 +212,7 @@ mod tests {
     fn issuer_not_in_allow_list_rejected() {
         let d = build_did(did(1), vec![attr_at(k(1), 1000, 0xAB)]);
         let p = d.present(&[k(1)]).unwrap();
-        let policy = VerifierPolicy::new()
-            .with_allowed_issuers(k(1), vec![[0xCD; 32]]);
+        let policy = VerifierPolicy::new().with_allowed_issuers(k(1), vec![[0xCD; 32]]);
         let err = verify_presentation(&p, &policy).unwrap_err();
         assert!(matches!(err, VerifyError::DisallowedIssuer(_, _)));
     }
@@ -264,7 +264,13 @@ mod tests {
         // Honest DID: fresh KYC from the trusted issuer. Passes.
         let d_honest = build_did(
             did(1),
-            vec![Attribute::new(k(1), b"alice".to_vec(), bank_kyc_issuer, 1000, 100)],
+            vec![Attribute::new(
+                k(1),
+                b"alice".to_vec(),
+                bank_kyc_issuer,
+                1000,
+                100,
+            )],
         );
         verify_presentation(&d_honest.present(&[k(1)]).unwrap(), &policy).unwrap();
 
@@ -279,7 +285,13 @@ mod tests {
         // high, the issuer is rejected.
         let d_sybil = build_did(
             did(2),
-            vec![Attribute::new(k(1), b"bob".to_vec(), other_issuer, 1000, 100)],
+            vec![Attribute::new(
+                k(1),
+                b"bob".to_vec(),
+                other_issuer,
+                1000,
+                100,
+            )],
         );
         let err = verify_presentation(&d_sybil.present(&[k(1)]).unwrap(), &policy).unwrap_err();
         assert!(matches!(err, VerifyError::DisallowedIssuer(_, _)));

@@ -104,7 +104,10 @@ mod tests {
         let aq = AttentionQuantum::mint(id(1), addr(0xAA), 1000, 45, 0).unwrap();
         let v_5min = aq.value_at(5);
         let v_25min = aq.value_at(25);
-        assert!(v_5min > v_25min, "5min={v_5min} should be > 25min={v_25min}");
+        assert!(
+            v_5min > v_25min,
+            "5min={v_5min} should be > 25min={v_25min}"
+        );
     }
 
     #[test]

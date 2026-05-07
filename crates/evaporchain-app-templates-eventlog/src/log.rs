@@ -9,9 +9,7 @@ use evaporchain_app_templates_receipt::DeployReceipt;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AppendError {
-    #[error(
-        "non-monotone block height: incoming {incoming} < last logged {last}"
-    )]
+    #[error("non-monotone block height: incoming {incoming} < last logged {last}")]
     NonMonotoneHeight { incoming: u64, last: u64 },
     #[error("duplicate event_id {0:?} (a receipt with these exact bytes already exists)")]
     DuplicateEventId([u8; 32]),
@@ -140,7 +138,10 @@ mod tests {
         let err = log.append(receipt(0x22, 99, 2)).unwrap_err();
         assert_eq!(
             err,
-            AppendError::NonMonotoneHeight { incoming: 99, last: 100 }
+            AppendError::NonMonotoneHeight {
+                incoming: 99,
+                last: 100
+            }
         );
     }
 
@@ -281,11 +282,16 @@ mod tests {
         // through height 102 calls `since(103)` and gets only the
         // receipts it hasn't seen. Cross-class is fine.
         let mut log = DeployEventLog::new();
-        log.append(DeployReceipt::new([0; 32], [0; 32], SINGH_SABI, [1; 32], 1, 1, 100).unwrap()).unwrap();
-        log.append(DeployReceipt::new([1; 32], [1; 32], MAYFLY, [2; 32], 1, 1, 101).unwrap()).unwrap();
-        log.append(DeployReceipt::new([2; 32], [2; 32], SINGH_SABI, [3; 32], 1, 1, 102).unwrap()).unwrap();
-        log.append(DeployReceipt::new([3; 32], [3; 32], MAYFLY, [4; 32], 1, 1, 103).unwrap()).unwrap();
-        log.append(DeployReceipt::new([4; 32], [4; 32], SINGH_SABI, [5; 32], 1, 1, 104).unwrap()).unwrap();
+        log.append(DeployReceipt::new([0; 32], [0; 32], SINGH_SABI, [1; 32], 1, 1, 100).unwrap())
+            .unwrap();
+        log.append(DeployReceipt::new([1; 32], [1; 32], MAYFLY, [2; 32], 1, 1, 101).unwrap())
+            .unwrap();
+        log.append(DeployReceipt::new([2; 32], [2; 32], SINGH_SABI, [3; 32], 1, 1, 102).unwrap())
+            .unwrap();
+        log.append(DeployReceipt::new([3; 32], [3; 32], MAYFLY, [4; 32], 1, 1, 103).unwrap())
+            .unwrap();
+        log.append(DeployReceipt::new([4; 32], [4; 32], SINGH_SABI, [5; 32], 1, 1, 104).unwrap())
+            .unwrap();
         let unseen = log.since(103);
         assert_eq!(unseen.len(), 2);
         assert_eq!(unseen[0].block_height, 103);

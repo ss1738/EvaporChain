@@ -81,10 +81,7 @@ impl std::fmt::Display for ValidationError {
                 min,
                 max,
                 got,
-            } => write!(
-                f,
-                "Field '{field}' = {got} is out of range [{min}, {max}]"
-            ),
+            } => write!(f, "Field '{field}' = {got} is out of range [{min}, {max}]"),
             ValidationError::MalformedAddress { field, reason } => {
                 write!(f, "Field '{field}' is malformed: {reason}")
             }
@@ -152,10 +149,7 @@ pub fn validate_amount_field(
 
 /// Validate a nonce field. Accepts any non-negative u64 (zero is
 /// the legitimate first-tx nonce for a fresh address).
-pub fn validate_nonce_field(
-    args: &Value,
-    field: &'static str,
-) -> Result<u64, ValidationError> {
+pub fn validate_nonce_field(args: &Value, field: &'static str) -> Result<u64, ValidationError> {
     let v = args.get(field).ok_or(ValidationError::Missing(field))?;
     v.as_u64().ok_or(ValidationError::WrongType {
         field,
@@ -165,10 +159,7 @@ pub fn validate_nonce_field(
 
 /// Validate a half-life field — positive u64 bounded by
 /// [`MAX_HALF_LIFE_EPOCHS`].
-pub fn validate_half_life_field(
-    args: &Value,
-    field: &'static str,
-) -> Result<u64, ValidationError> {
+pub fn validate_half_life_field(args: &Value, field: &'static str) -> Result<u64, ValidationError> {
     validate_amount_field(args, field, MAX_HALF_LIFE_EPOCHS)
 }
 

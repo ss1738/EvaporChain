@@ -60,7 +60,13 @@ mod press_claim_tests {
         let mut iid = [0u8; 32];
         iid[0] = instance_byte;
         DeployReceipt::new(
-            [1u8; 32], iid, MAYFLY, [7u8; 32], 500, block_height, block_height,
+            [1u8; 32],
+            iid,
+            MAYFLY,
+            [7u8; 32],
+            500,
+            block_height,
+            block_height,
         )
         .unwrap()
     }
@@ -81,7 +87,10 @@ mod press_claim_tests {
 
         // Monotonicity: appending an older height fails.
         let res = log.append(receipt(1, 0xDD));
-        assert!(res.is_err(), "monotone non-decreasing block heights required");
+        assert!(
+            res.is_err(),
+            "monotone non-decreasing block heights required"
+        );
 
         // Duplicate receipt rejected.
         let dup = log.append(receipt(2, 0xBB));

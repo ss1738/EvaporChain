@@ -104,8 +104,7 @@ mod tests {
     #[test]
     fn list_rejects_non_subject() {
         let l = lease(0xAA, 1000);
-        let err = list_lease_for_sale(&l, [0xBB; 32], aid(1), 1000, 100, 0, 100)
-            .unwrap_err();
+        let err = list_lease_for_sale(&l, [0xBB; 32], aid(1), 1000, 100, 0, 100).unwrap_err();
         assert_eq!(err, MarketError::NotCurrentSubject);
     }
 
@@ -113,8 +112,7 @@ mod tests {
     fn list_rejects_expired_lease() {
         let l = lease(0xAA, 100);
         // Open auction at epoch 200 — lease already expired.
-        let err =
-            list_lease_for_sale(&l, [0xAA; 32], aid(1), 1000, 100, 200, 100).unwrap_err();
+        let err = list_lease_for_sale(&l, [0xAA; 32], aid(1), 1000, 100, 200, 100).unwrap_err();
         assert_eq!(err, MarketError::Expired);
     }
 
@@ -133,7 +131,9 @@ mod tests {
         // and lambda_tolerance=10000 ≥ lot_lambda=10000 (epochs remaining).
         let buyer = [0xCC; 32];
         let b = Bid::new(buyer, 600, 10_000, 50).unwrap();
-        let cleared = settle_lease_resale(&mut l, &mut a, &[b], 50).unwrap().unwrap();
+        let cleared = settle_lease_resale(&mut l, &mut a, &[b], 50)
+            .unwrap()
+            .unwrap();
         assert_eq!(cleared.winner, buyer);
         assert_eq!(l.subject, buyer);
     }

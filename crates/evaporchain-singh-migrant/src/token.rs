@@ -250,7 +250,10 @@ mod tests {
         let outcome = t.transfer(addr(0xAA), addr(0xBB), 50).unwrap();
         match outcome {
             TransferOutcome::Novel { post_energy } => {
-                assert!(post_energy > 500, "expected refund > 500, got {post_energy}");
+                assert!(
+                    post_energy > 500,
+                    "expected refund > 500, got {post_energy}"
+                );
                 assert!(post_energy <= 1000, "must not inflate above initial");
             }
             other => panic!("expected Novel, got {other:?}"),
@@ -300,10 +303,8 @@ mod tests {
         // initial budget so neither evaporates before we can measure:
         //   (a) circulate every 10 epochs (fast — stays in tier 1 mostly)
         //   (b) circulate every 50 epochs (slow — crosses into tier 2/3)
-        let mut a =
-            MigrantToken::mint(id(1), addr(0x00), 1_000_000, 200, 30, 0).unwrap();
-        let mut b =
-            MigrantToken::mint(id(2), addr(0x00), 1_000_000, 200, 30, 0).unwrap();
+        let mut a = MigrantToken::mint(id(1), addr(0x00), 1_000_000, 200, 30, 0).unwrap();
+        let mut b = MigrantToken::mint(id(2), addr(0x00), 1_000_000, 200, 30, 0).unwrap();
         // Three distinct hops at 10-epoch intervals (tier 1 throughout).
         let mut owner_a = addr(0x00);
         for hop in 1..=3 {

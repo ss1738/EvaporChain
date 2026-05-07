@@ -115,10 +115,7 @@ mod press_claim_tests {
     #[test]
     fn the_press_claim_lives_as_a_test() {
         // Deterministic distribution (mass on one outcome) → 0 slash.
-        assert_eq!(
-            entropic_slash(1_000_000, &[500_000, 0, 0]).unwrap(),
-            0
-        );
+        assert_eq!(entropic_slash(1_000_000, &[500_000, 0, 0]).unwrap(), 0);
 
         // Skewed (80/20) gives partial slash > 0 but ≤ stake.
         let skewed = entropic_slash(1_000, &[800, 200]).unwrap();

@@ -995,9 +995,9 @@ impl StateDB for RocksDBStateDB {
                 address: *addr,
                 balance: 0,
                 nonce: 0,
-            storage_deposit: 0,
-            storage_bytes: 0,
-            last_touched_epoch: 0,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 0,
             };
             self.persist_account(&account);
             let key = trie_key_for_account(&account.address);
@@ -1366,7 +1366,14 @@ mod tests {
     fn make_account(b: u8, balance: u64) -> Account {
         let mut addr = [0u8; 32];
         addr[0] = b;
-        Account { address: addr, balance, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 }
+        Account {
+            address: addr,
+            balance,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        }
     }
 
     #[test]

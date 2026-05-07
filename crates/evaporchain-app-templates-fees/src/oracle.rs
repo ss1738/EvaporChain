@@ -42,18 +42,18 @@ const PER_SCL_TARGET_BYTE: u64 = 4; // verb+object combined
 /// computing diffs between two ladder lengths.
 pub fn base_fee(typed: &TypedInit) -> u64 {
     let surcharge = match typed {
-        TypedInit::SinghSabi(_)
-        | TypedInit::SinghMigrant(_)
-        | TypedInit::Mayfly(_) => SURCHARGE_NFT_BASE,
+        TypedInit::SinghSabi(_) | TypedInit::SinghMigrant(_) | TypedInit::Mayfly(_) => {
+            SURCHARGE_NFT_BASE
+        }
         TypedInit::SinghResonance(_) | TypedInit::SinghPosthuma(_) => SURCHARGE_NFT_RICH,
         TypedInit::Sddc(_)
         | TypedInit::Sfsv(_)
         | TypedInit::Shlm(_)
         | TypedInit::Scl(_)
         | TypedInit::Sap(_) => SURCHARGE_MARKETPLACE,
-        TypedInit::SinghTriage(_)
-        | TypedInit::SinghHeartbeat(_)
-        | TypedInit::SinghLineage(_) => SURCHARGE_WALLET_UX,
+        TypedInit::SinghTriage(_) | TypedInit::SinghHeartbeat(_) | TypedInit::SinghLineage(_) => {
+            SURCHARGE_WALLET_UX
+        }
         TypedInit::Childkey(_) | TypedInit::Mnemochain(_) | TypedInit::Witnessfit(_) => {
             SURCHARGE_CONSUMER
         }
@@ -94,10 +94,7 @@ pub fn fee_for(typed: &TypedInit) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_app_templates::{
-        catalogue,
-        class::*,
-    };
+    use evaporchain_app_templates::{catalogue, class::*};
     use evaporchain_app_templates_deploy::DeployRequest;
     use evaporchain_app_templates_engine::*;
     use evaporchain_app_templates_materialise::materialise_request;
@@ -136,13 +133,25 @@ mod tests {
     #[test]
     fn lineage_fee_scales_with_ladder_length() {
         let one_rung = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
-            ladder: vec![init_singh_lineage::LadderRung { days: 90, share_bp: 2500 }],
+            ladder: vec![init_singh_lineage::LadderRung {
+                days: 90,
+                share_bp: 2500,
+            }],
         });
         let three_rungs = TypedInit::SinghLineage(init_singh_lineage::InitConfig {
             ladder: vec![
-                init_singh_lineage::LadderRung { days: 90, share_bp: 2500 },
-                init_singh_lineage::LadderRung { days: 180, share_bp: 5000 },
-                init_singh_lineage::LadderRung { days: 365, share_bp: 10000 },
+                init_singh_lineage::LadderRung {
+                    days: 90,
+                    share_bp: 2500,
+                },
+                init_singh_lineage::LadderRung {
+                    days: 180,
+                    share_bp: 5000,
+                },
+                init_singh_lineage::LadderRung {
+                    days: 365,
+                    share_bp: 10000,
+                },
             ],
         });
         assert!(fee_for(&three_rungs) > fee_for(&one_rung));
@@ -155,7 +164,9 @@ mod tests {
 
     #[test]
     fn sgb_fee_scales_with_fragment_length() {
-        let short = TypedInit::Sgb(init_sgb::InitConfig { fragment: "SLL".into() });
+        let short = TypedInit::Sgb(init_sgb::InitConfig {
+            fragment: "SLL".into(),
+        });
         let long = TypedInit::Sgb(init_sgb::InitConfig {
             fragment: "SLL_extended_with_modal_operators".into(),
         });
@@ -191,7 +202,9 @@ mod tests {
         // Doctrine: paradigm primitives (SGB / SBAV / SSM) bootstrap
         // a typing VM and should be the most expensive deploy.
         let sabi = typed_for(SINGH_SABI);
-        let sgb = TypedInit::Sgb(init_sgb::InitConfig { fragment: "SLL".into() });
+        let sgb = TypedInit::Sgb(init_sgb::InitConfig {
+            fragment: "SLL".into(),
+        });
         assert!(fee_for(&sgb) > fee_for(&sabi));
     }
 

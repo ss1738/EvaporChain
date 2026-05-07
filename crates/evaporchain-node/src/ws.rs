@@ -164,7 +164,10 @@ impl WsBroadcaster {
 
     pub fn new_with_cap(capacity: usize, max_subscribers: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
-        Self { tx, max_subscribers }
+        Self {
+            tx,
+            max_subscribers,
+        }
     }
 
     pub fn publish(&self, event: WsEvent) {

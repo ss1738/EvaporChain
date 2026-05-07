@@ -72,7 +72,10 @@ mod press_claim_tests {
 
         // Source death → inverted.
         leg.certify_source_death(100);
-        assert!(matches!(leg.state, SplitState::Inverted { died_at_epoch: 100 }));
+        assert!(matches!(
+            leg.state,
+            SplitState::Inverted { died_at_epoch: 100 }
+        ));
 
         // r1 accepts → counts toward total.
         leg.curate(r1, Curation::Accepted).unwrap();
@@ -111,12 +114,7 @@ mod press_claim_tests {
         ));
         // Self-recipient rejected.
         assert!(matches!(
-            SplitLegacy::declare(
-                SplitId([3u8; 32]),
-                source,
-                vec![(source, 10_000)],
-                0,
-            ),
+            SplitLegacy::declare(SplitId([3u8; 32]), source, vec![(source, 10_000)], 0,),
             Err(SplitError::SelfRecipient)
         ));
     }

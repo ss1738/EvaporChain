@@ -220,11 +220,7 @@ impl SocialRecoveryManager {
         // process-wide monotonic counter.
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let id = format!(
-            "recovery_{}_{}",
-            now.timestamp_nanos_opt().unwrap_or(0),
-            n
-        );
+        let id = format!("recovery_{}_{}", now.timestamp_nanos_opt().unwrap_or(0), n);
 
         let request = RecoveryRequest {
             id: id.clone(),

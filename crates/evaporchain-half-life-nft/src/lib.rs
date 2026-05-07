@@ -32,7 +32,7 @@
 pub mod tier;
 pub mod token;
 
-pub use tier::{Tier, TierLadder, default_ladder};
+pub use tier::{default_ladder, Tier, TierLadder};
 pub use token::{HalfLifeNft, NftError, TokenId};
 
 #[cfg(test)]
@@ -52,14 +52,8 @@ mod press_claim_tests {
         let alice = [0xAAu8; 32];
         let bob = [0xBBu8; 32];
 
-        let mut nft = HalfLifeNft::mint(
-            TokenId([1u8; 32]),
-            alice,
-            10_000,
-            0,
-            default_ladder(),
-        )
-        .unwrap();
+        let mut nft =
+            HalfLifeNft::mint(TokenId([1u8; 32]), alice, 10_000, 0, default_ladder()).unwrap();
 
         // Fresh mint: tier 0 (lowest tier, fastest decay).
         assert_eq!(nft.current_tier_index(), 0);
@@ -69,7 +63,10 @@ mod press_claim_tests {
         nft.tick_to(10_000).unwrap();
         let energy_after_long_hold = nft.energy;
         let tier_after_long_hold = nft.current_tier_index();
-        assert!(tier_after_long_hold >= 1, "long hold must have promoted at least 1 tier");
+        assert!(
+            tier_after_long_hold >= 1,
+            "long hold must have promoted at least 1 tier"
+        );
 
         // Transfer resets retention clock and tier — held_epochs goes
         // back to 0 → tier 0 — but energy is preserved.

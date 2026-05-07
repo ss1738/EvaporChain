@@ -76,11 +76,11 @@ mod press_claim_tests {
             id,
             holder,
             Verb::Send,
-            vec![3u8; 32],          // recipient address
-            b"{}".to_vec(),         // minimal valid constraint
-            1_000,                  // deadline_epoch
-            500,                    // energy_budget
-            9_500,                  // 95% confidence
+            vec![3u8; 32],  // recipient address
+            b"{}".to_vec(), // minimal valid constraint
+            1_000,          // deadline_epoch
+            500,            // energy_budget
+            9_500,          // 95% confidence
         )
         .unwrap();
 
@@ -111,7 +111,16 @@ mod press_claim_tests {
         ));
         // Object too long (>1024) → rejected.
         assert!(matches!(
-            Intent::new(id, holder, Verb::Send, vec![0u8; 2_000], b"{}".to_vec(), 1, 1, 1),
+            Intent::new(
+                id,
+                holder,
+                Verb::Send,
+                vec![0u8; 2_000],
+                b"{}".to_vec(),
+                1,
+                1,
+                1
+            ),
             Err(IntentError::ObjectTooLong)
         ));
         // Zero deadline → rejected.

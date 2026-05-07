@@ -134,7 +134,10 @@ impl HeirloomNft {
             return Err(HeirloomError::HolderStillAlive);
         }
         // Find the highest-priority live heir.
-        let live_idx = self.kin.iter().position(|e| matches!(e.state, HeirState::Live));
+        let live_idx = self
+            .kin
+            .iter()
+            .position(|e| matches!(e.state, HeirState::Live));
         match live_idx {
             None => {
                 // No live heirs → escheat.
@@ -189,22 +192,41 @@ impl HeirloomNft {
 mod tests {
     use super::*;
 
-    fn tid(b: u8) -> TokenId { TokenId([b; 32]) }
-    fn alice() -> [u8; 32] { [0xAA; 32] }
-    fn bob() -> [u8; 32] { [0xBB; 32] }
-    fn carol() -> [u8; 32] { [0xCC; 32] }
-    fn dan() -> [u8; 32] { [0xDD; 32] }
+    fn tid(b: u8) -> TokenId {
+        TokenId([b; 32])
+    }
+    fn alice() -> [u8; 32] {
+        [0xAA; 32]
+    }
+    fn bob() -> [u8; 32] {
+        [0xBB; 32]
+    }
+    fn carol() -> [u8; 32] {
+        [0xCC; 32]
+    }
+    fn dan() -> [u8; 32] {
+        [0xDD; 32]
+    }
 
     fn live(addr: [u8; 32]) -> KinEdge {
-        KinEdge { heir: addr, state: HeirState::Live }
+        KinEdge {
+            heir: addr,
+            state: HeirState::Live,
+        }
     }
 
     fn dead(addr: [u8; 32]) -> KinEdge {
-        KinEdge { heir: addr, state: HeirState::Dead }
+        KinEdge {
+            heir: addr,
+            state: HeirState::Dead,
+        }
     }
 
     fn refused(addr: [u8; 32]) -> KinEdge {
-        KinEdge { heir: addr, state: HeirState::Refused }
+        KinEdge {
+            heir: addr,
+            state: HeirState::Refused,
+        }
     }
 
     // ── construction ─────────────────────────────────────────────
@@ -233,14 +255,8 @@ mod tests {
 
     #[test]
     fn inherit_passes_to_highest_live_heir() {
-        let mut n = HeirloomNft::mint(
-            tid(1),
-            alice(),
-            1000,
-            vec![live(bob()), live(carol())],
-            0,
-        )
-        .unwrap();
+        let mut n =
+            HeirloomNft::mint(tid(1), alice(), 1000, vec![live(bob()), live(carol())], 0).unwrap();
         n.certify_holder_death().unwrap();
         let new_holder = n.inherit().unwrap();
         assert_eq!(new_holder, bob());
@@ -251,14 +267,8 @@ mod tests {
 
     #[test]
     fn inherit_skips_dead_heirs() {
-        let mut n = HeirloomNft::mint(
-            tid(1),
-            alice(),
-            1000,
-            vec![dead(bob()), live(carol())],
-            0,
-        )
-        .unwrap();
+        let mut n =
+            HeirloomNft::mint(tid(1), alice(), 1000, vec![dead(bob()), live(carol())], 0).unwrap();
         n.certify_holder_death().unwrap();
         let new_holder = n.inherit().unwrap();
         assert_eq!(new_holder, carol());
@@ -297,28 +307,15 @@ mod tests {
 
     #[test]
     fn inherit_holder_alive_rejected() {
-        let mut n = HeirloomNft::mint(
-            tid(1),
-            alice(),
-            1000,
-            vec![live(bob())],
-            0,
-        )
-        .unwrap();
+        let mut n = HeirloomNft::mint(tid(1), alice(), 1000, vec![live(bob())], 0).unwrap();
         let err = n.inherit().unwrap_err();
         assert_eq!(err, HeirloomError::HolderStillAlive);
     }
 
     #[test]
     fn inherit_clears_kin_for_new_holder() {
-        let mut n = HeirloomNft::mint(
-            tid(1),
-            alice(),
-            1000,
-            vec![live(bob()), live(carol())],
-            0,
-        )
-        .unwrap();
+        let mut n =
+            HeirloomNft::mint(tid(1), alice(), 1000, vec![live(bob()), live(carol())], 0).unwrap();
         n.certify_holder_death().unwrap();
         n.inherit().unwrap();
         assert!(n.kin.is_empty());
@@ -335,14 +332,7 @@ mod tests {
 
     #[test]
     fn set_kin_replaces_full_list() {
-        let mut n = HeirloomNft::mint(
-            tid(1),
-            alice(),
-            1000,
-            vec![live(bob())],
-            0,
-        )
-        .unwrap();
+        let mut n = HeirloomNft::mint(tid(1), alice(), 1000, vec![live(bob())], 0).unwrap();
         n.set_kin(vec![live(carol()), live(dan())]).unwrap();
         assert_eq!(n.kin.len(), 2);
         assert_eq!(n.kin[0].heir, carol());
@@ -383,14 +373,7 @@ mod tests {
 
     #[test]
     fn reinforce_restores_energy() {
-        let mut n = HeirloomNft::mint(
-            tid(1),
-            alice(),
-            1000,
-            vec![live(bob())],
-            0,
-        )
-        .unwrap();
+        let mut n = HeirloomNft::mint(tid(1), alice(), 1000, vec![live(bob())], 0).unwrap();
         n.certify_holder_death().unwrap();
         n.inherit().unwrap();
         assert_eq!(n.energy, 500);
@@ -402,20 +385,19 @@ mod tests {
 
     #[test]
     fn escheated_token_rejects_further_ops() {
-        let mut n = HeirloomNft::mint(
-            tid(1),
-            alice(),
-            1000,
-            vec![dead(bob())],
-            0,
-        )
-        .unwrap();
+        let mut n = HeirloomNft::mint(tid(1), alice(), 1000, vec![dead(bob())], 0).unwrap();
         n.certify_holder_death().unwrap();
         let _ = n.inherit(); // escheats
         assert!(n.escheated);
         // Subsequent ops fail.
-        assert_eq!(n.certify_holder_death().unwrap_err(), HeirloomError::Escheated);
-        assert!(matches!(n.tick_to(100, 1000).unwrap_err(), HeirloomError::Escheated));
+        assert_eq!(
+            n.certify_holder_death().unwrap_err(),
+            HeirloomError::Escheated
+        );
+        assert!(matches!(
+            n.tick_to(100, 1000).unwrap_err(),
+            HeirloomError::Escheated
+        ));
         assert_eq!(n.reinforce(500).unwrap_err(), HeirloomError::Escheated);
         assert_eq!(n.set_kin(vec![]).unwrap_err(), HeirloomError::Escheated);
     }
@@ -440,9 +422,7 @@ mod tests {
         // of its value. Heirs who actively reinforce keep it
         // alive; heirs who don't watch it fade."
 
-        let mut active = HeirloomNft::mint(
-            tid(1), alice(), 16_000, vec![live(bob())], 0,
-        ).unwrap();
+        let mut active = HeirloomNft::mint(tid(1), alice(), 16_000, vec![live(bob())], 0).unwrap();
         // Active line: bob inherits, immediately reinforces.
         active.certify_holder_death().unwrap();
         active.inherit().unwrap();
@@ -455,9 +435,8 @@ mod tests {
         assert_eq!(active.energy, 16_000);
         assert_eq!(active.generation, 2);
 
-        let mut neglected = HeirloomNft::mint(
-            tid(2), alice(), 16_000, vec![live(bob())], 0,
-        ).unwrap();
+        let mut neglected =
+            HeirloomNft::mint(tid(2), alice(), 16_000, vec![live(bob())], 0).unwrap();
         // Neglected line: nobody reinforces.
         neglected.certify_holder_death().unwrap();
         neglected.inherit().unwrap();

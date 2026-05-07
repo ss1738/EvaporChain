@@ -145,8 +145,7 @@ pub fn verify_inclusion(
 
     // Walk the sibling path to reconstruct the target peak.
     let mut h = proof.leaf.hash();
-    let (_, peak_size, offset_in_peak, _, _) =
-        locate_peak(proof.mmr_leaf_count, proof.leaf_index);
+    let (_, peak_size, offset_in_peak, _, _) = locate_peak(proof.mmr_leaf_count, proof.leaf_index);
     let expected_path_len = peak_size.trailing_zeros() as usize;
     if proof.sibling_path.len() != expected_path_len {
         return Err(ProofError::MalformedPath);
@@ -294,7 +293,10 @@ mod tests {
     fn out_of_range_leaf_rejected() {
         let m = build_mmr(5, 1000);
         let err = InclusionProof::build(&m, 100).unwrap_err();
-        assert!(matches!(err, ProofError::LeafOutOfRange { idx: 100, len: 5 }));
+        assert!(matches!(
+            err,
+            ProofError::LeafOutOfRange { idx: 100, len: 5 }
+        ));
     }
 
     #[test]
@@ -339,12 +341,18 @@ mod tests {
         // floor is 100. The proof's hash chain is valid against
         // the MMR root, but the energy-floor check rejects it.
         let mut m = EpaMmr::new();
-        m.append(leaf(1, 10));   // evaporated
+        m.append(leaf(1, 10)); // evaporated
         m.append(leaf(2, 1000)); // healthy
         let root = m.root().unwrap();
         let proof = InclusionProof::build(&m, 0).unwrap();
         let err = verify_inclusion(&proof, &root, 100).unwrap_err();
-        assert_eq!(err, ProofError::EnergyBelowFloor { energy: 10, floor: 100 });
+        assert_eq!(
+            err,
+            ProofError::EnergyBelowFloor {
+                energy: 10,
+                floor: 100
+            }
+        );
     }
 
     #[test]
@@ -442,12 +450,8 @@ mod tests {
         // unprovable.
         verify_inclusion(&InclusionProof::build(&m, 0).unwrap(), &root2, 100).unwrap();
         verify_inclusion(&InclusionProof::build(&m, 2).unwrap(), &root2, 100).unwrap();
-        let err = verify_inclusion(
-            &InclusionProof::build(&m, 1).unwrap(),
-            &root2,
-            100,
-        )
-        .unwrap_err();
+        let err =
+            verify_inclusion(&InclusionProof::build(&m, 1).unwrap(), &root2, 100).unwrap_err();
         assert!(matches!(err, ProofError::EnergyBelowFloor { .. }));
     }
 

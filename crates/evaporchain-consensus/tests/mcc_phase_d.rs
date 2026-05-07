@@ -149,8 +149,7 @@ fn mcc_phase_d1_four_validators_converge_on_three_forks() {
         3,
         "proposer must emit the full 3-fork antichain under mcc_full"
     );
-    let parent_set: std::collections::BTreeSet<[u8; 32]> =
-        parents_1.iter().copied().collect();
+    let parent_set: std::collections::BTreeSet<[u8; 32]> = parents_1.iter().copied().collect();
     assert_eq!(parent_set, heads_1);
     assert!(
         evaporchain_light_cone::concurrency::is_antichain(&v1.light_cone_dag, &parents_1),
@@ -197,7 +196,10 @@ fn mcc_phase_d1_late_joining_validator_converges_after_catchup() {
     let late_head = v4.update_authoritative_head().expect("Some");
     let late_parents = v4.propose_parents();
 
-    assert_eq!(early_head, late_head, "late-joining v4 must converge on same head");
+    assert_eq!(
+        early_head, late_head,
+        "late-joining v4 must converge on same head"
+    );
     assert_eq!(
         early_parents, late_parents,
         "late-joining v4 must produce same antichain"
@@ -552,8 +554,8 @@ fn mcc_phase_d3_state_replay_correctness_under_head_churn() {
     // Capture genesis state (empty DB) and register genesis as a
     // state branch with the snapshot attached. This is what
     // `restore_to_lca` reads when the replay's LCA == id(0).
-    let genesis_snapshot = StateSnapshotBranch::capture(id(0), 0, 0, &mut db)
-        .expect("snapshot capture at genesis");
+    let genesis_snapshot =
+        StateSnapshotBranch::capture(id(0), 0, 0, &mut db).expect("snapshot capture at genesis");
     tc.state_branches
         .insert(id(0), LightConeBranchMetadata::fresh(0, 0));
     tc.attach_branch_snapshot(id(0), std::sync::Arc::new(genesis_snapshot))
@@ -638,8 +640,12 @@ fn mcc_phase_d3_state_replay_correctness_under_head_churn() {
 
         let r = tc
             .replay_and_apply(&mut db, current, target, block_lookup_n, block_apply_n)
-            .unwrap_or_else(|e| panic!("round {}: replay {:?} → {:?} failed: {:?}",
-                round, current, target, e));
+            .unwrap_or_else(|e| {
+                panic!(
+                    "round {}: replay {:?} → {:?} failed: {:?}",
+                    round, current, target, e
+                )
+            });
 
         assert_eq!(r.lca, id(0), "round {}: LCA must be genesis", round);
 
@@ -651,11 +657,19 @@ fn mcc_phase_d3_state_replay_correctness_under_head_churn() {
         if target == head_a {
             assert_eq!(bal_a, 5, "round {}: target=A → addr_a.balance == 5", round);
             assert_eq!(bal_b, 0, "round {}: target=A → addr_b.balance == 0", round);
-            assert_eq!(r.applied, fork_a_path, "round {}: applied path == fork A", round);
+            assert_eq!(
+                r.applied, fork_a_path,
+                "round {}: applied path == fork A",
+                round
+            );
         } else {
             assert_eq!(bal_a, 0, "round {}: target=B → addr_a.balance == 0", round);
             assert_eq!(bal_b, 5, "round {}: target=B → addr_b.balance == 5", round);
-            assert_eq!(r.applied, fork_b_path, "round {}: applied path == fork B", round);
+            assert_eq!(
+                r.applied, fork_b_path,
+                "round {}: applied path == fork B",
+                round
+            );
         }
 
         current = target;
@@ -701,7 +715,11 @@ fn mcc_phase_d3_atomic_replay_matches_non_atomic_on_success_path() {
         Some(make_test_block(height, fork, parent))
     };
     let block_apply = move |db: &mut dyn StateDB, block: &TxBlock| -> Result<(), String> {
-        let addr = if block.producer_id == Some(1) { addr_a } else { addr_b };
+        let addr = if block.producer_id == Some(1) {
+            addr_a
+        } else {
+            addr_b
+        };
         let acct = db.get_or_create_account(&addr);
         acct.balance = acct.balance.saturating_add(1);
         Ok(())
@@ -845,8 +863,7 @@ fn mcc_phase_d4_propose_parents_under_500us() {
 fn mcc_phase_d4_state_branches_ops_under_20us() {
     let mut tc = build_4_head_dag();
     let mut db = InMemoryStateDB::new();
-    let snap =
-        StateSnapshotBranch::capture(id(0), 0, 0, &mut db).expect("capture genesis");
+    let snap = StateSnapshotBranch::capture(id(0), 0, 0, &mut db).expect("capture genesis");
     let arc_snap = std::sync::Arc::new(snap);
 
     // Pre-populate state_branches[id(0)] so attach hits the
@@ -1021,11 +1038,7 @@ fn mcc_phase_d5_substrate_soak_no_drift_under_sustained_load() {
     let elapsed = start.elapsed();
     println!(
         "D.5 soak: {} block insertions × {} forks, {} accessor calls each, {} stalls, {:?} elapsed",
-        D5_SOAK_BLOCKS,
-        D5_FORKS,
-        5,
-        stall_count,
-        elapsed
+        D5_SOAK_BLOCKS, D5_FORKS, 5, stall_count, elapsed
     );
 
     // Property 1: zero stalls (heads always == 4 after fork is

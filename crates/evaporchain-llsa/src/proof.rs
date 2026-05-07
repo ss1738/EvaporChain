@@ -240,12 +240,13 @@ mod tests {
     /// thresholds.
     #[test]
     fn multi_auditor_constructor_rejects_invalid_thresholds() {
-        let vs: Vec<Box<dyn ProofVerifier + Send + Sync>> =
-            vec![Box::new(AlwaysAcceptVerifier), Box::new(AlwaysAcceptVerifier)];
+        let vs: Vec<Box<dyn ProofVerifier + Send + Sync>> = vec![
+            Box::new(AlwaysAcceptVerifier),
+            Box::new(AlwaysAcceptVerifier),
+        ];
         // threshold = 0 → None
         assert!(MultiAuditorVerifier::new(vs, 0).is_none());
-        let vs: Vec<Box<dyn ProofVerifier + Send + Sync>> =
-            vec![Box::new(AlwaysAcceptVerifier)];
+        let vs: Vec<Box<dyn ProofVerifier + Send + Sync>> = vec![Box::new(AlwaysAcceptVerifier)];
         // threshold > n → None
         assert!(MultiAuditorVerifier::new(vs, 2).is_none());
     }
@@ -304,7 +305,10 @@ mod tests {
     #[test]
     fn multi_auditor_unanimous_threshold() {
         let v = MultiAuditorVerifier::new(
-            vec![Box::new(AlwaysAcceptVerifier), Box::new(AlwaysAcceptVerifier)],
+            vec![
+                Box::new(AlwaysAcceptVerifier),
+                Box::new(AlwaysAcceptVerifier),
+            ],
             2,
         )
         .expect("valid threshold");
@@ -312,7 +316,10 @@ mod tests {
         assert!(v.verify(&p, [1u8; 32], [2u8; 32]).is_ok());
 
         let v_with_reject = MultiAuditorVerifier::new(
-            vec![Box::new(AlwaysAcceptVerifier), Box::new(AlwaysRejectVerifier)],
+            vec![
+                Box::new(AlwaysAcceptVerifier),
+                Box::new(AlwaysRejectVerifier),
+            ],
             2,
         )
         .expect("valid threshold");

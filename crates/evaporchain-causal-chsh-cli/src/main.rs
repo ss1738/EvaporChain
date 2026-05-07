@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use evaporchain_causal_chsh_cli::{run_cli, CliIo, CliError};
+use evaporchain_causal_chsh_cli::{run_cli, CliError, CliIo};
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();

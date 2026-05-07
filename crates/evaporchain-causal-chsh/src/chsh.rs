@@ -243,10 +243,30 @@ mod tests {
         // PER PAIR and aggregate via the classical helper.
         // S ≤ 2 by Bell's theorem.
         let lhv_pairs = vec![
-            ConcurrentPair { a: 1, a_prime: 1, b: 1, b_prime: 1 },
-            ConcurrentPair { a: 1, a_prime: -1, b: 1, b_prime: -1 },
-            ConcurrentPair { a: -1, a_prime: 1, b: -1, b_prime: 1 },
-            ConcurrentPair { a: -1, a_prime: -1, b: -1, b_prime: -1 },
+            ConcurrentPair {
+                a: 1,
+                a_prime: 1,
+                b: 1,
+                b_prime: 1,
+            },
+            ConcurrentPair {
+                a: 1,
+                a_prime: -1,
+                b: 1,
+                b_prime: -1,
+            },
+            ConcurrentPair {
+                a: -1,
+                a_prime: 1,
+                b: -1,
+                b_prime: 1,
+            },
+            ConcurrentPair {
+                a: -1,
+                a_prime: -1,
+                b: -1,
+                b_prime: -1,
+            },
         ];
         let s = compute_chsh_s_classical(&lhv_pairs).unwrap();
         assert!(s <= 2.0 + 1e-9, "Bell bound: S ≤ 2, got {}", s);
@@ -264,9 +284,9 @@ mod tests {
         // classical source can't independently rig the four marginals.
         // A communicating cartel CAN.
         let s_samples = samples(
-            vec![1, 1, 1, 1],   // E(A,B) = 1
-            vec![1, 1, 1, 1],   // E(A,B') = 1
-            vec![1, 1, 1, 1],   // E(A',B) = 1
+            vec![1, 1, 1, 1],     // E(A,B) = 1
+            vec![1, 1, 1, 1],     // E(A,B') = 1
+            vec![1, 1, 1, 1],     // E(A',B) = 1
             vec![-1, -1, -1, -1], // E(A',B') = -1
         );
         let s = compute_chsh_s(&s_samples).unwrap();

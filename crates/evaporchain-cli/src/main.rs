@@ -1528,9 +1528,7 @@ fn cmd_testnet_init(
             );
         }
         if listen_ip != "127.0.0.1" {
-            eprintln!(
-                "warning: ignoring --listen-ip, using --per-validator-ips"
-            );
+            eprintln!("warning: ignoring --listen-ip, using --per-validator-ips");
         }
         per_validator_ips.to_vec()
     } else {
@@ -1603,16 +1601,10 @@ fn cmd_testnet_init(
         // can publish a stable peer-id-suffixed entry.
         let v_port = p2p_base + vid as u16;
         let v_keypair = evaporchain_network::load_or_generate_identity(&v_data_dir)
-            .with_context(|| {
-                format!(
-                    "Failed to load_or_generate libp2p identity for v{}",
-                    vid
-                )
-            })?;
+            .with_context(|| format!("Failed to load_or_generate libp2p identity for v{}", vid))?;
         let v_peer_id = v_keypair.public().to_peer_id();
         let v_ip = &per_validator_ips[(vid - 1) as usize];
-        let v_multiaddr =
-            format!("/ip4/{}/tcp/{}/p2p/{}", v_ip, v_port, v_peer_id);
+        let v_multiaddr = format!("/ip4/{}/tcp/{}/p2p/{}", v_ip, v_port, v_peer_id);
         bootstrap_multiaddrs.push(v_multiaddr.clone());
 
         genesis_validators.push(GenesisValidator {
@@ -1634,8 +1626,8 @@ fn cmd_testnet_init(
 
     // Faucet: hold the remaining share so the testnet has a known funded
     // address tests/demos can transfer from.
-    let faucet_share = total_supply
-        .saturating_sub((total_supply / (validators as u64 + 1)) * (validators as u64));
+    let faucet_share =
+        total_supply.saturating_sub((total_supply / (validators as u64 + 1)) * (validators as u64));
     genesis_accounts.push(GenesisAccount {
         address: [0xFAu8; 32],
         balance: faucet_share,
@@ -2726,8 +2718,8 @@ fn cmd_genesis_contribute(
 
     let keys_json = std::fs::read_to_string(keys_path)
         .with_context(|| format!("failed to read keys file {}", keys_path))?;
-    let bundle: serde_json::Value = serde_json::from_str(&keys_json)
-        .with_context(|| "keys file is not valid JSON")?;
+    let bundle: serde_json::Value =
+        serde_json::from_str(&keys_json).with_context(|| "keys file is not valid JSON")?;
 
     let bls_sk_hex = bundle
         .get("bls")
@@ -2949,7 +2941,10 @@ fn cmd_genesis_ceremony(
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
         } else {
-            println!("  {} Ceremony failed: invalid envelopes:", "\u{2718}".red().bold());
+            println!(
+                "  {} Ceremony failed: invalid envelopes:",
+                "\u{2718}".red().bold()
+            );
             for (path, err) in &errors {
                 println!("    - {}: {}", path.cyan(), err.red());
             }
@@ -3069,11 +3064,8 @@ fn cmd_genesis_ceremony(
             "bls_public_key": e.body.bls_public_key,
         })).collect::<Vec<_>>(),
     });
-    std::fs::write(
-        &transcript_path,
-        serde_json::to_string_pretty(&transcript)?,
-    )
-    .with_context(|| format!("failed to write transcript to {}", transcript_path))?;
+    std::fs::write(&transcript_path, serde_json::to_string_pretty(&transcript)?)
+        .with_context(|| format!("failed to write transcript to {}", transcript_path))?;
 
     if json_mode {
         let out = serde_json::json!({
@@ -3126,8 +3118,8 @@ fn cmd_genesis_verify_ceremony(
 ) -> Result<()> {
     let transcript_text = std::fs::read_to_string(transcript_path)
         .with_context(|| format!("failed to read transcript {}", transcript_path))?;
-    let transcript: serde_json::Value = serde_json::from_str(&transcript_text)
-        .with_context(|| "transcript is not valid JSON")?;
+    let transcript: serde_json::Value =
+        serde_json::from_str(&transcript_text).with_context(|| "transcript is not valid JSON")?;
 
     let chain_id = transcript
         .get("chain_id")
@@ -3269,7 +3261,9 @@ impl HttpCellSource {
     /// Pick the next base URL for outgoing requests. Round-robin under
     /// concurrency-safe atomic increment.
     fn next_base(&self) -> &str {
-        let i = self.cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let i = self
+            .cursor
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         &self.bases[i % self.bases.len()]
     }
 
@@ -3348,11 +3342,11 @@ impl HttpCellSource {
                 .ok_or_else(|| anyhow::anyhow!("header missing `{}` array", key))?;
             arr.iter()
                 .map(|x| {
-                    let s = x.as_str().ok_or_else(|| {
-                        anyhow::anyhow!("non-string in `{}`", key)
-                    })?;
-                    let bytes = hex::decode(s)
-                        .with_context(|| format!("decode hex in `{}`", key))?;
+                    let s = x
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("non-string in `{}`", key))?;
+                    let bytes =
+                        hex::decode(s).with_context(|| format!("decode hex in `{}`", key))?;
                     if bytes.len() != 32 {
                         anyhow::bail!("entry in `{}` is not 32 bytes", key);
                     }
@@ -3372,11 +3366,10 @@ impl HttpCellSource {
             .and_then(|x| x.as_u64())
             .ok_or_else(|| anyhow::anyhow!("header missing original_dim"))?
             as usize;
-        let cell_size = v
-            .get("cell_size")
-            .and_then(|x| x.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("header missing cell_size"))?
-            as usize;
+        let cell_size =
+            v.get("cell_size")
+                .and_then(|x| x.as_u64())
+                .ok_or_else(|| anyhow::anyhow!("header missing cell_size"))? as usize;
         let original_len = v
             .get("original_len")
             .and_then(|x| x.as_u64())
@@ -3403,8 +3396,10 @@ impl evaporchain_da::light_client::CellSource for HttpCellSource {
         height: u64,
         row: usize,
         col: usize,
-    ) -> Result<(String, evaporchain_da::commitments::CellProof), evaporchain_da::light_client::CellSourceError>
-    {
+    ) -> Result<
+        (String, evaporchain_da::commitments::CellProof),
+        evaporchain_da::light_client::CellSourceError,
+    > {
         use evaporchain_da::light_client::CellSourceError;
         let base = self.next_base();
         let url = format!("{}/api/da/cell/{}/{}/{}", base, height, row, col);
@@ -3460,8 +3455,8 @@ impl evaporchain_da::light_client::CellSource for HttpCellSource {
                     let s = x.as_str().ok_or_else(|| {
                         CellSourceError::Transport(format!("non-string in `{}`", key))
                     })?;
-                    let bytes = hex::decode(s)
-                        .map_err(|e| CellSourceError::Transport(e.to_string()))?;
+                    let bytes =
+                        hex::decode(s).map_err(|e| CellSourceError::Transport(e.to_string()))?;
                     if bytes.len() != 32 {
                         return Err(CellSourceError::Transport(format!(
                             "entry in `{}` is not 32 bytes",
@@ -3508,7 +3503,10 @@ enum ChainAttestation {
     /// Block exists but isn't in the node's in-memory ring.
     BlockNotInRing,
     /// On-chain root and served header disagree. Hard fail.
-    Mismatch { on_chain: [u8; 32], served: [u8; 32] },
+    Mismatch {
+        on_chain: [u8; 32],
+        served: [u8; 32],
+    },
 }
 
 /// Output of a DA verify run. Tests call `da_verify_inner` directly to
@@ -3544,9 +3542,7 @@ async fn da_verify_inner(
 
     let nodes_owned: Vec<String> = nodes.to_vec();
     let seed_owned: Option<Vec<u8>> = match seed_hex {
-        Some(s) => Some(
-            hex::decode(s.trim_start_matches("0x")).context("--seed must be hex")?,
-        ),
+        Some(s) => Some(hex::decode(s.trim_start_matches("0x")).context("--seed must be hex")?),
         None => None,
     };
 
@@ -3588,8 +3584,8 @@ async fn da_verify_inner(
         }
 
         let sampler = evaporchain_da::light_client::LightClientSampler::new(source);
-        let seed = seed_owned
-            .unwrap_or_else(|| blake3::hash(&block.to_le_bytes()).as_bytes().to_vec());
+        let seed =
+            seed_owned.unwrap_or_else(|| blake3::hash(&block.to_le_bytes()).as_bytes().to_vec());
         let report = sampler.sample_block(&header, block, samples, &seed);
         Ok((attestation, report))
     })
@@ -3664,7 +3660,11 @@ async fn cmd_da_verify(
         print_header("DA Light-Client Verification");
         println!(
             "  {} block #{} across {} node(s)",
-            if outcome.passes { "✅".green() } else { "❌".red() },
+            if outcome.passes {
+                "✅".green()
+            } else {
+                "❌".red()
+            },
             block,
             nodes.len()
         );
@@ -3768,8 +3768,14 @@ fn cmd_genesis_stamp_result(
         .get("flat_ratio")
         .and_then(|v| v.as_f64())
         .unwrap_or(f64::NAN);
-    let n_accounts = payload.get("n_accounts").and_then(|v| v.as_u64()).unwrap_or(0);
-    let n_blocks = payload.get("n_blocks").and_then(|v| v.as_u64()).unwrap_or(0);
+    let n_accounts = payload
+        .get("n_accounts")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let n_blocks = payload
+        .get("n_blocks")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     // 2. Build the body that goes between the markers. Stable shape so a
     // git diff between two stamps shows only the values that actually
@@ -3846,8 +3852,7 @@ fn cmd_genesis_stamp_result(
     // the doc if the process is interrupted.
     let tmp = format!("{}.stamp.tmp", doc_path);
     std::fs::write(&tmp, &updated).with_context(|| format!("write {}", tmp))?;
-    std::fs::rename(&tmp, doc_path)
-        .with_context(|| format!("rename {} → {}", tmp, doc_path))?;
+    std::fs::rename(&tmp, doc_path).with_context(|| format!("rename {} → {}", tmp, doc_path))?;
 
     if json_mode {
         let out = serde_json::json!({
@@ -3878,10 +3883,7 @@ fn stamp_into_doc(doc: &str, section: &str, stamp_body: &str) -> Result<String> 
         .find(|(_, line)| line.trim_start().starts_with(section))
         .map(|(i, _)| i)
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "section heading prefixed `{}` not found in doc",
-                section
-            )
+            anyhow::anyhow!("section heading prefixed `{}` not found in doc", section)
         })?;
 
     let lines: Vec<&str> = doc.lines().collect();
@@ -3950,8 +3952,8 @@ fn stamp_into_doc(doc: &str, section: &str, stamp_body: &str) -> Result<String> 
 // ──────────────────────────── MERA gate replay ──────────────────────────
 
 fn parse_csv_activations(path: &str) -> Result<Vec<Vec<f64>>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read CSV {}", path))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("failed to read CSV {}", path))?;
     let mut rows: Vec<Vec<f64>> = Vec::new();
     for (line_no, raw) in text.lines().enumerate() {
         let line = raw.trim();
@@ -4051,9 +4053,7 @@ fn cmd_genesis_run_gate(
             std::process::exit(64);
         }
         (None, None) => {
-            eprintln!(
-                "supply either --csv <path> (real telemetry) or --regime <name> (synthetic)"
-            );
+            eprintln!("supply either --csv <path> (real telemetry) or --regime <name> (synthetic)");
             std::process::exit(64);
         }
     };
@@ -4264,10 +4264,8 @@ fn cmd_encrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) 
     // H5: bind ciphertext to the destination file path so a relocated
     // blob silently fails to decrypt under the wrong path.
     let aad = evaporchain_crypto::bls_key_store::path_aad(out_file.as_bytes());
-    let blob = evaporchain_crypto::bls_key_store::encrypt_bls_secret_with_aad(
-        &secret, &pass, &aad,
-    )
-    .map_err(|e| anyhow::anyhow!("encrypt failed: {}", e))?;
+    let blob = evaporchain_crypto::bls_key_store::encrypt_bls_secret_with_aad(&secret, &pass, &aad)
+        .map_err(|e| anyhow::anyhow!("encrypt failed: {}", e))?;
     write_secret_file_0600(out_file, &blob)?;
     println!(
         "  {} Wrote {} encrypted bytes (EVK1) to {}",
@@ -4289,11 +4287,10 @@ fn cmd_decrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) 
     // H5: try AAD-bound decrypt first (current write format), fall
     // back to legacy empty-AAD for blobs from before deployment.
     let aad = evaporchain_crypto::bls_key_store::path_aad(in_file.as_bytes());
-    let plaintext = evaporchain_crypto::bls_key_store::decrypt_bls_secret_with_aad(
-        &blob, &pass, &aad,
-    )
-    .or_else(|_| evaporchain_crypto::bls_key_store::decrypt_bls_secret(&blob, &pass))
-    .map_err(|e| anyhow::anyhow!("decrypt failed: {}", e))?;
+    let plaintext =
+        evaporchain_crypto::bls_key_store::decrypt_bls_secret_with_aad(&blob, &pass, &aad)
+            .or_else(|_| evaporchain_crypto::bls_key_store::decrypt_bls_secret(&blob, &pass))
+            .map_err(|e| anyhow::anyhow!("decrypt failed: {}", e))?;
     write_secret_file_0600(out_file, &plaintext)?;
     println!(
         "  {} Wrote 32-byte plaintext BLS secret to {}",
@@ -4316,7 +4313,12 @@ fn cmd_decrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) 
 // header `EVSN` + version byte) and is what GET
 // /api/snapshot/download/:height streams to peers.
 
-fn cmd_snapshot_create(data_dir: &str, output: &str, chain_id: &str, json_mode: bool) -> Result<()> {
+fn cmd_snapshot_create(
+    data_dir: &str,
+    output: &str,
+    chain_id: &str,
+    json_mode: bool,
+) -> Result<()> {
     use evaporchain_state::{RocksDBStateDB, SnapshotFile, ValidatorSetSnapshot};
 
     let mut db = RocksDBStateDB::open(data_dir)
@@ -4387,8 +4389,7 @@ fn cmd_snapshot_create(data_dir: &str, output: &str, chain_id: &str, json_mode: 
 fn cmd_snapshot_verify(input: &str, json_mode: bool) -> Result<()> {
     use evaporchain_state::SnapshotFile;
     let path = std::path::Path::new(input);
-    let file =
-        SnapshotFile::load_and_verify(path).map_err(|e| anyhow::anyhow!("verify: {}", e))?;
+    let file = SnapshotFile::load_and_verify(path).map_err(|e| anyhow::anyhow!("verify: {}", e))?;
 
     let size_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     if json_mode {
@@ -4421,8 +4422,7 @@ fn cmd_snapshot_verify(input: &str, json_mode: bool) -> Result<()> {
 fn cmd_snapshot_apply(input: &str, data_dir: &str, json_mode: bool) -> Result<()> {
     use evaporchain_state::{RocksDBStateDB, SnapshotFile};
     let path = std::path::Path::new(input);
-    let file =
-        SnapshotFile::load_and_verify(path).map_err(|e| anyhow::anyhow!("verify: {}", e))?;
+    let file = SnapshotFile::load_and_verify(path).map_err(|e| anyhow::anyhow!("verify: {}", e))?;
 
     let mut db = RocksDBStateDB::open(data_dir)
         .map_err(|e| anyhow::anyhow!("open RocksDB at {}: {}", data_dir, e))?;
@@ -4498,9 +4498,7 @@ async fn cmd_upgrade_contract(
             let h = h.strip_prefix("0x").unwrap_or(h);
             hex::decode(h).context("invalid --new-bytecode-hex")?
         }
-        (None, Some(p)) => {
-            std::fs::read(p).with_context(|| format!("Failed to read {}", p))?
-        }
+        (None, Some(p)) => std::fs::read(p).with_context(|| format!("Failed to read {}", p))?,
         (Some(_), Some(_)) => {
             anyhow::bail!("supply at most one of --new-bytecode-hex / --new-bytecode-path");
         }
@@ -4556,7 +4554,11 @@ async fn cmd_upgrade_contract(
             contract_id, new_bytecode_hash_hex, nonce
         );
         let sig = kp.sign(canonical.as_bytes());
-        (Some(hex::encode(&sig)), Some(hex::encode(&pk_bytes)), Vec::<u64>::new())
+        (
+            Some(hex::encode(&sig)),
+            Some(hex::encode(&pk_bytes)),
+            Vec::<u64>::new(),
+        )
     } else {
         // Path B — load endorser-stakes JSON (`[{"stake": N}, ...]`).
         let path = governance_quorum_path.expect("checked above");
@@ -4593,8 +4595,7 @@ async fn cmd_upgrade_contract(
     }
 
     if broadcast {
-        let result: serde_json::Value =
-            api_post(base, "/api/tx/upgrade_contract", &body).await?;
+        let result: serde_json::Value = api_post(base, "/api/tx/upgrade_contract", &body).await?;
         if json_mode {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else {
@@ -5634,8 +5635,7 @@ mod tests {
         let genesis_time = "2026-05-01T00:00:00Z";
         // Deterministic 32-byte ceremony nonce (hex). Real ceremonies use
         // a freshly-randomized nonce drawn after every operator commits.
-        let ceremony_nonce =
-            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        let ceremony_nonce = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
         // ── Stage 1: keygen × N ────────────────────────────────────────
         let mut keys_paths = Vec::with_capacity(N_VALIDATORS as usize);
@@ -5662,10 +5662,10 @@ mod tests {
                 keys_path.to_str().unwrap(),
                 vid,
                 &format!("validator-{}", vid),
-                500_000,                         // stake
-                None,                            // no p2p in rehearsal
-                1_000_000,                       // balance
-                Some(vid as u8),                 // address_byte
+                500_000,         // stake
+                None,            // no p2p in rehearsal
+                1_000_000,       // balance
+                Some(vid as u8), // address_byte
                 chain_id,
                 genesis_time,
                 ceremony_nonce,
@@ -5804,8 +5804,8 @@ mod tests {
         // declared config_hash. Catches any silent mutation of the genesis
         // between ceremony and install.
         for vid in 1..=N_VALIDATORS {
-            let copied = std::fs::read(nodes_root.join(format!("v{}", vid)).join("genesis.json"))
-                .unwrap();
+            let copied =
+                std::fs::read(nodes_root.join(format!("v{}", vid)).join("genesis.json")).unwrap();
             let parsed: evaporchain_types::genesis::GenesisConfig =
                 serde_json::from_slice(&copied).unwrap();
             let canonical = hex::encode(evaporchain_crypto::blake3_hash(
@@ -5841,7 +5841,10 @@ mod tests {
         let prose_pos = out.find("Original prose A.").unwrap();
         let next_section_pos = out.find("## A1.9").unwrap();
         assert!(begin_pos < prose_pos, "marker must precede original prose");
-        assert!(prose_pos < next_section_pos, "next section must follow prose");
+        assert!(
+            prose_pos < next_section_pos,
+            "next section must follow prose"
+        );
     }
 
     #[test]
@@ -5882,11 +5885,7 @@ mod tests {
     #[test]
     fn stamp_into_doc_errors_on_missing_section() {
         let doc = "# Doc\n\n## A2.0 Different section\n\nProse.\n";
-        let body = format!(
-            "{begin}\nx\n{end}\n",
-            begin = STAMP_BEGIN,
-            end = STAMP_END
-        );
+        let body = format!("{begin}\nx\n{end}\n", begin = STAMP_BEGIN, end = STAMP_END);
         let err = stamp_into_doc(doc, "## A1.8", &body).unwrap_err();
         assert!(format!("{err:#}").contains("section heading"));
     }
@@ -6180,18 +6179,14 @@ mod tests {
     async fn da_verify_honest_server_passes() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::Honest).await;
-        let outcome = da_verify_inner(
-            &[server.addr.clone()],
-            7,
-            8,
-            0.99,
-            None,
-            false,
-        )
-        .await
-        .expect("honest server must produce an outcome");
+        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+            .await
+            .expect("honest server must produce an outcome");
         assert_eq!(outcome.attestation_label, "verified");
-        assert!(outcome.all_valid, "every cell from honest server must verify");
+        assert!(
+            outcome.all_valid,
+            "every cell from honest server must verify"
+        );
         assert!(outcome.passes, "honest server must clear threshold");
     }
 
@@ -6199,16 +6194,9 @@ mod tests {
     async fn da_verify_chain_root_mismatch_aborts_before_sampling() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::ChainRootMismatch).await;
-        let err = da_verify_inner(
-            &[server.addr.clone()],
-            7,
-            8,
-            0.99,
-            None,
-            false,
-        )
-        .await
-        .expect_err("mismatch must abort");
+        let err = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+            .await
+            .expect_err("mismatch must abort");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("does not match"),
@@ -6241,16 +6229,9 @@ mod tests {
     async fn da_verify_block_not_in_ring_proceeds_with_label() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::BlockNotInRing).await;
-        let outcome = da_verify_inner(
-            &[server.addr.clone()],
-            7,
-            8,
-            0.99,
-            None,
-            false,
-        )
-        .await
-        .expect("block-not-in-ring is not a hard fail");
+        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+            .await
+            .expect("block-not-in-ring is not a hard fail");
         assert_eq!(outcome.attestation_label, "block-not-in-ring");
         // Cells still verify against the served header; sampling passes.
         assert!(outcome.passes);
@@ -6260,16 +6241,9 @@ mod tests {
     async fn da_verify_no_data_root_proceeds_with_label() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::NoDataRoot).await;
-        let outcome = da_verify_inner(
-            &[server.addr.clone()],
-            7,
-            8,
-            0.99,
-            None,
-            false,
-        )
-        .await
-        .expect("no-data-root is not a hard fail");
+        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+            .await
+            .expect("no-data-root is not a hard fail");
         assert_eq!(outcome.attestation_label, "no-data-root");
         assert!(outcome.passes);
     }
@@ -6278,16 +6252,9 @@ mod tests {
     async fn da_verify_fabricated_cells_marks_peer_faulty() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::FabricatedCells).await;
-        let outcome = da_verify_inner(
-            &[server.addr.clone()],
-            7,
-            8,
-            0.99,
-            None,
-            false,
-        )
-        .await
-        .expect("fabricated cells produce an outcome (with faulty peers)");
+        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+            .await
+            .expect("fabricated cells produce an outcome (with faulty peers)");
         assert!(
             !outcome.faulty_peers.is_empty(),
             "fabricated cells must trip the faulty-peer detector; got {:?}",
@@ -6352,8 +6319,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let tmp =
-            std::env::temp_dir().join(format!("evapor-testnet-init-{nonce}"));
+        let tmp = std::env::temp_dir().join(format!("evapor-testnet-init-{nonce}"));
         let _ = std::fs::remove_dir_all(&tmp);
 
         cmd_testnet_init(
@@ -6371,10 +6337,10 @@ mod tests {
         )
         .expect("cmd_testnet_init");
 
-        let genesis_json = std::fs::read_to_string(tmp.join("genesis.json"))
-            .expect("read genesis.json");
-        let parsed: GenesisConfig = serde_json::from_str(&genesis_json)
-            .expect("parse genesis.json");
+        let genesis_json =
+            std::fs::read_to_string(tmp.join("genesis.json")).expect("read genesis.json");
+        let parsed: GenesisConfig =
+            serde_json::from_str(&genesis_json).expect("parse genesis.json");
 
         assert_eq!(
             parsed.bootstrap_peers.len(),
@@ -6425,8 +6391,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let tmp = std::env::temp_dir()
-            .join(format!("evapor-testnet-init-pvi-{nonce}"));
+        let tmp = std::env::temp_dir().join(format!("evapor-testnet-init-pvi-{nonce}"));
         let _ = std::fs::remove_dir_all(&tmp);
 
         cmd_testnet_init(
@@ -6444,17 +6409,16 @@ mod tests {
         )
         .expect("cmd_testnet_init with per_validator_ips");
 
-        let genesis_json = std::fs::read_to_string(tmp.join("genesis.json"))
-            .expect("read genesis.json");
-        let parsed: GenesisConfig = serde_json::from_str(&genesis_json)
-            .expect("parse genesis.json");
+        let genesis_json =
+            std::fs::read_to_string(tmp.join("genesis.json")).expect("read genesis.json");
+        let parsed: GenesisConfig =
+            serde_json::from_str(&genesis_json).expect("parse genesis.json");
 
         assert_eq!(parsed.bootstrap_peers.len(), n as usize);
         for (i, ma) in parsed.bootstrap_peers.iter().enumerate() {
             let vid = (i + 1) as u16;
             let expected_port = p2p_base + vid;
-            let expected_prefix =
-                format!("/ip4/{}/tcp/{}/p2p/", ips[i], expected_port);
+            let expected_prefix = format!("/ip4/{}/tcp/{}/p2p/", ips[i], expected_port);
             assert!(
                 ma.starts_with(&expected_prefix),
                 "bootstrap_peer[{i}] {ma} must start with {expected_prefix}"
@@ -6469,16 +6433,12 @@ mod tests {
         // If --per-validator-ips count != --validators, init must
         // refuse rather than silently truncate or pad.
         let n = 3u32;
-        let ips = [
-            "10.0.0.1".to_string(),
-            "10.0.0.2".to_string(),
-        ];
+        let ips = ["10.0.0.1".to_string(), "10.0.0.2".to_string()];
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let tmp = std::env::temp_dir()
-            .join(format!("evapor-testnet-init-pvi-bad-{nonce}"));
+        let tmp = std::env::temp_dir().join(format!("evapor-testnet-init-pvi-bad-{nonce}"));
         let _ = std::fs::remove_dir_all(&tmp);
 
         let res = cmd_testnet_init(

@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn build_block_da_inputs_matches_consensus_for_typical_txs() {
-        use evaporchain_types::{TransferTx, Transaction};
+        use evaporchain_types::{Transaction, TransferTx};
         let txs = vec![
             Transaction::Transfer(TransferTx {
                 from: [1u8; 32],

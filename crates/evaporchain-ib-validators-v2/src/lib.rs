@@ -67,20 +67,24 @@ mod press_claim_tests {
         // CHSH window jail covers id1 for 50 epochs from now=0.
         apply_chsh_failure_jail(&mut js, &[id1], 100, 200, 0, 50);
         let v = ib_vote_v2(&local, &prior, &params, &id1, 1_000, 10, &js, 10).unwrap();
-        assert!(matches!(v, VoteV2::Jailed { reason: JailReason::ChshFailedWindow { .. } }));
+        assert!(matches!(
+            v,
+            VoteV2::Jailed {
+                reason: JailReason::ChshFailedWindow { .. }
+            }
+        ));
 
         // Past expiry → V1 vote semantics apply (high-KL → Commit).
         let v_free = ib_vote_v2(&local, &prior, &params, &id1, 1_000, 10, &js, 50).unwrap();
         assert_eq!(v_free, VoteV2::Commit);
 
         // Energy below floor jails on the spot without persisting state.
-        let v_lo = ib_vote_v2(
-            &local, &prior, &params, &id2, 5, 10, &JailState::new(), 0,
-        )
-        .unwrap();
+        let v_lo = ib_vote_v2(&local, &prior, &params, &id2, 5, 10, &JailState::new(), 0).unwrap();
         assert!(matches!(
             v_lo,
-            VoteV2::Jailed { reason: JailReason::EnergyBelowFloor { .. } }
+            VoteV2::Jailed {
+                reason: JailReason::EnergyBelowFloor { .. }
+            }
         ));
 
         // apply_energy_jail persists the entry idempotently.

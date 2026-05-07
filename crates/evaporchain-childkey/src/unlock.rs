@@ -16,9 +16,7 @@ use crate::letter::{SealedLetter, SealedLetterStatus};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum UnlockError {
-    #[error(
-        "letter is not yet unlockable: unlock_epoch={unlock_epoch} > now={now}"
-    )]
+    #[error("letter is not yet unlockable: unlock_epoch={unlock_epoch} > now={now}")]
     NotYet { unlock_epoch: Epoch, now: Epoch },
     #[error("letter has already been opened at epoch {opened_at_epoch}")]
     AlreadyOpened { opened_at_epoch: Epoch },

@@ -247,11 +247,7 @@ pub async fn fetch_snapshot_blob_from_peer(
         .await
         .map_err(|e| format!("GET {}: {}", latest_url, e))?;
     if !latest.status().is_success() {
-        return Err(format!(
-            "GET {} returned {}",
-            latest_url,
-            latest.status()
-        ));
+        return Err(format!("GET {} returned {}", latest_url, latest.status()));
     }
     let latest_json: serde_json::Value = latest
         .json()

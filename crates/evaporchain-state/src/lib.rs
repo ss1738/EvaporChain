@@ -34,7 +34,9 @@ mod press_claim_tests {
     /// uniqueness is enforced by the spend gate (not by the caller)."
     #[test]
     fn the_press_claim_lives_as_a_test() {
-        fn addr(b: u8) -> AccountAddress { [b; 32] }
+        fn addr(b: u8) -> AccountAddress {
+            [b; 32]
+        }
 
         let mut db1 = InMemoryStateDB::new();
         db1.put_account(Account {

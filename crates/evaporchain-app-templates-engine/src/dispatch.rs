@@ -29,9 +29,9 @@ use evaporchain_app_templates_materialise::MaterialiseInstruction;
 
 use crate::{
     init_childkey, init_gallery_forgets, init_mayfly, init_mnemochain, init_sap, init_sbav,
-    init_scl, init_sddc, init_sfsv, init_sgb, init_shlm, init_singh_heartbeat,
-    init_singh_lineage, init_singh_migrant, init_singh_posthuma, init_singh_resonance,
-    init_singh_sabi, init_singh_triage, init_ssm, init_witnessfit,
+    init_scl, init_sddc, init_sfsv, init_sgb, init_shlm, init_singh_heartbeat, init_singh_lineage,
+    init_singh_migrant, init_singh_posthuma, init_singh_resonance, init_singh_sabi,
+    init_singh_triage, init_ssm, init_witnessfit,
 };
 
 /// Typed init configs — one variant per registered template. The
@@ -133,7 +133,10 @@ mod tests {
     use evaporchain_app_templates_materialise::materialise_request;
     use serde_json::json;
 
-    fn build_instr(class: evaporchain_app_templates::TemplateClass, params: serde_json::Value) -> MaterialiseInstruction {
+    fn build_instr(
+        class: evaporchain_app_templates::TemplateClass,
+        params: serde_json::Value,
+    ) -> MaterialiseInstruction {
         let req = DeployRequest::new(class, params, [0xAB; 32], 0, 1).unwrap();
         materialise_request(&req).unwrap()
     }
@@ -239,7 +242,8 @@ mod tests {
         let instr = MaterialiseInstruction {
             template_class: SINGH_SABI,
             instance_id: evaporchain_app_templates_materialise::InstanceId([0; 32]),
-            init_calldata: br#"{"initial_energy": "not a number", "floor_pct": 15, "half_life": 365}"#.to_vec(),
+            init_calldata:
+                br#"{"initial_energy": "not a number", "floor_pct": 15, "half_life": 365}"#.to_vec(),
         };
         let err = materialise(&instr).unwrap_err();
         assert!(matches!(err, EngineError::ParseFailed(_)));
@@ -252,7 +256,9 @@ mod tests {
         let instr = MaterialiseInstruction {
             template_class: MAYFLY,
             instance_id: evaporchain_app_templates_materialise::InstanceId([0; 32]),
-            init_calldata: br#"{"initial_energy": 500, "half_life": 50, "v2_extra_field": "ignore_me"}"#.to_vec(),
+            init_calldata:
+                br#"{"initial_energy": 500, "half_life": 50, "v2_extra_field": "ignore_me"}"#
+                    .to_vec(),
         };
         let typed = materialise(&instr).unwrap();
         assert!(matches!(typed, TypedInit::Mayfly(_)));
@@ -265,16 +271,10 @@ mod tests {
         // variant. If a future PR adds a 21st template to the
         // catalogue without adding a handler here, this fails.
         for desc in catalogue() {
-            let req = DeployRequest::new(
-                desc.class,
-                desc.default_params.clone(),
-                [0xAB; 32],
-                0,
-                1,
-            )
-            .expect("default_params is a JSON object");
-            let instr = materialise_request(&req)
-                .expect("default_params should pass schema validation");
+            let req = DeployRequest::new(desc.class, desc.default_params.clone(), [0xAB; 32], 0, 1)
+                .expect("default_params is a JSON object");
+            let instr =
+                materialise_request(&req).expect("default_params should pass schema validation");
             let typed = materialise(&instr).unwrap_or_else(|e| {
                 panic!(
                     "engine has no handler for {:#010x} ({}): {:?}",

@@ -31,17 +31,34 @@ import urllib.request
 
 # -- Config ---------------------------------------------------------------
 
-# Submit to a stable single validator so nonce tracking is consistent.
-SUBMIT_URL = "http://100.119.53.101:8081/api/tx/transfer"
-NONCE_QUERY_URL_TEMPLATE = "http://100.119.53.101:8081/api/accounts"
+# Submit to ALL 5 validator APIs in parallel. The chain has a real
+# tx-inclusion race on the proposer side: when validator V's mempool
+# is the only one with the tx, the tx only lands when V happens to be
+# the round-0 proposer for the next height — otherwise round
+# advancement finalises an empty block from another validator and the
+# tx is lost. Submitting to all 5 ensures whoever proposes next has
+# the tx in their local mempool. The deeper proposer-side fix
+# (re-submit drained txs on round advance) is a separate change in
+# crates/evaporchain-consensus/src/tendermint.rs.
+SUBMIT_URLS = [
+    "http://100.119.53.101:8081/api/tx/transfer",  # M1
+    "http://100.113.253.72:8081/api/tx/transfer",  # M2
+    "http://100.103.216.125:8081/api/tx/transfer", # M3
+    "http://100.66.208.20:8081/api/tx/transfer",   # H1
+    "http://100.91.235.22:8081/api/tx/transfer",   # H2
+]
+NONCE_QUERY_URL = "http://100.119.53.101:8081/api/accounts"
 
-# Sender = val-1 (we already burned nonces 0 and 1 earlier in the session).
-SENDER = "0100000000000000000000000000000000000000000000000000000000000000"
+# Sender = val-3 (highest balance after the cluster's been running a while —
+# val-1 ran out of balance for per-tx gas fees, ~21k each, so it now
+# rejects every tx with "insufficient balance for gas". val-3's never
+# proposed enough blocks to drain itself and stays well-funded.)
+SENDER = "0300000000000000000000000000000000000000000000000000000000000000"
 
 # Rotate destination among the other validator accounts (skip sender).
 DESTINATIONS = [
+    "0100000000000000000000000000000000000000000000000000000000000000",
     "0200000000000000000000000000000000000000000000000000000000000000",
-    "0300000000000000000000000000000000000000000000000000000000000000",
     "0400000000000000000000000000000000000000000000000000000000000000",
     "0500000000000000000000000000000000000000000000000000000000000000",
 ]
@@ -66,7 +83,7 @@ def load_token() -> str:
 def starting_nonce() -> int:
     """Read val-1's current nonce from the API and use that as the next nonce."""
     try:
-        with urllib.request.urlopen(NONCE_QUERY_URL_TEMPLATE, timeout=5) as resp:
+        with urllib.request.urlopen(NONCE_QUERY_URL, timeout=5) as resp:
             accounts = json.loads(resp.read())
         for a in accounts:
             if a.get("address", "").lower() == "0x" + SENDER:
@@ -76,15 +93,9 @@ def starting_nonce() -> int:
     return 0
 
 
-def submit_transfer(token: str, nonce: int, dest: str) -> tuple[bool, str]:
-    body = json.dumps({
-        "from": SENDER,
-        "to": dest,
-        "amount": AMOUNT,
-        "nonce": nonce,
-    }).encode()
+def submit_to_one(url: str, token: str, body: bytes) -> tuple[bool, str]:
     req = urllib.request.Request(
-        SUBMIT_URL,
+        url,
         data=body,
         headers={
             "Content-Type": "application/json",
@@ -93,15 +104,50 @@ def submit_transfer(token: str, nonce: int, dest: str) -> tuple[bool, str]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=6) as resp:
             payload = json.loads(resp.read())
         if payload.get("success"):
             return True, payload.get("tx_hash", "")
         return False, payload.get("message", "no message")
     except urllib.error.HTTPError as e:
-        return False, f"HTTP {e.code}: {e.read().decode()[:120]}"
+        try:
+            return False, f"HTTP {e.code}: {e.read().decode()[:120]}"
+        except Exception:
+            return False, f"HTTP {e.code}"
     except Exception as e:
-        return False, f"exception: {e}"
+        return False, f"exception: {type(e).__name__}: {e}"
+
+
+def submit_transfer(token: str, nonce: int, dest: str) -> tuple[bool, str]:
+    """Submit to ALL 5 validator APIs in parallel; treat as success if any
+    returns success. Logs the first success's tx_hash; on total failure,
+    logs the first error message."""
+    body = json.dumps({
+        "from": SENDER,
+        "to": dest,
+        "amount": AMOUNT,
+        "nonce": nonce,
+    }).encode()
+    import concurrent.futures as cf
+    results: list[tuple[str, bool, str]] = []
+    with cf.ThreadPoolExecutor(max_workers=len(SUBMIT_URLS)) as pool:
+        futures = {pool.submit(submit_to_one, url, token, body): url for url in SUBMIT_URLS}
+        for fut in cf.as_completed(futures, timeout=10):
+            url = futures[fut]
+            try:
+                ok, info = fut.result()
+            except Exception as e:
+                ok, info = False, f"future-exc: {e}"
+            results.append((url, ok, info))
+    # Prefer the first success
+    for url, ok, info in results:
+        if ok:
+            return True, info
+    # No success — return the first non-empty error
+    for url, ok, info in results:
+        if info:
+            return False, info
+    return False, "all 5 endpoints failed silently"
 
 
 def log_event(line: str) -> None:
@@ -112,7 +158,7 @@ def log_event(line: str) -> None:
 def main() -> None:
     token = load_token()
     nonce = starting_nonce()
-    print(f"EvaporChain faucet starting — submit to {SUBMIT_URL}")
+    print(f"EvaporChain faucet starting — fan-out submit to {len(SUBMIT_URLS)} validator APIs")
     print(f"Sender val-1 ({SENDER[:16]}…), starting nonce {nonce}, rate 1/{INTERVAL_S}s, log {FAUCET_LOG}")
     log_event(f"# faucet started ts={int(time.time())} nonce={nonce}")
 

@@ -67,14 +67,30 @@ mod press_claim_tests {
         assert_eq!(big.accumulated_energy, 50);
 
         // Merge takes max tick.
-        let a = LamportClock { current_tick: 3, accumulated_energy: 99, tick_quantum: 100 };
-        let b = LamportClock { current_tick: 5, accumulated_energy: 10, tick_quantum: 100 };
+        let a = LamportClock {
+            current_tick: 3,
+            accumulated_energy: 99,
+            tick_quantum: 100,
+        };
+        let b = LamportClock {
+            current_tick: 5,
+            accumulated_energy: 10,
+            tick_quantum: 100,
+        };
         assert_eq!(a.merge(b).current_tick, 5);
         assert_eq!(b.merge(a).current_tick, 5);
 
         // Equal ticks → concurrent (Equal), residual irrelevant.
-        let p = LamportClock { current_tick: 3, accumulated_energy: 99, tick_quantum: 100 };
-        let q = LamportClock { current_tick: 3, accumulated_energy: 1, tick_quantum: 100 };
+        let p = LamportClock {
+            current_tick: 3,
+            accumulated_energy: 99,
+            tick_quantum: 100,
+        };
+        let q = LamportClock {
+            current_tick: 3,
+            accumulated_energy: 1,
+            tick_quantum: 100,
+        };
         assert_eq!(p.precedes(&q), Ordering::Equal);
 
         // Distinct ticks → strict ordering.

@@ -90,7 +90,9 @@ mod press_claim_tests {
         let low = Tx::new(TxId([2; 32]), 500, vec![], ws_b);
 
         // Forward order: low first.
-        let forward = s.run(BTreeMap::new(), vec![low.clone(), high.clone()]).unwrap();
+        let forward = s
+            .run(BTreeMap::new(), vec![low.clone(), high.clone()])
+            .unwrap();
         // Reverse order: high first.
         let reverse = s.run(BTreeMap::new(), vec![high, low]).unwrap();
         // Submission-order independence (validator-determinism).

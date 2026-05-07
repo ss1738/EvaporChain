@@ -28,10 +28,7 @@ pub type LeaseId = [u8; 32];
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LeaseError {
     #[error("expires_at_epoch ({expires_at}) must be > issued_at ({issued_at})")]
-    AlreadyExpired {
-        issued_at: Epoch,
-        expires_at: Epoch,
-    },
+    AlreadyExpired { issued_at: Epoch, expires_at: Epoch },
     #[error("subject change requires caller to be current subject")]
     NotCurrentSubject,
 }

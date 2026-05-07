@@ -464,10 +464,7 @@ pub fn load_or_generate_identity(data_dir: &Path) -> std::io::Result<identity::K
     }
     let kp = identity::Keypair::generate_ed25519();
     let bytes = kp.to_protobuf_encoding().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("encode keypair: {e}"),
-        )
+        std::io::Error::new(std::io::ErrorKind::Other, format!("encode keypair: {e}"))
     })?;
     std::fs::write(&key_path, &bytes)?;
     #[cfg(unix)]
@@ -2938,7 +2935,10 @@ mod tests {
             .expect("ghost peer must be surfaced by scores_view");
         assert!(!ghost_entry.connected, "ghost must report connected=false");
         assert!(ghost_entry.ip.is_none(), "ghost must not have an IP");
-        assert!(ghost_entry.since_ms.is_none(), "ghost must not have since_ms");
+        assert!(
+            ghost_entry.since_ms.is_none(),
+            "ghost must not have since_ms"
+        );
         assert_eq!(ghost_entry.score, -10);
         assert_eq!(ghost_entry.infractions, 1);
     }

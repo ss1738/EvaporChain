@@ -131,8 +131,14 @@ mod tests {
     #[test]
     fn rejects_non_monotone_thresholds() {
         let err = Ladder::new(vec![
-            DormancyTier { epochs_dormant: 100, authority_share_bp: 2_500 },
-            DormancyTier { epochs_dormant: 50, authority_share_bp: 5_000 },
+            DormancyTier {
+                epochs_dormant: 100,
+                authority_share_bp: 2_500,
+            },
+            DormancyTier {
+                epochs_dormant: 50,
+                authority_share_bp: 5_000,
+            },
         ])
         .unwrap_err();
         assert!(matches!(err, LadderError::NonMonotoneThreshold { .. }));
@@ -141,8 +147,14 @@ mod tests {
     #[test]
     fn rejects_duplicate_thresholds() {
         let err = Ladder::new(vec![
-            DormancyTier { epochs_dormant: 100, authority_share_bp: 2_500 },
-            DormancyTier { epochs_dormant: 100, authority_share_bp: 5_000 },
+            DormancyTier {
+                epochs_dormant: 100,
+                authority_share_bp: 2_500,
+            },
+            DormancyTier {
+                epochs_dormant: 100,
+                authority_share_bp: 5_000,
+            },
         ])
         .unwrap_err();
         assert!(matches!(err, LadderError::NonMonotoneThreshold { .. }));
@@ -151,8 +163,14 @@ mod tests {
     #[test]
     fn rejects_decreasing_authority() {
         let err = Ladder::new(vec![
-            DormancyTier { epochs_dormant: 100, authority_share_bp: 5_000 },
-            DormancyTier { epochs_dormant: 200, authority_share_bp: 2_500 },
+            DormancyTier {
+                epochs_dormant: 100,
+                authority_share_bp: 5_000,
+            },
+            DormancyTier {
+                epochs_dormant: 200,
+                authority_share_bp: 2_500,
+            },
         ])
         .unwrap_err();
         assert!(matches!(err, LadderError::AuthorityDecreased { .. }));
@@ -171,9 +189,18 @@ mod tests {
     #[test]
     fn share_at_returns_highest_crossed_tier() {
         let ladder = Ladder::new(vec![
-            DormancyTier { epochs_dormant: 90, authority_share_bp: 2_500 },
-            DormancyTier { epochs_dormant: 180, authority_share_bp: 5_000 },
-            DormancyTier { epochs_dormant: 365, authority_share_bp: 10_000 },
+            DormancyTier {
+                epochs_dormant: 90,
+                authority_share_bp: 2_500,
+            },
+            DormancyTier {
+                epochs_dormant: 180,
+                authority_share_bp: 5_000,
+            },
+            DormancyTier {
+                epochs_dormant: 365,
+                authority_share_bp: 10_000,
+            },
         ])
         .unwrap();
         assert_eq!(ladder.share_at(0), 0);

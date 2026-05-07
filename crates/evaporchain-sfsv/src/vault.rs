@@ -149,49 +149,25 @@ mod tests {
 
     #[test]
     fn create_rejects_zero_deposit() {
-        let err = Vault::create(
-            id(1),
-            addr(0xAA),
-            addr(0xAA),
-            0,
-            epoch_predicate(),
-            10,
-        )
-        .unwrap_err();
+        let err =
+            Vault::create(id(1), addr(0xAA), addr(0xAA), 0, epoch_predicate(), 10).unwrap_err();
         assert_eq!(err, VaultError::ZeroDeposit);
     }
 
     #[test]
     fn newly_created_holder_is_future_self() {
-        let v = Vault::create(
-            id(1),
-            addr(0xAA),
-            addr(0xBB),
-            1000,
-            epoch_predicate(),
-            10,
-        )
-        .unwrap();
+        let v = Vault::create(id(1), addr(0xAA), addr(0xBB), 1000, epoch_predicate(), 10).unwrap();
         assert!(v.is_locked());
         assert_eq!(v.current_holder(), Some(addr(0xBB)));
     }
 
     #[test]
     fn transfer_claim_only_by_current_holder() {
-        let mut v = Vault::create(
-            id(1),
-            addr(0xAA),
-            addr(0xBB),
-            1000,
-            epoch_predicate(),
-            10,
-        )
-        .unwrap();
+        let mut v =
+            Vault::create(id(1), addr(0xAA), addr(0xBB), 1000, epoch_predicate(), 10).unwrap();
         // The current holder is 0xBB (future_self). 0xAA (creator)
         // cannot transfer the claim — they no longer own it.
-        let err = v
-            .transfer_claim(addr(0xAA), addr(0xCC))
-            .unwrap_err();
+        let err = v.transfer_claim(addr(0xAA), addr(0xCC)).unwrap_err();
         assert!(matches!(err, VaultError::NotCurrentHolder { .. }));
 
         // 0xBB can transfer.
@@ -201,33 +177,16 @@ mod tests {
 
     #[test]
     fn transfer_after_release_errors() {
-        let mut v = Vault::create(
-            id(1),
-            addr(0xAA),
-            addr(0xBB),
-            1000,
-            epoch_predicate(),
-            10,
-        )
-        .unwrap();
+        let mut v =
+            Vault::create(id(1), addr(0xAA), addr(0xBB), 1000, epoch_predicate(), 10).unwrap();
         v.mark_released(addr(0xBB), 200);
-        let err = v
-            .transfer_claim(addr(0xBB), addr(0xCC))
-            .unwrap_err();
+        let err = v.transfer_claim(addr(0xBB), addr(0xCC)).unwrap_err();
         assert_eq!(err, VaultError::NotLocked);
     }
 
     #[test]
     fn round_trip_serde() {
-        let v = Vault::create(
-            id(2),
-            addr(0xAA),
-            addr(0xBB),
-            777,
-            epoch_predicate(),
-            5,
-        )
-        .unwrap();
+        let v = Vault::create(id(2), addr(0xAA), addr(0xBB), 777, epoch_predicate(), 5).unwrap();
         let s = serde_json::to_string(&v).unwrap();
         let back: Vault = serde_json::from_str(&s).unwrap();
         assert_eq!(v, back);

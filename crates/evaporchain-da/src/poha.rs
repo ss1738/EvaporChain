@@ -935,7 +935,10 @@ mod tests {
 
         // First tick at epoch 30, interval = 50, sample = 2. Should fire.
         let n1 = store.tick_re_attestation_sampler(30, 2, 50);
-        assert!(n1 > 0, "first tick at epoch 30 must re-attest at least one cert");
+        assert!(
+            n1 > 0,
+            "first tick at epoch 30 must re-attest at least one cert"
+        );
 
         // Immediate second tick at epoch 50 should be SUPPRESSED by cadence
         // (last fired at 30, interval 50 → next allowed at 80).

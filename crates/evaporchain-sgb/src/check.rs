@@ -126,10 +126,7 @@ mod tests {
         let ctx = ctx_with(&[("x", Type::Lin(Base::Energy))]);
         let u = UsageProfile::new();
         let err = check(&ctx, &u).unwrap_err();
-        assert!(matches!(
-            err,
-            CheckError::LinearMisuse { count: 0, .. }
-        ));
+        assert!(matches!(err, CheckError::LinearMisuse { count: 0, .. }));
     }
 
     #[test]
@@ -139,10 +136,7 @@ mod tests {
         u.add_use("x");
         u.add_use("x");
         let err = check(&ctx, &u).unwrap_err();
-        assert!(matches!(
-            err,
-            CheckError::LinearMisuse { count: 2, .. }
-        ));
+        assert!(matches!(err, CheckError::LinearMisuse { count: 2, .. }));
     }
 
     // ─── Bang: any-count ─────────────────────────────────────────────
@@ -150,16 +144,14 @@ mod tests {
     #[test]
     fn bang_used_zero_times_is_ok() {
         // !T admits weakening — explicit drop is legal.
-        let ctx =
-            ctx_with(&[("x", Type::bang(Type::Lin(Base::Energy)))]);
+        let ctx = ctx_with(&[("x", Type::bang(Type::Lin(Base::Energy)))]);
         let u = UsageProfile::new();
         check(&ctx, &u).unwrap();
     }
 
     #[test]
     fn bang_used_many_times_is_ok() {
-        let ctx =
-            ctx_with(&[("x", Type::bang(Type::Lin(Base::Energy)))]);
+        let ctx = ctx_with(&[("x", Type::bang(Type::Lin(Base::Energy)))]);
         let mut u = UsageProfile::new();
         for _ in 0..7 {
             u.add_use("x");
@@ -172,16 +164,14 @@ mod tests {
     #[test]
     fn whimper_used_zero_is_ok() {
         // ?T admits silent decay-drop — chain's λ takes it without notice.
-        let ctx =
-            ctx_with(&[("x", Type::whimper(Type::Lin(Base::Account)))]);
+        let ctx = ctx_with(&[("x", Type::whimper(Type::Lin(Base::Account)))]);
         let u = UsageProfile::new();
         check(&ctx, &u).unwrap();
     }
 
     #[test]
     fn whimper_used_once_is_ok() {
-        let ctx =
-            ctx_with(&[("x", Type::whimper(Type::Lin(Base::Account)))]);
+        let ctx = ctx_with(&[("x", Type::whimper(Type::Lin(Base::Account)))]);
         let mut u = UsageProfile::new();
         u.add_use("x");
         check(&ctx, &u).unwrap();
@@ -192,16 +182,12 @@ mod tests {
         // The doctrine guarantee: ? admits weakening but not contraction.
         // Duplicating an ephemeral value would let it survive its own
         // decay window — must be rejected at check time.
-        let ctx =
-            ctx_with(&[("x", Type::whimper(Type::Lin(Base::Account)))]);
+        let ctx = ctx_with(&[("x", Type::whimper(Type::Lin(Base::Account)))]);
         let mut u = UsageProfile::new();
         u.add_use("x");
         u.add_use("x");
         let err = check(&ctx, &u).unwrap_err();
-        assert!(matches!(
-            err,
-            CheckError::WhimperMisuse { count: 2, .. }
-        ));
+        assert!(matches!(err, CheckError::WhimperMisuse { count: 2, .. }));
     }
 
     // ─── Mixed contexts ─────────────────────────────────────────────
@@ -227,10 +213,7 @@ mod tests {
         // the chain's λ silently decayed it before the contract could
         // touch it) MUST type-check, while a `Lin` value used 0 times
         // MUST NOT (ephemerality is a type, not a runtime convention).
-        let ephemeral_decayed = ctx_with(&[(
-            "ephemeral",
-            Type::whimper(Type::Lin(Base::Account)),
-        )]);
+        let ephemeral_decayed = ctx_with(&[("ephemeral", Type::whimper(Type::Lin(Base::Account)))]);
         let scarce_lost = ctx_with(&[("scarce", Type::Lin(Base::Energy))]);
         let none_used = UsageProfile::new();
         check(&ephemeral_decayed, &none_used).unwrap();

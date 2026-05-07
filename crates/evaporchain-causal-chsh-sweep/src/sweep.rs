@@ -457,19 +457,12 @@ mod tests {
         let h = balanced_honest(16);
         let bad_grid = SweepGrid {
             coordinated_subset: vec![GridPoint { num: 5, den: 4 }], // invalid
-            biased_coin: vec![GridPoint { num: 1, den: 0 }],         // invalid
+            biased_coin: vec![GridPoint { num: 1, den: 0 }],        // invalid
             pr_box: vec![GridPoint { num: 1, den: 1 }],
         };
-        let report =
-            run_sweep(&h, &bad_grid, GateThresholds::doctrine(), seed(10)).unwrap();
-        assert!(matches!(
-            report.rows[0].cell,
-            SweepCell::CartelError(_)
-        ));
-        assert!(matches!(
-            report.rows[1].cell,
-            SweepCell::CartelError(_)
-        ));
+        let report = run_sweep(&h, &bad_grid, GateThresholds::doctrine(), seed(10)).unwrap();
+        assert!(matches!(report.rows[0].cell, SweepCell::CartelError(_)));
+        assert!(matches!(report.rows[1].cell, SweepCell::CartelError(_)));
         // PR-box at v=1 should still pass.
         assert!(matches!(report.rows[2].cell, SweepCell::Pass { .. }));
     }

@@ -123,8 +123,7 @@ mod tests {
     #[test]
     fn tensor_with_plus_have_depth_one_plus_max() {
         let inner: Type<Base> = Type::bang(Type::Lin(Base::Energy));
-        let outer: Type<Base> =
-            Type::tensor(inner.clone(), Type::Lin(Base::Account));
+        let outer: Type<Base> = Type::tensor(inner.clone(), Type::Lin(Base::Account));
         // depth(inner) = 1, depth(Lin) = 0 ⇒ depth(tensor) = 2
         assert_eq!(outer.depth(), 2);
     }

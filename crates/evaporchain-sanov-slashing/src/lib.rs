@@ -90,8 +90,7 @@ mod press_claim_tests {
         // Insufficient-stake apply_slash fails closed without mutation.
         let mut acc_short = EnergyAccumulator::new(0, 100, 0, 0);
         let pre = acc_short;
-        let err = apply_slash(1_000_000, &q_violation, &p_impossible, &mut acc_short)
-            .unwrap_err();
+        let err = apply_slash(1_000_000, &q_violation, &p_impossible, &mut acc_short).unwrap_err();
         assert!(matches!(err, SlashError::StakeBelowSlash { .. }));
         assert_eq!(acc_short, pre);
     }

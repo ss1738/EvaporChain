@@ -98,9 +98,21 @@ mod press_claim_tests {
     fn the_press_claim_lives_as_a_test() {
         // Three contributors, range=10 each. Mixed energies.
         let mixed = vec![
-            Contributor { lo: 0, hi: 10, energy: 1_000 },
-            Contributor { lo: 0, hi: 10, energy: 500 },
-            Contributor { lo: 0, hi: 10, energy: 100 },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+            },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 500,
+            },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 100,
+            },
         ];
         let h = hoeffding_variance_bound(&mixed).unwrap();
         let s = singh_variance_bound(&mixed).unwrap();
@@ -109,9 +121,21 @@ mod press_claim_tests {
 
         // (b) Full energy across all → bounds COINCIDE.
         let full = vec![
-            Contributor { lo: 0, hi: 10, energy: 1_000 },
-            Contributor { lo: 0, hi: 10, energy: 1_000 },
-            Contributor { lo: 0, hi: 10, energy: 1_000 },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+            },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+            },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+            },
         ];
         let h_full = hoeffding_variance_bound(&full).unwrap();
         let s_full = singh_variance_bound(&full).unwrap();
@@ -120,9 +144,21 @@ mod press_claim_tests {
         // (c) Decay collapses: zero one contributor's energy →
         // σ² strictly smaller.
         let decayed = vec![
-            Contributor { lo: 0, hi: 10, energy: 1_000 },
-            Contributor { lo: 0, hi: 10, energy: 1_000 },
-            Contributor { lo: 0, hi: 10, energy: 0 }, // fully decayed
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+            },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+            },
+            Contributor {
+                lo: 0,
+                hi: 10,
+                energy: 0,
+            }, // fully decayed
         ];
         let s_decayed = singh_variance_bound(&decayed).unwrap();
         assert!(s_decayed < s_full, "decayed contributor must shrink σ²");
@@ -134,12 +170,13 @@ mod press_claim_tests {
         assert!(!passes_singh_gate(2, &full, 1).unwrap());
 
         // Empty/invalid inputs fail closed.
+        assert!(matches!(singh_variance_bound(&[]), Err(BoundError::Empty)));
         assert!(matches!(
-            singh_variance_bound(&[]),
-            Err(BoundError::Empty)
-        ));
-        assert!(matches!(
-            singh_variance_bound(&[Contributor { lo: 10, hi: 5, energy: 100 }]),
+            singh_variance_bound(&[Contributor {
+                lo: 10,
+                hi: 5,
+                energy: 100
+            }]),
             Err(BoundError::InvalidRange { .. })
         ));
     }

@@ -142,8 +142,7 @@ mod tests {
 
     #[test]
     fn transfer_requires_current_owner() {
-        let mut t =
-            PatinaToken::mint_ruined_beautiful(id(1), addr(0xAA), 1000, 100, 10).unwrap();
+        let mut t = PatinaToken::mint_ruined_beautiful(id(1), addr(0xAA), 1000, 100, 10).unwrap();
         // Non-owner cannot transfer.
         let err = t.transfer(addr(0xBB), addr(0xCC)).unwrap_err();
         assert!(matches!(err, TokenError::NotOwner { .. }));
@@ -154,8 +153,7 @@ mod tests {
 
     #[test]
     fn self_transfer_rejected() {
-        let mut t =
-            PatinaToken::mint_ruined_beautiful(id(1), addr(0xAA), 1000, 100, 10).unwrap();
+        let mut t = PatinaToken::mint_ruined_beautiful(id(1), addr(0xAA), 1000, 100, 10).unwrap();
         let err = t.transfer(addr(0xAA), addr(0xAA)).unwrap_err();
         assert_eq!(err, TokenError::SelfTransfer);
     }
@@ -164,8 +162,7 @@ mod tests {
     fn transfer_does_not_alter_decay_curve() {
         // Doctrine: owner cannot pause; only witness. Transfer must NOT
         // refresh the patina or change the curve in any way.
-        let mut t =
-            PatinaToken::mint_ruined_beautiful(id(1), addr(0xAA), 1000, 100, 0).unwrap();
+        let mut t = PatinaToken::mint_ruined_beautiful(id(1), addr(0xAA), 1000, 100, 0).unwrap();
         let score_before = t.score_at(100);
         t.transfer(addr(0xAA), addr(0xBB)).unwrap();
         let score_after = t.score_at(100);

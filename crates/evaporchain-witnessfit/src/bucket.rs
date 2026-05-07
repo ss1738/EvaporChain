@@ -69,7 +69,11 @@ mod tests {
 
     #[test]
     fn round_trip_serde() {
-        for b in [StrengthBucket::Healthy, StrengthBucket::Aging, StrengthBucket::Broken] {
+        for b in [
+            StrengthBucket::Healthy,
+            StrengthBucket::Aging,
+            StrengthBucket::Broken,
+        ] {
             let s = serde_json::to_string(&b).unwrap();
             let back: StrengthBucket = serde_json::from_str(&s).unwrap();
             assert_eq!(b, back);

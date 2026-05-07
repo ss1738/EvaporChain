@@ -170,11 +170,7 @@ impl MayflyToken {
 /// `initial >> full_halvings == 0`, i.e. when `full_halvings >
 /// log2(initial)`. So the worst-case bound is
 /// `half_life * (1 + floor(log2(initial)) + 1)`.
-fn project_worst_case_death(
-    initial: Energy,
-    half_life: HalfLife,
-    minted_at_epoch: Epoch,
-) -> Epoch {
+fn project_worst_case_death(initial: Energy, half_life: HalfLife, minted_at_epoch: Epoch) -> Epoch {
     if initial == 0 {
         return minted_at_epoch;
     }

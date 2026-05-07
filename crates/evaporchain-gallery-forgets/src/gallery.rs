@@ -194,9 +194,7 @@ mod tests {
     fn deposit_requires_curator() {
         let mut g = fresh_gallery();
         let m = mayfly(1, 1000, 100);
-        let err = g
-            .deposit(addr(0xBB), id(1), addr(0xAA), m, 0)
-            .unwrap_err();
+        let err = g.deposit(addr(0xBB), id(1), addr(0xAA), m, 0).unwrap_err();
         assert!(matches!(err, GalleryError::NotCurator { .. }));
     }
 

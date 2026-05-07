@@ -61,10 +61,18 @@ impl SinghPool {
         })
     }
 
-    pub fn reserve_x(&self) -> u128 { self.reserve_x }
-    pub fn reserve_y(&self) -> u128 { self.reserve_y }
-    pub fn total_shares(&self) -> u128 { self.total_shares }
-    pub fn k(&self) -> u128 { self.reserve_x.saturating_mul(self.reserve_y) }
+    pub fn reserve_x(&self) -> u128 {
+        self.reserve_x
+    }
+    pub fn reserve_y(&self) -> u128 {
+        self.reserve_y
+    }
+    pub fn total_shares(&self) -> u128 {
+        self.total_shares
+    }
+    pub fn k(&self) -> u128 {
+        self.reserve_x.saturating_mul(self.reserve_y)
+    }
 
     pub fn shares_of(&self, h: HolderId) -> u128 {
         self.shares.get(&h).map(|s| s.shares).unwrap_or(0)
@@ -129,8 +137,14 @@ impl SinghPool {
         if new_shares == 0 {
             return Err(PoolError::ZeroAmount);
         }
-        self.reserve_x = self.reserve_x.checked_add(amount_x).ok_or(PoolError::Overflow)?;
-        self.reserve_y = self.reserve_y.checked_add(amount_y).ok_or(PoolError::Overflow)?;
+        self.reserve_x = self
+            .reserve_x
+            .checked_add(amount_x)
+            .ok_or(PoolError::Overflow)?;
+        self.reserve_y = self
+            .reserve_y
+            .checked_add(amount_y)
+            .ok_or(PoolError::Overflow)?;
         self.total_shares = self
             .total_shares
             .checked_add(new_shares)
@@ -139,7 +153,10 @@ impl SinghPool {
             .shares
             .entry(holder)
             .or_insert_with(|| LpShare::new(holder, 0, 0, epoch));
-        entry.shares = entry.shares.checked_add(new_shares).ok_or(PoolError::Overflow)?;
+        entry.shares = entry
+            .shares
+            .checked_add(new_shares)
+            .ok_or(PoolError::Overflow)?;
         // Re-anchor: minting refreshes the energy tag.
         entry.energy = anchor_energy;
         entry.anchored_at_epoch = epoch;
@@ -148,7 +165,10 @@ impl SinghPool {
 
     /// Decay a holder's share energy. Called by the chain's tick.
     pub fn decay_holder(&mut self, holder: HolderId, new_energy: u64) -> Result<(), PoolError> {
-        let entry = self.shares.get_mut(&holder).ok_or(PoolError::NoShares(holder))?;
+        let entry = self
+            .shares
+            .get_mut(&holder)
+            .ok_or(PoolError::NoShares(holder))?;
         entry.energy = new_energy;
         Ok(())
     }
@@ -164,7 +184,10 @@ impl SinghPool {
         if shares_to_burn == 0 {
             return Err(PoolError::ZeroAmount);
         }
-        let entry = self.shares.get_mut(&holder).ok_or(PoolError::NoShares(holder))?;
+        let entry = self
+            .shares
+            .get_mut(&holder)
+            .ok_or(PoolError::NoShares(holder))?;
         if entry.energy <= self.energy_floor {
             return Err(PoolError::EnergyBelowFloor(holder));
         }
@@ -172,9 +195,15 @@ impl SinghPool {
             return Err(PoolError::WithdrawExceedsBalance);
         }
         // Proportional withdrawal: holder gets (shares/total) of each reserve.
-        let out_x = self.reserve_x.checked_mul(shares_to_burn).ok_or(PoolError::Overflow)?
+        let out_x = self
+            .reserve_x
+            .checked_mul(shares_to_burn)
+            .ok_or(PoolError::Overflow)?
             / self.total_shares;
-        let out_y = self.reserve_y.checked_mul(shares_to_burn).ok_or(PoolError::Overflow)?
+        let out_y = self
+            .reserve_y
+            .checked_mul(shares_to_burn)
+            .ok_or(PoolError::Overflow)?
             / self.total_shares;
         if out_x == 0 || out_y == 0 {
             return Err(PoolError::ZeroAmount);
@@ -198,7 +227,10 @@ impl SinghPool {
         anchor_energy: u64,
         epoch: u64,
     ) -> Result<(), PoolError> {
-        let entry = self.shares.get_mut(&holder).ok_or(PoolError::NoShares(holder))?;
+        let entry = self
+            .shares
+            .get_mut(&holder)
+            .ok_or(PoolError::NoShares(holder))?;
         entry.energy = anchor_energy;
         entry.anchored_at_epoch = epoch;
         Ok(())
@@ -221,15 +253,24 @@ impl SinghPool {
             return Err(PoolError::ZeroAmount);
         }
         // y_out = y · Δx / (x + Δx)
-        let new_x = self.reserve_x.checked_add(amount_in_after_fee).ok_or(PoolError::Overflow)?;
-        let y_out = self.reserve_y.checked_mul(amount_in_after_fee).ok_or(PoolError::Overflow)?
+        let new_x = self
+            .reserve_x
+            .checked_add(amount_in_after_fee)
+            .ok_or(PoolError::Overflow)?;
+        let y_out = self
+            .reserve_y
+            .checked_mul(amount_in_after_fee)
+            .ok_or(PoolError::Overflow)?
             / new_x;
         if y_out == 0 || y_out >= self.reserve_y {
             return Err(PoolError::InsufficientOutput);
         }
         // Apply: X gets the FULL amount_in (fee accrues to LPs);
         // Y reserve drops by y_out.
-        self.reserve_x = self.reserve_x.checked_add(amount_in).ok_or(PoolError::Overflow)?;
+        self.reserve_x = self
+            .reserve_x
+            .checked_add(amount_in)
+            .ok_or(PoolError::Overflow)?;
         self.reserve_y -= y_out;
         Ok(y_out)
     }
@@ -249,13 +290,22 @@ impl SinghPool {
         if amount_in_after_fee == 0 {
             return Err(PoolError::ZeroAmount);
         }
-        let new_y = self.reserve_y.checked_add(amount_in_after_fee).ok_or(PoolError::Overflow)?;
-        let x_out = self.reserve_x.checked_mul(amount_in_after_fee).ok_or(PoolError::Overflow)?
+        let new_y = self
+            .reserve_y
+            .checked_add(amount_in_after_fee)
+            .ok_or(PoolError::Overflow)?;
+        let x_out = self
+            .reserve_x
+            .checked_mul(amount_in_after_fee)
+            .ok_or(PoolError::Overflow)?
             / new_y;
         if x_out == 0 || x_out >= self.reserve_x {
             return Err(PoolError::InsufficientOutput);
         }
-        self.reserve_y = self.reserve_y.checked_add(amount_in).ok_or(PoolError::Overflow)?;
+        self.reserve_y = self
+            .reserve_y
+            .checked_add(amount_in)
+            .ok_or(PoolError::Overflow)?;
         self.reserve_x -= x_out;
         Ok(x_out)
     }
@@ -284,19 +334,15 @@ fn isqrt_u128(n: u128) -> u128 {
 mod tests {
     use super::*;
 
-    fn h(b: u8) -> HolderId { HolderId([b; 32]) }
+    fn h(b: u8) -> HolderId {
+        HolderId([b; 32])
+    }
 
     fn fresh_pool(fee_bp: u64, floor: u64) -> SinghPool {
         SinghPool::new(fee_bp, floor).unwrap()
     }
 
-    fn bootstrap(
-        p: &mut SinghPool,
-        holder: HolderId,
-        x: u128,
-        y: u128,
-        energy: u64,
-    ) -> u128 {
+    fn bootstrap(p: &mut SinghPool, holder: HolderId, x: u128, y: u128, energy: u64) -> u128 {
         p.mint_initial(holder, x, y, energy, 0).unwrap()
     }
 
@@ -331,7 +377,9 @@ mod tests {
         let mut p = fresh_pool(30, 0);
         bootstrap(&mut p, h(1), 1_000_000, 4_000_000, 1000);
         // Add same ratio.
-        let s2 = p.mint_proportional(h(2), 500_000, 2_000_000, 1000, 1).unwrap();
+        let s2 = p
+            .mint_proportional(h(2), 500_000, 2_000_000, 1000, 1)
+            .unwrap();
         assert_eq!(p.reserve_x(), 1_500_000);
         assert_eq!(p.reserve_y(), 6_000_000);
         assert_eq!(p.shares_of(h(2)), s2);
@@ -368,8 +416,10 @@ mod tests {
     fn total_shares_equals_sum_of_holders() {
         let mut p = fresh_pool(30, 0);
         bootstrap(&mut p, h(1), 1_000_000, 4_000_000, 1000);
-        p.mint_proportional(h(2), 500_000, 2_000_000, 1000, 1).unwrap();
-        p.mint_proportional(h(3), 250_000, 1_000_000, 1000, 2).unwrap();
+        p.mint_proportional(h(2), 500_000, 2_000_000, 1000, 1)
+            .unwrap();
+        p.mint_proportional(h(3), 250_000, 1_000_000, 1000, 2)
+            .unwrap();
         assert_eq!(p.total_shares(), p.sum_holder_shares());
     }
 
@@ -382,7 +432,10 @@ mod tests {
         let k_before = p.k();
         let _y_out = p.swap_x_for_y(10_000).unwrap();
         let k_after = p.k();
-        assert!(k_after >= k_before, "k must not decrease: before={k_before}, after={k_after}");
+        assert!(
+            k_after >= k_before,
+            "k must not decrease: before={k_before}, after={k_after}"
+        );
     }
 
     #[test]
@@ -489,7 +542,9 @@ mod tests {
         bootstrap(&mut p, h(0), 1_000_000, 4_000_000, 1000);
 
         // Mercenary deposits — high energy at deposit.
-        let merc_shares = p.mint_proportional(h(1), 1_000_000, 4_000_000, 1000, 0).unwrap();
+        let merc_shares = p
+            .mint_proportional(h(1), 1_000_000, 4_000_000, 1000, 0)
+            .unwrap();
         assert!(merc_shares > 0);
 
         // Time passes; mercenary disappeared. Chain's tick decays

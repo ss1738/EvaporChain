@@ -92,27 +92,21 @@ pub fn parse_args(argv: &[String]) -> Result<CliArgs, CliError> {
     while let Some(a) = iter.next() {
         match a.as_str() {
             "--input" => {
-                let v = iter
-                    .next()
-                    .ok_or_else(|| CliError::FlagMissingValue {
-                        flag: "--input".into(),
-                    })?;
+                let v = iter.next().ok_or_else(|| CliError::FlagMissingValue {
+                    flag: "--input".into(),
+                })?;
                 args.input = v.clone();
             }
             "--output" => {
-                let v = iter
-                    .next()
-                    .ok_or_else(|| CliError::FlagMissingValue {
-                        flag: "--output".into(),
-                    })?;
+                let v = iter.next().ok_or_else(|| CliError::FlagMissingValue {
+                    flag: "--output".into(),
+                })?;
                 args.output = v.clone();
             }
             "--seed" => {
-                let v = iter
-                    .next()
-                    .ok_or_else(|| CliError::FlagMissingValue {
-                        flag: "--seed".into(),
-                    })?;
+                let v = iter.next().ok_or_else(|| CliError::FlagMissingValue {
+                    flag: "--seed".into(),
+                })?;
                 args.seed = parse_hex_seed(v)?;
             }
             other => return Err(CliError::UnknownArgument(other.to_string())),
@@ -203,9 +197,7 @@ mod tests {
     }
 
     fn balanced_honest_json(n: usize) -> String {
-        let bal: Vec<i8> = (0..n)
-            .map(|i| if i % 2 == 0 { 1 } else { -1 })
-            .collect();
+        let bal: Vec<i8> = (0..n).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect();
         let s = ConcurrentPairSamples {
             samples_ab: bal.clone(),
             samples_ab_prime: bal.clone(),
@@ -234,8 +226,7 @@ mod tests {
             "--output".into(),
             "out.md".into(),
             "--seed".into(),
-            "0x".to_string()
-                + &"ab".repeat(32),
+            "0x".to_string() + &"ab".repeat(32),
         ];
         let a = parse_args(&argv).unwrap();
         assert_eq!(a.input, "h.json");
@@ -302,7 +293,12 @@ mod tests {
         let mut io = MemIo::new();
         io.inputs.insert("h.json".into(), balanced_honest_json(64));
         run_cli(
-            &vec!["--input".into(), "h.json".into(), "--output".into(), "r.md".into()],
+            &vec![
+                "--input".into(),
+                "h.json".into(),
+                "--output".into(),
+                "r.md".into(),
+            ],
             &mut io,
         )
         .unwrap();
@@ -389,8 +385,7 @@ mod tests {
     #[test]
     fn pipeline_surfaces_input_io_error() {
         let mut io = MemIo::new();
-        let err =
-            run_cli(&vec!["--input".into(), "missing.json".into()], &mut io).unwrap_err();
+        let err = run_cli(&vec!["--input".into(), "missing.json".into()], &mut io).unwrap_err();
         assert!(matches!(err, CliError::Io(_)));
     }
 

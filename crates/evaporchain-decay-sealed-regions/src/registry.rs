@@ -17,7 +17,9 @@ pub enum RegistryError {
         incoming: u64,
         existing: u64,
     },
-    #[error("incoming seal overlaps a FROZEN seal — sub-block finality is real, replacement forbidden")]
+    #[error(
+        "incoming seal overlaps a FROZEN seal — sub-block finality is real, replacement forbidden"
+    )]
     OverlappingFrozenSeal,
     #[error("region commitment {commitment:?} not found")]
     NotFound { commitment: [u8; 32] },
@@ -109,9 +111,12 @@ impl SealRegistry {
         commitment: &[u8; 32],
         new_energy: u64,
     ) -> Result<(), RegistryError> {
-        let r = self.seals.get_mut(commitment).ok_or(RegistryError::NotFound {
-            commitment: *commitment,
-        })?;
+        let r = self
+            .seals
+            .get_mut(commitment)
+            .ok_or(RegistryError::NotFound {
+                commitment: *commitment,
+            })?;
         if r.is_frozen() {
             return Err(RegistryError::AlreadyFrozen);
         }
@@ -126,7 +131,9 @@ impl SealRegistry {
         let mut frozen = 0usize;
         for r in self.seals.values_mut() {
             if matches!(r.state, RegionState::Tentative) && r.energy <= floor {
-                r.state = RegionState::Frozen { frozen_at_epoch: at_epoch };
+                r.state = RegionState::Frozen {
+                    frozen_at_epoch: at_epoch,
+                };
                 frozen += 1;
             }
         }
@@ -202,7 +209,11 @@ mod tests {
         let err = reg.register(weak).unwrap_err();
         assert!(matches!(
             err,
-            RegistryError::OverlappingSealHigherEnergy { existing: 100, incoming: 50, .. }
+            RegistryError::OverlappingSealHigherEnergy {
+                existing: 100,
+                incoming: 50,
+                ..
+            }
         ));
         assert!(reg.get(&strong.commitment()).is_some());
         assert_eq!(reg.len(), 1);
@@ -216,7 +227,10 @@ mod tests {
         reg.register(first.clone()).unwrap();
         let same_energy = r_with_root(5, 15, 0, 100, 0xBB);
         let err = reg.register(same_energy).unwrap_err();
-        assert!(matches!(err, RegistryError::OverlappingSealHigherEnergy { .. }));
+        assert!(matches!(
+            err,
+            RegistryError::OverlappingSealHigherEnergy { .. }
+        ));
     }
 
     // ── freeze + immutability ────────────────────────────────────

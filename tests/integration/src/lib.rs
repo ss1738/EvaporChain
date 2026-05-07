@@ -192,9 +192,9 @@ mod tests {
             address: sender,
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         // Submit transfer to all mempools
@@ -258,9 +258,9 @@ mod tests {
             address: [1u8; 32],
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         let mut state_roots = Vec::new();
@@ -625,9 +625,9 @@ mod tests {
             address: [5u8; 32],
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         // Submit blob tx
@@ -738,9 +738,9 @@ mod tests {
             address: sender,
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         // Build and sign the transfer
@@ -825,9 +825,9 @@ mod tests {
             address: sender,
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
 
         // Build tx with WRONG signature (sign different message)
@@ -3167,11 +3167,7 @@ mod hot_cold_stake_integration {
         // half-lives, not zero decay on cold. ~0.7% over 100 epochs is
         // the documented behaviour; bound at 9_900 (1% slack) so we
         // catch any regression that would scale cold's decay rate.
-        assert!(
-            after.cold > 9_900,
-            "cold decayed too fast: {}",
-            after.cold
-        );
+        assert!(after.cold > 9_900, "cold decayed too fast: {}", after.cold);
         assert!(
             after.cold < 10_000,
             "cold did not decay at all: {}",
@@ -6628,7 +6624,11 @@ mod shard_stress_harness {
     impl Xs64 {
         fn new(seed: u64) -> Self {
             // Avoid the all-zero state which xorshift cannot escape.
-            Self(if seed == 0 { 0xDEAD_BEEF_CAFE_BABE } else { seed })
+            Self(if seed == 0 {
+                0xDEAD_BEEF_CAFE_BABE
+            } else {
+                seed
+            })
         }
         fn next(&mut self) -> u64 {
             let mut x = self.0;
@@ -6652,11 +6652,7 @@ mod shard_stress_harness {
         }
     }
 
-    fn synthetic_msg(
-        rng: &mut Xs64,
-        config: &ShardConfig,
-        timestamp: u64,
-    ) -> CrossShardMessage {
+    fn synthetic_msg(rng: &mut Xs64, config: &ShardConfig, timestamp: u64) -> CrossShardMessage {
         let target = rng.next_obj_id();
         let to_shard = shard_for_object(&target, config);
         // Pick a from_shard distinct from to_shard so every message is
@@ -6772,10 +6768,7 @@ mod shard_stress_harness {
                 let drained = router.drain_for_shard(shard);
                 for msg in &drained {
                     assert_eq!(msg.to_shard, shard, "drained msg landed in wrong shard");
-                    assert!(
-                        sent_ids.contains(&msg.id),
-                        "drained an id we never sent"
-                    );
+                    assert!(sent_ids.contains(&msg.id), "drained an id we never sent");
                     let receipt = CrossShardReceipt {
                         message_id: msg.id,
                         from_shard: msg.from_shard,
@@ -6863,7 +6856,12 @@ mod shard_stress_harness {
         assert_eq!(router.pending_count(), 0);
     }
 
-    fn make_health(id: u16, total: u64, live: u64, energy: u64) -> evaporchain_sharding::ShardHealth {
+    fn make_health(
+        id: u16,
+        total: u64,
+        live: u64,
+        energy: u64,
+    ) -> evaporchain_sharding::ShardHealth {
         evaporchain_sharding::ShardHealth {
             shard_id: ShardId(id),
             total_objects: total,
@@ -6880,9 +6878,9 @@ mod shard_stress_harness {
         // 4 shards: 0 healthy, 1 dead (all evaporated), 2 cold (low energy
         // but still has live objects), 3 healthy.
         let healths = vec![
-            make_health(0, 100, 80, 50_000), // healthy
-            make_health(1, 50, 0, 0),        // dead
-            make_health(2, 20, 5, 30),       // cold (energy 30 ≤ threshold 100)
+            make_health(0, 100, 80, 50_000),  // healthy
+            make_health(1, 50, 0, 0),         // dead
+            make_health(2, 20, 5, 30),        // cold (energy 30 ≤ threshold 100)
             make_health(3, 200, 150, 60_000), // healthy
         ];
 
@@ -7278,11 +7276,11 @@ mod shard_stress_harness {
 
         // Cases the protocol actually hits in practice.
         for &(num_shards, num_validators) in &[
-            (16u16, 1u64),  // single validator owns everything
-            (16, 2),        // 2-way split
-            (16, 4),        // 4-way split
-            (16, 16),       // each validator owns exactly one shard
-            (8, 16),        // more validators than shards: latter half get empty
+            (16u16, 1u64), // single validator owns everything
+            (16, 2),       // 2-way split
+            (16, 4),       // 4-way split
+            (16, 16),      // each validator owns exactly one shard
+            (8, 16),       // more validators than shards: latter half get empty
         ] {
             let config = ShardConfig::new(num_shards);
             let mut union: HashSet<u16> = HashSet::new();

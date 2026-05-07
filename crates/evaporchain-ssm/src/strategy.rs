@@ -95,10 +95,7 @@ pub fn p_view(arena: &Arena, play: &Play) -> Option<Vec<MoveId>> {
 /// Verify a strategy is innocent over the supplied set of (play,
 /// expected_response) pairs. Two pairs with the same P-view but
 /// different responses break innocence.
-pub fn is_innocent(
-    arena: &Arena,
-    cases: &[(Play, MoveId)],
-) -> Result<(), StrategyError> {
+pub fn is_innocent(arena: &Arena, cases: &[(Play, MoveId)]) -> Result<(), StrategyError> {
     let mut seen: HashMap<Vec<MoveId>, MoveId> = HashMap::new();
     for (play, response) in cases {
         if let Some(view) = p_view(arena, play) {
@@ -126,10 +123,30 @@ mod tests {
 
     fn arena_simple() -> Arena {
         Arena::build(vec![
-            MoveDecl { id: id(1), owner: Owner::Opponent, label: MoveLabel::Question, parent: None },
-            MoveDecl { id: id(2), owner: Owner::Proponent, label: MoveLabel::Answer, parent: Some(id(1)) },
-            MoveDecl { id: id(3), owner: Owner::Proponent, label: MoveLabel::Question, parent: Some(id(1)) },
-            MoveDecl { id: id(4), owner: Owner::Opponent, label: MoveLabel::Answer, parent: Some(id(3)) },
+            MoveDecl {
+                id: id(1),
+                owner: Owner::Opponent,
+                label: MoveLabel::Question,
+                parent: None,
+            },
+            MoveDecl {
+                id: id(2),
+                owner: Owner::Proponent,
+                label: MoveLabel::Answer,
+                parent: Some(id(1)),
+            },
+            MoveDecl {
+                id: id(3),
+                owner: Owner::Proponent,
+                label: MoveLabel::Question,
+                parent: Some(id(1)),
+            },
+            MoveDecl {
+                id: id(4),
+                owner: Owner::Opponent,
+                label: MoveLabel::Answer,
+                parent: Some(id(3)),
+            },
         ])
         .unwrap()
     }
@@ -138,7 +155,14 @@ mod tests {
     fn p_view_at_root_is_just_root() {
         let arena = arena_simple();
         let mut play = Play::new();
-        play.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        play.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
         let view = p_view(&arena, &play).unwrap();
         assert_eq!(view, vec![id(1)]);
     }
@@ -149,8 +173,22 @@ mod tests {
         // a response when it's its own turn).
         let arena = arena_simple();
         let mut play = Play::new();
-        play.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
-        play.append(&arena, Move { move_id: id(3), justifier: Some(id(1)) }).unwrap();
+        play.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
+        play.append(
+            &arena,
+            Move {
+                move_id: id(3),
+                justifier: Some(id(1)),
+            },
+        )
+        .unwrap();
         assert!(p_view(&arena, &play).is_none());
     }
 
@@ -158,9 +196,30 @@ mod tests {
     fn p_view_walks_justifier_chain() {
         let arena = arena_simple();
         let mut play = Play::new();
-        play.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
-        play.append(&arena, Move { move_id: id(3), justifier: Some(id(1)) }).unwrap();
-        play.append(&arena, Move { move_id: id(4), justifier: Some(id(3)) }).unwrap();
+        play.append(
+            &arena,
+            Move {
+                move_id: id(1),
+                justifier: None,
+            },
+        )
+        .unwrap();
+        play.append(
+            &arena,
+            Move {
+                move_id: id(3),
+                justifier: Some(id(1)),
+            },
+        )
+        .unwrap();
+        play.append(
+            &arena,
+            Move {
+                move_id: id(4),
+                justifier: Some(id(3)),
+            },
+        )
+        .unwrap();
         let view = p_view(&arena, &play).unwrap();
         // P-view: [4, 3, 1] — the latest O-move and its chain back to root.
         assert_eq!(view, vec![id(4), id(3), id(1)]);
@@ -180,9 +239,25 @@ mod tests {
         // Two plays with the same P-view at the root: both must map
         // to the same response.
         let mut play_a = Play::new();
-        play_a.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        play_a
+            .append(
+                &arena,
+                Move {
+                    move_id: id(1),
+                    justifier: None,
+                },
+            )
+            .unwrap();
         let mut play_b = Play::new();
-        play_b.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        play_b
+            .append(
+                &arena,
+                Move {
+                    move_id: id(1),
+                    justifier: None,
+                },
+            )
+            .unwrap();
         is_innocent(&arena, &[(play_a, id(2)), (play_b, id(2))]).unwrap();
     }
 
@@ -191,9 +266,25 @@ mod tests {
         let arena = arena_simple();
         // Same P-view → different responses ⇒ non-innocent.
         let mut play_a = Play::new();
-        play_a.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        play_a
+            .append(
+                &arena,
+                Move {
+                    move_id: id(1),
+                    justifier: None,
+                },
+            )
+            .unwrap();
         let mut play_b = Play::new();
-        play_b.append(&arena, Move { move_id: id(1), justifier: None }).unwrap();
+        play_b
+            .append(
+                &arena,
+                Move {
+                    move_id: id(1),
+                    justifier: None,
+                },
+            )
+            .unwrap();
         let err = is_innocent(&arena, &[(play_a, id(2)), (play_b, id(3))]).unwrap_err();
         assert_eq!(err, StrategyError::NonInnocent);
     }

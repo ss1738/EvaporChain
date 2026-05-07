@@ -78,7 +78,10 @@ mod press_claim_tests {
         // Genesis has empty causal past — its root is the empty
         // sentinel, distinct from any non-empty causal-past root.
         let genesis_root = causal_root(&lc, id(0));
-        assert_ne!(genesis_root, root, "genesis vs non-genesis roots must differ");
+        assert_ne!(
+            genesis_root, root,
+            "genesis vs non-genesis roots must differ"
+        );
 
         // Empty-sentinel root is reproducible for any genesis-like
         // block (a fresh DAG with a single block has empty causal past).

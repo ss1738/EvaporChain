@@ -128,11 +128,7 @@ type HistoryCounts = BTreeMap<Vec<u32>, Vec<u64>>;
 /// Slide a window over `stream`. For each position `t` and each
 /// length `L ∈ 0..=l_max`, increment `counts[stream[t-L..t]][stream[t]]`.
 /// The empty history `[]` is always included (Phase I starts there).
-fn collect_history_counts(
-    stream: &[u32],
-    alphabet_size: u32,
-    l_max: usize,
-) -> HistoryCounts {
+fn collect_history_counts(stream: &[u32], alphabet_size: u32, l_max: usize) -> HistoryCounts {
     let mut counts: HistoryCounts = BTreeMap::new();
     let n = stream.len();
     for t in 0..n {
@@ -192,8 +188,7 @@ fn homogenize_phase(counts: &HistoryCounts, alphabet_size: u32, alpha: f64) -> A
     // Histories sorted shortest-first so Phase I processes
     // depth-by-depth. Tie-break on lexicographic content (no clone
     // needed — `sort_by` compares behind references directly).
-    let mut sorted_histories: Vec<&Vec<u32>> =
-        counts.keys().filter(|h| !h.is_empty()).collect();
+    let mut sorted_histories: Vec<&Vec<u32>> = counts.keys().filter(|h| !h.is_empty()).collect();
     sorted_histories.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
 
     for history in sorted_histories {
@@ -208,10 +203,7 @@ fn homogenize_phase(counts: &HistoryCounts, alphabet_size: u32, alpha: f64) -> A
             // is already in `assignment` because we sorted shortest-
             // first.
             let parent = &history[1..]; // strip leftmost symbol
-            let parent_state = assignment
-                .get(parent)
-                .copied()
-                .unwrap_or(0);
+            let parent_state = assignment.get(parent).copied().unwrap_or(0);
             assignment.insert(history.clone(), parent_state);
             continue;
         }
@@ -263,10 +255,7 @@ fn determinize_phase(
         // Group pasts by their current state.
         let mut by_state: BTreeMap<StateId, Vec<Vec<u32>>> = BTreeMap::new();
         for (history, &state) in assignment.iter() {
-            by_state
-                .entry(state)
-                .or_default()
-                .push(history.clone());
+            by_state.entry(state).or_default().push(history.clone());
         }
 
         let mut next_state_id: StateId = by_state.keys().copied().max().unwrap_or(0) + 1;
@@ -285,7 +274,8 @@ fn determinize_phase(
             for history in histories {
                 // Determine, per symbol, what state this history
                 // would transition to.
-                let mut signature: Vec<Option<StateId>> = Vec::with_capacity(alphabet_size as usize);
+                let mut signature: Vec<Option<StateId>> =
+                    Vec::with_capacity(alphabet_size as usize);
                 let history_total: u64 = counts
                     .get(&history)
                     .map(|cs| cs.iter().sum::<u64>())
@@ -310,7 +300,7 @@ fn determinize_phase(
                 successor_map
                     .entry((alphabet_size, state)) // placeholder — re-keyed below
                     .or_default(); // ensure entry exists
-                // Bucket by signature → list of histories
+                                   // Bucket by signature → list of histories
                 successor_map
                     .entry((signature_hash(&signature), state))
                     .or_default()
@@ -530,8 +520,7 @@ fn build_machine(
     // Build transitions. For each `(state, symbol)`, find the
     // dominant successor state across all histories assigned to that
     // state.
-    let mut transition_votes: BTreeMap<(StateId, u32), BTreeMap<StateId, u64>> =
-        BTreeMap::new();
+    let mut transition_votes: BTreeMap<(StateId, u32), BTreeMap<StateId, u64>> = BTreeMap::new();
     for (history, &state) in assignment.iter() {
         let new_state = renumber[&state];
         let history_counts = match counts.get(history) {
@@ -739,11 +728,7 @@ mod tests {
             x ^= x << 13;
             x ^= x >> 7;
             x ^= x << 17;
-            let next = if last == 1 {
-                0
-            } else {
-                (x & 1) as u32
-            };
+            let next = if last == 1 { 0 } else { (x & 1) as u32 };
             out.push(next);
             last = next;
         }
@@ -779,7 +764,10 @@ mod tests {
         let err = reconstruct_cssr(&[0, 1, 5], 2, DEFAULT_L_MAX, DEFAULT_ALPHA).unwrap_err();
         assert!(matches!(
             err,
-            ReconstructError::SymbolOutOfAlphabet { got: 5, alphabet_size: 2 }
+            ReconstructError::SymbolOutOfAlphabet {
+                got: 5,
+                alphabet_size: 2
+            }
         ));
     }
 
@@ -982,8 +970,7 @@ mod tests {
         }
 
         let uniform_pmf = uniform_state_pmf.expect("must find a near-uniform state");
-        let deterministic_pmf =
-            deterministic_state_pmf.expect("must find a deterministic state");
+        let deterministic_pmf = deterministic_state_pmf.expect("must find a deterministic state");
 
         // Reference uniform: pmf[0] = pmf[1] = FIXED_POINT_SCALE / 2.
         let uniform_ref: Vec<u64> = vec![FIXED_POINT_SCALE / 2, FIXED_POINT_SCALE / 2];

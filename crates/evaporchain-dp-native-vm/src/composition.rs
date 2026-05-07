@@ -40,8 +40,12 @@ impl BasicComposition {
         let mut total_eps: u64 = 0;
         let mut total_delta: u64 = 0;
         for (e, d) in queries {
-            total_eps = total_eps.checked_add(*e).ok_or(CompositionError::Overflow)?;
-            total_delta = total_delta.checked_add(*d).ok_or(CompositionError::Overflow)?;
+            total_eps = total_eps
+                .checked_add(*e)
+                .ok_or(CompositionError::Overflow)?;
+            total_delta = total_delta
+                .checked_add(*d)
+                .ok_or(CompositionError::Overflow)?;
         }
         Ok(Self {
             total_epsilon_micros: total_eps,
@@ -138,8 +142,7 @@ mod tests {
     #[test]
     fn basic_composition_iterative_matches_one_shot() {
         // Adding queries one at a time matches summing them at once.
-        let queries: Vec<(u64, u64)> =
-            (1..=5).map(|i| (i * 10_000, i * 5)).collect();
+        let queries: Vec<(u64, u64)> = (1..=5).map(|i| (i * 10_000, i * 5)).collect();
         let one_shot = BasicComposition::compose(&queries).unwrap();
         let mut acc_eps: u64 = 0;
         let mut acc_d: u64 = 0;

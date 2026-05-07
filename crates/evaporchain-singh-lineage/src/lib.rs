@@ -118,16 +118,11 @@ mod press_claim_tests {
         ));
 
         // Over-weighted addition rejected (exceeds FULL_AUTHORITY_BP).
-        let mut over = Lineage::register([0u8; 32], issuer, Ladder::doctrine_default(1).unwrap(), 0);
-        over.add_successor(
-            issuer,
-            Successor::new(heir1, 7_000, "x", issuer).unwrap(),
-        )
-        .unwrap();
-        let res = over.add_successor(
-            issuer,
-            Successor::new(heir2, 5_000, "y", issuer).unwrap(),
-        );
+        let mut over =
+            Lineage::register([0u8; 32], issuer, Ladder::doctrine_default(1).unwrap(), 0);
+        over.add_successor(issuer, Successor::new(heir1, 7_000, "x", issuer).unwrap())
+            .unwrap();
+        let res = over.add_successor(issuer, Successor::new(heir2, 5_000, "y", issuer).unwrap());
         assert!(matches!(res, Err(LineageError::OverWeighted { .. })));
     }
 }

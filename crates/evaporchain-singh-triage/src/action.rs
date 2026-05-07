@@ -59,9 +59,7 @@ pub fn apply_action(
             // Compute current energy at epoch_now, add the top-up,
             // re-anchor to epoch_now.
             let now_e = item.energy_at(epoch_now);
-            let new = now_e
-                .checked_add(top_up)
-                .ok_or(ActionError::Overflow)?;
+            let new = now_e.checked_add(top_up).ok_or(ActionError::Overflow)?;
             item.energy_at_anchor = new;
             item.last_refreshed_epoch = epoch_now;
             Ok(ActionOutcome::Refreshed {
@@ -95,7 +93,10 @@ mod tests {
         // At epoch 100, energy decayed by ~half. Top up 500.
         let outcome = apply_action(&mut it, Action::Refresh { top_up: 500 }, 100).unwrap();
         match outcome {
-            ActionOutcome::Refreshed { new_energy, anchored_at } => {
+            ActionOutcome::Refreshed {
+                new_energy,
+                anchored_at,
+            } => {
                 assert!(new_energy > 500);
                 assert!(new_energy <= 1500);
                 assert_eq!(anchored_at, 100);
@@ -109,12 +110,7 @@ mod tests {
     fn refresh_overflow_rejected() {
         let mut it = TriageItem::new([0; 32], u64::MAX - 100, 100, 0).unwrap();
         // top_up=1000 + current ≈ MAX-100 ⇒ overflow.
-        let err = apply_action(
-            &mut it,
-            Action::Refresh { top_up: 1000 },
-            0,
-        )
-        .unwrap_err();
+        let err = apply_action(&mut it, Action::Refresh { top_up: 1000 }, 0).unwrap_err();
         assert_eq!(err, ActionError::Overflow);
     }
 

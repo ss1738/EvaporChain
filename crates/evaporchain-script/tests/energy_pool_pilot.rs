@@ -37,10 +37,8 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("EnergyPool failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("EnergyPool failed to compile: {e:?}"))
+    let ast = parser::parse(SOURCE).unwrap_or_else(|e| panic!("EnergyPool failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("EnergyPool failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {

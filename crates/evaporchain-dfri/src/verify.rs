@@ -108,11 +108,7 @@ mod tests {
         let input = build_even_codeword(1000);
         let mut folded = fold_codeword(&input).unwrap();
         // Tamper: flip f' at x² = 1 (folded position 1).
-        let pos = folded
-            .positions
-            .iter_mut()
-            .find(|p| p.x == 1)
-            .unwrap();
+        let pos = folded.positions.iter_mut().find(|p| p.x == 1).unwrap();
         pos.fx = add_p(pos.fx, 1);
         let err = verify_query_round(&input, &folded, 1, 100).unwrap_err();
         assert!(matches!(err, VerifyError::ConsistencyMismatch { .. }));

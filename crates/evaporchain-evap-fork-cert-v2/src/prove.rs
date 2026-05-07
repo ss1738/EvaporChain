@@ -28,7 +28,13 @@ pub fn prove_fork_evaporated_v2(
     }
 
     // Reuse V1 decay aggregation; ignore V1's witness (V2 derives its own).
-    let v1 = prove_fork_evaporated(fork_root, blocks, chain_lambda, evaluated_at_epoch, threshold);
+    let v1 = prove_fork_evaporated(
+        fork_root,
+        blocks,
+        chain_lambda,
+        evaluated_at_epoch,
+        threshold,
+    );
 
     let witness = compute_witness_v2(
         fork_root,
@@ -146,24 +152,30 @@ mod tests {
     #[test]
     fn different_anchor_yields_different_witness() {
         let blocks = one_block_at_one_halflife();
-        let a = prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [1u8; 32], 0).unwrap();
-        let b = prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [2u8; 32], 0).unwrap();
+        let a =
+            prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [1u8; 32], 0).unwrap();
+        let b =
+            prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [2u8; 32], 0).unwrap();
         assert_ne!(a.witness, b.witness);
     }
 
     #[test]
     fn different_anchor_epoch_yields_different_witness() {
         let blocks = one_block_at_one_halflife();
-        let a = prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 0).unwrap();
-        let b = prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 50).unwrap();
+        let a =
+            prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 0).unwrap();
+        let b =
+            prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 50).unwrap();
         assert_ne!(a.witness, b.witness);
     }
 
     #[test]
     fn determinism_same_inputs_same_witness() {
         let blocks = one_block_at_one_halflife();
-        let a = prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 50).unwrap();
-        let b = prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 50).unwrap();
+        let a =
+            prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 50).unwrap();
+        let b =
+            prove_fork_evaporated_v2([1u8; 32], &blocks, lambda(), 100, 1, [9u8; 32], 50).unwrap();
         assert_eq!(a, b);
     }
 }

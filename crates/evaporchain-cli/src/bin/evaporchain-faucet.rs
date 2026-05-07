@@ -36,7 +36,10 @@ use tokio::sync::Mutex;
 // ─────────────────────────── CLI ──────────────────────────────────────────
 
 #[derive(clap::Parser, Clone)]
-#[command(name = "evaporchain-faucet", about = "Public testnet faucet for EvaporChain.")]
+#[command(
+    name = "evaporchain-faucet",
+    about = "Public testnet faucet for EvaporChain."
+)]
 struct Cli {
     /// Listen port for the public HTTP service.
     #[arg(long, default_value_t = 7676)]
@@ -89,9 +92,7 @@ struct ClaimStore {
 impl ClaimStore {
     fn load(path: &PathBuf) -> Self {
         match std::fs::read_to_string(path) {
-            Ok(s) if !s.trim().is_empty() => {
-                serde_json::from_str(&s).unwrap_or_default()
-            }
+            Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
             _ => Self::default(),
         }
     }
@@ -381,10 +382,7 @@ async fn post_claim(
     }
 
     // Forward to the chain.
-    let url = format!(
-        "{}/api/faucet",
-        state.cli.node_url.trim_end_matches('/')
-    );
+    let url = format!("{}/api/faucet", state.cli.node_url.trim_end_matches('/'));
     let mut req_builder = state
         .http
         .post(&url)

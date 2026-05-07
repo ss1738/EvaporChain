@@ -116,12 +116,16 @@ pub enum ToolTier {
 pub fn classify_tool(name: &str) -> ToolTier {
     match name {
         // Write tools — every call is a chain-state mutation.
-        "transfer" | "create_object" | "refresh_object" | "resurrect_object"
-        | "request_faucet" => ToolTier::Write,
+        "transfer" | "create_object" | "refresh_object" | "resurrect_object" | "request_faucet" => {
+            ToolTier::Write
+        }
 
         // Compute-heavy reads — backend runs non-trivial math.
-        "compute_demurrage" | "compute_mera_commitment" | "prove_fork_evaporated"
-        | "check_conservation" | "check_annealing_temperature" => ToolTier::Compute,
+        "compute_demurrage"
+        | "compute_mera_commitment"
+        | "prove_fork_evaporated"
+        | "check_conservation"
+        | "check_annealing_temperature" => ToolTier::Compute,
 
         // Everything else — cheap GETs.
         _ => ToolTier::Read,

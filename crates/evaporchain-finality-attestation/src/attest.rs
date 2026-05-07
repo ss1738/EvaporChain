@@ -46,7 +46,9 @@ pub struct FinalityAttestation {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AttestationError {
-    #[error("evaporated_forks must be sorted lexicographically by fork_root for canonical commitment")]
+    #[error(
+        "evaporated_forks must be sorted lexicographically by fork_root for canonical commitment"
+    )]
     UnsortedForks,
     #[error("evaporated_forks contains duplicate fork_root {0:?}")]
     DuplicateForkRoot([u8; 32]),
@@ -294,11 +296,7 @@ mod tests {
         // holding the DAG, the beacon archive, or any fork blocks.
         // Tampering any field of the attestation diverges the root."
 
-        let att = att_with(vec![
-            fwr(0x10, 0xaa),
-            fwr(0x20, 0xbb),
-            fwr(0x30, 0xcc),
-        ]);
+        let att = att_with(vec![fwr(0x10, 0xaa), fwr(0x20, 0xbb), fwr(0x30, 0xcc)]);
         let root = build_attestation(&att).unwrap();
         verify_attestation(&att, &root).unwrap();
 

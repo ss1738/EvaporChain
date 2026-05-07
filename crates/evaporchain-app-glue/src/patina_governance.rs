@@ -50,7 +50,11 @@ pub const PATINA_FLOOR_DEFAULT_BP: u64 = 15;
 pub enum PatinaGovernanceError {
     #[error("parameter setup failed: {0}")]
     Parameter(#[from] ParameterError),
-    #[error("requested initial value {bp} outside [{}, {}]", PATINA_FLOOR_MIN_BP, PATINA_FLOOR_MAX_BP)]
+    #[error(
+        "requested initial value {bp} outside [{}, {}]",
+        PATINA_FLOOR_MIN_BP,
+        PATINA_FLOOR_MAX_BP
+    )]
     OutOfBounds { bp: u64 },
 }
 

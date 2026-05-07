@@ -104,7 +104,12 @@ pub fn verify_certificate(
         });
     }
 
-    let cartel_seed = derive_cartel_seed(chain_id, prev_block_hash, cert.window_start, cert.window_end);
+    let cartel_seed = derive_cartel_seed(
+        chain_id,
+        prev_block_hash,
+        cert.window_start,
+        cert.window_end,
+    );
     let cartel = coordinated_subset_cartel(&honest, 1, 1, cartel_seed)
         .map_err(|e| VerifyError::ChshFailure(format!("{e}")))?;
     let s_cartel_milli =
@@ -196,8 +201,15 @@ mod tests {
     fn good_cert() -> (Vec<ConcurrentPair>, [u8; 32], BellCertificate) {
         let pairs = balanced_window();
         let prev = [9u8; 32];
-        let cert =
-            issue_certificate("test-chain-v1", 100, 200, &pairs, GateThresholds::doctrine(), prev).unwrap();
+        let cert = issue_certificate(
+            "test-chain-v1",
+            100,
+            200,
+            &pairs,
+            GateThresholds::doctrine(),
+            prev,
+        )
+        .unwrap();
         (pairs, prev, cert)
     }
 
@@ -206,7 +218,14 @@ mod tests {
     #[test]
     fn round_trip_verifies() {
         let (pairs, prev, cert) = good_cert();
-        verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap();
+        verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap();
     }
 
     // ── tampered fields rejected ──────────────────────────────────
@@ -215,7 +234,14 @@ mod tests {
     fn tampered_seed_rejected() {
         let (pairs, prev, mut cert) = good_cert();
         cert.seed[0] ^= 0xff;
-        let err = verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         assert_eq!(err, VerifyError::SeedMismatch);
     }
 
@@ -223,7 +249,14 @@ mod tests {
     fn tampered_s_honest_rejected() {
         let (pairs, prev, mut cert) = good_cert();
         cert.s_honest_milli += 100;
-        let err = verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         assert!(matches!(err, VerifyError::SHonestMismatch { .. }));
     }
 
@@ -231,7 +264,14 @@ mod tests {
     fn tampered_s_cartel_rejected() {
         let (pairs, prev, mut cert) = good_cert();
         cert.s_cartel_milli -= 1000;
-        let err = verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         assert!(matches!(err, VerifyError::SCartelMismatch { .. }));
     }
 
@@ -239,7 +279,14 @@ mod tests {
     fn tampered_gap_rejected() {
         let (pairs, prev, mut cert) = good_cert();
         cert.gap_milli += 50;
-        let err = verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         assert!(matches!(err, VerifyError::GapMismatch { .. }));
     }
 
@@ -247,7 +294,14 @@ mod tests {
     fn tampered_n_pairs_rejected() {
         let (pairs, prev, mut cert) = good_cert();
         cert.n_pairs += 1;
-        let err = verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         assert!(matches!(err, VerifyError::PairCountMismatch { .. }));
     }
 
@@ -256,7 +310,14 @@ mod tests {
         let (pairs, prev, mut cert) = good_cert();
         cert.bucket_counts[0] += 1;
         cert.bucket_counts[1] -= 1;
-        let err = verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         assert_eq!(err, VerifyError::BucketCountMismatch);
     }
 
@@ -297,8 +358,14 @@ mod tests {
         // but the exact tag set differs. Replace one tag's byte 0
         // with 0xff to guarantee divergence.
         substituted[0].tag[0] = 0xff;
-        let err = verify_certificate("test-chain-v1", &substituted, prev, GateThresholds::doctrine(), &cert)
-            .unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &substituted,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         // Either bucket counts differ (because tag[31]&0b11 changes
         // for one pair) or the seed mismatches if buckets stayed the
         // same. Both are valid rejection reasons.
@@ -311,7 +378,14 @@ mod tests {
     #[test]
     fn empty_pairs_rejected() {
         let (_pairs, prev, cert) = good_cert();
-        let err = verify_certificate("test-chain-v1", &[], prev, GateThresholds::doctrine(), &cert).unwrap_err();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &[],
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
         assert_eq!(err, VerifyError::EmptyWindow);
     }
 
@@ -330,7 +404,14 @@ mod tests {
         // or seed causes verify_certificate to reject."
 
         let (pairs, prev, cert) = good_cert();
-        verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap();
+        verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap();
 
         // 8 tampering vectors, one per field. Already covered by the
         // tests above; press-claim test asserts the public invariant.
@@ -371,9 +452,14 @@ mod tests {
                 c
             },
         ] {
-            assert!(
-                verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &tampered).is_err()
-            );
+            assert!(verify_certificate(
+                "test-chain-v1",
+                &pairs,
+                prev,
+                GateThresholds::doctrine(),
+                &tampered
+            )
+            .is_err());
         }
     }
 }

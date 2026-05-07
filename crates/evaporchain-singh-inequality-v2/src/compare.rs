@@ -42,8 +42,8 @@ pub fn bernstein_strictly_tighter(
         .collect();
 
     let v1_variance = singh_variance_bound(&v1_contribs).map_err(map_v1_err)?;
-    let v1_admits = passes_singh_gate(deviation, &v1_contribs, soundness_multiplier)
-        .map_err(map_v1_err)?;
+    let v1_admits =
+        passes_singh_gate(deviation, &v1_contribs, soundness_multiplier).map_err(map_v1_err)?;
 
     let v2_variance = singh_bernstein_variance(contribs)?;
     let _ = max_range(contribs)?; // also validates ranges

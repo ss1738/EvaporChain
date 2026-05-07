@@ -163,7 +163,13 @@ pub fn prove_sumcheck_inclusion(
         let remaining_dims = v - round_k - 1;
         let cube_size = 1usize << remaining_dims;
         for &x_value in &[0u64, 1u64, 2u64] {
-            let idx_pos = if x_value == 0 { 0 } else if x_value == 1 { 1 } else { 2 };
+            let idx_pos = if x_value == 0 {
+                0
+            } else if x_value == 1 {
+                1
+            } else {
+                2
+            };
             let mut sum: FieldElem = 0;
             for cube_pt in 0..cube_size {
                 // Build the full v-dim point: (r_1,…,r_{k-1}, x_value, cube_pt's bits…)
@@ -176,8 +182,8 @@ pub fn prove_sumcheck_inclusion(
                     point.push(((cube_pt >> d) & 1) as FieldElem);
                 }
                 // g(point) = leaf_energy_MLE(point) · selector(target, point)
-                let leaf_val = multilinear_extend(leaves, &point)
-                    .expect("MLE at well-shaped point");
+                let leaf_val =
+                    multilinear_extend(leaves, &point).expect("MLE at well-shaped point");
                 let sel_val = selector_eval(target, &point);
                 sum = add_p(sum, mul_p(leaf_val, sel_val));
             }
@@ -312,7 +318,11 @@ mod tests {
     #[test]
     fn univariate_poly_evaluates_at_arbitrary_point() {
         // A degree-2 polynomial. Try x²: at 0=0, at 1=1, at 2=4.
-        let p = UnivariatePoly3 { at_0: 0, at_1: 1, at_2: 4 };
+        let p = UnivariatePoly3 {
+            at_0: 0,
+            at_1: 1,
+            at_2: 4,
+        };
         // p(3) should = 9.
         assert_eq!(p.evaluate(3), 9);
         // p(5) should = 25.

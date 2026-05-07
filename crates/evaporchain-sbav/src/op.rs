@@ -78,9 +78,9 @@ impl Reversible for Op {
             Op::Not { reg } => Op::Not { reg },
             Op::Rotl { reg, bits } => Op::Rotr { reg, bits },
             Op::Rotr { reg, bits } => Op::Rotl { reg, bits },
-            Op::Decay { .. } => unreachable!(
-                "Decay has no inverse — caller must check is_reversible()"
-            ),
+            Op::Decay { .. } => {
+                unreachable!("Decay has no inverse — caller must check is_reversible()")
+            }
         }
     }
 }

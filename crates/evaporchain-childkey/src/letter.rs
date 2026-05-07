@@ -116,33 +116,15 @@ mod tests {
 
     #[test]
     fn seal_rejects_zero_unlock_age() {
-        let err = SealedLetter::seal(
-            [0; 32],
-            [0xAA; 32],
-            [0xBB; 32],
-            1000,
-            0,
-            365,
-            vault(),
-            0,
-        )
-        .unwrap_err();
+        let err = SealedLetter::seal([0; 32], [0xAA; 32], [0xBB; 32], 1000, 0, 365, vault(), 0)
+            .unwrap_err();
         assert_eq!(err, LetterError::ZeroUnlockAge);
     }
 
     #[test]
     fn seal_rejects_zero_epochs_per_year() {
-        let err = SealedLetter::seal(
-            [0; 32],
-            [0xAA; 32],
-            [0xBB; 32],
-            1000,
-            18,
-            0,
-            vault(),
-            0,
-        )
-        .unwrap_err();
+        let err = SealedLetter::seal([0; 32], [0xAA; 32], [0xBB; 32], 1000, 18, 0, vault(), 0)
+            .unwrap_err();
         assert_eq!(err, LetterError::ZeroEpochsPerYear);
     }
 
@@ -154,7 +136,7 @@ mod tests {
             [0xBB; 32],
             10_000, // birth at epoch 10_000
             18,
-            365,    // 365 epochs per year (1 epoch = 1 day)
+            365, // 365 epochs per year (1 epoch = 1 day)
             vault(),
             0,
         )
@@ -165,17 +147,8 @@ mod tests {
 
     #[test]
     fn newly_sealed_letter_is_in_sealed_state() {
-        let l = SealedLetter::seal(
-            [0; 32],
-            [0xAA; 32],
-            [0xBB; 32],
-            0,
-            18,
-            365,
-            vault(),
-            0,
-        )
-        .unwrap();
+        let l =
+            SealedLetter::seal([0; 32], [0xAA; 32], [0xBB; 32], 0, 18, 365, vault(), 0).unwrap();
         assert!(l.is_sealed());
     }
 

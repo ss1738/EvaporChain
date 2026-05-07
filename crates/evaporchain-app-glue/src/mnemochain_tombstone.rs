@@ -18,7 +18,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum MnemoTombstoneError {
-    #[error("card still has memory energy at epoch {epoch_now} — refresh first or wait for full decay")]
+    #[error(
+        "card still has memory energy at epoch {epoch_now} — refresh first or wait for full decay"
+    )]
     StillFresh { epoch_now: Epoch },
     #[error("card has zero attempts — nothing to memorialise (was it ever studied?)")]
     NeverReviewed,
@@ -29,10 +31,7 @@ pub enum MnemoTombstoneError {
 /// Errors if the card still has memory energy (the holder should
 /// either refresh or wait — same doctrine as WitnessFit). Errors on
 /// a never-reviewed card.
-pub fn tombstone_for_card(
-    card: &Card,
-    epoch_now: Epoch,
-) -> Result<Tombstone, MnemoTombstoneError> {
+pub fn tombstone_for_card(card: &Card, epoch_now: Epoch) -> Result<Tombstone, MnemoTombstoneError> {
     if card.energy_at(epoch_now) > 0 {
         return Err(MnemoTombstoneError::StillFresh { epoch_now });
     }

@@ -176,7 +176,9 @@ pub fn all_block_clocks(
             if cache.contains_key(&cur) {
                 continue;
             }
-            let block = lc.get(&cur).ok_or(ClockDerivationError::BlockNotFound(cur))?;
+            let block = lc
+                .get(&cur)
+                .ok_or(ClockDerivationError::BlockNotFound(cur))?;
             if !expanded {
                 stack.push((cur, true));
                 let mut sorted_parents = block.parents.clone();
@@ -264,12 +266,25 @@ mod tests {
         lc.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 100, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 300, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 100, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 100, 2))
+            .unwrap();
 
-        assert_eq!(block_lamport_clock(&lc, id(0), 100).unwrap().current_tick, 1);
-        assert_eq!(block_lamport_clock(&lc, id(1), 100).unwrap().current_tick, 2);
-        assert_eq!(block_lamport_clock(&lc, id(2), 100).unwrap().current_tick, 4);
-        assert_eq!(block_lamport_clock(&lc, id(3), 100).unwrap().current_tick, 5);
+        assert_eq!(
+            block_lamport_clock(&lc, id(0), 100).unwrap().current_tick,
+            1
+        );
+        assert_eq!(
+            block_lamport_clock(&lc, id(1), 100).unwrap().current_tick,
+            2
+        );
+        assert_eq!(
+            block_lamport_clock(&lc, id(2), 100).unwrap().current_tick,
+            4
+        );
+        assert_eq!(
+            block_lamport_clock(&lc, id(3), 100).unwrap().current_tick,
+            5
+        );
     }
 
     #[test]
@@ -295,7 +310,8 @@ mod tests {
         lc.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 200, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 300, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 100, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 100, 2))
+            .unwrap();
         lc.insert(Block::new(id(4), vec![id(3)], 100, 3)).unwrap();
 
         let all = all_block_clocks(&lc, 100).unwrap();
@@ -327,7 +343,8 @@ mod tests {
         lc.insert(Block::new(id(0), vec![], 100, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 200, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 50, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 100, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 100, 2))
+            .unwrap();
 
         let all = all_block_clocks(&lc, 100).unwrap();
         // Genesis precedes every descendant.
@@ -358,7 +375,8 @@ mod tests {
             let mut bid = [0u8; 32];
             bid[..4].copy_from_slice(&i.to_le_bytes());
             bid[28..].copy_from_slice(&i.to_le_bytes());
-            lc.insert(Block::new(bid, vec![last], 100, i as u64)).unwrap();
+            lc.insert(Block::new(bid, vec![last], 100, i as u64))
+                .unwrap();
             last = bid;
         }
         let clock = block_lamport_clock(&lc, last, 100).unwrap();
@@ -374,39 +392,37 @@ mod tests {
         // Each entry: (id_seed, parent_id_seeds, energy, observed_epoch).
         // The first entry is genesis (parents=[]); subsequent entries
         // pick parents from earlier-seen seeds.
-        proptest::collection::vec(
-            (any::<u8>(), 1u64..1000, 0u64..100),
-            1..=12,
-        )
-        .prop_map(|raws: Vec<(u8, u64, u64)>| {
-            let mut seen: Vec<u8> = Vec::new();
-            let mut out: Vec<(u8, Vec<u8>, u64, u64)> = Vec::new();
-            for (seed, energy, epoch) in raws {
-                let unique_seed = if seen.contains(&seed) {
-                    seen.iter()
-                        .max()
-                        .copied()
-                        .unwrap_or(0)
-                        .wrapping_add(1)
-                        .max(1)
-                } else {
-                    seed
-                };
-                if seen.contains(&unique_seed) {
-                    continue; // skip duplicates after collision
+        proptest::collection::vec((any::<u8>(), 1u64..1000, 0u64..100), 1..=12).prop_map(
+            |raws: Vec<(u8, u64, u64)>| {
+                let mut seen: Vec<u8> = Vec::new();
+                let mut out: Vec<(u8, Vec<u8>, u64, u64)> = Vec::new();
+                for (seed, energy, epoch) in raws {
+                    let unique_seed = if seen.contains(&seed) {
+                        seen.iter()
+                            .max()
+                            .copied()
+                            .unwrap_or(0)
+                            .wrapping_add(1)
+                            .max(1)
+                    } else {
+                        seed
+                    };
+                    if seen.contains(&unique_seed) {
+                        continue; // skip duplicates after collision
+                    }
+                    let parents = if seen.is_empty() {
+                        vec![]
+                    } else {
+                        // Pick 1-2 parents from seen.
+                        let n = (energy as usize % 2) + 1;
+                        seen.iter().rev().take(n).copied().collect()
+                    };
+                    out.push((unique_seed, parents, energy, epoch));
+                    seen.push(unique_seed);
                 }
-                let parents = if seen.is_empty() {
-                    vec![]
-                } else {
-                    // Pick 1-2 parents from seen.
-                    let n = (energy as usize % 2) + 1;
-                    seen.iter().rev().take(n).copied().collect()
-                };
-                out.push((unique_seed, parents, energy, epoch));
-                seen.push(unique_seed);
-            }
-            out
-        })
+                out
+            },
+        )
     }
 
     proptest! {

@@ -59,12 +59,15 @@ impl LightCone {
     /// DAG-aware fork-choice scores to pick the chain head. Returned
     /// in `BTreeMap` (sorted) order for cross-validator determinism.
     pub fn leaves(&self) -> impl Iterator<Item = BlockId> + '_ {
-        self.blocks.keys().filter(|id| {
-            self.children
-                .get(*id)
-                .map(|ch| ch.is_empty())
-                .unwrap_or(true)
-        }).copied()
+        self.blocks
+            .keys()
+            .filter(|id| {
+                self.children
+                    .get(*id)
+                    .map(|ch| ch.is_empty())
+                    .unwrap_or(true)
+            })
+            .copied()
     }
 
     /// Insert a block. All parents must already be present (this is a
@@ -114,7 +117,12 @@ impl LightCone {
         if !self.blocks.contains_key(&tip) {
             return pruned;
         }
-        if self.children.get(&tip).map(|c| !c.is_empty()).unwrap_or(false) {
+        if self
+            .children
+            .get(&tip)
+            .map(|c| !c.is_empty())
+            .unwrap_or(false)
+        {
             return pruned;
         }
 
@@ -237,10 +245,7 @@ pub fn find_lca(lc: &LightCone, a: BlockId, b: BlockId) -> Option<BlockId> {
     ancestors_a.insert(a);
     let mut ancestors_b = causal_past(lc, b);
     ancestors_b.insert(b);
-    let common: BTreeSet<BlockId> = ancestors_a
-        .intersection(&ancestors_b)
-        .copied()
-        .collect();
+    let common: BTreeSet<BlockId> = ancestors_a.intersection(&ancestors_b).copied().collect();
     if common.is_empty() {
         return None;
     }
@@ -278,11 +283,7 @@ pub fn find_lca(lc: &LightCone, a: BlockId, b: BlockId) -> Option<BlockId> {
 /// along the canonical first-parent chain. Multi-parent reachability
 /// is the responsibility of antichain finalization (Phase 4.2,
 /// already shipped), not state replay.
-pub fn block_path_from_to(
-    lc: &LightCone,
-    from: BlockId,
-    to: BlockId,
-) -> Option<Vec<BlockId>> {
+pub fn block_path_from_to(lc: &LightCone, from: BlockId, to: BlockId) -> Option<Vec<BlockId>> {
     if !lc.contains(&from) || !lc.contains(&to) {
         return None;
     }
@@ -399,7 +400,9 @@ mod tests {
         // Block id(0) references itself as parent — at insert
         // time, id(0) is not yet in the DAG, so the parent check
         // fires.
-        let err = lc.insert(Block::new(id(0), vec![id(0)], 1000, 0)).unwrap_err();
+        let err = lc
+            .insert(Block::new(id(0), vec![id(0)], 1000, 0))
+            .unwrap_err();
         assert!(
             matches!(err, LightConeError::MissingParent { block, parent } if block == id(0) && parent == id(0)),
             "self-cycle must reject as MissingParent (parent == self), got {:?}",
@@ -417,7 +420,9 @@ mod tests {
         // Now try to "complete the cycle" by re-inserting A with
         // parent B. The duplicate-id check fires before the
         // parent check.
-        let err = lc.insert(Block::new(id(0), vec![id(1)], 800, 2)).unwrap_err();
+        let err = lc
+            .insert(Block::new(id(0), vec![id(1)], 800, 2))
+            .unwrap_err();
         assert!(
             matches!(err, LightConeError::AlreadyInserted(b) if b == id(0)),
             "2-cycle must reject as AlreadyInserted, got {:?}",
@@ -431,7 +436,9 @@ mod tests {
         // Try to insert C with parent B before B exists. The
         // intent of constructing A→B→C→A is impossible at the
         // step where any cycle-completing block tries to insert.
-        let err = lc.insert(Block::new(id(2), vec![id(1)], 1000, 0)).unwrap_err();
+        let err = lc
+            .insert(Block::new(id(2), vec![id(1)], 1000, 0))
+            .unwrap_err();
         assert!(
             matches!(err, LightConeError::MissingParent { .. }),
             "3-cycle attempt must reject (parent missing), got {:?}",
@@ -577,10 +584,10 @@ mod tests {
     #[test]
     fn find_lca_linear_chain_is_lower_of_two() {
         let mut lc = LightCone::new();
-        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();        // genesis
-        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();    // depth 1
-        lc.insert(Block::new(id(2), vec![id(1)], 800, 2)).unwrap();    // depth 2
-        // LCA of depth-2 and depth-1: depth-1 (the deeper of the two).
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap(); // genesis
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap(); // depth 1
+        lc.insert(Block::new(id(2), vec![id(1)], 800, 2)).unwrap(); // depth 2
+                                                                    // LCA of depth-2 and depth-1: depth-1 (the deeper of the two).
         assert_eq!(find_lca(&lc, id(2), id(1)), Some(id(1)));
         assert_eq!(find_lca(&lc, id(1), id(2)), Some(id(1)));
         // LCA of depth-2 and genesis: genesis.
@@ -593,10 +600,11 @@ mod tests {
     #[test]
     fn find_lca_diamond_dag() {
         let mut lc = LightCone::new();
-        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();        // genesis
-        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();    // child A
-        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();    // child B (sibling of A)
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap(); // merge
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap(); // genesis
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap(); // child A
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap(); // child B (sibling of A)
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2))
+            .unwrap(); // merge
 
         // LCA of A and B: genesis (the only common ancestor).
         assert_eq!(find_lca(&lc, id(1), id(2)), Some(id(0)));
@@ -687,7 +695,8 @@ mod tests {
         lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2))
+            .unwrap();
 
         // To replay from head=1 to head=2: LCA=0, then walk 0 → 2.
         let lca = find_lca(&lc, id(1), id(2)).unwrap();

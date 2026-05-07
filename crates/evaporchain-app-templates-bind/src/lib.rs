@@ -43,7 +43,7 @@
 pub mod bind;
 pub mod context;
 
-pub use bind::{bind, Bound, BindError};
+pub use bind::{bind, BindError, Bound};
 pub use context::BindContext;
 
 #[cfg(test)]

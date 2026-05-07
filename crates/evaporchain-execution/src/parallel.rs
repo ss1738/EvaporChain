@@ -140,7 +140,10 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         // for now this declares the access pattern correctly so the
         // BlockSTM scheduler doesn't run conflicting refunds in parallel.
         Transaction::Refund(tx) => {
-            vec![AccessKey::Account(tx.attacker), AccessKey::Account(tx.victim)]
+            vec![
+                AccessKey::Account(tx.attacker),
+                AccessKey::Account(tx.victim),
+            ]
         }
     }
 }
@@ -373,9 +376,9 @@ impl StateDB for OverlayStateDB {
             address: *addr,
             balance: 0,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         })
     }
 
@@ -707,9 +710,7 @@ impl ParallelExecutor {
     }
 
     /// Get a mutable reference to the reward accumulator (if enabled).
-    pub fn reward_accumulator_mut(
-        &mut self,
-    ) -> Option<&mut crate::rewards::RewardAccumulator> {
+    pub fn reward_accumulator_mut(&mut self) -> Option<&mut crate::rewards::RewardAccumulator> {
         self.reward_accumulator.as_mut()
     }
 
@@ -1765,11 +1766,13 @@ impl ExecutionEngine for ParallelExecutor {
                     } else {
                         sender.nonce += 1;
                         sender.last_touched_epoch = block.epoch;
-                        let mut stake = db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
-                            ExecutionError::ObjectNotFound(
-                                format!("no stake record for validator {}", exit.validator_id),
-                            )
-                        })?;
+                        let mut stake =
+                            db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
+                                ExecutionError::ObjectNotFound(format!(
+                                    "no stake record for validator {}",
+                                    exit.validator_id
+                                ))
+                            })?;
                         if stake.validator_address != exit.validator_address {
                             return Err(ExecutionError::InvalidSignature);
                         }
@@ -2082,13 +2085,7 @@ impl ExecutionEngine for ParallelExecutor {
                 // tx (elapsed=0) yields ~1 token. Operator-tunable in a
                 // future commit (genesis tokenomics field).
                 let bonus_scale = evaporchain_types::BASE_INCLUSION_ENERGY;
-                ra.apply_priority_bonus(
-                    db,
-                    &producer_addr,
-                    block.epoch,
-                    priority_sum,
-                    bonus_scale,
-                );
+                ra.apply_priority_bonus(db, &producer_addr, block.epoch, priority_sum, bonus_scale);
             }
 
             // Distribute staker rewards every 100 blocks
@@ -2254,10 +2251,7 @@ impl ExecutionEngine for ParallelExecutor {
         self.mmr.size()
     }
 
-    fn mmr_proof(
-        &self,
-        leaf_index: u64,
-    ) -> Option<evaporchain_crypto::accumulator::MMRProof> {
+    fn mmr_proof(&self, leaf_index: u64) -> Option<evaporchain_crypto::accumulator::MMRProof> {
         self.mmr.prove(leaf_index)
     }
 }
@@ -2337,9 +2331,9 @@ mod tests {
             address: addr(byte),
             balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 
@@ -3202,8 +3196,7 @@ mod tests {
         // (one transfer, ~21k gas << target_gas) must let the controller
         // pull energy back toward target.
         let seeded_energy = target_e + 100_000;
-        executor.lyapunov_fee_state =
-            evaporchain_fee_controller::FeeState::new(seeded_energy);
+        executor.lyapunov_fee_state = evaporchain_fee_controller::FeeState::new(seeded_energy);
         assert_eq!(executor.lyapunov_fee_state.energy, seeded_energy);
 
         let _ = executor.execute_block(&mut db, &block).unwrap();

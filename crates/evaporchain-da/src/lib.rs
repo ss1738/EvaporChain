@@ -47,7 +47,10 @@ mod press_claim_tests {
     /// fails closed."
     #[test]
     fn the_press_claim_lives_as_a_test() {
-        let cfg = ErasureConfig { data_shards: 4, parity_shards: 4 };
+        let cfg = ErasureConfig {
+            data_shards: 4,
+            parity_shards: 4,
+        };
         let enc = ErasureEncoder::new(cfg).unwrap();
         let payload: Vec<u8> = (0..1024u32).map(|i| i as u8).collect();
 

@@ -15,7 +15,11 @@ pub enum GraveGraphError {
     #[error("self-loop edges not allowed")]
     SelfLoop,
     #[error("edge already exists between {from:?} and {to:?} of kind {kind:?}")]
-    DuplicateEdge { from: NodeId, to: NodeId, kind: EdgeKind },
+    DuplicateEdge {
+        from: NodeId,
+        to: NodeId,
+        kind: EdgeKind,
+    },
     #[error("dedications can only be curated by the living recipient")]
     NotRecipient,
     #[error("only Living source can declare an edge — {0:?} is dead")]
@@ -29,7 +33,9 @@ pub enum NodeState {
     Living,
     /// Certified dead at the chain's higher layer; cannot declare
     /// new edges. Existing legacy edges flip to dedications.
-    Dead { died_at_epoch: u64 },
+    Dead {
+        died_at_epoch: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
@@ -182,7 +188,10 @@ impl GraveGraph {
         let edge = self
             .edges
             .get_mut(&(from, recipient))
-            .ok_or(GraveGraphError::EdgeNotFound { from, to: recipient })?;
+            .ok_or(GraveGraphError::EdgeNotFound {
+                from,
+                to: recipient,
+            })?;
         if !matches!(edge.kind, EdgeKind::Dedication { .. }) {
             // Curation is meaningless on living/legacy edges.
             return Err(GraveGraphError::NotRecipient);
@@ -202,16 +211,12 @@ impl GraveGraph {
 
     /// Edges where `n` is the source.
     pub fn outgoing(&self, n: NodeId) -> impl Iterator<Item = &Edge> {
-        self.edges
-            .values()
-            .filter(move |e| e.from == n)
+        self.edges.values().filter(move |e| e.from == n)
     }
 
     /// Edges where `n` is the target.
     pub fn incoming(&self, n: NodeId) -> impl Iterator<Item = &Edge> {
-        self.edges
-            .values()
-            .filter(move |e| e.to == n)
+        self.edges.values().filter(move |e| e.to == n)
     }
 
     /// All dedications currently directed at `n`. (Filters edges
@@ -245,7 +250,9 @@ impl GraveGraph {
 mod tests {
     use super::*;
 
-    fn n(b: u8) -> NodeId { NodeId([b; 32]) }
+    fn n(b: u8) -> NodeId {
+        NodeId([b; 32])
+    }
 
     fn fresh() -> GraveGraph {
         let mut g = GraveGraph::new();
@@ -350,7 +357,10 @@ mod tests {
         let inverted = g.certify_death(n(1), 50).unwrap();
         assert_eq!(inverted, 1);
         let edge = g.outgoing(n(1)).next().unwrap();
-        assert!(matches!(edge.kind, EdgeKind::Dedication { died_at_epoch: 50 }));
+        assert!(matches!(
+            edge.kind,
+            EdgeKind::Dedication { died_at_epoch: 50 }
+        ));
         assert_eq!(edge.curation, Curation::Pending);
     }
 
@@ -383,7 +393,9 @@ mod tests {
     fn curate_living_edge_rejected() {
         let mut g = fresh();
         g.add_edge(n(1), n(2), EdgeKind::Living, 0).unwrap();
-        let err = g.curate_dedication(n(2), n(1), Curation::Accepted).unwrap_err();
+        let err = g
+            .curate_dedication(n(2), n(1), Curation::Accepted)
+            .unwrap_err();
         assert_eq!(err, GraveGraphError::NotRecipient);
     }
 
@@ -394,14 +406,18 @@ mod tests {
         g.certify_death(n(1), 50).unwrap();
         // Now the recipient (n(2)) also dies — they cannot curate.
         g.certify_death(n(2), 60).unwrap();
-        let err = g.curate_dedication(n(2), n(1), Curation::Accepted).unwrap_err();
+        let err = g
+            .curate_dedication(n(2), n(1), Curation::Accepted)
+            .unwrap_err();
         assert_eq!(err, GraveGraphError::NotRecipient);
     }
 
     #[test]
     fn curate_unknown_edge_rejected() {
         let mut g = fresh();
-        let err = g.curate_dedication(n(2), n(1), Curation::Accepted).unwrap_err();
+        let err = g
+            .curate_dedication(n(2), n(1), Curation::Accepted)
+            .unwrap_err();
         assert!(matches!(err, GraveGraphError::EdgeNotFound { .. }));
     }
 
@@ -467,8 +483,7 @@ mod tests {
         // is per-survivor.
         let footprint: Vec<&Edge> = g.footprint_of(n(1)).collect();
         assert_eq!(footprint.len(), 2);
-        let curations: Vec<Curation> =
-            footprint.iter().map(|e| e.curation).collect();
+        let curations: Vec<Curation> = footprint.iter().map(|e| e.curation).collect();
         assert!(curations.contains(&Curation::Accepted));
         assert!(curations.contains(&Curation::Hidden));
     }

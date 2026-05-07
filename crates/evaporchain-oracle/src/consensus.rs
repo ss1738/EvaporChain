@@ -579,19 +579,28 @@ mod tests {
         let (v0, pk0) = signed(&kp0, 0, "btc_usd", 60000.0, 1, 1000);
         round.submit_vote(v0, &pk0).unwrap();
         let first = round.finalize().unwrap();
-        assert!(first.twap.is_none(), "first finalize: only 1 accumulator entry");
+        assert!(
+            first.twap.is_none(),
+            "first finalize: only 1 accumulator entry"
+        );
 
         let kp1 = BlsKeypair::generate();
         let (v1, pk1) = signed(&kp1, 1, "btc_usd", 60100.0, 1, 2000);
         round.submit_vote(v1, &pk1).unwrap();
         let second = round.finalize().unwrap();
-        assert!(second.twap.is_none(), "second finalize: only 2 accumulator entries (still single-block-pinnable)");
+        assert!(
+            second.twap.is_none(),
+            "second finalize: only 2 accumulator entries (still single-block-pinnable)"
+        );
 
         let kp2 = BlsKeypair::generate();
         let (v2, pk2) = signed(&kp2, 2, "btc_usd", 60200.0, 1, 3000);
         round.submit_vote(v2, &pk2).unwrap();
         let third = round.finalize().unwrap();
-        assert!(third.twap.is_some(), "third finalize: TWAP should be populated");
+        assert!(
+            third.twap.is_some(),
+            "third finalize: TWAP should be populated"
+        );
     }
 
     #[test]

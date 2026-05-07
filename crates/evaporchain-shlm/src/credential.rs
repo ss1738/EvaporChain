@@ -77,11 +77,7 @@ impl Credential {
     /// `level`. The new epoch must be ≥ the previous attestation
     /// epoch (refreshing into the past is rejected — it would be
     /// equivalent to back-dating a credential).
-    pub fn refresh(
-        &mut self,
-        new_level: Energy,
-        refresh_at: Epoch,
-    ) -> Result<(), CredentialError> {
+    pub fn refresh(&mut self, new_level: Energy, refresh_at: Epoch) -> Result<(), CredentialError> {
         if refresh_at < self.attested_at_epoch {
             return Err(CredentialError::RefreshGoingBackwards {
                 refresh_at,
@@ -113,8 +109,7 @@ mod tests {
 
     #[test]
     fn issue_rejects_zero_level() {
-        let err = Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 0, 10)
-            .unwrap_err();
+        let err = Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 0, 10).unwrap_err();
         assert_eq!(err, CredentialError::ZeroLevel);
     }
 
@@ -129,8 +124,7 @@ mod tests {
 
     #[test]
     fn refresh_advances_epoch_and_updates_level() {
-        let mut c =
-            Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
+        let mut c = Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
         c.refresh(90, 200).unwrap();
         assert_eq!(c.attested_at_epoch, 200);
         assert_eq!(c.level, 90);
@@ -138,21 +132,16 @@ mod tests {
 
     #[test]
     fn refresh_at_same_epoch_is_allowed() {
-        let mut c =
-            Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
+        let mut c = Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
         c.refresh(85, 100).unwrap();
         assert_eq!(c.level, 85);
     }
 
     #[test]
     fn refresh_into_past_rejected() {
-        let mut c =
-            Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
+        let mut c = Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
         let err = c.refresh(90, 50).unwrap_err();
-        assert!(matches!(
-            err,
-            CredentialError::RefreshGoingBackwards { .. }
-        ));
+        assert!(matches!(err, CredentialError::RefreshGoingBackwards { .. }));
         // Original credential unchanged on error.
         assert_eq!(c.level, 80);
         assert_eq!(c.attested_at_epoch, 100);
@@ -160,8 +149,7 @@ mod tests {
 
     #[test]
     fn refresh_with_zero_level_rejected() {
-        let mut c =
-            Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
+        let mut c = Credential::issue(id(1), id(2), addr(0xAA), addr(0xBB), 80, 100).unwrap();
         let err = c.refresh(0, 200).unwrap_err();
         assert_eq!(err, CredentialError::ZeroLevel);
     }

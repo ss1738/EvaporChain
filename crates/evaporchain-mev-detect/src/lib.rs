@@ -279,21 +279,16 @@ pub fn compute_observation_refund(
     // P_F (ppm) = sandwich_count / window_blocks, scaled to ppm.
     // Capped at 999_999 to keep crooks_log_ratio_millibits in-range
     // (the primitive rejects p_forward == 1_000_000).
-    let p_forward_ppm = (stat
-        .sandwich_count
-        .saturating_mul(1_000_000)
-        / window_blocks)
-        .min(999_999);
+    let p_forward_ppm =
+        (stat.sandwich_count.saturating_mul(1_000_000) / window_blocks).min(999_999);
 
     // P_R (ppm) = noise floor = 1 / (window_blocks * 1024) in ppm.
     // For window=256 → ~3.8 ppm. Caps at 1 to avoid div-by-zero in
     // the log primitive when window_blocks is huge.
-    let p_reverse_ppm = (1_000_000u64
-        / window_blocks.saturating_mul(1024))
-    .max(1);
+    let p_reverse_ppm = (1_000_000u64 / window_blocks.saturating_mul(1024)).max(1);
 
-    let log_ratio = evaporchain_cfm::crooks_log_ratio_millibits(p_forward_ppm, p_reverse_ppm)
-        .ok()?;
+    let log_ratio =
+        evaporchain_cfm::crooks_log_ratio_millibits(p_forward_ppm, p_reverse_ppm).ok()?;
 
     let delta_f = evaporchain_crooks_mev_refund::compute_delta_f_millibits(
         obs.work_estimate as i64,
@@ -525,8 +520,7 @@ pub fn mev_state_digest(
     }
 
     // Attacker stats: sorted by address bytes for canonical order.
-    let mut stats_sorted: Vec<(&AccountAddress, &AttackerStat)> =
-        attacker_stats.iter().collect();
+    let mut stats_sorted: Vec<(&AccountAddress, &AttackerStat)> = attacker_stats.iter().collect();
     stats_sorted.sort_by_key(|(addr, _)| *addr);
     h.update(&(stats_sorted.len() as u64).to_le_bytes());
     for (addr, stat) in &stats_sorted {
@@ -789,7 +783,10 @@ mod tests {
             stats_b.insert(*a, *s);
         }
         let obs = std::collections::VecDeque::new();
-        assert_eq!(mev_state_digest(&obs, &stats_a), mev_state_digest(&obs, &stats_b));
+        assert_eq!(
+            mev_state_digest(&obs, &stats_a),
+            mev_state_digest(&obs, &stats_b)
+        );
     }
 
     /// Phase 3.2 — a single divergent observation must produce a
@@ -839,11 +836,7 @@ mod tests {
     }
 
     /// Phase 3.3 helper: synthetic observation builder for tests.
-    fn make_obs(
-        block_height: u64,
-        attacker_pre_idx: usize,
-        refund: Option<u64>,
-    ) -> MevObservation {
+    fn make_obs(block_height: u64, attacker_pre_idx: usize, refund: Option<u64>) -> MevObservation {
         MevObservation {
             block_height,
             attacker_pre_idx,
@@ -867,8 +860,19 @@ mod tests {
         obs.push_back(make_obs(100, 0, Some(100)));
         let settled = std::collections::HashSet::new();
         let current = 100;
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
-        assert!(due.is_empty(), "obs at age 0 and 2 are inside grace; nothing due");
+        let due = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            current,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
+        assert!(
+            due.is_empty(),
+            "obs at age 0 and 2 are inside grace; nothing due"
+        );
     }
 
     /// Phase 3.3 — observation in (grace, refund_window) interval
@@ -879,7 +883,15 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         let settled = std::collections::HashSet::new();
         let current = 100;
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let due = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            current,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
         assert_eq!(due.len(), 1);
         match &due[0] {
             evaporchain_types::Transaction::Refund(r) => {
@@ -900,7 +912,15 @@ mod tests {
         obs.push_back(make_obs(10, 0, Some(100)));
         let settled = std::collections::HashSet::new();
         let current = 1000; // age = 990, far past 256-block window
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let due = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            current,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
         assert!(due.is_empty(), "stale observation must not settle");
     }
 
@@ -912,7 +932,15 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         let mut settled = std::collections::HashSet::new();
         settled.insert((50, 0));
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let due = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            100,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
         assert!(due.is_empty(), "settled observation must not re-emit");
     }
 
@@ -924,7 +952,15 @@ mod tests {
         obs.push_back(make_obs(50, 0, None));
         obs.push_back(make_obs(51, 0, Some(0)));
         let settled = std::collections::HashSet::new();
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let due = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            100,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
         assert!(due.is_empty());
     }
 
@@ -941,7 +977,15 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(200)));
         obs.push_back(make_obs(60, 0, Some(75)));
         let settled = std::collections::HashSet::new();
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let due = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            100,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
         assert_eq!(due.len(), 4);
         let heights_idxs: Vec<(u64, usize)> = due
             .iter()
@@ -961,7 +1005,9 @@ mod tests {
 
     /// Phase 3.4 helper — extract `&RefundTx` slices from a block's
     /// transaction vector for the validator-side check.
-    fn extract_refunds(txs: &[evaporchain_types::Transaction]) -> Vec<&evaporchain_types::RefundTx> {
+    fn extract_refunds(
+        txs: &[evaporchain_types::Transaction],
+    ) -> Vec<&evaporchain_types::RefundTx> {
         txs.iter()
             .filter_map(|tx| match tx {
                 evaporchain_types::Transaction::Refund(r) => Some(r),
@@ -985,7 +1031,15 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         obs.push_back(make_obs(60, 0, Some(75)));
         let settled = std::collections::HashSet::new();
-        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let expected = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            100,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
 
         let block_refunds = extract_refunds(&expected);
         assert_eq!(validate_block_refunds(&expected, &block_refunds), Ok(()));
@@ -998,7 +1052,15 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         obs.push_back(make_obs(60, 0, Some(75)));
         let settled = std::collections::HashSet::new();
-        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let expected = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            100,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
 
         // Block carries only the first refund.
         let partial: Vec<evaporchain_types::Transaction> = expected[0..1].to_vec();
@@ -1023,7 +1085,10 @@ mod tests {
         let block_txs = vec![evaporchain_types::Transaction::Refund(bogus)];
         let block_refunds = extract_refunds(&block_txs);
         let err = validate_block_refunds(&expected, &block_refunds).unwrap_err();
-        assert!(matches!(err, RefundValidationError::UnexpectedRefund { .. }));
+        assert!(matches!(
+            err,
+            RefundValidationError::UnexpectedRefund { .. }
+        ));
     }
 
     /// Phase 3.4 — block carrying a refund for the right
@@ -1033,7 +1098,15 @@ mod tests {
         let mut obs = std::collections::VecDeque::new();
         obs.push_back(make_obs(50, 0, Some(100)));
         let settled = std::collections::HashSet::new();
-        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let expected = due_refund_txs(
+            &obs,
+            &settled,
+            &std::collections::HashSet::new(),
+            100,
+            5,
+            256,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
+        );
         // Tamper: bump amount.
         let mut tampered = match &expected[0] {
             evaporchain_types::Transaction::Refund(r) => r.clone(),
@@ -1043,7 +1116,10 @@ mod tests {
         let block_txs = vec![evaporchain_types::Transaction::Refund(tampered)];
         let block_refunds = extract_refunds(&block_txs);
         let err = validate_block_refunds(&expected, &block_refunds).unwrap_err();
-        assert!(matches!(err, RefundValidationError::MismatchedRefund { .. }));
+        assert!(matches!(
+            err,
+            RefundValidationError::MismatchedRefund { .. }
+        ));
     }
 
     /// Phase 3.3 — misconfigured grace > window emits empty
@@ -1271,7 +1347,11 @@ mod tests {
             transfer(0xAA, 0x99, 150, 1),
         ];
         let out = scan_block(&txs, 1);
-        assert_eq!(out.len(), 1, "refresh in the middle should not break detection");
+        assert_eq!(
+            out.len(),
+            1,
+            "refresh in the middle should not break detection"
+        );
     }
 
     #[test]
@@ -1303,6 +1383,10 @@ mod tests {
         ];
         let out = scan_block(&txs, 1);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].victim, addr(0xBB), "first victim wins per Phase 1 contract");
+        assert_eq!(
+            out[0].victim,
+            addr(0xBB),
+            "first victim wins per Phase 1 contract"
+        );
     }
 }

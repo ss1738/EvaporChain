@@ -79,11 +79,7 @@ impl RewardAccumulator {
         self.total_minted = self.total_minted.saturating_add(bonus);
         debug!(
             producer = hex::encode(producer),
-            priority_sum,
-            scale_per_unit,
-            bonus,
-            epoch,
-            "Proposer priority bonus minted"
+            priority_sum, scale_per_unit, bonus, epoch, "Proposer priority bonus minted"
         );
         bonus
     }
@@ -273,9 +269,9 @@ mod tests {
             address: addr(byte),
             balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
     }
 

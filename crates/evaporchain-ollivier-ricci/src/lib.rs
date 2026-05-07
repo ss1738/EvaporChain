@@ -57,8 +57,6 @@ pub mod curvature;
 pub mod graph;
 pub mod wasserstein;
 
-pub use curvature::{
-    curvature_floor_check, ollivier_ricci_micros, CurvatureError, MICROS,
-};
+pub use curvature::{curvature_floor_check, ollivier_ricci_micros, CurvatureError, MICROS};
 pub use graph::{Graph, GraphError, NodeId};
 pub use wasserstein::wasserstein_1;

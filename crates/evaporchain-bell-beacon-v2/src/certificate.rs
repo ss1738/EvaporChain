@@ -62,7 +62,6 @@ impl CertificateBytes {
         buf.extend_from_slice(&cert.prev_block_hash);
         Self(buf)
     }
-
 }
 
 /// Pure-integer milli-encoded form of [`GateThresholds`]. This is the

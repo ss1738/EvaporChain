@@ -372,7 +372,10 @@ mod tests {
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while queue.latest_proof().is_none() {
-            assert!(std::time::Instant::now() < deadline, "worker never produced a proof");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker never produced a proof"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 

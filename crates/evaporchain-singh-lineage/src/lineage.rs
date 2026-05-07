@@ -90,7 +90,11 @@ impl Lineage {
                 issuer: self.issuer,
             });
         }
-        if self.successors.iter().any(|s| s.address == successor.address) {
+        if self
+            .successors
+            .iter()
+            .any(|s| s.address == successor.address)
+        {
             return Err(LineageError::DuplicateSuccessor(successor.address));
         }
         let new_total: u64 = self
@@ -100,7 +104,9 @@ impl Lineage {
             .sum::<u64>()
             + successor.weight_bp as u64;
         if new_total > FULL_AUTHORITY_BP as u64 {
-            return Err(LineageError::OverWeighted { total_bp: new_total });
+            return Err(LineageError::OverWeighted {
+                total_bp: new_total,
+            });
         }
         self.successors.push(successor);
         Ok(())
@@ -128,11 +134,7 @@ impl Lineage {
 
     /// Issuer signals they're alive. Resets `last_seen_epoch`. Errors
     /// on backward time and non-issuer caller.
-    pub fn touch(
-        &mut self,
-        caller: AccountAddress,
-        epoch_now: Epoch,
-    ) -> Result<(), LineageError> {
+    pub fn touch(&mut self, caller: AccountAddress, epoch_now: Epoch) -> Result<(), LineageError> {
         if caller != self.issuer {
             return Err(LineageError::NotIssuer {
                 caller,
@@ -153,11 +155,7 @@ impl Lineage {
     /// in basis points. Pure function; deterministic; integer-only.
     ///
     /// `effective_bp = ladder.share_at(dormancy) × successor.weight_bp / FULL_AUTHORITY_BP`.
-    pub fn authority_at(
-        &self,
-        epoch_now: Epoch,
-        successor_address: &AccountAddress,
-    ) -> u32 {
+    pub fn authority_at(&self, epoch_now: Epoch, successor_address: &AccountAddress) -> u32 {
         let s = match self
             .successors
             .iter()
@@ -169,8 +167,7 @@ impl Lineage {
         let dormancy = epoch_now.saturating_sub(self.last_seen_epoch);
         let tier_share = self.ladder.share_at(dormancy);
         // (tier_share × weight) / FULL — integer math via u64.
-        let eff =
-            (tier_share as u64 * s.weight_bp as u64) / FULL_AUTHORITY_BP as u64;
+        let eff = (tier_share as u64 * s.weight_bp as u64) / FULL_AUTHORITY_BP as u64;
         eff.min(FULL_AUTHORITY_BP as u64) as u32
     }
 
@@ -247,7 +244,7 @@ mod tests {
     fn over_weighted_lineage_rejected() {
         let mut l = doctrine_lineage();
         l.add_successor(addr(1), daughter()).unwrap(); // 10000bp
-        // Adding a son with 5000bp would push total to 15000 > 10000.
+                                                       // Adding a son with 5000bp would push total to 15000 > 10000.
         let err = l.add_successor(addr(1), son()).unwrap_err();
         assert!(matches!(err, LineageError::OverWeighted { .. }));
     }

@@ -67,11 +67,7 @@ impl Did {
 
     /// Mutate the energy of one attribute — used by the chain's
     /// decay tick.
-    pub fn decay_attribute(
-        &mut self,
-        key: AttributeKey,
-        new_energy: u64,
-    ) -> Result<(), DidError> {
+    pub fn decay_attribute(&mut self, key: AttributeKey, new_energy: u64) -> Result<(), DidError> {
         let a = self
             .attributes
             .get_mut(&key)
@@ -112,8 +108,12 @@ pub struct Presentation {
 mod tests {
     use super::*;
 
-    fn did(b: u8) -> DidId { DidId([b; 32]) }
-    fn k(b: u8) -> AttributeKey { AttributeKey([b; 32]) }
+    fn did(b: u8) -> DidId {
+        DidId([b; 32])
+    }
+    fn k(b: u8) -> AttributeKey {
+        AttributeKey([b; 32])
+    }
 
     fn attr(key: AttributeKey, energy: u64) -> Attribute {
         Attribute::new(key, b"value".to_vec(), [0xAB; 32], energy, 100)

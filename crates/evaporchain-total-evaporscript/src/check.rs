@@ -11,7 +11,9 @@ use crate::term::{BinOp, Expr, Term};
 pub enum TotalError {
     #[error("BoundedFor `{var}`: step must be a strictly positive literal, got {step}")]
     BoundedForNonPositiveStep { var: String, step: i64 },
-    #[error("BoundedFor `{var}`: body mutates the loop variable — body must treat it as read-only")]
+    #[error(
+        "BoundedFor `{var}`: body mutates the loop variable — body must treat it as read-only"
+    )]
     BoundedForMutatesLoopVar { var: String },
     #[error(
         "BoundedWhile `{ranking_var}`: condition does not syntactically establish `{ranking_var} > 0` (or > positive literal). The chain cannot certify termination."
@@ -429,10 +431,7 @@ mod tests {
             body: Box::new(inc("i", 1)),
         };
         let err = check_total(&t).unwrap_err();
-        assert!(matches!(
-            err,
-            TotalError::BoundedForMutatesLoopVar { .. }
-        ));
+        assert!(matches!(err, TotalError::BoundedForMutatesLoopVar { .. }));
     }
 
     #[test]
@@ -730,10 +729,16 @@ mod tests {
     fn leaf_terms_are_total() {
         for t in [
             Term::Skip,
-            Term::Let { name: "x".into(), value: lit(0) },
+            Term::Let {
+                name: "x".into(),
+                value: lit(0),
+            },
             Term::Return(None),
             Term::Return(Some(lit(1))),
-            Term::Require { cond: lit(1), message: Expr::Str("ok".into()) },
+            Term::Require {
+                cond: lit(1),
+                message: Expr::Str("ok".into()),
+            },
             Term::Emit(lit(0)),
             Term::ExprStmt(lit(0)),
         ] {

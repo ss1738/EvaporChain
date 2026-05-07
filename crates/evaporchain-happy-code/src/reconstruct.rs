@@ -7,9 +7,7 @@ use crate::field::{add_p, inverse_p, mul_p, neg_p, sub_p, FieldElem, MOD_P};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReconstructError {
-    #[error(
-        "only {fresh}/{required} fresh shares available — adversary cannot recover bulk"
-    )]
+    #[error("only {fresh}/{required} fresh shares available — adversary cannot recover bulk")]
     InsufficientFreshShares { fresh: usize, required: usize },
     #[error("duplicate share index {0}")]
     DuplicateIndex(u64),
@@ -141,7 +139,10 @@ mod tests {
         let err = reconstruct_bulk(&shares, 3, 100).unwrap_err();
         assert_eq!(
             err,
-            ReconstructError::InsufficientFreshShares { fresh: 2, required: 3 }
+            ReconstructError::InsufficientFreshShares {
+                fresh: 2,
+                required: 3
+            }
         );
     }
 
@@ -182,7 +183,10 @@ mod tests {
         shares[3].energy = 50;
         shares[4].energy = 50;
         let err = reconstruct_bulk(&shares, 3, 100).unwrap_err();
-        assert!(matches!(err, ReconstructError::InsufficientFreshShares { .. }));
+        assert!(matches!(
+            err,
+            ReconstructError::InsufficientFreshShares { .. }
+        ));
     }
 
     // ── share-index validation ───────────────────────────────────
@@ -233,7 +237,10 @@ mod tests {
         }
         // shares[4..7] still at 1000.
         let err = reconstruct_bulk(&shares, k_threshold, 100).unwrap_err();
-        assert!(matches!(err, ReconstructError::InsufficientFreshShares { .. }));
+        assert!(matches!(
+            err,
+            ReconstructError::InsufficientFreshShares { .. }
+        ));
 
         // Re-attestation: bring 2 of the decayed shares back.
         shares[0].energy = 1000;

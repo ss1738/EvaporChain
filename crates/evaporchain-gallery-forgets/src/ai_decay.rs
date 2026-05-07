@@ -49,8 +49,7 @@ pub fn runtime_seed(gallery: &Gallery, epoch_now: Epoch) -> AiSeedSnapshot {
     let mut total_initial: u128 = 0;
     for ex in &gallery.exhibits {
         total_alive = total_alive.saturating_add(ex.mayfly.score_at(epoch_now) as u128);
-        total_initial =
-            total_initial.saturating_add(ex.mayfly.params.initial as u128);
+        total_initial = total_initial.saturating_add(ex.mayfly.params.initial as u128);
     }
     let seed = if total_initial == 0 {
         // Empty gallery: define seed=1.0 (the artist's "open canvas"

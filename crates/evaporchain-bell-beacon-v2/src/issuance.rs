@@ -216,15 +216,29 @@ mod tests {
 
     #[test]
     fn rejects_invalid_window_range() {
-        let err = issue_certificate("test-chain-v1", 200, 100, &balanced_window(), GateThresholds::doctrine(), [0u8; 32])
-            .unwrap_err();
+        let err = issue_certificate(
+            "test-chain-v1",
+            200,
+            100,
+            &balanced_window(),
+            GateThresholds::doctrine(),
+            [0u8; 32],
+        )
+        .unwrap_err();
         assert!(matches!(err, BeaconError::InvalidWindowRange { .. }));
     }
 
     #[test]
     fn rejects_empty_window() {
-        let err = issue_certificate("test-chain-v1", 100, 200, &[], GateThresholds::doctrine(), [0u8; 32])
-            .unwrap_err();
+        let err = issue_certificate(
+            "test-chain-v1",
+            100,
+            200,
+            &[],
+            GateThresholds::doctrine(),
+            [0u8; 32],
+        )
+        .unwrap_err();
         assert_eq!(err, BeaconError::EmptyWindow);
     }
 
@@ -232,8 +246,15 @@ mod tests {
     fn rejects_single_bucket_window() {
         // All pairs have tag_byte=0 → all bucketed to AB.
         let trace = vec![pair(10, 10, 10, 10, 0); 4];
-        let err = issue_certificate("test-chain-v1", 100, 200, &trace, GateThresholds::doctrine(), [0u8; 32])
-            .unwrap_err();
+        let err = issue_certificate(
+            "test-chain-v1",
+            100,
+            200,
+            &trace,
+            GateThresholds::doctrine(),
+            [0u8; 32],
+        )
+        .unwrap_err();
         assert_eq!(err, BeaconError::InsufficientCoverage);
     }
 

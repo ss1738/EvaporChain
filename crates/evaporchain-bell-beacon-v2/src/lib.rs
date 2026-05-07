@@ -44,8 +44,14 @@ mod press_claim_tests {
         tag[31] = tag_byte;
         tag[0] = tag_byte;
         ConcurrentPair {
-            first: PairStats { energy: e1, tx_count: t1 },
-            second: PairStats { energy: e2, tx_count: t2 },
+            first: PairStats {
+                energy: e1,
+                tx_count: t1,
+            },
+            second: PairStats {
+                energy: e2,
+                tx_count: t2,
+            },
             tag,
         }
     }
@@ -80,14 +86,31 @@ mod press_claim_tests {
 
         // Issuance + verification round-trip.
         let cert = issue_certificate(
-            "test-chain-v1", 100, 200, &pairs, GateThresholds::doctrine(), prev,
+            "test-chain-v1",
+            100,
+            200,
+            &pairs,
+            GateThresholds::doctrine(),
+            prev,
         )
         .unwrap();
-        verify_certificate("test-chain-v1", &pairs, prev, GateThresholds::doctrine(), &cert).unwrap();
+        verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap();
 
         // Determinism: same inputs → byte-identical certificate.
         let cert2 = issue_certificate(
-            "test-chain-v1", 100, 200, &pairs, GateThresholds::doctrine(), prev,
+            "test-chain-v1",
+            100,
+            200,
+            &pairs,
+            GateThresholds::doctrine(),
+            prev,
         )
         .unwrap();
         assert_eq!(cert, cert2);
@@ -96,21 +119,38 @@ mod press_claim_tests {
         let mut shuffled = pairs.clone();
         shuffled.reverse();
         let cert_shuffled = issue_certificate(
-            "test-chain-v1", 100, 200, &shuffled, GateThresholds::doctrine(), prev,
+            "test-chain-v1",
+            100,
+            200,
+            &shuffled,
+            GateThresholds::doctrine(),
+            prev,
         )
         .unwrap();
         assert_eq!(cert.seed, cert_shuffled.seed);
 
         // Prev-block binding: changing prev_block_hash changes the seed.
         let cert_other = issue_certificate(
-            "test-chain-v1", 100, 200, &pairs, GateThresholds::doctrine(), [7u8; 32],
+            "test-chain-v1",
+            100,
+            200,
+            &pairs,
+            GateThresholds::doctrine(),
+            [7u8; 32],
         )
         .unwrap();
         assert_ne!(cert.seed, cert_other.seed);
 
         // Empty window fails closed.
         assert!(matches!(
-            issue_certificate("test-chain-v1", 100, 200, &[], GateThresholds::doctrine(), prev),
+            issue_certificate(
+                "test-chain-v1",
+                100,
+                200,
+                &[],
+                GateThresholds::doctrine(),
+                prev
+            ),
             Err(BeaconError::EmptyWindow)
         ));
     }

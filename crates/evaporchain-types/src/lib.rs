@@ -289,9 +289,7 @@ impl Block {
     /// Cycle detection is the DAG-side responsibility — see
     /// `evaporchain-light-cone::LightCone::insert` for the
     /// `MissingParent` rejection rule.
-    pub fn validate_parents_wire_format(
-        &self,
-    ) -> Result<(), BlockParentsValidationError> {
+    pub fn validate_parents_wire_format(&self) -> Result<(), BlockParentsValidationError> {
         if self.parents.len() > 1 && self.protocol_version < 3 {
             return Err(BlockParentsValidationError::MultiParentRequiresV3 {
                 n: self.parents.len(),
@@ -2026,7 +2024,9 @@ mod tests {
         }
 
         // Happy path: legacy block (empty parents) at any pv → Ok.
-        assert!(mk(vec![], 0, [0xAA; 32]).validate_parents_wire_format().is_ok());
+        assert!(mk(vec![], 0, [0xAA; 32])
+            .validate_parents_wire_format()
+            .is_ok());
 
         // Happy path: single-parent block matching parent_hash → Ok.
         assert!(mk(vec![[0xAA; 32]], 0, [0xAA; 32])
@@ -2051,7 +2051,10 @@ mod tests {
         let err = mk(vec![[0xAA; 32], [0xAA; 32]], 3, [0xAA; 32])
             .validate_parents_wire_format()
             .unwrap_err();
-        assert!(matches!(err, BlockParentsValidationError::DuplicateParent(_)));
+        assert!(matches!(
+            err,
+            BlockParentsValidationError::DuplicateParent(_)
+        ));
 
         // parents[0] disagrees with parent_hash → ParentHashMismatch.
         let err = mk(vec![[0xBB; 32]], 0, [0xAA; 32])

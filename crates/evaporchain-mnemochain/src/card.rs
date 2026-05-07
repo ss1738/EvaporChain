@@ -194,8 +194,7 @@ mod tests {
 
     #[test]
     fn mint_rejects_zero_stability() {
-        let err =
-            Card::mint(id(1), [0xAA; 32], ptr(), 1_000, 0, 0).unwrap_err();
+        let err = Card::mint(id(1), [0xAA; 32], ptr(), 1_000, 0, 0).unwrap_err();
         assert_eq!(err, CardError::StabilityBelowFloor);
     }
 

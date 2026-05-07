@@ -93,7 +93,15 @@ mod press_claim_tests {
 
         // Attenuate: parent → child, holder = bob.
         let child_id = r
-            .attenuate(issuer, parent_id, child_authority.clone(), 500, bob, [2u8; 32], 0)
+            .attenuate(
+                issuer,
+                parent_id,
+                child_authority.clone(),
+                500,
+                bob,
+                [2u8; 32],
+                0,
+            )
             .unwrap();
         r.invoke_gate(child_id).unwrap();
 
@@ -137,6 +145,9 @@ mod press_claim_tests {
             [3u8; 32],
             0,
         );
-        assert!(matches!(res, Err(RegistryError::AttenuationNotStrictSubset)));
+        assert!(matches!(
+            res,
+            Err(RegistryError::AttenuationNotStrictSubset)
+        ));
     }
 }

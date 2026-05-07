@@ -99,8 +99,7 @@ mod tests {
     }
 
     fn cred_at(level: Energy, attested_at: Epoch) -> Credential {
-        Credential::issue(id(0xCD), id(0xC1), id(0xAA), id(0xBB), level, attested_at)
-            .unwrap()
+        Credential::issue(id(0xCD), id(0xC1), id(0xAA), id(0xBB), level, attested_at).unwrap()
     }
 
     fn bounty_at(min_freshness: Energy, min_level: Energy) -> Bounty {
@@ -146,8 +145,8 @@ mod tests {
         let c = class(); // half_life=100
         let cr = cred_at(1000, 0);
         let b = bounty_at(900, 100); // demands ≥ 900 freshness
-        // At epoch 50 (half a half-life), score < 1000. After 1 half-life,
-        // score ≈ 500 < 900 — definitely fails.
+                                     // At epoch 50 (half a half-life), score < 1000. After 1 half-life,
+                                     // score ≈ 500 < 900 — definitely fails.
         assert!(!b.matches(&c, &cr, 100).unwrap());
     }
 
@@ -162,8 +161,7 @@ mod tests {
     #[test]
     fn class_mismatch_errors() {
         let c = class(); // id = 0xC1
-        let other_cred =
-            Credential::issue(id(0xCD), id(0xC2), id(0xAA), id(0xBB), 800, 0).unwrap();
+        let other_cred = Credential::issue(id(0xCD), id(0xC2), id(0xAA), id(0xBB), 800, 0).unwrap();
         let b = bounty_at(500, 100);
         let err = b.matches(&c, &other_cred, 0).unwrap_err();
         assert_eq!(err, BountyError::ClassMismatch);

@@ -35,10 +35,8 @@ fn ctx(caller: [u8; 32], owner: [u8; 32], epoch: u64, energy: u64) -> ExecutionC
 }
 
 fn compile_pilot() -> EvaporBytecode {
-    let ast = parser::parse(SOURCE)
-        .unwrap_or_else(|e| panic!("MortalNft failed to parse: {e:?}"));
-    compiler::compile(&ast)
-        .unwrap_or_else(|e| panic!("MortalNft failed to compile: {e:?}"))
+    let ast = parser::parse(SOURCE).unwrap_or_else(|e| panic!("MortalNft failed to parse: {e:?}"));
+    compiler::compile(&ast).unwrap_or_else(|e| panic!("MortalNft failed to compile: {e:?}"))
 }
 
 fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
@@ -55,7 +53,13 @@ fn initial_state(bc: &EvaporBytecode) -> HashMap<String, Value> {
 fn parses_and_compiles_cleanly() {
     let bc = compile_pilot();
     assert_eq!(bc.name, "MortalNft");
-    let public = ["set_metadata", "transfer", "current_owner", "metadata_uri", "transfers"];
+    let public = [
+        "set_metadata",
+        "transfer",
+        "current_owner",
+        "metadata_uri",
+        "transfers",
+    ];
     for m in &public {
         assert!(
             bc.methods.contains_key(*m),

@@ -39,7 +39,10 @@ pub fn verify_amplified(
     let positions = derive_query_positions(input, &mut transcript, num_queries as usize);
     for x in positions {
         verify_query_round(input, folded, x, energy_floor).map_err(|source| {
-            AmplifiedError::InnerRejection { position: x, source }
+            AmplifiedError::InnerRejection {
+                position: x,
+                source,
+            }
         })?;
     }
     Ok(())

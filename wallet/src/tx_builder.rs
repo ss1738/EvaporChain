@@ -634,8 +634,7 @@ mod tests {
 
     #[test]
     fn test_build_hlwa_effective_supply_request() {
-        let req =
-            TxBuilder::build_hlwa_effective_supply_request(1_000_000, 1_000_000, 0, 500, 100);
+        let req = TxBuilder::build_hlwa_effective_supply_request(1_000_000, 1_000_000, 0, 500, 100);
         assert_eq!(req.attestation_lambda_epochs, 500);
         assert_eq!(req.current_epoch, 100);
     }

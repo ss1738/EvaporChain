@@ -69,7 +69,7 @@
 pub mod proposal;
 pub mod registry;
 
-pub use proposal::{ALPHA_MICROS_DEFAULT, Proposal, ProposalError, ProposalId, MICROS};
+pub use proposal::{Proposal, ProposalError, ProposalId, ALPHA_MICROS_DEFAULT, MICROS};
 pub use registry::{ConvictionRegistry, RegistryError, VoterId};
 
 #[cfg(test)]
@@ -97,7 +97,10 @@ mod press_claim_tests {
         let mut last_conviction = 0u128;
         for t in 1u64..50 {
             p.tick(t, 10_000_000).unwrap();
-            assert!(p.conviction_micros >= last_conviction, "conviction monotone with constant stake");
+            assert!(
+                p.conviction_micros >= last_conviction,
+                "conviction monotone with constant stake"
+            );
             last_conviction = p.conviction_micros;
         }
         // After enough ticks, threshold is crossed.
@@ -110,7 +113,10 @@ mod press_claim_tests {
             p.tick(t, 0).unwrap();
         }
         assert!(p.is_passed(), "Passed status must be sticky");
-        assert!(p.conviction_micros < passed_conviction, "decay shrinks conviction");
+        assert!(
+            p.conviction_micros < passed_conviction,
+            "decay shrinks conviction"
+        );
 
         // Non-monotone tick rejected.
         assert!(matches!(

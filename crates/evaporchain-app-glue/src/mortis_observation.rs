@@ -124,7 +124,12 @@ mod tests {
         m.tick(1, 500);
         let s = observe(&m);
         // 1 of 10 epochs below; 9 left.
-        assert_eq!(s, MortalityState::Sickening { remaining_epochs: 9 });
+        assert_eq!(
+            s,
+            MortalityState::Sickening {
+                remaining_epochs: 9
+            }
+        );
         assert!(s.is_alive());
         assert!(s.should_warn());
     }
@@ -133,11 +138,26 @@ mod tests {
     fn sickening_remaining_decreases() {
         let mut m = MortisMonitor::new(cond(1000, 5));
         m.tick(1, 500);
-        assert_eq!(observe(&m), MortalityState::Sickening { remaining_epochs: 4 });
+        assert_eq!(
+            observe(&m),
+            MortalityState::Sickening {
+                remaining_epochs: 4
+            }
+        );
         m.tick(2, 500);
-        assert_eq!(observe(&m), MortalityState::Sickening { remaining_epochs: 3 });
+        assert_eq!(
+            observe(&m),
+            MortalityState::Sickening {
+                remaining_epochs: 3
+            }
+        );
         m.tick(3, 500);
-        assert_eq!(observe(&m), MortalityState::Sickening { remaining_epochs: 2 });
+        assert_eq!(
+            observe(&m),
+            MortalityState::Sickening {
+                remaining_epochs: 2
+            }
+        );
     }
 
     #[test]
@@ -148,7 +168,9 @@ mod tests {
         m.tick(2, 500);
         assert_eq!(
             observe(&m),
-            MortalityState::Sickening { remaining_epochs: 3 }
+            MortalityState::Sickening {
+                remaining_epochs: 3
+            }
         );
         // Pool recovers — counter resets.
         m.tick(3, 5000);
@@ -206,7 +228,9 @@ mod tests {
     fn round_trip_serde() {
         for state in [
             MortalityState::Alive,
-            MortalityState::Sickening { remaining_epochs: 5 },
+            MortalityState::Sickening {
+                remaining_epochs: 5,
+            },
             MortalityState::Dead,
         ] {
             let s = serde_json::to_string(&state).unwrap();
@@ -220,7 +244,10 @@ mod tests {
         // UI/dApp utility: the wallet should warn during Sickening
         // AND Dead but not during Alive. Verify the predicate flag.
         assert!(!MortalityState::Alive.should_warn());
-        assert!(MortalityState::Sickening { remaining_epochs: 1 }.should_warn());
+        assert!(MortalityState::Sickening {
+            remaining_epochs: 1
+        }
+        .should_warn());
         assert!(MortalityState::Dead.should_warn());
     }
 
@@ -229,7 +256,10 @@ mod tests {
         // Light clients should keep expecting blocks during Alive AND
         // Sickening; they can stop only when Dead.
         assert!(MortalityState::Alive.is_alive());
-        assert!(MortalityState::Sickening { remaining_epochs: 1 }.is_alive());
+        assert!(MortalityState::Sickening {
+            remaining_epochs: 1
+        }
+        .is_alive());
         assert!(!MortalityState::Dead.is_alive());
     }
 }

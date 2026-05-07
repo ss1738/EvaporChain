@@ -420,10 +420,7 @@ pub trait LightConeBranchSnapshot {
     /// `evaporchain_state::snapshot::StateSnapshot`) override.
     /// Test stubs that only need the metadata methods (`tip`,
     /// `created_at_height`) can ignore the default error path.
-    fn restore(
-        &self,
-        _db: &mut dyn evaporchain_state::db::StateDB,
-    ) -> Result<(), String> {
+    fn restore(&self, _db: &mut dyn evaporchain_state::db::StateDB) -> Result<(), String> {
         Err("LightConeBranchSnapshot does not support restoration".to_string())
     }
 }
@@ -457,9 +454,8 @@ impl StateSnapshotBranch {
         epoch: u64,
         db: &mut dyn evaporchain_state::db::StateDB,
     ) -> Result<Self, String> {
-        let snapshot =
-            evaporchain_state::snapshot::SnapshotBuilder::create(db, height, epoch)
-                .map_err(|e| format!("SnapshotBuilder::create failed: {:?}", e))?;
+        let snapshot = evaporchain_state::snapshot::SnapshotBuilder::create(db, height, epoch)
+            .map_err(|e| format!("SnapshotBuilder::create failed: {:?}", e))?;
         Ok(Self {
             tip,
             height,
@@ -477,10 +473,7 @@ impl LightConeBranchSnapshot for StateSnapshotBranch {
         self.height
     }
 
-    fn restore(
-        &self,
-        db: &mut dyn evaporchain_state::db::StateDB,
-    ) -> Result<(), String> {
+    fn restore(&self, db: &mut dyn evaporchain_state::db::StateDB) -> Result<(), String> {
         evaporchain_state::snapshot::SnapshotApplier::apply(db, &self.snapshot)
             .map_err(|e| format!("SnapshotApplier::apply failed: {:?}", e))
             .map(|_apply_result| ())
@@ -1071,9 +1064,7 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
-            mev_observations: std::collections::VecDeque::with_capacity(
-                MEV_OBSERVATION_BUFFER_CAP,
-            ),
+            mev_observations: std::collections::VecDeque::with_capacity(MEV_OBSERVATION_BUFFER_CAP),
             mev_attacker_stats: std::collections::HashMap::new(),
             settled_refunds: std::collections::HashSet::new(),
             mev_missing_refund_violations: std::collections::HashMap::new(),
@@ -1151,9 +1142,7 @@ impl TendermintConsensus {
             last_bell_block_height: 0,
             last_bell_epoch: 0,
             last_bell_certified: false,
-            block_prod_history: std::collections::VecDeque::with_capacity(
-                BLOCK_PROD_HISTORY_CAP,
-            ),
+            block_prod_history: std::collections::VecDeque::with_capacity(BLOCK_PROD_HISTORY_CAP),
             committed_at: BTreeMap::new(),
             finality_gap_history: VecDeque::with_capacity(FINALITY_GAP_HISTORY_CAP),
             draining: false,
@@ -1235,13 +1224,13 @@ impl TendermintConsensus {
             // numeric parseability + lower bound rather than
             // enumerating values. Special-cased below.
             "crooks_mev_beta_mb" => {
-                let v = value.parse::<u64>().map_err(|_| {
-                    GovernanceParamError::InvalidValue {
+                let v = value
+                    .parse::<u64>()
+                    .map_err(|_| GovernanceParamError::InvalidValue {
                         key: key.to_string(),
                         value: value.to_string(),
                         permitted: vec!["any u64 ≥ 1".to_string()],
-                    }
-                })?;
+                    })?;
                 if v < 1 {
                     return Err(GovernanceParamError::InvalidValue {
                         key: key.to_string(),
@@ -1259,13 +1248,13 @@ impl TendermintConsensus {
             // (subject to the recency check). Default 0 = no
             // orphans by caliber alone. Range 0..=u64::MAX.
             "light_cone_orphan_caliber_threshold" => {
-                let v = value.parse::<u64>().map_err(|_| {
-                    GovernanceParamError::InvalidValue {
+                let v = value
+                    .parse::<u64>()
+                    .map_err(|_| GovernanceParamError::InvalidValue {
                         key: key.to_string(),
                         value: value.to_string(),
                         permitted: vec!["any u64".to_string()],
-                    }
-                })?;
+                    })?;
                 self.governance_params
                     .insert(key.to_string(), v.to_string());
                 return Ok(());
@@ -1275,13 +1264,13 @@ impl TendermintConsensus {
             // default 4. Inert when light_cone_state_branches_enabled
             // is false (linear-state mode has no branches to cap).
             "light_cone_max_concurrent_forks" => {
-                let v = value.parse::<u8>().map_err(|_| {
-                    GovernanceParamError::InvalidValue {
+                let v = value
+                    .parse::<u8>()
+                    .map_err(|_| GovernanceParamError::InvalidValue {
                         key: key.to_string(),
                         value: value.to_string(),
                         permitted: vec!["any u8 in 1..=8".to_string()],
-                    }
-                })?;
+                    })?;
                 if !(1..=8).contains(&v) {
                     return Err(GovernanceParamError::InvalidValue {
                         key: key.to_string(),
@@ -1297,13 +1286,13 @@ impl TendermintConsensus {
             // confidence threshold in parts-per-million (0..=1_000_000).
             // **Audit fix HIGH H4**: ppm replaces legacy milli.
             "crooks_mev_confidence_threshold_ppm" => {
-                let v = value.parse::<u32>().map_err(|_| {
-                    GovernanceParamError::InvalidValue {
+                let v = value
+                    .parse::<u32>()
+                    .map_err(|_| GovernanceParamError::InvalidValue {
                         key: key.to_string(),
                         value: value.to_string(),
                         permitted: vec!["any u32 in 0..=1_000_000".to_string()],
-                    }
-                })?;
+                    })?;
                 if v > 1_000_000 {
                     return Err(GovernanceParamError::InvalidValue {
                         key: key.to_string(),
@@ -1319,13 +1308,13 @@ impl TendermintConsensus {
             // period and refund window. Both are u64 ≥ 1; window
             // must be ≥ grace (enforced at use site, not allowlist).
             "crooks_mev_grace_period_blocks" | "crooks_mev_refund_window_blocks" => {
-                let v = value.parse::<u64>().map_err(|_| {
-                    GovernanceParamError::InvalidValue {
+                let v = value
+                    .parse::<u64>()
+                    .map_err(|_| GovernanceParamError::InvalidValue {
                         key: key.to_string(),
                         value: value.to_string(),
                         permitted: vec!["any u64 ≥ 1".to_string()],
-                    }
-                })?;
+                    })?;
                 if v < 1 {
                     return Err(GovernanceParamError::InvalidValue {
                         key: key.to_string(),
@@ -1726,9 +1715,7 @@ impl TendermintConsensus {
     /// surface fired alarms downstream. The queue holds at most one
     /// event per `last_run_at_height` (de-duplicated at emission time)
     /// so back-to-back ticks at the same height never double-emit.
-    pub fn take_pending_cartel_alarms(
-        &mut self,
-    ) -> Vec<evaporchain_causal_chsh::CartelAlarmEvent> {
+    pub fn take_pending_cartel_alarms(&mut self) -> Vec<evaporchain_causal_chsh::CartelAlarmEvent> {
         std::mem::take(&mut self.pending_cartel_alarms)
     }
 
@@ -2055,10 +2042,7 @@ impl TendermintConsensus {
     /// state root) so consensus enforces convergence; for now it's
     /// an in-memory contract validators can cross-check via RPC.
     pub fn mev_state_digest(&self) -> [u8; 32] {
-        evaporchain_mev_detect::mev_state_digest(
-            &self.mev_observations,
-            &self.mev_attacker_stats,
-        )
+        evaporchain_mev_detect::mev_state_digest(&self.mev_observations, &self.mev_attacker_stats)
     }
 
     /// Phase 3.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — list of
@@ -2112,21 +2096,14 @@ impl TendermintConsensus {
     /// RPC for monitoring; Phase 3.2 will additionally read it
     /// inside the executor dispatch path to find the right snapshot
     /// for a given tip.
-    pub fn state_branches(
-        &self,
-    ) -> &std::collections::HashMap<[u8; 32], LightConeBranchMetadata> {
+    pub fn state_branches(&self) -> &std::collections::HashMap<[u8; 32], LightConeBranchMetadata> {
         &self.state_branches
     }
 
     /// Phase 3.1 — record-or-update metadata for a DAG tip.
     /// Idempotent: if the tip is already tracked, just bumps
     /// `last_touched_block`. Internal helper exposed for tests.
-    pub(crate) fn record_state_branch(
-        &mut self,
-        tip: [u8; 32],
-        block_height: u64,
-        caliber: u64,
-    ) {
+    pub(crate) fn record_state_branch(&mut self, tip: [u8; 32], block_height: u64, caliber: u64) {
         self.state_branches
             .entry(tip)
             .and_modify(|m| {
@@ -2149,10 +2126,7 @@ impl TendermintConsensus {
     /// Phase 4.1 — typed snapshot of a single tip's voting tally,
     /// returned as `(prevote_count, precommit_count)` pairs. None
     /// if the tip isn't tracked.
-    pub fn dag_round_state_counts(
-        &self,
-        tip: &[u8; 32],
-    ) -> Option<(usize, usize)> {
+    pub fn dag_round_state_counts(&self, tip: &[u8; 32]) -> Option<(usize, usize)> {
         self.dag_round_states
             .get(tip)
             .map(|rs| (rs.prevotes.len(), rs.precommits.len()))
@@ -2223,10 +2197,7 @@ impl TendermintConsensus {
             // multiple violation buckets to get non-trivial entropy.
             // Phase 3.5d ships the wiring; entropy-based amount
             // tuning is operator follow-up.
-            let amount = match evaporchain_entropic_slashing::entropic_slash(
-                stake,
-                &[count, 1],
-            ) {
+            let amount = match evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]) {
                 Ok(v) => v,
                 Err(_) => 0,
             };
@@ -2459,8 +2430,7 @@ impl TendermintConsensus {
         if !self.state_branches.contains_key(&tip_id) {
             return Ok(());
         }
-        let snapshot =
-            StateSnapshotBranch::capture(tip_id, block.number, block.epoch, db)?;
+        let snapshot = StateSnapshotBranch::capture(tip_id, block.number, block.epoch, db)?;
         self.attach_branch_snapshot(tip_id, std::sync::Arc::new(snapshot));
         Ok(())
     }
@@ -2492,9 +2462,7 @@ impl TendermintConsensus {
         let mut orphans: Vec<[u8; 32]> = self
             .state_branches
             .iter()
-            .filter(|(_, m)| {
-                m.caliber < threshold && m.last_touched_block < staleness_horizon
-            })
+            .filter(|(_, m)| m.caliber < threshold && m.last_touched_block < staleness_horizon)
             .map(|(tip, _)| *tip)
             .collect();
         orphans.sort();
@@ -2522,9 +2490,7 @@ impl TendermintConsensus {
             if let Some((&victim, _)) = self
                 .state_branches
                 .iter()
-                .min_by(|(t1, m1), (t2, m2)| {
-                    m1.caliber.cmp(&m2.caliber).then_with(|| t1.cmp(t2))
-                })
+                .min_by(|(t1, m1), (t2, m2)| m1.caliber.cmp(&m2.caliber).then_with(|| t1.cmp(t2)))
             {
                 self.state_branches.remove(&victim);
                 // Phase 5.3 of LIGHT_CONE_FULL_DAG_PLAN.md — pair
@@ -2682,9 +2648,9 @@ impl TendermintConsensus {
                 active_count: 0,
                 ghost_count: 0,
             };
-            self.lambda_fold_nova = Some(Box::new(
-                evaporchain_lambda_fold::NovaFolder::new(&genesis_dc)?,
-            ));
+            self.lambda_fold_nova = Some(Box::new(evaporchain_lambda_fold::NovaFolder::new(
+                &genesis_dc,
+            )?));
         }
 
         let folder = self
@@ -2695,14 +2661,7 @@ impl TendermintConsensus {
             object_energies: vec![(0, 0, 100)],
             evaporation_nullifiers: vec![],
         };
-        let inst = folder.fold_block(
-            block,
-            &new_dc,
-            &new_dc,
-            &thermo,
-            block.epoch,
-            step_energy,
-        )?;
+        let inst = folder.fold_block(block, &new_dc, &new_dc, &thermo, block.epoch, step_energy)?;
         self.lambda_fold_nova_instance = inst;
         Ok(())
     }
@@ -2849,10 +2808,7 @@ impl TendermintConsensus {
             .get("crooks_mev_beta_mb")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(1000);
-        let fc = crate::fork_choice::MccForkChoice::new(
-            self.light_cone_dag.clone(),
-            beta_mb,
-        );
+        let fc = crate::fork_choice::MccForkChoice::new(self.light_cone_dag.clone(), beta_mb);
         fc.enumerate_with_caliber()
     }
 
@@ -2955,11 +2911,7 @@ impl TendermintConsensus {
             .unwrap_or(4);
         // Take the top-N heads by caliber (already sorted descending).
         let scored = self.enumerate_candidate_heads();
-        let candidates: Vec<[u8; 32]> = scored
-            .into_iter()
-            .take(cap)
-            .map(|(id, _)| id)
-            .collect();
+        let candidates: Vec<[u8; 32]> = scored.into_iter().take(cap).map(|(id, _)| id).collect();
         // Filter to an antichain: drop any head that's comparable to
         // a higher-caliber head (it would violate the partial-order
         // contract on multi-parent blocks).
@@ -2967,11 +2919,7 @@ impl TendermintConsensus {
         for c in &candidates {
             let mut all_concurrent = true;
             for a in &accepted {
-                if evaporchain_light_cone::concurrency::comparable(
-                    &self.light_cone_dag,
-                    *c,
-                    *a,
-                ) {
+                if evaporchain_light_cone::concurrency::comparable(&self.light_cone_dag, *c, *a) {
                     all_concurrent = false;
                     break;
                 }
@@ -3070,16 +3018,9 @@ impl TendermintConsensus {
         from_head: [u8; 32],
         to_head: [u8; 32],
     ) -> Option<ReplayWalk> {
-        let lca = evaporchain_light_cone::dag::find_lca(
-            &self.light_cone_dag,
-            from_head,
-            to_head,
-        )?;
-        let forward_path = evaporchain_light_cone::dag::block_path_from_to(
-            &self.light_cone_dag,
-            lca,
-            to_head,
-        )?;
+        let lca = evaporchain_light_cone::dag::find_lca(&self.light_cone_dag, from_head, to_head)?;
+        let forward_path =
+            evaporchain_light_cone::dag::block_path_from_to(&self.light_cone_dag, lca, to_head)?;
         Some(ReplayWalk {
             lca,
             forward_path,
@@ -3126,15 +3067,12 @@ impl TendermintConsensus {
         if !plan.rollback_required {
             return Ok(());
         }
-        let metadata = self
-            .state_branches
-            .get(&plan.lca)
-            .ok_or_else(|| {
-                format!(
-                    "LCA {} not tracked in state_branches",
-                    hex::encode(plan.lca)
-                )
-            })?;
+        let metadata = self.state_branches.get(&plan.lca).ok_or_else(|| {
+            format!(
+                "LCA {} not tracked in state_branches",
+                hex::encode(plan.lca)
+            )
+        })?;
         let snapshot = metadata.snapshot.as_ref().ok_or_else(|| {
             format!(
                 "LCA {} has no attached snapshot — call attach_branch_snapshot first",
@@ -3204,9 +3142,8 @@ impl TendermintConsensus {
             .map_err(ReplayError::RestoreFailed)?;
         let mut applied: Vec<[u8; 32]> = Vec::with_capacity(plan.forward_path.len());
         for block_id in &plan.forward_path {
-            let block = block_lookup(block_id).ok_or_else(|| {
-                ReplayError::BlockNotFound(hex::encode(block_id))
-            })?;
+            let block = block_lookup(block_id)
+                .ok_or_else(|| ReplayError::BlockNotFound(hex::encode(block_id)))?;
             block_apply(db, &block).map_err(|msg| ReplayError::ApplyFailed {
                 block: hex::encode(block_id),
                 msg,
@@ -3276,21 +3213,11 @@ impl TendermintConsensus {
         // is a placeholder ([0u8; 32]) since we're not registering
         // this snapshot in state_branches — it's purely a
         // transactional rollback anchor.
-        let pre_replay_snapshot = StateSnapshotBranch::capture(
-            [0u8; 32],
-            pre_replay_height,
-            pre_replay_epoch,
-            db,
-        )
-        .map_err(ReplayError::RestoreFailed)?;
+        let pre_replay_snapshot =
+            StateSnapshotBranch::capture([0u8; 32], pre_replay_height, pre_replay_epoch, db)
+                .map_err(ReplayError::RestoreFailed)?;
 
-        match self.replay_and_apply(
-            db,
-            current_head,
-            target_head,
-            block_lookup,
-            block_apply,
-        ) {
+        match self.replay_and_apply(db, current_head, target_head, block_lookup, block_apply) {
             Ok(result) => Ok(result),
             Err(replay_err) => {
                 // Roll back to pre-replay state. If THIS fails, the
@@ -3467,9 +3394,7 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
-            mev_observations: std::collections::VecDeque::with_capacity(
-                MEV_OBSERVATION_BUFFER_CAP,
-            ),
+            mev_observations: std::collections::VecDeque::with_capacity(MEV_OBSERVATION_BUFFER_CAP),
             mev_attacker_stats: std::collections::HashMap::new(),
             settled_refunds: std::collections::HashSet::new(),
             mev_missing_refund_violations: std::collections::HashMap::new(),
@@ -3543,9 +3468,7 @@ impl TendermintConsensus {
             last_bell_block_height: 0,
             last_bell_epoch: 0,
             last_bell_certified: false,
-            block_prod_history: std::collections::VecDeque::with_capacity(
-                BLOCK_PROD_HISTORY_CAP,
-            ),
+            block_prod_history: std::collections::VecDeque::with_capacity(BLOCK_PROD_HISTORY_CAP),
             committed_at: BTreeMap::new(),
             finality_gap_history: VecDeque::with_capacity(FINALITY_GAP_HISTORY_CAP),
             draining: false,
@@ -3586,9 +3509,7 @@ impl TendermintConsensus {
     /// Persisted as part of `ConsensusCheckpoint::with_bell_reading` so
     /// the wallet `BellBeaconCard` keeps reporting the last live S-value
     /// across node restart instead of resetting to `no_data`.
-    pub fn checkpoint_bell_reading(
-        &self,
-    ) -> Option<crate::persistence::CheckpointedBellReading> {
+    pub fn checkpoint_bell_reading(&self) -> Option<crate::persistence::CheckpointedBellReading> {
         self.last_bell_s_milli
             .map(|s| crate::persistence::CheckpointedBellReading {
                 s_value_milli: s,
@@ -3883,10 +3804,7 @@ impl TendermintConsensus {
             // ForkChoice trait must be in scope for the
             // `select_tip` method to resolve.
             use crate::fork_choice::ForkChoice;
-            let fc = crate::fork_choice::MccForkChoice::new(
-                self.light_cone_dag.clone(),
-                beta_mb,
-            );
+            let fc = crate::fork_choice::MccForkChoice::new(self.light_cone_dag.clone(), beta_mb);
             if let Some(tip) = fc.select_tip() {
                 return tip;
             }
@@ -4028,8 +3946,7 @@ impl TendermintConsensus {
         // closes the audit's "T1 + T2 vs T1||T2_suffix can collide"
         // edge case.
         for tx in &block.transactions {
-            let bytes = serde_json::to_vec(tx)
-                .expect("transaction serialization must not fail");
+            let bytes = serde_json::to_vec(tx).expect("transaction serialization must not fail");
             input.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
             input.extend_from_slice(&bytes);
         }
@@ -4477,8 +4394,7 @@ impl TendermintConsensus {
             if !evaporchain_crypto::signatures::BlsVerifier::verify(&signed, &sig, &pk) {
                 warn!(
                     validator_id,
-                    block_number,
-                    "Rejecting DA attestation: BLS signature did not verify"
+                    block_number, "Rejecting DA attestation: BLS signature did not verify"
                 );
                 return actions;
             }
@@ -4734,11 +4650,7 @@ impl TendermintConsensus {
                 let prev_hash_for_proposer: Option<[u8; 32]> = self
                     .proposals_seen
                     .get(&key)
-                    .and_then(|v| {
-                        v.iter()
-                            .find(|(id, _)| *id == proposer_id)
-                            .map(|(_, h)| *h)
-                    });
+                    .and_then(|v| v.iter().find(|(id, _)| *id == proposer_id).map(|(_, h)| *h));
                 if let Some(prev_hash) = prev_hash_for_proposer {
                     if prev_hash != hash {
                         // EQUIVOCATION: same proposer, same slot, different block!
@@ -5323,9 +5235,7 @@ impl TendermintConsensus {
             // since they all commit the same blocks at the same
             // committed_at_ms (well, per-validator wall-clock differs;
             // operators tolerate up to 1024-entry slack).
-            if let Some((&victim, _)) =
-                self.committed_at_block.iter().min_by_key(|(_, &t)| t)
-            {
+            if let Some((&victim, _)) = self.committed_at_block.iter().min_by_key(|(_, &t)| t) {
                 self.committed_at_block.remove(&victim);
             }
         }
@@ -5451,10 +5361,9 @@ impl TendermintConsensus {
             // light_cone_dag (above) so it reflects the post-commit
             // state. FIFO eviction at `ANTICHAIN_DIGEST_HISTORY_CAP`.
             let digest =
-                evaporchain_light_cone::concurrency::closing_antichain_digest(
-                    &self.light_cone_dag,
-                );
-            self.antichain_digest_history.push_back((block.number, digest));
+                evaporchain_light_cone::concurrency::closing_antichain_digest(&self.light_cone_dag);
+            self.antichain_digest_history
+                .push_back((block.number, digest));
             while self.antichain_digest_history.len() > ANTICHAIN_DIGEST_HISTORY_CAP {
                 self.antichain_digest_history.pop_front();
             }
@@ -5552,7 +5461,10 @@ impl TendermintConsensus {
         }
         #[cfg(feature = "lambda_fold_nova")]
         {
-            if self.governance_params.get("lambda_fold_mode").map(|s| s.as_str())
+            if self
+                .governance_params
+                .get("lambda_fold_mode")
+                .map(|s| s.as_str())
                 == Some("nova")
             {
                 if let Err(e) = self.try_nova_fold(block, state_root, block_j) {
@@ -6205,8 +6117,7 @@ impl TendermintConsensus {
                     .map(ParallelExecutor::estimate_gas)
                     .fold(0u64, |a, g| a.saturating_add(g));
                 let mut rejected = Vec::new();
-                for (tx, hint) in candidates.into_iter().zip(candidate_hints.into_iter())
-                {
+                for (tx, hint) in candidates.into_iter().zip(candidate_hints.into_iter()) {
                     let gas = ParallelExecutor::estimate_gas(&tx);
                     if gas_used.saturating_add(gas) > self.executor.block_gas_limit {
                         rejected.push(tx);
@@ -6221,8 +6132,7 @@ impl TendermintConsensus {
                     self.mempool.submit_priority(tx);
                 }
             } else {
-                for (tx, hint) in candidates.into_iter().zip(candidate_hints.into_iter())
-                {
+                for (tx, hint) in candidates.into_iter().zip(candidate_hints.into_iter()) {
                     txs.push(tx);
                     hints_vec.push(Some(hint));
                 }
@@ -8002,10 +7912,8 @@ mod tests {
         // ── Mode: mcc. Same proposal, different governance flag.
         // Reset round state for a fresh on_message call.
         let mut tc2 = make_consensus(1, ids);
-        tc2.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc".to_string(),
-        );
+        tc2.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc".to_string());
         assert_eq!(tc2.parent_hash, [0u8; 32]);
 
         let actions_mcc = tc2.on_message(mk_proposal());
@@ -8184,15 +8092,12 @@ mod tests {
         // What we assert: status IS populated, and the verdict string
         // is well-formed.
         assert!(
-            st.verdict == "Pass"
-                || st.verdict == "Fail"
-                || st.verdict.starts_with("InputError"),
+            st.verdict == "Pass" || st.verdict == "Fail" || st.verdict.starts_with("InputError"),
             "unexpected verdict: {:?}",
             st.verdict
         );
         assert_eq!(
-            st.last_run_at_height,
-            50,
+            st.last_run_at_height, 50,
             "first run fires at records_seen=50, height=50"
         );
     }
@@ -8282,7 +8187,10 @@ mod tests {
         // *effective* value, so we expect "alarm" here, not the
         // default. The default-when-unset is exercised in the next
         // assertion using a fresh TC.
-        assert_eq!(snap.get("cartel_alarm_mode").map(|s| s.as_str()), Some("alarm"));
+        assert_eq!(
+            snap.get("cartel_alarm_mode").map(|s| s.as_str()),
+            Some("alarm")
+        );
 
         let fresh = make_consensus(1, &[1, 2, 3, 4]);
         let snap_default = fresh.governance_flags_snapshot();
@@ -8394,7 +8302,11 @@ mod tests {
 
         // Step 5: drain the queue and verify.
         let events = tc.take_pending_cartel_alarms();
-        assert_eq!(events.len(), 1, "alarm mode + over-ceiling status must emit on hot path");
+        assert_eq!(
+            events.len(),
+            1,
+            "alarm mode + over-ceiling status must emit on hot path"
+        );
         assert_eq!(events[0].at_height, 6);
         assert_eq!(events[0].s_honest_milli, 2400);
         assert_eq!(events[0].honest_ceiling_milli_at_fire, 1800);
@@ -8523,7 +8435,9 @@ mod tests {
         let blocks_per_fork = total_blocks / n_forks;
 
         let g = [0xFF; 32];
-        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(g, vec![], 1000, 0))
+            .unwrap();
 
         // 4 leaf seeds.
         let mut tips: Vec<[u8; 32]> = (0..n_forks)
@@ -8569,8 +8483,7 @@ mod tests {
         );
 
         // select_tip benchmark.
-        let fc =
-            crate::fork_choice::MccForkChoice::new(tc.light_cone_dag.clone(), 1000);
+        let fc = crate::fork_choice::MccForkChoice::new(tc.light_cone_dag.clone(), 1000);
         let select_start = std::time::Instant::now();
         let _tip = {
             use crate::fork_choice::ForkChoice;
@@ -8594,10 +8507,7 @@ mod tests {
         }
         tc.prune_state_branches();
         let sb_elapsed = sb_start.elapsed();
-        eprintln!(
-            "[Phase 6.3] 4-fork state-branch ops: {:?}",
-            sb_elapsed
-        );
+        eprintln!("[Phase 6.3] 4-fork state-branch ops: {:?}", sb_elapsed);
         assert!(
             sb_elapsed.as_millis() < 200,
             "state-branch ops budget: < 200 ms; got {:?}",
@@ -8630,9 +8540,15 @@ mod tests {
         let g = [0xFF; 32];
         let a = [0xAA; 32];
         let b = [0xBB; 32];
-        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(a, vec![g], 100, 1)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(b, vec![g], 100, 1)).unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(g, vec![], 1000, 0))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(a, vec![g], 100, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(b, vec![g], 100, 1))
+            .unwrap();
 
         // Split 2/2: validators 1,2 → leaf A; validators 3,4 → leaf B.
         tc.record_dag_precommit(a, 1, Some(a), vec![]);
@@ -8694,11 +8610,21 @@ mod tests {
         let b = [0xBB; 32];
         let c = [0xCC; 32];
         let d = [0xDD; 32];
-        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(a, vec![g], 100, 1)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(b, vec![g], 200, 1)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(c, vec![g], 150, 1)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(d, vec![g], 175, 1)).unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(g, vec![], 1000, 0))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(a, vec![g], 100, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(b, vec![g], 200, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(c, vec![g], 150, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(d, vec![g], 175, 1))
+            .unwrap();
 
         // Record state-branch metadata for each leaf.
         tc.record_state_branch(a, 1, 100);
@@ -8752,14 +8678,8 @@ mod tests {
         let mut sorted = finalized.clone();
         sorted.sort();
         assert_eq!(sorted, vec![b, d], "expected b + d to finalize");
-        assert!(
-            !sorted.contains(&c),
-            "c (below-quorum) must NOT finalize"
-        );
-        assert!(
-            !sorted.contains(&a),
-            "a (LRU-evicted) must NOT finalize"
-        );
+        assert!(!sorted.contains(&c), "c (below-quorum) must NOT finalize");
+        assert!(!sorted.contains(&a), "a (LRU-evicted) must NOT finalize");
 
         // Closing antichain still includes the surviving leaves.
         let ac = evaporchain_light_cone::concurrency::closing_antichain(&tc.light_cone_dag);
@@ -8790,19 +8710,12 @@ mod tests {
     #[test]
     fn test_apply_mev_missing_refund_slashes_applies_slash() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_set_param(
-            "crooks_mev_missing_refund_slash_enabled",
-            "true",
-        )
-        .unwrap();
+        tc.governance_set_param("crooks_mev_missing_refund_slash_enabled", "true")
+            .unwrap();
 
         // Validator 1 has some default stake from make_consensus;
         // confirm it's non-zero before we slash.
-        let stake_before = tc
-            .validator_set
-            .get(1)
-            .expect("validator 1 exists")
-            .stake;
+        let stake_before = tc.validator_set.get(1).expect("validator 1 exists").stake;
         assert!(stake_before > 0);
 
         // Violation count > 0 → entropic_slash returns a non-zero
@@ -8825,11 +8738,8 @@ mod tests {
     #[test]
     fn test_apply_mev_missing_refund_slashes_unknown_validator() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_set_param(
-            "crooks_mev_missing_refund_slash_enabled",
-            "true",
-        )
-        .unwrap();
+        tc.governance_set_param("crooks_mev_missing_refund_slash_enabled", "true")
+            .unwrap();
         tc.mev_missing_refund_violations.insert(99, 50);
         let slashed = tc.apply_mev_missing_refund_slashes();
         // Validator 99 doesn't exist → no slash entry.
@@ -8909,9 +8819,15 @@ mod tests {
         let g = [0xFF; 32];
         let a = [0xAA; 32];
         let b = [0xBB; 32];
-        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(a, vec![g], 100, 1)).unwrap();
-        tc.light_cone_dag.insert(LcBlock::new(b, vec![g], 200, 1)).unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(g, vec![], 1000, 0))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(a, vec![g], 100, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(b, vec![g], 200, 1))
+            .unwrap();
         for v in 1..=3u64 {
             // Same validators precommit on BOTH leaves with the
             // matching block_hash — equivocation detection skips
@@ -9104,7 +9020,10 @@ mod tests {
         // of current 100 → not stale).
         tc.record_state_branch([0xAA; 32], 90, 100);
         let orphans = tc.detect_orphan_branches(100);
-        assert!(orphans.is_empty(), "fresh low-caliber tip must NOT be orphaned");
+        assert!(
+            orphans.is_empty(),
+            "fresh low-caliber tip must NOT be orphaned"
+        );
     }
 
     /// Phase 5.1 — canonical sorting: orphans returned in BlockId
@@ -9133,8 +9052,7 @@ mod tests {
         // crate root. From a test inside `tendermint::tests`, that
         // means `crate::LightConeBranchMetadata` and
         // `crate::LightConeBranchSnapshot` should both resolve.
-        let _: crate::LightConeBranchMetadata =
-            crate::LightConeBranchMetadata::fresh(1, 100);
+        let _: crate::LightConeBranchMetadata = crate::LightConeBranchMetadata::fresh(1, 100);
 
         // Trait re-export is also at the crate root.
         struct StubAtCrateRoot;
@@ -9779,7 +9697,8 @@ mod tests {
 
         // Phase 4 anti-gaming on validator b (still in observe mode):
         // dispute the observation within grace → due_refund_txs skips.
-        b.dispute_observation(1, 0, 3).expect("dispute within grace");
+        b.dispute_observation(1, 0, 3)
+            .expect("dispute within grace");
         let due_b = b.due_refund_txs(10);
         assert!(due_b.is_empty(), "disputed observation must not settle");
     }
@@ -9851,7 +9770,8 @@ mod tests {
         tc.on_block_committed(&sandwich_block, [0u8; 32], 0);
 
         // Within grace (default 5 blocks): dispute succeeds.
-        tc.dispute_observation(1, 0, 3).expect("dispute within grace");
+        tc.dispute_observation(1, 0, 3)
+            .expect("dispute within grace");
         assert!(tc.disputed_observations().contains(&(1, 0)));
 
         // due_refund_txs past-grace skips disputed.
@@ -9952,8 +9872,7 @@ mod tests {
         // Observe mode (default): every block passes regardless.
         let empty_block = make_block_local(10, vec![]);
         assert_eq!(tc.validate_block_refunds(&empty_block), Ok(()));
-        let block_with_refund =
-            make_block_local(10, vec![Transaction::Refund(due_refund.clone())]);
+        let block_with_refund = make_block_local(10, vec![Transaction::Refund(due_refund.clone())]);
         assert_eq!(tc.validate_block_refunds(&block_with_refund), Ok(()));
 
         // Switch to enforce mode.
@@ -9974,8 +9893,7 @@ mod tests {
         // MismatchedRefund.
         let mut tampered = due_refund.clone();
         tampered.amount += 1;
-        let bad_block =
-            make_block_local(10, vec![Transaction::Refund(tampered)]);
+        let bad_block = make_block_local(10, vec![Transaction::Refund(tampered)]);
         let err = tc.validate_block_refunds(&bad_block).unwrap_err();
         assert!(matches!(
             err,
@@ -10299,8 +10217,7 @@ mod tests {
 
         // After non-trivial commits, digest must have moved away
         // from the empty-set sentinel.
-        let empty_digest =
-            evaporchain_light_cone::concurrency::digest_antichain(&[]);
+        let empty_digest = evaporchain_light_cone::concurrency::digest_antichain(&[]);
         assert_ne!(
             a.light_cone_antichain_digest(),
             empty_digest,
@@ -10455,12 +10372,7 @@ mod tests {
     /// `candidate_heads` without going through the full
     /// `on_block_committed` path (which would also consume mempool,
     /// fee logic, etc.).
-    fn lc_insert(
-        tc: &mut TendermintConsensus,
-        id: [u8; 32],
-        parents: Vec<[u8; 32]>,
-        epoch: u64,
-    ) {
+    fn lc_insert(tc: &mut TendermintConsensus, id: [u8; 32], parents: Vec<[u8; 32]>, epoch: u64) {
         use evaporchain_light_cone::Block as LcBlock;
         tc.light_cone_dag
             .insert(LcBlock::new(id, parents, 1000, epoch))
@@ -10567,13 +10479,20 @@ mod tests {
         lc_insert(&mut tc, id(3), vec![id(1)], 2);
 
         let heads = tc.candidate_heads();
-        assert_eq!(heads.len(), 2, "still 2 heads after extension (id(2) + id(3))");
+        assert_eq!(
+            heads.len(),
+            2,
+            "still 2 heads after extension (id(2) + id(3))"
+        );
         assert!(
             !heads.contains(&id(1)),
             "extended block must no longer be a head"
         );
         assert!(heads.contains(&id(3)), "new child id(3) takes head role");
-        assert!(heads.contains(&id(2)), "uninvolved sibling id(2) stays a head");
+        assert!(
+            heads.contains(&id(2)),
+            "uninvolved sibling id(2) stays a head"
+        );
     }
 
     /// MCC Phase A.4 — validator-determinism property test.
@@ -10595,12 +10514,12 @@ mod tests {
         let mut b = make_consensus(2, &[1, 2, 3, 4]);
 
         let inserts: Vec<([u8; 32], Vec<[u8; 32]>, u64)> = vec![
-            (id(0), vec![], 0),       // genesis
-            (id(1), vec![id(0)], 1),  // child A
-            (id(2), vec![id(0)], 1),  // child B (sibling of A)
-            (id(3), vec![id(1)], 2),  // grandchild via A
-            (id(4), vec![id(0)], 1),  // child C (sibling of A, B)
-            (id(5), vec![id(2)], 2),  // grandchild via B
+            (id(0), vec![], 0),      // genesis
+            (id(1), vec![id(0)], 1), // child A
+            (id(2), vec![id(0)], 1), // child B (sibling of A)
+            (id(3), vec![id(1)], 2), // grandchild via A
+            (id(4), vec![id(0)], 1), // child C (sibling of A, B)
+            (id(5), vec![id(2)], 2), // grandchild via B
         ];
 
         for (i, parents, epoch) in &inserts {
@@ -10671,8 +10590,8 @@ mod tests {
         let tip = id(42);
         let height = 100u64;
         let epoch = 7u64;
-        let branch = super::StateSnapshotBranch::capture(tip, height, epoch, &mut db)
-            .expect("capture");
+        let branch =
+            super::StateSnapshotBranch::capture(tip, height, epoch, &mut db).expect("capture");
 
         assert_eq!(branch.tip(), tip);
         assert_eq!(branch.created_at_height(), height);
@@ -10780,8 +10699,8 @@ mod tests {
             storage_bytes: 0,
             last_touched_epoch: 0,
         });
-        let snapshot = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db)
-            .expect("capture at LCA");
+        let snapshot =
+            super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).expect("capture at LCA");
 
         // Record the LCA as a state branch + attach the snapshot.
         tc.record_state_branch(id(0), 0, 100);
@@ -10805,11 +10724,8 @@ mod tests {
         assert_eq!(plan.lca, id(0));
 
         // Execute the bridge: restore to LCA.
-        tc.restore_to_lca(
-            &plan,
-            &mut db as &mut dyn evaporchain_state::db::StateDB,
-        )
-        .expect("restore_to_lca");
+        tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB)
+            .expect("restore_to_lca");
 
         // State must reflect the captured-at-LCA values.
         let after = db.get_account(&addr).expect("account present");
@@ -10836,9 +10752,11 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         // No state_branches entry for id(0) — would normally error,
         // but rollback_required is false so the function short-circuits.
-        let result =
-            tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
-        assert!(result.is_ok(), "no-op rollback must succeed without LCA snapshot");
+        let result = tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
+        assert!(
+            result.is_ok(),
+            "no-op rollback must succeed without LCA snapshot"
+        );
     }
 
     /// MCC Phase B.2 — `restore_to_lca` errors when the LCA is not
@@ -10858,8 +10776,7 @@ mod tests {
         assert!(plan.rollback_required);
 
         let mut db = InMemoryStateDB::new();
-        let result =
-            tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
+        let result = tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -10889,8 +10806,7 @@ mod tests {
         assert!(plan.rollback_required);
 
         let mut db = InMemoryStateDB::new();
-        let result =
-            tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
+        let result = tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -10914,10 +10830,8 @@ mod tests {
         assert_eq!(tc.cross_fork_equivocation_count(7), 0);
 
         // Single-line mcc → also 0.
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc".to_string());
         assert_eq!(tc.cross_fork_equivocation_count(7), 0);
         assert!(tc.all_cross_fork_equivocations().is_empty());
     }
@@ -10927,10 +10841,8 @@ mod tests {
     #[test]
     fn mcc_phase_c4_equivocation_count_exposes_counter_under_mcc_full() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
         tc.cross_fork_equivocations.insert(7, 5);
         tc.cross_fork_equivocations.insert(11, 2);
 
@@ -10959,10 +10871,8 @@ mod tests {
         assert!(tc.propose_parents().is_empty());
 
         // Single-line mcc.
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc".to_string());
         assert!(tc.propose_parents().is_empty());
     }
 
@@ -10972,10 +10882,8 @@ mod tests {
     #[test]
     fn mcc_phase_c3_propose_parents_returns_concurrent_heads_under_mcc_full() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
         // Three siblings off genesis.
         lc_insert(&mut tc, id(0), vec![], 0);
         lc_insert(&mut tc, id(1), vec![id(0)], 1);
@@ -10990,10 +10898,7 @@ mod tests {
 
         // The result must form an antichain.
         assert!(
-            evaporchain_light_cone::concurrency::is_antichain(
-                &tc.light_cone_dag,
-                &parents
-            ),
+            evaporchain_light_cone::concurrency::is_antichain(&tc.light_cone_dag, &parents),
             "propose_parents output must be an antichain"
         );
     }
@@ -11004,10 +10909,8 @@ mod tests {
     #[test]
     fn mcc_phase_c3_propose_parents_filters_comparable_heads() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
         // 0 → 1, 1 → 2 (linear chain). Only id(2) is a leaf.
         lc_insert(&mut tc, id(0), vec![], 0);
         lc_insert(&mut tc, id(1), vec![id(0)], 1);
@@ -11024,10 +10927,8 @@ mod tests {
     #[test]
     fn mcc_phase_c3_propose_parents_respects_max_forks_cap() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
         tc.governance_params.insert(
             "light_cone_max_concurrent_forks".to_string(),
             "2".to_string(),
@@ -11054,10 +10955,8 @@ mod tests {
         assert_eq!(tc.vote_target_head(), id(42));
 
         // Single-line mcc mode — still parent_hash.
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc".to_string());
         assert_eq!(tc.vote_target_head(), id(42));
     }
 
@@ -11068,10 +10967,8 @@ mod tests {
     fn mcc_phase_c2_vote_target_uses_authoritative_head_under_mcc_full() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
         tc.parent_hash = id(42);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
 
         // No authoritative head set yet → fallback to parent_hash.
         assert_eq!(tc.vote_target_head(), id(42));
@@ -11101,10 +10998,8 @@ mod tests {
 
         // Flip to "mcc" (single-line trajectory walk) — still no-op
         // for the C.1 field; only "mcc_full" populates it.
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc".to_string());
         assert!(tc.update_authoritative_head().is_none());
         assert!(tc.current_authoritative_head.is_none());
     }
@@ -11116,10 +11011,8 @@ mod tests {
     #[test]
     fn mcc_phase_c1_authoritative_head_populated_under_mcc_full() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
 
         // Empty DAG → None even under mcc_full.
         assert!(tc.update_authoritative_head().is_none());
@@ -11129,7 +11022,9 @@ mod tests {
         lc_insert(&mut tc, id(1), vec![id(0)], 1);
         lc_insert(&mut tc, id(2), vec![id(0)], 1);
 
-        let chosen = tc.update_authoritative_head().expect("non-empty DAG → Some");
+        let chosen = tc
+            .update_authoritative_head()
+            .expect("non-empty DAG → Some");
         assert_eq!(tc.current_authoritative_head, Some(chosen));
 
         // Choice must equal the argmax: first entry of
@@ -11151,18 +11046,14 @@ mod tests {
         lc_insert(&mut tc, id(1), vec![id(0)], 1);
 
         // Set to mcc_full + populate.
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
         tc.update_authoritative_head();
         assert!(tc.current_authoritative_head.is_some());
 
         // Roll back to linear → next update clears.
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "linear".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "linear".to_string());
         let cleared = tc.update_authoritative_head();
         assert!(cleared.is_none());
         assert!(tc.current_authoritative_head.is_none());
@@ -11176,7 +11067,8 @@ mod tests {
         let result = tc.governance_set_param("parent_acceptance_mode", "mcc_full");
         assert!(result.is_ok(), "mcc_full must be allowlisted");
         assert_eq!(
-            tc.get_governance_param("parent_acceptance_mode").map(|s| s.to_string()),
+            tc.get_governance_param("parent_acceptance_mode")
+                .map(|s| s.to_string()),
             Some("mcc_full".to_string())
         );
     }
@@ -11193,10 +11085,8 @@ mod tests {
     #[test]
     fn mcc_phase_c6_integration_accessors_compose_on_4_fork_dag() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
         tc.parent_hash = id(0); // genesis as fallback
 
         // 4 sibling forks off genesis.
@@ -11218,18 +11108,13 @@ mod tests {
         let parents = tc.propose_parents();
         assert!(parents.contains(&chosen), "argmax must be in parents");
         assert!(
-            evaporchain_light_cone::concurrency::is_antichain(
-                &tc.light_cone_dag,
-                &parents
-            ),
+            evaporchain_light_cone::concurrency::is_antichain(&tc.light_cone_dag, &parents),
             "propose_parents must be antichain"
         );
 
         // Read-consistency: re-reading without DAG mutation gives
         // identical results.
-        let chosen_2 = tc
-            .update_authoritative_head()
-            .expect("still Some");
+        let chosen_2 = tc.update_authoritative_head().expect("still Some");
         assert_eq!(chosen, chosen_2);
         assert_eq!(parents, tc.propose_parents());
     }
@@ -11241,10 +11126,8 @@ mod tests {
     #[test]
     fn mcc_phase_c6_integration_authoritative_head_follows_dag_extension() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
 
         lc_insert(&mut tc, id(0), vec![], 0);
         lc_insert(&mut tc, id(1), vec![id(0)], 1);
@@ -11262,8 +11145,7 @@ mod tests {
 
         // The DAG now has 2 leaves: id(2) and id(3) (id(1) extended
         // to id(3) so id(1) is no longer a leaf).
-        let heads_set: std::collections::BTreeSet<[u8; 32]> =
-            tc.candidate_heads();
+        let heads_set: std::collections::BTreeSet<[u8; 32]> = tc.candidate_heads();
         assert_eq!(heads_set.len(), 2);
         assert!(heads_set.contains(&id(2)));
         assert!(heads_set.contains(&id(3)));
@@ -11275,12 +11157,10 @@ mod tests {
         );
 
         // parents_b must form antichain over the new DAG.
-        assert!(
-            evaporchain_light_cone::concurrency::is_antichain(
-                &tc.light_cone_dag,
-                &parents_b
-            )
-        );
+        assert!(evaporchain_light_cone::concurrency::is_antichain(
+            &tc.light_cone_dag,
+            &parents_b
+        ));
 
         // Sanity: head_a (chosen pre-extension) may or may not equal
         // head_b. What's locked is that the substrate followed the
@@ -11296,10 +11176,8 @@ mod tests {
     fn mcc_phase_c6_integration_rollback_to_linear_restores_bit_compat() {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
         tc.parent_hash = id(7);
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "mcc_full".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
 
         lc_insert(&mut tc, id(0), vec![], 0);
         lc_insert(&mut tc, id(1), vec![id(0)], 1);
@@ -11308,14 +11186,19 @@ mod tests {
         // Populate C.1 + verify C.2/C.3 active.
         tc.update_authoritative_head();
         assert!(tc.current_authoritative_head.is_some());
-        assert_ne!(tc.vote_target_head(), id(7), "mcc_full uses authoritative head");
-        assert!(!tc.propose_parents().is_empty(), "mcc_full populates parents");
+        assert_ne!(
+            tc.vote_target_head(),
+            id(7),
+            "mcc_full uses authoritative head"
+        );
+        assert!(
+            !tc.propose_parents().is_empty(),
+            "mcc_full populates parents"
+        );
 
         // Flip back to linear.
-        tc.governance_params.insert(
-            "parent_acceptance_mode".to_string(),
-            "linear".to_string(),
-        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "linear".to_string());
         tc.update_authoritative_head();
 
         // C.1 cleared.
@@ -11606,8 +11489,7 @@ mod tests {
 
         // Apply closure that ALWAYS fails — simulating an executor
         // error mid-forward-replay.
-        let block_apply = |_db: &mut dyn evaporchain_state::db::StateDB,
-                           _b: &TxBlock| {
+        let block_apply = |_db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| {
             Err("simulated executor failure".to_string())
         };
 
@@ -11630,7 +11512,9 @@ mod tests {
         // **Atomicity assertion:** StateDB is back at fork-A state
         // (5555/9/5), NOT at the LCA (1000/0/0) where the inner
         // replay's restore_to_lca would have left it.
-        let after = db.get_account(&alice).expect("alice present after rollback");
+        let after = db
+            .get_account(&alice)
+            .expect("alice present after rollback");
         assert_eq!(
             after.balance, 5555,
             "atomic wrapper must restore pre-replay state on failure"
@@ -11673,15 +11557,12 @@ mod tests {
 
         // Capture snapshots for each tip; keep external Arcs so we
         // can observe strong_count.
-        let snap_lo =
-            Arc::new(super::StateSnapshotBranch::capture(id(1), 1, 0, &mut db).unwrap())
-                as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
-        let snap_mid =
-            Arc::new(super::StateSnapshotBranch::capture(id(2), 1, 0, &mut db).unwrap())
-                as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
-        let snap_hi =
-            Arc::new(super::StateSnapshotBranch::capture(id(3), 1, 0, &mut db).unwrap())
-                as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
+        let snap_lo = Arc::new(super::StateSnapshotBranch::capture(id(1), 1, 0, &mut db).unwrap())
+            as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
+        let snap_mid = Arc::new(super::StateSnapshotBranch::capture(id(2), 1, 0, &mut db).unwrap())
+            as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
+        let snap_hi = Arc::new(super::StateSnapshotBranch::capture(id(3), 1, 0, &mut db).unwrap())
+            as Arc<dyn super::LightConeBranchSnapshot + Send + Sync>;
 
         // Initial strong counts: 1 (test holds the Arc).
         assert_eq!(Arc::strong_count(&snap_lo), 1);
@@ -11691,9 +11572,11 @@ mod tests {
         // Record + attach with distinct calibers so id(1) is the
         // lowest (will be evicted first when cap exceeded).
         tc.record_state_branch(id(1), 1, /*caliber*/ 10);
-        tc.attach_branch_snapshot(id(1), Arc::clone(&snap_lo)).unwrap();
+        tc.attach_branch_snapshot(id(1), Arc::clone(&snap_lo))
+            .unwrap();
         tc.record_state_branch(id(2), 1, /*caliber*/ 50);
-        tc.attach_branch_snapshot(id(2), Arc::clone(&snap_mid)).unwrap();
+        tc.attach_branch_snapshot(id(2), Arc::clone(&snap_mid))
+            .unwrap();
 
         // After 2 attachments under cap=2: each consensus holds 1
         // ref → strong_count = 2 (test + consensus).
@@ -11702,15 +11585,12 @@ mod tests {
 
         // Add the 3rd branch — cap exceeded → eviction kicks in.
         tc.record_state_branch(id(3), 1, /*caliber*/ 100);
-        tc.attach_branch_snapshot(id(3), Arc::clone(&snap_hi)).unwrap();
+        tc.attach_branch_snapshot(id(3), Arc::clone(&snap_hi))
+            .unwrap();
         tc.prune_state_branches();
 
         // Cap honored: only 2 metadata entries.
-        assert_eq!(
-            tc.state_branches.len(),
-            2,
-            "prune must enforce cap=2"
-        );
+        assert_eq!(tc.state_branches.len(), 2, "prune must enforce cap=2");
 
         // The lowest-caliber entry (id(1)) is evicted.
         assert!(
@@ -12025,11 +11905,11 @@ mod tests {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
 
         // ── Build the 3-block-deep diverging DAG ────────────────
-        lc_insert(&mut tc, id(0), vec![], 0);             // genesis
-        lc_insert(&mut tc, id(1), vec![id(0)], 1);        // A1
-        lc_insert(&mut tc, id(2), vec![id(1)], 2);        // A2
-        lc_insert(&mut tc, id(3), vec![id(0)], 1);        // B1 (sibling of A1)
-        lc_insert(&mut tc, id(4), vec![id(3)], 2);        // B2
+        lc_insert(&mut tc, id(0), vec![], 0); // genesis
+        lc_insert(&mut tc, id(1), vec![id(0)], 1); // A1
+        lc_insert(&mut tc, id(2), vec![id(1)], 2); // A2
+        lc_insert(&mut tc, id(3), vec![id(0)], 1); // B1 (sibling of A1)
+        lc_insert(&mut tc, id(4), vec![id(3)], 2); // B2
 
         // ── Set up genesis state + capture snapshot ─────────────
         let mut db = InMemoryStateDB::new();
@@ -12054,8 +11934,8 @@ mod tests {
         });
 
         // Capture snapshot at genesis.
-        let genesis_snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db)
-            .expect("capture genesis");
+        let genesis_snap =
+            super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).expect("capture genesis");
         tc.record_state_branch(id(0), 0, 100);
         tc.attach_branch_snapshot(id(0), Arc::new(genesis_snap))
             .expect("attach genesis snapshot");
@@ -12087,19 +11967,22 @@ mod tests {
         assert_eq!(db.get_account(&bob).map(|a| a.balance), Some(2750));
 
         // ── Plan replay from A2 (current head) → B2 (target) ────
-        let plan = tc
-            .plan_replay_to_head(id(2), id(4))
-            .expect("plan A2 → B2");
-        assert_eq!(plan.lca, id(0), "LCA must be genesis (forks share only genesis)");
-        assert_eq!(plan.forward_path, vec![id(3), id(4)], "forward path = [B1, B2]");
+        let plan = tc.plan_replay_to_head(id(2), id(4)).expect("plan A2 → B2");
+        assert_eq!(
+            plan.lca,
+            id(0),
+            "LCA must be genesis (forks share only genesis)"
+        );
+        assert_eq!(
+            plan.forward_path,
+            vec![id(3), id(4)],
+            "forward path = [B1, B2]"
+        );
         assert!(plan.rollback_required, "branch switch requires rollback");
 
         // ── Phase B.2 bridge: restore to LCA (genesis) ──────────
-        tc.restore_to_lca(
-            &plan,
-            &mut db as &mut dyn evaporchain_state::db::StateDB,
-        )
-        .expect("restore to genesis");
+        tc.restore_to_lca(&plan, &mut db as &mut dyn evaporchain_state::db::StateDB)
+            .expect("restore to genesis");
 
         // After restore: state must match genesis. Fork A's
         // mutations are gone; alice=1000, bob=2000.
@@ -12195,13 +12078,12 @@ mod tests {
 
         // from = genesis, to = depth-2: LCA is genesis itself.
         // No rollback; forward path = [id(1), id(2)].
-        let plan = tc.plan_replay_to_head(id(0), id(2)).expect("ancestor → descendant");
+        let plan = tc
+            .plan_replay_to_head(id(0), id(2))
+            .expect("ancestor → descendant");
         assert_eq!(plan.lca, id(0));
         assert_eq!(plan.forward_path, vec![id(1), id(2)]);
-        assert!(
-            !plan.rollback_required,
-            "from==lca → no rollback needed"
-        );
+        assert!(!plan.rollback_required, "from==lca → no rollback needed");
     }
 
     /// MCC Phase B.0+ — rollback case. When `from_head` and `to_head`
@@ -12282,10 +12164,10 @@ mod tests {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
         // Diamond + extra leaves so multiple trajectories of
         // different lengths exist.
-        lc_insert(&mut tc, id(0), vec![], 0);              // genesis
-        lc_insert(&mut tc, id(1), vec![id(0)], 1);         // depth 1
-        lc_insert(&mut tc, id(2), vec![id(1)], 2);         // depth 2 (deeper trajectory)
-        lc_insert(&mut tc, id(3), vec![id(0)], 1);         // depth 1, sibling of 1
+        lc_insert(&mut tc, id(0), vec![], 0); // genesis
+        lc_insert(&mut tc, id(1), vec![id(0)], 1); // depth 1
+        lc_insert(&mut tc, id(2), vec![id(1)], 2); // depth 2 (deeper trajectory)
+        lc_insert(&mut tc, id(3), vec![id(0)], 1); // depth 1, sibling of 1
 
         // Three leaves expected: id(2) (deeper), id(3) (sibling).
         // id(0) is parent of 1 + 3, id(1) is parent of 2 — neither
@@ -12296,7 +12178,11 @@ mod tests {
         assert!(heads.contains(&id(3)));
 
         let scored = tc.enumerate_candidate_heads();
-        assert_eq!(scored.len(), 2, "scored list must match candidate_heads count");
+        assert_eq!(
+            scored.len(),
+            2,
+            "scored list must match candidate_heads count"
+        );
 
         // Set equivalence: the keys of `scored` must equal the
         // unsorted `candidate_heads`.
@@ -12319,10 +12205,7 @@ mod tests {
         // `MccForkChoice::select_tip`'s pick (with the same DAG + β).
         use crate::fork_choice::ForkChoice;
         let beta_mb = 1000;
-        let fc = crate::fork_choice::MccForkChoice::new(
-            tc.light_cone_dag.clone(),
-            beta_mb,
-        );
+        let fc = crate::fork_choice::MccForkChoice::new(tc.light_cone_dag.clone(), beta_mb);
         let selected = fc.select_tip().expect("non-empty DAG → Some");
         assert_eq!(
             scored[0].0, selected,
@@ -12507,7 +12390,10 @@ mod tests {
         // Nova accumulator advances only when nova-mode + feature on.
         let nova = tc.lambda_fold_nova_instance().clone();
         assert_eq!(nova.step_count, 3, "nova fold should have ticked 3x");
-        assert!(!nova.proof_bytes.is_empty(), "nova proof should be non-empty");
+        assert!(
+            !nova.proof_bytes.is_empty(),
+            "nova proof should be non-empty"
+        );
 
         // Light-client path: round-trip the proof through
         // verify_nova_folded with the prover's vk_bytes. This closes
@@ -12527,7 +12413,8 @@ mod tests {
         // strings must surface as InvalidValue.
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
         assert!(matches!(
-            tc.governance_set_param("crooks_mev_beta_mb", "0").unwrap_err(),
+            tc.governance_set_param("crooks_mev_beta_mb", "0")
+                .unwrap_err(),
             GovernanceParamError::InvalidValue { .. }
         ));
         assert!(matches!(
@@ -12613,9 +12500,7 @@ mod tests {
             other => panic!("expected InvalidValue, got {:?}", other),
         }
         // Pre-mutation default value preserved.
-        assert!(tc
-            .get_governance_param("parent_acceptance_mode")
-            .is_none());
+        assert!(tc.get_governance_param("parent_acceptance_mode").is_none());
     }
 
     proptest::proptest! {
@@ -14920,10 +14805,7 @@ mod da_tests {
         let parent = [0x42u8; 32];
         let r1 = crate::empty_block_data_root(1, &parent);
         let r2 = crate::empty_block_data_root(2, &parent);
-        assert_ne!(
-            r1, r2,
-            "empty-block sentinel must be height-dependent"
-        );
+        assert_ne!(r1, r2, "empty-block sentinel must be height-dependent");
     }
 
     #[test]
@@ -15285,15 +15167,9 @@ mod da_tests {
         // tracking. Order is priority-sorted (recent-first); we don't
         // assume which tx ends up first — we just assert both hints
         // are present and match the set {3, 7}.
-        let hints: std::collections::BTreeSet<u64> = block
-            .submit_epoch_hints
-            .iter()
-            .filter_map(|h| *h)
-            .collect();
-        assert_eq!(
-            hints,
-            [3u64, 7u64].iter().copied().collect()
-        );
+        let hints: std::collections::BTreeSet<u64> =
+            block.submit_epoch_hints.iter().filter_map(|h| *h).collect();
+        assert_eq!(hints, [3u64, 7u64].iter().copied().collect());
     }
 
     #[test]
@@ -15335,10 +15211,8 @@ mod da_tests {
         tc.set_bls_keypair(kp);
 
         // Flip the Lane I.5 flag.
-        tc.governance_params.insert(
-            "block_source_mode".to_string(),
-            "antichain".to_string(),
-        );
+        tc.governance_params
+            .insert("block_source_mode".to_string(), "antichain".to_string());
 
         // Three same-sender txs (sender 1, nonces 0/1/2) + one
         // different-sender tx (sender 2). Antichain admits at most
@@ -16076,7 +15950,9 @@ mod da_tests {
             );
             let cert_bytes = tc
                 .try_build_da_certificate(h, data_root)
-                .unwrap_or_else(|| panic!("DA certificate should build for h={h} (proposer={proposer})"));
+                .unwrap_or_else(|| {
+                    panic!("DA certificate should build for h={h} (proposer={proposer})")
+                });
             let cert: evaporchain_da::certificate::DACertificate =
                 serde_json::from_slice(&cert_bytes).unwrap();
             assert!(
@@ -16250,7 +16126,10 @@ mod da_tests {
 
         // Idempotent: a second set_draining keeps the flag, refreshes anchor.
         let started_at2 = tc.set_draining();
-        assert_eq!(started_at, started_at2, "epoch anchor stable at this height");
+        assert_eq!(
+            started_at, started_at2,
+            "epoch anchor stable at this height"
+        );
 
         let was = tc.clear_draining();
         assert!(was);

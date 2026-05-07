@@ -101,9 +101,7 @@ pub fn parse_args(argv: &[String]) -> Result<CliArgs, CliError> {
 fn parse_hex32(s: &str) -> Result<[u8; 32], CliError> {
     let trimmed = s.strip_prefix("0x").unwrap_or(s);
     if trimmed.len() != 64 {
-        return Err(CliError::HexWrongLength {
-            got: trimmed.len(),
-        });
+        return Err(CliError::HexWrongLength { got: trimmed.len() });
     }
     let bytes = trimmed.as_bytes();
     let mut out = [0u8; 32];
@@ -138,13 +136,13 @@ pub fn run_cli<IO: CliIo>(argv: &[String], io: &mut IO) -> Result<(), CliError> 
 
     match args.sub {
         Subcommand::Build => {
-            let root = build_attestation(&att).map_err(|e| CliError::Attestation(format!("{e}")))?;
+            let root =
+                build_attestation(&att).map_err(|e| CliError::Attestation(format!("{e}")))?;
             io.write_output(&args.output, &hex_encode(&root))?;
             Ok(())
         }
         Subcommand::Verify { root } => {
-            verify_attestation(&att, &root)
-                .map_err(|e| CliError::Attestation(format!("{e}")))?;
+            verify_attestation(&att, &root).map_err(|e| CliError::Attestation(format!("{e}")))?;
             io.write_output(&args.output, "ok")?;
             Ok(())
         }

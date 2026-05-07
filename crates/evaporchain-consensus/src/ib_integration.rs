@@ -102,8 +102,8 @@ mod tests {
         // bin 15) — KL = 0. Pick distributions where local concentrates in
         // a bin that prior spreads across.
         let local = vec![100, 100, 100, 100, 100, 100, 100, 100]; // all bin 15
-        let prior = vec![10, 20, 30, 40, 50, 60, 70, 80];          // spread bins
-        // lambda_mb = 1 — tiny threshold should still commit.
+        let prior = vec![10, 20, 30, 40, 50, 60, 70, 80]; // spread bins
+                                                          // lambda_mb = 1 — tiny threshold should still commit.
         let vote = ib_vote_from_stakes(&local, &prior, 1);
         assert_eq!(vote, IbVote::Commit);
     }

@@ -874,8 +874,7 @@ impl EvaporVM {
             "allen_relation" => {
                 if arg_count != 4 {
                     return Err(ScriptError::Runtime(
-                        "allen_relation() takes 4 arguments: start_a, end_a, start_b, end_b"
-                            .into(),
+                        "allen_relation() takes 4 arguments: start_a, end_a, start_b, end_b".into(),
                     ));
                 }
                 let end_b = self.pop()?.as_u64()?;
@@ -883,22 +882,14 @@ impl EvaporVM {
                 let end_a = self.pop()?.as_u64()?;
                 let start_a = self.pop()?.as_u64()?;
                 let interval_a =
-                    evaporchain_allen_decay::Interval::new(start_a, end_a)
-                        .map_err(|e| {
-                            ScriptError::Runtime(format!(
-                                "allen_relation: invalid interval A: {e}"
-                            ))
-                        })?;
+                    evaporchain_allen_decay::Interval::new(start_a, end_a).map_err(|e| {
+                        ScriptError::Runtime(format!("allen_relation: invalid interval A: {e}"))
+                    })?;
                 let interval_b =
-                    evaporchain_allen_decay::Interval::new(start_b, end_b)
-                        .map_err(|e| {
-                            ScriptError::Runtime(format!(
-                                "allen_relation: invalid interval B: {e}"
-                            ))
-                        })?;
-                let rel = evaporchain_allen_decay::compute_relation(
-                    interval_a, interval_b,
-                );
+                    evaporchain_allen_decay::Interval::new(start_b, end_b).map_err(|e| {
+                        ScriptError::Runtime(format!("allen_relation: invalid interval B: {e}"))
+                    })?;
+                let rel = evaporchain_allen_decay::compute_relation(interval_a, interval_b);
                 let code = match rel {
                     evaporchain_allen_decay::AllenRelation::Before => 0u64,
                     evaporchain_allen_decay::AllenRelation::Meets => 1,
@@ -1408,8 +1399,7 @@ contract Allen {
         let r2 = EvaporVM::execute(&bytecode, "equals", vec![], empty_state(), &ctx).unwrap();
         assert_eq!(r2.return_value, Value::U64(6), "Equals encodes as 6");
 
-        let r3 =
-            EvaporVM::execute(&bytecode, "after_rel", vec![], empty_state(), &ctx).unwrap();
+        let r3 = EvaporVM::execute(&bytecode, "after_rel", vec![], empty_state(), &ctx).unwrap();
         assert_eq!(r3.return_value, Value::U64(12), "After encodes as 12");
     }
 

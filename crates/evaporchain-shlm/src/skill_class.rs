@@ -99,9 +99,8 @@ mod tests {
         // length is set by genesis).
         let python = SkillClass::register(id(1), "Python", 540, 0).unwrap(); // ~18mo
         let cobol = SkillClass::register(id(2), "COBOL", 2920, 0).unwrap(); // ~8yr
-        let prompt =
-            SkillClass::register(id(3), "prompt-engineering", 120, 0).unwrap(); // ~4mo
-        // Doctrine ordering invariant: prompt < Python < COBOL.
+        let prompt = SkillClass::register(id(3), "prompt-engineering", 120, 0).unwrap(); // ~4mo
+                                                                                         // Doctrine ordering invariant: prompt < Python < COBOL.
         assert!(prompt.half_life < python.half_life);
         assert!(python.half_life < cobol.half_life);
     }

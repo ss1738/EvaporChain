@@ -76,11 +76,26 @@ impl TierLadder {
 /// | 4 | 50_000 | 1600 |
 pub fn default_ladder() -> TierLadder {
     TierLadder::new(vec![
-        Tier { min_held_epochs: 0, half_life_epochs: 100 },
-        Tier { min_held_epochs: 1_000, half_life_epochs: 200 },
-        Tier { min_held_epochs: 5_000, half_life_epochs: 400 },
-        Tier { min_held_epochs: 20_000, half_life_epochs: 800 },
-        Tier { min_held_epochs: 50_000, half_life_epochs: 1600 },
+        Tier {
+            min_held_epochs: 0,
+            half_life_epochs: 100,
+        },
+        Tier {
+            min_held_epochs: 1_000,
+            half_life_epochs: 200,
+        },
+        Tier {
+            min_held_epochs: 5_000,
+            half_life_epochs: 400,
+        },
+        Tier {
+            min_held_epochs: 20_000,
+            half_life_epochs: 800,
+        },
+        Tier {
+            min_held_epochs: 50_000,
+            half_life_epochs: 1600,
+        },
     ])
     .expect("default ladder is well-formed")
 }
@@ -96,15 +111,24 @@ mod tests {
 
     #[test]
     fn rejects_first_rung_not_zero() {
-        let bad = vec![Tier { min_held_epochs: 100, half_life_epochs: 100 }];
+        let bad = vec![Tier {
+            min_held_epochs: 100,
+            half_life_epochs: 100,
+        }];
         assert!(TierLadder::new(bad).is_none());
     }
 
     #[test]
     fn rejects_non_increasing_held() {
         let bad = vec![
-            Tier { min_held_epochs: 0, half_life_epochs: 100 },
-            Tier { min_held_epochs: 0, half_life_epochs: 200 },
+            Tier {
+                min_held_epochs: 0,
+                half_life_epochs: 100,
+            },
+            Tier {
+                min_held_epochs: 0,
+                half_life_epochs: 200,
+            },
         ];
         assert!(TierLadder::new(bad).is_none());
     }
@@ -113,15 +137,24 @@ mod tests {
     fn rejects_decreasing_half_life() {
         // Climbing should make half-life longer, not shorter.
         let bad = vec![
-            Tier { min_held_epochs: 0, half_life_epochs: 200 },
-            Tier { min_held_epochs: 100, half_life_epochs: 100 },
+            Tier {
+                min_held_epochs: 0,
+                half_life_epochs: 200,
+            },
+            Tier {
+                min_held_epochs: 100,
+                half_life_epochs: 100,
+            },
         ];
         assert!(TierLadder::new(bad).is_none());
     }
 
     #[test]
     fn rejects_zero_half_life() {
-        let bad = vec![Tier { min_held_epochs: 0, half_life_epochs: 0 }];
+        let bad = vec![Tier {
+            min_held_epochs: 0,
+            half_life_epochs: 0,
+        }];
         assert!(TierLadder::new(bad).is_none());
     }
 

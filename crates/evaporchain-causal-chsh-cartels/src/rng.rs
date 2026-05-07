@@ -85,7 +85,10 @@ impl Blake3Rng {
     /// Pure integer (no float arithmetic anywhere on the consensus path).
     pub fn bernoulli(&mut self, numerator: u64, denominator: u64) -> bool {
         assert!(denominator > 0, "bernoulli denominator must be > 0");
-        assert!(numerator <= denominator, "bernoulli numerator must be <= denominator");
+        assert!(
+            numerator <= denominator,
+            "bernoulli numerator must be <= denominator"
+        );
         if numerator == 0 {
             return false;
         }

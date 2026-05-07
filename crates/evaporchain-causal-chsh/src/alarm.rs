@@ -35,11 +35,8 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    chsh::compute_chsh_s,
-    extract_chsh_samples,
-    gate::GateThresholds,
-    synthesize_max_cartel_samples,
-    BlockSummary,
+    chsh::compute_chsh_s, extract_chsh_samples, gate::GateThresholds,
+    synthesize_max_cartel_samples, BlockSummary,
 };
 
 /// Rolling Causal-CHSH alarm. Holds the last `capacity` block summaries;
@@ -238,8 +235,7 @@ impl CartelAlarm {
             }
         };
         let cartel = synthesize_max_cartel_samples(n_per_bucket);
-        let s_cartel_milli =
-            crate::chsh::compute_chsh_s_milli(&cartel).unwrap_or(0);
+        let s_cartel_milli = crate::chsh::compute_chsh_s_milli(&cartel).unwrap_or(0);
         let gap_milli = s_cartel_milli - s_honest_milli;
 
         // f64 display values (operator-RPC path). Recomputed
@@ -319,9 +315,13 @@ mod tests {
     fn synth_block(h: u64) -> BlockSummary {
         // Simple deterministic LCG so the rolling-buffer behaviour is
         // reproducible without an rand dep.
-        let mut rng = h.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut rng = h
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let mut next = |bound: u64| {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng >> 33) % bound.max(1)
         };
         BlockSummary {

@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 use crate::protocol::Context;
 use crate::rate_limit::McpRateLimiter;
 use crate::validation::{
-    validate_address_field, validate_amount_field, validate_half_life_field,
-    validate_nonce_field, MAX_TOKEN_AMOUNT,
+    validate_address_field, validate_amount_field, validate_half_life_field, validate_nonce_field,
+    MAX_TOKEN_AMOUNT,
 };
 
 /// Process-wide rate limiter. Lazily initialised on first
@@ -471,14 +471,12 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "create_object" => {
-            let creator = validate_address_field(args, "creator")
-                .map_err(|e| e.to_string())?;
-            let object_id = validate_address_field(args, "object_id")
-                .map_err(|e| e.to_string())?;
+            let creator = validate_address_field(args, "creator").map_err(|e| e.to_string())?;
+            let object_id = validate_address_field(args, "object_id").map_err(|e| e.to_string())?;
             let energy = validate_amount_field(args, "energy", MAX_TOKEN_AMOUNT)
                 .map_err(|e| e.to_string())?;
-            let half_life = validate_half_life_field(args, "half_life")
-                .map_err(|e| e.to_string())?;
+            let half_life =
+                validate_half_life_field(args, "half_life").map_err(|e| e.to_string())?;
             let body = json!({
                 "creator": creator,
                 "object_id": object_id,
@@ -489,8 +487,7 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "refresh_object" => {
-            let object_id = validate_address_field(args, "object_id")
-                .map_err(|e| e.to_string())?;
+            let object_id = validate_address_field(args, "object_id").map_err(|e| e.to_string())?;
             let energy_deposit = validate_amount_field(args, "energy_deposit", MAX_TOKEN_AMOUNT)
                 .map_err(|e| e.to_string())?;
             let body = json!({
@@ -501,8 +498,7 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "resurrect_object" => {
-            let object_id = validate_address_field(args, "object_id")
-                .map_err(|e| e.to_string())?;
+            let object_id = validate_address_field(args, "object_id").map_err(|e| e.to_string())?;
             let energy_deposit = validate_amount_field(args, "energy_deposit", MAX_TOKEN_AMOUNT)
                 .map_err(|e| e.to_string())?;
             let body = json!({
@@ -513,8 +509,7 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "request_faucet" => {
-            let address = validate_address_field(args, "address")
-                .map_err(|e| e.to_string())?;
+            let address = validate_address_field(args, "address").map_err(|e| e.to_string())?;
             let body = json!({ "address": address });
             let data = ctx.post_json("/api/faucet", &body).await?;
             format_text_result(&data)

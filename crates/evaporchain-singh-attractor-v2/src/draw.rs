@@ -12,7 +12,9 @@ const DRAW_DOMAIN: &[u8] = b"evaporchain:singh-attractor:v2:draw\0";
 pub enum DrawError {
     #[error("attractor list empty")]
     Empty,
-    #[error("attractor at index {idx} has zero basin_radius and zero drift_rate — cannot make progress")]
+    #[error(
+        "attractor at index {idx} has zero basin_radius and zero drift_rate — cannot make progress"
+    )]
     DegenerateAttractor { idx: usize },
 }
 
@@ -69,7 +71,11 @@ pub fn draw_attractor(
     }
 
     // In-basin: select the first attractor that contains the state.
-    if let Some((idx, a)) = attractors.iter().enumerate().find(|(_, a)| a.as_v1().contains(state)) {
+    if let Some((idx, a)) = attractors
+        .iter()
+        .enumerate()
+        .find(|(_, a)| a.as_v1().contains(state))
+    {
         return Ok(DrawResult {
             selected_center: a.center,
             selected_index: idx,
@@ -180,7 +186,10 @@ mod tests {
     #[test]
     fn degenerate_attractor_rejected() {
         let r = draw_attractor(1000, &[a(100, 0, 0)], &seed(0));
-        assert!(matches!(r.unwrap_err(), DrawError::DegenerateAttractor { idx: 0 }));
+        assert!(matches!(
+            r.unwrap_err(),
+            DrawError::DegenerateAttractor { idx: 0 }
+        ));
     }
 
     // ── in-basin selection (V1 compat) ───────────────────────────
@@ -223,7 +232,11 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(seen_idx.len(), 2, "fallback should sample both attractors over varying seeds");
+        assert_eq!(
+            seen_idx.len(),
+            2,
+            "fallback should sample both attractors over varying seeds"
+        );
     }
 
     #[test]

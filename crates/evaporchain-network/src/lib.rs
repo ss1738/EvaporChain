@@ -40,12 +40,16 @@ mod press_claim_tests {
         // Re-adding a SHORTER expiry must NOT shorten the ban.
         bl.add_ban(ip, now + 1_000, "manual");
         let active = bl.active_bans();
-        assert!(active.iter().any(|e| e.ip == ip && e.until_ms >= now + 60_000));
+        assert!(active
+            .iter()
+            .any(|e| e.ip == ip && e.until_ms >= now + 60_000));
 
         // Re-adding a LONGER expiry extends the ban.
         bl.add_ban(ip, now + 120_000, "extended");
         let active2 = bl.active_bans();
-        assert!(active2.iter().any(|e| e.ip == ip && e.until_ms >= now + 120_000));
+        assert!(active2
+            .iter()
+            .any(|e| e.ip == ip && e.until_ms >= now + 120_000));
 
         // Manual remove drops the entry.
         assert!(bl.remove_ban(&ip));

@@ -29,10 +29,7 @@ pub enum BlockDiffError {
 ///
 /// `arrival_rank[i]` = position of tx `i` in arrival order.
 /// `final_rank[i]`   = position of tx `i` in the block.
-pub fn embd_micros(
-    arrival_rank: &[u32],
-    final_rank: &[u32],
-) -> Result<u64, BlockDiffError> {
+pub fn embd_micros(arrival_rank: &[u32], final_rank: &[u32]) -> Result<u64, BlockDiffError> {
     if arrival_rank.len() != final_rank.len() {
         return Err(BlockDiffError::LengthMismatch {
             arrival: arrival_rank.len(),
@@ -143,7 +140,7 @@ mod tests {
         // Two adjacent txs swap. Each displaced by 1 rank;
         // total displacement = 2; per-tx = 2/5 = 0.4 = 400_000.
         let arrival = vec![0u32, 1, 2, 3, 4];
-        let final_  = vec![1u32, 0, 2, 3, 4];
+        let final_ = vec![1u32, 0, 2, 3, 4];
         assert_eq!(embd_micros(&arrival, &final_).unwrap(), 400_000);
     }
 
@@ -153,7 +150,7 @@ mod tests {
         // |2-2|, |3-1|, |4-0| = 4+2+0+2+4 = 12. Per-tx = 12/5 = 2.4
         // → 2_400_000.
         let arrival = vec![0u32, 1, 2, 3, 4];
-        let final_  = vec![4u32, 3, 2, 1, 0];
+        let final_ = vec![4u32, 3, 2, 1, 0];
         assert_eq!(embd_micros(&arrival, &final_).unwrap(), 2_400_000);
     }
 
@@ -164,15 +161,15 @@ mod tests {
         // all). Final order: [I, victim, A, B] — I jumps from
         // rank 3 to rank 0. Wait — we have 4 txs total then.
         let arrival = vec![1u32, 2, 3, 0]; // I at index 3, arrival-rank 0
-        // Hmm let me re-think. Use 4 txs where one inserted late
-        // jumps to the front.
-        // Tx indices 0..3, where 3 is the inserted attacker.
-        // Arrival order (timeline): victim(0)→A(1)→B(2)→I(3)
-        //   so arrival_rank[i] = i.
-        // Final order (block): I(3)→victim(0)→A(1)→B(2)
-        //   so final_rank[0]=1, final_rank[1]=2, final_rank[2]=3, final_rank[3]=0.
+                                           // Hmm let me re-think. Use 4 txs where one inserted late
+                                           // jumps to the front.
+                                           // Tx indices 0..3, where 3 is the inserted attacker.
+                                           // Arrival order (timeline): victim(0)→A(1)→B(2)→I(3)
+                                           //   so arrival_rank[i] = i.
+                                           // Final order (block): I(3)→victim(0)→A(1)→B(2)
+                                           //   so final_rank[0]=1, final_rank[1]=2, final_rank[2]=3, final_rank[3]=0.
         let arrival = vec![0u32, 1, 2, 3];
-        let final_  = vec![1u32, 2, 3, 0];
+        let final_ = vec![1u32, 2, 3, 0];
         // Displacements: 1, 1, 1, 3 → sum 6 → per-tx 6/4 = 1.5 = 1_500_000.
         assert_eq!(embd_micros(&arrival, &final_).unwrap(), 1_500_000);
     }

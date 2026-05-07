@@ -48,10 +48,7 @@ mod press_claim_tests {
     #[test]
     fn the_press_claim_lives_as_a_test() {
         // Two attractors, basin_radius=10 around centres 100 and 1000.
-        let attractors = vec![
-            AttractorV2::new(100, 10, 5),
-            AttractorV2::new(1000, 10, 7),
-        ];
+        let attractors = vec![AttractorV2::new(100, 10, 5), AttractorV2::new(1000, 10, 7)];
 
         // In-basin: state=105 lands inside the first basin →
         // selection is independent of seed.

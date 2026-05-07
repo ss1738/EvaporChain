@@ -114,9 +114,8 @@ impl DeployRequest {
             .try_into()
             .map_err(|_| RequestError::ParamsTooLarge)?;
 
-        let mut out = Vec::with_capacity(
-            DEPLOY_DOMAIN_TAG.len() + 4 + 32 + 8 + 8 + 4 + canonical.len(),
-        );
+        let mut out =
+            Vec::with_capacity(DEPLOY_DOMAIN_TAG.len() + 4 + 32 + 8 + 8 + 4 + canonical.len());
         out.extend_from_slice(DEPLOY_DOMAIN_TAG);
         out.extend_from_slice(&self.template_class.0.to_le_bytes());
         out.extend_from_slice(&self.deployer);
@@ -179,14 +178,8 @@ mod tests {
 
     #[test]
     fn rejects_out_of_range_class() {
-        let err = DeployRequest::new(
-            TemplateClass(0x9999_9999),
-            json!({}),
-            [0; 32],
-            0,
-            0,
-        )
-        .unwrap_err();
+        let err =
+            DeployRequest::new(TemplateClass(0x9999_9999), json!({}), [0; 32], 0, 0).unwrap_err();
         assert_eq!(err, RequestError::OutOfRange(0x9999_9999));
     }
 
@@ -263,22 +256,8 @@ mod tests {
     fn canonicalize_does_not_reorder_arrays() {
         // Arrays are positional; element order is meaningful and
         // must not be sorted.
-        let r1 = DeployRequest::new(
-            SINGH_SABI,
-            json!({"v": [3, 1, 2]}),
-            [0; 32],
-            0,
-            0,
-        )
-        .unwrap();
-        let r2 = DeployRequest::new(
-            SINGH_SABI,
-            json!({"v": [1, 2, 3]}),
-            [0; 32],
-            0,
-            0,
-        )
-        .unwrap();
+        let r1 = DeployRequest::new(SINGH_SABI, json!({"v": [3, 1, 2]}), [0; 32], 0, 0).unwrap();
+        let r2 = DeployRequest::new(SINGH_SABI, json!({"v": [1, 2, 3]}), [0; 32], 0, 0).unwrap();
         assert_ne!(r1.signing_bytes().unwrap(), r2.signing_bytes().unwrap());
     }
 

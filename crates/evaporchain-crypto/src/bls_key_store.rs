@@ -200,7 +200,13 @@ pub fn decrypt_bls_secret_with_aad(
         XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
-        .decrypt(nonce, Payload { msg: ciphertext, aad })
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| "decrypt failed — wrong passphrase or corrupt blob".to_string())?;
     if plaintext.len() != PLAINTEXT_LEN {
         return Err(format!(
@@ -287,9 +293,9 @@ pub fn extract_plaintext(bytes: &[u8]) -> Result<[u8; PLAINTEXT_LEN], String> {
             out.copy_from_slice(bytes);
             Ok(out)
         }
-        BlsKeyFormat::Encrypted => Err(
-            "blob is encrypted (EVK1) — call decrypt_bls_secret_with_aad instead".into(),
-        ),
+        BlsKeyFormat::Encrypted => {
+            Err("blob is encrypted (EVK1) — call decrypt_bls_secret_with_aad instead".into())
+        }
         BlsKeyFormat::Unknown => Err(format!(
             "unrecognised BLS key format ({} bytes; expected 32 raw, 36 EVPL+raw, or 92 EVK1)",
             bytes.len()

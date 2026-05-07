@@ -126,7 +126,10 @@ mod tests {
         ]);
         let mut trace = Trace::new();
         for op in [
-            Op::XorReg { reg: 0, key: 0xDEAD_BEEF },
+            Op::XorReg {
+                reg: 0,
+                key: 0xDEAD_BEEF,
+            },
             Op::AddReg { reg: 1, k: 12_345 },
             Op::Rotl { reg: 2, bits: 17 },
             Op::Swap { a: 3, b: 4 },

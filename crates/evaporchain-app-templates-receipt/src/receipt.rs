@@ -104,13 +104,7 @@ mod tests {
 
     fn r() -> DeployReceipt {
         DeployReceipt::new(
-            [0x11; 32],
-            [0x22; 32],
-            SINGH_SABI,
-            [0x33; 32],
-            1_400,
-            500,
-            12_345,
+            [0x11; 32], [0x22; 32], SINGH_SABI, [0x33; 32], 1_400, 500, 12_345,
         )
         .unwrap()
     }

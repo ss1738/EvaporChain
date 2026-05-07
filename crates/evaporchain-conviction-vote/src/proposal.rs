@@ -202,7 +202,10 @@ mod tests {
         let mut prev = 0u128;
         for t in 1..=100 {
             p.tick(t, 1_000_000).unwrap();
-            assert!(p.conviction_micros >= prev, "conviction should be monotone non-decreasing under constant stake");
+            assert!(
+                p.conviction_micros >= prev,
+                "conviction should be monotone non-decreasing under constant stake"
+            );
             prev = p.conviction_micros;
         }
         // Should be near the asymptote.
@@ -255,7 +258,11 @@ mod tests {
         assert!(!p.is_passed());
         // Conviction should be very small after 199 ticks of α=0.9 multiplication.
         // 0.9^199 ≈ 5.6e-10 — essentially zero in micros.
-        assert!(p.conviction_micros < 100, "conviction should decay toward 0, got {}", p.conviction_micros);
+        assert!(
+            p.conviction_micros < 100,
+            "conviction should decay toward 0, got {}",
+            p.conviction_micros
+        );
     }
 
     #[test]
@@ -289,7 +296,12 @@ mod tests {
             p.tick(t, 0).unwrap();
         }
         assert!(p.is_passed());
-        assert_eq!(p.state, ProposalState::Passed { passed_at_tick: passed_at });
+        assert_eq!(
+            p.state,
+            ProposalState::Passed {
+                passed_at_tick: passed_at
+            }
+        );
     }
 
     // ── monotone tick ─────────────────────────────────────────────
@@ -299,7 +311,13 @@ mod tests {
         let mut p = fresh(1_000_000);
         p.tick(5, 100).unwrap();
         let err = p.tick(5, 100).unwrap_err();
-        assert_eq!(err, ProposalError::NonMonotoneTick { incoming: 5, last: 5 });
+        assert_eq!(
+            err,
+            ProposalError::NonMonotoneTick {
+                incoming: 5,
+                last: 5
+            }
+        );
         let err = p.tick(3, 100).unwrap_err();
         assert!(matches!(err, ProposalError::NonMonotoneTick { .. }));
     }

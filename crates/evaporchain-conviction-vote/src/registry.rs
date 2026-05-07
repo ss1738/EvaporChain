@@ -74,11 +74,7 @@ impl ConvictionRegistry {
     /// Run one tick of the conviction update on a single proposal.
     /// Caller specifies the energy-adjusted stake total to feed
     /// into the integrator (typically `total_stake_on`).
-    pub fn tick(
-        &mut self,
-        proposal: ProposalId,
-        current_tick: u64,
-    ) -> Result<(), RegistryError> {
+    pub fn tick(&mut self, proposal: ProposalId, current_tick: u64) -> Result<(), RegistryError> {
         let total = self.total_stake_on(proposal);
         let p = self
             .proposals
@@ -92,10 +88,14 @@ impl ConvictionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proposal::{ALPHA_MICROS_DEFAULT, ProposalId};
+    use crate::proposal::{ProposalId, ALPHA_MICROS_DEFAULT};
 
-    fn pid(b: u8) -> ProposalId { ProposalId([b; 32]) }
-    fn vid(b: u8) -> VoterId { VoterId([b; 32]) }
+    fn pid(b: u8) -> ProposalId {
+        ProposalId([b; 32])
+    }
+    fn vid(b: u8) -> VoterId {
+        VoterId([b; 32])
+    }
 
     fn fresh_proposal(id: ProposalId, threshold: u128) -> Proposal {
         Proposal::new(id, ALPHA_MICROS_DEFAULT, threshold, 0).unwrap()

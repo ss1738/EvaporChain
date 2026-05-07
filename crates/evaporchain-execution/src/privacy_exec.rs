@@ -886,9 +886,9 @@ mod tests {
             address: *addr,
             balance,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
-        last_touched_epoch: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
         });
         db
     }
@@ -1533,13 +1533,17 @@ mod tests {
         // v0: legacy reads db (unbounded set) → tx passes the check
         // because db has nothing. PNT poison is invisible.
         executor.set_protocol_version(0);
-        assert!(!executor.is_double_spend(&db, &tx.input_nullifiers[0]),
-            "v0 must read db, not pnt");
+        assert!(
+            !executor.is_double_spend(&db, &tx.input_nullifiers[0]),
+            "v0 must read db, not pnt"
+        );
 
         // v1: PNT-authoritative → tx fails the check because PNT has it.
         executor.set_protocol_version(1);
-        assert!(executor.is_double_spend(&db, &tx.input_nullifiers[0]),
-            "v1 must read pnt, not db");
+        assert!(
+            executor.is_double_spend(&db, &tx.input_nullifiers[0]),
+            "v1 must read pnt, not db"
+        );
     }
 
     #[test]
@@ -1869,7 +1873,14 @@ mod tests {
         let alice = test_addr(1);
         let bob = test_addr(2);
         let mut db = setup_db_with_balance(&alice, 100_000);
-        db.put_account(Account { address: bob, balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+        db.put_account(Account {
+            address: bob,
+            balance: 0,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
         let mut executor = PrivacyExecutor::with_depth(8);
         executor.set_epoch(1);
 

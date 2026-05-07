@@ -15,11 +15,10 @@
 
 use evaporchain_app_templates::{
     class::{
-        CHILDKEY_LETTER, GALLERY_FORGETS, MAYFLY, MNEMOCHAIN_CARD, SAP_AQ, SBAV_RUNTIME,
-        SCL_LEASE, SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY,
-        SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA,
-        SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS,
-        WITNESSFIT_STREAK,
+        CHILDKEY_LETTER, GALLERY_FORGETS, MAYFLY, MNEMOCHAIN_CARD, SAP_AQ, SBAV_RUNTIME, SCL_LEASE,
+        SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE,
+        SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI,
+        SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -60,12 +59,13 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
             "window_epochs",
         ],
         // ── Wallet UX lane ────────────────────────────────────────
-        c if c == SINGH_TRIAGE_CONTRACT => {
-            &["horizon_today", "horizon_tomorrow", "horizon_week"]
-        }
-        c if c == SINGH_HEARTBEAT_PULSE => {
-            &["healthy_bpm", "alarmed_bpm", "amber_threshold_bp", "red_threshold_bp"]
-        }
+        c if c == SINGH_TRIAGE_CONTRACT => &["horizon_today", "horizon_tomorrow", "horizon_week"],
+        c if c == SINGH_HEARTBEAT_PULSE => &[
+            "healthy_bpm",
+            "alarmed_bpm",
+            "amber_threshold_bp",
+            "red_threshold_bp",
+        ],
         c if c == SINGH_LINEAGE_POLICY => &["ladder"],
         // ── Consumer lane ─────────────────────────────────────────
         c if c == CHILDKEY_LETTER => &[

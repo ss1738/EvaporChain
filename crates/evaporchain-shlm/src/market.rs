@@ -55,10 +55,10 @@ pub fn post_bounty(
     duration_epochs: u64,
 ) -> Result<Auction, MarketError> {
     let lot_lambda: DecayRate = 0; // initialised; SDDC type alias
-    // Use the class id alone isn't enough — SDDC needs a numeric λ. We
-    // use the bounty's `min_freshness` as the lot's published λ-axis
-    // value: bidders' `lambda_tolerance` is read as "how decayed a
-    // freshness am I willing to accept" — bounty publishes its floor.
+                                   // Use the class id alone isn't enough — SDDC needs a numeric λ. We
+                                   // use the bounty's `min_freshness` as the lot's published λ-axis
+                                   // value: bidders' `lambda_tolerance` is read as "how decayed a
+                                   // freshness am I willing to accept" — bounty publishes its floor.
     let _ = lot_lambda;
     Ok(Auction::open(
         auction_id,
@@ -134,8 +134,7 @@ mod tests {
     }
 
     fn cred_at(holder: u8, level: Energy, attested_at: Epoch) -> Credential {
-        Credential::issue(id(0xCD), id(0xC1), id(0xAA), id(holder), level, attested_at)
-            .unwrap()
+        Credential::issue(id(0xCD), id(0xC1), id(0xAA), id(holder), level, attested_at).unwrap()
     }
 
     fn bounty(min_freshness: Energy, min_level: Energy) -> Bounty {
@@ -195,8 +194,9 @@ mod tests {
             },
         ];
 
-        let cleared =
-            settle_bounty(&b, &c, &mut a, &candidates, 200).unwrap().unwrap();
+        let cleared = settle_bounty(&b, &c, &mut a, &candidates, 200)
+            .unwrap()
+            .unwrap();
         // Weak candidate filtered ⇒ strong candidate (0xBB) wins.
         assert_eq!(cleared.winner, id(0xBB));
     }
@@ -234,9 +234,11 @@ mod tests {
             freshness_tolerance: 1000,
             submitted_at: 100,
         }];
-        let err =
-            settle_bounty(&b, &c, &mut a, &candidates, 200).unwrap_err();
-        assert!(matches!(err, MarketError::Bounty(BountyError::ClassMismatch)));
+        let err = settle_bounty(&b, &c, &mut a, &candidates, 200).unwrap_err();
+        assert!(matches!(
+            err,
+            MarketError::Bounty(BountyError::ClassMismatch)
+        ));
     }
 
     #[test]
@@ -252,7 +254,7 @@ mod tests {
             id(0xEE),
             id(0xC1),
             100_000,
-            500,  // min_freshness — used as SDDC lot_lambda
+            500, // min_freshness — used as SDDC lot_lambda
             100,
             0,
         )
@@ -281,8 +283,9 @@ mod tests {
             },
         ];
 
-        let cleared =
-            settle_bounty(&b, &c, &mut a, &candidates, 200).unwrap().unwrap();
+        let cleared = settle_bounty(&b, &c, &mut a, &candidates, 200)
+            .unwrap()
+            .unwrap();
         // The desperate bidder wins — they tolerated the higher λ.
         assert_eq!(cleared.winner, id(0xCC));
     }

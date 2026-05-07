@@ -33,7 +33,11 @@ pub type Distribution = HashMap<NodeId, u64>;
 /// Lazy random walk at `node` with `stay_prob_micros` probability
 /// of staying. The remaining mass is uniformly distributed across
 /// neighbors. Returns a distribution that sums to exactly 10⁶ micros.
-pub fn lazy_walk(g: &Graph, node: NodeId, stay_prob_micros: u64) -> Result<Distribution, GraphError> {
+pub fn lazy_walk(
+    g: &Graph,
+    node: NodeId,
+    stay_prob_micros: u64,
+) -> Result<Distribution, GraphError> {
     let neigh = g.neighbors(&node).ok_or(GraphError::UnknownNode(node))?;
     let mut d: Distribution = HashMap::new();
     let stay = stay_prob_micros.min(1_000_000);
@@ -131,7 +135,7 @@ mod tests {
     fn lazy_walk_distributes_correctly() {
         let g = ring4();
         let d = lazy_walk(&g, n(1), 200_000).unwrap(); // stay 0.2
-        // Stay at 1: 200_000. Two neighbors each get (1M - 200k)/2 = 400_000.
+                                                       // Stay at 1: 200_000. Two neighbors each get (1M - 200k)/2 = 400_000.
         assert_eq!(d.get(&n(1)).copied().unwrap(), 200_000);
         assert_eq!(d.get(&n(2)).copied().unwrap(), 400_000);
         assert_eq!(d.get(&n(4)).copied().unwrap(), 400_000);

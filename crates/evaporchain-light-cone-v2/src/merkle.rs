@@ -111,7 +111,10 @@ mod tests {
     fn leaf_and_inner_domains_differ() {
         let l = leaf_hash(&id(0));
         let i = inner_hash(&[0u8; 32], &[0u8; 32]);
-        assert_ne!(l, i, "leaf and inner hashes must come from different domains");
+        assert_ne!(
+            l, i,
+            "leaf and inner hashes must come from different domains"
+        );
     }
 
     #[test]

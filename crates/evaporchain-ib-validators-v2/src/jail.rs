@@ -9,10 +9,7 @@ pub type ValidatorId = [u8; 32];
 pub enum JailReason {
     /// Validator was active during a window whose BellCertificate
     /// failed the CHSH gate.
-    ChshFailedWindow {
-        window_start: u64,
-        window_end: u64,
-    },
+    ChshFailedWindow { window_start: u64, window_end: u64 },
     /// Validator's energy fell below the floor.
     EnergyBelowFloor { observed: u64, floor: u64 },
     /// Operator-issued slash with a typed code.

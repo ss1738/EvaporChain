@@ -89,15 +89,9 @@ fn write_secret_0600(path: &Path, data: &[u8]) -> Result<()> {
 
 fn parse_hex_strict(s: &str, expected: usize, what: &str) -> Result<Vec<u8>> {
     let trimmed = s.trim().trim_start_matches("0x");
-    let bytes =
-        hex::decode(trimmed).with_context(|| format!("{} is not valid hex", what))?;
+    let bytes = hex::decode(trimmed).with_context(|| format!("{} is not valid hex", what))?;
     if bytes.len() != expected {
-        anyhow::bail!(
-            "{} must be {} bytes, got {}",
-            what,
-            expected,
-            bytes.len()
-        );
+        anyhow::bail!("{} must be {} bytes, got {}", what, expected, bytes.len());
     }
     Ok(bytes)
 }
@@ -125,8 +119,7 @@ pub fn cmd_generate_coordinator(out_dir: &Path) -> Result<()> {
     // exists()-then-create pattern let an attacker on the same host
     // replace `out_dir` with a symlink between the two calls, then
     // we'd write keys into the target.
-    std::fs::create_dir_all(out_dir)
-        .with_context(|| format!("create {}", out_dir.display()))?;
+    std::fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
     let kp = MlDsaKeypair::generate();
     let pk_hex = hex::encode(kp.public_key());
     let sk_hex = hex::encode(kp.secret_key());
@@ -134,8 +127,7 @@ pub fn cmd_generate_coordinator(out_dir: &Path) -> Result<()> {
     let pk_path = out_dir.join("coordinator-pk.hex");
     let sk_path = out_dir.join("coordinator-sk.hex");
 
-    std::fs::write(&pk_path, &pk_hex)
-        .with_context(|| format!("write {}", pk_path.display()))?;
+    std::fs::write(&pk_path, &pk_hex).with_context(|| format!("write {}", pk_path.display()))?;
     write_secret_0600(&sk_path, sk_hex.as_bytes())?;
 
     println!("Coordinator ML-DSA-65 keypair written:");
@@ -154,14 +146,9 @@ pub fn cmd_generate_coordinator(out_dir: &Path) -> Result<()> {
 /// fully-formed multiaddr template so the operator can copy/paste both
 /// the file (onto their validator host's `<data-dir>/network_key.bin`)
 /// and the multiaddr (into the coordinator's manifest).
-pub fn cmd_generate_network_key(
-    out_dir: &Path,
-    listen_ip: &str,
-    port: u16,
-) -> Result<()> {
+pub fn cmd_generate_network_key(out_dir: &Path, listen_ip: &str, port: u16) -> Result<()> {
     // Crypto-TOCTOU: idempotent create, no exists()-then-create window.
-    std::fs::create_dir_all(out_dir)
-        .with_context(|| format!("create {}", out_dir.display()))?;
+    std::fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
     // Reuse the network crate's loader/generator so the on-disk format is
     // exactly what `P2pNetworkService::start` will read at node startup.
     let kp = evaporchain_network::load_or_generate_identity(out_dir)
@@ -176,7 +163,10 @@ pub fn cmd_generate_network_key(
     println!("  multiaddr:       {}", multiaddr);
     println!();
     println!("Add this to your coordinator's validator manifest:");
-    println!("  {{ \"id\": <vid>, ..., \"multiaddr\": \"{}\" }}", multiaddr);
+    println!(
+        "  {{ \"id\": <vid>, ..., \"multiaddr\": \"{}\" }}",
+        multiaddr
+    );
     Ok(())
 }
 
@@ -225,7 +215,10 @@ pub fn cmd_build_genesis(
         // Sanity: BLS pk is 48 bytes (96 hex chars).
         let _ = parse_hex_strict(&v.bls_public_key, 48, "validator bls_public_key")?;
         if v.id == 0 || v.id > 0xFF {
-            anyhow::bail!("validator id {} must be 1..=255 (encoded in address byte 0)", v.id);
+            anyhow::bail!(
+                "validator id {} must be 1..=255 (encoded in address byte 0)",
+                v.id
+            );
         }
         let mut addr = [0u8; 32];
         addr[0] = v.id as u8;
@@ -349,11 +342,17 @@ pub fn cmd_build_genesis(
 /// Locate the coordinator pk hex paired with the sk file. Tries `<sk>.pub`,
 /// then `coordinator-pk.hex` in the same directory.
 fn find_paired_pk(sk_path: &Path) -> Result<String> {
-    let stem = sk_path.file_name().and_then(|s| s.to_str()).unwrap_or("coordinator-sk.hex");
+    let stem = sk_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("coordinator-sk.hex");
     let with_ext = sk_path.with_file_name(format!("{}.pub", stem));
     let candidates = [
         with_ext,
-        sk_path.parent().unwrap_or(Path::new(".")).join("coordinator-pk.hex"),
+        sk_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("coordinator-pk.hex"),
     ];
     for p in &candidates {
         if p.exists() {
@@ -455,8 +454,7 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
     // 3. Load keygen bundle, derive BLS pubkey, match to genesis entry.
     let mut keys_text = std::fs::read_to_string(&args.keys)
         .with_context(|| format!("read {}", args.keys.display()))?;
-    let bundle: serde_json::Value =
-        serde_json::from_str(&keys_text).context("parse keys JSON")?;
+    let bundle: serde_json::Value = serde_json::from_str(&keys_text).context("parse keys JSON")?;
     // Crypto-2 (re-audit 2026-05-02): the parsed `keys_text` String
     // and the JSON `bundle` both hold the plaintext BLS sk hex
     // until function return. Zeroize the raw text so a core dump or
@@ -472,8 +470,8 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
     drop(bundle);
     keys_text.zeroize();
     let mut bls_sk_hex_buf = bls_sk_hex_owned;
-    let mut bls_sk_bytes = hex::decode(bls_sk_hex_buf.trim_start_matches("0x"))
-        .context("bls.secret_key not hex")?;
+    let mut bls_sk_bytes =
+        hex::decode(bls_sk_hex_buf.trim_start_matches("0x")).context("bls.secret_key not hex")?;
     bls_sk_hex_buf.zeroize();
     let bls_kp = BlsKeypair::from_secret_bytes(&bls_sk_bytes)
         .context("BLS secret is not a valid 32-byte scalar")?;
@@ -524,10 +522,8 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
     }
     let data_dir = args.node_dir.join("data");
     let logs_dir = args.node_dir.join("logs");
-    std::fs::create_dir_all(&data_dir)
-        .with_context(|| format!("mkdir {}", data_dir.display()))?;
-    std::fs::create_dir_all(&logs_dir)
-        .with_context(|| format!("mkdir {}", logs_dir.display()))?;
+    std::fs::create_dir_all(&data_dir).with_context(|| format!("mkdir {}", data_dir.display()))?;
+    std::fs::create_dir_all(&logs_dir).with_context(|| format!("mkdir {}", logs_dir.display()))?;
 
     // 5. Write BLS secret to <data-dir>/bls_key.bin (mode 0600).
     let bls_path = data_dir.join("bls_key.bin");
@@ -552,10 +548,7 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
 
     // 8. Emit run.sh — the canonical start command. Quoting is conservative
     // (no shell expansion of bootstrap multiaddrs).
-    let node_binary = args
-        .node_binary
-        .as_deref()
-        .unwrap_or("evaporchain-node");
+    let node_binary = args.node_binary.as_deref().unwrap_or("evaporchain-node");
     let mut bootstrap_lines = String::new();
     for ma in &args.bootstrap {
         bootstrap_lines.push_str(&format!("  --bootstrap '{}' \\\n", ma));
@@ -638,9 +631,15 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
              WantedBy=multi-user.target\n",
             chain = chain_id_for_log,
             vid = args.validator_id,
-            run = run_path.canonicalize().unwrap_or_else(|_| run_path.clone()).display(),
+            run = run_path
+                .canonicalize()
+                .unwrap_or_else(|_| run_path.clone())
+                .display(),
             node_dir = abs_node_dir.display(),
-            logs = logs_dir.canonicalize().unwrap_or_else(|_| logs_dir.clone()).display(),
+            logs = logs_dir
+                .canonicalize()
+                .unwrap_or_else(|_| logs_dir.clone())
+                .display(),
         );
         let unit_path = args.node_dir.join("evaporchain.service");
         std::fs::write(&unit_path, unit)
@@ -674,9 +673,15 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
 </plist>
 "#,
             vid = args.validator_id,
-            run = run_path.canonicalize().unwrap_or_else(|_| run_path.clone()).display(),
+            run = run_path
+                .canonicalize()
+                .unwrap_or_else(|_| run_path.clone())
+                .display(),
             node_dir = abs_node_dir.display(),
-            logs = logs_dir.canonicalize().unwrap_or_else(|_| logs_dir.clone()).display(),
+            logs = logs_dir
+                .canonicalize()
+                .unwrap_or_else(|_| logs_dir.clone())
+                .display(),
         );
         let plist_path = args.node_dir.join("evaporchain.plist");
         std::fs::write(&plist_path, plist)
@@ -684,9 +689,16 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
     }
 
     // 10. Operator-facing summary.
-    println!("OK: validator {} installed at {}", args.validator_id, abs_node_dir.display());
+    println!(
+        "OK: validator {} installed at {}",
+        args.validator_id,
+        abs_node_dir.display()
+    );
     println!("  chain_id:    {}", chain_id_for_log);
-    println!("  bls_pubkey:  {}", &derived_pk_hex[..32.min(derived_pk_hex.len())]);
+    println!(
+        "  bls_pubkey:  {}",
+        &derived_pk_hex[..32.min(derived_pk_hex.len())]
+    );
     println!("  data_dir:    {}", abs_data.display());
     println!("  genesis:     {}", abs_genesis.display());
     println!("  api_port:    {}", args.api_port);
@@ -709,19 +721,14 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
             "  cp {}/evaporchain.plist ~/Library/LaunchAgents/",
             abs_node_dir.display()
         );
-        println!(
-            "  launchctl load ~/Library/LaunchAgents/evaporchain.plist"
-        );
+        println!("  launchctl load ~/Library/LaunchAgents/evaporchain.plist");
     }
     Ok(())
 }
 
 /// Pure verification helper. Returns Err with a human reason on any failure;
 /// this is the same logic the node uses on startup so behaviour stays aligned.
-pub fn verify_signed_genesis(
-    config: &GenesisConfig,
-    expected_pk: &[u8],
-) -> Result<()> {
+pub fn verify_signed_genesis(config: &GenesisConfig, expected_pk: &[u8]) -> Result<()> {
     let sig_hex = config
         .coordinator_signature
         .as_deref()
@@ -740,9 +747,10 @@ pub fn verify_signed_genesis(
         // bail (it's already public information). Equal-length
         // payloads always run the full subtle compare.
         if claimed.len() != expected_pk.len()
-            || !bool::from(
-                <[u8] as subtle::ConstantTimeEq>::ct_eq(&claimed[..], expected_pk),
-            )
+            || !bool::from(<[u8] as subtle::ConstantTimeEq>::ct_eq(
+                &claimed[..],
+                expected_pk,
+            ))
         {
             anyhow::bail!(
                 "coordinator_pk in genesis ({} bytes) does not match expected ({} bytes / different value)",
@@ -768,10 +776,14 @@ mod tests {
     /// Self-cleaning temp dir, no `tempfile` dep.
     struct TmpDir(std::path::PathBuf);
     impl TmpDir {
-        fn path(&self) -> &Path { &self.0 }
+        fn path(&self) -> &Path {
+            &self.0
+        }
     }
     impl Drop for TmpDir {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
     fn tempdir() -> TmpDir {
         // SystemTime::now() can return identical nanosecond stamps across
@@ -783,7 +795,9 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let p = std::env::temp_dir().join(format!("evaporchain-onboard-{}-{}", nonce, n));
         std::fs::create_dir_all(&p).unwrap();
@@ -797,18 +811,29 @@ mod tests {
         let pk_path = tmp.path().join("coordinator-pk.hex");
         let sk_path = tmp.path().join("coordinator-sk.hex");
         let manifest_path = tmp.path().join("validators.json");
-        std::fs::write(&manifest_path, serde_json::json!({
-            "validators": [{
-                "id": 1, "name": "alpha",
-                "bls_public_key": hex::encode([7u8; 48]),
-                "stake": 200_000, "balance": 1_000_000,
-            }]
-        }).to_string()).unwrap();
+        std::fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "validators": [{
+                    "id": 1, "name": "alpha",
+                    "bls_public_key": hex::encode([7u8; 48]),
+                    "stake": 200_000, "balance": 1_000_000,
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
         let genesis_path = tmp.path().join("genesis.json");
         cmd_build_genesis(
-            &manifest_path, &sk_path, "evaporchain-test-1", &genesis_path,
-            2000, 10_000_000, 100,
-        ).unwrap();
+            &manifest_path,
+            &sk_path,
+            "evaporchain-test-1",
+            &genesis_path,
+            2000,
+            10_000_000,
+            100,
+        )
+        .unwrap();
         (tmp, genesis_path, pk_path)
     }
 
@@ -830,8 +855,10 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&genesis_path).unwrap()).unwrap();
         config.chain_params.chain_id = "evaporchain-mainnet-WRONG".to_string();
         let pk_bytes = hex::decode(std::fs::read_to_string(&pk_path).unwrap().trim()).unwrap();
-        assert!(verify_signed_genesis(&config, &pk_bytes).is_err(),
-            "tampered genesis must not verify");
+        assert!(
+            verify_signed_genesis(&config, &pk_bytes).is_err(),
+            "tampered genesis must not verify"
+        );
     }
 
     #[test]
@@ -840,8 +867,10 @@ mod tests {
         let other = MlDsaKeypair::generate();
         let config: GenesisConfig =
             serde_json::from_str(&std::fs::read_to_string(&genesis_path).unwrap()).unwrap();
-        assert!(verify_signed_genesis(&config, other.public_key()).is_err(),
-            "wrong pk must not verify");
+        assert!(
+            verify_signed_genesis(&config, other.public_key()).is_err(),
+            "wrong pk must not verify"
+        );
     }
 
     /// Build a genesis whose validator's `bls_public_key` matches a real BLS
@@ -1041,7 +1070,10 @@ mod tests {
         })
         .expect_err("non-empty node-dir without --force must abort");
         let msg = format!("{err:#}");
-        assert!(msg.contains("--force"), "error must mention --force, got: {msg}");
+        assert!(
+            msg.contains("--force"),
+            "error must mention --force, got: {msg}"
+        );
         // Pre-existing file untouched.
         assert!(node_dir.join("PRECIOUS.txt").is_file());
 

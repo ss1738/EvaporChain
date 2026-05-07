@@ -48,11 +48,7 @@ pub fn effective_temperature(params: &AnnealingParams, epoch: u64) -> u64 {
     // Initial temperature = lambda_half_life; the cooling schedule
     // halves once per λ-period, so half_life of the decay is itself
     // lambda_half_life.
-    evaporchain_types::energy_at_epoch(
-        params.lambda_half_life,
-        params.lambda_half_life,
-        epoch,
-    )
+    evaporchain_types::energy_at_epoch(params.lambda_half_life, params.lambda_half_life, epoch)
 }
 
 /// SA acceptance gate.

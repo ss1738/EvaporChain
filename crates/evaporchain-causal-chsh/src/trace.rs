@@ -96,7 +96,9 @@ pub fn extract_chsh_samples(
     for i in 0..trace.len() {
         for j in (i + 1)..trace.len() {
             // Concurrency proxy: timestamp difference within window.
-            let dt = trace[j].timestamp_secs.saturating_sub(trace[i].timestamp_secs);
+            let dt = trace[j]
+                .timestamp_secs
+                .saturating_sub(trace[i].timestamp_secs);
             if dt > concurrency_window_secs {
                 // Trace is height-sorted; once we exceed the window
                 // for some j, all later j' also exceed.
@@ -156,7 +158,9 @@ mod tests {
         // an rand dep.
         let mut rng: u64 = 0xCAFEBABEDEADBEEF;
         let mut next = |bound: u64| {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng >> 33) % bound
         };
         for i in 0..200 {

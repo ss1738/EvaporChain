@@ -247,7 +247,10 @@ mod tests {
         try_clear(&mut a, &[b.clone()], 50).unwrap();
         // Auction is now Cleared; further try_clear must error.
         let err = try_clear(&mut a, &[b], 60).unwrap_err();
-        assert!(matches!(err, ClearError::Lifecycle(LifecycleError::NotOpen)));
+        assert!(matches!(
+            err,
+            ClearError::Lifecycle(LifecycleError::NotOpen)
+        ));
     }
 
     #[test]

@@ -39,10 +39,8 @@ use crate::barcode::{Bar, Barcode, INF_DEATH};
 /// bars (incomparable).
 pub fn bottleneck_distance(a: &Barcode, b: &Barcode) -> u64 {
     // Partition into finite + infinite bars.
-    let (a_inf, a_fin): (Vec<&Bar>, Vec<&Bar>) =
-        a.bars().iter().partition(|x| x.is_infinite());
-    let (b_inf, b_fin): (Vec<&Bar>, Vec<&Bar>) =
-        b.bars().iter().partition(|x| x.is_infinite());
+    let (a_inf, a_fin): (Vec<&Bar>, Vec<&Bar>) = a.bars().iter().partition(|x| x.is_infinite());
+    let (b_inf, b_fin): (Vec<&Bar>, Vec<&Bar>) = b.bars().iter().partition(|x| x.is_infinite());
 
     if a_inf.len() != b_inf.len() {
         return INF_DEATH;
@@ -179,10 +177,7 @@ mod tests {
     fn distance_is_symmetric() {
         let a = bc(vec![b(1, 5), b(3, 8)]);
         let bb = bc(vec![b(2, 6)]);
-        assert_eq!(
-            bottleneck_distance(&a, &bb),
-            bottleneck_distance(&bb, &a)
-        );
+        assert_eq!(bottleneck_distance(&a, &bb), bottleneck_distance(&bb, &a));
     }
 
     // ── single-bar cases ──────────────────────────────────────────

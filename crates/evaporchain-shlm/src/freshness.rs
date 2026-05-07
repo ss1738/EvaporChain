@@ -69,8 +69,15 @@ fn test_class(half_life: u64) -> SkillClass {
 
 #[cfg(test)]
 fn test_cred(level: Energy, attested_at: Epoch) -> Credential {
-    Credential::issue([2u8; 32], [1u8; 32], [0xAA; 32], [0xBB; 32], level, attested_at)
-        .unwrap()
+    Credential::issue(
+        [2u8; 32],
+        [1u8; 32],
+        [0xAA; 32],
+        [0xBB; 32],
+        level,
+        attested_at,
+    )
+    .unwrap()
 }
 
 #[cfg(test)]

@@ -27,9 +27,7 @@
 //! tier transitions, but for V1 the re-anchor is sound (it's a
 //! conservative under-estimate of energy loved tokens accumulate).
 
-use evaporchain_types::{
-    energy_at_epoch, AccountAddress, Energy, Epoch, HalfLife,
-};
+use evaporchain_types::{energy_at_epoch, AccountAddress, Energy, Epoch, HalfLife};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -111,7 +109,11 @@ impl ResonanceToken {
     /// Effective half-life right now given the decayed attention.
     pub fn effective_half_life_at(&self, epoch_now: Epoch) -> Result<HalfLife, TokenError> {
         let attn = self.engagement.attention_at(epoch_now);
-        Ok(effective_half_life(self.base_half_life, attn, &self.coupling)?)
+        Ok(effective_half_life(
+            self.base_half_life,
+            attn,
+            &self.coupling,
+        )?)
     }
 
     /// Current energy at `epoch_now`. V1 evaluation: uses the
@@ -191,47 +193,20 @@ mod tests {
 
     fn fresh(creator: u8) -> ResonanceToken {
         let coupling = CouplingParams::default_attention_curve(1000).unwrap();
-        ResonanceToken::mint(
-            id(0xFF),
-            addr(creator),
-            10_000,
-            100,
-            coupling,
-            100,
-            0,
-        )
-        .unwrap()
+        ResonanceToken::mint(id(0xFF), addr(creator), 10_000, 100, coupling, 100, 0).unwrap()
     }
 
     #[test]
     fn mint_rejects_zero_initial() {
         let coupling = CouplingParams::default_attention_curve(1000).unwrap();
-        let err = ResonanceToken::mint(
-            id(1),
-            addr(0xAA),
-            0,
-            100,
-            coupling,
-            100,
-            0,
-        )
-        .unwrap_err();
+        let err = ResonanceToken::mint(id(1), addr(0xAA), 0, 100, coupling, 100, 0).unwrap_err();
         assert_eq!(err, TokenError::ZeroInitial);
     }
 
     #[test]
     fn mint_rejects_zero_base_half_life() {
         let coupling = CouplingParams::default_attention_curve(1000).unwrap();
-        let err = ResonanceToken::mint(
-            id(1),
-            addr(0xAA),
-            1000,
-            0,
-            coupling,
-            100,
-            0,
-        )
-        .unwrap_err();
+        let err = ResonanceToken::mint(id(1), addr(0xAA), 1000, 0, coupling, 100, 0).unwrap_err();
         assert_eq!(err, TokenError::ZeroBaseHalfLife);
     }
 
@@ -283,7 +258,10 @@ mod tests {
         t.register_engagement(1_000_000, 0).unwrap();
         let h_eff = t.effective_half_life_at(0).unwrap();
         let max_possible = 100 * 800 / 100; // 800
-        assert!(h_eff < max_possible, "h_eff={h_eff} must be < max={max_possible}");
+        assert!(
+            h_eff < max_possible,
+            "h_eff={h_eff} must be < max={max_possible}"
+        );
         assert!(h_eff > 100, "should be much above mid");
     }
 
@@ -300,7 +278,10 @@ mod tests {
         // Far in the future, attention has decayed away — effective
         // half-life slid back toward the min.
         let h_later = t.effective_half_life_at(100_000).unwrap();
-        assert!(h_later < h_now, "ignored later: {h_later} should be < {h_now}");
+        assert!(
+            h_later < h_now,
+            "ignored later: {h_later} should be < {h_now}"
+        );
     }
 
     #[test]
@@ -315,8 +296,7 @@ mod tests {
         // Tiny initial + small base half-life + min-scale (no
         // engagement) ⇒ token dies fast.
         let coupling = CouplingParams::default_attention_curve(1000).unwrap();
-        let mut t =
-            ResonanceToken::mint(id(1), addr(0xAA), 4, 1, coupling, 100, 0).unwrap();
+        let mut t = ResonanceToken::mint(id(1), addr(0xAA), 4, 1, coupling, 100, 0).unwrap();
         // After many half-lives at min_scale (0.5×base=0), token is dead.
         let err = t.transfer(addr(0xAA), addr(0xBB), 10_000).unwrap_err();
         assert_eq!(err, TokenError::Evaporated);

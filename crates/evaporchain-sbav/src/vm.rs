@@ -87,13 +87,11 @@ impl Sbav {
             }
             Op::Rotl { reg, bits } => {
                 self.check_reg(reg)?;
-                self.regs[reg as usize] =
-                    self.regs[reg as usize].rotate_left(bits);
+                self.regs[reg as usize] = self.regs[reg as usize].rotate_left(bits);
             }
             Op::Rotr { reg, bits } => {
                 self.check_reg(reg)?;
-                self.regs[reg as usize] =
-                    self.regs[reg as usize].rotate_right(bits);
+                self.regs[reg as usize] = self.regs[reg as usize].rotate_right(bits);
             }
             Op::Decay { amount } => {
                 if amount == 0 {
@@ -130,7 +128,10 @@ mod tests {
     fn xor_round_trip_recovers_state() {
         let mut vm = Sbav::with_regs([0xAB; 8]);
         let snap = vm.clone();
-        let op = Op::XorReg { reg: 3, key: 0xDEAD_BEEF };
+        let op = Op::XorReg {
+            reg: 3,
+            key: 0xDEAD_BEEF,
+        };
         vm.apply(op).unwrap();
         assert_ne!(vm, snap);
         vm.inverse_apply(op).unwrap();

@@ -58,7 +58,10 @@ mod press_claim_tests {
         // At-bound admitted.
         assert!(matches!(
             cmu_check(300, 100, 200),
-            Verdict::Ok { observed_cmu: 300, bound: 300 }
+            Verdict::Ok {
+                observed_cmu: 300,
+                bound: 300
+            }
         ));
         // Below-bound admitted.
         assert!(matches!(cmu_check(250, 100, 200), Verdict::Ok { .. }));

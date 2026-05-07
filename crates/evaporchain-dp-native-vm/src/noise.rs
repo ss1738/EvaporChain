@@ -78,9 +78,12 @@ impl NoiseMechanism {
             return Err(NoiseError::ZeroSensitivity);
         }
         match self {
-            NoiseMechanism::DiscreteLaplace => {
-                Ok(discrete_laplace(true_value, sensitivity, epsilon_micros, seed))
-            }
+            NoiseMechanism::DiscreteLaplace => Ok(discrete_laplace(
+                true_value,
+                sensitivity,
+                epsilon_micros,
+                seed,
+            )),
         }
     }
 }

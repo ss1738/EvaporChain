@@ -38,8 +38,7 @@ pub mod bound;
 pub mod compare;
 
 pub use bound::{
-    passes_singh_bernstein_gate, singh_bernstein_variance, BernsteinError,
-    ContributorWithVariance,
+    passes_singh_bernstein_gate, singh_bernstein_variance, BernsteinError, ContributorWithVariance,
 };
 pub use compare::{bernstein_strictly_tighter, BernsteinAdvantage};
 
@@ -61,8 +60,18 @@ mod press_claim_tests {
         // Two low-variance contributors. (hi−lo)=10 → range²=100;
         // variance_proxy=4 (well below Popoviciu's bound of 25).
         let low_var = vec![
-            ContributorWithVariance { lo: 0, hi: 10, energy: 1_000, variance_proxy: 4 },
-            ContributorWithVariance { lo: 0, hi: 10, energy: 1_000, variance_proxy: 4 },
+            ContributorWithVariance {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+                variance_proxy: 4,
+            },
+            ContributorWithVariance {
+                lo: 0,
+                hi: 10,
+                energy: 1_000,
+                variance_proxy: 4,
+            },
         ];
 
         // σ²_SB = 8 (sum of (1)² · 4 + (1)² · 4); M = 10.

@@ -120,40 +120,19 @@ mod tests {
 
     #[test]
     fn rejects_empty_ciphertext_hash() {
-        let err = SealedVault::new(
-            [0; 32],
-            10,
-            1,
-            vec![validator(1)],
-            [1; 32],
-        )
-        .unwrap_err();
+        let err = SealedVault::new([0; 32], 10, 1, vec![validator(1)], [1; 32]).unwrap_err();
         assert_eq!(err, VaultError::EmptyCiphertextHash);
     }
 
     #[test]
     fn rejects_zero_ciphertext_len() {
-        let err = SealedVault::new(
-            [1; 32],
-            0,
-            1,
-            vec![validator(1)],
-            [1; 32],
-        )
-        .unwrap_err();
+        let err = SealedVault::new([1; 32], 0, 1, vec![validator(1)], [1; 32]).unwrap_err();
         assert_eq!(err, VaultError::ZeroCiphertextLen);
     }
 
     #[test]
     fn rejects_empty_pubkey_commitment() {
-        let err = SealedVault::new(
-            [1; 32],
-            10,
-            1,
-            vec![validator(1)],
-            [0; 32],
-        )
-        .unwrap_err();
+        let err = SealedVault::new([1; 32], 10, 1, vec![validator(1)], [0; 32]).unwrap_err();
         assert_eq!(err, VaultError::EmptyPubkeyCommitment);
     }
 
@@ -165,14 +144,8 @@ mod tests {
 
     #[test]
     fn rejects_threshold_above_committee() {
-        let err = SealedVault::new(
-            [1; 32],
-            10,
-            5,
-            vec![validator(1), validator(2)],
-            [1; 32],
-        )
-        .unwrap_err();
+        let err = SealedVault::new([1; 32], 10, 5, vec![validator(1), validator(2)], [1; 32])
+            .unwrap_err();
         assert!(matches!(
             err,
             VaultError::ThresholdAboveCommittee { m: 5, n: 2 }
@@ -198,7 +171,13 @@ mod tests {
             [0xAB; 32],
             1024,
             3,
-            vec![validator(1), validator(2), validator(3), validator(4), validator(5)],
+            vec![
+                validator(1),
+                validator(2),
+                validator(3),
+                validator(4),
+                validator(5),
+            ],
             [0xCD; 32],
         )
         .unwrap();

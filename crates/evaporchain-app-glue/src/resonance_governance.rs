@@ -58,12 +58,14 @@ pub enum ResonanceGovernanceError {
     Parameter(#[from] ParameterError),
     #[error(
         "saturation {value} outside [{}, {}]",
-        RESONANCE_SATURATION_MIN, RESONANCE_SATURATION_MAX
+        RESONANCE_SATURATION_MIN,
+        RESONANCE_SATURATION_MAX
     )]
     SaturationOutOfBounds { value: u64 },
     #[error(
         "max_scale_bp {value} outside [{}, {}]",
-        RESONANCE_MAX_SCALE_MIN_BP, RESONANCE_MAX_SCALE_MAX_BP
+        RESONANCE_MAX_SCALE_MIN_BP,
+        RESONANCE_MAX_SCALE_MAX_BP
     )]
     MaxScaleOutOfBounds { value: u64 },
 }
@@ -124,20 +126,29 @@ mod tests {
     #[test]
     fn saturation_too_low_rejected() {
         let err = resonance_saturation_parameter(50).unwrap_err();
-        assert!(matches!(err, ResonanceGovernanceError::SaturationOutOfBounds { .. }));
+        assert!(matches!(
+            err,
+            ResonanceGovernanceError::SaturationOutOfBounds { .. }
+        ));
     }
 
     #[test]
     fn saturation_too_high_rejected() {
         let err = resonance_saturation_parameter(1_000_000).unwrap_err();
-        assert!(matches!(err, ResonanceGovernanceError::SaturationOutOfBounds { .. }));
+        assert!(matches!(
+            err,
+            ResonanceGovernanceError::SaturationOutOfBounds { .. }
+        ));
     }
 
     #[test]
     fn max_scale_below_anti_blackmirror_floor_rejected() {
         // Below 200 bp = below 2× base → "loved art slows" loses force.
         let err = resonance_max_scale_parameter(100).unwrap_err();
-        assert!(matches!(err, ResonanceGovernanceError::MaxScaleOutOfBounds { .. }));
+        assert!(matches!(
+            err,
+            ResonanceGovernanceError::MaxScaleOutOfBounds { .. }
+        ));
     }
 
     #[test]
@@ -146,7 +157,10 @@ mod tests {
         // asymptote, but functionally tokens become immortal. The
         // chain refuses to cross this line.
         let err = resonance_max_scale_parameter(10_000).unwrap_err();
-        assert!(matches!(err, ResonanceGovernanceError::MaxScaleOutOfBounds { .. }));
+        assert!(matches!(
+            err,
+            ResonanceGovernanceError::MaxScaleOutOfBounds { .. }
+        ));
     }
 
     #[test]

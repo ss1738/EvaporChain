@@ -87,7 +87,10 @@ mod press_claim_tests {
             step: 1,
             body: Box::new(Term::Skip),
         };
-        assert!(check_total(&total).is_ok(), "trivially-total loop must certify");
+        assert!(
+            check_total(&total).is_ok(),
+            "trivially-total loop must certify"
+        );
 
         // (b) BoundedFor body mutates the loop variable → rejected.
         let mutating = Term::BoundedFor {
@@ -122,7 +125,10 @@ mod press_claim_tests {
                 },
             }),
         };
-        assert!(check_total(&bw_ok).is_ok(), "well-formed BoundedWhile must certify");
+        assert!(
+            check_total(&bw_ok).is_ok(),
+            "well-formed BoundedWhile must certify"
+        );
 
         // (d) BoundedWhile body never strict-decrements the ranking
         // variable → rejected (divergence-prone).
@@ -135,6 +141,9 @@ mod press_claim_tests {
             ranking_var: "n".into(),
             body: Box::new(Term::Skip),
         };
-        assert!(check_total(&bw_bad).is_err(), "missing decrement must reject");
+        assert!(
+            check_total(&bw_bad).is_err(),
+            "missing decrement must reject"
+        );
     }
 }
