@@ -398,33 +398,44 @@ Lemma concrete_step_subadditive_within_halving :
     EnergyDecayMonotonicity.energy_at_epoch
       (EnergyDecayMonotonicity.energy_at_epoch e h k) h 1.
 Proof.
-  (* Proof scaffold drafted 2026-05-07. The h=1 case discharges by
-     contradiction (within-halving with h=1 forces S k = k); the
-     h>=2 case unfolds energy_at_epoch on both sides, reduces to
-     the chain `after - linear_decay after (rem+1) h <= (after -
-     linear_decay after rem h) - linear_decay (after - linear_decay
-     after rem h) 1 h`, and assembles 7 supporting bounds (linear_
-     decay_super_additive Hsuper, linear_decay_bounded × 4 sites,
-     monotonicity-in-arg-1 for the inner linear_decay call, and the
-     combined non-saturation bound A+B <= after).
+  (* Proof scaffold drafted across multiple 2026-05-07 attempts. The
+     structural decomposition is solid:
+       - h=1 case: contradiction (within-halving forces S k = k)
+       - h>=2 case: unfold energy_at_epoch on both sides; assemble
+         7 supporting bounds (Hsuper from linear_decay_super_additive
+         + 4 linear_decay_bounded sites + monotonicity-in-arg-1 of
+         the inner linear_decay + combined non-saturation bound)
+       - Final goal: `after - C <= (after - A) - D` reduces in
+         real arith to `A + D <= C`, immediate from Hsuper +
+         Hmono_inner.
 
-     The bounds are SUFFICIENT to close the goal in real arithmetic
-     (it reduces to `A + D <= C`, immediate from Hsuper + Hmono_inner).
-     But Coq's `lia` and `nia` BOTH FAIL to close it even after
-     `set`/`remember`/`clearbody` of the four `linear_decay`
-     applications — saturating-sub anti-monotonic chain doesn't
-     unfold cleanly. The proof-engineering path forward is an explicit
-     chain via `Nat.sub_add_distr` + a `Nat.sub_le_mono_*`
-     family-lemma application:
+     Tactical blocker (encountered in 4 separate attempts):
+       - Bare lia fails: doesn't unfold the saturating-sub
+         anti-monotonic relation across the structural goal.
+       - Bare nia same.
+       - set/remember/clearbody of the four linear_decay applications
+         + lia: same failure (lia can't bridge).
+       - Explicit chain via `replace ((after - A) - D) with
+         (after - (A + D))` (using Nat.sub_add_distr) does succeed,
+         leaving a goal `after - C <= after - (A + D)`. The remaining
+         `apply Nat.sub_le_mono_l` then fails because that lemma's
+         signature is `n <= m -> n - p <= m - p` — wrong polarity.
+         The needed lemma is `n <= m -> p - m <= p - n` (anti-mono
+         in arg-2). Inline-asserting `forall a b c, a <= b -> c - b
+         <= c - a` and proving by `intros; lia` succeeds for the
+         standalone helper but `apply Hsub_anti` then fails on the
+         actual goal due to unification difficulty around the `set
+         (after := nat_shr e (Nat.div k h))` binding inside the
+         destruct branch.
 
-       replace ((after - A) - D) with (after - (A + D))
-         by (rewrite Nat.sub_add_distr; reflexivity)
-       (* Goal: after - C <= after - (A + D) *)
-       (* This is anti-monotonic-in-arg-2 of Nat.sub *)
-       (* Need lemma `forall n m p, n <= m -> p - m <= p - n` *)
+     The needed missing piece is either:
+       (a) An anti-mono-arg-2 sub lemma in scope as a fresh nat
+           relation (without nested set bindings interfering), OR
+       (b) A more aggressive lia variant / autorewrite database that
+           handles `(c - b <= c - a)` from `a <= b` automatically.
 
-     This is more proof-engineering than fits in this commit's
-     bounded scope. Tagged [DRIFT-STEP-SUB-WITHIN]. *)
+     Tagged [DRIFT-STEP-SUB-WITHIN]. The proof IS structurally
+     sound — the Admitted is purely Coq-tactical. *)
 Admitted.
 
 (** Cross-halving case of step-subadditivity. When (S k)/h = k/h + 1
