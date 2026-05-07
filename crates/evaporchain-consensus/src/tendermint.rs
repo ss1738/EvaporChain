@@ -6135,12 +6135,27 @@ impl TendermintConsensus {
         // vector with `None` for them so the indices stay parallel to `txs`.
         let mut hints_vec: Vec<Option<u64>> = txs.iter().map(|_| None).collect();
         let remaining = MAX_TXS_PER_BLOCK.saturating_sub(txs.len());
+        // Diagnostic: mempool snapshot just before proposer drains. Logged
+        // unconditionally at INFO so it's visible without RUST_LOG=debug —
+        // narrow non-zero counts let us distinguish "no txs in mempool"
+        // from "txs dropped by antichain/gas-check after drain".
+        let mempool_snapshot_before_drain = self.mempool.len();
         if remaining > 0 {
             let (mut candidates, priority_sum, mut candidate_hints) = self
                 .mempool
                 .take_with_priority_sum_and_hints(remaining, self.height);
+            let drained_count = candidates.len();
             self.last_proposal_priority_sum =
                 self.last_proposal_priority_sum.saturating_add(priority_sum);
+            if mempool_snapshot_before_drain > 0 || drained_count > 0 {
+                info!(
+                    height = self.height,
+                    mempool_before = mempool_snapshot_before_drain,
+                    drained = drained_count,
+                    encrypted_reveals_kept = txs.len(),
+                    "DIAG-MEMPOOL: proposer drained mempool"
+                );
+            }
             debug_assert_eq!(
                 candidates.len(),
                 candidate_hints.len(),
@@ -6419,6 +6434,17 @@ impl TendermintConsensus {
             has_data_root = block.data_root.is_some(),
             "Created proposal"
         );
+        // Diagnostic companion to DIAG-MEMPOOL: shows what made it into
+        // the final proposal payload AFTER all the trimming/filtering
+        // (antichain, gas, max-block-size). Compare against drained_count
+        // to see where txs were lost.
+        if !block.transactions.is_empty() {
+            info!(
+                height = self.height,
+                final_txs = block.transactions.len(),
+                "DIAG-MEMPOOL: block.transactions populated"
+            );
+        }
 
         Some(block)
     }
