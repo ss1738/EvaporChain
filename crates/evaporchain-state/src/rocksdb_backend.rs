@@ -1179,6 +1179,11 @@ impl StateDB for RocksDBStateDB {
         self.trie.prove(&key)
     }
 
+    fn prove_at_key(&mut self, key: &[u8; 32]) -> evaporchain_crypto::EnergyVerkleProof {
+        self.sync_dirty_to_trie();
+        self.trie.prove(key)
+    }
+
     fn trie_snapshot(&mut self) -> Vec<u8> {
         self.sync_dirty_to_trie();
         self.trie.to_bytes()

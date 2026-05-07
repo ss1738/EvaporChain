@@ -145,6 +145,14 @@ pub trait StateDB: Send + Sync {
     /// Generate a Verkle inclusion proof for a state object.
     fn prove_object(&mut self, id: &ObjectId) -> evaporchain_crypto::EnergyVerkleProof;
 
+    /// Generate a Verkle inclusion proof for an arbitrary 32-byte
+    /// trie key. Wraps `EnergyVerkleTrie::prove` directly. Used
+    /// by the light-client SDK's `/api/state/proof/:key_hex`
+    /// endpoint and by any caller that already has the trie key
+    /// in hand (e.g. a UI that hashes a structured query without
+    /// going through the account/object derivation helpers).
+    fn prove_at_key(&mut self, key: &[u8; 32]) -> evaporchain_crypto::EnergyVerkleProof;
+
     /// Serialize the current trie state to bytes for persistence.
     fn trie_snapshot(&mut self) -> Vec<u8>;
 
@@ -661,6 +669,11 @@ impl StateDB for InMemoryStateDB {
         self.sync_dirty_to_trie();
         let key = trie_key_for_object(id);
         self.trie.prove(&key)
+    }
+
+    fn prove_at_key(&mut self, key: &[u8; 32]) -> evaporchain_crypto::EnergyVerkleProof {
+        self.sync_dirty_to_trie();
+        self.trie.prove(key)
     }
 
     fn trie_snapshot(&mut self) -> Vec<u8> {

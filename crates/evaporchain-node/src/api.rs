@@ -8735,6 +8735,50 @@ async fn get_latest_light_header(
     Ok(Json(header))
 }
 
+// ─── State-proof endpoint (for evaporchain-light-client SDK) ───────────────
+//
+// Wires `RpcTransport::fetch_state_proof(&key)` →
+//        `GET /api/state/proof/:key_hex`
+//
+// Returns JSON-serialised
+// `evaporchain_crypto::energy_verkle::EnergyVerkleProof` directly so
+// the SDK's `LightClient::verify_state` decodes straight into the
+// authoritative proof type.
+//
+// `:key_hex` is the lowercase 64-character hex encoding of the
+// 32-byte trie key. The handler decodes it, calls
+// `StateDB::prove_at_key(&key)`, and returns the proof JSON.
+//
+// Status codes:
+//   200 — JSON EnergyVerkleProof
+//   400 — key_hex is malformed (wrong length, non-hex chars, etc.)
+async fn get_state_proof(
+    State(state): State<Arc<ApiState>>,
+    Path(key_hex): Path<String>,
+) -> Result<Json<evaporchain_crypto::energy_verkle::EnergyVerkleProof>, StatusCode> {
+    if key_hex.len() != 64 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let mut key = [0u8; 32];
+    for (i, byte) in key.iter_mut().enumerate() {
+        let hi = hex_nibble_state_proof(key_hex.as_bytes()[i * 2])?;
+        let lo = hex_nibble_state_proof(key_hex.as_bytes()[i * 2 + 1])?;
+        *byte = (hi << 4) | lo;
+    }
+    let mut db = safe_lock(&state.db);
+    let proof = db.prove_at_key(&key);
+    Ok(Json(proof))
+}
+
+fn hex_nibble_state_proof(c: u8) -> Result<u8, StatusCode> {
+    match c {
+        b'0'..=b'9' => Ok(c - b'0'),
+        b'a'..=b'f' => Ok(c - b'a' + 10),
+        b'A'..=b'F' => Ok(c - b'A' + 10),
+        _ => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
 /// Wallet-facing tx-status response. Mirrors the wallet's `TxStatus` TS shape
 /// (`extension/src/utils/api.ts`) so the polling client can drop its 404
 /// special-case and progress `pending → mempool → included → finalised`
@@ -16294,6 +16338,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/block/:number", get(get_single_block))
         .route("/api/light_header/:height", get(get_light_header))
         .route("/api/light_header/latest", get(get_latest_light_header))
+        .route("/api/state/proof/:key_hex", get(get_state_proof))
         .route(
             "/api/block/:number/transactions",
             get(get_block_transactions),
