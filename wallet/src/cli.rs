@@ -757,6 +757,20 @@ pub enum AccountAction {
         #[arg(long)]
         address_override: Option<String>,
     },
+    /// Export an account's keypair to a JSON file in the same format
+    /// the `import` subcommand consumes. Decrypts the keystore entry
+    /// in-process and writes plaintext key material — REFUSES to
+    /// overwrite existing files; output file is created with mode
+    /// 0600 (owner-only read/write).
+    ///
+    /// Pairs with `account import` for backup / cross-machine sync.
+    /// **The exported file is plaintext — handle accordingly.**
+    Export {
+        /// Local name of the account to export.
+        name: String,
+        /// Path to write the JSON key file. MUST NOT exist already.
+        key_file: std::path::PathBuf,
+    },
     /// List all accounts.
     List,
     /// Switch active account.
@@ -4617,6 +4631,79 @@ async fn cmd_account(
                 mode
             );
             println!("   Address: {}", format_address(&addr));
+        }
+        AccountAction::Export { name, key_file } => {
+            // Refuse to overwrite — exporting plaintext key material
+            // is high-stakes; if the user pointed us at an existing
+            // file, that's almost certainly a mistake.
+            if key_file.exists() {
+                return Err(format!(
+                    "refuse to overwrite existing file: {} (delete first if intentional)",
+                    key_file.display()
+                )
+                .into());
+            }
+            // Look up the keystore entry to read its stored address
+            // (honors --address-override set at import time).
+            let entry = mgr
+                .keystore()
+                .entries
+                .iter()
+                .find(|e| e.name == name)
+                .ok_or_else(|| format!("account '{name}' not found in keystore"))?;
+            let address_str = entry.address.clone();
+            let public_key_hex = entry.public_key.clone();
+
+            let password = prompt_password("Enter password to decrypt the key")?;
+            let keypair = mgr.keystore().unlock_key(&name, &password)?;
+            let secret_key_hex = hex::encode(keypair.secret_key());
+
+            // Match the validator-N-keys.json bundle shape that
+            // `account import` consumes — round-trip-able.
+            let payload = serde_json::json!({
+                "_comment": "Exported by evaporchain-wallet account export. Plaintext ML-DSA-65 keypair. Handle with care.",
+                "address": address_str,
+                "ml_dsa": {
+                    "public_key": public_key_hex,
+                    "secret_key": secret_key_hex,
+                }
+            });
+            let json_text = serde_json::to_string_pretty(&payload)?;
+
+            // Create with mode 0600 (owner read/write only) — never let
+            // anyone else read this. open() with O_CREAT | O_EXCL also
+            // fails if a file appeared between our exists() check and
+            // now (TOCTOU).
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&key_file)
+                    .map_err(|e| format!("create {} mode 0600: {e}", key_file.display()))?;
+                use std::io::Write;
+                f.write_all(json_text.as_bytes())
+                    .map_err(|e| format!("write {}: {e}", key_file.display()))?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::write(&key_file, &json_text)
+                    .map_err(|e| format!("write {}: {e}", key_file.display()))?;
+            }
+
+            println!(
+                "{} Exported '{}' to {} (plaintext keypair, mode 0600)",
+                "OK".green().bold(),
+                name,
+                key_file.display()
+            );
+            println!("   Address: {}", address_str);
+            println!(
+                "   {} Plaintext key on disk — back up + delete the file when done.",
+                "WARN".yellow().bold()
+            );
         }
         AccountAction::List => {
             let accounts = mgr.list_accounts();
