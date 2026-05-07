@@ -5877,6 +5877,35 @@ impl TendermintConsensus {
         }
     }
 
+    /// Verify that the locally-computed state root matches the block
+    /// header's claimed state root after execution. Returns an error if
+    /// they diverge — silent acceptance of a divergent root would let a
+    /// node with corrupt local state (e.g. unsafe bootstrap, partial
+    /// migration, disk error) commit a fork indefinitely while only its
+    /// votes get rejected by quorum. Skips the check when the header
+    /// carries an all-zero state_root (legacy / proposer-side path
+    /// where the field is filled in from the execution result).
+    fn verify_post_execution_state_root(
+        block: &Block,
+        execution: &evaporchain_execution::BlockExecutionResult,
+    ) -> Result<(), ConsensusError> {
+        if block.state_root == [0u8; 32] {
+            return Ok(());
+        }
+        if execution.state_root != block.state_root {
+            return Err(ConsensusError::ExecutionFailed(format!(
+                "Post-execution state_root mismatch at block {}: local={}, header={}. \
+                 Local state has diverged from the canonical chain — halting block to \
+                 prevent silent fork. Operator action required: rebuild data dir from \
+                 a clean source.",
+                block.number,
+                hex::encode(execution.state_root),
+                hex::encode(block.state_root),
+            )));
+        }
+        Ok(())
+    }
+
     /// Apply a block received from block sync (not through consensus).
     /// Used for catch-up when joining the network.
     pub fn apply_block(
@@ -5897,6 +5926,8 @@ impl TendermintConsensus {
                 ConsensusError::ExecutionFailed(e.to_string())
             },
         )?;
+
+        Self::verify_post_execution_state_root(block, &execution)?;
 
         // Apply any validator BLS key rotations emitted by execution. Done
         // after execute_block but before on_block_committed so the new
@@ -5953,6 +5984,8 @@ impl TendermintConsensus {
                 ConsensusError::ExecutionFailed(e.to_string())
             },
         )?;
+
+        Self::verify_post_execution_state_root(block, &execution)?;
 
         // Same post-commit application as in apply_block_sync above.
         if !execution.validator_key_rotations.is_empty() {
