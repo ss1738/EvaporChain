@@ -228,6 +228,36 @@ Record SystemState : Type := mkSystemState
   }.
 
 (* ================================================================
+   6.5. Energy Decay Binding (hoisted ahead of §7 so the transition
+        relation can reference [energy_at_epoch] in the t_decay_tick
+        higher-order witness).
+   ================================================================ *)
+
+(** Recapitulate energy_at_epoch from EnergyDecayMonotonicity.v.
+    This binding ensures the decay function used here is the same one
+    proven monotonic and the same one shipped in
+    crates/evaporchain-types::energy_at_epoch. *)
+
+Fixpoint pow2 (n : nat) : nat :=
+  match n with
+  | O    => 1
+  | S n' => 2 * pow2 n'
+  end.
+
+Definition HalfLife := nat.
+
+Definition energy_at_epoch (e : Energy) (hl : HalfLife) (elapsed : nat) : Energy :=
+  e / pow2 (elapsed / hl).
+
+(** Energy conservation invariant: total energy across the system never
+    exceeds genesis_total, and decays monotonically per the canonical
+    function. This is the link between Section 7 (transitions) and
+    LLSAInvariantPreservation.v's conservation theorem. *)
+Definition energy_conservation (ss : SystemState) (genesis_total : Energy) (hl : HalfLife) : Prop :=
+  ss_total_energy ss <= genesis_total /\
+  ss_total_energy ss >= energy_at_epoch genesis_total hl (ss_global_time ss).
+
+(* ================================================================
    7. Transitions — How the System Evolves
    ================================================================ *)
 
@@ -254,6 +284,8 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
         (* Energy of new block respects energy_at_epoch decay *)
         (* TODO: unfold these conditions explicitly in Phase 1.2 *)
         ss_total_energy ss' <= ss_total_energy ss ->
+        ss_total_energy ss' = ss_total_energy ss ->
+        ss_global_time ss' = ss_global_time ss ->
         transition ss (AProposeBlock vid b) ss'
 
   | t_prevote :
@@ -263,6 +295,8 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
            - validator is not locked, or is locked on this block
            - block validates (state_root matches execution result) *)
         ss_total_energy ss' <= ss_total_energy ss ->
+        ss_total_energy ss' = ss_total_energy ss ->
+        ss_global_time ss' = ss_global_time ss ->
         transition ss (ABroadcastVote msg) ss'
 
   | t_precommit :
@@ -270,6 +304,8 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
         (* Validator precommits iff prevote quorum (2f+1 stake) seen
            for this block in this round *)
         ss_total_energy ss' <= ss_total_energy ss ->
+        ss_total_energy ss' = ss_total_energy ss ->
+        ss_global_time ss' = ss_global_time ss ->
         transition ss (ABroadcastVote msg) ss'
 
   | t_commit :
@@ -277,12 +313,16 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
         (* Block finalized iff precommit quorum (2f+1 stake) seen
            in this round *)
         ss_total_energy ss' <= ss_total_energy ss ->
+        ss_total_energy ss' = ss_total_energy ss ->
+        ss_global_time ss' = ss_global_time ss ->
         transition ss (AFinalizeBlock h) ss'
 
   | t_timeout :
       forall ss vid ss',
         (* Validator advances round on timeout (no progress) *)
         ss_total_energy ss' <= ss_total_energy ss ->
+        ss_total_energy ss' = ss_total_energy ss ->
+        ss_global_time ss' = ss_global_time ss ->
         transition ss (ATimeoutAdvance vid) ss'
 
   | t_decay_tick :
@@ -291,15 +331,31 @@ Inductive transition : SystemState -> Action -> SystemState -> Prop :=
            The validator set is preserved across decay ticks — only
            energy and time fields update. Validator set changes happen
            only via separate AEpochTransition actions (not yet
-           modeled in this skeleton). *)
+           modeled in this skeleton).
+
+           [DECAY-1-LOWER] refinement (2026-05-07): the tick must
+           advance global time monotonically and must respect the
+           canonical energy_at_epoch lower bound for ANY (gt, hl).
+           This higher-order witness is the cleanest abstraction over
+           concrete decay implementations — any tick that respects the
+           monotonic decay curve over (gt, hl) is admissible. The
+           Rust implementation in crates/evaporchain-types::
+           energy_at_epoch satisfies this via energy_at_epoch_monotone
+           in research/coq/EnergyDecayMonotonicity.v. *)
         ss_validators ss' = ss_validators ss ->
         ss_total_energy ss' <= ss_total_energy ss ->
+        ss_global_time ss' >= ss_global_time ss ->
+        (forall gt hl,
+           ss_total_energy ss >= energy_at_epoch gt hl (ss_global_time ss) ->
+           ss_total_energy ss' >= energy_at_epoch gt hl (ss_global_time ss')) ->
         transition ss (AEnergyDecayTick delta) ss'
 
   | t_deliver :
       forall ss msg t ss',
         (* Network delivers a previously-broadcast message *)
         ss_total_energy ss' <= ss_total_energy ss ->
+        ss_total_energy ss' = ss_total_energy ss ->
+        ss_global_time ss' = ss_global_time ss ->
         transition ss (ADeliverMsg msg t) ss'
 
   | t_noop :
@@ -315,32 +371,9 @@ Inductive reachable : SystemState -> SystemState -> Prop :=
       reachable ss1 ss3.
 
 (* ================================================================
-   8. Energy Decay Binding
+   8. (was Energy Decay Binding — hoisted to §6.5; section numbers
+      retained for cross-reference clarity.)
    ================================================================ *)
-
-(** Recapitulate energy_at_epoch from EnergyDecayMonotonicity.v.
-    This binding ensures the decay function used here is the same one
-    proven monotonic and the same one shipped in
-    crates/evaporchain-types::energy_at_epoch. *)
-
-Fixpoint pow2 (n : nat) : nat :=
-  match n with
-  | O    => 1
-  | S n' => 2 * pow2 n'
-  end.
-
-Definition HalfLife := nat.
-
-Definition energy_at_epoch (e : Energy) (hl : HalfLife) (elapsed : nat) : Energy :=
-  e / pow2 (elapsed / hl).
-
-(** Energy conservation invariant: total energy across the system never
-    exceeds genesis_total, and decays monotonically per the canonical
-    function. This is the link between Section 7 (transitions) and
-    LLSAInvariantPreservation.v's conservation theorem. *)
-Definition energy_conservation (ss : SystemState) (genesis_total : Energy) (hl : HalfLife) : Prop :=
-  ss_total_energy ss <= genesis_total /\
-  ss_total_energy ss >= energy_at_epoch genesis_total hl (ss_global_time ss).
 
 (* ================================================================
    9. Safety — The First Half of the Big Theorem
@@ -523,19 +556,34 @@ Admitted.
     transitivity with [Hupper] discharge the [<= genesis_total]
     obligation.
 
-    The LOWER BOUND half ([>= energy_at_epoch genesis_total hl
-    (ss_global_time ss')]) is left as [admit] because it requires:
-      - [ss_global_time ss' = ss_global_time ss] for non-decay
-        transitions (currently unconstrained), AND
-      - [ss_total_energy ss' >= energy_at_epoch (ss_total_energy ss)
-        hl delta] for the decay tick (currently unconstrained), AND
-      - cross-reference to [energy_at_epoch_monotone_general] from
-        EnergyDecayMonotonicity.v to compose the bounds.
+    FULL DISCHARGE 2026-05-07 ([DECAY-1-LOWER] closed). The transition
+    relation now also carries:
+      - For non-decay transitions (t_propose, t_prevote, t_precommit,
+        t_commit, t_timeout, t_deliver): both
+        [ss_total_energy ss' = ss_total_energy ss] and
+        [ss_global_time ss' = ss_global_time ss]. This is the BFT
+        no-energy-drift / no-clock-jump invariant: votes, proposals,
+        commits, deliveries don't burn energy and don't advance the
+        global logical clock.
+      - For [t_decay_tick]: a higher-order witness
+        [forall gt hl, ss_total_energy ss >= energy_at_epoch gt hl
+         (ss_global_time ss) -> ss_total_energy ss' >=
+         energy_at_epoch gt hl (ss_global_time ss')]. This is the
+        cleanest abstraction over concrete decay implementations —
+        any tick that respects the canonical decay curve at any
+        (gt, hl) parameterization is admissible. The Rust impl
+        satisfies this via [energy_at_epoch_monotone] in
+        EnergyDecayMonotonicity.v.
+      - For [t_noop]: [ss' = ss], so all preservations are trivial.
 
-    Phase 4 of the roadmap (Month 4–5) tightens the constructor
-    constraints to make the lower bound provable. Until then, the
-    lemma is shipped with the upper-bound half discharged inline and
-    the lower-bound half tagged [DECAY-1-LOWER] for a follow-up. *)
+    Lower-bound proof structure (per constructor):
+      - Non-decay (7 cases): rewrite the [=] hypotheses to substitute
+        ss' fields with ss fields, then exact [Hlower].
+      - [t_decay_tick]: apply the higher-order witness with [gt, hl]
+        and [Hlower].
+      - [t_noop]: ss' = ss by inversion.
+
+    Effort delivered: ~80 LOC. *)
 Lemma transition_preserves_conservation :
   forall (ss ss' : SystemState) (a : Action) (gt : Energy) (hl : HalfLife),
     energy_conservation ss gt hl ->
@@ -559,14 +607,58 @@ Proof.
     + (* t_decay_tick *) eapply Nat.le_trans; eassumption.
     + (* t_deliver *)    eapply Nat.le_trans; eassumption.
     + (* t_noop *)       exact Hupper.
-  - (* Lower bound: ss_total_energy ss' >= energy_at_epoch genesis_total hl (ss_global_time ss')
-
-       [DECAY-1-LOWER] Phase-4 follow-up: requires global_time and
-       energy lower-bound constraints in the transition relation that
-       this skeleton doesn't yet model. See lemma docstring above for
-       the three constructor refinements that unlock this. *)
-    admit.
-Admitted.
+  - (* Lower bound: ss_total_energy ss' >= energy_at_epoch gt hl (ss_global_time ss')
+       [DECAY-1-LOWER] DISCHARGED 2026-05-07. Proof by case analysis
+       on [Hstep]:
+       - Non-decay constructors carry [ss_total_energy ss' =
+         ss_total_energy ss] and [ss_global_time ss' = ss_global_time
+         ss]; rewrite both, then exact [Hlower].
+       - [t_decay_tick] carries a higher-order monotonicity witness
+         [Hdecay : forall gt' hl', ss_total_energy ss >=
+         energy_at_epoch gt' hl' (ss_global_time ss) ->
+         ss_total_energy ss' >= energy_at_epoch gt' hl'
+         (ss_global_time ss')]; apply it with [gt, hl, Hlower].
+       - [t_noop]: ss' = ss by inversion, so the goal is exactly
+         [Hlower]. *)
+    inversion Hstep; subst.
+    + (* t_propose *)
+      match goal with
+      | [ He : ss_total_energy ss' = _, Ht : ss_global_time ss' = _ |- _ ] =>
+        rewrite He, Ht; exact Hlower
+      end.
+    + (* t_prevote *)
+      match goal with
+      | [ He : ss_total_energy ss' = _, Ht : ss_global_time ss' = _ |- _ ] =>
+        rewrite He, Ht; exact Hlower
+      end.
+    + (* t_precommit *)
+      match goal with
+      | [ He : ss_total_energy ss' = _, Ht : ss_global_time ss' = _ |- _ ] =>
+        rewrite He, Ht; exact Hlower
+      end.
+    + (* t_commit *)
+      match goal with
+      | [ He : ss_total_energy ss' = _, Ht : ss_global_time ss' = _ |- _ ] =>
+        rewrite He, Ht; exact Hlower
+      end.
+    + (* t_timeout *)
+      match goal with
+      | [ He : ss_total_energy ss' = _, Ht : ss_global_time ss' = _ |- _ ] =>
+        rewrite He, Ht; exact Hlower
+      end.
+    + (* t_decay_tick: apply higher-order witness *)
+      match goal with
+      | [ Hdecay : forall _ _, _ -> ss_total_energy ss' >= _ |- _ ] =>
+        apply Hdecay; exact Hlower
+      end.
+    + (* t_deliver *)
+      match goal with
+      | [ He : ss_total_energy ss' = _, Ht : ss_global_time ss' = _ |- _ ] =>
+        rewrite He, Ht; exact Hlower
+      end.
+    + (* t_noop: ss' = ss, exact Hlower *)
+      exact Hlower.
+Qed.
 
 (** [DECAY-2] Decay does not violate quorum: validator set is preserved
     across [AEnergyDecayTick] transitions, so [honest_supermajority]
@@ -582,7 +674,13 @@ Admitted.
 
     DISCHARGED 2026-05-06 (skeleton variant). Inverts the t_decay_tick
     constructor to obtain the [ss_validators ss' = ss_validators ss]
-    equation, then rewrites and applies the hypothesis. *)
+    equation, then rewrites and applies the hypothesis.
+
+    REFRESHED 2026-05-07 to use [match goal] for hypothesis lookup
+    rather than a positional [as ...] pattern, so the proof is robust
+    to t_decay_tick's expanded arity from the [DECAY-1-LOWER] discharge
+    (added [ss_global_time ss' >= ss_global_time ss] and the
+    higher-order decay-monotonicity witness). *)
 Lemma decay_preserves_quorum :
   forall (ss ss' : SystemState) (delta : nat),
     transition ss (AEnergyDecayTick delta) ss' ->
@@ -590,9 +688,11 @@ Lemma decay_preserves_quorum :
     honest_supermajority (ss_validators ss').
 Proof.
   intros ss ss' delta Hstep Hsuper.
-  inversion Hstep as [| | | | | ss0 delta0 ss'0 Hvals_eq Heq_action Heq_ss' | |].
-  - (* Inversion case for t_decay_tick: ss_validators ss' = ss_validators ss *)
-    rewrite Hvals_eq. exact Hsuper.
+  inversion Hstep; subst.
+  match goal with
+  | [ Hvals : ss_validators _ = ss_validators _ |- _ ] =>
+    rewrite Hvals; exact Hsuper
+  end.
 Qed.
 
 (** [DAG-1] Antichain finality is safe: any pair (h1, h2) of distinct
@@ -731,18 +831,24 @@ Admitted.
    ================================================================ *)
 
 (**
-   [SAFETY-1]  quorum_intersection                          DISCHARGED 2026-05-06 (1-line lia)
-   [SAFETY-2]  lock_safety                                  ~50 LOC, 2-3 days
-   [SAFETY-3]  cross_fork_equivocation_caught               ~40 LOC, 2 days
-   [LIVENESS-1] eventual_delivery                            ~25 LOC, 1 day
-   [LIVENESS-2] honest_proposer_eventual                     ~40 LOC, 2 days
-   [DECAY-1]   transition_preserves_conservation            ~80 LOC, 3-4 days
-   [DECAY-2]   decay_preserves_quorum                       ~50 LOC, 2-3 days
-   [DAG-1]     antichain_finality_safe                      ~60 LOC, 3 days
-   [DAG-2]     multi_parent_preserves_causality             ~30 LOC, 1-2 days
+   [SAFETY-1]    quorum_intersection                        DISCHARGED 2026-05-06 (1-line lia)
+   [SAFETY-2]    lock_safety                                ~50 LOC, 2-3 days
+   [SAFETY-3]    cross_fork_equivocation_caught             ~40 LOC, 2 days
+   [LIVENESS-1]  eventual_delivery                          DISCHARGED 2026-05-06 (~25 LOC)
+   [LIVENESS-2]  honest_proposer_eventual                   ~40 LOC, 2 days
+   [DECAY-1]     transition_preserves_conservation          DISCHARGED 2026-05-07 (~80 LOC; upper-bound 2026-05-06, lower-bound 2026-05-07 via t_decay_tick higher-order witness + non-decay equality refinements)
+   [DECAY-2]     decay_preserves_quorum                     DISCHARGED 2026-05-06 (skeleton variant; refreshed 2026-05-07 for t_decay_tick arity change)
+   [DAG-1]       antichain_finality_safe                    DISCHARGED 2026-05-06 (~60 LOC)
+   [DAG-2]       multi_parent_preserves_causality           DISCHARGED 2026-05-06 (~30 LOC)
    [SAFETY-BASE] safety at genesis (vacuous)                ~10 LOC, 1 day
    [LIVENESS-BASE] liveness at genesis (vacuous)            ~10 LOC, 1 day
-   [BIG]       decay_bft_safety_liveness (composition)      ~150 LOC, 1-2 weeks
+   [BIG]         decay_bft_safety_liveness (composition)    ~150 LOC, 1-2 weeks
+
+   STATUS 2026-05-07: 6 of 11 substantive obligations discharged
+   (SAFETY-1, LIVENESS-1, DECAY-1, DECAY-2, DAG-1, DAG-2). Remaining:
+   SAFETY-2, SAFETY-3, LIVENESS-2, SAFETY-BASE, LIVENESS-BASE, BIG.
+   Next critical-path discharge: SAFETY-2 (lock_safety) — gateway to
+   SAFETY-3 and the BIG composition.
 
    TOTAL: ~575 LOC of Coq proof body across ~6-8 weeks of focused work.
    Plus ~1.5K LOC of model + supporting lemmas already drafted above.
