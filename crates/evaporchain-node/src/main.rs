@@ -4954,7 +4954,15 @@ async fn main() -> Result<()> {
                                 // Prune old blocks and snapshots every 100 blocks
                                 if block.number % 100 == 0 && block.number > 1000 {
                                     let pruned = chain_store.prune_blocks(block.number, 1000);
-                                    chain_store.prune_full_blocks(block.number, 2000);
+                                    // Retain ALL full blocks — fresh-from-genesis sync
+                                    // requires peers to serve historical heights from
+                                    // chain_store after the in-memory cache rolls past
+                                    // them. The previous 2000-block retention made M1
+                                    // un-bootstrappable on 2026-05-07 (peers had pruned
+                                    // 1..15155 from disk). Re-introducing pruning needs
+                                    // a state-sync mechanism that lets fresh nodes jump
+                                    // to a recent snapshot height.
+                                    chain_store.prune_full_blocks(block.number, u64::MAX);
                                     chain_store.prune_old_snapshots(block.number, 200);
                                     if pruned > 0 {
                                         tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
@@ -6096,7 +6104,10 @@ async fn main() -> Result<()> {
                     // Prune old blocks every 100 blocks
                     if result.block.number % 100 == 0 && result.block.number > 1000 {
                         let pruned = chain_store.prune_blocks(result.block.number, 1000);
-                        chain_store.prune_full_blocks(result.block.number, 2000);
+                        // Retain ALL full blocks — see comment at the other
+                        // prune_full_blocks call site for why this was bumped
+                        // from 2000.
+                        chain_store.prune_full_blocks(result.block.number, u64::MAX);
                         chain_store.prune_old_snapshots(result.block.number, 200);
                         if pruned > 0 {
                             tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
