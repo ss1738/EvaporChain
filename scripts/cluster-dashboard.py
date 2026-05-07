@@ -116,6 +116,26 @@ def build_state() -> dict[str, Any]:
             if disk is not None and height and height > 0:
                 bytes_per_block = round(disk / height, 1)
 
+            # Decay-graph time-series: (relative_seconds, disk_bytes,
+            # block_height) tuples for SVG plotting. Down-sample to at
+            # most 80 points per node so the SVG stays readable; pick
+            # evenly-spaced indices across the captured window.
+            disk_series: list[list[float]] = []
+            if samples:
+                t0 = samples[0][0]
+                samples_with_disk = [
+                    (t - t0, s.get("data_dir_bytes"), s.get("block_height"))
+                    for (t, s) in samples
+                    if s.get("data_dir_bytes") is not None
+                ]
+                if samples_with_disk:
+                    n = len(samples_with_disk)
+                    step = max(1, n // 80)
+                    disk_series = [
+                        [round(t, 1), int(d), int(h or 0)]
+                        for (t, d, h) in samples_with_disk[::step]
+                    ]
+
             out["nodes"].append({
                 "label": label,
                 "ip": ip,
@@ -123,6 +143,7 @@ def build_state() -> dict[str, Any]:
                 **latest,
                 "block_rate_per_min": block_rate_per_min,
                 "bytes_per_block": bytes_per_block,
+                "disk_series": disk_series,
                 "history_points": len(samples),
             })
     # Cluster-wide convergence score: how many distinct (height, state_root) pairs
@@ -178,6 +199,12 @@ HTML_PAGE = """<!doctype html>
 <p style="color:#6e7681;font-size:11px;margin-top:6px;">
   <strong>Bytes/block</strong> is the decay-primitive indicator — flat or shrinking over time = healthy decay (state evaporates as it ages). Linearly growing = no decay (unbounded state growth like every other L1).
 </p>
+
+<h2 style="margin-top:24px;font-weight:500;font-size:14px;">Decay graph — disk bytes over time, per node</h2>
+<p style="color:#6e7681;font-size:11px;margin:0 0 8px;">
+  Live in-memory window (last ~30 min). Vanilla SVG, no chart library, no third-party. A flat or sub-linear curve under sustained block production = the decay primitive working as designed.
+</p>
+<svg id="decay-chart" width="100%" height="320" style="background:#0d1117;border:1px solid #21262d;border-radius:6px;"></svg>
 <div class="footer">Polling every 3 s &middot; data is in-memory only &middot; dashboard process serves on localhost:9090.</div>
 <script>
 function fmtUptime(s) {
@@ -197,6 +224,90 @@ function fmtBytesPerBlock(bpb) {
   if (bpb < 1024*1024) return (bpb/1024).toFixed(1) + 'KB';
   return (bpb/(1024*1024)).toFixed(2) + 'MB';
 }
+
+// Per-node colour palette. Stable across re-renders so each node
+// keeps its line colour. Picked for contrast on the dark background.
+const NODE_COLORS = {
+  M1: '#58a6ff',  // blue
+  M2: '#7ee2a3',  // green
+  M3: '#e8c870',  // amber
+  H1: '#ff8e8e',  // red
+  H2: '#c7a6ff',  // violet
+};
+
+function drawDecayChart(nodes) {
+  const svg = document.getElementById('decay-chart');
+  // Pull width from the rendered <svg> width (inherits from CSS 100%).
+  const W = svg.clientWidth || 1000;
+  const H = 320;
+  const padL = 60, padR = 110, padT = 18, padB = 36;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  // Pull all (t, bytes) points across all nodes to find axis ranges.
+  let minT = Infinity, maxT = -Infinity;
+  let minB = Infinity, maxB = -Infinity;
+  let havePoints = false;
+  for (const n of nodes) {
+    const series = n.disk_series || [];
+    for (const [t, b, h] of series) {
+      havePoints = true;
+      if (t < minT) minT = t;
+      if (t > maxT) maxT = t;
+      if (b < minB) minB = b;
+      if (b > maxB) maxB = b;
+    }
+  }
+  if (!havePoints) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" fill="#6e7681" font-family="monospace" font-size="13" text-anchor="middle">No decay data yet — older binary doesn't expose data_dir_bytes. Rebuild + restart at least one validator and waitone poll cycle.</text>`;
+    return;
+  }
+  // Pad y-axis 5% above max for headroom.
+  const yPad = (maxB - minB) * 0.05 || 1;
+  minB = Math.max(0, minB - yPad);
+  maxB = maxB + yPad;
+  const tRange = Math.max(1, maxT - minT);
+  const bRange = Math.max(1, maxB - minB);
+  const xOf = t => padL + ((t - minT) / tRange) * plotW;
+  const yOf = b => padT + plotH - ((b - minB) / bRange) * plotH;
+
+  // y-axis MB labels (5 ticks).
+  const yTicks = 5;
+  let axes = '';
+  for (let i = 0; i <= yTicks; i++) {
+    const v = minB + (bRange * i / yTicks);
+    const y = yOf(v);
+    const mb = (v / (1024*1024)).toFixed(0);
+    axes += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#21262d" stroke-width="1"/>`;
+    axes += `<text x="${padL-6}" y="${y+4}" fill="#6e7681" font-family="monospace" font-size="10" text-anchor="end">${mb} MB</text>`;
+  }
+  // x-axis time labels (5 ticks, in seconds → minutes).
+  const xTicks = 5;
+  for (let i = 0; i <= xTicks; i++) {
+    const t = minT + (tRange * i / xTicks);
+    const x = xOf(t);
+    const min = (t / 60).toFixed(1);
+    axes += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H-padB}" stroke="#21262d" stroke-width="1"/>`;
+    axes += `<text x="${x}" y="${H-padB+14}" fill="#6e7681" font-family="monospace" font-size="10" text-anchor="middle">${min}m</text>`;
+  }
+
+  // Per-node polylines.
+  let lines = '';
+  let legend = '';
+  let lx = W - padR + 10;
+  let ly = padT + 8;
+  for (const n of nodes) {
+    const colour = NODE_COLORS[n.label] || '#c9d1d9';
+    const pts = (n.disk_series || []).map(([t, b]) => `${xOf(t).toFixed(1)},${yOf(b).toFixed(1)}`).join(' ');
+    if (pts) {
+      lines += `<polyline points="${pts}" fill="none" stroke="${colour}" stroke-width="1.6" stroke-linejoin="round"/>`;
+    }
+    legend += `<text x="${lx}" y="${ly}" fill="${colour}" font-family="monospace" font-size="11">${n.label}</text>`;
+    ly += 16;
+  }
+
+  svg.innerHTML = axes + lines + legend;
+}
 async function tick() {
   let data;
   try { data = await (await fetch('/state.json')).json(); }
@@ -210,6 +321,7 @@ async function tick() {
     <div class="stat"><div class="lbl">Cluster convergence</div><div class="val">${distinct === 1 ? '5/5 lockstep' : 'spread'}</div></div>
   `;
   const tbody = document.querySelector('#nodes tbody');
+  drawDecayChart(data.nodes);
   tbody.innerHTML = data.nodes.map(n => {
     if (!n.ok) return `<tr><td>${n.label}</td><td>${n.name}</td><td colspan="9" class="down">unreachable (${n.ip})</td></tr>`;
     return `<tr>
