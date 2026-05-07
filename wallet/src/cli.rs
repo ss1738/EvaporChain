@@ -4706,6 +4706,20 @@ async fn cmd_account(
             );
         }
         AccountAction::List => {
+            // Best-effort on-chain refresh so the balance/nonce columns
+            // show real numbers instead of `?`. If the node is
+            // unreachable or returns an error, list still works — just
+            // shows cached/missing values. Skip refresh entirely if
+            // there are no accounts (saves a needless RPC round-trip).
+            if !mgr.list_accounts().is_empty() {
+                if let Err(e) = mgr.refresh_all().await {
+                    eprintln!(
+                        "  {} could not refresh balances from node ({}): showing cached values",
+                        "warn:".yellow(),
+                        e
+                    );
+                }
+            }
             let accounts = mgr.list_accounts();
             if crate::output::is_json_mode() {
                 let json_accounts: Vec<crate::output::AccountInfo> = accounts
@@ -4731,7 +4745,14 @@ async fn cmd_account(
                         .balance
                         .map(|b| format!("{} EVAP", b))
                         .unwrap_or_else(|| "?".to_string());
-                    println!("{}{:<12} {} ({})", marker, a.name, a.address, bal);
+                    let nonce = a
+                        .nonce
+                        .map(|n| format!("nonce={n}"))
+                        .unwrap_or_else(|| "nonce=?".to_string());
+                    println!(
+                        "{}{:<14} {} {:>14} {:>10}",
+                        marker, a.name, a.address, bal, nonce
+                    );
                 }
             }
         }
