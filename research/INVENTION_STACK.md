@@ -213,7 +213,7 @@ For each Tier-1 primitive, the agent or session that surfaced it:
 | **Headline sentence** — pick one for technical pitch, one for marketing | 4 candidates above; not yet locked |
 | **Light-Cone Consensus latency target** — must hold under Sui/Aptos DEX workload before launch | Adversarial benchmark suite to be built in M5/M6 (twin's plan) |
 | **Bell-Certified Beacon hardware attestation** — which CHSH source vendor / fallback chain | V2 question; research-mode |
-| **Total chain energy budget at genesis** — sets all other constants | Tokenomics ceremony question |
+| **Total chain energy budget at genesis** — sets all other constants | Tokenomics doctrine scaffolded 2026-05-07 in `TOKENOMICS.md` (549 lines, 28 ceremony questions, §1-3). Mechanisms wired: VestingLock (§2.6), EmissionParams dispatch (§2.4), MEV reconciliation (§2.3). Three §2 items remain ceremony-blocked: §2.1 recipient policy (Q6), §2.2 validator commission (Q7), §2.5 staking-APY controller (Q21) — engineering can resume once tokenomics advisor lands those decisions. Genesis-mainnet.json now locks 900M of 1B at genesis under placeholder vesting schedules pending counsel review. |
 | **Conservation invariant proof** — formal Lyapunov-style proof that total energy is monotone-decreasing | TLA+ / Coq target during the sprint |
 
 ---
