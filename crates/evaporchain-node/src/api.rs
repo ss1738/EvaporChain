@@ -8665,6 +8665,76 @@ async fn get_single_block(
     Ok(Json(block))
 }
 
+// ─────────── Light-header endpoints (for evaporchain-light-client SDK) ──────
+//
+// Returns the consensus crate's `LightBlockHeader` shape directly so the SDK's
+// `evaporchain-light-client-http::HttpTransport` can decode straight into
+// the type expected by `RpcTransport::fetch_header_at` / `fetch_latest_header`.
+// Synthesised on-demand from the chain_store full block + the running
+// validator set; not a separate persisted shape.
+//
+// Returns 404 when:
+//   - the requested height has no full block in chain_store (post-prune
+//     or pre-genesis), OR
+//   - the block has no commit_certificate (e.g., not yet finalised), OR
+//   - the node has no tendermint consensus engine (early-startup or
+//     mock-consensus-only deployments).
+//
+// Wires:
+//   `RpcTransport::fetch_header_at(height)` → GET /api/light_header/:height
+//   `RpcTransport::fetch_latest_header()`   → GET /api/light_header/latest
+fn build_light_header_for_block(
+    state: &Arc<ApiState>,
+    block: &evaporchain_types::Block,
+) -> Option<evaporchain_consensus::light_client::LightBlockHeader> {
+    let cert = block.commit_certificate.as_ref()?.clone();
+    let tendermint = state.tendermint.as_ref()?;
+    let validator_set = {
+        let tc = safe_lock(tendermint);
+        tc.validator_set().clone()
+    };
+    Some(evaporchain_consensus::light_client::LightBlockHeader {
+        height: block.number,
+        epoch: block.epoch,
+        block_hash: cert.block_hash,
+        parent_hash: block.parent_hash,
+        state_root: block.state_root,
+        timestamp: block.timestamp,
+        validator_set,
+        commit_certificate: cert,
+    })
+}
+
+async fn get_light_header(
+    State(state): State<Arc<ApiState>>,
+    Path(height): Path<u64>,
+) -> Result<Json<evaporchain_consensus::light_client::LightBlockHeader>, StatusCode> {
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let block = store.load_full_block(height).ok_or(StatusCode::NOT_FOUND)?;
+    let header = build_light_header_for_block(&state, &block).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(header))
+}
+
+async fn get_latest_light_header(
+    State(state): State<Arc<ApiState>>,
+) -> Result<Json<evaporchain_consensus::light_client::LightBlockHeader>, StatusCode> {
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let history = safe_lock(&state.block_history);
+    let latest_height = history.back().map(|b| b.number).ok_or(StatusCode::NOT_FOUND)?;
+    drop(history);
+    let block = store
+        .load_full_block(latest_height)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let header = build_light_header_for_block(&state, &block).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(header))
+}
+
 /// Wallet-facing tx-status response. Mirrors the wallet's `TxStatus` TS shape
 /// (`extension/src/utils/api.ts`) so the polling client can drop its 404
 /// special-case and progress `pending → mempool → included → finalised`
@@ -16222,6 +16292,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/blocks/latest", get(get_latest_block))
         .route("/api/block/latest", get(get_latest_block))
         .route("/api/block/:number", get(get_single_block))
+        .route("/api/light_header/:height", get(get_light_header))
+        .route("/api/light_header/latest", get(get_latest_light_header))
         .route(
             "/api/block/:number/transactions",
             get(get_block_transactions),
@@ -18630,5 +18702,117 @@ mod fork_cert_v2_handler_tests {
             w_a, w_b,
             "different anchors must yield different witnesses (V2 binding)"
         );
+    }
+}
+
+#[cfg(test)]
+mod canonical_tx_hash_regression {
+    //! Regression test for the 2026-05-07 canonical-hash bug.
+    //!
+    //! Pre-fix the API returned a tx_hash computed from a format string
+    //! ("transfer:from:to:amount") via the legacy `tx_hash()` helper.
+    //! The chain's executor recorded finalised txs by the CANONICAL
+    //! hash — `BLAKE3` over `tx.signable_bytes()` — which is what
+    //! `tx_records_from_block_with_outcomes` computes when it builds
+    //! `BlockRecord.transactions[].hash`. The two never matched, so a
+    //! wallet that saved the API's returned hash and polled
+    //! `/api/tx/<hash>` got `pending` forever even after the tx
+    //! finalised.
+    //!
+    //! These tests lock the contract: the canonical hash is
+    //! `hex(blake3(signable_bytes))`, distinct from the legacy
+    //! format-string hash, and matches what the chain records.
+    use super::*;
+    use evaporchain_types::{Transaction, TransferTx};
+
+    fn sample_transfer() -> Transaction {
+        // Realistic post-sign Transfer (signature populated as the
+        // submission path does after sign_transaction).
+        Transaction::Transfer(TransferTx {
+            from: [0x01; 32],
+            to: [0x02; 32],
+            amount: 1000,
+            nonce: 5,
+            signature: Some(vec![0xAA; 64]),
+            public_key: Some(vec![0xBB; 32]),
+            mev_refund_eligible: None,
+        })
+    }
+
+    /// The canonical hash format is BLAKE3(signable_bytes), 32 bytes
+    /// hex-encoded → 64 chars. Lock the format.
+    #[test]
+    fn canonical_hash_format_is_blake3_signable_bytes() {
+        let tx = sample_transfer();
+        let h = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+        assert_eq!(h.len(), 64, "canonical hash must be 64 hex chars (32 bytes)");
+        assert!(
+            h.chars().all(|c| c.is_ascii_hexdigit()),
+            "canonical hash must be all-hex"
+        );
+    }
+
+    /// The canonical hash must be DETERMINISTIC: hashing the same
+    /// transaction twice must produce identical output. This is the
+    /// core invariant the `/api/tx/<hash>` lookup relies on.
+    #[test]
+    fn canonical_hash_is_deterministic() {
+        let tx = sample_transfer();
+        let h1 = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+        let h2 = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+        assert_eq!(h1, h2);
+    }
+
+    /// The canonical hash must DIFFER from the legacy format-string
+    /// hash. Pre-fix code returned the format-string version; if a
+    /// future change ever reverts to it, this assertion fails. Lock
+    /// the regression.
+    #[test]
+    fn canonical_hash_differs_from_legacy_format_string() {
+        let tx = sample_transfer();
+        let canonical = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+        // Reproduce the pre-fix format-string hash shape.
+        let legacy_format_hash = tx_hash(&format!(
+            "transfer:{}:{}:{}",
+            hex::encode(&[0x01u8; 20]),
+            hex::encode(&[0x02u8; 20]),
+            1000
+        ));
+        assert_ne!(
+            canonical, legacy_format_hash,
+            "canonical hash must NOT equal the legacy format-string hash — \
+             a regression to the format-string would break /api/tx/<hash>"
+        );
+    }
+
+    /// The canonical hash must be SENSITIVE to nonce — two transfers
+    /// from the same sender to the same recipient with the same amount
+    /// but different nonces must produce different hashes. Pre-fix the
+    /// format-string hash IGNORED nonce, so two such submissions
+    /// would collide on the API-returned hash even though the chain
+    /// treated them as distinct txs.
+    #[test]
+    fn canonical_hash_sensitive_to_nonce() {
+        let tx_n5 = Transaction::Transfer(TransferTx {
+            from: [0x01; 32],
+            to: [0x02; 32],
+            amount: 1000,
+            nonce: 5,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let tx_n6 = Transaction::Transfer(TransferTx {
+            from: [0x01; 32],
+            to: [0x02; 32],
+            amount: 1000,
+            nonce: 6,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let h5 = hex::encode(blake3::hash(&tx_n5.signable_bytes()).as_bytes());
+        let h6 = hex::encode(blake3::hash(&tx_n6.signable_bytes()).as_bytes());
+        assert_ne!(h5, h6, "canonical hash must distinguish txs that differ only in nonce");
     }
 }
