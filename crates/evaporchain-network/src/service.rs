@@ -1408,14 +1408,25 @@ impl P2pNetworkService {
                         if pool.is_empty() {
                             warn!("No peers available for shard sample request");
                         } else {
-                            let idx = (req_rotation as usize) % pool.len();
+                            // Fan out to ALL peers in pool. Earlier code sent
+                            // to one round-robin peer, which wedged whenever
+                            // that peer didn't yet have the block's shards
+                            // — common right at finalization time over WAN.
+                            // Receiving multiple responses for the same query
+                            // is safe: the main loop's cumulative
+                            // da_valid_sample_count handles duplicates by
+                            // raising confidence faster.
                             req_rotation = req_rotation.wrapping_add(1);
-                            let target = pool[idx];
-                            debug!("Requesting {} shard samples from peer {target}", queries.len());
-                            swarm.behaviour_mut().shard_sample.send_request(
-                                &target,
-                                ShardSampleRequest { queries },
+                            debug!(
+                                "Requesting {} shard samples from {} peers (fan-out)",
+                                queries.len(), pool.len()
                             );
+                            for &target in pool.iter() {
+                                swarm.behaviour_mut().shard_sample.send_request(
+                                    &target,
+                                    ShardSampleRequest { queries: queries.clone() },
+                                );
+                            }
                         }
                     }
                     // App requests block sync from peers

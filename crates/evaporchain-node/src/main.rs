@@ -63,7 +63,11 @@ struct PendingSample {
 }
 
 /// Maximum number of retry attempts for a DA sample request.
-const DA_SAMPLE_MAX_RETRIES: u8 = 2;
+/// Bumped from 2 → 5 alongside the network-layer fan-out fix: even with
+/// fan-out across all peers, a freshly proposed block's shards may not
+/// have reached every peer's cache by the time we sample — extra retries
+/// give those peers time to ingest before we give up.
+const DA_SAMPLE_MAX_RETRIES: u8 = 5;
 
 /// Timeout before retrying a DA sample request (5 seconds).
 const DA_SAMPLE_TIMEOUT: Duration = Duration::from_secs(5);
