@@ -65,14 +65,24 @@ enum Cmd {
         bearer_token: Option<String>,
     },
 
-    /// Fetch + verify a state-query proof for the given trie key.
+    /// Fetch + verify a state-query proof for the given trie key
+    /// (or account address — see --account).
     GetState {
         /// Node base URL.
         #[arg(long)]
         node: String,
-        /// 64-character hex 32-byte trie key.
-        #[arg(long)]
-        key: String,
+        /// 64-character hex 32-byte trie key. Mutually exclusive
+        /// with --account; one of the two is required.
+        #[arg(long, conflicts_with = "account")]
+        key: Option<String>,
+        /// 64-character hex 32-byte account address. The CLI
+        /// derives the trie key as
+        /// `blake3("acct" || address)` — same formula
+        /// `evaporchain_state::trie_key_for_account` uses.
+        /// Mutually exclusive with --key; one of the two is
+        /// required.
+        #[arg(long, conflicts_with = "key")]
+        account: Option<String>,
         /// Optional 64-character hex 32-byte expected value. If
         /// supplied, the CLI fails non-zero on mismatch.
         #[arg(long)]
@@ -112,9 +122,10 @@ fn main() -> ExitCode {
         Cmd::GetState {
             node,
             key,
+            account,
             expected,
             bearer_token,
-        } => run_get_state(node, key, expected, bearer_token),
+        } => run_get_state(node, key, account, expected, bearer_token),
         Cmd::Watch {
             node,
             genesis_height,
@@ -187,14 +198,44 @@ fn run_sync_latest(
 
 fn run_get_state(
     node: String,
-    key_hex: String,
+    key_hex: Option<String>,
+    account_hex: Option<String>,
     expected_hex: Option<String>,
     bearer_token: Option<String>,
 ) -> Result<(), String> {
     let transport = build_transport(&node, bearer_token);
     let now = current_time_secs();
 
-    let key = parse_hex_32(&key_hex).ok_or_else(|| format!("--key must be 64-char hex: {key_hex}"))?;
+    // Resolve the trie key from either --key or --account. clap's
+    // `conflicts_with` ensures we never get both; we still need to
+    // require one.
+    let (key, source_label) = match (key_hex.as_deref(), account_hex.as_deref()) {
+        (Some(k), None) => {
+            let k_arr = parse_hex_32(k)
+                .ok_or_else(|| format!("--key must be 64-char hex: {k}"))?;
+            (k_arr, format!("key={k}"))
+        }
+        (None, Some(a)) => {
+            let addr = parse_hex_32(a)
+                .ok_or_else(|| format!("--account must be 64-char hex: {a}"))?;
+            // Same formula as evaporchain-state::db::trie_key_for_account:
+            //   blake3("acct" || address)
+            let mut buf = Vec::with_capacity(36);
+            buf.extend_from_slice(b"acct");
+            buf.extend_from_slice(&addr);
+            let derived = *blake3::hash(&buf).as_bytes();
+            (derived, format!("account={a}"))
+        }
+        (None, None) => {
+            return Err(
+                "one of --key (raw 32-byte trie key) or --account (32-byte address)
+ is required"
+                    .to_string(),
+            );
+        }
+        (Some(_), Some(_)) => unreachable!("clap conflicts_with prevents both"),
+    };
+
     let expected = match expected_hex.as_deref() {
         Some(s) => Some(
             parse_hex_32(s).ok_or_else(|| format!("--expected must be 64-char hex: {s}"))?,
@@ -210,12 +251,13 @@ fn run_get_state(
 
     let value = lc
         .fetch_and_verify_state(&transport, &key, expected)
-        .map_err(|e| format!("verify state at key {key_hex}: {e}"))?;
+        .map_err(|e| format!("verify state at {source_label}: {e}"))?;
 
     let out = serde_json::json!({
         "trusted_tip_height": lc.current_height(),
         "trusted_tip_state_root": hex_lower(&lc.current_state_root()),
-        "key": key_hex,
+        "queried": source_label,
+        "trie_key": hex_lower(&key),
         "value": value.map(|v| hex_lower(&v)),
     });
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -353,12 +395,49 @@ mod tests {
         ])
         .expect("must parse");
         match cli.command {
-            Cmd::GetState { node, key: k, .. } => {
+            Cmd::GetState { node, key: k, account, .. } => {
                 assert_eq!(node, "http://localhost:8080");
-                assert_eq!(k, key);
+                assert_eq!(k, Some(key));
+                assert_eq!(account, None);
             }
             _ => panic!("wrong subcommand"),
         }
+    }
+
+    #[test]
+    fn cli_parses_get_state_with_account() {
+        let addr = "0".repeat(64);
+        let cli = Cli::try_parse_from([
+            "lc",
+            "get-state",
+            "--node",
+            "http://localhost:8080",
+            "--account",
+            &addr,
+        ])
+        .expect("must parse");
+        match cli.command {
+            Cmd::GetState { account, key, .. } => {
+                assert_eq!(account, Some(addr));
+                assert_eq!(key, None);
+            }
+            _ => panic!("wrong subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_get_state_rejects_both_key_and_account() {
+        let result = Cli::try_parse_from([
+            "lc",
+            "get-state",
+            "--node",
+            "http://localhost:8080",
+            "--key",
+            &"0".repeat(64),
+            "--account",
+            &"1".repeat(64),
+        ]);
+        assert!(result.is_err(), "clap should reject both --key and --account together");
     }
 
     #[test]

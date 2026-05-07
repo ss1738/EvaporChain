@@ -16,5 +16,6 @@ evaporchain-light-client-http = { path = "../evaporchain-light-client-http" }
 evaporchain-consensus         = { path = "../evaporchain-consensus" }
 evaporchain-types             = { path = "../evaporchain-types" }
 clap        = { version = "4", features = ["derive"] }
+blake3      = "1"
 serde       = { workspace = true }
 serde_json  = { workspace = true }
