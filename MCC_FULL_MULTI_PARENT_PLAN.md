@@ -1,7 +1,7 @@
 # MCC Fork-Choice Full Multi-Parent Enumeration — Plan
 
 **Created:** 2026-05-05
-**Status:** Phase 0 (planning) — implementation not started.
+**Status (2026-05-07):** **majority shipped** — 27 of 28 task boxes are `[x]` (~96%). Phases A–D substantively SHIPPED across substrate + soak + runbook (see commits ba5d591, d886573, f34cf07, b93195d, 108e60e). 1 task box remains. The original "Phase 0 (planning) — implementation not started" line was authored 2026-05-05 and was stale by ba5d591 (Phase D.1 ship, same day) — this header tracks live state going forward; the inline `[x]/[ ]` checkboxes are the authoritative per-task ledger.
 **Owner:** Satyawan Singh
 **Sibling plans:** `LIGHT_CONE_FULL_DAG_PLAN.md`, `CROOKS_MEV_INTEGRATION_PLAN.md`, `LAMBDA_FOLD_NOVA_PLAN.md`.
 

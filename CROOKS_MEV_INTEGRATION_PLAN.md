@@ -1,6 +1,6 @@
 # Crooks-MEV Refund — Consensus Integration Plan
 
-**Status:** plan-draft 2026-05-04. No implementation yet.
+**Status (2026-05-07):** **majority shipped** — 29 of 35 task boxes are `[x]` (~83%). Phases 1, 2, 3 substantively SHIPPED to substrate + observe-mode; Phases 3.5d/3.5e (enforce-mode flip + slashing-loop close) and Phase 4+ (anti-gaming, governance) remain. The original status line ("plan-draft, no implementation yet") was authored 2026-05-04 and was stale by the time the substrate landed — this header tracks live state going forward; the inline `[x]/[ ]` checkboxes are the authoritative per-task ledger.
 
 **Context:** `DOCTRINE_PUNCH_LIST.md` Layer 6 row marks Crooks-MEV as "⚠ substrate-only — HTTP endpoint at `api.rs:4153/4168` consumes `evaporchain_crooks_mev_refund::compute_refund` but no consensus hot-path integration." This file is the roadmap to flip that to ✅. Mirrors `LAMBDA_FOLD_NOVA_PLAN.md` in shape — phases, stopping conditions, tests, doctrine sweep at the end.
 

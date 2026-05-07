@@ -1,6 +1,6 @@
 # Light-Cone Full DAG Consensus — Implementation Plan
 
-**Status:** plan-draft 2026-05-04. No implementation yet.
+**Status (2026-05-07):** **39 of 39 task boxes are `[x]` SHIPPED** — every individual task in this plan has landed in code. The original status line ("plan-draft, no implementation yet") was authored 2026-05-04 and was stale by the time the substrate landed — this header tracks live state going forward; the inline `[x]` checkboxes are the authoritative per-task ledger. Cross-check: `DOCTRINE_PUNCH_LIST.md` Layer 6 Light-Cone row also reflects the shipped state. Any remaining "full DAG fork-choice" work (multi-parent state branching beyond what's shipped) belongs to a successor plan, not this one.
 
 **Context:** `DOCTRINE_PUNCH_LIST.md` Layer 6 Light-Cone row reads "⏳ tendermint.rs still 8,782 LOC; `MccForkChoice` (Layer 4) cherry-picks parents but doesn't materialise alternative state branches — full DAG fork-choice is genuine months-long work." This file is the roadmap to flip it to ✅. Mirrors `LAMBDA_FOLD_NOVA_PLAN.md` and `CROOKS_MEV_INTEGRATION_PLAN.md` in shape — phases, stopping conditions, tests, doctrine sweep at the end.
 

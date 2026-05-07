@@ -90,6 +90,9 @@ EvaporChain's security relies on the following hardness assumptions:
 
 | Date | Auditor | Scope | Status |
 |------|---------|-------|--------|
-| — | — | Pre-mainnet full audit | Planned |
+| 2026-04-24 | Internal (12-agent suite) | Full codebase + consensus + crypto + DA + execution + proving + scripting + governance + persistence + network + standards + tests | **Complete** — see `FULL_AUDIT_2026_04_24.md` (13 CRITICALs identified, all closed) |
+| 2026-04-27 | Internal (end-to-end suite) | Re-audit + cross-verification + dependency baseline + audit-readiness pack + external-audit RFP | **Complete** — see `audit/end_to_end_audit_2026_04_27.md` and the four sibling files in `audit/` |
+| 2026-05-06 | Internal (full-tree audit) | End-to-end re-audit covering 7/7 historical CRITICALs + 4/4 HIGH + 5/5 MEDIUM substrates + doc-drift sweep | **Complete** — see `AUDIT_2026_05_06.md` |
+| TBD | External firm (Trail of Bits / Sigma Prime / Halborn — RFP issued) | Full pre-mainnet audit per scope in `audit/external_audit_rfp_2026_04_27.md` | **Engagement deferred** until mainnet-blocker punch-list at `DOCTRINE_PUNCH_LIST.md` is exhausted |
 
 This document will be updated as audits are completed.
