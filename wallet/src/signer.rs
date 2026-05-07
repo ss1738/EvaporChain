@@ -326,6 +326,65 @@ mod tests {
         assert_eq!(*signer.address(), expected);
     }
 
+    /// Regression test (commit ed01c86): WalletSigner::unlock must honor
+    /// the keystore entry's `address` field, not re-derive from the
+    /// pubkey. This is the path that genesis-allocated accounts (e.g.
+    /// validator-N operator at [N, 0, 0, ...]) take when imported via
+    /// `account import --address-override`.
+    #[test]
+    fn test_unlock_honors_stored_address_override() {
+        // Override address that does NOT match hash(pubkey).
+        let override_addr: AccountAddress = [0x01; 32];
+
+        let kp = MlDsaKeypair::generate();
+        let pk_bytes = kp.public_key_bytes();
+        let sk_bytes: Vec<u8> = kp.secret_key().to_vec();
+        let derived = derive_address(&pk_bytes);
+        assert_ne!(derived, override_addr,
+            "test setup invariant: derived must differ from override");
+
+        let mut store = KeyStore::new();
+        let returned_addr = store.import_key_with_address(
+            "validator-1",
+            "pass",
+            &pk_bytes,
+            &sk_bytes,
+            override_addr,
+        ).expect("import_key_with_address");
+        assert_eq!(returned_addr, override_addr);
+
+        // Round-trip the keystore through serde so we exercise the
+        // load path too (matches what `wallet send` does on a fresh
+        // process).
+        let json = serde_json::to_string(&store).unwrap();
+        let reloaded: KeyStore = serde_json::from_str(&json).unwrap();
+
+        // CRITICAL: unlock must produce a signer whose address equals
+        // the OVERRIDE address, not the derived address. Pre-fix this
+        // assertion failed (signer used derive_address(pubkey)).
+        let signer = WalletSigner::unlock(&reloaded, "validator-1", "pass").unwrap();
+        assert_eq!(*signer.address(), override_addr,
+            "signer must use the keystore entry's address, not re-derive from pubkey");
+
+        // Also verify a signature signed by this signer carries the
+        // SAME pubkey as the original keypair (so the chain can
+        // verify it).
+        let pk_emitted = signer.public_key_bytes();
+        assert_eq!(pk_emitted, pk_bytes);
+    }
+
+    /// Default path: unlock without override yields a signer whose
+    /// address is derive_address(pubkey). Confirms backwards-compat —
+    /// fresh keys generated via `account create` continue to work.
+    #[test]
+    fn test_unlock_default_path_uses_derived_address() {
+        let mut store = KeyStore::new();
+        let addr = store.generate_key("alice", "pass").unwrap();
+        let signer = WalletSigner::unlock(&store, "alice", "pass").unwrap();
+        assert_eq!(*signer.address(), addr,
+            "default unlock must derive address from pubkey");
+    }
+
     // ─── Hybrid Signer Tests ──────────────────────────────────────────
 
     #[test]
