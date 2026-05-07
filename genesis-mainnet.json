@@ -1,5 +1,6 @@
 {
   "_comment": "DEVELOPMENT SCAFFOLD — NOT the real mainnet genesis. Placeholder addresses, stakes, and peers. The real genesis is produced from genesis-target.json via docs/GENESIS_CEREMONY.md. The genesis_time below is aspirational and will be set at T-7 days during the ceremony.",
+  "_vesting_placeholder_warning": "VESTING SCHEDULES IN THIS FILE ARE PLACEHOLDERS — not legal/economic decisions. Industry-standard defaults applied (12mo cliff + 36-48mo linear for treasury/contributors, 6mo+24mo for ecosystem, none for airdrop). Foundation/Contributor durations MUST be reviewed by counsel + tokenomics advisor before mainnet. See TOKENOMICS.md §3 Q14-Q17. Epoch math: at block_interval_ms=2000 (2s blocks), 12 months = 15,768,000 epochs.",
   "chain_params": {
     "chain_id": "evaporchain-mainnet-1",
     "block_interval_ms": 2000,
@@ -54,17 +55,32 @@
     {
       "address": [160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       "balance": 350000000,
-      "label": "Foundation Treasury"
+      "label": "Foundation Treasury",
+      "vesting": {
+        "cliff_epoch": 15768000,
+        "linear_release_epochs": 63072000,
+        "total_locked": 350000000
+      }
     },
     {
       "address": [176, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       "balance": 200000000,
-      "label": "Ecosystem Development"
+      "label": "Ecosystem Development",
+      "vesting": {
+        "cliff_epoch": 7884000,
+        "linear_release_epochs": 31536000,
+        "total_locked": 200000000
+      }
     },
     {
       "address": [192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       "balance": 150000000,
-      "label": "Core Contributors"
+      "label": "Core Contributors",
+      "vesting": {
+        "cliff_epoch": 15768000,
+        "linear_release_epochs": 47304000,
+        "total_locked": 150000000
+      }
     },
     {
       "address": [208, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -74,22 +90,42 @@
     {
       "address": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       "balance": 50000000,
-      "label": "Validator-Alpha Operator"
+      "label": "Validator-Alpha Operator",
+      "vesting": {
+        "cliff_epoch": 15768000,
+        "linear_release_epochs": 31536000,
+        "total_locked": 50000000
+      }
     },
     {
       "address": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       "balance": 50000000,
-      "label": "Validator-Beta Operator"
+      "label": "Validator-Beta Operator",
+      "vesting": {
+        "cliff_epoch": 15768000,
+        "linear_release_epochs": 31536000,
+        "total_locked": 50000000
+      }
     },
     {
       "address": [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       "balance": 50000000,
-      "label": "Validator-Gamma Operator"
+      "label": "Validator-Gamma Operator",
+      "vesting": {
+        "cliff_epoch": 15768000,
+        "linear_release_epochs": 31536000,
+        "total_locked": 50000000
+      }
     },
     {
       "address": [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       "balance": 50000000,
-      "label": "Validator-Delta Operator"
+      "label": "Validator-Delta Operator",
+      "vesting": {
+        "cliff_epoch": 15768000,
+        "linear_release_epochs": 31536000,
+        "total_locked": 50000000
+      }
     }
   ],
   "objects": [],
