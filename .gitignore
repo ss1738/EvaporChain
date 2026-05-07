@@ -42,3 +42,10 @@ evaporchain-data/
 data-v1/
 *.db-shm
 *.db-wal
+
+# Per-agent temporary worktrees
+.claude/worktrees/
+
+# Python caches in research/
+__pycache__/
+*.pyc
