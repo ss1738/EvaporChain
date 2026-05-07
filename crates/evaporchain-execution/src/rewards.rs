@@ -103,8 +103,14 @@ impl RewardAccumulator {
     ) -> u64 {
         let mut producer_credit = 0u64;
 
-        // 1. Block reward (minted)
-        let block_reward = self.tokenomics.reward_at_epoch(epoch);
+        // 1. Block reward (minted) — clipped against the optional
+        //    `Tokenomics::max_supply_cap` using cumulative
+        //    `total_minted` so emissions never exceed the cap by
+        //    even one base unit. Audit 2026-05-06 MEDIUM (block
+        //    reward / emission schedule).
+        let block_reward = self
+            .tokenomics
+            .reward_at_epoch_capped(epoch, self.total_minted);
         if block_reward > 0 {
             let acct = db.get_or_create_account(producer);
             acct.balance = acct.balance.saturating_add(block_reward);

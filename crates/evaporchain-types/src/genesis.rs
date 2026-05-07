@@ -99,6 +99,15 @@ pub struct Tokenomics {
 
     /// Annual percentage yield target for staking rewards (informational).
     pub target_staking_apy: f64,
+
+    /// Optional terminal cap on cumulative emissions (in token base units).
+    /// Once `total_minted >= max_supply_cap`, `reward_at_epoch_capped`
+    /// returns 0 regardless of schedule. The final pre-cap block is
+    /// clipped to whatever headroom remains, so cumulative emissions
+    /// never exceed the cap by even one base unit. `None` = uncapped
+    /// (chain emits forever per the schedule). Audit 2026-05-06 MEDIUM.
+    #[serde(default)]
+    pub max_supply_cap: Option<u64>,
 }
 
 impl Default for Tokenomics {
@@ -110,6 +119,7 @@ impl Default for Tokenomics {
             fee_burn_rate: 0.50,
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
+            max_supply_cap: None,
         }
     }
 }
@@ -121,6 +131,34 @@ impl Tokenomics {
             return self.block_reward;
         }
         crate::energy_at_epoch(self.block_reward, self.reward_half_life, epoch)
+    }
+
+    /// Compute the block reward at `epoch`, then clip against
+    /// [`max_supply_cap`] given the cumulative emitted-so-far.
+    /// Returns the actual reward to mint this block (may be 0 if
+    /// the cap is already exhausted, or smaller than the schedule
+    /// value if this is the last pre-cap block).
+    ///
+    /// Audit 2026-05-06 MEDIUM (block reward / emission schedule):
+    /// the pre-fix `reward_at_epoch` had no terminal cap, so the
+    /// chain would emit forever per the halving schedule. Operators
+    /// who want a Bitcoin-style 21M cap had nowhere to encode it.
+    /// This method plugs that gap without changing the existing
+    /// `reward_at_epoch` shape — callers that don't need cap
+    /// enforcement still use the simple form.
+    pub fn reward_at_epoch_capped(&self, epoch: Epoch, total_minted: u64) -> u64 {
+        let raw = self.reward_at_epoch(epoch);
+        match self.max_supply_cap {
+            None => raw,
+            Some(cap) => {
+                if total_minted >= cap {
+                    0
+                } else {
+                    let headroom = cap - total_minted;
+                    raw.min(headroom)
+                }
+            }
+        }
     }
 
     /// Compute fee distribution for a block.
@@ -362,6 +400,7 @@ impl GenesisConfig {
                 fee_burn_rate: 0.50,
                 staker_fee_share: 0.50,
                 target_staking_apy: 0.05,
+                max_supply_cap: None,
             },
             genesis_time: "2026-04-06T00:00:00Z".to_string(),
             validators: vec![
@@ -510,6 +549,88 @@ mod tests {
         config.validators[0].stake = 1; // below min_validator_stake=100
         let errors = config.validate().unwrap_err();
         assert!(errors.iter().any(|e| e.contains("below minimum")));
+    }
+
+    // ── max_supply_cap (audit 2026-05-06 MEDIUM) ──────────────────
+
+    #[test]
+    fn reward_at_epoch_capped_with_no_cap_returns_raw_reward() {
+        let tok = Tokenomics::default(); // max_supply_cap = None
+        let total = 0;
+        // No cap → matches uncapped reward exactly.
+        assert_eq!(
+            tok.reward_at_epoch_capped(0, total),
+            tok.reward_at_epoch(0)
+        );
+        assert_eq!(
+            tok.reward_at_epoch_capped(1_000_000, u64::MAX / 2),
+            tok.reward_at_epoch(1_000_000)
+        );
+    }
+
+    #[test]
+    fn reward_at_epoch_capped_zero_when_total_at_cap() {
+        let mut tok = Tokenomics::default();
+        tok.max_supply_cap = Some(1_000_000);
+        // cumulative already AT cap → no more emissions.
+        assert_eq!(tok.reward_at_epoch_capped(0, 1_000_000), 0);
+        assert_eq!(tok.reward_at_epoch_capped(0, 1_000_001), 0);
+        assert_eq!(tok.reward_at_epoch_capped(1_000_000, u64::MAX), 0);
+    }
+
+    #[test]
+    fn reward_at_epoch_capped_clips_final_block_to_headroom() {
+        let mut tok = Tokenomics::default();
+        tok.block_reward = 100;
+        tok.reward_half_life = 0; // constant 100
+        tok.max_supply_cap = Some(1050);
+        // cumulative = 1000 → headroom = 50, so reward should be
+        // clipped from 100 to 50. The next block (cumulative = 1050)
+        // gets 0.
+        assert_eq!(tok.reward_at_epoch_capped(0, 1000), 50);
+        assert_eq!(tok.reward_at_epoch_capped(0, 1050), 0);
+    }
+
+    #[test]
+    fn reward_at_epoch_capped_compose_with_halving() {
+        // Halving every 100 epochs, initial 1024, cap 5000.
+        let mut tok = Tokenomics::default();
+        tok.block_reward = 1024;
+        tok.reward_half_life = 100;
+        tok.max_supply_cap = Some(5000);
+        // At epoch 0: schedule says 1024, headroom > 1024 → 1024.
+        assert_eq!(tok.reward_at_epoch_capped(0, 0), 1024);
+        // At epoch 100 (one halving): schedule = 512, cumulative
+        // = 4500, headroom = 500, so reward clipped to 500.
+        assert_eq!(tok.reward_at_epoch_capped(100, 4500), 500);
+        // At epoch 100, cumulative at cap = 0.
+        assert_eq!(tok.reward_at_epoch_capped(100, 5000), 0);
+    }
+
+    #[test]
+    fn tokenomics_serde_round_trip_with_cap() {
+        let mut tok = Tokenomics::default();
+        tok.max_supply_cap = Some(21_000_000);
+        let json = serde_json::to_string(&tok).unwrap();
+        let parsed: Tokenomics = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.max_supply_cap, Some(21_000_000));
+    }
+
+    #[test]
+    fn tokenomics_serde_round_trip_without_cap_field_defaults_to_none() {
+        // Existing genesis configs without `max_supply_cap` field
+        // must still parse — the #[serde(default)] makes it
+        // backward-compatible. Locks the migration contract.
+        let json_no_cap = r#"{
+            "total_supply": 1000000,
+            "block_reward": 100,
+            "reward_half_life": 1000000,
+            "fee_burn_rate": 0.5,
+            "staker_fee_share": 0.5,
+            "target_staking_apy": 0.05
+        }"#;
+        let parsed: Tokenomics = serde_json::from_str(json_no_cap).unwrap();
+        assert_eq!(parsed.max_supply_cap, None);
     }
 
     #[test]
