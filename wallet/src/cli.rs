@@ -732,8 +732,22 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum AccountAction {
-    /// Create a new account.
+    /// Create a new account (generates a fresh ML-DSA-65 keypair).
     Create { name: String },
+    /// Import an existing ML-DSA-65 keypair from a JSON key file.
+    ///
+    /// File format must include:
+    ///   { "ml_dsa": { "public_key": "<hex>", "secret_key": "<hex>" } }
+    /// Other top-level fields (e.g. `bls`, `vrf`) are ignored. Matches
+    /// the `validator-N-keys.json` bundle shape used by the genesis
+    /// ceremony — useful for importing a genesis-allocated account so
+    /// the wallet can sign / send EVAP from it.
+    Import {
+        /// Local name to assign to the imported account.
+        name: String,
+        /// Path to the JSON key file.
+        key_file: std::path::PathBuf,
+    },
     /// List all accounts.
     List,
     /// Switch active account.
@@ -4524,6 +4538,40 @@ async fn cmd_account(
             let addr = mgr.create_account(&name, &password)?;
             mgr.save(keystore_path)?;
             println!("{} Account '{}' created", "OK".green().bold(), name);
+            println!("   Address: {}", format_address(&addr));
+        }
+        AccountAction::Import { name, key_file } => {
+            validation::validate_name(&name)?;
+            let raw = std::fs::read_to_string(&key_file)
+                .map_err(|e| format!("read key file {}: {e}", key_file.display()))?;
+            let parsed: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|e| format!("parse key file as JSON: {e}"))?;
+            let pk_hex = parsed
+                .get("ml_dsa")
+                .and_then(|v| v.get("public_key"))
+                .and_then(|v| v.as_str())
+                .ok_or("key file missing ml_dsa.public_key (string)")?;
+            let sk_hex = parsed
+                .get("ml_dsa")
+                .and_then(|v| v.get("secret_key"))
+                .and_then(|v| v.as_str())
+                .ok_or("key file missing ml_dsa.secret_key (string)")?;
+            let public_key = hex::decode(pk_hex)
+                .map_err(|e| format!("ml_dsa.public_key hex-decode: {e}"))?;
+            let secret_key = hex::decode(sk_hex)
+                .map_err(|e| format!("ml_dsa.secret_key hex-decode: {e}"))?;
+            let password = prompt_password("Enter password to encrypt the imported key")?;
+            validation::validate_password(&password)?;
+            let addr = mgr.import_account(&name, &password, &public_key, &secret_key)?;
+            mgr.save(keystore_path)?;
+            println!(
+                "{} Imported '{}' from {} ({} byte pk, {} byte sk)",
+                "OK".green().bold(),
+                name,
+                key_file.display(),
+                public_key.len(),
+                secret_key.len()
+            );
             println!("   Address: {}", format_address(&addr));
         }
         AccountAction::List => {
