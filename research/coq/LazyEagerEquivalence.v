@@ -347,6 +347,16 @@ Qed.
     `nat_shr (k/h + 1)` differs from `nat_shr k/h` by exactly one
     halving. Tractable but technical; left as Admitted for a focused
     follow-up. *)
+(** Standalone helper for nat-sub anti-monotonicity in argument 2.
+    Coq's `Nat.sub_le_mono_l` has the wrong polarity (`n <= m ->
+    n - p <= m - p`); this is the form needed for `c - b <= c - a`
+    given `a <= b`. Stated as top-level so unification works
+    cleanly when applied inside proofs that have local `set`
+    bindings (which interfered with inline `assert` versions). *)
+Lemma nat_sub_anti_mono :
+  forall a b c, a <= b -> c - b <= c - a.
+Proof. intros; lia. Qed.
+
 (** Helper: floor-super-additivity for the linear_decay term. The
     sum of two floor-divides is bounded above by the floor of the
     sum: `floor(a/c) + floor(b/c) <= floor((a+b)/c)`. Specialised
@@ -398,44 +408,40 @@ Lemma concrete_step_subadditive_within_halving :
     EnergyDecayMonotonicity.energy_at_epoch
       (EnergyDecayMonotonicity.energy_at_epoch e h k) h 1.
 Proof.
-  (* Proof scaffold drafted across multiple 2026-05-07 attempts. The
-     structural decomposition is solid:
-       - h=1 case: contradiction (within-halving forces S k = k)
-       - h>=2 case: unfold energy_at_epoch on both sides; assemble
-         7 supporting bounds (Hsuper from linear_decay_super_additive
-         + 4 linear_decay_bounded sites + monotonicity-in-arg-1 of
-         the inner linear_decay + combined non-saturation bound)
-       - Final goal: `after - C <= (after - A) - D` reduces in
-         real arith to `A + D <= C`, immediate from Hsuper +
-         Hmono_inner.
+  (* 5 attempts on 2026-05-07. The mathematical content is sound:
+     after - C <= (after - A) - D reduces in real arith to
+     A + D <= C, which follows from Hsuper (A + B <= C) +
+     Hmono_inner (D <= B). The structural decomposition (h=1
+     contradiction; h>=2 7-bound assembly) is sound.
 
-     Tactical blocker (encountered in 4 separate attempts):
-       - Bare lia fails: doesn't unfold the saturating-sub
-         anti-monotonic relation across the structural goal.
-       - Bare nia same.
-       - set/remember/clearbody of the four linear_decay applications
-         + lia: same failure (lia can't bridge).
-       - Explicit chain via `replace ((after - A) - D) with
-         (after - (A + D))` (using Nat.sub_add_distr) does succeed,
-         leaving a goal `after - C <= after - (A + D)`. The remaining
-         `apply Nat.sub_le_mono_l` then fails because that lemma's
-         signature is `n <= m -> n - p <= m - p` — wrong polarity.
-         The needed lemma is `n <= m -> p - m <= p - n` (anti-mono
-         in arg-2). Inline-asserting `forall a b c, a <= b -> c - b
-         <= c - a` and proving by `intros; lia` succeeds for the
-         standalone helper but `apply Hsub_anti` then fails on the
-         actual goal due to unification difficulty around the `set
-         (after := nat_shr e (Nat.div k h))` binding inside the
-         destruct branch.
+     The blocker is Coq tactical: the destruct-on-leb branch
+     followed by the inner unfold-of-energy_at_epoch leaks the
+     `set after := nat_shr e (k/h)` binding's unfold into the goal
+     in some positions (where the cutoff-conditional `if match k/h
+     with S(S...64)) => true | _ => false then 0 else nat_shr e
+     (k/h) - linear_decay ...` shape persists). This means the
+     goal and any helper lemma applied at top level have
+     syntactically-different forms even though they're
+     definitionally equal. `lia`, `nia`, `apply
+     nat_sub_anti_mono`, `etransitivity + apply + reflexivity`,
+     `unfold after in *; lia`, `change` — all fail to bridge.
 
-     The needed missing piece is either:
-       (a) An anti-mono-arg-2 sub lemma in scope as a fresh nat
-           relation (without nested set bindings interfering), OR
-       (b) A more aggressive lia variant / autorewrite database that
-           handles `(c - b <= c - a)` from `a <= b` automatically.
+     Successful proof path is achievable via either:
+       (a) Restructure to AVOID `set after := ...` inside the
+           destruct branch (push the `set` outside, or use `pose +
+           generalize` to abstract before the destruct), so the
+           goal stays in the `after`-named form throughout.
+       (b) Add a top-level `Lemma` whose statement uses the fully-
+           unfolded form `nat_shr e (k/h) - linear_decay ...`, prove
+           it independently, then apply.
+       (c) Use `simpl in *` with explicit unfold control (Hint
+           Unfold) to normalise the goal and helpers consistently
+           before applying.
 
-     Tagged [DRIFT-STEP-SUB-WITHIN]. The proof IS structurally
-     sound — the Admitted is purely Coq-tactical. *)
+     Each is 30+ minutes of Coq engineering. Tagged
+     [DRIFT-STEP-SUB-WITHIN] for a focused-session pickup. The
+     mathematical proof is fully documented above and in
+     CHANGELOG. *)
 Admitted.
 
 (** Cross-halving case of step-subadditivity. When (S k)/h = k/h + 1
