@@ -1,5 +1,15 @@
 //! Evaporated-Fork Certificates.
 //!
+//! **Companion: V2.** `evaporchain-evap-fork-cert-v2` closes the
+//! pre-computation gap by binding the certificate witness to a
+//! 32-byte chain-supplied seed anchor (typically a
+//! `BellCertificate.seed` from `evaporchain-bell-beacon-v2`) plus
+//! the seed's issuance epoch. V1's witness is purely a function of
+//! public chain math, so a tactical forker who knows the half-life
+//! could pre-compute future certificates; V2 forces the witness to
+//! depend on a chain seed the forker can't compute in advance.
+//! V1 and V2 are peers, both live.
+//!
 //! Per `research/INVENTION_STACK.md` §4.1 row 10:
 //!
 //! > **Evaporated-Fork Certificates** — Negative-finality ZK proof:

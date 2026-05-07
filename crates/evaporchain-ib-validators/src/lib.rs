@@ -1,5 +1,14 @@
 //! Information-Bottleneck Validators — A4.3.1.
 //!
+//! **Companion: V2.** `evaporchain-ib-validators-v2` wraps this V1
+//! IB-vote gate (`Commit | Abstain` from KL divergence) with three
+//! structural rejection paths: CHSH-failed-window jail, energy-floor
+//! jail, and explicit operator slash. V1 says nothing about validator
+//! eligibility; V2 adds the structural-jail layer over the V1 vote
+//! decision. V1 currently has 0 direct dependents in `Cargo.toml`
+//! workspace members (V2 has 2); V1 stays as the standalone vote
+//! primitive that V2 is built on top of.
+//!
 //! # Doctrine
 //!
 //! From INVENTION_STACK.md A4.3.1 (PROMISING):

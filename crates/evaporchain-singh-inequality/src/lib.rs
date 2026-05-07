@@ -1,5 +1,15 @@
 //! Singh Inequality — energy-weighted Hoeffding-style tail bound.
 //!
+//! **Companion: V2.** `evaporchain-singh-inequality-v2` ships the
+//! variance-aware Bernstein bound (Bernstein 1924) — strictly tighter
+//! than V1's Hoeffding when the actual variance is small relative to
+//! the range, which matches real chain data (most signals concentrate
+//! near range centre rather than living at the endpoints). V1 ships
+//! the worst-case-variance Hoeffding bound; V2 adds the data-aware
+//! Bernstein bound. V1 and V2 are peers — Bernstein is strictly
+//! tighter when applicable, but Hoeffding is still the right call
+//! when variance estimates are unavailable.
+//!
 //! ## Standard Hoeffding (1963)
 //!
 //! For independent random variables `X_i` with `X_i ∈ [a_i, b_i]`,

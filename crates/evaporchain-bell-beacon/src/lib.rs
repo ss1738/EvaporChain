@@ -1,5 +1,14 @@
 //! Bell-Certified Beacon (Tier 2).
 //!
+//! **Companion: V2.** `evaporchain-bell-beacon-v2` hardens this V1
+//! gate onto real chain data: collects concurrent-block-pair windows
+//! from the LightCone DAG, runs the gate against an injected
+//! coordinated-cartel synthetic, and on Pass issues a chain-attached
+//! `BellCertificate` carrying a beacon seed = BLAKE3(domain || window
+//! || prev_block || pair_tags). V1 ships the abstract CHSH gate at
+//! integer milli-units; V2 wraps it in the chain-binding
+//! certificate machinery. V1 and V2 are peers, both live.
+//!
 //! Per `research/INVENTION_STACK.md` §4.2:
 //!
 //! > **Bell-Certified Beacon** — Device-independent randomness from

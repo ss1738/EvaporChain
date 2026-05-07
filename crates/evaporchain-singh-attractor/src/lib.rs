@@ -1,5 +1,14 @@
 //! Singh Attractor Consensus (Tier 2).
 //!
+//! **Companion: V2.** `evaporchain-singh-attractor-v2` closes the
+//! deterministic-fallback grinding gap by drawing the no-basin
+//! fallback attractor via energy-distance-weighted sampling against
+//! a 32-byte certificate seed (typically from
+//! `evaporchain-bell-beacon-v2::BellCertificate.seed`). V1 ships
+//! basin-membership + nearest-centre fallback; V2 swaps the
+//! deterministic fallback for an unpredictable-until-published one.
+//! V1 and V2 are peers, both live.
+//!
 //! Per `research/INVENTION_STACK.md` §4.2:
 //!
 //! > **Singh Attractor Consensus** — Folds into Singh-Lyapunov Fee

@@ -1,5 +1,17 @@
 //! Exact transportation-LP solver via successive-shortest-path.
 //!
+//! **Companion: V2.** `evaporchain-network-simplex-v2` is a parallel
+//! implementation (also Successive-Shortest-Path with reduced-cost
+//! potentials). Note: as of 2026-05-07 the V1 and V2 module-doc
+//! strings disagree on what V1 ships — V1 here describes itself as
+//! SSP-with-Bellman-Ford-augmenting-paths, while V2's lib.rs frames
+//! V1 as a greedy minimum-cost-cell heuristic. The discrepancy is
+//! pre-existing and not resolved by this companion-pointer commit;
+//! readers should consult the actual implementations to settle which
+//! crate matches which algorithm. Behaviourally V1 and V2 should
+//! agree on optimum cost; check via the `flow_invariants_match` test
+//! patterns if relying on either for production.
+//!
 //! ## Problem
 //!
 //! Given:

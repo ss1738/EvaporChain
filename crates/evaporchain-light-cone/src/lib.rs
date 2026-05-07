@@ -1,5 +1,12 @@
 //! Light-Cone Consensus substrate.
 //!
+//! **Companion: V2.** `evaporchain-light-cone-v2` adds Merkle-committed
+//! causal-cone proofs (`causal_root`, `prove_ancestry`, `verify_ancestry`)
+//! so a verifier can check ancestry from a 32-byte root + a path
+//! without holding the full DAG. V1 ships the reachability primitives
+//! (`causal_past`, antichain math); V2 commits them. V1 and V2 are
+//! peers — both live, both consumed by downstream crates.
+//!
 //! **Production status (2026-05-03):** read-only observability layer.
 //! The chain authority is still Tendermint's linear chain — see the
 //! honest comment at `evaporchain-consensus/src/tendermint.rs:3115-3118`.
