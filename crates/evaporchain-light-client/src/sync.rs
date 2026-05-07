@@ -111,7 +111,7 @@ mod tests {
     use super::*;
     use crate::client::test_fixtures::*;
     use crate::transport::test_transport::MockTransport;
-    use evaporchain_crypto::verkle::VerkleTrie;
+    use evaporchain_crypto::energy_verkle::EnergyVerkleTrie;
 
     #[test]
     fn sync_to_height_no_op_when_at_or_below_target() {
@@ -239,10 +239,10 @@ mod tests {
     fn fetch_and_verify_state_round_trip() {
         // Build a Verkle trie and derive the state root that
         // matches a synthetic genesis header.
-        let mut trie = VerkleTrie::new();
+        let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value);
+        trie.insert(key, value, 0, 0, 0);
         let proof = trie.prove(&key);
 
         // Construct a header whose state_root matches the trie's

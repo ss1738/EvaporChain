@@ -52,7 +52,7 @@
 //!   matches the chain's `LambdaFoldNovaVkResp` shape.
 
 use evaporchain_consensus::light_client::LightBlockHeader;
-use evaporchain_crypto::verkle::VerkleProof;
+use evaporchain_crypto::energy_verkle::EnergyVerkleProof;
 use evaporchain_light_client::transport::{RpcTransport, TransportError};
 
 /// Default URL path templates used when constructing a
@@ -192,7 +192,7 @@ impl RpcTransport for HttpTransport {
         self.get_json(&self.latest_header_url())
     }
 
-    fn fetch_state_proof(&self, key: &[u8; 32]) -> Result<VerkleProof, TransportError> {
+    fn fetch_state_proof(&self, key: &[u8; 32]) -> Result<EnergyVerkleProof, TransportError> {
         self.get_json(&self.state_proof_url(key))
     }
 

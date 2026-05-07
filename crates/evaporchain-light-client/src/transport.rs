@@ -36,7 +36,7 @@
 //!   verification.
 
 use evaporchain_consensus::light_client::LightBlockHeader;
-use evaporchain_crypto::verkle::VerkleProof;
+use evaporchain_crypto::energy_verkle::EnergyVerkleProof;
 
 /// Errors a transport can surface. Keep the variants narrow so
 /// the SDK can map them into [`crate::LightClientError`] cleanly.
@@ -80,7 +80,7 @@ pub trait RpcTransport {
     /// Fetch a Verkle state-query proof for the given key. The
     /// proof's `value` field is `Some(_)` for membership,
     /// `None` for non-membership.
-    fn fetch_state_proof(&self, key: &[u8; 32]) -> Result<VerkleProof, TransportError>;
+    fn fetch_state_proof(&self, key: &[u8; 32]) -> Result<EnergyVerkleProof, TransportError>;
 
     /// Fetch the chain's running Nova-folded instance (proof +
     /// witness). Feature-gated because most consumers don't need
@@ -117,7 +117,7 @@ pub(crate) mod test_transport {
 
     pub struct MockTransport {
         pub headers: Mutex<BTreeMap<u64, LightBlockHeader>>,
-        pub state_proofs: Mutex<BTreeMap<[u8; 32], VerkleProof>>,
+        pub state_proofs: Mutex<BTreeMap<[u8; 32], EnergyVerkleProof>>,
         #[cfg(feature = "nova")]
         pub nova_attestation: Mutex<Option<crate::nova::NovaAttestation>>,
         #[cfg(feature = "nova")]
@@ -140,7 +140,7 @@ pub(crate) mod test_transport {
             self.headers.lock().unwrap().insert(header.height, header);
         }
 
-        pub fn insert_state_proof(&self, key: [u8; 32], proof: VerkleProof) {
+        pub fn insert_state_proof(&self, key: [u8; 32], proof: EnergyVerkleProof) {
             self.state_proofs.lock().unwrap().insert(key, proof);
         }
     }
@@ -165,7 +165,7 @@ pub(crate) mod test_transport {
                 .ok_or(TransportError::NotFound)
         }
 
-        fn fetch_state_proof(&self, key: &[u8; 32]) -> Result<VerkleProof, TransportError> {
+        fn fetch_state_proof(&self, key: &[u8; 32]) -> Result<EnergyVerkleProof, TransportError> {
             self.state_proofs
                 .lock()
                 .unwrap()

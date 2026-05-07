@@ -2,14 +2,20 @@
 //!
 //! After [`crate::LightClient::ingest_block`] has trusted a header
 //! (and thus a `state_root`), consumers can verify state queries
-//! against that root via Verkle Merkle proofs. Wraps
-//! [`evaporchain_crypto::verkle::VerkleTrie::verify`].
+//! against that root via Energy-Verkle Merkle proofs. Wraps
+//! [`evaporchain_crypto::energy_verkle::EnergyVerkleTrie::verify`]
+//! — the chain's AUTHORITATIVE state verifier (Pasta-curve
+//! Pedersen commitments, not the simpler blake3 `VerkleTrie`
+//! variant). Using `EnergyVerkleTrie::verify` here means the SDK's
+//! state-query semantics match the chain's exactly: any proof the
+//! chain produces verifies, any proof the chain rejects also gets
+//! rejected.
 //!
 //! ## Contract
 //!
 //! Given:
-//!   - a [`VerkleProof`] returned by a node (typically via an HTTP
-//!     RPC like `/api/state/proof`)
+//!   - an [`EnergyVerkleProof`] returned by a node (typically via
+//!     an HTTP RPC like `/api/state/proof/:key_hex`)
 //!   - the expected value (or `None` if the caller is verifying
 //!     non-membership)
 //!
@@ -20,7 +26,7 @@
 //!
 //! Either failure surfaces as a [`crate::LightClientError`].
 
-use evaporchain_crypto::verkle::{VerkleProof, VerkleTrie};
+use evaporchain_crypto::energy_verkle::{EnergyVerkleProof, EnergyVerkleTrie};
 
 use crate::client::LightClient;
 use crate::error::LightClientError;
@@ -41,14 +47,14 @@ impl LightClient {
     ///     `expected_value`.
     pub fn verify_state(
         &self,
-        proof: &VerkleProof,
+        proof: &EnergyVerkleProof,
         expected_value: Option<[u8; 32]>,
     ) -> Result<(), LightClientError> {
         let state_root = self.current_state_root();
 
         // Step 1: cryptographic verification — the proof binds to
-        // the trusted state root.
-        if !VerkleTrie::verify(proof, &state_root) {
+        // the trusted state root via Pasta-curve Pedersen commits.
+        if !EnergyVerkleTrie::verify(proof, &state_root) {
             return Err(LightClientError::VerkleProof {
                 state_root_hex: bytes_to_hex(&state_root),
             });
@@ -98,7 +104,7 @@ mod tests {
     use super::*;
     use evaporchain_consensus::light_client::LightBlockHeader;
     use evaporchain_consensus::validator_set::ValidatorSet;
-    use evaporchain_crypto::verkle::VerkleTrie;
+    use evaporchain_crypto::energy_verkle::EnergyVerkleTrie;
     use evaporchain_types::CommitCertificate;
 
     /// Build a header anchored at the given state_root for
@@ -126,7 +132,7 @@ mod tests {
     /// the given Verkle trie's root, using a synthetic genesis
     /// header. State-query tests don't drive BFT verification;
     /// they only exercise `verify_state`'s Verkle path.
-    fn light_client_for_trie(trie: &VerkleTrie) -> crate::LightClient {
+    fn light_client_for_trie(trie: &EnergyVerkleTrie) -> crate::LightClient {
         let header = header_with_state_root(trie.root());
         crate::LightClient::new(
             header,
@@ -137,10 +143,10 @@ mod tests {
 
     #[test]
     fn verify_state_membership_proof_succeeds() {
-        let mut trie = VerkleTrie::new();
+        let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value);
+        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
         let proof = trie.prove(&key);
 
         let lc = light_client_for_trie(&trie);
@@ -149,11 +155,11 @@ mod tests {
 
     #[test]
     fn verify_state_value_mismatch_rejected() {
-        let mut trie = VerkleTrie::new();
+        let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let stored_value = [42u8; 32];
         let wrong_expected = [43u8; 32];
-        trie.insert(key, stored_value);
+        trie.insert(key, stored_value, 0, 0, 0);
         let proof = trie.prove(&key);
 
         let lc = light_client_for_trie(&trie);
@@ -165,10 +171,10 @@ mod tests {
 
     #[test]
     fn verify_state_mismatched_state_root_rejected() {
-        let mut trie = VerkleTrie::new();
+        let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value);
+        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
         let proof = trie.prove(&key);
 
         // Build the light client against a DIFFERENT (wrong)
@@ -188,10 +194,10 @@ mod tests {
 
     #[test]
     fn verify_state_tampered_proof_rejected() {
-        let mut trie = VerkleTrie::new();
+        let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value);
+        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
         let mut proof = trie.prove(&key);
 
         // Tamper with the proof's value (claim the trie maps key
@@ -218,10 +224,10 @@ mod tests {
         // Caller supplies `None` (non-membership expectation) but
         // proof claims membership with a value. Value-mismatch
         // path surfaces the error.
-        let mut trie = VerkleTrie::new();
+        let mut trie = EnergyVerkleTrie::new();
         let key = [1u8; 32];
         let value = [42u8; 32];
-        trie.insert(key, value);
+        trie.insert(key, value, /* energy */ 0, /* half_life */ 0, /* epoch */ 0);
         let proof = trie.prove(&key); // proof.value = Some(value)
 
         let lc = light_client_for_trie(&trie);
