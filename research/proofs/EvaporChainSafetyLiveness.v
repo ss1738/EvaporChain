@@ -1244,6 +1244,63 @@ Proof.
   apply (Hsafe h1 h2 Hin1 Hin2 Hne b1 b2 Hb1 Hb2 Hh1 Hh2 Hheight).
 Qed.
 
+(** [LIVENESS-PRESERVATION-FRAMEWORK] Decomposition framework for the
+    LIVENESS-PRESERVATION named hypothesis of the BIG theorem.
+
+    Unlike Safety (which is universal: "no two conflicting commits"),
+    Liveness is existential: "exists a reachable future with strictly
+    more commits". This asymmetry is fundamental — the Safety
+    decomposition (state-unchanged → property-unchanged) doesn't
+    transfer to Liveness because witnesses don't propagate forward
+    through nondeterministic transitions.
+
+    Specifically: if [Liveness s] gives us a witness state [s*] with
+    [reachable s s*] and [committed s* > committed s], we cannot
+    automatically conclude [reachable s' s*] after a transition
+    [s -> s']. The transition might have "branched away" from the
+    path to [s*]. Reachable is the reflexive-transitive closure of
+    a nondeterministic relation; predecessors don't subsume
+    successors' reachable sets in general.
+
+    What IS structurally available:
+      - The HYPOTHESES of [Liveness] (honest_supermajority +
+        partial_synchrony) ARE preserved by [HSP] + [PSP].
+      - The trivial case [t_noop] (where [ss' = ss] by inversion)
+        preserves Liveness mechanically.
+      - The existential conclusion's RE-DERIVATION at the post-
+        transition state requires concrete BFT fairness reasoning:
+        from any reachable state with honest supermajority + partial
+        synchrony, eventually some honest validator's proposal
+        receives 2f+1 prevotes + precommits within bounded GST-
+        plus-Δ time. This is the [LIVENESS-FAIRNESS] obligation,
+        and it's the single remaining deep-model obligation for
+        liveness.
+
+    Net effect: LIVENESS-PRESERVATION is decomposed into
+      - one mechanical lemma ([liveness_preserved_under_noop])
+      - hypothesis-preservation through [HSP] + [PSP] (already proven)
+      - the [LIVENESS-FAIRNESS] sub-obligation for the general
+        existential re-derivation, which composes the existing
+        [LIVENESS-1] eventual_delivery + [LIVENESS-2]
+        honest_proposer_eventual + a future bounded-GST argument.
+
+    The reduction is real (eliminates [t_noop] from the obligation
+    surface and isolates the fairness core) but smaller than
+    SAFETY's because Safety's universal structure permits cleaner
+    state-decomposition than Liveness's existential structure does.
+
+    Discharged 2026-05-07 — companion to
+    [SAFETY-PRESERVATION-FRAMEWORK]. *)
+Lemma liveness_preserved_under_noop :
+  forall (s s' : SystemState),
+    transition s ANoOp s' ->
+    Liveness s -> Liveness s'.
+Proof.
+  intros s s' Hstep Hl.
+  inversion Hstep; subst.
+  exact Hl.
+Qed.
+
 (* ================================================================
    12. THE BIG THEOREM
    ================================================================ *)
