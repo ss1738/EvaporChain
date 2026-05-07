@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-light-client-example-balance-monitor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Worked-example binary demonstrating the evaporchain-light-client SDK end-to-end. Polls a single account's state at a fixed cadence and prints balance changes as they're observed. Intended as copyable integrator template (mobile wallet, dapp, bridge, explorer): keeps the loop tight and the SDK calls explicit. Not for production use."
+
+[[bin]]
+name = "evaporchain-balance-monitor"
+path = "src/main.rs"
+
+[dependencies]
+evaporchain-light-client      = { path = "../evaporchain-light-client" }
+evaporchain-light-client-http = { path = "../evaporchain-light-client-http" }
+clap        = { version = "4", features = ["derive"] }
+blake3      = "1"
+serde_json  = { workspace = true }

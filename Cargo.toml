@@ -34,6 +34,7 @@ members = [
     "crates/evaporchain-light-client",
     "crates/evaporchain-light-client-http",
     "crates/evaporchain-light-client-cli",
+    "crates/evaporchain-light-client-example-balance-monitor",
     "crates/evaporchain-cslc",
     "crates/evaporchain-lambda-fold",
     "crates/evaporchain-mdl-shard",
