@@ -136,17 +136,26 @@ Crypto axioms are explicit:
 
 **Practical reading:** EvaporChain's DA security depends only on blake3 + BFT honest-majority. The EvaporChain-specific design (decaying DA, energy re-attestation, Pedersen commitments) does NOT introduce new cryptographic assumptions — that's the auditor-relevant claim this file makes precise.
 
-### [~] 10. Coq mechanization: `lazy_eval ≡ eager_eval` for Rule-Based Consensus  (scaffolded 2026-04-28)
+### [~] 10. Coq mechanization: `lazy_eval ≡ eager_eval` for Rule-Based Consensus  (scaffolded 2026-04-28; concrete drift framework shipped 2026-05-07)
 **Where:** `research/coq/LazyEagerEquivalence.v`
 
-**State today:** Theorem `eager_eq_lazy` proven at `Qed.` relative to two axioms on the decay primitive: `decay_step_compose` (k+m steps = k then m) and `decay_step_zero` (0 steps = identity). The first is the non-trivial obligation — under the actual EvaporChain integer-rounding decay, composition is *approximate*, not exact. The frontier doc acknowledges this drift; the file documents the gap precisely.
+**State today (2026-05-07 update):** Two parallel theorem tracks now ship in this file.
+
+The IDEAL track (existing): theorem `eager_eq_lazy` proven at `Qed.` relative to two axioms on an opaque `decay_step` parameter: `decay_step_compose` (k+m steps = k then m) and `decay_step_zero` (0 steps = identity). Models the perfectly-composable decay scenario.
+
+The CONCRETE track (NEW 2026-05-07): replaces the opaque parameter with the live `energy_at_epoch` function imported from `EnergyDecayMonotonicity.v`. Under the concrete function exact composition FAILS (integer floor-rounding accumulates differently between the two evaluation modes), so the right theorem is a directional bound: `concrete_lazy_eval e h n <= concrete_eager_eval e h n`. Proven at `Qed.` (composition theorem) + `Qed.` (corollary `concrete_lazy_is_conservative`) conditional on two named helper lemmas, both currently Admitted with detailed proof-strategy comments.
+
+The original punch-list framing of `|lazy - eager| <= O(1/h)` was aspirational and quantitatively incorrect — the actual gap can be O(n*e/h) in the worst case. The directional bound (lazy underestimates eager) is what the integer-decay model actually supports, and is sufficient for the Rule-Based Consensus design: validators relying on lazy evaluation produce conservative (lower-bound) energy estimates, which is the safety contract the design needs.
 
 **Done when:**
 - [x] Eager and lazy evaluators defined as Coq fixpoints
 - [x] `eager_eq_lazy` theorem proved at `Qed.` (relative to decay axioms)
 - [x] `trace_query_agreement` corollary proved at `Qed.`
 - [x] Drift-bound caveat documented inline — under bit-shift + linear-interpolation, composition is not exact, but the protocol's anchor-interval bound keeps the drift negligible
-- [ ] **Open:** prove `decay_step_compose` for the actual `energy_at_epoch` function with a quantified drift bound `|lazy(e0, h, n+m) - eager(...)| <= O(1/h)`. Distinct from the monotonicity proof in `EnergyDecayMonotonicity.v`.
+- [x] Concrete drift framework shipped — `concrete_decay_step`, `concrete_eager_eval`, `concrete_lazy_eval` defined against `energy_at_epoch`; `concrete_drift_base` (n=0 case) Qed
+- [x] Headline directional bound `concrete_drift_one_sided` Qed via helper composition; corollary `concrete_lazy_is_conservative` Qed
+- [ ] **Open:** discharge helper `concrete_step_mono_init` — monotonicity of `energy_at_epoch` in initial value. Tagged [DRIFT-MONO-INIT] in the file. Standard integer-floor monotonicity proof; structural unfold + 4 helper assertions go through cleanly, but the final compose-via-`lia` step needs a per-unit-step inductive argument over `b - a` to handle the saturating-sub `f(a) - g(a) <= f(b) - g(b)` shape (lia alone can't handle the floor-rounding non-linearity).
+- [ ] **Open:** discharge helper `concrete_step_subadditive` — `energy_at_epoch e h (S k) <= energy_at_epoch (energy_at_epoch e h k) h 1`. Tagged [DRIFT-STEP-SUB] in the file. Within-halving case reduces to algebraic comparison via `nia`; cross-halving case uses existing `energy_at_epoch_monotone` + `nat_shr` halving facts. Tractable but technical.
 
 ---
 
