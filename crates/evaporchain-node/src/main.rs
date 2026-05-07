@@ -85,9 +85,79 @@ fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     })
 }
 
+/// Returns `true` if the given persistence error message indicates the
+/// underlying volume is out of space (disk-full / quota-exhausted).
+///
+/// Extracted as a standalone helper so the detection logic is unit-
+/// testable without invoking `fatal_persist_err`'s `std::process::exit`
+/// path (which would kill the test harness). The matching is
+/// case-insensitive and covers the three OS-level shapes seen in the
+/// wild: macOS / Linux ENOSPC, Linux EDQUOT, and Linux generic
+/// "disk full" wrappers from libraries that don't surface errno cleanly.
+///
+/// Bug-A reference: see [`fatal_persist_err`] docstring +
+/// `cluster_5node_2026_05_06_session.md` Bug-A entry for the live
+/// 2026-05-07 evening evidence — M1 hit ENOSPC mid-block-write, the
+/// `full_block:pre_commit` log_persist_err logged the error in red
+/// and continued, the node's process kept running but couldn't
+/// persist any further blocks, and the cluster silently stalled for
+/// ~3 hours before operator intervention. The fix applied below
+/// upgrades any disk-full hit to a fatal exit so the operator gets
+/// an unambiguous signal (process exit code 2 + tracing::error +
+/// red stderr banner) instead of silent corruption.
+fn error_indicates_disk_full(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("no space left on device")
+        || lower.contains("disk full")
+        || lower.contains("disk quota exceeded")
+}
+
 fn log_persist_err(op: &str, r: Result<(), String>) {
     if let Err(e) = r {
+        // Disk-full errors are never recoverable in the same process: every
+        // subsequent write will fail too, so the node ends up silently
+        // stalled with the consensus engine voting on blocks it can't
+        // persist. Escalate to [`fatal_persist_err`] so the operator gets
+        // a clear signal (exit 2) instead of red-text-and-continue.
+        if error_indicates_disk_full(&e) {
+            fatal_persist_err(op, Err(e));
+            return;
+        }
         eprintln!("\x1b[31mPersistence error ({}): {}\x1b[0m", op, e);
+    }
+}
+
+#[cfg(test)]
+mod disk_full_detection_tests {
+    use super::*;
+
+    #[test]
+    fn detects_macos_linux_enospc() {
+        // The exact shape M1 logged on 2026-05-07 evening:
+        let live = "IO error: No space left on device: While appending to \
+                    file: ~/.evaporchain-tailscale-5node-data/chain/000071.log";
+        assert!(error_indicates_disk_full(live));
+    }
+
+    #[test]
+    fn detects_uppercase_and_mixed_case() {
+        assert!(error_indicates_disk_full("NO SPACE LEFT ON DEVICE"));
+        assert!(error_indicates_disk_full("No Space Left On Device (errno 28)"));
+        assert!(error_indicates_disk_full("disk full"));
+        assert!(error_indicates_disk_full("DISK QUOTA EXCEEDED"));
+    }
+
+    #[test]
+    fn does_not_match_unrelated_io_errors() {
+        // These are recoverable / non-disk-full errors that must NOT
+        // escalate to fatal exit. Permission denied, file-not-found,
+        // network EOF, etc. all keep their existing log-and-continue
+        // behaviour.
+        assert!(!error_indicates_disk_full("IO error: Permission denied"));
+        assert!(!error_indicates_disk_full("IO error: File not found"));
+        assert!(!error_indicates_disk_full("RocksDB error: Corruption"));
+        assert!(!error_indicates_disk_full("network: EOF"));
+        assert!(!error_indicates_disk_full(""));
     }
 }
 

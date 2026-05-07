@@ -415,6 +415,15 @@ impl StateDB for OverlayStateDB {
     fn prove_object(&mut self, _id: &ObjectId) -> evaporchain_crypto::EnergyVerkleProof {
         empty_verkle_proof()
     }
+    fn prove_at_key(&mut self, _key: &[u8; 32]) -> evaporchain_crypto::EnergyVerkleProof {
+        // Overlay holds only ephemeral writes — proving against the
+        // overlay's view alone gives an inconsistent answer relative to
+        // the canonical post-commit trie. Return the empty proof so
+        // overlay-level callers don't accidentally rely on this path;
+        // the canonical proof is computed by the wrapped backing store
+        // after `materialize_final_state` flushes the overlay.
+        empty_verkle_proof()
+    }
     fn trie_snapshot(&mut self) -> Vec<u8> {
         Vec::new()
     }
