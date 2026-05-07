@@ -294,6 +294,7 @@ pub fn cmd_build_genesis(
         fee_burn_rate: 0.50,
         staker_fee_share: 0.50,
         target_staking_apy: 0.05,
+        max_supply_cap: None,
     };
 
     let coordinator_pk_hex = hex::encode(kp.public_key());
