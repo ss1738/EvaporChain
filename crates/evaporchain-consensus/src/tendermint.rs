@@ -95,6 +95,23 @@ const PROPOSE_TIMEOUT_MS: u64 = 8000;
 const PREVOTE_TIMEOUT_MS: u64 = 32000;
 const PRECOMMIT_TIMEOUT_MS: u64 = 32000;
 
+// Round-backoff deltas for additive (linear) growth per round. Each
+// successive round adds these increments to the base timeouts to give
+// partition-recovery slack without explosion.
+//
+// Cluster-soak evidence 2026-05-07: the previous formula used
+// exponential backoff (`1u64 << min(round, 6)`) which capped at 64×
+// at round 6+. That turned the 32s prevote timeout into 32 × 64 ≈ 34
+// minutes, and a single round at round 7+ took ~76 minutes total.
+// Reaching round 7 took ~75 minutes by itself, then waiting through
+// round 7 added another 76. The cluster soak at h=16956 sat at round
+// 7 for over 22 minutes before we noticed — looked like a wedge but
+// was just the timeout exploding. Replaced with additive backoff
+// matching standard Tendermint (Cosmos SDK).
+const PROPOSE_TIMEOUT_DELTA_MS: u64 = 1000;
+const PREVOTE_TIMEOUT_DELTA_MS: u64 = 2000;
+const PRECOMMIT_TIMEOUT_DELTA_MS: u64 = 2000;
+
 /// Maximum rounds before forcing commit (prevents livelock).
 const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
 
@@ -6546,21 +6563,34 @@ impl TendermintConsensus {
     }
 
     fn set_timeouts_for_round(&mut self, round: u32) {
-        let shift = std::cmp::min(round, 6) as u64;
-        let multiplier = 1u64 << shift;
+        // Additive (linear) backoff: timeout = base + round * delta.
+        // Standard Tendermint shape (Cosmos SDK pattern). The previous
+        // formula was exponential-with-cap-at-64×; see the comment on
+        // PROPOSE_TIMEOUT_DELTA_MS for the cluster-soak evidence that
+        // motivated this change.
+        let r = round as u64;
         let jitter_seed = self
             .height
             .wrapping_mul(31)
-            .wrapping_add(round as u64)
+            .wrapping_add(r)
             .wrapping_mul(17)
             .wrapping_add(self.my_id.wrapping_mul(7));
-        let jitter_ms = (jitter_seed % 11) * multiplier;
-        self.propose_timeout =
-            Duration::from_millis(PROPOSE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
-        self.prevote_timeout =
-            Duration::from_millis(PREVOTE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
-        self.precommit_timeout =
-            Duration::from_millis(PRECOMMIT_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
+        // Bounded jitter (≤100 ms) so validators don't all time out
+        // at the same instant. Independent of round so we don't
+        // re-introduce exponential growth via a multiplied jitter.
+        let jitter_ms = jitter_seed % 100;
+        self.propose_timeout = Duration::from_millis(
+            PROPOSE_TIMEOUT_MS.saturating_add(r.saturating_mul(PROPOSE_TIMEOUT_DELTA_MS))
+                + jitter_ms,
+        );
+        self.prevote_timeout = Duration::from_millis(
+            PREVOTE_TIMEOUT_MS.saturating_add(r.saturating_mul(PREVOTE_TIMEOUT_DELTA_MS))
+                + jitter_ms,
+        );
+        self.precommit_timeout = Duration::from_millis(
+            PRECOMMIT_TIMEOUT_MS.saturating_add(r.saturating_mul(PRECOMMIT_TIMEOUT_DELTA_MS))
+                + jitter_ms,
+        );
     }
 
     /// Get current proposer info for display.
@@ -7223,6 +7253,65 @@ mod tests {
 
     fn make_consensus(my_id: u64, ids: &[u64]) -> TendermintConsensus {
         TendermintConsensus::new_for_test(my_id, 5, make_validator_set(ids))
+    }
+
+    // ── Round-backoff timeout regression ──────────────────────────────
+    //
+    // Confirms additive (linear) backoff post the 2026-05-07 cluster
+    // soak fix. Previous formula was `1u64 << min(round, 6)` —
+    // exponential capped at 64×, which made round 6+ each take ~76
+    // minutes of timeout and stalled the cluster soak at h=16956 for
+    // over 22 minutes before we noticed.
+
+    #[test]
+    fn timeouts_grow_linearly_per_round_not_exponentially() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4, 5]);
+        tc.set_timeouts_for_round(0);
+        let p0 = tc.propose_timeout.as_millis();
+        let pv0 = tc.prevote_timeout.as_millis();
+        let pc0 = tc.precommit_timeout.as_millis();
+
+        tc.set_timeouts_for_round(7);
+        let p7 = tc.propose_timeout.as_millis();
+        let pv7 = tc.prevote_timeout.as_millis();
+        let pc7 = tc.precommit_timeout.as_millis();
+
+        // At round 7 with the OLD exponential formula, each timeout
+        // would be 64× the base — propose 512s, prevote 2048s,
+        // precommit 2048s. The fix is additive: round * delta.
+        // Concretely: propose 8 + 7 = 15s, prevote 32 + 14 = 46s,
+        // precommit 32 + 14 = 46s. Allow ±100ms for jitter.
+        assert!(
+            p7 < 20_000,
+            "round-7 propose_timeout exploded under exponential backoff: {p7} ms"
+        );
+        assert!(
+            pv7 < 60_000,
+            "round-7 prevote_timeout exploded under exponential backoff: {pv7} ms"
+        );
+        assert!(
+            pc7 < 60_000,
+            "round-7 precommit_timeout exploded under exponential backoff: {pc7} ms"
+        );
+
+        // Sanity: round 0 unchanged baseline (within jitter).
+        assert!(
+            (8_000..=8_100).contains(&(p0 as u64)),
+            "round-0 propose_timeout drifted: {p0} ms"
+        );
+        assert!(
+            (32_000..=32_100).contains(&(pv0 as u64)),
+            "round-0 prevote_timeout drifted: {pv0} ms"
+        );
+        assert!(
+            (32_000..=32_100).contains(&(pc0 as u64)),
+            "round-0 precommit_timeout drifted: {pc0} ms"
+        );
+
+        // Monotonicity: round 7 > round 0 (some growth, just not 64×).
+        assert!(p7 > p0);
+        assert!(pv7 > pv0);
+        assert!(pc7 > pc0);
     }
 
     // ── Validator key rotation cert verification (punch-list 4d) ──────
