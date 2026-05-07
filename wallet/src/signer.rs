@@ -8,7 +8,7 @@ use evaporchain_crypto::signatures::{HybridKeypair, MlDsaKeypair, Signer};
 use evaporchain_types::{AccountAddress, Transaction};
 use thiserror::Error;
 
-use crate::address::derive_address;
+use crate::address::{derive_address, parse_address as parse_address_hex_32};
 use crate::keystore::{KeyStore, KeyStoreError};
 
 #[derive(Debug, Error)]
@@ -47,9 +47,23 @@ pub struct WalletSigner {
 }
 
 impl WalletSigner {
-    /// Create a signer from a raw ML-DSA keypair (legacy).
+    /// Create a signer from a raw ML-DSA keypair. Address is derived
+    /// as `blake3(public_key)` — see [`Self::from_keypair_with_address`]
+    /// for cases where the keystore entry holds an override address
+    /// (genesis-allocated accounts whose address ≠ hash(pubkey)).
     pub fn from_keypair(keypair: MlDsaKeypair) -> Self {
         let address = derive_address(&keypair.public_key_bytes());
+        Self {
+            inner: SignerInner::MlDsa(keypair),
+            address,
+        }
+    }
+
+    /// Create a signer with a caller-supplied address that decouples
+    /// from `hash(public_key)`. Used when unlocking a keystore entry
+    /// imported via `--address-override` (e.g. validator-N genesis
+    /// allocations at `[N, 0, 0, ...]`).
+    pub fn from_keypair_with_address(keypair: MlDsaKeypair, address: AccountAddress) -> Self {
         Self {
             inner: SignerInner::MlDsa(keypair),
             address,
@@ -66,19 +80,34 @@ impl WalletSigner {
     }
 
     /// Unlock a key from the keystore by name and create a signer.
+    /// The signer's address is read from the keystore entry's
+    /// `address` field — honoring any `--address-override` set at
+    /// import time. Falls back to `blake3(public_key)` derivation if
+    /// the entry's address can't be parsed (defensive default; old
+    /// keystores all hold derived addresses).
     pub fn unlock(store: &KeyStore, name: &str, password: &str) -> Result<Self, SignerError> {
         let keypair = store.unlock_key(name, password)?;
-        Ok(Self::from_keypair(keypair))
+        let stored_address = store
+            .entries
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(|e| parse_address_hex_32(&e.address).ok());
+        Ok(match stored_address {
+            Some(addr) => Self::from_keypair_with_address(keypair, addr),
+            None => Self::from_keypair(keypair),
+        })
     }
 
     /// Unlock a key from the keystore by address and create a signer.
+    /// Signer's address is the caller-supplied lookup address (which
+    /// by construction matches the keystore entry).
     pub fn unlock_by_address(
         store: &KeyStore,
         address: &AccountAddress,
         password: &str,
     ) -> Result<Self, SignerError> {
         let keypair = store.unlock_by_address(address, password)?;
-        Ok(Self::from_keypair(keypair))
+        Ok(Self::from_keypair_with_address(keypair, *address))
     }
 
     /// Get the signer's address.

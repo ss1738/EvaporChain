@@ -66,10 +66,15 @@ pub struct AccountInfo {
 // ──────────────────────────── Account Manager ──────────────────────────
 
 /// Manages multiple named accounts backed by a keystore.
+///
+/// The active account is stored on `keystore.active` (persisted to
+/// disk via the keystore's serde Serialize), NOT on a separate
+/// in-memory field — that previously meant every wallet invocation
+/// reset the active account to None. As of 2026-05-07 the active
+/// account survives wallet restarts.
 pub struct AccountManager {
     keystore: KeyStore,
     rpc: RpcClient,
-    active_account: Option<String>,
     cache: HashMap<String, CachedAccountState>,
 }
 
@@ -79,7 +84,6 @@ impl AccountManager {
         Self {
             keystore,
             rpc,
-            active_account: None,
             cache: HashMap::new(),
         }
     }
@@ -121,8 +125,8 @@ impl AccountManager {
     ) -> Result<AccountAddress, AccountError> {
         let addr = self.keystore.generate_key(name, password)?;
         // Auto-set as active if it's the first account
-        if self.active_account.is_none() {
-            self.active_account = Some(name.to_string());
+        if self.keystore.active.is_none() {
+            self.keystore.active = Some(name.to_string());
         }
         Ok(addr)
     }
@@ -142,8 +146,8 @@ impl AccountManager {
         let addr = self
             .keystore
             .import_key(name, password, public_key, secret_key)?;
-        if self.active_account.is_none() {
-            self.active_account = Some(name.to_string());
+        if self.keystore.active.is_none() {
+            self.keystore.active = Some(name.to_string());
         }
         Ok(addr)
     }
@@ -176,8 +180,8 @@ impl AccountManager {
             secret_key,
             address,
         )?;
-        if self.active_account.is_none() {
-            self.active_account = Some(name.to_string());
+        if self.keystore.active.is_none() {
+            self.keystore.active = Some(name.to_string());
         }
         Ok(addr)
     }
@@ -195,8 +199,8 @@ impl AccountManager {
             if let Some(addr) = addr_hex {
                 self.cache.remove(&addr);
             }
-            if self.active_account.as_deref() == Some(name) {
-                self.active_account = self.keystore.list().first().map(|(n, _)| n.to_string());
+            if self.keystore.active.as_deref() == Some(name) {
+                self.keystore.active = self.keystore.list().first().map(|(n, _)| n.to_string());
             }
         }
         removed
@@ -214,7 +218,7 @@ impl AccountManager {
                     address: addr.to_string(),
                     balance: cached.map(|c| c.balance),
                     nonce: cached.map(|c| c.nonce),
-                    is_active: self.active_account.as_deref() == Some(*name),
+                    is_active: self.keystore.active.as_deref() == Some(*name),
                 }
             })
             .collect()
@@ -232,18 +236,18 @@ impl AccountManager {
         if !self.keystore.list().iter().any(|(n, _)| *n == name) {
             return Err(AccountError::NotFound(name.to_string()));
         }
-        self.active_account = Some(name.to_string());
+        self.keystore.active = Some(name.to_string());
         Ok(())
     }
 
     /// Get the name of the active account.
     pub fn active_name(&self) -> Option<&str> {
-        self.active_account.as_deref()
+        self.keystore.active.as_deref()
     }
 
     /// Get the address of the active account.
     pub fn active_address(&self) -> Option<AccountAddress> {
-        self.active_account
+        self.keystore.active
             .as_ref()
             .and_then(|name| self.keystore.get_address(name))
     }
@@ -322,7 +326,8 @@ impl AccountManager {
     /// Unlock a signer for the active account.
     pub fn get_active_signer(&self, password: &str) -> Result<WalletSigner, AccountError> {
         let name = self
-            .active_account
+            .keystore
+            .active
             .as_deref()
             .ok_or(AccountError::NoActiveAccount)?;
         self.get_signer(name, password)

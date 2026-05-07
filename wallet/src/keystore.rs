@@ -82,6 +82,13 @@ pub struct KeyStore {
     pub version: u32,
     /// Key entries.
     pub entries: Vec<KeyEntry>,
+    /// Currently-active account name. Persisted across wallet
+    /// invocations (set by `account create` / `account import` /
+    /// `account switch`; consumed by `send`, `stake`, etc).
+    /// `serde(default)` keeps existing keystore.json files
+    /// (without this field) loadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
 }
 
 impl KeyStore {
@@ -90,6 +97,7 @@ impl KeyStore {
         Self {
             version: KEYSTORE_VERSION,
             entries: Vec::new(),
+            active: None,
         }
     }
 
