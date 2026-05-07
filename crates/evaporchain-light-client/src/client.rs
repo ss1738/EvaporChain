@@ -134,12 +134,27 @@ impl LightClient {
     ///
     /// Verification stages in order:
     ///   1. Monotone-height check (provided > trusted).
-    ///   2. Parent-hash adjacency check (when height = trusted+1).
-    ///   3. BFT BLS aggregate-signature verification via the
+    ///   2. BFT BLS aggregate-signature verification via the
     ///      consensus-side `LightClientVerifier::verify`. Validates
     ///      signer set membership, ≥2/3 stake quorum, BLS aggregate
     ///      signature, and trust-period freshness. For skip-mode
     ///      (height gap > 1), also checks validator-set overlap.
+    ///
+    /// **Note on parent-hash adjacency**: an earlier draft of the
+    /// SDK enforced `header.parent_hash == trusted_tip.block_hash`
+    /// when `height == trusted+1`. That check was removed
+    /// 2026-05-08 after live-chain verification revealed
+    /// EvaporChain producer-side `block.parent_hash` uses a
+    /// custom recursive formula (see `tendermint.rs:5263-5269`,
+    /// `blake3(number || epoch || state_root || prev_parent_hash)`)
+    /// distinct from `cert.block_hash` used in commit certificates.
+    /// The two never coincide, so the adjacency check rejected
+    /// every otherwise-valid sequential block. BFT BLS aggregate-
+    /// sig verification is the actual authoritative chain
+    /// authentication; parent-hash adjacency was speculative
+    /// defence-in-depth that turned out to be incorrect for this
+    /// chain. The cert verification ensures ≥2/3 stake attested
+    /// to (height, block_hash) — sufficient.
     pub fn ingest_block(
         &mut self,
         header: LightBlockHeader,
@@ -153,18 +168,7 @@ impl LightClient {
             });
         }
 
-        // Stage 2: Parent-hash adjacency check (only for height = trusted+1).
-        if header.height == self.trusted_tip.height + 1 {
-            if header.parent_hash != self.trusted_tip.block_hash {
-                return Err(LightClientError::ParentHashMismatch {
-                    height: header.height,
-                    parent_hash_hex: hex_lower(&header.parent_hash),
-                    trusted_hash_hex: hex_lower(&self.trusted_tip.block_hash),
-                });
-            }
-        }
-
-        // Stage 3: BFT BLS aggregate-sig verification via the
+        // Stage 2: BFT BLS aggregate-sig verification via the
         // consensus-side verifier. Translates VerificationResult
         // into our error type.
         match self.bft.verify(&header, current_time) {
@@ -353,7 +357,16 @@ mod tests {
     }
 
     #[test]
-    fn ingest_adjacent_block_with_wrong_parent_hash_rejected() {
+    fn ingest_adjacent_block_with_arbitrary_parent_hash_accepted() {
+        // Test renamed + inverted 2026-05-08 after live-chain
+        // verification revealed EvaporChain's producer-side
+        // `block.parent_hash` uses a different formula than
+        // `cert.block_hash` (see `tendermint.rs:5263-5269`).
+        // The SDK no longer enforces parent-hash adjacency —
+        // BFT BLS aggregate-sig is the authoritative chain
+        // authentication. So a block with a parent_hash that
+        // doesn't match the trusted tip's block_hash should
+        // STILL verify, as long as the BLS sig is valid.
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         let mut lc = LightClient::new(
@@ -361,12 +374,13 @@ mod tests {
             100,
             None,
         );
-        // Adjacent block (height 2) but parent_hash != [0xaa; 32].
-        let bad_parent = make_signed_header(2, [0x11; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
-        assert!(matches!(
-            lc.ingest_block(bad_parent, 110),
-            Err(LightClientError::ParentHashMismatch { .. })
-        ));
+        // Adjacent block (height 2) with an unrelated parent_hash —
+        // must STILL accept since BFT BLS sig is valid.
+        let arbitrary_parent =
+            make_signed_header(2, [0x11; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
+        lc.ingest_block(arbitrary_parent, 110)
+            .expect("BFT-valid block must verify regardless of parent_hash");
+        assert_eq!(lc.current_height(), 2);
     }
 
     #[test]

@@ -86,15 +86,10 @@ impl LightClient {
                 trusted: self.trusted_tip().height,
             });
         }
-        if header.height == self.trusted_tip().height + 1
-            && header.parent_hash != self.trusted_tip().block_hash
-        {
-            return Err(LightClientError::ParentHashMismatch {
-                height: header.height,
-                parent_hash_hex: hex_lower(&header.parent_hash),
-                trusted_hash_hex: hex_lower(&self.trusted_tip().block_hash),
-            });
-        }
+        // Parent-hash adjacency check intentionally omitted — see
+        // `ingest_block` doc comment for rationale (chain producer
+        // uses a different parent-hash formula than cert.block_hash;
+        // BFT BLS aggregate-sig is the authoritative authentication).
 
         // Stage 2: BFT BLS aggregate-sig verification (same as
         // `ingest_block`).
