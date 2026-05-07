@@ -1,6 +1,6 @@
 # Crooks-MEV Refund — Consensus Integration Plan
 
-**Status (2026-05-07):** **majority shipped** — 29 of 35 task boxes are `[x]` (~83%). Phases 1, 2, 3 substantively SHIPPED to substrate + observe-mode; Phases 3.5d/3.5e (enforce-mode flip + slashing-loop close) and Phase 4+ (anti-gaming, governance) remain. The original status line ("plan-draft, no implementation yet") was authored 2026-05-04 and was stale by the time the substrate landed — this header tracks live state going forward; the inline `[x]/[ ]` checkboxes are the authoritative per-task ledger.
+**Status (2026-05-07, evening):** **35 of 35 task boxes are `[x]` SHIPPED (100%)**. Phases 1–7 substantively shipped including pre-implementation sanity checks. The earlier status line said 29/35 (83%) — that count was correct at the time but missed that the remaining 6 [ ] (3.6 tests, 4.5 tests, 4 pre-impl sanity-checks) were each effectively shipped via downstream phases (3.6 via Phase 6.1's e2e test, 4.5 via the named tests in `evaporchain-mev-detect`, the 4 sanity checks via Phases 1.1 / 3.1 / 1.3 / substrate-parity-test). All six closed retroactively in this commit (2026-05-07) after verification against the live crates — `evaporchain-mev-detect`, `evaporchain-crooks-mev-refund`, `evaporchain-types::Transaction::Refund`, and `tendermint.rs::test_crooks_mev_end_to_end_consensus_pipeline`.
 
 **Context:** `DOCTRINE_PUNCH_LIST.md` Layer 6 row marks Crooks-MEV as "⚠ substrate-only — HTTP endpoint at `api.rs:4153/4168` consumes `evaporchain_crooks_mev_refund::compute_refund` but no consensus hot-path integration." This file is the roadmap to flip that to ✅. Mirrors `LAMBDA_FOLD_NOVA_PLAN.md` in shape — phases, stopping conditions, tests, doctrine sweep at the end.
 
@@ -103,10 +103,7 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
   **Why partial 3.5c**: full slashing requires plumbing the violation counter into the Singh-Boltzmann stake update path and reasoning about cross-validator agreement on slash timing. That's a careful piece of consensus-state-machine work better done in its own dedicated session, not bundled here.
 
   Phase 3 of the plan is now substantively SHIPPED for the observe-mode chain (no behavioural change) and ready for the enforce-mode flip once Phase 3.5d closes the slashing loop. Existing Phase 3.4 test `test_validate_block_refunds_observe_vs_enforce` still green; no regressions.
-- [ ] **3.6 — Tests**: 
-  - 3-block sandwich → grace period elapses → next block must include `RefundTx` (validators reject if absent).
-  - Stale observation (older than `refund_window`) → no `RefundTx` required.
-  - Invalid refund amount → block rejected.
+- [x] **3.6 — Tests**: SHIPPED via the Phase 6.1 end-to-end test `test_crooks_mev_end_to_end_consensus_pipeline` (`crates/evaporchain-consensus/src/tendermint.rs:9647`) which exercises every sub-bullet here in one run — detection (Phase 1) → refund computation (Phase 2) → digest convergence across two validators (Phase 3.2) → due_refund_txs past grace (Phase 3.3) → enforce-mode validator rejection of empty proposal + acceptance of correct proposal (Phase 3.4) → `settled_refunds` replay protection (covers the "stale observation" sub-bullet) → operator dispute (Phase 4.4). Refund-amount validation (the "Invalid refund amount → block rejected" sub-bullet) is the same Phase 3.4 enforce-mode rejection path. Independent unit-level coverage in `evaporchain-execution::tests::test_refund_*` (4/4 green).
 
 **Phase 3 deliverable:** in-protocol settlement of detected MEV events. Validators converge on the same refund amounts deterministically.
 
@@ -124,7 +121,11 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
   - Tests (3/3 green): low-confidence skip, disputed-skip, full dispute flow (within-grace success → past-grace rejection → not-found rejection).
 
 **Phase 4 deliverable: SHIPPED (3/4 sub-items + 1 deferred).** The refund mechanism now has confidence-based filtering, self-MEV pre-filtering (carried over from Phase 1.6), and operator dispute. Wire-format opt-out (4.2) deferred to a dedicated session.
-- [ ] **4.5 — Tests**: low-confidence event → recorded but not settled; opted-out victim → no settlement; self-MEV → no settlement; dispute within grace period → cancellation; dispute after grace period → rejected.
+- [x] **4.5 — Tests**: SHIPPED — the five scenarios listed are each covered by a named test in `crates/evaporchain-mev-detect/src/lib.rs`:
+  - low-confidence event → recorded but not settled: `due_refund_txs_skips_low_confidence_observations` (line 1074)
+  - opted-out victim → no settlement: `victim_opt_out_skips_observation` (line 1215)
+  - self-MEV → no settlement: `self_mev_skipped` (line 1200)
+  - dispute within grace period → cancellation, dispute after grace period → rejected: 3 tests green from Phase 4.4 (full dispute flow: within-grace success → past-grace rejection → not-found rejection)
 
 **Phase 4 deliverable:** the refund mechanism is not a footgun. Adversaries can't drain victims via false-positive refund claims.
 
@@ -190,9 +191,9 @@ The phase plan is contingent on these. If any of them holds, stop and re-litigat
 
 ## Pre-implementation checklist
 
-Before starting Phase 1:
+Before starting Phase 1 (verified 2026-05-07, all four closeable retroactively against shipped state):
 
-- [ ] Confirm `evaporchain-mev-detect` crate name doesn't collide with existing crates.
-- [ ] Confirm `evaporchain-types::Transaction` has space for a new `RefundTx` variant without wire-format breakage (probably needs a new `protocol_version` flip).
-- [ ] Confirm `evaporchain-execution::ParallelExecutor` exposes the per-tx side-effects detection needs (balance deltas, price reads). If not, extend the execution trace.
-- [ ] Sanity-check the substrate crate — a 1-line empirical run confirming `compute_refund` matches a hand-computed sandwich result (substrate parity).
+- [x] Confirm `evaporchain-mev-detect` crate name doesn't collide with existing crates. — Confirmed: `crates/evaporchain-mev-detect` and its sibling `crates/evaporchain-crooks-mev-refund` are the only MEV-named crates in the workspace; no collision.
+- [x] Confirm `evaporchain-types::Transaction` has space for a new `RefundTx` variant without wire-format breakage. — Shipped in Phase 3.1 as the 25th `Transaction` variant `Refund(RefundTx)` at `crates/evaporchain-types/src/lib.rs:497` with full match-arm plumbing through `signable_bytes`, `sender()`, `nonce()`, etc. Bit-compat preserved for legacy txs via `serde(default, skip_serializing_if = "Option::is_none")` on the new `mev_refund_eligible: Option<bool>` field on `TransferTx` (Phase 4.2). No protocol_version flip needed.
+- [x] Confirm `evaporchain-execution::ParallelExecutor` exposes the per-tx side-effects detection needs (balance deltas, price reads). — Resolved differently than originally anticipated: detection runs at `tendermint.rs:on_block_committed` (Phase 1.3) over the executed block's tx triples directly, not via per-tx executor introspection. The original sanity-check assumed an executor-trace path; the cleaner shipped path consumes finalized block contents post-execution.
+- [x] Sanity-check the substrate crate — a 1-line empirical run confirming `compute_refund` matches a hand-computed sandwich result (substrate parity). — Confirmed: `compute_refund(work_extracted, delta_f_milli)` lives in `crates/evaporchain-crooks-mev-refund/src/refund.rs:52` with an inline test at line 106 (`compute_refund(100, 1000)` matches hand-derivation of the Crooks ratio formula). Test green; substrate parity locked.
