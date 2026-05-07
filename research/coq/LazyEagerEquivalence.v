@@ -500,6 +500,78 @@ Qed.
     DISCHARGE STATUS 2026-05-07: stated; the integer-floor-rounding
     case is technical but tractable. Tagged [DRIFT-STEP-SUB-CROSS]
     for a focused follow-up. *)
+(** Helper: at the cross-halving boundary, the previous-epoch
+    remainder is exactly [h - 1] and the new-epoch remainder is 0.
+    Both follow directly from [Nat.div_mod] + the cross hypothesis. *)
+Lemma cross_halving_remainders :
+  forall h k,
+    h <> 0 ->
+    Nat.div (S k) h = Nat.div k h + 1 ->
+    Nat.modulo k h = h - 1 /\ Nat.modulo (S k) h = 0.
+Proof.
+  intros h k Hh Hcross.
+  pose proof (Nat.div_mod (S k) h Hh) as Hsk.
+  pose proof (Nat.div_mod k h Hh) as Hk.
+  pose proof (Nat.mod_upper_bound (S k) h Hh) as Hbnd_sk.
+  pose proof (Nat.mod_upper_bound k h Hh) as Hbnd_k.
+  rewrite Hcross in Hsk.
+  split; lia.
+Qed.
+
+(** [DRIFT-STEP-SUB-CROSS-INTEGER] The central integer-arithmetic
+    inequality for the cross-halving case: when [after_k] is the
+    pre-halving energy state at the boundary, the post-halving
+    halved value is bounded by the staged "linear-decay then
+    one-step-ahead" pipeline.
+
+    In real-number terms: after_k/2 <= inner * (2h-1)/(2h) where
+    inner = after_k * (h+1)/(2h). Algebraically reduces to
+    [4h^2 - h + 1 <= 4h^2], i.e., [1 <= h]. The integer-floor
+    version is implied by the real version because every floor
+    rounds DOWN, never increasing the LHS or decreasing the RHS.
+
+    Stated as a clean reusable lemma with concrete preconditions
+    so the outer cross-halving proof can dispatch via [apply]. The
+    integer-tactical work is the only piece of the cross-halving
+    obligation that remains; everything else (cutoff branches,
+    h=1 degenerate, h>=2 unfolding) is structural and discharged
+    in [concrete_step_subadditive_cross_halving] below. *)
+Lemma cross_halving_arith :
+  forall after_k h,
+    h >= 2 ->
+    Nat.div2 after_k <=
+    (after_k - EnergyDecayMonotonicity.linear_decay after_k (h - 1) h) -
+    EnergyDecayMonotonicity.linear_decay
+      (after_k - EnergyDecayMonotonicity.linear_decay after_k (h - 1) h) 1 h.
+Proof.
+  intros after_k h Hh.
+  unfold EnergyDecayMonotonicity.linear_decay.
+  rewrite Nat.mul_1_r.
+  rewrite Nat.div2_div.
+  (* Now the goal is purely in terms of Nat.div / Nat.modulo. We feed
+     [nia] the standard div_mod identities + mod upper-bounds for the
+     three division sites:
+       - [after_k / 2]                                   (the LHS halving)
+       - [(after_k * (h - 1)) / (2 * h)]                 (1st linear_decay)
+       - [(after_k - prev) / (2 * h)]                    (2nd linear_decay)
+     plus h >= 2 from the hypothesis. The closed-form algebra
+     (multiply through by 2h, sum the three div_mod expansions,
+     reduce to "0 <= h - 1") is well within nia's reach. *)
+  assert (H2h : 2 * h <> 0) by lia.
+  assert (H2  : (2 : nat) <> 0) by lia.
+  pose proof (Nat.div_mod (after_k * (h - 1)) (2 * h) H2h) as Hq_dm.
+  pose proof (Nat.mod_upper_bound (after_k * (h - 1)) (2 * h) H2h) as Hq_bnd.
+  pose proof (Nat.div_mod
+                (after_k - Nat.div (after_k * (h - 1)) (2 * h))
+                (2 * h) H2h) as Hp_dm.
+  pose proof (Nat.mod_upper_bound
+                (after_k - Nat.div (after_k * (h - 1)) (2 * h))
+                (2 * h) H2h) as Hp_bnd.
+  pose proof (Nat.div_mod after_k 2 H2) as Hd2.
+  pose proof (Nat.mod_upper_bound after_k 2 H2) as Hd2_bnd.
+  nia.
+Qed.
+
 Lemma concrete_step_subadditive_cross_halving :
   forall e h k,
     h <> 0 ->
@@ -508,7 +580,67 @@ Lemma concrete_step_subadditive_cross_halving :
     EnergyDecayMonotonicity.energy_at_epoch
       (EnergyDecayMonotonicity.energy_at_epoch e h k) h 1.
 Proof.
-Admitted.
+  intros e h k Hh Hcross.
+  destruct (cross_halving_remainders h k Hh Hcross) as [Hrem_k Hrem_sk].
+  unfold EnergyDecayMonotonicity.energy_at_epoch at 1 2.
+  rewrite (proj2 (Nat.eqb_neq h 0) Hh).
+  rewrite Hcross, Hrem_sk, Hrem_k.
+  destruct (leb EnergyDecayMonotonicity.halving_cutoff (Nat.div k h + 1)) eqn:Ecut_sk.
+  - (* LHS cutoff hit: LHS = 0, RHS >= 0. *)
+    apply Nat.le_0_l.
+  - destruct (leb EnergyDecayMonotonicity.halving_cutoff (Nat.div k h)) eqn:Ecut_k.
+    + (* Inner cutoff hit but new one not — impossible (cutoff <= k/h => cutoff <= k/h+1). *)
+      apply Nat.leb_le in Ecut_k.
+      apply Nat.leb_nle in Ecut_sk. lia.
+    + (* Main case: neither cutoff. *)
+      set (after_k := EnergyDecayMonotonicity.nat_shr e (Nat.div k h)).
+      assert (Hshr_succ :
+        EnergyDecayMonotonicity.nat_shr e (Nat.div k h + 1)
+        = Nat.div2 after_k).
+      { unfold after_k.
+        replace (Nat.div k h + 1) with (S (Nat.div k h)) by lia.
+        rewrite EnergyDecayMonotonicity.nat_shr_succ. reflexivity. }
+      rewrite Hshr_succ.
+      (* linear_decay X 0 h = 0 — clears the LHS subtraction *)
+      assert (Hld0 : forall X, EnergyDecayMonotonicity.linear_decay X 0 h = 0).
+      { intros X. unfold EnergyDecayMonotonicity.linear_decay.
+        rewrite Nat.mul_0_r. apply Nat.div_0_l. lia. }
+      rewrite Hld0. rewrite Nat.sub_0_r.
+      (* Now: Nat.div2 after_k <= energy_at_epoch (after_k - ...) h 1 *)
+      unfold EnergyDecayMonotonicity.energy_at_epoch.
+      rewrite (proj2 (Nat.eqb_neq h 0) Hh).
+      destruct (Nat.lt_ge_cases 1 h) as [Hlt1 | Hge1].
+      * (* h >= 2 *)
+        rewrite Nat.div_small by exact Hlt1.
+        rewrite Nat.mod_small by exact Hlt1.
+        destruct (leb EnergyDecayMonotonicity.halving_cutoff 0) eqn:Ecut0.
+        { unfold EnergyDecayMonotonicity.halving_cutoff in Ecut0.
+          apply Nat.leb_le in Ecut0. lia. }
+        rewrite EnergyDecayMonotonicity.nat_shr_zero.
+        (* Goal reduces to cross_halving_arith *)
+        apply cross_halving_arith. lia.
+      * (* h = 1: degenerate. rem_k = h - 1 = 0, so the linear_decay
+           subtraction is zero and inner = after_k. Both sides reduce
+           to Nat.div2 after_k. *)
+        assert (Hh1 : h = 1) by lia. subst h.
+        rewrite Nat.div_1_r, Nat.mod_1_r.
+        destruct (leb EnergyDecayMonotonicity.halving_cutoff 1) eqn:Ecut1.
+        { unfold EnergyDecayMonotonicity.halving_cutoff in Ecut1.
+          apply Nat.leb_le in Ecut1. lia. }
+        (* h-1 = 0 so the inner linear_decay is 0 *)
+        replace (1 - 1) with 0 by lia.
+        rewrite Hld0. rewrite Nat.sub_0_r.
+        (* RHS: nat_shr after_k 1 - linear_decay (nat_shr after_k 1) 0 1
+                = nat_shr after_k 1 - 0
+                = Nat.div2 after_k                                        *)
+        replace (EnergyDecayMonotonicity.nat_shr after_k 1)
+          with (Nat.div2 after_k).
+        2: { rewrite EnergyDecayMonotonicity.nat_shr_succ,
+                     EnergyDecayMonotonicity.nat_shr_zero.
+             reflexivity. }
+        rewrite Hld0. rewrite Nat.sub_0_r.
+        reflexivity.
+Qed.
 
 (** [DRIFT-STEP-SUB] composition lemma. Combines the within-halving
     and cross-halving cases via case-split on `(S k)/h` vs `k/h`. *)
