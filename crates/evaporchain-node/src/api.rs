@@ -10427,11 +10427,6 @@ async fn post_resurrect(
             })
         }
     };
-    let hash = tx_hash(&format!(
-        "resurrect:{}:{}",
-        hex::encode(&obj_id_val[..8]),
-        req.energy_deposit
-    ));
     let mut tx = Transaction::Refresh(RefreshTx {
         object_id: obj_id_val,
         energy_deposit: req.energy_deposit,
@@ -10439,6 +10434,8 @@ async fn post_resurrect(
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
     sign_transaction(&mut tx, &state, None);
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
@@ -10505,12 +10502,6 @@ async fn post_batch(
                 nonce,
             } => match (parse_address_value(&from), parse_address_value(&to)) {
                 (Ok(f), Ok(t)) if f != t && amount > 0 => {
-                    let hash = tx_hash(&format!(
-                        "transfer:{}:{}:{}",
-                        hex::encode(&f[..20]),
-                        hex::encode(&t[..20]),
-                        amount
-                    ));
                     let mut tx = Transaction::Transfer(TransferTx {
                         from: f,
                         to: t,
@@ -10521,6 +10512,8 @@ async fn post_batch(
                         mev_refund_eligible: None,
                     });
                     sign_transaction(&mut tx, &state, None);
+                    // Canonical tx hash — see post_transfer.
+                    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
                     state.submit_tx(tx);
                     BatchItemResult {
                         index: i,
@@ -10553,12 +10546,6 @@ async fn post_batch(
                     parse_address_value(&object_id),
                 ) {
                     (Ok(c), Ok(oid)) => {
-                        let hash = tx_hash(&format!(
-                            "create:{}:{}:{}",
-                            hex::encode(&oid[..8]),
-                            energy,
-                            half_life
-                        ));
                         let mut tx = Transaction::CreateObject(CreateObjectTx {
                             creator: c,
                             object_id: oid,
@@ -10571,6 +10558,8 @@ async fn post_batch(
                             public_key: None,
                         });
                         sign_transaction(&mut tx, &state, None);
+                        // Canonical tx hash — see post_transfer.
+                        let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
                         state.submit_tx(tx);
                         BatchItemResult {
                             index: i,
@@ -10592,11 +10581,6 @@ async fn post_batch(
                 energy_deposit,
             } => match parse_address_value(&object_id) {
                 Ok(oid) => {
-                    let hash = tx_hash(&format!(
-                        "refresh:{}:{}",
-                        hex::encode(&oid[..8]),
-                        energy_deposit
-                    ));
                     let mut tx = Transaction::Refresh(RefreshTx {
                         object_id: oid,
                         energy_deposit,
@@ -10604,6 +10588,8 @@ async fn post_batch(
                         public_key: None,
                     });
                     sign_transaction(&mut tx, &state, None);
+                    // Canonical tx hash — see post_transfer.
+                    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
                     state.submit_tx(tx);
                     BatchItemResult {
                         index: i,
@@ -10624,11 +10610,6 @@ async fn post_batch(
                 energy_deposit,
             } => match parse_address_value(&object_id) {
                 Ok(oid) => {
-                    let hash = tx_hash(&format!(
-                        "resurrect:{}:{}",
-                        hex::encode(&oid[..8]),
-                        energy_deposit
-                    ));
                     let mut tx = Transaction::Refresh(RefreshTx {
                         object_id: oid,
                         energy_deposit,
@@ -10636,6 +10617,8 @@ async fn post_batch(
                         public_key: None,
                     });
                     sign_transaction(&mut tx, &state, None);
+                    // Canonical tx hash — see post_transfer.
+                    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
                     state.submit_tx(tx);
                     BatchItemResult {
                         index: i,
@@ -10713,11 +10696,9 @@ async fn post_deploy_contract(
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
-    let hash = tx_hash(&format!(
-        "deploy:{}:{}:{}",
-        req.template, req.energy, req.half_life
-    ));
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -10749,13 +10730,9 @@ async fn post_call_contract(
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
-    let hash = tx_hash(&format!(
-        "call:{}:{}:{}",
-        req.contract_id,
-        req.method,
-        state.mempool_len()
-    ));
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -10852,8 +10829,9 @@ async fn post_deploy_script(
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
-    let hash = tx_hash(&format!("deploy-script:{}:{}", req.energy, req.half_life));
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -10885,13 +10863,9 @@ async fn post_call_script(
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
-    let hash = tx_hash(&format!(
-        "call-script:{}:{}:{}",
-        req.contract_id,
-        req.method,
-        state.mempool_len()
-    ));
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11675,13 +11649,6 @@ async fn post_oracle_ingest(
         }
     };
 
-    let hash = tx_hash(&format!(
-        "oracle:{}:{}:{}",
-        req.source,
-        hex::encode(&obj_id_val[..8]),
-        req.energy
-    ));
-
     // Prepend source tag to data
     let data_str = format!("[{}] {}", req.source, req.data);
 
@@ -11697,6 +11664,8 @@ async fn post_oracle_ingest(
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
 
     Json(TxResultResponse {
