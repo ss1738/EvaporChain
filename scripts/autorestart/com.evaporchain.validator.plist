@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd LaunchAgent for an EvaporChain validator.
+
+  Replace the placeholders before installing:
+    {{VALIDATOR_ID}}   — 1, 2, or 3 (matches the validator's slot in genesis)
+    {{HOME}}            — the operator's $HOME (absolute path, no shell expansion)
+
+  Install:
+    cp scripts/autorestart/com.evaporchain.validator.plist \
+       ~/Library/LaunchAgents/com.evaporchain.validator-{{VALIDATOR_ID}}.plist
+    # edit the file in-place, replacing placeholders
+    launchctl load ~/Library/LaunchAgents/com.evaporchain.validator-{{VALIDATOR_ID}}.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.evaporchain.validator-{{VALIDATOR_ID}}.plist
+    rm           ~/Library/LaunchAgents/com.evaporchain.validator-{{VALIDATOR_ID}}.plist
+
+  Behavior:
+    KeepAlive: relaunch the validator if it exits (normal exit OR crash).
+    SuccessfulExit=false: don't relaunch on a clean exit code 0
+                          (operator can `pkill` to actually stop).
+    ThrottleInterval: minimum 30s between restart attempts —
+                      avoids restart storms when something fundamental
+                      is broken (e.g., disk full, missing binary).
+    RunAtLoad: start immediately on `launchctl load`.
+    StandardOutPath / StandardErrorPath: stream node logs to a known
+                                          location for tailing.
+
+  Note: this LaunchAgent is intentionally USER-LEVEL, not system-level.
+  Validator state lives in $HOME/.evaporchain-tailscale-5node-data/
+  and the BLS key is owned by the user — running as root is the
+  wrong principal.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.evaporchain.validator-{{VALIDATOR_ID}}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{HOME}}/EvaporChain/scripts/launch-tailscale-5node.sh</string>
+        <string>{{VALIDATOR_ID}}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{HOME}}/EvaporChain</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/evaporchain-5node-v{{VALIDATOR_ID}}.launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/evaporchain-5node-v{{VALIDATOR_ID}}.launchd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,63 @@
+# systemd unit for an EvaporChain validator (Hetzner / generic Linux).
+#
+# Replace placeholders before installing:
+#   {{VALIDATOR_ID}}  — validator slot in genesis (1..N)
+#   {{USER}}          — system user that owns the data dir + BLS key
+#                       (typically `root` on Hetzner CX23, but can be
+#                       a non-root account for stricter setups)
+#   {{HOME}}          — that user's $HOME (absolute path)
+#
+# Install:
+#   sudo cp scripts/autorestart/evaporchain-validator.service \
+#           /etc/systemd/system/evaporchain-validator-{{VALIDATOR_ID}}.service
+#   # edit the file in-place, replacing placeholders
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now evaporchain-validator-{{VALIDATOR_ID}}.service
+#
+# Tail logs:
+#   journalctl -u evaporchain-validator-{{VALIDATOR_ID}}.service -f
+#
+# Stop:
+#   sudo systemctl stop evaporchain-validator-{{VALIDATOR_ID}}.service
+#
+# Behavior:
+#   Restart=on-failure         — only restart on non-zero exit code,
+#                                so an operator `systemctl stop` doesn't
+#                                fight a relaunch.
+#   RestartSec=30              — minimum 30s between attempts; avoids
+#                                restart storms when something fundamental
+#                                is broken (disk full, missing binary).
+#   StartLimitBurst=5          — allow 5 restarts in StartLimitIntervalSec
+#                                seconds, then give up (operator
+#                                investigation needed).
+#   StartLimitIntervalSec=600  — the burst window above.
+#   WorkingDirectory           — required so the launcher script's
+#                                relative paths (`./target/release/...`,
+#                                `./genesis-tailscale-5node.json`)
+#                                resolve correctly.
+#   StandardOutput=journal     — node logs flow to journald and are
+#                                queryable via journalctl.
+
+[Unit]
+Description=EvaporChain validator {{VALIDATOR_ID}} (Tailscale 5-node cluster)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Documentation=https://github.com/ss1738/EvaporChain
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{HOME}}/EvaporChain
+ExecStart={{HOME}}/EvaporChain/scripts/launch-tailscale-5node.sh {{VALIDATOR_ID}}
+Restart=on-failure
+RestartSec=30
+StartLimitBurst=5
+StartLimitIntervalSec=600
+StandardOutput=journal
+StandardError=journal
+# Make sure the cargo / rustup PATH is available so any rebuild
+# triggered downstream doesn't fail with `cargo: command not found`.
+Environment="PATH={{HOME}}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
