@@ -59,6 +59,9 @@ pub mod client;
 pub mod error;
 pub mod state_query;
 
+#[cfg(feature = "nova")]
+pub mod nova;
+
 pub use client::LightClient;
 pub use error::LightClientError;
 

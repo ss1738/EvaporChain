@@ -25,8 +25,11 @@ pub struct LightClient {
 
     /// `vk_bytes` for Nova-IVC sublinear verification. `None`
     /// means the SDK runs in BFT-only mode (still useful — energy-
-    /// floor checks at the BFT level work fine).
-    #[cfg(feature = "nova")]
+    /// floor checks at the BFT level work fine). Always present
+    /// in the struct regardless of the `nova` feature flag — the
+    /// flag only gates whether the actual SNARK verification path
+    /// is compiled in. Keeping the field unconditional keeps
+    /// constructor signatures uniform across feature flavours.
     vk_bytes: Option<Vec<u8>>,
 
     /// Most-recently-trusted block header. Updated on each
@@ -42,17 +45,18 @@ pub struct LightClient {
 impl LightClient {
     /// Construct a new light client anchored at `genesis_header`,
     /// with the given `current_time` (Unix seconds) used for
-    /// trust-period tracking. Optionally supply `vk_bytes` for
-    /// Nova-IVC sublinear verification (feature-gated).
+    /// trust-period tracking. Pass `vk_bytes = Some(...)` to
+    /// enable Nova-IVC sublinear verification via
+    /// [`LightClient::ingest_block_with_nova`] (requires `nova`
+    /// feature); pass `None` for BFT-only operation.
     pub fn new(
         genesis_header: LightBlockHeader,
         current_time: u64,
-        #[cfg(feature = "nova")] vk_bytes: Option<Vec<u8>>,
+        vk_bytes: Option<Vec<u8>>,
     ) -> Self {
         let bft = LightClientVerifier::new(genesis_header.clone(), current_time);
         Self {
             bft,
-            #[cfg(feature = "nova")]
             vk_bytes,
             trusted_tip: genesis_header,
             // Default 2-week trust period from
@@ -68,7 +72,7 @@ impl LightClient {
         genesis_header: LightBlockHeader,
         current_time: u64,
         trust_period_secs: u64,
-        #[cfg(feature = "nova")] vk_bytes: Option<Vec<u8>>,
+        vk_bytes: Option<Vec<u8>>,
     ) -> Self {
         let bft = evaporchain_consensus::light_client::LightClientVerifier::with_trust_period(
             genesis_header.clone(),
@@ -77,11 +81,29 @@ impl LightClient {
         );
         Self {
             bft,
-            #[cfg(feature = "nova")]
             vk_bytes,
             trusted_tip: genesis_header,
             trust_period_secs,
         }
+    }
+
+    // ── Crate-internal accessors used by the `nova` module ────
+
+    /// Mutable handle to the BFT verifier. Crate-private so the
+    /// `nova` module can drive the same BFT verification path.
+    pub(crate) fn bft_verifier_mut(&mut self) -> &mut LightClientVerifier {
+        &mut self.bft
+    }
+
+    /// Read-only access to vk_bytes for the Nova path.
+    pub(crate) fn vk_bytes_ref(&self) -> Option<&[u8]> {
+        self.vk_bytes.as_deref()
+    }
+
+    /// Promote a header to the trusted tip after both BFT and
+    /// Nova verification have succeeded.
+    pub(crate) fn set_trusted_tip(&mut self, header: LightBlockHeader) {
+        self.trusted_tip = header;
     }
 
     /// Current trust-period (seconds).
@@ -284,7 +306,6 @@ mod tests {
         let lc = LightClient::new(
             genesis,
             100,
-            #[cfg(feature = "nova")]
             None,
         );
         assert_eq!(lc.current_height(), 1);
@@ -299,7 +320,6 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
-            #[cfg(feature = "nova")]
             None,
         );
 
@@ -316,7 +336,6 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
-            #[cfg(feature = "nova")]
             None,
         );
         // Same-height block — must be rejected before any BFT check.
@@ -340,7 +359,6 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
-            #[cfg(feature = "nova")]
             None,
         );
         // Adjacent block (height 2) but parent_hash != [0xaa; 32].
@@ -358,7 +376,6 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
-            #[cfg(feature = "nova")]
             None,
         );
         // Only 1 of 4 signers — below quorum (need ≥3).
@@ -376,7 +393,6 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
-            #[cfg(feature = "nova")]
             None,
         );
         // Build a valid header, then corrupt the aggregate sig.
@@ -399,7 +415,6 @@ mod tests {
             genesis,
             100,
             1,
-            #[cfg(feature = "nova")]
             None,
         );
         // Wait past the trust period.
@@ -417,7 +432,6 @@ mod tests {
         let lc = LightClient::new(
             genesis,
             100,
-            #[cfg(feature = "nova")]
             None,
         );
         assert_eq!(lc.trust_period_secs(), 14 * 24 * 3600);
@@ -431,7 +445,6 @@ mod tests {
             genesis,
             100,
             3600,
-            #[cfg(feature = "nova")]
             None,
         );
         assert_eq!(lc.trust_period_secs(), 3600);

@@ -131,7 +131,6 @@ mod tests {
         crate::LightClient::new(
             header,
             1_700_000_000,
-            #[cfg(feature = "nova")]
             None,
         )
     }
@@ -178,7 +177,6 @@ mod tests {
         let lc = crate::LightClient::new(
             header,
             1_700_000_000,
-            #[cfg(feature = "nova")]
             None,
         );
 
