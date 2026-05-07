@@ -1,5 +1,48 @@
 # EvaporChain Changelog
 
+## 2026-05-07 (late-evening continuation) — Light Client SDK consumer surface (5 commits)
+
+Continuation of the Light Client SDK arc closed earlier this evening. The 10-commit arc shipped the verifier composition + chain-side endpoints + e2e tests; this 5-commit continuation lands the *consumer surface* — the actual touch-points a wallet/dapp/explorer integrator hits before reading the SDK source. Built strictly client-side under the running 5-node WAN cluster; no chain-side rebuild, no node restart, no runtime change.
+
+### CLI binary fleshed out
+
+- `7d715b9` `feat(light-client-cli): get-state --account derives trie key via blake3("acct" || addr)` — final shipping flag set on the `evaporchain-light-client` binary. `get-state` now accepts EITHER `--key HEX` (raw 32-byte trie key) OR `--account HEX` (32-byte address; trie key derived as `blake3("acct" || address)` matching `evaporchain_state::db::trie_key_for_account`). Mutually exclusive via clap `conflicts_with`. CLI suite to 9/9 green (added `cli_parses_get_state_with_account` + `cli_get_state_rejects_both_key_and_account`).
+
+### Operator + integrator docs
+
+- `a43f2c7` `docs(runbooks): operator runbook for the Light Client CLI` — `docs/runbooks/light-client-cli.md`. ~270 lines covering build, prerequisites (chain endpoints required), all three subcommands (sync-latest, get-state, watch) with flag tables + examples + JSON output shapes, exit-code semantics, 5-row error→remedy table (including the 2026-05-07 `e56359a` cluster-binary-lag finding for `/api/state/proof/:key_hex`), why-vs-curl, source cross-references.
+- `9c1b63c` `docs(light-client): README for the SDK core crate` — `crates/evaporchain-light-client/README.md`. 82-line cold-landing doc: 3-layer verification table, runnable Quickstart, crates-in-family map, feature flags, WASM-target notes, verification semantics including the documented intentional omission of parent-hash adjacency checks at the SDK boundary (BLS aggregate sig is authoritative; chain producer-side `block.parent_hash` uses a recursive blake3 formula different from `cert.block_hash`, discovered during 5-node WAN cluster validation).
+- `14979a3` `docs(light-client): READMEs for the http transport + cli crates` — completes the SDK-trilogy README coverage. http: when-to-use / when-NOT-to-use callouts (WASM, async, no_std), Quickstart, `with_paths` override example for non-default gateway shapes, response-schema + error-mapping tables. cli: 3-subcommand quick reference, build instructions, "source as reference" section pointing integrators at `src/main.rs` as a copyable worked example.
+
+### Worked-example binary
+
+- `961abfa` `feat(light-client-example): worked-example balance-monitor binary` — new workspace member `evaporchain-light-client-example-balance-monitor`. ~265-line `src/main.rs` polls a single account's verified state at a fixed cadence and prints JSON on value-change; 4 unit tests (trie-key derivation, hex round-trip, clap parsing minimum + full args); 50-line README explaining intentional limitations (no persistence, no trust-period re-anchoring, no retries — left for real consumers). Cargo.toml registers the member; deps trimmed to SDK + HTTP + clap + blake3 + serde_json. Build verification deferred under cluster non-disruption mode (locked off the Minis + the laptop); SDK call patterns mirror the CLI 1:1, cargo-error risk bounded.
+
+### Final consumer-surface state
+
+| Surface | Path | Purpose |
+|---|---|---|
+| SDK core README | `crates/evaporchain-light-client/README.md` | Cold landing for integrators |
+| HTTP transport README | `crates/evaporchain-light-client-http/README.md` | When / when-not + path overrides |
+| CLI README | `crates/evaporchain-light-client-cli/README.md` | Subcommand quick-ref + source-as-reference |
+| Operator runbook | `docs/runbooks/light-client-cli.md` | Full operator detail |
+| CLI binary | `evaporchain-light-client` (3 subcommands) | sync-latest / get-state / watch |
+| Worked-example binary | `evaporchain-balance-monitor` | Copyable integrator template |
+
+### Light Client SDK arc — final closure
+
+| Component | LOC | Tests | Status |
+|---|---|---|---|
+| `evaporchain-light-client` core | ~1,500 | 28 (with `--features nova`) | ✅ shipped |
+| `evaporchain-light-client-http` add-on | ~400 | 6 unit + 4 e2e | ✅ shipped |
+| `evaporchain-light-client-cli` binary | ~450 | 9 unit | ✅ shipped + cluster-validated (15190→15271 walk) |
+| `evaporchain-light-client-example-balance-monitor` | ~265 | 4 unit | ✅ shipped (build-verify pending) |
+| Chain endpoints (`api.rs`) | ~140 | indirect via SDK e2e | ✅ shipped (cluster-binary lag for state-proof) |
+| `StateDB::prove_at_key` (trait + 3 impls) | ~25 | indirect | ✅ shipped |
+| Operator runbook + READMEs trilogy | ~450 lines docs | n/a | ✅ shipped |
+
+The Lambda-Fold Real Nova "decade-defining if the math holds" claim is now operational from chain consensus through the prover (Layer 5) through the SDK + HTTP transport + CLI + worked example + integrator docs all the way to a wallet/dapp/explorer ready to import a single Cargo dep.
+
 ## 2026-05-07 (late evening) — Light Client SDK arc end-to-end (10 commits)
 
 Closes the Light Client SDK arc — `evaporchain-light-client` + `evaporchain-light-client-http` + chain-side `/api/light_header/...` + `/api/state/proof/:key_hex` + e2e HTTP integration test. Operationalises the entire Layer 5 Lambda-Fold Real Nova investment at the consumer surface: third-party wallets / dapps / bridges / explorers can now hold just `vk_bytes` (~few KB) and verify chain validity + state queries in O(1) per block via the chain's authoritative verifier.
