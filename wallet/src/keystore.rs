@@ -231,7 +231,11 @@ impl KeyStore {
         decrypt_hybrid_entry(entry, password)
     }
 
-    /// Import an existing ML-DSA key pair into the keystore.
+    /// Import an existing ML-DSA key pair into the keystore. The
+    /// account's on-chain address is computed as `blake3(public_key)`
+    /// — see [`Self::import_key_with_address`] for cases where the
+    /// account's address was hand-picked at genesis (validator-N
+    /// allocations, etc.) and decouples from `hash(public_key)`.
     pub fn import_key(
         &mut self,
         name: &str,
@@ -239,11 +243,33 @@ impl KeyStore {
         public_key: &[u8],
         secret_key: &[u8],
     ) -> Result<AccountAddress, KeyStoreError> {
+        let address = derive_address(public_key);
+        self.import_key_with_address(name, password, public_key, secret_key, address)
+    }
+
+    /// Import a keypair WITH an explicit address override. The chain
+    /// accepts signed transactions where the `from` field decouples
+    /// from `hash(public_key)` — used by genesis allocations whose
+    /// addresses were hand-picked (e.g. `[1, 0, 0, ...]` for
+    /// validator-1's operator account in `genesis-mainnet.json`).
+    /// This method skips the derive_address step and pins the
+    /// keystore entry's address to the caller-supplied value.
+    ///
+    /// Use [`Self::import_key`] when you control the keypair fresh
+    /// or imported from a wallet whose addresses already are
+    /// `hash(public_key)` — that's the safer default.
+    pub fn import_key_with_address(
+        &mut self,
+        name: &str,
+        password: &str,
+        public_key: &[u8],
+        secret_key: &[u8],
+        address: AccountAddress,
+    ) -> Result<AccountAddress, KeyStoreError> {
         if self.entries.iter().any(|e| e.name == name) {
             return Err(KeyStoreError::DuplicateName(name.to_string()));
         }
 
-        let address = derive_address(public_key);
         let address_hex = crate::address::format_address(&address);
 
         if self.entries.iter().any(|e| e.address == address_hex) {

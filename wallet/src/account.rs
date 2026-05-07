@@ -127,7 +127,11 @@ impl AccountManager {
         Ok(addr)
     }
 
-    /// Import an existing key pair into the keystore.
+    /// Import an existing key pair into the keystore. Account address
+    /// is derived as `blake3(public_key)` — see
+    /// [`Self::import_account_with_address`] for cases where the
+    /// on-chain address was hand-picked at genesis and decouples
+    /// from `hash(public_key)`.
     pub fn import_account(
         &mut self,
         name: &str,
@@ -138,6 +142,40 @@ impl AccountManager {
         let addr = self
             .keystore
             .import_key(name, password, public_key, secret_key)?;
+        if self.active_account.is_none() {
+            self.active_account = Some(name.to_string());
+        }
+        Ok(addr)
+    }
+
+    /// Import a keypair WITH an explicit address override.
+    ///
+    /// The chain accepts signed transactions where `from` decouples
+    /// from `hash(public_key)` — used by genesis allocations whose
+    /// addresses were hand-picked (e.g. validator-N operator
+    /// accounts at `[N, 0, 0, ...]` in `genesis-mainnet.json`). This
+    /// method binds the keystore entry to a caller-supplied address
+    /// instead of deriving from the pubkey.
+    ///
+    /// Safety: callers MUST verify the keypair actually controls the
+    /// override address on-chain (e.g. the chain accepted a prior
+    /// signed tx from this address with this public_key). Mis-pairing
+    /// will produce signed txs the chain rejects on signature-verify.
+    pub fn import_account_with_address(
+        &mut self,
+        name: &str,
+        password: &str,
+        public_key: &[u8],
+        secret_key: &[u8],
+        address: AccountAddress,
+    ) -> Result<AccountAddress, AccountError> {
+        let addr = self.keystore.import_key_with_address(
+            name,
+            password,
+            public_key,
+            secret_key,
+            address,
+        )?;
         if self.active_account.is_none() {
             self.active_account = Some(name.to_string());
         }

@@ -747,6 +747,15 @@ pub enum AccountAction {
         name: String,
         /// Path to the JSON key file.
         key_file: std::path::PathBuf,
+        /// Override the derived `blake3(public_key)` address with a
+        /// caller-supplied 32-byte hex address. Required for genesis
+        /// allocations whose addresses were hand-picked (e.g.
+        /// `0x0100...` for validator-1 operator). The chain accepts
+        /// signed txs where `from` decouples from `hash(public_key)`.
+        /// Caller MUST verify the keypair actually controls the
+        /// override address on-chain.
+        #[arg(long)]
+        address_override: Option<String>,
     },
     /// List all accounts.
     List,
@@ -4540,7 +4549,11 @@ async fn cmd_account(
             println!("{} Account '{}' created", "OK".green().bold(), name);
             println!("   Address: {}", format_address(&addr));
         }
-        AccountAction::Import { name, key_file } => {
+        AccountAction::Import {
+            name,
+            key_file,
+            address_override,
+        } => {
             validation::validate_name(&name)?;
             let raw = std::fs::read_to_string(&key_file)
                 .map_err(|e| format!("read key file {}: {e}", key_file.display()))?;
@@ -4562,15 +4575,46 @@ async fn cmd_account(
                 .map_err(|e| format!("ml_dsa.secret_key hex-decode: {e}"))?;
             let password = prompt_password("Enter password to encrypt the imported key")?;
             validation::validate_password(&password)?;
-            let addr = mgr.import_account(&name, &password, &public_key, &secret_key)?;
+
+            let (addr, mode) = match address_override {
+                None => (
+                    mgr.import_account(&name, &password, &public_key, &secret_key)?,
+                    "derived from public_key",
+                ),
+                Some(hex_str) => {
+                    let stripped = hex_str.strip_prefix("0x").unwrap_or(&hex_str);
+                    if stripped.len() != 64 {
+                        return Err(format!(
+                            "--address-override must be 64-char hex (32 bytes), got {} chars",
+                            stripped.len()
+                        )
+                        .into());
+                    }
+                    let bytes = hex::decode(stripped)
+                        .map_err(|e| format!("--address-override hex-decode: {e}"))?;
+                    let mut addr_bytes = [0u8; 32];
+                    addr_bytes.copy_from_slice(&bytes);
+                    (
+                        mgr.import_account_with_address(
+                            &name,
+                            &password,
+                            &public_key,
+                            &secret_key,
+                            addr_bytes,
+                        )?,
+                        "address override (genesis-allocated)",
+                    )
+                }
+            };
             mgr.save(keystore_path)?;
             println!(
-                "{} Imported '{}' from {} ({} byte pk, {} byte sk)",
+                "{} Imported '{}' from {} ({} byte pk, {} byte sk; {})",
                 "OK".green().bold(),
                 name,
                 key_file.display(),
                 public_key.len(),
-                secret_key.len()
+                secret_key.len(),
+                mode
             );
             println!("   Address: {}", format_address(&addr));
         }
