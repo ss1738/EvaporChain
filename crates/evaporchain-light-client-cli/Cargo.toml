@@ -1,0 +1,20 @@
+[package]
+name = "evaporchain-light-client-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Operator-facing CLI demonstrating the evaporchain-light-client SDK against a running node. Wraps the SDK's HTTP transport into invokable subcommands — `sync-latest` walks the chain forward from a genesis trust anchor through the BFT BLS verification layer, `get-state` fetches and verifies a single state-query proof, `watch` follows the chain forward indefinitely. Useful as both an operator tool and a worked-example reference for downstream consumers (mobile / browser / bridge / explorer integrators)."
+
+[[bin]]
+name = "evaporchain-light-client"
+path = "src/main.rs"
+
+[dependencies]
+evaporchain-light-client      = { path = "../evaporchain-light-client" }
+evaporchain-light-client-http = { path = "../evaporchain-light-client-http" }
+evaporchain-consensus         = { path = "../evaporchain-consensus" }
+evaporchain-types             = { path = "../evaporchain-types" }
+clap        = { version = "4", features = ["derive"] }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
