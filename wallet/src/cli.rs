@@ -154,12 +154,25 @@ pub enum Commands {
     /// Run self-diagnostic checks.
     Doctor,
     /// Execute a batch of transactions from a JSON file.
+    ///
+    /// EvaporChain's tx-admission path strict-checks `req.nonce ==
+    /// account.nonce` against the CURRENT on-chain nonce — it does
+    /// NOT queue ahead-of-nonce txs in the mempool. Submitting tx N+1
+    /// before tx N has been included in a block produces
+    /// `InvalidNonce: expected N, got N+1`. Use `--wait-each` to
+    /// pause for confirmation of each tx before submitting the next
+    /// (slow at testnet block intervals: ~one block per tx).
     Batch {
         /// Path to batch JSON file.
         file: PathBuf,
         /// Dry-run: validate and show summary without executing.
         #[arg(long)]
         dry_run: bool,
+        /// Wait for each tx to be included in a block before
+        /// submitting the next. Required for multi-tx batches
+        /// from a single sender (see Batch help docstring).
+        #[arg(long)]
+        wait_each: bool,
     },
     /// Multi-account portfolio dashboard.
     Dashboard,
@@ -4313,8 +4326,12 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cmd_doctor(node_url, &keystore_path).await?;
             return Ok(());
         }
-        Commands::Batch { file, dry_run } => {
-            cmd_batch(rpc, &keystore_path, &history_path, &file, dry_run).await?;
+        Commands::Batch {
+            file,
+            dry_run,
+            wait_each,
+        } => {
+            cmd_batch(rpc, &keystore_path, &history_path, &file, dry_run, wait_each).await?;
             return Ok(());
         }
         Commands::Dashboard => {
@@ -5899,6 +5916,7 @@ async fn cmd_batch(
     history_path: &str,
     file: &std::path::Path,
     dry_run: bool,
+    wait_each: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::batch::{BatchFile, BatchOperation, BatchResult, BatchSummary};
 
@@ -5971,20 +5989,33 @@ async fn cmd_batch(
     let rpc2 = RpcClient::new(mgr.rpc().base_url())?;
     let mut pipeline = TxPipeline::new(rpc2);
 
+    // Fetch the sender's current on-chain nonce ONCE up front, then
+    // increment locally per successful submission. Pre-fix code did
+    // `detail.nonce + i` inside the loop with a fresh fetch per
+    // iteration — but once the first tx hit the mempool and the
+    // chain advanced, `detail.nonce` reflected the new state, so
+    // adding the static counter `i` over-counted and every
+    // subsequent tx was rejected as InvalidNonce. Standard fix:
+    // single fetch + local counter (matches Cosmos / Ethereum
+    // batch-submit conventions).
+    let initial_detail = mgr.rpc().get_address_detail(&from_addr).await?;
+    let mut next_nonce = initial_detail.nonce;
+
     let mut results = Vec::new();
 
     for (i, op) in batch.operations.iter().enumerate() {
         match op {
             BatchOperation::Transfer { to, amount } => {
                 let to_addr = parse_address(to)?;
-                // Fetch current nonce for each tx
-                let rpc_tmp = RpcClient::new(mgr.rpc().base_url())?;
-                let detail = rpc_tmp.get_address_detail(&from_addr).await?;
-                let nonce = detail.nonce + i as u64;
+                let nonce = next_nonce;
 
                 match pipeline.transfer(&signer, &to_addr, *amount, nonce).await {
                     Ok(resp) => {
                         let hash = resp.tx_hash.clone();
+                        // Only advance the local nonce on submission
+                        // success — if mempool rejected, the chain's
+                        // nonce expectation hasn't moved either.
+                        next_nonce = next_nonce.saturating_add(1);
                         if let Some(ref h) = hash {
                             record_tx(
                                 history_path,
@@ -6004,6 +6035,19 @@ async fn cmd_batch(
                                 &to[..16],
                                 hash.as_deref().unwrap_or("")
                             );
+                        }
+                        // EvaporChain rejects ahead-of-nonce submissions
+                        // (it strict-checks `req.nonce == account.nonce`
+                        // against the CURRENT chain state, not a
+                        // mempool-aware pending-nonce). For multi-tx
+                        // batches from a single sender we have to wait
+                        // for each tx to land before submitting the
+                        // next. With --wait-each enabled, poll until
+                        // the chain has advanced past this tx.
+                        if wait_each {
+                            if let Some(ref h) = hash {
+                                await_confirmation(&pipeline, h).await;
+                            }
                         }
                         results.push(BatchResult {
                             index: i,
