@@ -232,6 +232,80 @@ Qed.
     halving-cutoff branch may need manual work. Left as Admitted for
     a focused follow-up session; the outer `concrete_drift_one_sided`
     theorem composes cleanly once this discharges. *)
+(** Helper: per-unit-step bound on linear_decay growth. When v
+    increases by 1, linear_decay grows by at most 1 (because
+    rem < h ≤ 2h, so each step in v adds < 1 to v*rem/(2h)). *)
+Lemma linear_decay_step_le_one :
+  forall v rem h,
+    h <> 0 -> rem < h ->
+    EnergyDecayMonotonicity.linear_decay (v + 1) rem h <=
+    EnergyDecayMonotonicity.linear_decay v rem h + 1.
+Proof.
+  intros v rem h Hh Hrem.
+  unfold EnergyDecayMonotonicity.linear_decay.
+  replace ((v + 1) * rem) with (v * rem + rem) by lia.
+  (* Goal: (v*rem + rem) / (2h) <= (v*rem)/(2h) + 1 *)
+  (* Strategy: bound the RHS as `< (v*rem)/(2h) + 2`, then `<= +1` follows. *)
+  apply Nat.lt_succ_r.
+  apply Nat.div_lt_upper_bound; [lia |].
+  pose proof (Nat.div_mod (v * rem) (2 * h)) as Hdm.
+  pose proof (Nat.mod_upper_bound (v * rem) (2 * h)) as Hmod.
+  (* Goal: v*rem + rem < 2*h * S (Nat.div (v*rem) (2*h) + 1) *)
+  lia.
+Qed.
+
+(** Helper: per-unit-step monotonicity of v - linear_decay v rem h. *)
+Lemma sub_linear_decay_step_mono :
+  forall v rem h,
+    h <> 0 -> rem < h ->
+    v - EnergyDecayMonotonicity.linear_decay v rem h <=
+    (v + 1) - EnergyDecayMonotonicity.linear_decay (v + 1) rem h.
+Proof.
+  intros v rem h Hh Hrem.
+  pose proof (linear_decay_step_le_one v rem h Hh Hrem) as Hstep.
+  pose proof (EnergyDecayMonotonicity.linear_decay_bounded v rem h Hh Hrem) as Hbnd.
+  lia.
+Qed.
+
+(** Helper: monotonicity of `v - linear_decay v rem h` in v. By
+    induction on the proof of `a <= b` using the per-unit-step bound. *)
+Lemma sub_linear_decay_mono_init :
+  forall a b rem h,
+    h <> 0 -> rem < h -> a <= b ->
+    a - EnergyDecayMonotonicity.linear_decay a rem h <=
+    b - EnergyDecayMonotonicity.linear_decay b rem h.
+Proof.
+  intros a b rem h Hh Hrem Hab.
+  induction Hab as [| b' Hab' IH].
+  - (* a = a *) reflexivity.
+  - (* a <= S b' from a <= b' *)
+    eapply Nat.le_trans.
+    + exact IH.
+    + replace (S b') with (b' + 1) by lia.
+      apply sub_linear_decay_step_mono; assumption.
+Qed.
+
+(** Helper: nat_shr is monotone in its first argument. *)
+Lemma nat_shr_mono_init :
+  forall a b k,
+    a <= b ->
+    EnergyDecayMonotonicity.nat_shr a k <=
+    EnergyDecayMonotonicity.nat_shr b k.
+Proof.
+  intros a b k Hab.
+  induction k as [| k' IH].
+  - simpl. exact Hab.
+  - simpl.
+    (* Nat.div2 is monotone *)
+    apply Nat.div_le_mono with (c := 2) in IH.
+    + rewrite <- (Nat.div2_div (EnergyDecayMonotonicity.nat_shr a k')) in IH.
+      rewrite <- (Nat.div2_div (EnergyDecayMonotonicity.nat_shr b k')) in IH.
+      exact IH.
+    + lia.
+Qed.
+
+(** [DRIFT-MONO-INIT] DISCHARGED 2026-05-07. Composes the helpers
+    above. *)
 Lemma concrete_step_mono_init :
   forall a b h n,
     h <> 0 ->
@@ -239,29 +313,17 @@ Lemma concrete_step_mono_init :
     EnergyDecayMonotonicity.energy_at_epoch a h n <=
     EnergyDecayMonotonicity.energy_at_epoch b h n.
 Proof.
-  (* Proof attempt 2026-05-07: structural unfold + 4 helper assertions
-     (nat_shr monotonicity, linear_decay monotonicity in first arg,
-     linear_decay bounded by first arg when rem < h, applied to both
-     a and b). The unfold + helpers go through cleanly; the final
-     compose-via-lia step FAILS because `lia` cannot reason directly
-     about the saturating-sub `f(a) - g(a) <= f(b) - g(b)` shape from
-     `a <= b`, `f(a) <= f(b)`, `g(a) <= g(b)`, `g(a) <= f(a)`,
-     `g(b) <= f(b)` alone — a counterexample exists in those bounds
-     (e.g., f(a)=3, g(a)=0, f(b)=10, g(b)=9 satisfies all four but
-     gives 3 - 0 = 3 > 10 - 9 = 1). The MISSING constraint is that
-     `g(v) = floor(v*r/(2h))` with `r < h` gives `g(v+1) - g(v) <= 1`
-     per unit-step in v, hence `f(v) = v - g(v)` is monotone. The
-     correct proof goes by induction on `b - a` using the unit-step
-     bound. Tractable but technical; left as a focused follow-up.
-     Tagged [DRIFT-MONO-INIT].
-
-     The two intermediate facts (nat_shr monotone, linear_decay
-     monotone in arg-1) ARE provable as separate small lemmas — see
-     `EnergyDecayMonotonicity.v::nat_shr_monotone` and
-     `EnergyDecayMonotonicity.v::linear_decay_monotone_in_remainder`
-     for analogous primitives. The remaining work is composing them
-     via the per-unit-step argument above. *)
-Admitted.
+  intros a b h n Hh Hab.
+  unfold EnergyDecayMonotonicity.energy_at_epoch.
+  rewrite (proj2 (Nat.eqb_neq h 0) Hh).
+  destruct (leb EnergyDecayMonotonicity.halving_cutoff (Nat.div n h)).
+  - (* Past halving cutoff: both 0. *)
+    reflexivity.
+  - apply sub_linear_decay_mono_init.
+    + exact Hh.
+    + apply Nat.mod_upper_bound. exact Hh.
+    + apply nat_shr_mono_init. exact Hab.
+Qed.
 
 (** Helper: step-subadditivity of `energy_at_epoch`. Applying `S k`
     epochs in one shot underestimates applying `k` epochs and then
