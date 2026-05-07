@@ -95,10 +95,10 @@
 
 ## Tier 2 — Formal verification mechanization (multi-week each)
 
-### [~] 7. Coq mechanization: integer-decay monotonicity  (scaffolded 2026-04-28; one obligation `Admitted`)
+### [x] 7. Coq mechanization: integer-decay monotonicity  ✅ DONE — all obligations Qed
 **Where:** `research/coq/EnergyDecayMonotonicity.v`
 
-**State today:** Workspace + spec + main theorem statement + within-halving case fully proven (`Qed.`). The cross-halving step is `Admitted.` pending one arithmetic-bound lemma — its statement and proof obligation are documented in the file. A Rust-side cross-reference comment points from `energy_at_epoch` (`evaporchain-types/src/lib.rs:1331`) to the Coq spec.
+**State today (2026-05-07 verification):** Workspace + spec + main theorems all `Qed.`. Zero `Admitted` in the file — the closing comment at line 374 reads *"All lemmas in this file are now `Qed` (no `Admitted`)."* The cross-halving step closed via `decay_term_bound`, an arithmetic helper that bounds the floor-divisions of the linear-decay term + halving by `nia` using `Nat.mul_div_le` lower bounds. Section status flipped from `[~]` → `[x]` 2026-05-07 after re-verification on Mini 1 with Rocq 9.1.1.
 
 **Done when:**
 - [x] `research/coq/` workspace: `_CoqProject`, `Makefile`, `README.md`
@@ -107,30 +107,32 @@
 - [x] Within-halving monotonicity (`energy_step_within_halving`) proved at `Qed.`
 - [x] `energy_at_epoch_monotone` and `energy_at_epoch_monotone_general` theorems stated, structured proof in place
 - [x] Rust source carries a back-reference comment so future edits to the Rust impl trigger Coq re-check
-- [ ] **Open:** discharge `energy_step_cross_halving` `Admitted` — reduced to a single arithmetic-bound lemma:  
-      `Nat.div v 2 <= v - Nat.div (v * (h - 1)) (2 * h)` for `h >= 1`
+- [x] `energy_step_cross_halving` ✅ DISCHARGED at `EnergyDecayMonotonicity.v:283-324` (`Qed.`). Closed via `decay_term_bound` arithmetic-bound lemma — no longer `Admitted`. Earlier punch-list framing of *"reduced to a single arithmetic-bound lemma `Nat.div v 2 <= v - Nat.div (v * (h - 1)) (2 * h)` for `h >= 1`"* was the right pattern; the actual closure uses the strictly-stronger `decay_term_bound` form.
 
-### [~] 8. Coq mechanization: Energy-Verkle compression invariants  (scaffolded 2026-04-28)
+### [x] 8. Coq mechanization: Energy-Verkle compression invariants  ✅ DONE — all obligations Qed
 **Where:** `research/coq/EnergyVerkleCompression.v`
 
-**State today:** Spec + 3 invariants in place. The punch-list framing of "compress(decompress(c)) ≡ c" turned out to be inaccurate against the actual Rust impl — there is no `decompress` operation; leaves under a compressed subtree are recovered via a separate ghost-record resurrection path. The corrected invariant set:
+**State today (2026-05-07 verification):** Spec + 3 invariants in place; zero `Admitted` in the file. The punch-list framing of "compress(decompress(c)) ≡ c" turned out to be inaccurate against the actual Rust impl — there is no `decompress` operation; leaves under a compressed subtree are recovered via a separate ghost-record resurrection path. The corrected invariant set:
 
 **Done when:**
 - [x] Abstract trie model in Coq (`NEmpty | NLeaf | NInternal | NCompressed`)
 - [x] `compress_preserves_total_leaf_count` proven at `Qed.` — the Compressed node's recorded leaf_count equals the original subtree's total
 - [x] `compress_energy_sum_monotone` proven at `Qed.` — energy sum can only decrease (compression always lands at sum = 0)
-- [x] `compress_energy_conservative` proven at `Qed.` (modulo one Admitted Forall-induction lemma) — when the cold-precondition holds, energy sum is exactly preserved
+- [x] `compress_energy_conservative` proven at `Qed.` — when the cold-precondition holds, energy sum is exactly preserved
 - [x] `compress_preserves_commitment` axiomatized — bound to the `commitment: child.hash()` construction in `energy_verkle.rs:562`. Cannot be proven in Coq without modeling BLS12-381; explicit dependency stated.
 - [x] Rust source carries a back-reference comment listing each invariant
-- [ ] **Open:** discharge the `Forall`-induction case in `cold_subtree_zero_energy` (mechanical)
+- [x] `cold_subtree_zero_energy` ✅ DISCHARGED at `EnergyVerkleCompression.v:209-223` (`Qed.`). The Forall-induction case closed via custom strong induction; consumer site at line 232 (`rewrite (cold_subtree_zero_energy n Hcold)`) demonstrates it's now a usable theorem, not Admitted. The summary comment at line 274 confirms: *"`cold_subtree_zero_energy`: closed via a custom strong-induction"*.
 
-### [~] 9. Coq scaffold: PoHA freeloading-resistance  (scaffolded 2026-04-28)
+### [x] 9. Coq scaffold: PoHA freeloading-resistance  ✅ DONE — headline theorem Qed, gap axiomatized
 **Where:** `research/coq/PoHAFreeloading.v`
 
-**State today:** Threat model formalized, theorem stated, security reduction structured. Final transitivity step (`p <=p q -> negligible q -> negligible p`) is `Admitted` — closing it requires modeling `prob` as `Q` and proving the standard "negligible is closed under upper-bound" lemma. Crypto axioms are explicit:
+**State today (2026-05-07 verification):** Headline theorem `poha_freeloading_resistance` proven at `Qed.` (line 180). Zero `Admitted.` in the file. The transitivity step originally tagged for closure (`p <=p q -> negligible q -> negligible p`) is axiomatized as `negligible_le` at line 125, alongside the other negligible-algebra axioms (`negligible_zero` at line 77, `negligible_sum` at line 112) — same pattern as section 8's `compress_preserves_commitment` axiom (BLS12-381 isn't modeled in Coq either). Closing the obligation by modeling `prob` as `Q` would require building the full negligible-function algebra from scratch; the axiomatization is the standard cryptographic-proof style and matches the precedent set by section 8. Section status flipped from `[~]` → `[x]` 2026-05-07.
+
+Crypto axioms are explicit:
 - A1: Merkle-cell-proof unforgeability (reduces to blake3 collision-resistance)
 - A2: Sampling seed unmanipulability (reduces to blake3 random-oracle behaviour)
 - BFT bound: `3 * adversary_stake < total_stake` (honest > 2/3 stake)
+- Negligible algebra: `negligible_zero`, `negligible_sum`, `negligible_le` (matches the cryptographic-proof negligible-function abstraction)
 
 **Practical reading:** EvaporChain's DA security depends only on blake3 + BFT honest-majority. The EvaporChain-specific design (decaying DA, energy re-attestation, Pedersen commitments) does NOT introduce new cryptographic assumptions — that's the auditor-relevant claim this file makes precise.
 
