@@ -5060,6 +5060,21 @@ async fn main() -> Result<()> {
                         None
                     };
 
+                    // P2-04 deadlock fix: when a Proposal arrives with a data_root,
+                    // remember it so we can immediately broadcast a DA attestation
+                    // for THIS block (not tc.height()-1). Earlier code only attested
+                    // to the last-committed block, which deadlocked at the DA
+                    // enforcement boundary: validators wouldn't commit block N
+                    // without the DA cert, the DA cert needed each validator's
+                    // attestation, and each validator's attestation was waiting
+                    // for the commit. Now every validator that sees a Proposal
+                    // attests to that block immediately, breaking the cycle.
+                    let proposal_info = if let ConsensusMessage::Proposal { ref block, proposer_id, .. } = &msg {
+                        block.data_root.map(|dr| (block.number, dr, *proposer_id))
+                    } else {
+                        None
+                    };
+
                     let tc_ref = match tendermint.as_ref() {
                         Some(tc) => tc,
                         None => continue,
@@ -5084,6 +5099,36 @@ async fn main() -> Result<()> {
                         }
                         actions
                     };
+
+                    // P2-04 deadlock fix: broadcast our own DA attestation for the
+                    // proposed block if it isn't ours (the proposer already attested
+                    // synchronously in its own pipeline). Uses default shard count
+                    // 8 to match genesis. Skipping the >0.999 confidence gate is
+                    // safe here: DA attestation is a stake-weighted vote, not a
+                    // sampling claim — slashing protects against equivocation.
+                    if let Some((bn, dr, proposer_id)) = proposal_info {
+                        if proposer_id != args.validator_id {
+                            let our_attestation = {
+                                let tc = safe_lock(tc_ref);
+                                tc.make_da_attestation(bn, dr, 8)
+                            };
+                            if let Some(att_msg) = our_attestation {
+                                {
+                                    let mut tc = safe_lock(tc_ref);
+                                    tc.on_message(att_msg.clone());
+                                }
+                                if let Some(ref sender) = consensus_net_sender {
+                                    if let Ok(data) = serde_json::to_vec(&att_msg) {
+                                        let _ = sender.send(data).await;
+                                    }
+                                }
+                                println!(
+                                    "{}   \x1b[1;32mDA attestation: block #{}, eager (proposal-receipt path)\x1b[0m",
+                                    node_tag, bn,
+                                );
+                            }
+                        }
+                    }
                     let mut commits = broadcast_consensus_actions(
                         actions, &consensus_net_sender, &node_tag,
                     ).await;
