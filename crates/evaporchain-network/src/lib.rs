@@ -9,8 +9,9 @@ pub mod tls;
 pub use banlist::{now_ms, BanEntry, BanList};
 pub use libp2p::PeerId;
 pub use service::{
-    cache_da_package, load_or_generate_identity, subnet_key, NetworkConfig, P2pNetworkService,
-    PeerInfo, PeerScore, PeerScoreEntry, RejectionReason, ShardCache, SybilState,
+    cache_da_package, load_or_generate_identity, subnet_key, DiskBlockFetcher, NetworkConfig,
+    P2pNetworkService, PeerInfo, PeerScore, PeerScoreEntry, RejectionReason, ShardCache,
+    SybilState,
 };
 pub use tls::{PeerAuthority, TlsConfig};
 

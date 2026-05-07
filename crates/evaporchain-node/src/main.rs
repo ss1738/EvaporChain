@@ -2685,6 +2685,14 @@ async fn main() -> Result<()> {
                     }
                 })
                 .collect();
+        // Disk fallback for the block-sync handler. Lets a peer that
+        // requests a block older than our 2000-block in-memory cache
+        // window get served the block from chain_store instead of an
+        // empty Vec — required for fresh-from-genesis catch-up.
+        let chain_store_for_sync = Arc::clone(&chain_store);
+        let disk_block_fetcher = Some(evaporchain_network::DiskBlockFetcher::new(
+            move |height| chain_store_for_sync.load_full_block(height),
+        ));
         let net_config = NetworkConfig {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
             bootstrap_peers: effective_bootstrap_peers.clone(),
@@ -2702,6 +2710,7 @@ async fn main() -> Result<()> {
             chain_id: args.chain_id.clone(),
             enable_mdns: false,
             data_dir: Some(net_data_dir),
+            disk_block_fetcher,
         };
         println!(
             "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",

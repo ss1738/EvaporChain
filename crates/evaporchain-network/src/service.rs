@@ -53,6 +53,40 @@ pub struct BlockSyncResponse {
 /// the network layer reads from it to serve peer requests.
 pub type BlockCache = Arc<RwLock<BTreeMap<u64, Block>>>;
 
+/// Disk fallback for the block-sync handler. Invoked on cache miss when
+/// a peer requests a block older than the in-memory cache window
+/// (`MAX_CACHE_SIZE = 2000` blocks behind tip). Returns the full block
+/// from durable storage if present, `None` otherwise. When the fetcher
+/// itself is `None`, the sync handler is cache-only — the legacy
+/// behaviour from before fresh-from-genesis catch-up was supported.
+///
+/// Bug evidence (2026-05-07): M1 was wiped to height 0 while the
+/// cluster was at h=15800. M1 requested `1..101`; every peer returned
+/// 0 blocks because those were >2000 behind tip and evicted from the
+/// cache. M1 sat at h=1 forever while polluting consensus with stale
+/// prevotes. A fresh validator literally couldn't bootstrap.
+#[derive(Clone)]
+pub struct DiskBlockFetcher(pub Arc<dyn Fn(u64) -> Option<Block> + Send + Sync>);
+
+impl DiskBlockFetcher {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(u64) -> Option<Block> + Send + Sync + 'static,
+    {
+        Self(Arc::new(f))
+    }
+
+    pub fn fetch(&self, height: u64) -> Option<Block> {
+        (self.0)(height)
+    }
+}
+
+impl std::fmt::Debug for DiskBlockFetcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DiskBlockFetcher(<fn>)")
+    }
+}
+
 /// Shared DA shard cache — full nodes store BlockDAPackages so they can
 /// serve shard sample requests from light clients.
 pub type ShardCache = Arc<RwLock<BTreeMap<u64, BlockDAPackage>>>;
@@ -435,6 +469,12 @@ pub struct NetworkConfig {
     /// surgically bypasses the gate for legitimate peers without
     /// loosening sybil protection for the open internet.
     pub trusted_validator_ips: HashSet<IpAddr>,
+    /// Disk fallback for the block-sync request handler. When set, the
+    /// handler falls back to this callback for any height not present
+    /// in the in-memory `block_cache`. When `None`, the handler is
+    /// cache-only (legacy behaviour). See [`DiskBlockFetcher`] for
+    /// the bug context this exists to close.
+    pub disk_block_fetcher: Option<DiskBlockFetcher>,
 }
 
 impl Default for NetworkConfig {
@@ -455,6 +495,7 @@ impl Default for NetworkConfig {
             chain_id: String::new(),
             enable_mdns: false,
             data_dir: None,
+            disk_block_fetcher: None,
         }
     }
 }
@@ -1019,6 +1060,7 @@ impl P2pNetworkService {
         let block_cache_inner = Arc::clone(&block_cache);
         let shard_cache: ShardCache = Arc::new(RwLock::new(BTreeMap::new()));
         let shard_cache_inner = Arc::clone(&shard_cache);
+        let disk_block_fetcher = config.disk_block_fetcher.clone();
 
         let peer_authority = config.peer_authority.clone();
         let use_tls = config.use_tls;
@@ -1582,12 +1624,35 @@ impl P2pNetworkService {
                                 info!("Peer {peer} requested blocks {from}..{to}");
 
                                 let cache = safe_read(&block_cache_inner);
-                                let blocks: Vec<Block> = (from..=to)
-                                    .filter_map(|n| cache.get(&n).cloned())
-                                    .collect();
                                 let tip = cache.keys().last().copied().unwrap_or(0);
+                                // Two-pass: cache first (cheap), then disk
+                                // fallback for any height the cache evicted.
+                                // Without the disk pass a fresh-from-genesis
+                                // peer can't bootstrap once the cache window
+                                // (`MAX_CACHE_SIZE = 2000` blocks) has rolled
+                                // past — the bug we hit on M1 wipe-and-rejoin
+                                // 2026-05-07.
+                                let mut blocks: Vec<Block> = Vec::with_capacity((to - from + 1) as usize);
+                                let mut disk_misses = 0u64;
+                                for n in from..=to {
+                                    if let Some(b) = cache.get(&n).cloned() {
+                                        blocks.push(b);
+                                    } else if let Some(ref fetcher) = disk_block_fetcher {
+                                        match fetcher.fetch(n) {
+                                            Some(b) => blocks.push(b),
+                                            None => disk_misses += 1,
+                                        }
+                                    }
+                                }
                                 drop(cache);
 
+                                if disk_misses > 0 {
+                                    debug!(
+                                        "Sync request from {peer}: {} blocks served, {} not found on disk (range {from}..{to})",
+                                        blocks.len(),
+                                        disk_misses,
+                                    );
+                                }
                                 info!("Serving {} blocks to peer {peer} (tip={tip})", blocks.len());
                                 let response = BlockSyncResponse { blocks, tip_height: tip };
                                 if let Err(e) = swarm.behaviour_mut().block_sync.send_response(channel, response) {
@@ -2060,6 +2125,43 @@ mod tests {
         let c = cache.read().unwrap();
         let keys: Vec<u64> = c.keys().copied().collect();
         assert_eq!(keys, (0..10).collect::<Vec<_>>());
+    }
+
+    // ─── DiskBlockFetcher: bootstrap-from-genesis sync path ──────
+    //
+    // Pure tests for the sync handler's two-pass cache-then-disk
+    // fallback. The integration through libp2p is exercised by
+    // `test_block_sync_request_response`; here we cover the unit:
+    // that the fetcher type behaves as expected (forwards calls,
+    // returns None for absent heights, is Send+Sync+Clone) so a
+    // future regression in the fetcher abstraction itself is caught
+    // without a full swarm spin-up.
+
+    #[test]
+    fn disk_block_fetcher_returns_block_for_known_height() {
+        let store: BTreeMap<u64, Block> = (1..=5).map(|n| (n, dummy_block(n))).collect();
+        let fetcher = DiskBlockFetcher::new(move |h| store.get(&h).cloned());
+        let got = fetcher.fetch(3).expect("h=3 must be present");
+        assert_eq!(got.number, 3);
+    }
+
+    #[test]
+    fn disk_block_fetcher_returns_none_for_missing_height() {
+        let fetcher = DiskBlockFetcher::new(|_| None);
+        assert!(fetcher.fetch(42).is_none());
+    }
+
+    #[test]
+    fn disk_block_fetcher_is_clone_and_thread_safe() {
+        // Compile-time assertion that the type satisfies the trait
+        // bounds the sync handler's tokio task requires.
+        fn assert_send_sync_clone<T: Send + Sync + Clone + 'static>() {}
+        assert_send_sync_clone::<DiskBlockFetcher>();
+
+        let fetcher = DiskBlockFetcher::new(|h| Some(dummy_block(h)));
+        let cloned = fetcher.clone();
+        assert_eq!(cloned.fetch(7).unwrap().number, 7);
+        assert_eq!(fetcher.fetch(99).unwrap().number, 99);
     }
 
     // ─── H-21 sync-response structural validation ────────────────
