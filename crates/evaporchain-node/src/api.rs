@@ -10020,13 +10020,6 @@ async fn post_delegate(
             });
         }
     }
-    let hash = tx_hash(&format!(
-        "delegate:{}:{}:{}:{}",
-        hex::encode(&delegator[..20]),
-        req.validator_id,
-        req.amount,
-        req.nonce
-    ));
     let is_dup = state.mempool_contains(|tx| {
         if let Transaction::Delegate(t) = tx {
             t.delegator == delegator
@@ -10054,6 +10047,9 @@ async fn post_delegate(
     });
     let sender_addr = format!("0x{}", hex::encode(delegator));
     sign_transaction(&mut tx, &state, Some(&sender_addr));
+    // Canonical tx hash matches what the executor records — see
+    // post_transfer for the same fix shape and rationale.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
@@ -10140,13 +10136,6 @@ async fn post_undelegate(
             }
         }
     }
-    let hash = tx_hash(&format!(
-        "undelegate:{}:{}:{}:{}",
-        hex::encode(&delegator[..20]),
-        req.validator_id,
-        req.amount,
-        req.nonce
-    ));
     let is_dup = state.mempool_contains(|tx| {
         if let Transaction::Undelegate(t) = tx {
             t.delegator == delegator
@@ -10174,6 +10163,8 @@ async fn post_undelegate(
     });
     let sender_addr = format!("0x{}", hex::encode(delegator));
     sign_transaction(&mut tx, &state, Some(&sender_addr));
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
@@ -10250,12 +10241,6 @@ async fn post_claim_delegation(
             }
         }
     }
-    let hash = tx_hash(&format!(
-        "claim_delegation:{}:{}:{}",
-        hex::encode(&delegator[..20]),
-        req.validator_id,
-        req.nonce
-    ));
     let is_dup = state.mempool_contains(|tx| {
         if let Transaction::ClaimDelegation(t) = tx {
             t.delegator == delegator && t.validator_id == req.validator_id && t.nonce == req.nonce
@@ -10279,6 +10264,8 @@ async fn post_claim_delegation(
     });
     let sender_addr = format!("0x{}", hex::encode(delegator));
     sign_transaction(&mut tx, &state, Some(&sender_addr));
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
@@ -10352,12 +10339,6 @@ async fn post_create_object(
             })
         }
     };
-    let hash = tx_hash(&format!(
-        "create:{}:{}:{}",
-        hex::encode(&obj_id_val[..8]),
-        req.energy,
-        req.half_life
-    ));
     let obj_label = hex::encode(&obj_id_val[..4]);
     let data = req
         .data
@@ -10376,6 +10357,8 @@ async fn post_create_object(
     });
     let creator_addr = format!("0x{}", hex::encode(creator));
     sign_transaction(&mut tx, &state, Some(&creator_addr));
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
@@ -10405,11 +10388,6 @@ async fn post_refresh(
             })
         }
     };
-    let hash = tx_hash(&format!(
-        "refresh:{}:{}",
-        hex::encode(&obj_id_val[..8]),
-        req.energy_deposit
-    ));
     let mut tx = Transaction::Refresh(RefreshTx {
         object_id: obj_id_val,
         energy_deposit: req.energy_deposit,
@@ -10417,6 +10395,8 @@ async fn post_refresh(
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
     sign_transaction(&mut tx, &state, None);
+    // Canonical tx hash — see post_transfer.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
