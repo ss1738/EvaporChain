@@ -259,7 +259,7 @@ function drawDecayChart(nodes) {
     }
   }
   if (!havePoints) {
-    svg.innerHTML = `<text x="${W/2}" y="${H/2}" fill="#6e7681" font-family="monospace" font-size="13" text-anchor="middle">No decay data yet — older binary doesn't expose data_dir_bytes. Rebuild + restart at least one validator and waitone poll cycle.</text>`;
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" fill="#6e7681" font-family="monospace" font-size="13" text-anchor="middle">No decay data yet — older binary doesn't expose data_dir_bytes. Rebuild + restart at least one validator and wait one poll cycle.</text>`;
     return;
   }
   // Pad y-axis 5% above max for headroom.
