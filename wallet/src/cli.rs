@@ -6833,31 +6833,99 @@ fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 /// Wait for a transaction to be confirmed on-chain.
+///
+/// Two-phase wait:
+///   1. Poll until the tx reaches Included / Finalised / Rejected.
+///   2. After first finalisation, poll for ~20s more to detect
+///      `finalised → rejected` flips (reorg rejection observed on
+///      EvaporChain testnet 2026-05-08 — txs settle around 1 block
+///      and can revert ~5 blocks later).
 async fn await_confirmation(pipeline: &TxPipeline, tx_hash: &str) {
+    use crate::rpc::TxState;
     print!("  Waiting for confirmation");
+    let mut first_block: Option<u64> = None;
+    let mut first_state: Option<TxState> = None;
     for i in 0..30 {
         print!(".");
         if let Ok(Some(tx)) = pipeline.confirm_tx(tx_hash, 1, 0).await {
+            first_block = tx.block_height;
+            first_state = Some(tx.state.clone());
             println!();
-            println!(
-                "  {} Confirmed in block #{}",
-                "CONFIRMED".green().bold(),
-                tx.block_height
-                    .map(|h| h.to_string())
-                    .unwrap_or_else(|| "?".to_string())
-            );
-            return;
+            match tx.state {
+                TxState::Rejected => {
+                    println!(
+                        "  {} Rejected at block #{} (failed at execution)",
+                        "REJECTED".red().bold(),
+                        first_block
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "?".to_string())
+                    );
+                    return;
+                }
+                _ => {
+                    println!(
+                        "  {} Confirmed in block #{}",
+                        "CONFIRMED".green().bold(),
+                        first_block
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "?".to_string())
+                    );
+                }
+            }
+            break;
         }
         if i < 29 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
+    if first_state.is_none() {
+        println!();
+        println!(
+            "  {} Transaction not confirmed after 60s — check later with: {} tx {}",
+            "TIMEOUT".yellow().bold(),
+            "wallet".bold(),
+            tx_hash
+        );
+        return;
+    }
+
+    // Phase 2: post-confirmation reorg-rejection watch (~20s ≈ 10
+    // blocks at 2s/block testnet config). EvaporChain has been
+    // observed to revert finalised txs within ~5 blocks of first
+    // confirmation; alert the user if their "confirmed" tx flips
+    // to Rejected during the watch window.
+    print!("  Watching for reorg");
+    for i in 0..10 {
+        print!(".");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        if let Ok(Some(tx)) = pipeline.confirm_tx(tx_hash, 1, 0).await {
+            if matches!(tx.state, TxState::Rejected) {
+                println!();
+                println!(
+                    "  {} Tx flipped finalised → rejected at block #{} (was at block #{})",
+                    "REORG-REJECTED".red().bold(),
+                    tx.block_height
+                        .map(|h| h.to_string())
+                        .unwrap_or_else(|| "?".to_string()),
+                    first_block
+                        .map(|h| h.to_string())
+                        .unwrap_or_else(|| "?".to_string())
+                );
+                println!(
+                    "  {} On-chain state did NOT advance. Check sender balance / nonce.",
+                    "WARN".yellow().bold()
+                );
+                return;
+            }
+            // Continue watching even if state is stable.
+        }
+        let _ = i; // (silence unused if compiler complains)
+    }
     println!();
     println!(
-        "  {} Transaction not confirmed after 60s — check later with: {} tx {}",
-        "TIMEOUT".yellow().bold(),
-        "wallet".bold(),
-        tx_hash
+        "  {} Stable through {} additional blocks",
+        "STABLE".green().bold(),
+        10
     );
 }
 
