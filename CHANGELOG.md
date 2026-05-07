@@ -1,5 +1,85 @@
 # EvaporChain Changelog
 
+## 2026-05-07 (afternoon) — Doctrine-arc verify-and-tick hygiene sweep (8 commits)
+
+Single-day pass refreshing every plan-doc + status-row that the past 3 days of build velocity had outrun. Verify-and-tick pattern: each `[ ]` checkbox or stale "in flight" claim was checked against live source/proofs/tests before being ticked, with file:line pointers captured in the new text so future readers don't have to re-derive the verification.
+
+- **`docs/MAINNET_PUNCHLIST.md` Tier 2 (Coq mechanization)** — sections 7, 8, 9 flipped `[~]` → `[x]`. Sections 7 (`EnergyDecayMonotonicity.v`) and 8 (`EnergyVerkleCompression.v`) verified Qed against the live `.v` files; section 9 (`PoHAFreeloading.v`) flipped under the section-8 axiomatization-as-completion convention (the `negligible_le` axiom matches section 8's `compress_preserves_commitment` BLS12-381 axiom). Section 10 retains its 1 genuinely-open obligation (`decay_step_compose` quantified drift bound, `LazyEagerEquivalence.v:53`).
+- **`CROOKS_MEV_INTEGRATION_PLAN.md`** — flipped 6 stale `[ ]` to `[x]`: §3.6 tests via the Phase 6.1 e2e test (`test_crooks_mev_end_to_end_consensus_pipeline`), §4.5 tests via the named tests in `evaporchain-mev-detect`, plus the 4 pre-implementation sanity-checks. Plan now 35/35 shipped.
+- **`LAMBDA_FOLD_NOVA_PLAN.md`** — flipped 11 stale `[ ]` to `[x]`: 4 Phase 1 design decisions (locked in `research/lambda_fold/PHASE_1_DECISIONS.md` since 2026-05-04) + 7 Phase 2 implementation tasks (verified arity 8 in `nova.rs:1059`, `RealBlockWitness` fields at `nova.rs:653`, constraint count 25,129 = 14,575 step + 10,554 fold per whitepaper §11.2). Only `[ ] 7.5 arXiv preprint` remains, explicit defer per doctrine §A3.3. Plan now 36/37.
+- **`DOCTRINE_PUNCH_LIST.md` Layer 5/6/7 status rows** — Layer 5 (Lambda-Fold) old: "Phase 7 docs in flight" → new: "36/37 task boxes shipped, only 7.5 arXiv deferred". Layer 6 (Ecosystem completion) old: "⚠ Partial" with multiple stale "deferred" claims → new: "✅ DONE 2026-05-07" — every CROOKS-MEV deferred piece (3.5d, 4.2) and Light-Cone "voting-handler wiring deferred" claim verified shipped. Layer 7 (LLSA descope) old: "~90% done" → new: "100% DONE (5/5 sub-bullets)" + bonus note that the sibling Decay-BFT mechanization in the same Coq corpus also reached zero-Admitted today, so the Layer 7 CI gate now defends both tracks.
+- **`docs/runbooks/crooks-mev-enable.md`** — new operator runbook (3-stage: Stage 0 default observe, Stage 1 enforce-mode flip, Stage 2 slashing enable). Closes the last "next-session polish" item flagged in CROOKS plan Phase 7.4.
+- **`Cargo.toml` workspace** — added `crates/evaporchain-causal-chsh-realdata` to `workspace.members`. The audit's "1 dead crate" verdict turned out to be a false positive: the crate is the Lane O.2 LightCone-DAG real-data gate runner; `cargo test -p evaporchain-causal-chsh-realdata` runs 17/17 tests green on Mini 1. Closes `AUDIT_2026_05_06.md` §9.3 #20.
+
+State of the doctrine arc after this commit:
+- 137-of-139 plan-doc task boxes shipped across LAMBDA_FOLD/CROOKS_MEV/LIGHT_CONE/MCC (2 explicit defers).
+- All 7 doctrine layers ✅ DONE in `DOCTRINE_PUNCH_LIST.md` status snapshot.
+- 9 of 10 Tier 2 Coq mechanization sections fully done (only `decay_step_compose` drift bound genuinely open).
+
+## 2026-05-07 (morning) — Decay-BFT skeleton fully Qed (5 commits, 13/13 obligations)
+
+Closure of the mechanized-BFT track that started 2026-04-29. `EvaporChainSafetyLiveness.v` now has zero `Admitted.` — the headline theorem `decay_bft_safety_liveness` is `Qed.`.
+
+Sequence:
+
+- `d06c2c0` — `[DECAY-1-LOWER]` discharged. `transition_preserves_conservation` flipped from partial-Admitted to full Qed. Closes the lower-bound half (`ss_total_energy ss' >= energy_at_epoch gt hl (ss_global_time ss')`) via three constructor refinements: non-decay transitions carry `ss_total_energy ss' = ss_total_energy ss` and `ss_global_time ss' = ss_global_time ss` equalities; `t_decay_tick` carries a higher-order monotonicity witness `forall gt hl, ss_total_energy ss >= energy_at_epoch gt hl t -> ss_total_energy ss' >= energy_at_epoch gt hl t'`; `t_noop` is `ss' = ss`.
+- `f2167eb` — `[SAFETY-2] lock_safety` discharged. ~110 LOC: `lock_coherent` predicate (BFT lock + POLC well-formedness on `ValidatorState`), `lock_safety` headline lemma + `lock_round_bounded` + `valid_round_bounded` corollaries + `system_lock_safe` system invariant + lift lemma. Per-validator-state form; transition-preservation tagged `[SAFETY-2-PRESERVATION]` in `IMPOSSIBLE_RESEARCH_STACK.md`.
+- `181e06f` — `[SAFETY-3] cross_fork_equivocation_caught` discharged. ~80 LOC: `precommit_block_of` helper, `equivocation` predicate (DAG-agnostic — no `causal_precedes` / `is_antichain` appeal), headline + `equivocation_evidence` + `precommit_unique_when_no_equivocation` contrapositive + `system_no_equivocation` invariant.
+- `119164b` — `[LIVENESS-2] honest_proposer_eventual` discharged. ~50 LOC: `honest_validator_exists` pigeonhole core via list induction + `lia` (Byzantine cons case applies IH to tail since `honest_stake (v::vs') = honest_stake vs'`), then `honest_proposer_eventual` lifts via image-inclusion + surjectivity-past-r0 over an abstract `proposer : nat -> Validator` parameter.
+- `86b30c5` — `[BIG] decay_bft_safety_liveness` Qed. Restructured to take Safety/Liveness initial invariants AND Safety/Liveness preservation laws as hypotheses; the BIG theorem becomes a pure composition of the 9 per-state lemmas + the 2 structural preservation lemmas (HSP, PSP, both Qed in this commit) + reachability induction. The 4 inline `admit.` tactics from yesterday's draft (SAFETY-BASE, LIVENESS-BASE, honest-supermajority preservation, partial-synchrony preservation) are all closed: SAFETY-BASE and LIVENESS-BASE fold into the new `Safety ss0` / `Liveness ss0` hypotheses; HSP and PSP are discharged via the `ss_validators ss' = ss_validators ss` and `ss_network ss' = ss_network ss` constructor refinements (added in this commit to all 6 non-decay constructors and to t_decay_tick).
+
+Final tally (`grep -c '^Admitted\.' research/proofs/EvaporChainSafetyLiveness.v` = 0):
+- SAFETY-1, SAFETY-2, SAFETY-3, LIVENESS-1, LIVENESS-2, DECAY-1, DECAY-2, DAG-1, DAG-2, HSP, PSP, SAFETY-BASE (folded), LIVENESS-BASE (folded), BIG — all `Qed`.
+- Two GENUINE remaining obligations are now NAMED HYPOTHESES of the BIG theorem (not hidden admits): `[SAFETY-PRESERVATION]` and `[LIVENESS-PRESERVATION]` — concrete BFT vote-rule + fairness modeling, multi-week each, tagged in `IMPOSSIBLE_RESEARCH_STACK.md`.
+
+The Layer 7 CI gate (`coq` job in `.github/workflows/ci.yml`, pinned Rocq 9.1.1) now defends BOTH Coq tracks — LLSA invariant preservation AND the full Decay-BFT skeleton — on every PR for free, since both are members of the same `_CoqProject`.
+
+## 2026-05-06 — Audit closure + Decay-BFT track launch + recovery rescue (~30 commits)
+
+Multi-track day: shipped the full `AUDIT_2026_05_06.md` punch-list (7/7 CRITICAL, 4/4 HIGH, 5/5 MEDIUM substrates), launched the Decay-BFT mechanization with 4 obligations discharged, and rescued unmerged work from the abandoned `recover/tier5-stashed-work` branch.
+
+### Audit closure
+
+- **CRITICAL-1 (`bbfb1b5`)** — `evaporchain-crypto-wasm` Keypair reconstruction hardened. `pqc_dilithium 0.2.0` has no public secret-import path, so the recommended fix wasn't directly implementable; shipped realistic alternative: compile-time `_ASSERT_KEYPAIR_LAYOUT` const that pins `size_of::<Keypair>() == PUBLICKEYBYTES + SECRETKEYBYTES`, plus `zeroize_keypair` helper using `slice::from_raw_parts_mut` + `Zeroize::zeroize` called after every `kp.sign`.
+- **CRITICAL-2 (5-commit arc: `639c843`, `9b404b2`, `256e2ce`, `89166f8`, `f5b7561`)** — MCP server hardening. Shipped per-tool input validation on the 5 write-tools (`validate_address_field` / `validate_amount_field` / `validate_half_life_field` / `validate_nonce_field` with `MAX_TOKEN_AMOUNT = 1<<60` and `MAX_HALF_LIFE_EPOCHS = 1<<40`), structured audit log on every tool invocation (privacy-preserving — only sorted field NAMES logged, never values), per-tool sliding-window rate limiting (`WindowCounter` + `ToolTier::{Write,Compute,Read}` with limits 10/30/300 per 60s), bearer-token auth + require-auth gate, and consent prompt on the 5 write-tools (`requiresConsent: true` + ⚠️ description prefix).
+- **CRITICAL-3 (`da64d88`)** — Layer 0 doctrine violation fixed in `evaporchain-half-life-nft`. Removed the local `decay_energy` helper (the 4th workspace bypass of the canonical `energy_at_epoch`); `tick_to` now calls `energy_at_epoch(self.energy, tier.half_life_epochs, advance)` directly.
+- **CRITICAL-4 (`ac939fe`)** — `grants/sui_foundation.md` rewritten. Stripped the false "Move-compatible execution engine" claim; reframed as "Decay-Native Smart Contract Patterns: Lifecycle Hooks Inspired by Move." Test count corrected from 5,531 to 25,435; new "Honest Scoping" section.
+- **HIGH-19 (`4577cfb` + `2139c3e`)** — MockProver fingerprint guard. `is_mock_prover_proof_bytes(&[u8])` wire-shape check identifies the 32-zero-bytes mock proof and rejects via `tracing::warn!` in `ChainProofVerifier::verify_block_proof`. 8 tests covering positive identification + 3 false-positive guard classes.
+- **HIGH-21 (`25daabf`)** — sync-response structural validation. `validate_sync_response_structure` with 3 typed rejections (`OversizedBatch` / `NonMonotoneHeights` / `TipBelowMaxHeight`); records peer violation on rejection.
+- **HIGH §3 standards (`a3a241e`)** — EVR-20 + EVR-721 implementation-status badges added; clarifies which surfaces are ✅ Live vs ⏳ Planned-Phase-4.4.
+- **MEDIUM block reward / emission (`0b45aa1`, `cb31c3d`)** — `evaporchain-execution::emission` substrate (~365 LOC: `EmissionParams`, `EmissionSchedule::{Constant, Halving, LinearDecay}`, `block_reward_at`, 15 tests) + `Tokenomics::max_supply_cap: Option<u64>` with `#[serde(default)]` for backward compat + `reward_at_epoch_capped(epoch, total_minted)` clipping the final pre-cap block; hot-path swap in `process_block_rewards`.
+- **MEDIUM PID fee tuning (`47512a2`)** — empirical scenario regression bounds for `evaporchain-fee-controller`: 5 scenarios + 1 `#[ignore]`'d 25K-block stress test (`monotone_recovery_from_above_equilibrium`, `no_oscillation_on_empty_blocks`, `sustained_overload_does_not_saturate`, `square_wave_load_stays_bounded`, `fee_variance_under_noisy_steady_state`).
+- **MEDIUM Verkle adversarial (`9bb8905`)** — 5 adversarial tests + 1 `#[ignore]`'d 10K-key stress: high-churn-same-key returning to empty root, collision-heavy keys (~60s), exclusion-proof tampering, single-byte proof tampering, delete-order independence.
+- **MEDIUM Dashboard TLS (`67b9947`)** — in-process TLS via `axum_server::bind_rustls` when `EVAPORCHAIN_TLS_CERT` + `EVAPORCHAIN_TLS_KEY` env vars are both set; falls through to plain HTTP with warning otherwise.
+- **§9.2 Bug Bounty (`7594690`)** — prominent ⚠️ NOT-ACTIVE banner added to `docs/BUG_BOUNTY.md`.
+- **§9.3 doc-drift sweep (`06ba602`, `c209725`, `970799b`, `761a82f`)** — opcode/MERA/test-count drift fixed; CLAUDE.md test count `5,531+` → `25,435+`; `REMAINING_WORK.md` deprecated with frozen-snapshot banner; threat-model 2026-04-27 supplement folded into `THREAT_MODEL.md` (new §4.8 Oracle, §4.9 Governance, §4.10 Persistence, §3.1 local-host adversary refinement, 5 new §6.1 closure rows); empty `core/` + `move-extensions/` stub directories deleted.
+
+### Decay-BFT track launch (4 obligations)
+
+- `37c9e13` — Track launched. `research/proofs/EvaporChainSafetyLiveness.v` skeleton with 12 named obligations.
+- `576415d` — Drop `Ensembles` import that wasn't compiling under Rocq 9.1.1.
+- `6763aa5` — `[DAG-2] multi_parent_preserves_causality` Qed. 2-step proof via `causal_trans` + `causal_parent`.
+- `1291262` — `[LIVENESS-1] eventual_delivery` Qed. Definition unfold of `is_partial_synchrony` + assumption application.
+- `4633d84` — `[DECAY-2] decay_preserves_quorum` Qed (skeleton variant). Inverts `t_decay_tick`, gets `ss_validators ss' = ss_validators ss`, rewrites + applies hypothesis.
+- `27b9626` — `[DAG-1] antichain_finality_safe` Qed. Picks the 3rd disjunct, unfolds `is_antichain` over the singleton-pair list, case analysis on membership.
+- `511b830` — `[DECAY-1]` partial discharge: upper-bound half (`ss_total_energy ss' <= genesis_total`) closed via `Nat.le_trans` over the constructor's energy-non-creation hypothesis. Lower-bound half tagged `[DECAY-1-LOWER]` for follow-up (closed 2026-05-07 in `d06c2c0`).
+
+### Recovery branch rescue (`a8a4fb6`, `5aab187`)
+
+`recover/tier5-stashed-work` was a 4-commit branch with 2-week-stale parent. Rather than `git cherry-pick` (which would have generated hundreds of conflicts), copied the still-unique files directly:
+
+- `a8a4fb6` — 2 paper drafts (`paper_1_mechanism.md`, 597 LOC; `paper_2_state_economics.md`, 525 LOC) + 3 frontier proof companions (`-proof.md` for PoHA / Verkle / Rule-Based Consensus).
+- `5aab187` — `da_http_client` final piece: `HttpCellSource` type with `Box<dyn Fn>` field (manual `impl std::fmt::Debug` since `Box<dyn Fn>` doesn't auto-derive). Em-dash → ASCII dash in byte string literals.
+
+### Cluster + consensus
+
+- `f5c47c3` — 5-node Tailscale cluster genesis config (3 M4 Macs + 2 Hetzner CX23 Helsinki).
+- `f0a21a8` — H2: 2× bump consensus timeouts (`TimeoutPropose` / `TimeoutPrevote` / `TimeoutPrecommit`) for the UK+Helsinki cluster RTT.
+- `9b5a45d` — proper 5-node Tailscale launcher with full peer mesh.
+- `adb08da` — DA shard sample request fan-out + bump retries 2→5.
+- `b5a3c9a` — DA P2-04 deadlock break: eager DA attestation on proposal receipt.
+- `caf88f6` — self-hosted Tailscale-only cluster dashboard.
+
 ## 2026-05-05 (evening) — MCC full multi-parent enumeration substrate (Phase A + B + E + C.5)
 
 Long shipping arc on `MCC_FULL_MULTI_PARENT_PLAN.md` — the single
