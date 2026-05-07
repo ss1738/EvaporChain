@@ -156,6 +156,7 @@ mod tests {
                 fee_burn_rate: 0.5,
                 staker_fee_share: 0.5,
                 target_staking_apy: 0.05,
+                max_supply_cap: None,
             },
             genesis_time: "2026-01-01T00:00:00Z".into(),
             validators: vec![GenesisValidator {

@@ -2557,6 +2557,7 @@ mod tests {
             fee_burn_rate: 0.50,
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
+            max_supply_cap: None,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2615,6 +2616,7 @@ mod tests {
             fee_burn_rate: 0.50,
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
+            max_supply_cap: None,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2721,6 +2723,7 @@ mod tests {
             fee_burn_rate: 0.50,
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
+            max_supply_cap: None,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
