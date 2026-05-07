@@ -1,12 +1,12 @@
 # EvaporChain Tokenomics
 
-**Status: ~30% complete.** Structure exists in code, parameters are wired and functional, but most values are testnet placeholders. Five critical components are coded but **not wired into the hot path**. No tokenomics design document existed before this file.
+**Status: ~55% complete (up from 30% earlier today).** Structure exists in code, parameters are wired and functional. Three of six §2 items closed in the 2026-05-07 build session — vesting (§2.6), emission schedule (§2.4), and MEV settlement (§2.3 reconciled). Three §2 items remain ceremony-blocked: §2.1 recipient policy, §2.2 commission split, §2.5 staking-APY controller.
 
 **Audience:** Satyawan Singh + future tokenomics advisor. The "ceremony questions" sections are the punch list of decisions you must make before mainnet launch.
 
-**Pairs with:** `genesis-mainnet.json` (current allocation snapshot), `research/INVENTION_STACK.md` (line 216 explicitly flags "tokenomics ceremony question"), `research/whitepaper.md` (which has zero tokenomics section — gap to close).
+**Pairs with:** `genesis-mainnet.json` (current allocation snapshot, now with placeholder vesting schedules), `research/INVENTION_STACK.md` (line 216 explicitly flags "tokenomics ceremony question"), `research/whitepaper.md` (which has zero tokenomics section — gap to close).
 
-**Last updated:** 2026-05-07, after first end-to-end ML-DSA-signed external transactions on the running 5-node WAN cluster (TX hashes `22fc15c...`, `0801743...`, `7c74142...`).
+**Last updated:** 2026-05-07, after the build session that landed: TOKENOMICS.md (`9827ce1`), VestingLock primitive (`b666fe7`), genesis-mainnet vesting placeholders (`bcbb9b0`), EmissionParams dispatch (`fd1b580`), and MEV reconciliation (this commit). First end-to-end ML-DSA-signed external transactions on the running 5-node WAN cluster were tonight too (TX hashes `22fc15c...`, `0801743...`, `7c74142...`).
 
 ---
 
@@ -208,15 +208,11 @@ These parameters work; their *values* are arbitrary defaults that have not been 
 
 These appear in genesis, comments, or design docs but **the hot path doesn't actually use them**.
 
-### 2.1 Block reward distribution (CRITICAL)
+### 2.1 Block reward distribution recipient policy (still ceremony-blocked)
 
-`crates/evaporchain-execution/src/emission.rs::block_reward_at()` computes the reward amount per block, but the survey found **no caller invoking it inside `process_block_rewards`**. Yet we observed V2-V5 each gaining ~320–345k EVP during the 2026-05-07 demo, so rewards *are* being minted somewhere. This contradiction must be resolved:
+**Resolved 2026-05-07** (commit `fd1b580`): the actual minting path is `RewardAccumulator::process_block_rewards` in `crates/evaporchain-execution/src/rewards.rs:107`. It uses `Tokenomics::block_reward(epoch, total_minted)` which now dispatches to either `EmissionParams::block_reward_at` (when `emission: Some`) or the legacy `reward_at_epoch_capped` (when `emission: None`). `crates/evaporchain-execution/src/emission.rs` still hosts the test module; the type definitions moved to `evaporchain-types::emission`. **No more dead code or contradiction.**
 
-- Is there a different distribution code path not using `EmissionParams`?
-- Is `block_reward_at()` dead code that should be deleted, or the canonical implementation that should be wired?
-- **Recipient policy is undefined**: proposer-only? proposer + attesters split? proposer + attesters + delegators?
-
-This is the #1 audit-blocker before any external review.
+Still ceremony-blocked: **recipient policy is hardcoded to proposer-only** at `rewards.rs:111-117` (the producing validator's account is credited with the full block reward). This is one valid choice but it should be a deliberate one. See §3 Q6.
 
 ### 2.2 Delegator/validator fee split
 
@@ -229,15 +225,44 @@ Without this:
 
 Mainnet-blocker.
 
-### 2.3 MEV refund settlement
+### 2.3 MEV refund settlement (resolved — fully wired, dormant by default)
 
-Per `DOCTRINE_PUNCH_LIST.md`, `crooks_mev_settlement_mode` governance flag exists with default `observe`. Per-tx field `TransferTx::mev_refund_eligible: Option<bool>` is wired in serialization. But the actual settlement logic (attacker debit, victim credit, validator stake deduction) was reported as shipped in the changelog yet the parameter survey found "DOC MENTIONS, NOT WIRED."
+**Reconciled 2026-05-07.** Earlier audit reported "DOC MENTIONS, NOT WIRED" — that was a false negative. Deeper audit confirms the CHANGELOG is accurate: the Crooks-MEV refund pipeline is end-to-end consensus-integrated, with **11/12 claims fully shipped + 1 partial** (Phase 4.2 victim opt-out via `mev_refund_eligible: Option<bool>` is wired in serialization, but consumer-side honoring of the opt-out is deferred). Verified sites:
 
-Need to reconcile: is `crates/evaporchain-mev-detect` actually integrated, or only present as a crate?
+- `crates/evaporchain-mev-detect/src/lib.rs` — 1,392 LOC, `scan_block` + 9 detection tests
+- `tendermint.rs:5416` — detector wired into `on_block_committed`
+- `tendermint.rs:2550-2585` — `due_refund_txs` producer helper
+- `tendermint.rs:2590-2612, 4821-4838` — `validate_block_refunds` proposal-validation hook
+- `execution/lib.rs:1231-1273, 2938` — `execute_refund` attacker-debit / victim-credit executor
+- `tendermint.rs:2159-2195` — `apply_mev_missing_refund_slashes` (gated by `crooks_mev_missing_refund_slash_enabled`)
+- `tendermint.rs:1206, 2598-2600` — `crooks_mev_settlement_mode` governance flag (default `"observe"`)
+- `api.rs:16231, 16233` — `/api/mev/observations` (GET) + `/api/mev/dispute` (POST)
 
-### 2.4 Emission schedule selection
+**Operationally inert by default.** With `crooks_mev_settlement_mode = "observe"`:
+- Detection runs every block → observations buffered → visible via `/api/mev/observations`
+- `compute_observation_refund` populates `refund_amount` on each observation
+- Producers do NOT include `RefundTx` entries
+- `validate_block_refunds` short-circuits with `Ok(())` regardless of RefundTx absence
+- `execute_refund` never invoked
+- Zero economic effect on-chain
 
-`EmissionParams { schedule: EmissionSchedule, max_supply: Option<u128> }` exists but is not stored in genesis. The chain runs with whatever the executor's default is — almost certainly `Constant { 100 }` and unbounded supply. Mainnet must:
+**Flipping to `enforce`** (governance amendment, no code change required) activates:
+- Strict validation: blocks rejected if missing required `RefundTx` (per `due_refund_txs`)
+- `execute_refund` runs: attacker balance reduced, victim balance credited
+- `mev_missing_refund_violations` counter accumulates per validator
+- Optional second flag (`crooks_mev_missing_refund_slash_enabled = true`) arms entropic slashing of repeat-offender validators
+
+The mechanism is mainnet-ready. The activation timing is a deliberate ceremony decision — see §3 Q28.
+
+### 2.4 Emission schedule selection (resolved 2026-05-07)
+
+**Wired in commit `fd1b580`.** `Tokenomics.emission: Option<EmissionParams>` extends genesis schema. `Tokenomics::block_reward(epoch, total_minted)` dispatches:
+- `Some(params)` → `evaporchain_types::emission::block_reward_at` (Constant / Halving / LinearDecay + max_supply cap)
+- `None` → legacy `reward_at_epoch_capped` (current chain behavior)
+
+Backwards-compatible: existing genesis files have no `emission` field, so the legacy path stays in effect. Running cluster sees no behavior change. Regression test `test_block_reward_none_emission_matches_legacy` confirms.
+
+Mainnet must still:
 - Pick a shape (Halving like Bitcoin? LinearDecay over 50 years? Constant with eventual termination?)
 - Set `max_supply` if shape isn't naturally bounded
 - Persist the choice in genesis
@@ -248,15 +273,11 @@ Stored in genesis tokenomics, **read by nothing in code.** Pure documentation. E
 - Wire it as a controller target (adjust block_reward to maintain 5% APY for total bonded stake), OR
 - Delete it from genesis to avoid confusion
 
-### 2.6 Vesting / cliff / locked balances
+### 2.6 Vesting / cliff / locked balances (resolved 2026-05-07)
 
-**Not implemented.** No `vesting_schedule`, no `cliff_epoch`, no `locked_balance`. The 700M EVP allocated to Foundation/Ecosystem/Contributors at genesis is fully liquid on day one.
+**Wired in commit `b666fe7` + applied to genesis-mainnet.json in commit `bcbb9b0`.** `evaporchain-types::VestingLock { cliff_epoch, linear_release_epochs, total_locked }` attached to `Account` via `Account.vesting: Option<VestingLock>`. `Account.transferable_balance(epoch)` gates 7 outflow execution sites (Transfer, CreateObject, DeployContract, DeployScript, ValidatorStake, Delegate, Shield). Migration safety verified: `evaporchain-state::legacy::deserialize_account_with_legacy_fallback` ensures pre-vesting bincode'd Account records load with `vesting: None`.
 
-This must be built before any public mainnet:
-- A `LockedBalance` primitive (`balance` + `unlocked_at_epoch` or `linear_release_per_epoch`)
-- Hook in `Transfer` execution: deny if `transferable_balance < amount`
-- Genesis schema extension: per-account `vesting: { cliff_epoch, linear_release_epochs }`
-- Initial values for the 4 large allocations (Foundation, Ecosystem, Contributors, Airdrop)
+genesis-mainnet.json now locks **900M EVP of 1B (90%)** under placeholder schedules — only the 100M Community Airdrop is day-one liquid. Schedules are explicitly placeholder (`_vesting_placeholder_warning` field in JSON header); ceremony review required per Q14-Q17 below.
 
 ### 2.7 Mainnet genesis sync
 
@@ -478,6 +499,17 @@ Decide turnaround time per param-class:
 Current: `evaporchain-testnet-1` on the running cluster, `evaporchain-tailscale-5node-1` in the genesis file (mismatch). Mainnet:
 - Final chain_id (recommend `evaporchain-1` or `evaporchain-mainnet`)
 - Migration path from testnet
+
+### Q28. Crooks-MEV activation timing (added 2026-05-07)
+
+The Crooks-MEV refund pipeline is fully wired (§2.3) but defaults to `crooks_mev_settlement_mode = "observe"` — detection runs, no economic settlement happens. Decide:
+
+- Mainnet launch with `observe`? Safer; lets ecosystem observe detection accuracy under real load before tokens move.
+- Or launch with `enforce`? Activates attacker-debit / victim-credit at genesis; user-visible MEV protection from block 1.
+- Stake-deduction follow-on (`crooks_mev_missing_refund_slash_enabled`) — enable simultaneously with `enforce` or stage later?
+- `crooks_mev_beta_mb` (Phase 2 rate-based pmf scale, default 1000) — calibrate against testnet activation data.
+
+Recommended path: testnet runs `enforce` for ≥30 days first to validate proposer-rejection + balance-movement under load, then mainnet launches with `enforce` from genesis if testnet is clean. Slashing flag stays off until at least Q2 post-mainnet with ≥1 month of clean enforce-mode data.
 
 ---
 
