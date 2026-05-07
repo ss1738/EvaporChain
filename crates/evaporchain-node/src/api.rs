@@ -9887,12 +9887,6 @@ async fn post_transfer(
             });
         }
     }
-    let hash = tx_hash(&format!(
-        "transfer:{}:{}:{}",
-        hex::encode(&from[..20]),
-        hex::encode(&to[..20]),
-        req.amount
-    ));
     // Dedup check
     {
         let is_dup = state.mempool_contains(|tx| {
@@ -9910,6 +9904,16 @@ async fn post_transfer(
             });
         }
     }
+    // Build, sign, and submit. Compute the CANONICAL tx hash
+    // (BLAKE3 over signable_bytes) — this matches what the executor
+    // records in BlockRecord.transactions[].hash, so a wallet that
+    // saves this hash and polls /api/tx/<hash> will find the tx
+    // once it lands. Earlier code returned a format-string hash
+    // ("transfer:from:to:amount") that NEVER matched the chain's
+    // canonical hash, so /api/tx/<hash> reported "pending" forever
+    // — the bug observed live on 2026-05-07 when val-3.nonce
+    // advanced but the indexer kept returning pending.
+    let hash;
     {
         let mut tx = Transaction::Transfer(TransferTx {
             from,
@@ -9922,6 +9926,11 @@ async fn post_transfer(
         });
         let sender_addr = format!("0x{}", hex::encode(from));
         sign_transaction(&mut tx, &state, Some(&sender_addr));
+        // Hash AFTER signing so signable_bytes matches what the
+        // executor will hash at block-include time. signable_bytes
+        // is the same canonical input used by
+        // tx_records_from_block_with_outcomes in this file.
+        hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
         state.submit_tx(tx);
     }
     Json(TxResultResponse {
