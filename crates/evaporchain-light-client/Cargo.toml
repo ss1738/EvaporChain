@@ -1,0 +1,27 @@
+[package]
+name = "evaporchain-light-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Light Client SDK for EvaporChain. Unifies BFT commit-certificate verification (from `evaporchain-consensus::LightClientVerifier`) with Nova-IVC sublinear block-validity verification (from `evaporchain-proving::RealBlockProver::verify_with_vk_bytes`) and Verkle Merkle-proof state queries (from `evaporchain-crypto::verkle`). Foundation for browser/mobile wallets, dapps, bridges, and explorers — operationalises the Layer 5 Lambda-Fold Real Nova investment by giving third-party consumers a clean library entry point. WASM-target compatible (with `default-features = false`)."
+
+[dependencies]
+evaporchain-types     = { path = "../evaporchain-types" }
+evaporchain-crypto    = { path = "../evaporchain-crypto" }
+evaporchain-consensus = { path = "../evaporchain-consensus" }
+evaporchain-proving   = { path = "../evaporchain-proving", optional = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[features]
+default = []
+# `nova` enables Nova-IVC sublinear block-validity verification. Without
+# this feature, the SDK only does BFT commit-certificate verification —
+# still useful for energy-floor checks and validator-set tracking, just
+# not the sublinear claim.
+nova = ["dep:evaporchain-proving", "evaporchain-proving/nova"]
+
+[dev-dependencies]
+proptest = "1"
