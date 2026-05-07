@@ -91,6 +91,22 @@ echo "  Genesis:    $GENESIS"
 echo "  Log:        $LOG_FILE"
 echo ""
 
+if [[ "${LAUNCHED_BY_SUPERVISOR:-0}" == "1" ]]; then
+    # Foreground mode: replace shell with binary so launchd/systemd
+    # tracks the validator process directly (no orphan, no spurious
+    # "service exited successfully" + cgroup teardown).
+    echo "Starting validator $VID in foreground (supervisor mode)."
+    echo "$$" > "$PID_FILE"
+    exec "$BINARY" \
+        --tendermint --network --api --mock-prove \
+        --genesis-config "$GENESIS" \
+        --validator-id "$VID" --validators 5 \
+        --node-id "node-$VID" \
+        --port 9000 --api-port 8081 \
+        --data-dir "$DATA_DIR" --interval 8000 \
+        "${BOOTSTRAP_ARGS[@]}"
+fi
+
 nohup "$BINARY" \
     --tendermint --network --api --mock-prove \
     --genesis-config "$GENESIS" \

@@ -58,6 +58,7 @@ StandardError=journal
 # Make sure the cargo / rustup PATH is available so any rebuild
 # triggered downstream doesn't fail with `cargo: command not found`.
 Environment="PATH={{HOME}}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="LAUNCHED_BY_SUPERVISOR=1"
 
 [Install]
 WantedBy=multi-user.target
