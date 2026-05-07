@@ -1244,6 +1244,99 @@ Proof.
   apply (Hsafe h1 h2 Hin1 Hin2 Hne b1 b2 Hb1 Hb2 Hh1 Hh2 Hheight).
 Qed.
 
+(** [SAFETY-COMMIT-RULE] The composable preservation lemma for t_commit.
+
+    Companion to [safety_preserved_under_state_unchanged] — that lemma
+    handles the SIX state-no-op transitions; this lemma handles
+    t_commit, the transition that appends a hash to [ss_committed]
+    while leaving [ss_dag] unchanged.
+
+    Statement: a single-hash commit preserves Safety provided the
+    appended hash satisfies the BFT no-conflict contract — i.e., for
+    every previously-committed hash at the same height in the dag,
+    the new hash is either causally ordered against it or both are
+    members of a closing antichain. This is exactly the property
+    that the BFT lock-safety chain ([SAFETY-2] lock_safety +
+    [SAFETY-3] cross_fork_equivocation_caught + the 2f+1 prevote-
+    quorum lock) enforces at vote time; the lemma here doesn't
+    re-derive the lock-safety chain, it just composes it.
+
+    This factoring matches the [SAFETY-PRESERVATION-FRAMEWORK]
+    docstring: "[SAFETY-COMMIT-RULE] composes the already-proven
+    [SAFETY-2] lock_safety chain". With this lemma in place, the
+    remaining open obligation for SAFETY-PRESERVATION shrinks to
+    just two things:
+      1. Show that t_commit's [ss_dag ss' = ss_dag ss] holds (which
+         requires strengthening the t_commit constructor — out-of-
+         scope for the abstract model, tagged
+         [SAFETY-COMMIT-CONSTRUCTOR-STRENGTHENING]).
+      2. Show that the no-conflict precondition is invariantly true
+         for every t_commit invocation, given honest supermajority +
+         system_lock_safe — also requires the strengthened
+         constructor.
+
+    Discharged 2026-05-07 — third decomposition lemma in the SAFETY
+    chain (after FRAMEWORK + this). The narrowing brought the
+    remaining work from "monolithic ~600-LOC obligation" to two
+    specific named sub-tasks both of which are constructor-
+    strengthening exercises. *)
+Lemma safety_preserved_under_commit_with_no_conflict :
+  forall (s s' : SystemState) (h_new : BlockHash),
+    (* t_commit's effect on the chain state: dag unchanged,
+       committed list extended by [h_new]. *)
+    ss_dag s' = ss_dag s ->
+    ss_committed s' = h_new :: ss_committed s ->
+    (* The BFT no-conflict contract — the new committed hash does
+       not conflict with any previously-committed hash at the same
+       height in the dag. This is what the BFT lock-safety chain
+       guarantees at vote time. *)
+    (forall (h_old : BlockHash) (b_new b_old : Block),
+       In h_old (ss_committed s) ->
+       In b_new (ss_dag s) ->
+       In b_old (ss_dag s) ->
+       b_hash b_new = h_new ->
+       b_hash b_old = h_old ->
+       b_height b_new = b_height b_old ->
+       h_new <> h_old ->
+       causal_precedes (ss_dag s) h_new h_old \/
+       causal_precedes (ss_dag s) h_old h_new \/
+       is_antichain (ss_dag s) [h_new; h_old]) ->
+    Safety s ->
+    Safety s'.
+Proof.
+  intros s s' h_new Hdag Hcommitted Hno_conflict Hsafe.
+  unfold Safety in *.
+  intros h1 h2 Hin1 Hin2 Hne b1 b2 Hb1 Hb2 Hh1 Hh2 Hheight.
+  rewrite Hcommitted in Hin1, Hin2.
+  rewrite Hdag in Hb1, Hb2.
+  (* Three cases on whether h1 / h2 are the new hash or old. *)
+  destruct Hin1 as [Heq1 | Hin1_old]; destruct Hin2 as [Heq2 | Hin2_old].
+  - (* h1 = h_new = h2. Contradicts h1 <> h2. *)
+    subst h_new. exfalso. apply Hne. rewrite <- Heq1, <- Heq2. reflexivity.
+  - (* h1 = h_new, h2 in old committed. Apply no-conflict (rotated). *)
+    subst h_new. rewrite <- Heq1 in *.
+    apply (Hno_conflict h2 b1 b2 Hin2_old Hb1 Hb2 Hh1 Hh2 Hheight Hne).
+  - (* h1 in old committed, h2 = h_new. Apply no-conflict (swap arguments). *)
+    subst h_new. rewrite <- Heq2 in *.
+    assert (Hne_swapped : h2 <> h1) by (intro Heq; apply Hne; symmetry; exact Heq).
+    destruct (Hno_conflict h1 b2 b1 Hin1_old Hb2 Hb1 Hh2 Hh1 (eq_sym Hheight)
+                Hne_swapped) as [Hpre | [Hpre | Hac]].
+    + right. left. exact Hpre.
+    + left. exact Hpre.
+    + right. right.
+      (* is_antichain is symmetric over its hash list — no-conflict
+         (with h_new = h2 here) gave [h2; h1]; Safety wants [h1; h2].
+         Membership is identical in both. *)
+      unfold is_antichain in *.
+      intros hx hy Hin_x Hin_y Hne_xy.
+      apply Hac.
+      * simpl in *. tauto.
+      * simpl in *. tauto.
+      * exact Hne_xy.
+  - (* Both h1, h2 in old committed. Apply Safety s directly. *)
+    apply (Hsafe h1 h2 Hin1_old Hin2_old Hne b1 b2 Hb1 Hb2 Hh1 Hh2 Hheight).
+Qed.
+
 (** [LIVENESS-PRESERVATION-FRAMEWORK] Decomposition framework for the
     LIVENESS-PRESERVATION named hypothesis of the BIG theorem.
 
@@ -1450,6 +1543,30 @@ Qed.
    preconditions into t_propose / t_commit and prove the two named
    sub-lemmas — about ~150 LOC instead of the ~600 LOC the monolithic
    form would have demanded.
+
+   [SAFETY-COMMIT-RULE] (added 2026-05-07 evening):
+   [safety_preserved_under_commit_with_no_conflict] discharges the
+   t_commit half of the SAFETY-PRESERVATION-FRAMEWORK reduction. The
+   lemma takes the BFT no-conflict precondition (the new committed
+   hash is causally-ordered or antichain-paired with every prior
+   committed hash at the same height) as an EXPLICIT hypothesis,
+   so it composes cleanly without modifying the abstract t_commit
+   constructor. Proven by case-analysis: each pair (h1, h2) in the
+   new committed list is either both old (Safety s applies), one new
+   one old (no-conflict applies — both directions handled), or both
+   equal (h1<>h2 contradiction). The remaining open piece for full
+   t_commit preservation is now just the constructor-strengthening
+   step: ensuring t_commit's preconditions actually IMPLY the
+   no-conflict hypothesis. That's tagged
+   [SAFETY-COMMIT-CONSTRUCTOR-STRENGTHENING] for follow-up.
+
+   Net surface after this commit: SAFETY-PRESERVATION decomposes into
+     - 6 of 8 transition cases — DISCHARGED via FRAMEWORK lemma
+     - t_propose case — open as [SAFETY-PROPOSE-RULE], ~80 LOC future
+     - t_commit case — DISCHARGED conditional on no-conflict, which
+       reduces to constructor-strengthening (~70 LOC future)
+   Approximately 50% of the total SAFETY-PRESERVATION work landed
+   today; remainder is two well-defined ~70-80 LOC follow-ups.
 
    TOTAL: ~575 LOC of Coq proof body across ~6-8 weeks of focused work.
    Plus ~1.5K LOC of model + supporting lemmas already drafted above.
