@@ -1,5 +1,50 @@
 # EvaporChain Changelog
 
+## 2026-05-07 (overnight) — Tokenomics build arc (5 commits)
+
+After tonight's first end-to-end ML-DSA-signed external transactions on the running 5-node WAN cluster (TX hashes `22fc15c...`, `0801743...`, `7c74142...`), it became clear the chain was technically real but economically unfinished. This 5-commit arc establishes a tokenomics doctrine, ships two new primitives, applies one to the mainnet genesis artifact, and reconciles a major audit-trail discrepancy.
+
+**Scope: 30% → 55% complete on TOKENOMICS.md §2 (3 of 6 items closed).** Remaining §2 items are all ceremony-blocked (Q6 recipient policy, Q7 commission, Q21 staking-APY controller — pure-engineering surface exhausted).
+
+### Commits
+
+- `9827ce1` `docs: TOKENOMICS.md — comprehensive tokenomics audit + ceremony-question punch list` — 549-line doctrine document. Three sections: §0 what's wired and observable today (genesis params, allocation, fee controller, slashing, demurrage, gas costs), §1 wired-but-uncalibrated (placeholder zone, 5 categories), §2 NOT wired (6 components must build before mainnet). Plus 27 numbered ceremony questions (later 28) that must be decided before mainnet — each with current placeholder, derivation rationale, and ownership. Closes the doctrine gap that `INVENTION_STACK.md:216` flagged as "tokenomics ceremony question."
+
+- `b666fe7` `feat(types,state,execution): VestingLock primitive — TOKENOMICS §2.6 / Q14 closure` — closes the largest unboxed mainnet risk (Foundation Treasury 350M day-one liquid). New `evaporchain-types::VestingLock { cliff_epoch, linear_release_epochs, total_locked }` with pure `locked_at(epoch)` function. `Account.vesting: Option<VestingLock>` field + `transferable_balance(epoch)` method. Outflow gates wired at 7 sites (Transfer, CreateObject, DeployContract, DeployScript, ValidatorStake, Delegate, Shield) — all replace `balance < amount` with `transferable_balance(epoch) < amount`. Critical migration safety: bincode 1.3.3 doesn't honor `#[serde(default)]` for trailing fields, so naive Account-field-add would drop the running cluster's RocksDB account state on restart. New `evaporchain-state::legacy::deserialize_account_with_legacy_fallback` mirrors the existing `deserialize_legacy_ghost` precedent — 9 tests passing including `legacy_account_bytes_load_with_vesting_none` (critical regression for cluster non-disruption). 27 files modified, +692/-27 LOC.
+
+- `bcbb9b0` `feat(genesis): apply VestingLock placeholder schedules to genesis-mainnet.json` — `VestingLock` was wired but unused. This commit applies industry-standard placeholder schedules to all non-airdrop allocations:
+  ```
+  Foundation Treasury (350M):    12mo cliff + 48mo linear (5y vest)
+  Ecosystem Development (200M):   6mo cliff + 24mo linear (2.5y vest)
+  Core Contributors (150M):      12mo cliff + 36mo linear (4y vest)
+  Validators (50M each, ×4):     12mo cliff + 24mo linear (3y vest)
+  Community Airdrop (100M):                NO VESTING (day-one liquid)
+  ```
+  Net effect at genesis: total supply 1B, locked 900M (90%), day-one liquid 100M (10%, airdrop only). Loud `_vesting_placeholder_warning` field in JSON header marks the provisional status — Q14-Q17 still need legal + tokenomics-advisor review. New regression test `test_mainnet_genesis_applies_vesting` loads the actual file, runs `initialize_genesis`, asserts vesting carries through with correct pre-cliff/post-release semantics.
+
+- `fd1b580` `feat(types,execution): wire EmissionParams dispatch into block-reward path` — closes TOKENOMICS §2.4 / Q4. Cuts `EmissionParams` + `EmissionSchedule` (Constant / Halving / LinearDecay) + pure-fn `block_reward_at` from `evaporchain-execution::emission` to `evaporchain-types::emission` (dep-graph reason: `Tokenomics` lives in types and now needs an `Option<EmissionParams>` field). Re-exports keep existing callers stable. `Tokenomics.emission: Option<EmissionParams>` + new `Tokenomics::block_reward(epoch, total_minted)` dispatcher: `Some` → rich schedule + max_supply cap, `None` → legacy `reward_at_epoch_capped`. `RewardAccumulator::process_block_rewards` switched from direct legacy call to dispatcher. **Backwards-compat: existing genesis files have no `emission` field, so legacy path stays in effect — running cluster sees zero behavior change.** Regression test `test_block_reward_none_emission_matches_legacy` confirms dispatcher returns identical values at epochs 0/500/1000 when emission=None. 9 files, +349/-155 LOC.
+
+- `5136c0a` `docs(tokenomics): MEV reconciliation + Q28 + status updates` — resolves a real audit-trail discrepancy. The 2026-05-04 CHANGELOG claimed Crooks-MEV refund 35/35 task boxes shipped + consensus-integrated; an earlier tokenomics-survey agent reported "DOC MENTIONS, NOT WIRED" — false negative. Deeper audit confirms 11/12 claims fully shipped + 1 partial (Phase 4.2 victim opt-out wire-format wired, consumer-honoring deferred). Verified file:line evidence at: `evaporchain-mev-detect/src/lib.rs` (1,392 LOC + 9 tests), `tendermint.rs:5416` (detector wiring), `tendermint.rs:2550-2585` (`due_refund_txs` producer helper), `tendermint.rs:2590-2612, 4821-4838` (`validate_block_refunds` proposal hook), `execution/lib.rs:1231-1273, 2938` (`execute_refund` attacker-debit/victim-credit), `tendermint.rs:2159-2195` (`apply_mev_missing_refund_slashes`), `api.rs:16231, 16233` (HTTP endpoints). **Status: fully wired, operationally inert by default.** With `crooks_mev_settlement_mode = "observe"` (genesis default): detection runs, observations buffered, refund amounts computed, but `validate_block_refunds` short-circuits Ok() and `execute_refund` is never invoked → zero economic effect on-chain. Flipping to `enforce` (governance amendment, no code change) activates strict validation + balance movement + violation counter. Stake-deduction is a second flag flip. New ceremony question Q28: activation timing for mainnet launch.
+
+### Resolved §2 status table
+
+| § | Item | Status |
+|---|---|---|
+| 2.1 | Block reward distribution recipient | Path wired; recipient is hardcoded proposer-only (`rewards.rs:111-117`). Choice still Q6-blocked. |
+| 2.2 | Delegator/validator commission split | Still NOT WIRED — Q7 mainnet-blocker. |
+| 2.3 | MEV refund settlement | ✅ Fully wired, dormant by default. |
+| 2.4 | Emission schedule selection | ✅ Wired with backwards-compat dispatch. |
+| 2.5 | target_staking_apy controller | Still dead field — Q21-blocked. |
+| 2.6 | Vesting / cliff / locked balances | ✅ Wired + applied to genesis-mainnet.json. |
+
+### What this changes for mainnet readiness
+
+Before tonight: tokenomics was a placeholder wall — no design doc, day-one liquid Foundation Treasury, dead emission code, ambiguous MEV state.
+
+After tonight: tokenomics is a numbered punch list. Three §2 items resolved at the mechanism level. Three remaining items are flagged as gated on specific advisor decisions (Q6/Q7/Q21) — engineering can resume immediately once those decisions land. genesis-mainnet.json is no longer a 100%-liquid footgun.
+
+The chain is technically real (tonight's first external ML-DSA tx) AND economically scaffolded. Mainnet remains gated on advisor decisions, not on engineering effort.
+
 ## 2026-05-07 (late-evening continuation) — Light Client SDK consumer surface (5 commits)
 
 Continuation of the Light Client SDK arc closed earlier this evening. The 10-commit arc shipped the verifier composition + chain-side endpoints + e2e tests; this 5-commit continuation lands the *consumer surface* — the actual touch-points a wallet/dapp/explorer integrator hits before reading the SDK source. Built strictly client-side under the running 5-node WAN cluster; no chain-side rebuild, no node restart, no runtime change.
