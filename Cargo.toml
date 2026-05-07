@@ -32,6 +32,7 @@ members = [
     "crates/evaporchain-causal-chsh-cli",
     "crates/evaporchain-causal-chsh-realdata",
     "crates/evaporchain-light-client",
+    "crates/evaporchain-light-client-http",
     "crates/evaporchain-cslc",
     "crates/evaporchain-lambda-fold",
     "crates/evaporchain-mdl-shard",

@@ -1,0 +1,22 @@
+[package]
+name = "evaporchain-light-client-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP transport add-on for `evaporchain-light-client`. Implements `RpcTransport` over a configurable JSON HTTP gateway via `ureq` (sync, ~10 deps; chosen over reqwest's ~50 deps to keep the consumer dependency footprint small). Path templates are caller-supplied so the transport can target any node / gateway / proxy that exposes the required endpoints — the SDK itself doesn't prescribe a chain-side endpoint contract beyond the four data-class types (LightBlockHeader, VerkleProof, NovaAttestation, vk_bytes). Default path templates target the chain's `/api/...` endpoints. NOT WASM-compatible (ureq is sync-blocking native HTTP); browser/mobile consumers should ship their own RpcTransport over their environment's fetch primitives — see the parent crate `evaporchain-light-client`'s transport.rs module-level docs."
+
+[dependencies]
+evaporchain-light-client = { path = "../evaporchain-light-client" }
+evaporchain-consensus    = { path = "../evaporchain-consensus" }
+evaporchain-crypto       = { path = "../evaporchain-crypto" }
+ureq        = { version = "2", default-features = false, features = ["json", "tls"] }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+
+[features]
+default = []
+# Mirror parent crate's `nova` feature — when enabled, the HTTP
+# transport implements the Nova-related fetch methods.
+nova = ["evaporchain-light-client/nova"]
