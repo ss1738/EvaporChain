@@ -381,25 +381,50 @@ Proof.
   lia.
 Qed.
 
-(** Within-halving case of step-subadditivity. When (S k)/h = k/h
-    (no half-life boundary crossed), the lazy-at-(S k) value is at
-    most the staged-1-from-lazy-at-k value.
+(** Clean abstract form of the within-halving inequality. Operating
+    on fresh nat parameters (`after`) instead of `set` bindings
+    avoids the unification issues that derailed earlier inline-
+    proof attempts. The composition lemma below feeds this with
+    the appropriate `nat_shr` instantiation. DISCHARGED 2026-05-07. *)
+Lemma sub_step_clean :
+  forall (after rem h : nat),
+    h <> 0 ->
+    rem < h ->
+    rem + 1 < h ->
+    1 < h ->
+    after - EnergyDecayMonotonicity.linear_decay after (rem + 1) h <=
+    (after - EnergyDecayMonotonicity.linear_decay after rem h) -
+    EnergyDecayMonotonicity.linear_decay
+      (after - EnergyDecayMonotonicity.linear_decay after rem h) 1 h.
+Proof.
+  intros after rem h Hh Hrem_lt Hrem_succ_lt Hlt1.
+  pose proof (linear_decay_super_additive after rem h Hh) as Hsuper.
+  assert (Hbnd_A : EnergyDecayMonotonicity.linear_decay after rem h <= after).
+  { apply EnergyDecayMonotonicity.linear_decay_bounded; assumption. }
+  assert (Hbnd_C : EnergyDecayMonotonicity.linear_decay after (rem + 1) h <= after).
+  { apply EnergyDecayMonotonicity.linear_decay_bounded; assumption. }
+  assert (Hmono_inner :
+    EnergyDecayMonotonicity.linear_decay
+      (after - EnergyDecayMonotonicity.linear_decay after rem h) 1 h <=
+    EnergyDecayMonotonicity.linear_decay after 1 h).
+  { unfold EnergyDecayMonotonicity.linear_decay.
+    apply Nat.div_le_mono; [lia |].
+    apply Nat.mul_le_mono_r. lia. }
+  assert (Hbnd_inner :
+    EnergyDecayMonotonicity.linear_decay
+      (after - EnergyDecayMonotonicity.linear_decay after rem h) 1 h <=
+    after - EnergyDecayMonotonicity.linear_decay after rem h).
+  { apply EnergyDecayMonotonicity.linear_decay_bounded; assumption. }
+  remember (EnergyDecayMonotonicity.linear_decay after rem h) as A.
+  remember (EnergyDecayMonotonicity.linear_decay after 1 h) as B.
+  remember (EnergyDecayMonotonicity.linear_decay after (rem + 1) h) as C.
+  remember (EnergyDecayMonotonicity.linear_decay (after - A) 1 h) as D.
+  assert (HAD_le_C : A + D <= C) by lia.
+  pose proof (nat_sub_anti_mono (A + D) C after HAD_le_C) as Hstep.
+  rewrite Nat.sub_add_distr in Hstep.
+  exact Hstep.
+Qed.
 
-    DISCHARGE STATUS 2026-05-07: proof scaffold landed (case-split
-    on h=1 vs h>=2 done; for h>=2 the chain `LHS <= mid1 <= RHS` is
-    structurally clear with all 7 supporting bounds asserted).
-    Final compose step left as Admitted: under the bounds Hsuper
-    (A + B <= C), Hmono_inner (D <= B), Hbnd_after_rem' (A <= after),
-    Hbnd_after_rem_succ (C <= after), Hbnd_inner (D <= after - A),
-    and Hcomb (A + B <= after), the goal `after - C <= (after - A)
-    - D` reduces in real arithmetic to `A + D <= C`, immediate from
-    Hsuper + Hmono_inner. But Coq's `lia` and `nia` don't close it
-    even after `set`/`remember`/`clearbody` of the four
-    `linear_decay` applications — the saturating-sub anti-monotonic
-    chain doesn't unfold cleanly. The right path is an explicit
-    chain via `Nat.sub_add_distr` + a `Nat.sub_le_mono_*` family
-    lemma, which requires more proof-engineering than fits in
-    this commit's bounded scope. Tagged [DRIFT-STEP-SUB-WITHIN]. *)
 Lemma concrete_step_subadditive_within_halving :
   forall e h k,
     h <> 0 ->
@@ -408,41 +433,60 @@ Lemma concrete_step_subadditive_within_halving :
     EnergyDecayMonotonicity.energy_at_epoch
       (EnergyDecayMonotonicity.energy_at_epoch e h k) h 1.
 Proof.
-  (* 5 attempts on 2026-05-07. The mathematical content is sound:
-     after - C <= (after - A) - D reduces in real arith to
-     A + D <= C, which follows from Hsuper (A + B <= C) +
-     Hmono_inner (D <= B). The structural decomposition (h=1
-     contradiction; h>=2 7-bound assembly) is sound.
+  (* DISCHARGED 2026-05-07 via forward-path-(a). The trick was
+     proving the inner inequality on fresh `after` parameter
+     (sub_step_clean above), which avoids the unification issues
+     that the `set after := nat_shr e (k/h)` binding introduced
+     across the destruct-on-leb branch. The outer lemma now just
+     unfolds energy_at_epoch, peels the cutoff branch, and applies
+     sub_step_clean with the right instantiation. *)
+  intros e h k Hh Hdiv_eq.
+  unfold EnergyDecayMonotonicity.energy_at_epoch at 1 2.
+  rewrite (proj2 (Nat.eqb_neq h 0) Hh).
+  rewrite Hdiv_eq.
+  destruct (leb EnergyDecayMonotonicity.halving_cutoff (Nat.div k h)) eqn:Ecut.
+  - apply Nat.le_0_l.
+  - destruct (Nat.lt_ge_cases 1 h) as [Hlt1 | Hge1].
+    + (* h >= 2 *)
+      assert (Hsmod : Nat.modulo (S k) h = Nat.modulo k h + 1).
+      { pose proof (Nat.div_mod (S k) h Hh) as Hsk.
+        pose proof (Nat.div_mod k h Hh) as Hk.
+        rewrite Hdiv_eq in Hsk. lia. }
+      assert (Hrem_lt : Nat.modulo k h + 1 < h).
+      { pose proof (Nat.mod_upper_bound (S k) h Hh) as Hbnd. lia. }
+      rewrite Hsmod.
+      unfold EnergyDecayMonotonicity.energy_at_epoch.
+      rewrite (proj2 (Nat.eqb_neq h 0) Hh).
+      (* Resolve the inner conditional via Ecut, which says
+         halving_cutoff <=? k/h = false. *)
+      rewrite Ecut.
+      replace (Nat.div 1 h) with 0.
+      2: { symmetry. apply Nat.div_small. exact Hlt1. }
+      replace (Nat.modulo 1 h) with 1.
+      2: { symmetry. apply Nat.mod_small. exact Hlt1. }
+      destruct (leb EnergyDecayMonotonicity.halving_cutoff 0) eqn:Ecut'.
+      { unfold EnergyDecayMonotonicity.halving_cutoff in Ecut'. discriminate. }
+      simpl EnergyDecayMonotonicity.nat_shr.
+      apply sub_step_clean.
+      * exact Hh.
+      * apply Nat.mod_upper_bound. exact Hh.
+      * exact Hrem_lt.
+      * exact Hlt1.
+    + (* h = 1: within-halving forces S k = k, contradiction. *)
+      assert (Hh1 : h = 1) by lia.
+      subst h.
+      rewrite !Nat.div_1_r in Hdiv_eq. lia.
+Qed.
 
-     The blocker is Coq tactical: the destruct-on-leb branch
-     followed by the inner unfold-of-energy_at_epoch leaks the
-     `set after := nat_shr e (k/h)` binding's unfold into the goal
-     in some positions (where the cutoff-conditional `if match k/h
-     with S(S...64)) => true | _ => false then 0 else nat_shr e
-     (k/h) - linear_decay ...` shape persists). This means the
-     goal and any helper lemma applied at top level have
-     syntactically-different forms even though they're
-     definitionally equal. `lia`, `nia`, `apply
-     nat_sub_anti_mono`, `etransitivity + apply + reflexivity`,
-     `unfold after in *; lia`, `change` — all fail to bridge.
-
-     Successful proof path is achievable via either:
-       (a) Restructure to AVOID `set after := ...` inside the
-           destruct branch (push the `set` outside, or use `pose +
-           generalize` to abstract before the destruct), so the
-           goal stays in the `after`-named form throughout.
-       (b) Add a top-level `Lemma` whose statement uses the fully-
-           unfolded form `nat_shr e (k/h) - linear_decay ...`, prove
-           it independently, then apply.
-       (c) Use `simpl in *` with explicit unfold control (Hint
-           Unfold) to normalise the goal and helpers consistently
-           before applying.
-
-     Each is 30+ minutes of Coq engineering. Tagged
-     [DRIFT-STEP-SUB-WITHIN] for a focused-session pickup. The
-     mathematical proof is fully documented above and in
-     CHANGELOG. *)
-Admitted.
+(* Historical: 5 failed proof attempts on 2026-05-07 before the
+   forward-path-(a) restructure (sub_step_clean operating on fresh
+   nat parameters) succeeded. The blocker was Coq tactical — the
+   `set after := nat_shr e (k/h)` binding leaked unfolds across the
+   destruct branch, leaving the goal and helpers in syntactically-
+   different but definitionally-equal forms that lia/nia/apply/
+   replace/etransitivity all failed to bridge. The fix was
+   abstracting `after` as a real parameter in a separate top-level
+   helper, so unification works cleanly. *)
 
 (** Cross-halving case of step-subadditivity. When (S k)/h = k/h + 1
     (a half-life boundary IS crossed by the +1 step), the LHS gets
