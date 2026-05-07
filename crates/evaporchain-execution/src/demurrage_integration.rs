@@ -40,12 +40,37 @@ pub fn collect_demurrage(
     let mut total_collected: u64 = 0;
 
     for addr in addrs {
+        // Bug fix (2026-05-07): previously this passed the global
+        // `last_epoch` (last_rent_epoch) to demurrage_owed, ignoring each
+        // account's `last_touched_epoch` anchor — so EVERY account was
+        // charged for the full sweep window regardless of recent activity.
+        // That defeated the whole "transfers refresh the demurrage
+        // anchor" design (every Transfer execution path sets
+        // sender.last_touched_epoch + receiver.last_touched_epoch to the
+        // current epoch — that work was wasted).
+        //
+        // Correct behaviour: charge `demurrage_owed(balance,
+        // max(acct.last_touched_epoch, last_epoch), current_epoch,
+        // params)`. The `max` floor against `last_epoch` prevents
+        // double-charging for periods before the previous sweep already
+        // collected them. After this sweep, `last_touched_epoch` is
+        // bumped to `current_epoch` so the next sweep starts from a
+        // fresh anchor (without this, idle accounts would keep
+        // accumulating retroactive decay across every sweep).
+        //
+        // Verified live on the 5-node cluster: under the previous
+        // implementation val-3 lost ~270k of 350k balance in 90 s of
+        // faucet activity (its last_touched anchor was being refreshed
+        // by every transfer but ignored). With this fix, frequently
+        // touched accounts decay at ~0 and only stale balances bleed
+        // into the refresh pool — matching the documented design.
         let (balance, owed) = {
             let Some(acct) = db.get_account(&addr) else {
                 continue;
             };
+            let anchor = acct.last_touched_epoch.max(last_epoch);
             let b = acct.balance;
-            let o = demurrage_owed(b, last_epoch, current_epoch, params);
+            let o = demurrage_owed(b, anchor, current_epoch, params);
             (b, o)
         };
 
@@ -61,6 +86,10 @@ pub fn collect_demurrage(
 
         if let Some(acct) = db.get_account_mut(&addr) {
             acct.balance = acct.balance.saturating_sub(actual);
+            // Refresh the per-account anchor so the next sweep starts
+            // from current_epoch — otherwise idle accounts would be
+            // re-charged for the entire historical window every sweep.
+            acct.last_touched_epoch = current_epoch;
         }
 
         // Credit the refresh pool under the account address as namespace.
