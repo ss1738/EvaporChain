@@ -5309,6 +5309,36 @@ async fn main() -> Result<()> {
                             continue;
                         }
                         if let ConsensusAction::RequestSync(from, to) = action {
+                            // Same cold-boot escalation as the post-tick handler
+                            // at main.rs:4279. on_message-emitted RequestSync is
+                            // the path "Behind by N blocks — requesting sync"
+                            // takes from tendermint.rs:4458, which is what M1
+                            // actually hits on cold boot when peers gossip
+                            // future-height Prevotes/Precommits at it.
+                            if StateSyncManager::needs_state_sync(from, to)
+                                && state_sync.is_none()
+                                && !sync_in_flight
+                            {
+                                println!(
+                                    "{} \x1b[1;33mConsensus gap too large ({} blocks) — escalating to snapshot state sync\x1b[0m",
+                                    node_tag,
+                                    to.saturating_sub(from)
+                                );
+                                let mut ssm = StateSyncManager::new(from);
+                                let actions = ssm.start();
+                                for action in actions {
+                                    if let SyncAction::Broadcast { message } = action {
+                                        if let Some(ref sender) = consensus_net_sender {
+                                            if let Ok(data) = serde_json::to_vec(&message) {
+                                                let _ = sender.send(data).await;
+                                            }
+                                        }
+                                    }
+                                }
+                                state_sync = Some(ssm);
+                                sync_in_flight = true;
+                                continue;
+                            }
                             if !sync_in_flight {
                                 println!(
                                     "{} \x1b[36mConsensus requests sync (msg): blocks {}..{}\x1b[0m",
