@@ -64,6 +64,14 @@ def poll_node(label: str, ip: str) -> dict[str, Any]:
         "uptime_seconds": status.get("uptime_seconds"),
         "epoch": status.get("epoch"),
         "mempool_pending": mempool.get("pending"),
+        # New 2026-05-07 evening: data_dir_bytes is the on-disk size
+        # of the validator's chain + state + DA shards. The decay-graph
+        # plot shows this against block_height over time — a healthy
+        # decay regime makes data_dir_bytes flatten while block_height
+        # keeps growing linearly. Field is omitted by older binaries
+        # so .get() returns None and the chart simply skips that node
+        # until the operator deploys the new build.
+        "data_dir_bytes": status.get("data_dir_bytes"),
     }
 
 
@@ -97,12 +105,24 @@ def build_state() -> dict[str, Any]:
                     if dt > 0:
                         block_rate_per_min = round(dh / dt * 60.0, 1)
 
+            # Decay-graph derived metric: bytes-per-block ratio. Stays
+            # ~flat or shrinks under a healthy decay regime; grows
+            # linearly on a non-decaying chain. None when either the
+            # node is too young or the chain reports no data_dir_bytes
+            # (older binary).
+            bytes_per_block: float | None = None
+            disk = latest.get("data_dir_bytes")
+            height = latest.get("block_height")
+            if disk is not None and height and height > 0:
+                bytes_per_block = round(disk / height, 1)
+
             out["nodes"].append({
                 "label": label,
                 "ip": ip,
                 "name": name,
                 **latest,
                 "block_rate_per_min": block_rate_per_min,
+                "bytes_per_block": bytes_per_block,
                 "history_points": len(samples),
             })
     # Cluster-wide convergence score: how many distinct (height, state_root) pairs
@@ -148,11 +168,16 @@ HTML_PAGE = """<!doctype html>
   <thead>
     <tr>
       <th>Node</th><th>Region</th><th>Height</th><th>State Root (16 hex)</th>
-      <th>Peers</th><th>Mempool</th><th>Block&nbsp;rate /min</th><th>Uptime</th><th>Status</th>
+      <th>Peers</th><th>Mempool</th><th>Block&nbsp;rate /min</th>
+      <th>Disk&nbsp;(MB)</th><th>Bytes&nbsp;/&nbsp;block</th>
+      <th>Uptime</th><th>Status</th>
     </tr>
   </thead>
   <tbody></tbody>
 </table>
+<p style="color:#6e7681;font-size:11px;margin-top:6px;">
+  <strong>Bytes/block</strong> is the decay-primitive indicator — flat or shrinking over time = healthy decay (state evaporates as it ages). Linearly growing = no decay (unbounded state growth like every other L1).
+</p>
 <div class="footer">Polling every 3 s &middot; data is in-memory only &middot; dashboard process serves on localhost:9090.</div>
 <script>
 function fmtUptime(s) {
@@ -161,6 +186,16 @@ function fmtUptime(s) {
   if (h > 0) return h + 'h' + (m<10?'0':'') + m + 'm';
   if (m > 0) return m + 'm' + (sec<10?'0':'') + sec + 's';
   return sec + 's';
+}
+function fmtMB(bytes) {
+  if (bytes == null) return '-';
+  return (bytes / (1024*1024)).toFixed(1);
+}
+function fmtBytesPerBlock(bpb) {
+  if (bpb == null) return '-';
+  if (bpb < 1024) return bpb.toFixed(0) + 'B';
+  if (bpb < 1024*1024) return (bpb/1024).toFixed(1) + 'KB';
+  return (bpb/(1024*1024)).toFixed(2) + 'MB';
 }
 async function tick() {
   let data;
@@ -176,7 +211,7 @@ async function tick() {
   `;
   const tbody = document.querySelector('#nodes tbody');
   tbody.innerHTML = data.nodes.map(n => {
-    if (!n.ok) return `<tr><td>${n.label}</td><td>${n.name}</td><td colspan="7" class="down">unreachable (${n.ip})</td></tr>`;
+    if (!n.ok) return `<tr><td>${n.label}</td><td>${n.name}</td><td colspan="9" class="down">unreachable (${n.ip})</td></tr>`;
     return `<tr>
       <td><strong>${n.label}</strong></td>
       <td>${n.name}</td>
@@ -185,6 +220,8 @@ async function tick() {
       <td class="num">${n.peer_count}</td>
       <td class="num">${n.mempool_pending ?? '-'}</td>
       <td class="num">${n.block_rate_per_min ?? '-'}</td>
+      <td class="num">${fmtMB(n.data_dir_bytes)}</td>
+      <td class="num">${fmtBytesPerBlock(n.bytes_per_block)}</td>
       <td class="num">${fmtUptime(n.uptime_seconds)}</td>
       <td><span class="badge ok">live</span></td>
     </tr>`;

@@ -3635,6 +3635,7 @@ async fn main() -> Result<()> {
             encrypted_mempool: Arc::clone(&encrypted_mempool),
             light_client: Arc::clone(&light_client),
             chain_id: args.chain_id.clone(),
+            data_dir: Some(std::path::PathBuf::from(&args.data_dir)),
             four_act_snapshot: Arc::new(Mutex::new(api::FourActSnapshot::default())),
             hbct_book: Arc::new(Mutex::new(evaporchain_hbct::HbctBook::new())),
             hbct_oracle: Arc::new(Mutex::new(

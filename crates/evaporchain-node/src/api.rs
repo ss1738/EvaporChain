@@ -121,6 +121,11 @@ pub struct ApiState {
     pub encrypted_mempool: Arc<Mutex<evaporchain_consensus::encrypted_mempool::EncryptedMempool>>,
     /// Chain ID for signing message domain separation (cross-chain replay protection).
     pub chain_id: String,
+    /// Validator's on-disk data directory. When `Some`, /api/status
+    /// reports `data_dir_bytes` so the dashboard can plot disk usage
+    /// over time alongside block_height (the decay-graph artifact).
+    /// When `None`, the size field is omitted from the response.
+    pub data_dir: Option<std::path::PathBuf>,
     /// Light client verifier — BLS header verification + skip/sequential modes.
     pub light_client: Arc<Mutex<evaporchain_consensus::light_client::LightClientVerifier>>,
     /// Four-act narrative spine snapshot. The consensus layer's
@@ -821,6 +826,17 @@ struct StatusResponse {
     state_root: String,
     proving_enabled: bool,
     uptime_seconds: u64,
+    /// Total bytes used by the validator's on-disk data directory
+    /// (chain history + state + DA shards + snapshots), or `None` if
+    /// the dashboard can't access the path. Surfaced for the decay-
+    /// graph in scripts/cluster-dashboard.py — operators plot this
+    /// against block_height over time to visualise the
+    /// state-evaporation primitive: a healthy decay regime makes
+    /// data_dir_bytes flatten while block_height grows linearly,
+    /// the visceral differentiator versus chains with unbounded
+    /// state growth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_dir_bytes: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -1409,24 +1425,64 @@ pub fn is_valid_email(email: &str) -> bool {
 
 // ──────────────────────────── Handlers ─────────────────────────────────
 
+/// Recursively sum the size of every regular file under `path`.
+/// Returns `None` if the path doesn't exist or can't be read. The
+/// walk is bounded by the OS recursion limit; pathological symlink
+/// loops are guarded by [`std::fs::read_dir`]'s symlink-following
+/// being explicit (we use the metadata-on-symlink shape that does
+/// NOT chase). For the soak-run-friendly dashboard use-case (5
+/// nodes polled every 30 s), this is acceptable: walking a few
+/// hundred MB of RocksDB SSTs takes <50 ms locally.
+fn dir_size_bytes(path: &std::path::Path) -> Option<u64> {
+    fn walk(p: &std::path::Path, acc: &mut u64) -> std::io::Result<()> {
+        let md = std::fs::symlink_metadata(p)?;
+        if md.file_type().is_dir() {
+            for entry in std::fs::read_dir(p)? {
+                walk(&entry?.path(), acc)?;
+            }
+        } else if md.file_type().is_file() {
+            *acc = acc.saturating_add(md.len());
+        }
+        Ok(())
+    }
+    let mut total: u64 = 0;
+    walk(path, &mut total).ok()?;
+    Some(total)
+}
+
 async fn get_status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> {
-    let mut db = safe_lock(&state.db);
-    let history = safe_lock(&state.block_history);
-    let stats = safe_lock(&state.stats);
-    let latest = history.back();
+    // Snapshot all locked values first, then release locks before the
+    // filesystem walk for data_dir_bytes (which can take ~50 ms over
+    // a few hundred MB of RocksDB SSTs).
+    let (block_height, epoch, total_evaporated, active_objects, ghost_count, state_root) = {
+        let mut db = safe_lock(&state.db);
+        let history = safe_lock(&state.block_history);
+        let stats = safe_lock(&state.stats);
+        let latest = history.back();
+        (
+            latest.map(|b| b.number).unwrap_or(0),
+            latest.map(|b| b.epoch).unwrap_or(0),
+            stats.total_evaporated,
+            db.object_count(),
+            db.ghost_count(),
+            hex::encode(db.compute_state_root()),
+        )
+    };
+    let data_dir_bytes = state.data_dir.as_deref().and_then(dir_size_bytes);
 
     Json(StatusResponse {
         chain_name: "EvaporChain",
         version: "0.2.0",
-        block_height: latest.map(|b| b.number).unwrap_or(0),
-        epoch: latest.map(|b| b.epoch).unwrap_or(0),
-        active_objects: db.object_count(),
-        ghost_count: db.ghost_count(),
-        total_evaporated: stats.total_evaporated,
+        block_height,
+        epoch,
+        active_objects,
+        ghost_count,
+        total_evaporated,
         peer_count: state.peer_count.load(std::sync::atomic::Ordering::Relaxed),
-        state_root: hex::encode(db.compute_state_root()),
+        state_root,
         proving_enabled: state.prove_mode,
         uptime_seconds: state.start_time.elapsed().as_secs(),
+        data_dir_bytes,
     })
 }
 
