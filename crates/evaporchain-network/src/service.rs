@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -419,6 +419,22 @@ pub struct NetworkConfig {
     /// in genesis (which embed `/p2p/<peer_id>`) actually resolve to
     /// the right node across restarts.
     pub data_dir: Option<PathBuf>,
+    /// Trusted validator IPs that bypass the per-IP and per-subnet
+    /// inbound caps. Empty set = legacy behaviour (every peer subject
+    /// to the `max_connections_per_ip` and `max_connections_per_subnet`
+    /// gates). Populated set = those IPs can reconnect arbitrarily
+    /// without exhausting the per-subnet quota — e.g., a known
+    /// validator that churns through ephemeral peer-ids during long
+    /// uptime won't get silently rejected once the 16-slot cap fills.
+    ///
+    /// Bug-B reference: `cluster_5node_2026_05_06_session.md` "Bug B
+    /// — libp2p per-subnet cap exhausted by reconnect churn". Live
+    /// evidence on 2026-05-07 evening: H1 ended with peer_count = 0
+    /// after ~4 h of running because every reconnect from the
+    /// Helsinki subnet hit the cap. Whitelisting validator IPs
+    /// surgically bypasses the gate for legitimate peers without
+    /// loosening sybil protection for the open internet.
+    pub trusted_validator_ips: HashSet<IpAddr>,
 }
 
 impl Default for NetworkConfig {
@@ -435,6 +451,7 @@ impl Default for NetworkConfig {
             max_inbound_connections: 200,
             peer_ban_duration_secs: 3_600,
             ban_list_path: None,
+            trusted_validator_ips: HashSet::new(),
             chain_id: String::new(),
             enable_mdns: false,
             data_dir: None,
@@ -645,12 +662,18 @@ pub struct SybilState {
     pub config: SybilConfig,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SybilConfig {
     pub max_connections_per_ip: usize,
     pub max_connections_per_subnet: usize,
     pub max_inbound_connections: usize,
     pub peer_ban_duration_secs: u64,
+    /// IPs whitelisted to bypass the per-IP and per-subnet caps. Used
+    /// for known-validator peers so long-uptime peer-id churn doesn't
+    /// exhaust the subnet quota. Empty set = legacy behaviour. See
+    /// [`NetworkConfig::trusted_validator_ips`] for the live-evidence
+    /// reference (2026-05-07 evening 4-hour soak Bug B).
+    pub trusted_validator_ips: HashSet<IpAddr>,
 }
 
 impl SybilState {
@@ -673,6 +696,15 @@ impl SybilState {
 
     /// Try to admit a new inbound connection from `ip`. Returns `Ok(())`
     /// if accepted; `Err(reason)` if it should be disconnected.
+    ///
+    /// Trusted-validator-IP bypass: if `ip` is in
+    /// [`SybilConfig::trusted_validator_ips`], the per-IP and
+    /// per-subnet quotas are skipped. The total-cap and ban-list
+    /// gates still apply (we never want to allow a banned peer
+    /// even if it claims to be a validator, and the total cap is a
+    /// memory-safety bound rather than a sybil bound). Bug-B fix:
+    /// stops long-uptime peer-id churn from a known-validator
+    /// subnet from silently exhausting the quota.
     pub fn try_admit_inbound(
         &mut self,
         ip: IpAddr,
@@ -686,16 +718,19 @@ impl SybilState {
             self.rejections.record(RejectionReason::TotalCap);
             return Err(RejectionReason::TotalCap);
         }
-        let ip_count = self.ip_peers.get(&ip).map(|v| v.len()).unwrap_or(0);
-        if ip_count >= self.config.max_connections_per_ip {
-            self.rejections.record(RejectionReason::PerIp);
-            return Err(RejectionReason::PerIp);
-        }
-        let key = subnet_key(&ip);
-        let subnet_count = self.subnet_counts.get(&key).copied().unwrap_or(0);
-        if subnet_count >= self.config.max_connections_per_subnet {
-            self.rejections.record(RejectionReason::PerSubnet);
-            return Err(RejectionReason::PerSubnet);
+        let is_trusted = self.config.trusted_validator_ips.contains(&ip);
+        if !is_trusted {
+            let ip_count = self.ip_peers.get(&ip).map(|v| v.len()).unwrap_or(0);
+            if ip_count >= self.config.max_connections_per_ip {
+                self.rejections.record(RejectionReason::PerIp);
+                return Err(RejectionReason::PerIp);
+            }
+            let key = subnet_key(&ip);
+            let subnet_count = self.subnet_counts.get(&key).copied().unwrap_or(0);
+            if subnet_count >= self.config.max_connections_per_subnet {
+                self.rejections.record(RejectionReason::PerSubnet);
+                return Err(RejectionReason::PerSubnet);
+            }
         }
         Ok(())
     }
@@ -994,6 +1029,7 @@ impl P2pNetworkService {
             max_connections_per_subnet: config.max_connections_per_subnet,
             max_inbound_connections: config.max_inbound_connections,
             peer_ban_duration_secs: config.peer_ban_duration_secs,
+            trusted_validator_ips: config.trusted_validator_ips.clone(),
         };
         let sybil_state = Arc::new(RwLock::new(SybilState::new(
             sybil_cfg,
@@ -2596,6 +2632,7 @@ mod tests {
             max_connections_per_subnet: 16,
             max_inbound_connections: 200,
             peer_ban_duration_secs: 3_600,
+            trusted_validator_ips: HashSet::new(),
         }
     }
 
@@ -2635,6 +2672,7 @@ mod tests {
             max_connections_per_subnet: 3,
             max_inbound_connections: 200,
             peer_ban_duration_secs: 60,
+            trusted_validator_ips: HashSet::new(),
         };
         let mut s = SybilState::new(cfg, None);
         for last in 1..=3u8 {
@@ -2657,10 +2695,71 @@ mod tests {
             max_connections_per_subnet: 100,
             max_inbound_connections: 5,
             peer_ban_duration_secs: 60,
+            trusted_validator_ips: HashSet::new(),
         };
         let mut s = SybilState::new(cfg, None);
         let ip = ipv4(10, 0, 0, 1);
         assert_eq!(s.try_admit_inbound(ip, 5), Err(RejectionReason::TotalCap));
+    }
+
+    /// Bug-B regression: trusted validator IPs bypass the per-IP and
+    /// per-subnet caps. Live evidence (2026-05-07 evening 4-h soak):
+    /// Hetzner-Helsinki validator subnet exhausted the 16-slot cap
+    /// from peer-id churn, leaving H1 with peer_count=0. With the
+    /// validator's IP whitelisted, the gate stops rejecting reconnects
+    /// from that subnet specifically.
+    #[test]
+    fn trusted_validator_ip_bypasses_per_ip_and_per_subnet_caps() {
+        let mut trusted = HashSet::new();
+        let validator_ip = ipv4(100, 119, 53, 101);
+        trusted.insert(validator_ip);
+        let cfg = SybilConfig {
+            max_connections_per_ip: 1,
+            max_connections_per_subnet: 1,
+            max_inbound_connections: 200,
+            peer_ban_duration_secs: 60,
+            trusted_validator_ips: trusted,
+        };
+        let mut s = SybilState::new(cfg, None);
+        // Saturate the per-IP cap with several reconnects from the
+        // same validator IP. Pre-fix this would Err(PerIp) on the 2nd.
+        for _ in 0..10 {
+            assert!(
+                s.try_admit_inbound(validator_ip, 0).is_ok(),
+                "trusted validator IP must bypass per_ip cap"
+            );
+            s.record_connect(PeerId::random(), validator_ip);
+        }
+        // Untrusted IP in the SAME subnet still subject to the cap.
+        let untrusted_same_subnet = ipv4(100, 119, 53, 200);
+        // First connection from untrusted IP in the subnet — already at
+        // cap because the subnet now has 10 peers from the trusted IP.
+        assert_eq!(
+            s.try_admit_inbound(untrusted_same_subnet, 0),
+            Err(RejectionReason::PerSubnet),
+            "untrusted IP in trusted-validator subnet must still be \
+             subject to the per_subnet cap"
+        );
+        // Total-cap and ban-list still apply to trusted IPs.
+        assert_eq!(
+            s.try_admit_inbound(validator_ip, 200),
+            Err(RejectionReason::TotalCap),
+            "total cap still applies to trusted IPs (memory-safety bound)"
+        );
+    }
+
+    /// Empty trusted_validator_ips set preserves legacy behaviour: the
+    /// per-IP and per-subnet caps still apply to every connection.
+    #[test]
+    fn empty_trusted_set_preserves_legacy_behavior() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(192, 0, 2, 1);
+        for _ in 0..4 {
+            s.try_admit_inbound(ip, 0).unwrap();
+            s.record_connect(PeerId::random(), ip);
+        }
+        // 5th connection from same IP rejected — exactly as before.
+        assert_eq!(s.try_admit_inbound(ip, 0), Err(RejectionReason::PerIp));
     }
 
     #[test]
@@ -2699,7 +2798,7 @@ mod tests {
         let cfg = sybil_cfg();
         // Round 1: induce a ban + persist.
         {
-            let mut s = SybilState::new(cfg, Some(path.clone()));
+            let mut s = SybilState::new(cfg.clone(), Some(path.clone()));
             let ip = ipv4(198, 51, 100, 9);
             s.ban_ip(ip, "test_persist");
             assert!(s.bans.is_banned(&ip));

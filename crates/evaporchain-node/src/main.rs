@@ -2659,6 +2659,29 @@ async fn main() -> Result<()> {
             Vec::new()
         };
 
+        // Auto-derive trusted validator IPs from the bootstrap_peers
+        // multiaddrs. Every validator we explicitly bootstrap to is
+        // a known-trustworthy peer for sybil purposes — whitelist
+        // their IPs so long-uptime peer-id churn from the same
+        // validator host doesn't exhaust the per-subnet cap (Bug B
+        // from cluster_5node_2026_05_06_session.md). Operators can
+        // still extend the set via a future config field; for the
+        // common path (launcher script + genesis bootstrap_peers),
+        // this is automatic.
+        let trusted_validator_ips: std::collections::HashSet<std::net::IpAddr> =
+            effective_bootstrap_peers
+                .iter()
+                .filter_map(|m| {
+                    let s = m.to_string();
+                    // Multiaddr format: /ip4/A.B.C.D/tcp/N or /ip6/.../tcp/N
+                    let parts: Vec<&str> = s.split('/').collect();
+                    if parts.len() >= 3 && (parts[1] == "ip4" || parts[1] == "ip6") {
+                        parts[2].parse::<std::net::IpAddr>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .collect();
         let net_config = NetworkConfig {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
             bootstrap_peers: effective_bootstrap_peers.clone(),
@@ -2672,6 +2695,7 @@ async fn main() -> Result<()> {
             max_inbound_connections: 200,
             peer_ban_duration_secs: 3_600,
             ban_list_path: Some(ban_list_path),
+            trusted_validator_ips,
             chain_id: args.chain_id.clone(),
             enable_mdns: false,
             data_dir: Some(net_data_dir),
