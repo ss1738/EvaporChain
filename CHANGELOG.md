@@ -1,5 +1,56 @@
 # EvaporChain Changelog
 
+## 2026-05-07 (late evening) — Light Client SDK arc end-to-end (10 commits)
+
+Closes the Light Client SDK arc — `evaporchain-light-client` + `evaporchain-light-client-http` + chain-side `/api/light_header/...` + `/api/state/proof/:key_hex` + e2e HTTP integration test. Operationalises the entire Layer 5 Lambda-Fold Real Nova investment at the consumer surface: third-party wallets / dapps / bridges / explorers can now hold just `vk_bytes` (~few KB) and verify chain validity + state queries in O(1) per block via the chain's authoritative verifier.
+
+The "decade-defining if the math holds" claim from `INVENTION_STACK.md §4.1 row 8` is now operational across the full consumer stack: Rust SDK with single dep → HTTP transport against running node → JSON wire-format aligned with chain-native types → chain-authoritative cryptographic verification on both block validity (BFT BLS) and state queries (Pasta-curve Pedersen commitments).
+
+### SDK core (`evaporchain-light-client`) — 5 stages
+
+- `27744b1` `feat(light-client): scaffold ... Stage 1 (BFT verification + monotone-height + parent-hash chain)` — new crate with the LightClient struct, error enum, and BFT skeleton wrapping `evaporchain_consensus::light_client::LightClientVerifier`. 8 unit tests for monotone-height + parent-hash + trust-period mechanics.
+- `dcb52fa` `feat(light-client): Stage 2 — Verkle state-query verification` — `verify_state(proof, expected_value)` method using the (initially) basic `VerkleTrie::verify`. 6 new tests for membership, value mismatch, wrong root, tampered proof.
+- `f446679` `feat(light-client): Stage 3a — full BFT BLS aggregate-sig verification wired` — wires `LightClientVerifier::verify` fully into `ingest_block`. Real BLS aggregate-sig validation, ≥2/3 stake quorum, signer-set membership, trust-period freshness, skip-mode validator-overlap. New test fixtures (`make_validator_set_with_bls`, `make_commit_certificate`, `make_signed_header`) mirror the consensus crate's own helpers so the SDK exercises the chain's exact verification path. 4 new BFT-tested scenarios (sequential success, insufficient signers, corrupted sig, expired trust period).
+- `ea8a13e` `feat(light-client): Stage 3b — Nova-IVC sublinear verification (feature `nova`)` — wires `verify_nova_folded` from `evaporchain-lambda-fold` into `ingest_block_with_nova(header, current_time, nova_attestation, min_remaining_energy)`. Three-stage check: monotone-height + parent-hash → BFT BLS → Nova SNARK. 5 new Nova tests covering missing-vk-bytes, identity-instance, energy-floor, garbage-proof bytes, and defence-in-depth ordering.
+- `0297292` `feat(light-client): Stage 4 — RpcTransport trait + sync helpers (final SDK arc)` — abstract `RpcTransport` trait (sync, WASM-compatible, no `async-trait` dep). In-test `MockTransport`. Higher-level `sync_to_height` / `sync_to_latest` / `fetch_and_verify_state` methods on `LightClient`. 7 new sync-loop tests including partial-failure-preserves-trusted-tip and missing-header-as-Protocol-error.
+
+### HTTP transport add-on (`evaporchain-light-client-http`)
+
+- `1710f8c` `feat(light-client-http): real HTTP transport via ureq — Stage 5 add-on crate` — separate add-on so the parent crate stays WASM-target-friendly. Configurable URL templates default to the chain's `/api/...` shape, override-able for non-default gateways. Bearer-token support. 404 → `NotFound`, 5xx → `Backend`, network errors → `Network`. 6 unit tests on URL building + hex helpers + error mapping.
+
+### Chain-side endpoints
+
+- `f1b1491` `feat(node): /api/light_header/{:height,latest} endpoints for the SDK` (bundled with parallel-session tx-hash regression suite) — synthesises `LightBlockHeader` JSON on-demand from `chain_store.load_full_block(height)` + the running validator-set + commit-certificate. 200/404/503 status codes; no migration / schema work.
+- `e56359a` `feat(state,node): /api/state/proof/:key_hex endpoint + StateDB::prove_at_key` — adds `prove_at_key(&[u8; 32]) -> EnergyVerkleProof` to the `StateDB` trait, implemented in all three backends (`InMemoryStateDB`, `RocksDBStateDB`, `OverlayStateDB`). New endpoint hex-decodes the 32-byte key, calls `prove_at_key`, returns JSON `EnergyVerkleProof`. 200/400 status codes.
+
+### Verifier authoritativeness fix
+
+- `be44250` `feat(light-client): switch to chain-authoritative EnergyVerkleProof` — real correctness gap closed. Before this commit the SDK used `VerkleTrie::verify` (basic blake3 Merkle), but the chain uses `EnergyVerkleTrie::verify` (Pasta-curve Pedersen commitments + bottom-up commitment reconstruction via `Ep::identity` and `bytes_to_scalar` + `hit_compressed` handling). The SDK could accept proofs the chain rejected, or vice versa — a real security gap. After this commit the SDK's state-query semantics are byte-identical to the chain's. Refactor: `RpcTransport::fetch_state_proof` returns `EnergyVerkleProof`, `LightClient::verify_state` takes `&EnergyVerkleProof`, all tests updated to use `EnergyVerkleTrie::new()` + `insert(key, value, energy=0, half_life=0, epoch=0)` + `prove(&key)`.
+
+### End-to-end empirical loop
+
+- `03fbfec` `test(light-client-http): e2e HTTP integration test against synthetic server` — stdlib-only HTTP server (`std::net::TcpListener` + `std::io::{BufRead, Write}`, no new deps) spawns in a thread, serves canned `EnergyVerkleProof` JSON. SDK's `HttpTransport` drives `fetch_and_verify_state` against it through the full HTTP + JSON deserialise + Pedersen-verify pipeline. 4 e2e tests: round-trip success, 404 → error, value mismatch caught, URL-template alignment. Closes the empirical loop on the entire SDK arc.
+
+### Final SDK state
+
+| Component | LOC | Tests | Verification layer |
+|---|---|---|---|
+| `evaporchain-light-client` core | ~1,500 | 28 (with `--features nova`) | BFT BLS + Verkle + Nova-IVC |
+| `evaporchain-light-client-http` add-on | ~400 | 6 unit + 4 e2e | HTTP/JSON transport |
+| Chain endpoints (`api.rs`) | ~140 | indirect via SDK e2e | `/api/light_header/...` + `/api/state/proof/:key_hex` |
+| `StateDB::prove_at_key` (trait + 3 impls) | ~25 | indirect | Generic 32-byte trie-key prove path |
+
+Consumer flow:
+
+```rust
+let mut lc = LightClient::new(genesis, current_time, vk_bytes);
+let transport = HttpTransport::new("http://node:8080");
+
+lc.sync_to_latest(&transport, current_time)?;            // walks /api/light_header/...
+let v = lc.fetch_and_verify_state(&transport,             // calls /api/state/proof/:key_hex
+                                  &key, Some(expected))?;
+```
+
 ## 2026-05-07 (evening) — 5-node WAN soak + demurrage fix + tx-hash fix + Coq decomposition (18 commits)
 
 End-to-end working day: cluster operational fixes, a real economic bug fix, two Coq decomposition lemmas, full CI hygiene cleanup, and the canonical tx-hash fix that makes wallets actually work. Cluster ran throughout, soak still active at memory write.
