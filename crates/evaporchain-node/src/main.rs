@@ -4277,6 +4277,40 @@ async fn main() -> Result<()> {
                         continue;
                     }
                     if let ConsensusAction::RequestSync(from, to) = action {
+                        // Cold-boot detection: if the consensus-detected gap is
+                        // too large for block-by-block backfill, escalate to
+                        // snapshot-based state sync. M1 evidence (2026-05-07):
+                        // a fresh-from-genesis node at h=1 receiving consensus
+                        // messages at h=17200 would emit RequestSync(1, 17199),
+                        // which the block-by-block path can't satisfy because
+                        // peers prune full blocks past their retention window.
+                        // Route the large-gap case through StateSyncManager so
+                        // the node fetches a recent snapshot via the existing
+                        // TipRequest/SnapshotMetadataRequest protocol.
+                        if StateSyncManager::needs_state_sync(from, to)
+                            && state_sync.is_none()
+                            && !sync_in_flight
+                        {
+                            println!(
+                                "{} \x1b[1;33mConsensus gap too large ({} blocks) — escalating to snapshot state sync\x1b[0m",
+                                node_tag,
+                                to.saturating_sub(from)
+                            );
+                            let mut ssm = StateSyncManager::new(from);
+                            let actions = ssm.start();
+                            for action in actions {
+                                if let SyncAction::Broadcast { message } = action {
+                                    if let Some(ref sender) = consensus_net_sender {
+                                        if let Ok(data) = serde_json::to_vec(&message) {
+                                            let _ = sender.send(data).await;
+                                        }
+                                    }
+                                }
+                            }
+                            state_sync = Some(ssm);
+                            sync_in_flight = true;
+                            continue;
+                        }
                         if !sync_in_flight {
                             println!(
                                 "{} \x1b[36mConsensus requests sync: blocks {}..{}\x1b[0m",
