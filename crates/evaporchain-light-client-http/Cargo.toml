@@ -20,3 +20,9 @@ default = []
 # Mirror parent crate's `nova` feature — when enabled, the HTTP
 # transport implements the Nova-related fetch methods.
 nova = ["evaporchain-light-client/nova"]
+
+[dev-dependencies]
+# For e2e integration tests that drive the SDK against a synthetic
+# HTTP server. evaporchain-types is needed for CommitCertificate
+# stub fixtures in tests/e2e_http.rs.
+evaporchain-types = { path = "../evaporchain-types" }
