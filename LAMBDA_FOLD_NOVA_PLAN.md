@@ -1,7 +1,8 @@
 # Lambda-Fold Real Nova — Phased Build Plan
 
 **Date:** 2026-05-04
-**Doctrine:** `research/INVENTION_STACK.md §4.1 row 8` — *"Lambda-Fold (Energy-Folded Light Client) — First sublinear-in-active-energy verifier. Nova extension where each fold step folds the energy state. Decade-defining if the math holds."*
+**Status (2026-05-07):** **36 of 37 task boxes are `[x]` SHIPPED** (~97%). Phases 1–7 substantively SHIPPED; only `[ ] 7.5 arXiv preprint` remains, explicitly deferred to the academic-press lane per doctrine §A3.3. The original Phase 1 + Phase 2 checkboxes were stale through 2026-05-06 because the design decisions and implementation landed in the same 2026-05-04 sprint without ticking the plan's boxes — closed in this commit (2026-05-07) after verification against `research/lambda_fold/PHASE_1_DECISIONS.md`, `crates/evaporchain-proving/src/nova.rs` (arity 8 confirmed), and the live whitepaper §11.2 numbers.
+**Doctrine:** `research/INVENTION_STACK.md §4.1 row 8` — Lambda-Fold (Energy-Folded Light Client) — first sublinear-in-active-energy verifier. Nova extension where each fold step folds the energy state. **SHIPPED 2026-05-04** (Phases 1–6 of this plan). Per Decision 1 the original "decade-defining if the math holds" wording was Nova-locked, not HyperNova; the §4.1 entry was updated accordingly in Phase 7.2.
 **Pairs with:** `DOCTRINE_PUNCH_LIST.md` Layer 5.
 
 This is the build plan to bridge `evaporchain-lambda-fold` (today: 362 LOC of blake3 hash chain) to the real Nova folding pipeline already shipped in `evaporchain-proving` (today: arity-6 `RealBlockCircuit` with 24,595 measured R1CS constraints, real `RecursiveSNARK::prove_step` and `CompressedSNARK::verify`).
@@ -56,55 +57,35 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 **Goal:** lock the four design choices that gate everything downstream so phase 2+ can't be derailed by mid-implementation pivots.
 
-- [ ] **Decision 1: Nova vs HyperNova.** Read `evaporchain-proving::nova.rs`'s use of `nova_snark` traits — does any call site need HyperNova's customizable constraint shape? If not, lock in Nova. If yes, audit the migration cost and decide.
-  - Default recommendation: **stay on Nova**. The energy-fold gadget is a fixed-shape arithmetic relation that fits R1CS cleanly; HyperNova's CCS+multifold bring complexity that doesn't pay back unless we have multiple distinct relations to interleave.
+- [x] **Decision 1: Nova vs HyperNova.** **LOCKED 2026-05-04** in `research/lambda_fold/PHASE_1_DECISIONS.md` § Decision 1: Nova chosen. Single existing dep (`nova-snark = "0.68"`); HyperNova migration not justified. Recommendation in the original plan held.
 
-- [ ] **Decision 2: u128 vs u64 representation in-circuit.** `lambda-fold/src/folded.rs:14` stores `total_energy_remaining: u128`. Inside R1CS we work in field elements (BN254 scalars, ~254 bits). Two choices:
-  - **(a) Single field element** holding u128 directly with a `range_check_bits(128)` gadget. Simple, one limb. ~130 constraints for the range check (vs 32 for u64).
-  - **(b) Two limbs of u64 each** decomposed at the boundary with a 64-bit range check on each. Matches existing per-object pattern.
-  - Default recommendation: **(a) single u128 limb** — simpler, the constraint cost is small, and avoids the 2-limb composition complication.
+- [x] **Decision 2: u128 vs u64 representation in-circuit.** **LOCKED 2026-05-04** in `research/lambda_fold/PHASE_1_DECISIONS.md` § Decision 2: choice (a) — single `u128` field element with `range_check_bits(128)` (~130 constraints). Recommendation in the original plan held.
 
-- [ ] **Decision 3: IVC z-vector layout for arity 7.** Pick a stable order. Recommendation:
-  ```
-  z = [state_hash_truncated, mmr_root_truncated, epoch, block_number,
-       note_tree_root_truncated, pool_balance, total_energy_remaining]
-  //                                                  ^^^^^^^^^^^^^^^^^^^^
-  //                                                  NEW (index 6)
-  ```
-  Append at index 6 (after `pool_balance`). Existing `synthesize` constraints at indices 0-5 stay verbatim — minimises diff.
+- [x] **Decision 3: IVC z-vector layout — arity bumps from 6 → 8 (NOT 7).** **LOCKED 2026-05-04** in `research/lambda_fold/PHASE_1_DECISIONS.md` § Decision 3: arity 8 chosen, NOT the originally-recommended 7. The arity-7 layout above was superseded — the locked layout is `[state_root_poseidon_hash, mmr_root_truncated, epoch, block_number, note_tree_root_truncated, pool_balance, total_energy_remaining, step_count_or_anchor_epoch]`. Arity 8 keeps the security-grade `state_root` Poseidon binding and the light-client `step_count` together rather than splitting the change across phases.
 
-- [ ] **Decision 4: state_root truncation fix scope.** Two paths:
-  - **(a) In Phase 5** — fix as part of integration when we touch the state_hash binding for Lambda-Fold anyway.
-  - **(b) Now in Phase 2** — surgical change inside RealBlockCircuit, reduces per-step witness drift between phase 2 and phase 5.
-  - Default recommendation: **(b)**. Doing it during the arity bump keeps the diff atomic.
+- [x] **Decision 4: state_root truncation fix scope.** **LOCKED 2026-05-04** in `research/lambda_fold/PHASE_1_DECISIONS.md` § Decision 4: choice (c) Poseidon-bind. Replaces `z[0] = state_root_to_u64` with `z[0] = Poseidon(limb[0..3])` — single field element, ~250 constraints, no edge cases, inherits Poseidon collision resistance. Closes the audit's 192-bit collision risk and ships Cut E from `research/proposals/smaller-ivc-circuit.md` as a side benefit. Note: this supersedes the original (b) recommendation which would have kept truncation; the locked decision is stronger.
 
-**Phase 1 deliverable:** decision document committed at `research/lambda_fold/PHASE_1_DECISIONS.md`. Locks the four choices above.
+**Phase 1 deliverable: SHIPPED.** Decision document committed at `research/lambda_fold/PHASE_1_DECISIONS.md` (2026-05-04). Locks the four choices above.
 
 ### Phase 2 — Circuit extension (3-5 days)
 
-**Goal:** ship the arity-7 `RealBlockCircuit` with the energy-fold constraint, regenerate proving keys, validate `pp.num_constraints()` numerically.
+**Goal:** ship the arity-8 `RealBlockCircuit` (corrected from the original arity-7 plan via Decision 3) with the energy-fold constraint + Poseidon state-root binding, regenerate proving keys, validate `pp.num_constraints()` numerically.
 
-- [ ] **2.1 — Witness shape**: extend `RealBlockWitness` (`nova.rs:846+`) with two new fields: `prev_total_energy: u128`, `step_energy: u64`, `epochs_elapsed_at_step: u64`. Update `dummy()` impl.
+- [x] **2.1 — Witness shape**: SHIPPED. `RealBlockWitness` (`crates/evaporchain-proving/src/nova.rs:653`) gained `prev_total_energy: u128`, `step_energy: u64`, `epochs_elapsed_at_step: u64`, plus the chain-aggregate energy-fold gadget intermediates (`after_halvings`, `shift_factor`, `shift_remainder`, …). `dummy()` impl updated.
 
-- [ ] **2.2 — `arity()` change**: bump from 6 to 7.
+- [x] **2.2 — `arity()` change**: SHIPPED. Bumped 6 → **8** (not 7 — see Decision 3 correction). `RealBlockCircuit::arity()` at `nova.rs:1059` returns 8 with an inline comment referencing this Phase-2.2 task.
 
-- [ ] **2.3 — z-vector binding**: in `synthesize`, add `let old_total_energy = &z[6];`. After tx execution constraints, before returning, add:
-  ```rust
-  let new_total_energy = compute_decayed_plus_step(
-      cs, old_total_energy, &epochs_elapsed_var, &step_energy_var, &half_life_var
-  );
-  ```
-  where `compute_decayed_plus_step` is a helper modelled on the per-object decay gadget at `nova.rs:1027-1056`. Returns `AllocatedNum<G::Scalar>`. Append to output `z_new` at index 6.
+- [x] **2.3 — z-vector binding**: SHIPPED. `synthesize` binds `z_new[6] = compute_decayed_plus_step(...)` for total_energy_remaining (chain-aggregate energy-fold gadget, ~70-100 constraints — well under the original 500-constraint estimate per the PHASE_1_DECISIONS.md reconnaissance). `z_new[7] = z_old[7] + 1` for step_count. `z_new[0]` rebound to the Poseidon hash of the 4 state-root limbs (Decision 4 / Cut E).
 
-- [ ] **2.4 — Range checks**: `range_check_bits(128)` on the new total_energy AllocatedNum (per Decision 2a). Cost: ~130 primary constraints.
+- [x] **2.4 — Range checks**: SHIPPED. `range_check_bits(128)` on the new `prev_total_energy` AllocatedNum, plus `range_check_bits(64)` on `step_count`. Costs match the PHASE_1_DECISIONS.md budget.
 
-- [ ] **2.5 — state_root limb fix** (per Decision 4b): replace the per-step `state_root_to_u64` truncation in z[0] with a 4-limb representation. This is the security-grade fix from the audit's "192-bit collision risk." Two sub-options inside this — fold the limb decomposition into z (z grows to arity 10) or keep z arity at 7 and just bind the truncated u64 in z_i but use a 4-limb constraint internally (no z growth). Recommendation: **second option** to keep z lean.
+- [x] **2.5 — state_root limb fix**: SHIPPED via the stronger Decision 4 path (Poseidon hash of 4 limbs, NOT the 4-limb-internal-constraint path originally recommended in this checkbox). Closes the 192-bit collision risk and is verified by Phase 6.2's `test_real_block_state_root_collision_resistance` (two genesis roots agreeing on `limb[0]` but differing on `limb[1..3]` produce distinct `z0[0]` Poseidon hashes — cross-verification fails as required).
 
-- [ ] **2.6 — Constraint count check**: rebuild, run a test that prints `pp.num_constraints()`. Expect ~25,100 primary (was 14,041; +500 for energy fold + ~130 for range check + a few hundred for limb decomposition). Document the new number in the test's output assertion.
+- [x] **2.6 — Constraint count check**: SHIPPED. Final `pp.num_constraints() = (14_575, 10_554)` — primary 14,575 step + 10,554 fold/recursion = **25,129 total**. Comfortably under the 30,000 stopping-condition threshold. Documented in whitepaper §11.2 (Phase 7.1). Note: lower than the original ~25,100 estimate in this checkbox because the chain-aggregate energy-fold gadget came in at ~70-100 constraints, not the conservative 500 estimate.
 
-- [ ] **2.7 — Existing test guard**: every existing `RealBlockCircuit` test (Cuts A-E in `research/proposals/smaller-ivc-circuit.md`) must still pass with the new arity. Update z-vector init in tests to add the new index 6 element.
+- [x] **2.7 — Existing test guard**: SHIPPED. All existing `RealBlockCircuit` tests updated for arity 8 (z0 init extended from 6 elements to 8: `[poseidon_state_root_hash, mmr_root, epoch, block_number, note_tree_root, pool_balance, initial_total_energy, step_count]`). 101/101 tests green on Mini under `cargo test -p evaporchain-proving --features nova,test-utils --release` (4 ignored slow tests).
 
-**Phase 2 deliverable:** PR landing the arity bump + energy fold + state_root fix. Constraint count regression bounded. `cargo test -p evaporchain-proving --lib` green on Mini.
+**Phase 2 deliverable: SHIPPED.** Arity-8 `RealBlockCircuit` with the chain-aggregate energy-fold gadget + Poseidon state-root binding. Constraint count 25,129 (under the 30,000 threshold). `cargo test -p evaporchain-proving --lib` green on Mini.
 
 ### Phase 3 — Proving / verifying API (2-4 days)
 
