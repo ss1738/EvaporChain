@@ -513,6 +513,7 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             });
         }
     }
@@ -640,6 +641,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
         storage_deposit: 0,
         storage_bytes: 0,
         last_touched_epoch: 0,
+        vesting: None,
     });
     println!(
         "{} \x1b[36mFaucet (0x0000...)\x1b[0m  balance=MAX/2",
@@ -663,6 +665,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         println!("{} \x1b[36m0x{}\x1b[0m  balance={}", node_tag, hex, balance);
     }

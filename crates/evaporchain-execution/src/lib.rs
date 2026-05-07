@@ -1171,10 +1171,18 @@ impl SimpleExecutor {
                 got: tx.nonce,
             });
         }
-        if sender.balance < tx.amount {
+        // Vesting gate (TOKENOMICS §2.6 / Q14): outflows must come from the
+        // transferable portion of balance. Mint-bypass uses raw balance
+        // because the zero-address sender has no real account.
+        let available = if is_mint_bypass {
+            sender.balance
+        } else {
+            sender.transferable_balance(epoch)
+        };
+        if available < tx.amount {
             return Err(ExecutionError::InsufficientBalance {
                 account: hex::encode(tx.from),
-                available: sender.balance,
+                available,
                 required: tx.amount,
             });
         }
@@ -1287,10 +1295,13 @@ impl SimpleExecutor {
         };
         {
             let creator = db.get_or_create_account(&tx.creator);
-            if creator.balance < evaporchain_types::MIN_STORAGE_DEPOSIT {
+            // Vesting gate (TOKENOMICS §2.6 / Q14): storage deposits can't
+            // come from the locked portion of balance.
+            let available = creator.transferable_balance(epoch);
+            if available < evaporchain_types::MIN_STORAGE_DEPOSIT {
                 return Err(ExecutionError::InsufficientBalance {
                     account: hex::encode(tx.creator),
-                    available: creator.balance,
+                    available,
                     required: evaporchain_types::MIN_STORAGE_DEPOSIT,
                 });
             }
@@ -1410,10 +1421,13 @@ impl SimpleExecutor {
         };
         {
             let deployer = db.get_or_create_account(&tx.deployer);
-            if deployer.balance < evaporchain_types::MIN_STORAGE_DEPOSIT {
+            // Vesting gate (TOKENOMICS §2.6 / Q14): contract deploy storage
+            // deposit can't come from the locked portion of balance.
+            let available = deployer.transferable_balance(epoch);
+            if available < evaporchain_types::MIN_STORAGE_DEPOSIT {
                 return Err(ExecutionError::InsufficientBalance {
                     account: hex::encode(tx.deployer),
-                    available: deployer.balance,
+                    available,
                     required: evaporchain_types::MIN_STORAGE_DEPOSIT,
                 });
             }
@@ -1492,10 +1506,13 @@ impl SimpleExecutor {
         };
         {
             let deployer = db.get_or_create_account(&tx.deployer);
-            if deployer.balance < evaporchain_types::MIN_STORAGE_DEPOSIT {
+            // Vesting gate (TOKENOMICS §2.6 / Q14): script deploy storage
+            // deposit can't come from the locked portion of balance.
+            let available = deployer.transferable_balance(epoch);
+            if available < evaporchain_types::MIN_STORAGE_DEPOSIT {
                 return Err(ExecutionError::InsufficientBalance {
                     account: hex::encode(tx.deployer),
-                    available: deployer.balance,
+                    available,
                     required: evaporchain_types::MIN_STORAGE_DEPOSIT,
                 });
             }
@@ -1581,10 +1598,13 @@ impl SimpleExecutor {
                 got: tx.nonce,
             });
         }
-        if sender.balance < tx.stake_amount {
+        // Vesting gate (TOKENOMICS §2.6 / Q14): validator stake must come
+        // from the transferable portion of balance.
+        let available = sender.transferable_balance(epoch);
+        if available < tx.stake_amount {
             return Err(ExecutionError::InsufficientBalance {
                 account: hex::encode(tx.validator_address),
-                available: sender.balance,
+                available,
                 required: tx.stake_amount,
             });
         }
@@ -1652,10 +1672,13 @@ impl SimpleExecutor {
                 got: tx.nonce,
             });
         }
-        if delegator.balance < tx.amount {
+        // Vesting gate (TOKENOMICS §2.6 / Q14): delegated stake must come
+        // from the transferable portion of balance.
+        let available = delegator.transferable_balance(current_epoch);
+        if available < tx.amount {
             return Err(ExecutionError::InsufficientBalance {
                 account: hex::encode(tx.delegator),
-                available: delegator.balance,
+                available,
                 required: tx.amount,
             });
         }
@@ -3300,7 +3323,7 @@ mod tests {
     use super::*;
     use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
     use evaporchain_state::InMemoryStateDB;
-    use evaporchain_types::Account;
+    use evaporchain_types::{Account, VestingLock};
 
     fn addr(byte: u8) -> [u8; 32] {
         let mut a = [0u8; 32];
@@ -3352,6 +3375,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
     }
 
@@ -3511,6 +3535,216 @@ mod tests {
 
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
         assert!(db.get_account(&addr(2)).is_none());
+    }
+
+    // ─── Vesting / locked balance (TOKENOMICS §2.6 / Q14) ───
+
+    fn fund_account_with_vesting(
+        db: &mut InMemoryStateDB,
+        byte: u8,
+        balance: u64,
+        vesting: VestingLock,
+    ) {
+        db.put_account(Account {
+            address: addr(byte),
+            balance,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: Some(vesting),
+        });
+    }
+
+    #[test]
+    fn test_vesting_locked_at_pure_function() {
+        // Cliff at epoch 100, linear release over 1000 epochs, 1000 EVP locked.
+        let v = VestingLock {
+            cliff_epoch: 100,
+            linear_release_epochs: 1000,
+            total_locked: 1000,
+        };
+        // Pre-cliff: fully locked.
+        assert_eq!(v.locked_at(0), 1000);
+        assert_eq!(v.locked_at(50), 1000);
+        assert_eq!(v.locked_at(100), 1000);
+        // Just past cliff: nearly fully locked.
+        assert_eq!(v.locked_at(101), 999);
+        // Midpoint of linear window: half locked.
+        assert_eq!(v.locked_at(600), 500);
+        // End of window: nothing locked.
+        assert_eq!(v.locked_at(1100), 0);
+        // Beyond window: stays 0.
+        assert_eq!(v.locked_at(10_000), 0);
+
+        // Cliff-only schedule (linear_release_epochs = 0): instant release after cliff.
+        let cliff_only = VestingLock {
+            cliff_epoch: 50,
+            linear_release_epochs: 0,
+            total_locked: 500,
+        };
+        assert_eq!(cliff_only.locked_at(50), 500);
+        assert_eq!(cliff_only.locked_at(51), 0);
+    }
+
+    #[test]
+    fn test_transferable_balance_with_no_vesting() {
+        let acct = Account {
+            address: addr(1),
+            balance: 1000,
+            ..Account::default()
+        };
+        // None vesting ⇒ entire balance transferable at any epoch.
+        assert_eq!(acct.transferable_balance(0), 1000);
+        assert_eq!(acct.transferable_balance(1_000_000_000), 1000);
+    }
+
+    #[test]
+    fn test_transfer_blocked_by_vesting_pre_cliff() {
+        let mut db = InMemoryStateDB::new();
+        fund_account_with_vesting(
+            &mut db,
+            1,
+            1000,
+            VestingLock {
+                cliff_epoch: 100,
+                linear_release_epochs: 100,
+                total_locked: 1000,
+            },
+        );
+
+        // At epoch 50 (pre-cliff), all 1000 is locked. A 500 transfer must fail.
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            50,
+            50,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 500,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+        );
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "pre-cliff transfer must be rejected");
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn test_transfer_partial_unlock() {
+        let mut db = InMemoryStateDB::new();
+        fund_account_with_vesting(
+            &mut db,
+            1,
+            1000,
+            VestingLock {
+                cliff_epoch: 100,
+                linear_release_epochs: 100,
+                total_locked: 1000,
+            },
+        );
+
+        // At epoch 150 (50% through linear window), 500 is locked → 500 transferable.
+        // A 400 transfer succeeds; balance = 600.
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            150,
+            150,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 400,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+        );
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1, "400/500 transferable should succeed");
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 600);
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 400);
+    }
+
+    #[test]
+    fn test_transfer_after_full_unlock() {
+        let mut db = InMemoryStateDB::new();
+        fund_account_with_vesting(
+            &mut db,
+            1,
+            1000,
+            VestingLock {
+                cliff_epoch: 100,
+                linear_release_epochs: 100,
+                total_locked: 1000,
+            },
+        );
+
+        // At epoch 250 (well past linear window end at 200), nothing locked.
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            250,
+            250,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 999,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+        );
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1);
+    }
+
+    #[test]
+    fn test_validator_stake_blocked_by_vesting() {
+        // Locked-balance accounts cannot stake the locked portion.
+        let mut db = InMemoryStateDB::new();
+        fund_account_with_vesting(
+            &mut db,
+            1,
+            500_000,
+            VestingLock {
+                cliff_epoch: 1_000_000,
+                linear_release_epochs: 0,
+                total_locked: 500_000,
+            },
+        );
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            10,
+            10,
+            vec![Transaction::ValidatorStake(ValidatorStakeTx {
+                validator_address: addr(1),
+                stake_amount: 100_000,
+                validator_id: 1,
+                nonce: 0,
+                bls_public_key: None,
+                vrf_public_key: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(
+            result.txs_failed, 1,
+            "staking from locked balance must be rejected"
+        );
+        // Balance may have a small demurrage / storage-rent drift during the
+        // test block; the key assertion is that the 100_000 stake was NOT
+        // debited (which would drop balance to 400_000).
+        let balance_after = db.get_account(&addr(1)).unwrap().balance;
+        assert!(
+            balance_after > 400_000,
+            "stake debit must not have happened, got balance {balance_after}"
+        );
     }
 
     // ─── Crooks-MEV Refund (Lane Q.1 / Phase 3.5) ───
@@ -5236,6 +5470,7 @@ contract Counter {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let obj = evaporchain_types::StateObject {
             id: obj_id(1),
@@ -5292,6 +5527,7 @@ contract Counter {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         for i in 1..=3u8 {
@@ -6245,6 +6481,7 @@ contract Counter {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -6277,6 +6514,7 @@ contract Counter {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -6395,6 +6633,7 @@ contract Counter {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -6448,6 +6687,7 @@ contract Counter {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(7);

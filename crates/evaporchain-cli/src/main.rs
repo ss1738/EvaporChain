@@ -1621,6 +1621,7 @@ fn cmd_testnet_init(
             address: validator_address(vid),
             balance: total_supply / (validators as u64 + 1),
             label: format!("validator-{}-operator", vid),
+            vesting: None,
         });
     }
 
@@ -1632,6 +1633,7 @@ fn cmd_testnet_init(
         address: [0xFAu8; 32],
         balance: faucet_share,
         label: "faucet".into(),
+        vesting: None,
     });
 
     let now_secs = std::time::SystemTime::now()
@@ -2369,6 +2371,7 @@ fn cmd_genesis_add_validator(
         address: addr,
         balance,
         label: format!("Validator-{}", name),
+        vesting: None,
     });
 
     let output = serde_json::to_string_pretty(&config)?;
@@ -2521,6 +2524,7 @@ fn cmd_genesis_add_account(
         address: addr,
         balance,
         label: label.to_string(),
+        vesting: None,
     });
 
     let output = serde_json::to_string_pretty(&config)?;
@@ -2998,6 +3002,7 @@ fn cmd_genesis_ceremony(
                 address: addr,
                 balance: e.body.balance,
                 label: format!("Validator-{}", e.body.name),
+                vesting: None,
             }
         })
         .collect();
@@ -5551,6 +5556,7 @@ mod tests {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             });
             db.put_account(Account {
                 address: [2u8; 32],
@@ -5559,6 +5565,7 @@ mod tests {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             });
         } // drop -> release RocksDB lock
 

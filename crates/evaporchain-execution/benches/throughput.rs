@@ -19,6 +19,7 @@ fn seed_accounts(db: &mut InMemoryStateDB, count: u64, balance: u64) {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
     }
 }

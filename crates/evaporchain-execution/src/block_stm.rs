@@ -286,6 +286,7 @@ impl<'a> TxView<'a> {
                         storage_deposit: 0,
                         storage_bytes: 0,
                         last_touched_epoch: 0,
+                        vesting: None,
                     });
                     acct.balance = *bal;
                 }
@@ -297,6 +298,7 @@ impl<'a> TxView<'a> {
                         storage_deposit: 0,
                         storage_bytes: 0,
                         last_touched_epoch: 0,
+                        vesting: None,
                     });
                     acct.nonce = *nonce;
                 }
@@ -438,6 +440,7 @@ impl<'a> TxView<'a> {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: epoch,
+            vesting: None,
         };
         self.local_accounts.insert(addr, acct);
         self.write_buffer.push(WriteEntry {
@@ -2347,6 +2350,7 @@ impl BlockStmExecutor {
                             // demurrage anchor so the next sweep starts from
                             // the current epoch.
                             last_touched_epoch: epoch,
+                            vesting: None,
                         },
                     );
                 }
@@ -2378,6 +2382,7 @@ impl BlockStmExecutor {
                                             storage_bytes: 0,
                                             // Sender balance + nonce mutated.
                                             last_touched_epoch: epoch,
+                                            vesting: None,
                                         },
                                     );
                                     let rb = get_balance(&t.to, &accounts);
@@ -2394,6 +2399,7 @@ impl BlockStmExecutor {
                                                     storage_bytes: 0,
                                                     // Receiver balance mutated.
                                                     last_touched_epoch: epoch,
+                                                    vesting: None,
                                                 },
                                             );
                                             true
@@ -2468,6 +2474,7 @@ impl BlockStmExecutor {
                                         storage_bytes: 0,
                                         // Stake locks balance + bumps nonce.
                                         last_touched_epoch: epoch,
+                                        vesting: None,
                                     },
                                 );
                                 true
@@ -2494,6 +2501,7 @@ impl BlockStmExecutor {
                                         storage_bytes: 0,
                                         // Validator-exit bumps nonce.
                                         last_touched_epoch: epoch,
+                                        vesting: None,
                                     },
                                 );
                                 true
@@ -2612,6 +2620,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
     }
 
@@ -3289,6 +3298,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -3335,6 +3345,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -3382,6 +3393,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         fund_account(&mut db, 2, 0);
 
@@ -3423,6 +3435,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Two independent senders both transferring to addr(2)

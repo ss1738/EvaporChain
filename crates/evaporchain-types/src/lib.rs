@@ -379,6 +379,65 @@ pub fn is_faucet_address(addr: &[u8; 32]) -> bool {
     *addr == FAUCET_ADDRESS
 }
 
+/// Genesis-time balance lock with cliff + linear release.
+///
+/// Distinct from the richer stateful [`VestingSchedule`] (lower in this
+/// file) which is a standalone chain object with its own id, beneficiary,
+/// and tracked `released_amount`. `VestingLock` is a *stateless* schedule
+/// attached directly to [`Account.vesting`] — the lock is computed
+/// on-demand from `(cliff_epoch, linear_release_epochs, total_locked)` at
+/// any current_epoch, with no per-release state to advance.
+///
+/// Locked balance is a contiguous portion of `Account.balance` that cannot
+/// be the source of an outbound transfer / stake / delegate / object-deposit
+/// until the cliff has passed. After the cliff, `total_locked` releases
+/// linearly over `linear_release_epochs` epochs, then the account becomes
+/// fully transferable.
+///
+/// Closes TOKENOMICS.md §2.6 / Q14 — Foundation Treasury at genesis is
+/// 350M EVP with zero vesting today; this primitive enables time-locked
+/// allocations.
+///
+/// Pure data; behavior is in [`VestingLock::locked_at`] and
+/// [`Account::transferable_balance`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VestingLock {
+    /// Block height (≡ epoch) before-or-at which 0 of `total_locked` is
+    /// released. Releases START at `cliff_epoch + 1`.
+    pub cliff_epoch: u64,
+    /// Number of epochs over which the locked portion releases linearly
+    /// AFTER the cliff. `0` means everything unlocks at `cliff_epoch + 1`
+    /// (cliff-only schedule, no linear tail).
+    pub linear_release_epochs: u64,
+    /// Initial locked amount in EVP. The ACCOUNT'S BALANCE is *not* this
+    /// number — it is the portion of `Account.balance` that is locked.
+    pub total_locked: u64,
+}
+
+impl VestingLock {
+    /// Amount still locked at the given epoch. Pure function of self +
+    /// epoch; never reads chain state. Used by
+    /// [`Account::transferable_balance`].
+    pub fn locked_at(&self, current_epoch: u64) -> u64 {
+        if current_epoch <= self.cliff_epoch {
+            return self.total_locked;
+        }
+        let elapsed = current_epoch.saturating_sub(self.cliff_epoch);
+        if self.linear_release_epochs == 0 {
+            // Cliff-only schedule: fully released the epoch after cliff.
+            return 0;
+        }
+        if elapsed >= self.linear_release_epochs {
+            return 0;
+        }
+        // Linear release: locked = total × (1 − elapsed / window).
+        // u128 intermediate avoids overflow for very large total_locked.
+        let released = (self.total_locked as u128 * elapsed as u128
+            / self.linear_release_epochs as u128) as u64;
+        self.total_locked.saturating_sub(released)
+    }
+}
+
 /// An account with a balance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Account {
@@ -400,6 +459,32 @@ pub struct Account {
     /// balance/nonce-mutating tx stamps the current epoch.
     #[serde(default)]
     pub last_touched_epoch: u64,
+    /// Optional time-locked portion of `balance` (TOKENOMICS §2.6 / Q14).
+    /// `None` (default) ⇒ the entire balance is freely transferable.
+    /// `Some(_)` ⇒ the locked portion is unspendable until cliff /
+    /// linear-release expires. Backwards-compatible: bincode'd Account
+    /// records persisted before this field existed are loaded via the
+    /// legacy migration path
+    /// (`evaporchain-state::legacy::deserialize_account_with_legacy_fallback`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vesting: Option<VestingLock>,
+}
+
+impl Account {
+    /// Portion of `balance` that is freely transferable / stakeable /
+    /// delegatable at the given epoch. Equals `balance` when no vesting
+    /// is set; otherwise `balance − vesting.locked_at(current_epoch)`,
+    /// saturating at 0.
+    ///
+    /// All outflow execution paths (Transfer, ValidatorStake, Delegate,
+    /// CreateObject, DeployContract, DeployScript, Shield) MUST gate on
+    /// `transferable_balance(epoch)` — never on raw `balance`.
+    pub fn transferable_balance(&self, current_epoch: u64) -> u64 {
+        match self.vesting {
+            None => self.balance,
+            Some(v) => self.balance.saturating_sub(v.locked_at(current_epoch)),
+        }
+    }
 }
 
 impl Default for Account {
@@ -411,6 +496,7 @@ impl Default for Account {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         }
     }
 }

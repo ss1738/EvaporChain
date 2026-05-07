@@ -223,20 +223,49 @@ impl RocksDBStateDB {
             .cf_handle(CF_ACCOUNTS)
             .ok_or_else(|| format!("missing column family: {CF_ACCOUNTS}"))?;
         let iter = db.iterator_cf(cf_acct, rocksdb::IteratorMode::Start);
+        let mut account_migrated = 0usize;
         for item in iter {
             let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
             if key.len() == 32 {
+                // Try current format first, fall back to pre-vesting layout.
+                // Mirrors `deserialize_legacy_ghost` precedent — see
+                // `legacy.rs` for full rationale.
                 match bincode::deserialize::<Account>(&value) {
                     Ok(acct) => {
                         let mut addr = [0u8; 32];
                         addr.copy_from_slice(&key);
                         accounts.insert(addr, acct);
                     }
-                    Err(e) => {
-                        eprintln!("  Warning: skipping corrupt account record: {}", e);
-                    }
+                    Err(_) => match crate::legacy::deserialize_account_with_legacy_fallback(&value) {
+                        Ok(acct) => {
+                            let mut addr = [0u8; 32];
+                            addr.copy_from_slice(&key);
+                            accounts.insert(addr, acct);
+                            account_migrated += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("  Warning: skipping corrupt account record: {}", e);
+                        }
+                    },
                 }
             }
+        }
+        // Re-persist migrated accounts in current format and compact the CF.
+        if account_migrated > 0 {
+            for (addr, acct) in accounts.iter() {
+                let val = match bincode::serialize(acct) {
+                    Ok(v) => v,
+                    Err(e) => fatal_persistence_error("migrate_serialize_account", e),
+                };
+                if let Err(e) = db.put_cf(cf_acct, addr, val) {
+                    fatal_persistence_error("migrate_account_to_rocksdb", e);
+                }
+            }
+            db.compact_range_cf(cf_acct, None::<&[u8]>, None::<&[u8]>);
+            eprintln!(
+                "  Migrated and compacted {} pre-vesting account records",
+                account_migrated
+            );
         }
 
         let count = objects.len() + ghosts.len() + accounts.len();
@@ -998,6 +1027,7 @@ impl StateDB for RocksDBStateDB {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             };
             self.persist_account(&account);
             let key = trie_key_for_account(&account.address);
@@ -1378,6 +1408,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         }
     }
 

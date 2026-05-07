@@ -7522,6 +7522,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut tc = make_consensus(1, &[1]);
@@ -7562,6 +7563,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Tick all validators — the proposer should create a proposal
@@ -10609,6 +10611,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 7,
+            vesting: None,
         });
         db.put_account(Account {
             address: addr_b,
@@ -10617,6 +10620,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 7,
+            vesting: None,
         });
 
         // Capture snapshot at this tip.
@@ -10639,6 +10643,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 100,
+            vesting: None,
         });
         let addr_c = AccountAddress::from([0x03; 32]);
         db.put_account(Account {
@@ -10648,6 +10653,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 50,
+            vesting: None,
         });
 
         // Verify mutation took effect.
@@ -10731,6 +10737,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let snapshot =
             super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).expect("capture at LCA");
@@ -10749,6 +10756,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 5,
+            vesting: None,
         });
 
         // Plan: from id(1) → id(2). LCA = id(0), rollback_required = true.
@@ -11373,6 +11381,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
         tc.record_state_branch(id(0), 0, 100);
@@ -11386,6 +11395,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 1,
+            vesting: None,
         });
 
         let target_block = TxBlock {
@@ -11424,6 +11434,7 @@ mod tests {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 1,
+                vesting: None,
             });
             Ok(())
         };
@@ -11475,6 +11486,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
         tc.record_state_branch(id(0), 0, 100);
@@ -11489,6 +11501,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 5,
+            vesting: None,
         });
 
         let target_block = TxBlock {
@@ -11680,6 +11693,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let snap = super::StateSnapshotBranch::capture(id(0), 0, 0, &mut db).unwrap();
         tc.record_state_branch(id(0), 0, 100);
@@ -11693,6 +11707,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 1,
+            vesting: None,
         });
 
         // Build a synthetic block-store: id(2) → balance=2222.
@@ -11740,6 +11755,7 @@ mod tests {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 1,
+                vesting: None,
             });
             Ok(())
         };
@@ -11956,6 +11972,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         db.put_account(Account {
             address: bob,
@@ -11964,6 +11981,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Capture snapshot at genesis.
@@ -11985,6 +12003,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 1,
+            vesting: None,
         });
         db.put_account(Account {
             address: bob,
@@ -11993,6 +12012,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 2,
+            vesting: None,
         });
 
         // Sanity: state reflects fork A's mutations.
@@ -12044,6 +12064,7 @@ mod tests {
                     storage_deposit: 0,
                     storage_bytes: 0,
                     last_touched_epoch: 1,
+                    vesting: None,
                 });
             } else if *block_id == id(4) {
                 // B2
@@ -12054,6 +12075,7 @@ mod tests {
                     storage_deposit: 0,
                     storage_bytes: 0,
                     last_touched_epoch: 2,
+                    vesting: None,
                 });
             } else {
                 panic!("unexpected block id in forward_path: {:?}", block_id);
@@ -12971,6 +12993,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Run consensus
@@ -13053,6 +13076,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut messages = Vec::new();
@@ -13411,6 +13435,7 @@ mod integration_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Run 3 consecutive heights
@@ -13467,6 +13492,7 @@ mod integration_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Submit a blob transaction to the proposer's mempool
@@ -13512,6 +13538,7 @@ mod integration_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Remove validator 4 from the active set (simulate offline)
@@ -13548,6 +13575,7 @@ mod integration_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let committed = run_consensus_round(&mut nodes, &mut db, 30);
@@ -13663,6 +13691,7 @@ mod integration_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // === Height 1: Commit a block with BLS certificate ===
@@ -13732,6 +13761,7 @@ mod integration_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut all_messages = Vec::new();
@@ -13912,6 +13942,7 @@ mod vrf_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Tick to get the proposer to create a block
@@ -13966,6 +13997,7 @@ mod vrf_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         // Run full consensus round with VRF-enabled validators
@@ -14103,6 +14135,7 @@ mod vrf_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let beacon_before = nodes[0].randomness_beacon().current();
@@ -14174,6 +14207,7 @@ mod vrf_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut vrf_outputs = Vec::new();

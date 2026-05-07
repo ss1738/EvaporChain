@@ -525,6 +525,7 @@ impl StateDB for InMemoryStateDB {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             };
             let key = trie_key_for_account(&account.address);
             let value = trie_value_for_account(&account);
@@ -949,6 +950,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         db.put_object(make_object(1, 500));
 

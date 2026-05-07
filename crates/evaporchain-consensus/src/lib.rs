@@ -957,6 +957,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let kp = MlDsaKeypair::generate();
@@ -1031,6 +1032,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let kp = MlDsaKeypair::generate();
         let mut consensus = MockConsensus::new_for_test(5);
@@ -1069,6 +1071,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let kp = MlDsaKeypair::generate();
         let mut producer = MockConsensus::new_for_test(5);
@@ -1094,6 +1097,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let mut follower = MockConsensus::new_for_test(5);
         let applied = follower
@@ -1128,6 +1132,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         producer_db.put_object(StateObject {
             id: obj_id(1),
@@ -1190,6 +1195,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         follower_db.put_object(StateObject {
             id: obj_id(1),
@@ -1393,6 +1399,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut producer = make_rotating(1, &[1, 2, 3, 4]);
@@ -1417,6 +1424,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let mut follower = make_rotating(2, &[1, 2, 3, 4]);
         let applied = follower.apply_block(&mut follower_db, &block).unwrap();
@@ -1591,6 +1599,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let kp = MlDsaKeypair::generate();

@@ -198,6 +198,15 @@ pub struct GenesisAccount {
     /// Human-readable label (not stored on-chain).
     #[serde(default)]
     pub label: String,
+    /// Optional time-locked vesting schedule on this allocation. Absent in
+    /// JSON ⇒ `None` ⇒ fully liquid at genesis. Present ⇒ the account's
+    /// `balance` includes the locked portion; outflows are gated until the
+    /// cliff + linear-release schedule releases.
+    ///
+    /// JSON shape: `{"cliff_epoch": u64, "linear_release_epochs": u64,
+    ///                "total_locked": u64}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vesting: Option<crate::VestingLock>,
 }
 
 // ─────────────────────── Genesis Validators ──────────────────────────────────
@@ -428,16 +437,19 @@ impl GenesisConfig {
                     address: faucet_addr,
                     balance: 5_000_000,
                     label: "Faucet".into(),
+                    vesting: None,
                 },
                 GenesisAccount {
                     address: addr1,
                     balance: 2_000_000,
                     label: "Validator-1".into(),
+                    vesting: None,
                 },
                 GenesisAccount {
                     address: addr2,
                     balance: 2_000_000,
                     label: "Validator-2".into(),
+                    vesting: None,
                 },
             ],
             objects: vec![],

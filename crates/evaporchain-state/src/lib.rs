@@ -2,6 +2,7 @@ pub mod db;
 pub mod decay_curves;
 pub mod evaporation;
 pub mod ghost_bridge;
+pub(crate) mod legacy;
 pub mod refresh;
 pub mod rocksdb_backend;
 pub mod snapshot;
@@ -46,6 +47,7 @@ mod press_claim_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         db1.put_account(Account {
             address: addr(2),
@@ -54,6 +56,7 @@ mod press_claim_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let r1 = db1.compute_state_root();
 
@@ -71,6 +74,7 @@ mod press_claim_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         db2.put_account(Account {
             address: addr(1),
@@ -79,6 +83,7 @@ mod press_claim_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let r2 = db2.compute_state_root();
         assert_eq!(r1, r2);
@@ -91,6 +96,7 @@ mod press_claim_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let r2_tampered = db2.compute_state_root();
         assert_ne!(r1, r2_tampered);

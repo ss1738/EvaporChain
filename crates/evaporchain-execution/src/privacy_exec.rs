@@ -358,9 +358,12 @@ impl PrivacyExecutor {
 
         // 1. Debit transparent balance
         let sender = db.get_or_create_account(&tx.from);
-        if sender.balance < tx.amount {
+        // Vesting gate (TOKENOMICS §2.6 / Q14): shield must come from the
+        // transferable portion of balance.
+        let available = sender.transferable_balance(self.current_epoch);
+        if available < tx.amount {
             return Err(PrivacyExecError::InsufficientBalanceForShield {
-                available: sender.balance,
+                available,
                 required: tx.amount,
             });
         }
@@ -889,6 +892,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         db
     }
@@ -1880,6 +1884,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
         let mut executor = PrivacyExecutor::with_depth(8);
         executor.set_epoch(1);

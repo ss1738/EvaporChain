@@ -126,6 +126,7 @@ mod tests {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             });
         }
         db
@@ -215,6 +216,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: current_epoch - 1,
+            vesting: None,
         });
         // Account 2 — long-stale. Anchor at 0.
         db.put_account(Account {
@@ -224,6 +226,7 @@ mod tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
 
         let mut pool = RefreshPool::new();

@@ -54,6 +54,7 @@ pub fn initialize_genesis(
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: ga.vesting,
         };
         db.put_account(account);
         total_allocated += ga.balance;
@@ -173,11 +174,13 @@ mod tests {
                     address: addr(1),
                     balance: 500_000,
                     label: "Validator-1".into(),
+                    vesting: None,
                 },
                 GenesisAccount {
                     address: addr(2),
                     balance: 300_000,
                     label: "Foundation".into(),
+                    vesting: None,
                 },
             ],
             objects: vec![],

@@ -257,6 +257,7 @@ pub fn cmd_build_genesis(
                 address: addr,
                 balance: v.balance,
                 label: format!("Validator-{}", v.name),
+                vesting: None,
             });
         }
     }
@@ -266,6 +267,7 @@ pub fn cmd_build_genesis(
             address: addr,
             balance: alloc.balance,
             label: alloc.label.clone(),
+            vesting: None,
         });
     }
 

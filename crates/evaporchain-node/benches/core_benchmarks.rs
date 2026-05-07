@@ -15,6 +15,7 @@ fn seed_db(db: &mut InMemoryStateDB, n_accounts: u8) {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
     }
 }

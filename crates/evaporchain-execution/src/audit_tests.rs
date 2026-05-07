@@ -53,6 +53,7 @@ mod invariant_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
     }
 
@@ -288,6 +289,7 @@ mod invariant_tests {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             });
         }
 
@@ -487,8 +489,8 @@ mod proptest_execution {
             balance in 1u64..10_000_000,
         ) {
             let mut db = InMemoryStateDB::new();
-            db.put_account(Account { address: addr(1), balance, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
-            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+            db.put_account(Account { address: addr(1), balance, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 , vesting: None });
+            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 , vesting: None });
 
             let tx = Transaction::Transfer(TransferTx {
                 from: addr(1),
@@ -513,7 +515,7 @@ mod proptest_execution {
         ) {
             let mut db = InMemoryStateDB::new();
             for i in 0..10u8 {
-                db.put_account(Account { address: addr(i), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+                db.put_account(Account { address: addr(i), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 , vesting: None });
             }
 
             let txs: Vec<Transaction> = (0..num_txs)
@@ -547,8 +549,8 @@ mod proptest_execution {
         #[test]
         fn nonces_monotonic(num_txs in 1usize..20) {
             let mut db = InMemoryStateDB::new();
-            db.put_account(Account { address: addr(1), balance: 100_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
-            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+            db.put_account(Account { address: addr(1), balance: 100_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 , vesting: None });
+            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 , vesting: None });
 
             let txs: Vec<Transaction> = (0..num_txs)
                 .map(|i| {
@@ -578,8 +580,8 @@ mod proptest_execution {
         #[test]
         fn state_root_deterministic(seed in 0u64..100) {
             let setup = |db: &mut InMemoryStateDB| {
-                db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
-                db.put_account(Account { address: addr(2), balance: 500_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+                db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 , vesting: None });
+                db.put_account(Account { address: addr(2), balance: 500_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 , vesting: None });
             };
 
             let txs = vec![Transaction::Transfer(TransferTx {
@@ -645,6 +647,7 @@ mod proptest_execution {
                 storage_deposit: 0,
                 storage_bytes: 0,
                 last_touched_epoch: 0,
+                vesting: None,
             });
             if !same_addr {
                 db.put_account(Account {
@@ -654,6 +657,7 @@ mod proptest_execution {
                     storage_deposit: 0,
                     storage_bytes: 0,
                     last_touched_epoch: 0,
+                    vesting: None,
                 });
             }
 
@@ -772,6 +776,7 @@ mod conservation_enforce_tests {
             storage_deposit: 0,
             storage_bytes: 0,
             last_touched_epoch: 0,
+            vesting: None,
         });
     }
 
