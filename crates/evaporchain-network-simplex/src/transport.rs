@@ -1,4 +1,18 @@
-//! Min-cost transportation LP via successive-shortest-path.
+//! Min-cost transportation LP via greedy minimum-cost-cell.
+//!
+//! For the bipartite transportation problem (no intermediate nodes,
+//! single layer), full Successive-Shortest-Path collapses to a
+//! greedy: at each step, ship from the (i, j) cell with min cost
+//! among un-fully-satisfied pairs. This file ships that bipartite-
+//! case greedy. The name "successive-shortest-path" earlier in this
+//! repo's history was the theoretical connection, not the algorithm
+//! V1 actually runs.
+//!
+//! **For full SSP with Dijkstra over reduced-cost potentials and
+//! general augmenting paths**, see `evaporchain-network-simplex-v2`.
+//! V2 handles arbitrary cost matrices that defeat V1's greedy (test
+//! `_v2::tests::adversarial_3x3_where_greedy_underperforms` for a
+//! concrete example).
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -69,32 +83,23 @@ pub fn solve_transportation(
         });
     }
 
-    // Successive-shortest-path. We maintain residual supplies and
-    // demands, find a min-cost path from the most-supply source
-    // to the most-demand sink (via Bellman-Ford / direct min-cost
-    // edge selection — for the simple bipartite transportation
-    // problem, the cheapest available edge is the SSP path).
+    // Greedy minimum-cost-cell iteration. For the bipartite
+    // transportation problem (no intermediate nodes, single layer),
+    // full Successive-Shortest-Path collapses to: at each step,
+    // find the (i, j) with min cost among un-fully-satisfied pairs,
+    // ship the bottleneck quantity, repeat. We ship that bipartite-
+    // case shortcut here.
     //
-    // For a pure transportation problem (no intermediate nodes,
-    // single bipartite layer), SSP collapses to: at each step,
-    // find the (i, j) with min cost among un-fully-satisfied
-    // pairs, ship as much as possible, repeat.
+    // OPTIMAL when the cost matrix has the Monge property or for
+    // bipartite assignment. CAN UNDERPERFORM on arbitrary cost
+    // matrices — full SSP with Dijkstra over reduced-cost potentials
+    // is `evaporchain-network-simplex-v2` (a peer crate, also live
+    // in the workspace). See the V1 lib.rs companion-block for the
+    // V1↔V2 division-of-labour write-up.
     //
-    // This greedy variant is OPTIMAL for the transportation LP
-    // when ties are broken consistently — equivalent to the
-    // "minimum-cost cell" heuristic which gives an optimal basic
-    // feasible solution for a balanced transportation problem
-    // when the cost matrix has the "Monge property" or when
-    // applied iteratively until convergence.
-    //
-    // For correctness on arbitrary cost matrices, we run
-    // iteratively: pick min-cost (i,j), ship min(remaining_supply[i],
-    // remaining_demand[j]), update. Repeat until all shipped.
-    //
-    // This greedy works correctly for SMALL inputs (verified
-    // against brute-force in tests). For tightness on
-    // adversarial inputs, V2.x will ship the full network simplex
-    // pivot loop. Document the bound.
+    // This greedy works correctly for SMALL inputs (verified against
+    // brute-force in tests). For larger / adversarial inputs, prefer
+    // V2.
 
     let mut remaining_supply: Vec<u128> = supplies.to_vec();
     let mut remaining_demand: Vec<u128> = demands.to_vec();
