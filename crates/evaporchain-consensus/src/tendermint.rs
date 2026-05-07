@@ -73,14 +73,23 @@ const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
 /// Window size (in rounds) for Sanov downtime slash. Honest = miss 1 in 20.
 const SANOV_DOWNTIME_WINDOW: u64 = 20;
 
-const PROPOSE_TIMEOUT_MS: u64 = 8000;
+// H2 (cluster session 2026-05-06/07): 5-node cluster spanning UK Macs
+// + Hetzner Helsinki forked at h~200 under previous 8s/32s/32s timing.
+// Diagnostic: 3 Macs nil-voted at h=1 r=4 while Hetzner pair voted
+// FOR — Macs weren't receiving proposal in time over Tailscale's
+// inter-continental NAT-traversed gossip path. Bumping 2× (preserving
+// the 4:1 prevote-to-propose ratio from the H1 audit fix) gives the
+// UK-Helsinki gossip propagation more headroom without regressing the
+// phase-desync prevention. Round multiplier (2^min(round,6)) means at
+// round 4 we have propose=256s, prevote/precommit=1024s — generous.
+const PROPOSE_TIMEOUT_MS: u64 = 16000;
 // H1 (audit 2026-05-02): prevote/precommit were 60s, 15× the propose
 // window. Under partial network failures one validator could timeout
 // and advance rounds while peers were still in prevote, causing a
 // permanent phase desync livelock. Cap at 4× propose so timeouts ride
 // the same cadence as proposal arrival.
-const PREVOTE_TIMEOUT_MS: u64 = 32000;
-const PRECOMMIT_TIMEOUT_MS: u64 = 32000;
+const PREVOTE_TIMEOUT_MS: u64 = 64000;
+const PRECOMMIT_TIMEOUT_MS: u64 = 64000;
 
 /// Maximum rounds before forcing commit (prevents livelock).
 const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
