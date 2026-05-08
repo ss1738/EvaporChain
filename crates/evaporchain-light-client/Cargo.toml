@@ -7,9 +7,9 @@ repository.workspace = true
 description = "Light Client SDK for EvaporChain. Unifies BFT commit-certificate verification (from `evaporchain-consensus::LightClientVerifier`) with Nova-IVC sublinear block-validity verification (from `evaporchain-proving::RealBlockProver::verify_with_vk_bytes`) and Verkle Merkle-proof state queries (from `evaporchain-crypto::verkle`). Foundation for browser/mobile wallets, dapps, bridges, and explorers — operationalises the Layer 5 Lambda-Fold Real Nova investment by giving third-party consumers a clean library entry point. WASM-target compatible (with `default-features = false`)."
 
 [dependencies]
-evaporchain-types       = { path = "../evaporchain-types" }
-evaporchain-crypto      = { path = "../evaporchain-crypto" }
-evaporchain-consensus   = { path = "../evaporchain-consensus" }
+evaporchain-types            = { path = "../evaporchain-types" }
+evaporchain-crypto           = { path = "../evaporchain-crypto" }
+evaporchain-consensus-types  = { path = "../evaporchain-consensus-types" }
 evaporchain-lambda-fold = { path = "../evaporchain-lambda-fold", optional = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }

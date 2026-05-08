@@ -35,7 +35,7 @@
 //!   `fetch_vk_bytes`, feature `nova`) for Nova-IVC sublinear
 //!   verification.
 
-use evaporchain_consensus::light_client::LightBlockHeader;
+use evaporchain_consensus_types::LightBlockHeader;
 use evaporchain_crypto::energy_verkle::EnergyVerkleProof;
 
 /// Errors a transport can surface. Keep the variants narrow so

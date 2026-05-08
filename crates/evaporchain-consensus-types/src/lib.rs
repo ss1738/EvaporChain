@@ -644,6 +644,306 @@ impl Default for ValidatorSet {
     }
 }
 
+// ─────────────────────── Light Client Types ──────────────────────────
+//
+// Phase 2 + 4 (2026-05-08): the light-client surface — header types,
+// trust state, error/result enums, constants, and the BLS-using
+// verifier — moved from `evaporchain-consensus/src/light_client.rs`.
+
+/// A light block header — the minimal data needed to verify consensus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightBlockHeader {
+    pub height: u64,
+    pub epoch: u64,
+    pub block_hash: [u8; 32],
+    pub parent_hash: [u8; 32],
+    pub state_root: [u8; 32],
+    pub timestamp: u64,
+    /// The validator set that signed this block.
+    pub validator_set: ValidatorSet,
+    /// BLS commit certificate proving 2/3+ attestation.
+    pub commit_certificate: evaporchain_types::CommitCertificate,
+}
+
+/// Trusted state stored by the light client.
+#[derive(Debug, Clone)]
+pub struct TrustedState {
+    pub header: LightBlockHeader,
+    pub trust_expires_at: u64,
+}
+
+/// Result of light client verification.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerificationResult {
+    Valid,
+    Invalid(String),
+    NeedBisection {
+        trusted_height: u64,
+        target_height: u64,
+    },
+}
+
+/// Error from the light client.
+#[derive(Debug, Clone)]
+pub enum LightClientError {
+    NoTrustedState,
+    ExpiredTrustPeriod,
+    InsufficientValidatorOverlap,
+    InvalidCertificate(String),
+    HeightMismatch,
+}
+
+/// Trust period in seconds. Default: 2 weeks.
+pub const TRUST_PERIOD_SECS: u64 = 14 * 24 * 3600;
+
+/// Trust threshold numerator (1/3 = 33% stake overlap required for skip).
+pub const TRUST_THRESHOLD_NUMERATOR: u64 = 1;
+
+/// Trust threshold denominator.
+pub const TRUST_THRESHOLD_DENOMINATOR: u64 = 3;
+
+/// Maximum height gap for skip verification without bisection.
+pub const MAX_SKIP_HEIGHT_GAP: u64 = 10_000;
+
+// ─────────────────────── LightClientVerifier ─────────────────────────
+
+/// Verifies block headers using commit certificates and validator
+/// set tracking. BFT BLS aggregate-sig verification, trust-period
+/// tracking, sequential + skip verification modes per ICS-007.
+pub struct LightClientVerifier {
+    trusted_states: std::collections::BTreeMap<u64, TrustedState>,
+    trust_period: u64,
+}
+
+impl LightClientVerifier {
+    /// Create a new verifier with a genesis trusted state.
+    pub fn new(genesis_header: LightBlockHeader, current_time: u64) -> Self {
+        let height = genesis_header.height;
+        let mut trusted_states = std::collections::BTreeMap::new();
+        trusted_states.insert(
+            height,
+            TrustedState {
+                header: genesis_header,
+                trust_expires_at: current_time + TRUST_PERIOD_SECS,
+            },
+        );
+        Self {
+            trusted_states,
+            trust_period: TRUST_PERIOD_SECS,
+        }
+    }
+
+    /// Create with a custom trust period (useful for testing).
+    pub fn with_trust_period(
+        genesis_header: LightBlockHeader,
+        current_time: u64,
+        trust_period: u64,
+    ) -> Self {
+        let height = genesis_header.height;
+        let mut trusted_states = std::collections::BTreeMap::new();
+        trusted_states.insert(
+            height,
+            TrustedState {
+                header: genesis_header,
+                trust_expires_at: current_time + trust_period,
+            },
+        );
+        Self {
+            trusted_states,
+            trust_period,
+        }
+    }
+
+    pub fn latest_trusted_height(&self) -> Option<u64> {
+        self.trusted_states.keys().next_back().copied()
+    }
+
+    pub fn trusted_state_at(&self, height: u64) -> Option<&TrustedState> {
+        self.trusted_states.get(&height)
+    }
+
+    fn best_trusted_state_for(&self, target_height: u64) -> Option<&TrustedState> {
+        self.trusted_states
+            .range(..=target_height)
+            .next_back()
+            .map(|(_, ts)| ts)
+    }
+
+    /// Verify an untrusted header against trusted state.
+    pub fn verify(
+        &mut self,
+        untrusted: &LightBlockHeader,
+        current_time: u64,
+    ) -> VerificationResult {
+        let trusted = match self.best_trusted_state_for(untrusted.height.saturating_sub(1)) {
+            Some(ts) => ts.clone(),
+            None => return VerificationResult::Invalid("No trusted state found".into()),
+        };
+
+        if current_time > trusted.trust_expires_at {
+            return VerificationResult::Invalid(
+                "Trust period expired — need fresh checkpoint".into(),
+            );
+        }
+
+        match self.verify_commit_certificate(untrusted) {
+            Ok(()) => {}
+            Err(e) => return VerificationResult::Invalid(format!("Invalid certificate: {}", e)),
+        }
+
+        let height_gap = untrusted.height.saturating_sub(trusted.header.height);
+        if height_gap == 1 {
+            self.add_trusted(untrusted.clone(), current_time);
+            return VerificationResult::Valid;
+        }
+
+        if height_gap > MAX_SKIP_HEIGHT_GAP {
+            return VerificationResult::NeedBisection {
+                trusted_height: trusted.header.height,
+                target_height: untrusted.height,
+            };
+        }
+
+        match self.check_validator_overlap(&trusted.header, untrusted) {
+            Ok(()) => {
+                self.add_trusted(untrusted.clone(), current_time);
+                VerificationResult::Valid
+            }
+            Err(_) => VerificationResult::NeedBisection {
+                trusted_height: trusted.header.height,
+                target_height: untrusted.height,
+            },
+        }
+    }
+
+    fn verify_commit_certificate(&self, header: &LightBlockHeader) -> Result<(), String> {
+        use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
+
+        let cert = &header.commit_certificate;
+
+        if cert.height != header.height {
+            return Err(format!(
+                "Certificate height {} != header height {}",
+                cert.height, header.height
+            ));
+        }
+        if cert.block_hash != header.block_hash {
+            return Err("Certificate block hash mismatch".into());
+        }
+
+        let unique_signers: std::collections::HashSet<u64> =
+            cert.signer_ids.iter().copied().collect();
+        if unique_signers.len() != cert.signer_ids.len() {
+            return Err("Duplicate signer IDs in commit certificate".into());
+        }
+
+        let quorum = (header.validator_set.active_count() * 2 / 3) + 1;
+        if cert.signer_ids.len() < quorum {
+            return Err(format!(
+                "Insufficient signers: {} < quorum {}",
+                cert.signer_ids.len(),
+                quorum
+            ));
+        }
+
+        let mut pks = Vec::new();
+        let mut signing_stake = 0u64;
+        for &vid in &cert.signer_ids {
+            match header.validator_set.get(vid) {
+                Some(v) => {
+                    if let Some(ref bls_pk) = v.bls_public_key {
+                        pks.push(BlsPublicKey(bls_pk.clone()));
+                        signing_stake = signing_stake.saturating_add(v.stake);
+                    } else {
+                        return Err(format!("Signer {} has no BLS key", vid));
+                    }
+                }
+                None => return Err(format!("Signer {} not in validator set", vid)),
+            }
+        }
+
+        let total_stake = header.validator_set.total_stake();
+        if (signing_stake as u128) * 3 < (total_stake as u128) * 2 {
+            return Err(format!(
+                "Insufficient signing stake: {} < 2/3 of {}",
+                signing_stake, total_stake
+            ));
+        }
+
+        let msg = bls_vote_message(cert.height, cert.round, &cert.block_hash);
+        let agg_sig = BlsSignature(cert.aggregate_signature.clone());
+        if !BlsVerifier::aggregate_verify(&msg, &agg_sig, &pks) {
+            return Err("BLS aggregate signature verification failed".into());
+        }
+
+        Ok(())
+    }
+
+    fn check_validator_overlap(
+        &self,
+        trusted: &LightBlockHeader,
+        untrusted: &LightBlockHeader,
+    ) -> Result<(), String> {
+        let trusted_total_stake = trusted.validator_set.total_stake();
+        let threshold =
+            trusted_total_stake * TRUST_THRESHOLD_NUMERATOR / TRUST_THRESHOLD_DENOMINATOR;
+
+        let mut overlap_stake = 0u64;
+        for &signer_id in &untrusted.commit_certificate.signer_ids {
+            if let Some(trusted_validator) = trusted.validator_set.get(signer_id) {
+                overlap_stake += trusted_validator.stake;
+            }
+        }
+
+        if overlap_stake >= threshold {
+            Ok(())
+        } else {
+            Err(format!(
+                "Insufficient validator overlap: {} < threshold {}",
+                overlap_stake, threshold
+            ))
+        }
+    }
+
+    fn add_trusted(&mut self, header: LightBlockHeader, current_time: u64) {
+        let height = header.height;
+        self.trusted_states.insert(
+            height,
+            TrustedState {
+                header,
+                trust_expires_at: current_time + self.trust_period,
+            },
+        );
+        while self.trusted_states.len() > 100 {
+            let oldest = *self.trusted_states.keys().next().unwrap();
+            self.trusted_states.remove(&oldest);
+        }
+    }
+
+    pub fn bisection_target(&self, trusted_height: u64, target_height: u64) -> u64 {
+        (trusted_height + target_height) / 2
+    }
+
+    pub fn trusted_count(&self) -> usize {
+        self.trusted_states.len()
+    }
+
+    pub fn prune_expired(&mut self, current_time: u64) {
+        self.trusted_states
+            .retain(|_, ts| ts.trust_expires_at > current_time);
+    }
+}
+
+/// Construct the BLS vote message for verification (matches tendermint.rs format).
+pub fn bls_vote_message(height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(48);
+    msg.extend_from_slice(b"precommit");
+    msg.extend_from_slice(&height.to_le_bytes());
+    msg.extend_from_slice(&round.to_le_bytes());
+    msg.extend_from_slice(block_hash);
+    msg
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

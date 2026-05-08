@@ -39,7 +39,7 @@
 //! Both stages must pass; the trusted tip is updated only on
 //! complete success. On failure the trusted tip is unchanged.
 
-use evaporchain_consensus::light_client::{LightBlockHeader, VerificationResult};
+use evaporchain_consensus_types::{LightBlockHeader, VerificationResult};
 use evaporchain_lambda_fold::nova_path::{verify_nova_folded, NovaFoldedInstance, NovaVerifyError};
 
 use crate::client::{hex_lower, LightClient};

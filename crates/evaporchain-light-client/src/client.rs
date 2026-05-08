@@ -4,7 +4,7 @@
 //! Nova-IVC sublinear, Verkle state-query) into a single object
 //! consumers hold across calls.
 
-use evaporchain_consensus::light_client::{
+use evaporchain_consensus_types::{
     LightBlockHeader, LightClientVerifier, VerificationResult,
 };
 
@@ -74,7 +74,7 @@ impl LightClient {
         trust_period_secs: u64,
         vk_bytes: Option<Vec<u8>>,
     ) -> Self {
-        let bft = evaporchain_consensus::light_client::LightClientVerifier::with_trust_period(
+        let bft = evaporchain_consensus_types::LightClientVerifier::with_trust_period(
             genesis_header.clone(),
             current_time,
             trust_period_secs,
@@ -215,8 +215,8 @@ pub(crate) mod test_fixtures {
     //! used in `evaporchain-consensus::light_client::tests` so the
     //! SDK exercises the same verification path the chain uses.
 
-    use evaporchain_consensus::light_client::LightBlockHeader;
-    use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
+    use evaporchain_consensus_types::LightBlockHeader;
+    use evaporchain_consensus_types::{ValidatorInfo, ValidatorSet};
     use evaporchain_crypto::signatures::{BlsKeypair, BlsSignature, BlsVerifier};
     use evaporchain_types::CommitCertificate;
 

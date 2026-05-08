@@ -249,7 +249,7 @@ mod tests {
         // root.
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let cert = make_commit_certificate(1, 0, [0xaa; 32], &kps, &[0, 1, 2]);
-        let mut header = evaporchain_consensus::light_client::LightBlockHeader {
+        let mut header = evaporchain_consensus_types::LightBlockHeader {
             height: 1,
             epoch: 0,
             block_hash: [0xaa; 32],

@@ -102,8 +102,8 @@ fn nibble_hex(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_consensus::light_client::LightBlockHeader;
-    use evaporchain_consensus::validator_set::ValidatorSet;
+    use evaporchain_consensus_types::LightBlockHeader;
+    use evaporchain_consensus_types::ValidatorSet;
     use evaporchain_crypto::energy_verkle::EnergyVerkleTrie;
     use evaporchain_types::CommitCertificate;
 

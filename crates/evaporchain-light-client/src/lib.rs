@@ -10,7 +10,7 @@
 //! [`LightClient`] interface:
 //!
 //! 1. **BFT commit-certificate verification** — wraps
-//!    [`evaporchain_consensus::light_client::LightClientVerifier`].
+//!    [`evaporchain_consensus_types::LightClientVerifier`].
 //!    Each block header carries a BLS-aggregate `CommitCertificate`
 //!    proving 2/3+ validator stake attested to it. The SDK verifies
 //!    the certificate against the validator set and tracks trust-
@@ -72,6 +72,6 @@ pub use error::LightClientError;
 // Re-exports of the underlying types so consumers don't need to
 // depend on consensus + proving + crypto directly. Each consumer
 // gets a single SDK dep with all the types they need.
-pub use evaporchain_consensus::light_client::{
+pub use evaporchain_consensus_types::{
     LightBlockHeader, TrustedState, VerificationResult,
 };
