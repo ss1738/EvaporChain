@@ -1,5 +1,7 @@
 pub mod accumulator;
 pub mod bls_key_store;
+#[cfg(feature = "bls-portable")]
+pub mod bls_portable;
 pub mod energy_verkle;
 pub mod hash;
 pub mod secret_file_store;
@@ -16,10 +18,13 @@ pub use energy_verkle::{
 };
 pub use hash::{blake3_hash, poseidon_hash, Blake3Hasher, HashEngine, PoseidonHasher};
 pub use signatures::{
-    BlsError, BlsKeypair, BlsPublicKey, BlsSecretKey, BlsSignature, BlsVerifier, EcdsaError,
+    BlsError, BlsPublicKey, BlsSecretKey, BlsSignature, BlsVerifier, EcdsaError,
     EcdsaKeypair, EcdsaVerifier, HybridKeypair, HybridVerifier, MlDsaKeypair, MlDsaVerifier,
     Signer, Verifier, HYBRID_PK_LEN, HYBRID_SIG_LEN,
 };
+// BlsKeypair gated to native backend (signing requires blst).
+#[cfg(feature = "bls-native")]
+pub use signatures::BlsKeypair;
 pub use verkle::{VerkleProof, VerkleTrie};
 pub use vrf::{
     leader_vrf_input, sortition, sortition_vrf_input, vrf_leader_check, vrf_verify,

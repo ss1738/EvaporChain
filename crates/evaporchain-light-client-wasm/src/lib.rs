@@ -37,15 +37,8 @@ use evaporchain_light_client::LightBlockHeader;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
-// Note: the SDK's pub re-exports include `LightBlockHeader` (from
-// evaporchain-consensus). State-proof verification needs the
-// `EnergyVerkleProof` type from evaporchain-crypto, which is not
-// re-exported by the SDK. We re-deserialise it via the SDK's
-// `verify_state` method which takes `&EnergyVerkleProof` —  pull it in
-// from the SDK's public types tree.
-use evaporchain_light_client::state_query::verify_state;
-// Re-import from the crypto layer for the JSON deserialise.
-use evaporchain_light_client::*;
+// `verify_state` is a method on LightClient (not a free function),
+// so we call `lc.verify_state(...)` directly.
 
 // ─── panic hook — surfaces Rust panics in the browser console ────────
 
@@ -185,10 +178,10 @@ impl WasmLightClient {
             fetch_json(&self.base_url, &format!("/api/state/proof/{key_hex}"))
                 .await
                 .map_err(map_transport_err)?;
-        // Verify against the trusted state_root using the SDK's pure
-        // verification primitive. expected_value=None → just verify the
+        // Verify against the trusted state_root via the SDK's
+        // verify_state method. expected_value=None → just verify the
         // proof binds.
-        verify_state(&proof, None).map_err(map_lc_err)?;
+        self.inner.verify_state(&proof, None).map_err(map_lc_err)?;
         // Return the proof's value as hex (or empty for non-membership).
         match proof.value {
             Some(v) => Ok(JsValue::from_str(&hex::encode(v))),

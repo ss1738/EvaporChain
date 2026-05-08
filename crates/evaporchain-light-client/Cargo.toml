@@ -8,15 +8,29 @@ description = "Light Client SDK for EvaporChain. Unifies BFT commit-certificate 
 
 [dependencies]
 evaporchain-types            = { path = "../evaporchain-types" }
-evaporchain-crypto           = { path = "../evaporchain-crypto" }
-evaporchain-consensus-types  = { path = "../evaporchain-consensus-types" }
+# default-features = false on crypto so the SDK's own crypto dep
+# doesn't force bls-native; the SDK's own [features] table forwards
+# the choice to wasm consumers via bls-portable.
+evaporchain-crypto           = { path = "../evaporchain-crypto", default-features = false }
+evaporchain-consensus-types  = { path = "../evaporchain-consensus-types", default-features = false }
 evaporchain-lambda-fold = { path = "../evaporchain-lambda-fold", optional = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 thiserror  = { workspace = true }
 
 [features]
-default = []
+default = ["bls-native"]
+# Forwarded to evaporchain-crypto + evaporchain-consensus-types. Native
+# is the default for chain runtime / native consumers. WASM consumers
+# disable defaults and enable bls-portable.
+bls-native = [
+    "evaporchain-crypto/bls-native",
+    "evaporchain-consensus-types/bls-native",
+]
+bls-portable = [
+    "evaporchain-crypto/bls-portable",
+    "evaporchain-consensus-types/bls-portable",
+]
 # `nova` enables Nova-IVC sublinear block-validity verification. Without
 # this feature, the SDK only does BFT commit-certificate verification —
 # still useful for energy-floor checks and validator-set tracking, just

@@ -5,6 +5,19 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["bls-native"]
+# BLS via blst (C library, fast, native-only). Required for any
+# consensus path that needs to SIGN BLS — i.e., chain validators.
+# `BlsKeypair` is only available with this feature.
+bls-native = ["dep:blst"]
+# BLS via bls12_381 + group + pairing (pure Rust, wasm32-friendly).
+# Verification-only; signing still requires `bls-native`. Used by
+# `evaporchain-light-client-wasm` so browser-side verification works
+# without a native C build. See Refactor B in
+# `crates/evaporchain-light-client-wasm/README.md`.
+bls-portable = ["dep:bls12_381", "dep:group", "dep:pairing", "dep:ff", "dep:sha2_old_for_bls"]
+
 [dependencies]
 rand = { workspace = true }
 hex = { workspace = true }
@@ -17,12 +30,25 @@ pasta_curves = "0.5"
 # Pinned exact (=) per audit H-13 — `pqc_dilithium` upstream is unaudited.
 # Any version bump must go through manual security review before merge.
 pqc_dilithium = { version = "=0.2.0", features = ["mode3"] }
-blst = "0.3"
 subtle = "2"
 zeroize = { version = "1", features = ["derive"] }
 k256 = { version = "0.13", features = ["ecdsa-core", "ecdsa"] }
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
+
+# BLS backends — feature-gated. Default `bls-native` keeps the existing
+# blst dep unchanged for chain runtime + validator signing paths.
+blst = { version = "0.3", optional = true }
+bls12_381 = { version = "0.8", default-features = false, features = ["pairings", "alloc", "groups", "experimental"], optional = true }
+group = { version = "0.13", default-features = false, optional = true }
+pairing = { version = "0.23", default-features = false, optional = true }
+ff = { version = "0.13", default-features = false, optional = true }
+# Old sha2 (0.9) implementing digest-0.9 traits — required because
+# `bls12_381 0.8`'s `ExpandMsgXmd<H>` was written against digest 0.9
+# and the workspace's `sha2 = "0.10"` is incompatible. Renamed to
+# `sha2_old_for_bls` so it doesn't shadow the workspace sha2 used
+# by everything else.
+sha2_old_for_bls = { package = "sha2", version = "0.9", default-features = false, optional = true }
 
 [dev-dependencies]
 proptest = "1"

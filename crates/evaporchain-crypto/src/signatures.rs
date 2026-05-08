@@ -383,23 +383,28 @@ impl Verifier for HybridVerifier {
 }
 
 // ──────────────────── BLS12-381 (Consensus Attestations) ────────────────
+//
+// Refactor B (2026-05-08): BLS backend is feature-gated.
+//   * `bls-native` (default) → blst (C library, fast, signing + verifying)
+//   * `bls-portable`         → bls12_381 (pure Rust, wasm32-friendly,
+//                              VERIFY ONLY — signing is a `bls-native`
+//                              path because browsers / dapps don't sign
+//                              BLS).
+//
+// `BlsKeypair` is gated to `bls-native` only.
+// `BlsVerifier` exists in both flavours and produces identical results.
 
+#[cfg(feature = "bls-native")]
 use blst::min_pk::{
     AggregateSignature, PublicKey as BlstPublicKey, SecretKey as BlstSecretKey,
     Signature as BlstSignature,
 };
 
-const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+pub(crate) const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 /// Domain separation tag for proof-of-possession (prevents rogue-key attacks).
-/// Different from BLS_DST so PoP signatures cannot be replayed as message signatures.
-const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
+pub(crate) const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 /// Domain separation tag for validator key-rotation continuity proofs.
-/// Distinct from POP_DST so a generic PoP signed at validator registration
-/// time cannot be replayed as a rotation continuity proof. Distinct from
-/// BLS_DST so a regular vote signature cannot be replayed either.
-/// Closes the loose-binding gap on RotateValidatorKey: each rotation
-/// attempt requires a fresh signature bound to the specific new pubkey.
-const BLS_ROTATION_DST: &[u8] = b"BLS_ROTATION_BLS12381G2_XMD:SHA-256_SSWU_RO_ROT_";
+pub(crate) const BLS_ROTATION_DST: &[u8] = b"BLS_ROTATION_BLS12381G2_XMD:SHA-256_SSWU_RO_ROT_";
 
 /// BLS12-381 public key for consensus attestation aggregation.
 /// Public key: 48 bytes (compressed G1 point).
@@ -433,11 +438,16 @@ impl std::fmt::Debug for BlsSecretKey {
 pub struct BlsSignature(pub Vec<u8>);
 
 /// BLS12-381 keypair for validator consensus signing.
+///
+/// Only available with the `bls-native` feature (default). Browsers /
+/// dapps don't sign BLS — they verify, which is the `bls-portable` path.
+#[cfg(feature = "bls-native")]
 pub struct BlsKeypair {
     sk: BlstSecretKey,
     pk: BlstPublicKey,
 }
 
+#[cfg(feature = "bls-native")]
 impl BlsKeypair {
     /// Generate a new random BLS keypair.
     pub fn generate() -> Self {
@@ -498,24 +508,37 @@ impl BlsKeypair {
 }
 
 /// Stateless BLS verification and aggregation.
+///
+/// Backend-agnostic public surface; methods dispatch to either
+/// `bls-native` (blst) or `bls-portable` (bls12_381) based on enabled
+/// features. Both backends produce identical results because they
+/// implement the same RFC-9380 hash-to-curve + RFC-9381 pairing-equation
+/// scheme with matching domain-separation tags.
 pub struct BlsVerifier;
 
 impl BlsVerifier {
     /// Verify a single BLS signature.
     pub fn verify(msg: &[u8], sig: &BlsSignature, pk: &BlsPublicKey) -> bool {
-        let pk = match BlstPublicKey::from_bytes(&pk.0) {
-            Ok(pk) => pk,
-            Err(_) => return false,
-        };
-        let sig = match BlstSignature::from_bytes(&sig.0) {
-            Ok(sig) => sig,
-            Err(_) => return false,
-        };
-        sig.verify(true, msg, BLS_DST, &[], &pk, true) == blst::BLST_ERROR::BLST_SUCCESS
+        #[cfg(feature = "bls-native")]
+        {
+            return Self::verify_native(msg, sig, pk, BLS_DST);
+        }
+        #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
+        {
+            return crate::bls_portable::verify(msg, &sig.0, &pk.0, BLS_DST);
+        }
+        #[cfg(not(any(feature = "bls-native", feature = "bls-portable")))]
+        {
+            let _ = (msg, sig, pk);
+            unreachable!("evaporchain-crypto requires either `bls-native` or `bls-portable` feature")
+        }
     }
 
     /// Aggregate multiple BLS signatures into one.
-    /// Returns None if the input is empty or contains invalid signatures.
+    /// Available only with `bls-native` — signing aggregation is a
+    /// validator-side operation that doesn't run in browser-side
+    /// wasm targets.
+    #[cfg(feature = "bls-native")]
     pub fn aggregate_signatures(sigs: &[BlsSignature]) -> Option<BlsSignature> {
         if sigs.is_empty() {
             return None;
@@ -533,44 +556,41 @@ impl BlsVerifier {
     }
 
     /// Verify a proof-of-possession for a BLS public key.
-    /// Returns true only if the PoP was produced by the holder of the
-    /// secret key corresponding to `pk`. Uses BLS_POP_DST to prevent
-    /// cross-domain replay.
     pub fn verify_proof_of_possession(pk: &BlsPublicKey, pop: &BlsSignature) -> bool {
-        let pk_parsed = match BlstPublicKey::from_bytes(&pk.0) {
-            Ok(pk) => pk,
-            Err(_) => return false,
-        };
-        let sig = match BlstSignature::from_bytes(&pop.0) {
-            Ok(sig) => sig,
-            Err(_) => return false,
-        };
-        sig.verify(true, &pk.0, BLS_POP_DST, &[], &pk_parsed, true)
-            == blst::BLST_ERROR::BLST_SUCCESS
+        #[cfg(feature = "bls-native")]
+        {
+            return Self::verify_native(&pk.0, pop, pk, BLS_POP_DST);
+        }
+        #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
+        {
+            return crate::bls_portable::verify(&pk.0, &pop.0, &pk.0, BLS_POP_DST);
+        }
+        #[cfg(not(any(feature = "bls-native", feature = "bls-portable")))]
+        {
+            let _ = (pk, pop);
+            unreachable!("evaporchain-crypto requires a BLS backend feature")
+        }
     }
 
-    /// Verify a rotation continuity proof: that `sig` was produced by the
-    /// holder of `old_pk`'s secret key over the bytes of `new_pk_bytes`,
-    /// under `BLS_ROTATION_DST`.
-    ///
-    /// Returns true only if the rotator currently controls the old key
-    /// AND has committed (via signature) to this specific new public key.
-    /// Replays of a generic PoP fail because the DST differs.
+    /// Verify a rotation continuity proof.
     pub fn verify_rotation_continuity(
         old_pk: &BlsPublicKey,
         new_pk_bytes: &[u8],
         sig: &BlsSignature,
     ) -> bool {
-        let pk_parsed = match BlstPublicKey::from_bytes(&old_pk.0) {
-            Ok(pk) => pk,
-            Err(_) => return false,
-        };
-        let parsed_sig = match BlstSignature::from_bytes(&sig.0) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        parsed_sig.verify(true, new_pk_bytes, BLS_ROTATION_DST, &[], &pk_parsed, true)
-            == blst::BLST_ERROR::BLST_SUCCESS
+        #[cfg(feature = "bls-native")]
+        {
+            return Self::verify_native(new_pk_bytes, sig, old_pk, BLS_ROTATION_DST);
+        }
+        #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
+        {
+            return crate::bls_portable::verify(new_pk_bytes, &sig.0, &old_pk.0, BLS_ROTATION_DST);
+        }
+        #[cfg(not(any(feature = "bls-native", feature = "bls-portable")))]
+        {
+            let _ = (old_pk, new_pk_bytes, sig);
+            unreachable!("evaporchain-crypto requires a BLS backend feature")
+        }
     }
 
     /// Verify an aggregated signature against multiple public keys.
@@ -579,19 +599,48 @@ impl BlsVerifier {
         if pks.is_empty() {
             return false;
         }
-        let sig = match BlstSignature::from_bytes(&agg_sig.0) {
+        #[cfg(feature = "bls-native")]
+        {
+            let sig = match BlstSignature::from_bytes(&agg_sig.0) {
+                Ok(sig) => sig,
+                Err(_) => return false,
+            };
+            let parsed_pks: Vec<BlstPublicKey> = pks
+                .iter()
+                .filter_map(|pk| BlstPublicKey::from_bytes(&pk.0).ok())
+                .collect();
+            if parsed_pks.len() != pks.len() {
+                return false;
+            }
+            let pk_refs: Vec<&BlstPublicKey> = parsed_pks.iter().collect();
+            return sig.fast_aggregate_verify(true, msg, BLS_DST, &pk_refs)
+                == blst::BLST_ERROR::BLST_SUCCESS;
+        }
+        #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
+        {
+            let pk_byte_slices: Vec<&[u8]> = pks.iter().map(|p| p.0.as_slice()).collect();
+            return crate::bls_portable::aggregate_verify(msg, &agg_sig.0, &pk_byte_slices, BLS_DST);
+        }
+        #[cfg(not(any(feature = "bls-native", feature = "bls-portable")))]
+        {
+            let _ = (msg, agg_sig, pks);
+            unreachable!("evaporchain-crypto requires a BLS backend feature")
+        }
+    }
+
+    // ─── Native backend helpers (blst) ──────────────────────────────
+
+    #[cfg(feature = "bls-native")]
+    fn verify_native(msg: &[u8], sig: &BlsSignature, pk: &BlsPublicKey, dst: &[u8]) -> bool {
+        let pk_parsed = match BlstPublicKey::from_bytes(&pk.0) {
+            Ok(pk) => pk,
+            Err(_) => return false,
+        };
+        let sig_parsed = match BlstSignature::from_bytes(&sig.0) {
             Ok(sig) => sig,
             Err(_) => return false,
         };
-        let parsed_pks: Vec<BlstPublicKey> = pks
-            .iter()
-            .filter_map(|pk| BlstPublicKey::from_bytes(&pk.0).ok())
-            .collect();
-        if parsed_pks.len() != pks.len() {
-            return false;
-        }
-        let pk_refs: Vec<&BlstPublicKey> = parsed_pks.iter().collect();
-        sig.fast_aggregate_verify(true, msg, BLS_DST, &pk_refs) == blst::BLST_ERROR::BLST_SUCCESS
+        sig_parsed.verify(true, msg, dst, &[], &pk_parsed, true) == blst::BLST_ERROR::BLST_SUCCESS
     }
 }
 

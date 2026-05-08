@@ -8,7 +8,11 @@ description = "WASM bridge for the EvaporChain Light Client SDK. Browser wallets
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-evaporchain-light-client = { path = "../evaporchain-light-client" }
+# Disable default features on the SDK + crypto so blst (native-only)
+# doesn't get pulled in. Enable `bls-portable` instead, which forwards
+# to evaporchain-crypto's pure-Rust bls12_381 backend.
+evaporchain-light-client = { path = "../evaporchain-light-client", default-features = false, features = ["bls-portable"] }
+evaporchain-crypto = { path = "../evaporchain-crypto", default-features = false, features = ["bls-portable"] }
 wasm-bindgen        = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys              = "0.3"
