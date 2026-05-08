@@ -48,6 +48,42 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (afternoon) — Phase 4 full IVC circuit scaffold
+
+**Focus:** `ethereum-bridge/circuits/` — `VerkleStepCircuit` IVC proof of Verkle membership (nova-snark 0.68, BN254).
+
+**Commits shipped:** 2 (aae5be0 → f363764). See `ETHEREUM_BRIDGE_PLAN.md` status log for detail.
+
+**Deliverables:**
+- `ethereum-bridge/circuits/` — standalone Cargo workspace (nova-snark 0.68, separate from 147-crate parent)
+- `VerkleStepCircuit<G>`: `StepCircuit<G::Scalar>` — each step folds one Verkle proof level via `Poseidon(z_in, path_index, sibling_hash)`. Arity = 1.
+- `VerkleProver`: public-param setup + D-level fold + `CompressedSNARK` generation. Produces `VerkleProof { z_0, z_final, num_steps, proof_bytes }`.
+- `leaf_hash` + `poseidon_native` native helpers for pre-circuit leaf binding and cross-checking.
+- `verkle-prove` binary: CLI prover from (key, value, path.json, root).
+- `smoke_prove_3_steps` test: full setup→fold→compress cycle (marked `#[ignore]`, runs on demand).
+- 8 fast unit tests green on Mini 1 (11.2 s including nova-snark cold warm-up).
+
+**Empirical results:**
+- `cargo test`: 8 passed, 0 failed, 1 ignored (smoke) — Mini 1 exit 0.
+- Compiler fixes: `halo2curves::serde::Repr<32>` newtype — replaced `PrimeField<Repr=[u8;32]>` bound with plain `PrimeField` (the supertrait already guarantees `Default + AsMut<[u8]> + AsRef<[u8]>` on Repr).
+
+**Decisions made:**
+- Phase 4 full V1 = Poseidon hash-chain binding (collision-resistant, simpler). EC Pedersen commitment check is offloaded to the prover's `VerkleProof::verify()`. Circuit architecture is clean — upgrade to EC MSM in-circuit (EccChip, Phase 4 full V2) is a drop-in replacement of the Poseidon step.
+- Engine: `Bn256EngineKZG`/`GrumpkinEngine` (BN254) — same as the existing block proving engine. `CompressedSNARK` output is verifiable in Solidity via standard Groth16/Spartan libraries.
+
+**What's next:**
+- `VerkleProofVerifier.sol` — add to contracts, verify `(z_0, z_final, depth, snark_proof)` using existing CompressedSNARK verifying key
+- `smoke_prove_3_steps` via `cargo test -- --ignored` on Mini 1 to time full proof gen
+- Phase 6 — Sepolia end-to-end when cluster and relayer are stable
+
+**Blockers / open questions:**
+- `smoke_prove_3_steps` needs PP setup time measured on Mini (estimate ~30 s; known issue on first run)
+- Phase 4 full V2 (EC MSM constraint) deferred — needs `halo2_gadgets` EccChip integration
+
+**Cross-references:** `ETHEREUM_BRIDGE_PLAN.md` status log 2026-05-09 entry
+
+---
+
 ## 2026-05-09 (morning, latest) — Crooks-MEV cross-layer empirical proof + 3rd governance flag readiness tooling
 
 **Focus:** continue past the H-08 close into the operational adjacent: prove the chain's economic-punishment thesis end-to-end empirically, then ship the operator readiness tooling for the third governance flag in the activation ladder.
