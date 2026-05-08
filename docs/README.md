@@ -168,6 +168,46 @@ Available templates: `DecayingToken`, `MortalNFT`, `ThermodynamicEscrow`, `Decay
 
 Refund settlement (`Transaction::Refund`) is governance-gated via `crooks_mev_settlement_mode ∈ {observe, enforce}` (default `observe`). Both `SimpleExecutor` and the parallel-executor serial phase wire the attacker-debit / victim-credit balance movement (Lanes Q.1 + S.1).
 
+### Singh Pool AMM (decay-aware xy=k AMM)
+
+Per-pool decay-aware AMM with energy-tagged LP shares: holders below the pool's `energy_floor` cannot withdraw, structurally disincentivising mercenary capital. Substrate at `evaporchain-cl-amm` (692 LOC, fully tested); HTTP surface shipped 2026-05-08 (commits `0404d27`, `3333dab`, `50a9c40`, `51260a3`, `6fa1d61`). Pool state persists across restarts via bincode-encoded ledger at `<data_dir>/singh_pools.bin`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/pool/list` | Every Singh Pool's summary state (reserves, total_shares, fee_bp, energy_floor). |
+| GET | `/api/pool/:id` | Full state of one pool. Returns `{found:false}` for unknown id. |
+| POST | `/api/pool/create` | Create a new empty pool. Body: `{id, fee_bp, energy_floor}`. |
+| POST | `/api/pool/:id/mint` | Mint LP shares (initial or proportional). u128 amounts as decimal strings. |
+| POST | `/api/pool/:id/withdraw` | Burn shares for proportional reserves. Energy-floor-gated. |
+| POST | `/api/pool/:id/swap_x_for_y` | Swap X→Y at xy=k. Applies `fee_bp` on input. |
+| POST | `/api/pool/:id/swap_y_for_x` | Symmetric Y→X. |
+| POST | `/api/pool/:id/reanchor` | Top up holder's LpShare energy back to `anchor_energy` so they can withdraw. |
+
+`/api/swap/{quote,execute}` automatically routes through a Singh Pool when one exists for the canonical pair-id (`"EVAP-FLUX"` is alphabetically-sorted pair convention; X is the smaller token). Oracle-priced 1:1 fallback when no pool. Response includes `route: "pool" | "oracle"` so callers can distinguish.
+
+Smoke test: `scripts/test-singh-pool.sh [URL]` — exercises register → create → mint → swap → withdraw → reanchor against a running node.
+
+### Four-act narrative spine + observability
+
+Per `INVENTION_STACK.md` Amendment 2 §A2.5: Birth (Genesis with LLSA-checked invariants), Life (Sentinel autonomic governance), Small Deaths (Tombstone + eulogy trie + evaporation MMR), Final Death (Mortis death certificate).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/four_act` | Snapshot. Account-side death: `eulogy_count`, `tombstone_addresses`, `eulogy_trie_root`, `mortis_*`. **Object-side death** (added 2026-05-08): `ghost_object_count`, `evaporation_mmr_size`, `evaporation_mmr_root`. **Conservation audit**: `last_conservation_audit_ok`, `last_conservation_violation_type` (`DecayIncreasedTotal` is the known doctrine-vs-emission gap; other variants are real breaches). **Doctrine enforcement**: `dead_producer_redirect_total` (energy redirected from tombstoned-validator rewards to refresh pool — non-zero only on the rare race where proposer-and-tombstoned-validator are the same in the same block; ratchet 4 jail-on-tombstone preempts otherwise). |
+| GET | `/api/account/:addr/demurrage_preview` | Forward-looking demurrage view. Returns `balance, last_touched_epoch, current_epoch, elapsed_epochs, pending_demurrage, balance_after_sweep, params`. Pure read; no chain mutation. With testnet-calibrated threshold of 250k EVP (commit `7bdbfaf`), accounts above threshold see non-zero `pending_demurrage` per epoch. |
+
+Note on `light_cone_block_count`: this is a windowed count of currently-retained Light-Cone DAG blocks (sliding-window-pruned via `prune_before_epoch` on every epoch boundary). It is **not** chain block height. Use `/api/blocks?limit=1` for the canonical block-height read.
+
+### Cluster ops
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/admin/drain` | Mark this node as draining. Consensus stops proposing/voting so peers route around the node before binary swap. Auth: Bearer `EVAPORCHAIN_ADMIN_KEY`. |
+| POST | `/api/admin/undrain` | Clear the drain flag. |
+| GET | `/api/admin/drain/status` | Current drain state. |
+
+Stop-the-world deploy procedure: see `docs/runbooks/cluster-deploy.md` — captures the macOS launchd race (`launchctl unload` BEFORE `pkill`), the systemd `Restart=on-failure` surprise (use a `.new` path during deploy), and recovery from a forked cluster via data-dir wipe + sync from peers.
+
 ## Run Locally
 
 ```bash
