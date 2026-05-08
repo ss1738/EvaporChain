@@ -65,6 +65,15 @@ pub enum Commands {
         #[arg(long)]
         wait: bool,
     },
+    /// Paymaster-sponsored transactions (Option B per
+    /// docs/MULTI_TOKEN_GAS_OPTIONS.md). The paymaster pays gas; the
+    /// sender provides the signed intent. Requires a running
+    /// `evaporchain-paymaster` service URL and a hybrid keypair on
+    /// the active account.
+    Paymaster {
+        #[command(subcommand)]
+        action: PaymasterAction,
+    },
     /// Request testnet tokens from faucet.
     Faucet,
     /// View state objects.
@@ -740,6 +749,41 @@ pub enum Commands {
     Coverage {
         #[command(subcommand)]
         action: CoverageAction,
+    },
+}
+
+/// Subcommands for `wallet paymaster ...`. Pairs with the
+/// `evaporchain-paymaster` service (see `docs/runbooks/paymaster.md`).
+#[derive(Subcommand)]
+pub enum PaymasterAction {
+    /// Query a paymaster service: prints its address, next-nonce,
+    /// and the chain_id it signs for. Run this before `send` to
+    /// confirm the paymaster targets the chain you're sending on.
+    Info {
+        /// Paymaster service URL (e.g. `http://localhost:8088`).
+        url: String,
+    },
+    /// Send a sponsored Transfer. The paymaster pays gas; the active
+    /// account signs the intent. Requires a HYBRID keypair on the
+    /// active account (post-2026 audit default); ML-DSA-only legacy
+    /// keys are rejected with a clear error.
+    Send {
+        /// Recipient address (0x hex).
+        to: String,
+        /// Amount to send (EVP units).
+        amount: u64,
+        /// Paymaster service URL.
+        #[arg(long)]
+        paymaster: String,
+        /// Gas limit committed to the paymaster sponsorship sig.
+        /// Must be ≥ GAS_TRANSFER (21,000); the paymaster will be
+        /// debited `call_gas_limit + GAS_USER_OP` (= 30,000) at
+        /// execute time.
+        #[arg(long, default_value = "50000")]
+        call_gas_limit: u64,
+        /// Wait for on-chain confirmation after submission.
+        #[arg(long)]
+        wait: bool,
     },
 }
 
@@ -4366,6 +4410,9 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?
         }
+        Commands::Paymaster { action } => {
+            cmd_paymaster(action, rpc, &keystore_path, &history_path).await?
+        }
         Commands::Faucet => cmd_faucet(rpc, &keystore_path).await?,
         Commands::Objects => cmd_objects(rpc).await?,
         Commands::Object { id } => cmd_object(rpc, &id).await?,
@@ -4940,6 +4987,159 @@ async fn cmd_faucet(rpc: RpcClient, keystore_path: &str) -> Result<(), Box<dyn s
         );
     }
     Ok(())
+}
+
+/// Handler for `wallet paymaster ...`. Two branches:
+///   - `Info {url}`: GET /info on the paymaster service, print the
+///     address + next paymaster_nonce + chain_id. Read-only; no
+///     keystore touch.
+///   - `Send {to, amount, paymaster, ...}`: full sponsored Transfer.
+///     Loads the active account's hybrid keypair, fetches the chain's
+///     account nonce + the paymaster's next nonce, builds the UserOp,
+///     stamps the user-side signature, asks the paymaster for its
+///     sponsorship signature, and submits the doubly-signed UserOp
+///     via `POST /api/tx/user_op`.
+async fn cmd_paymaster(
+    action: PaymasterAction,
+    rpc: RpcClient,
+    keystore_path: &str,
+    history_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::paymaster::{build_unsigned_user_op, sign_user_op_as_sender, PaymasterClient};
+    use evaporchain_types::{Transaction, TransferTx};
+
+    match action {
+        PaymasterAction::Info { url } => {
+            let client = PaymasterClient::new(&url)?;
+            let info = client.info().await?;
+            if crate::output::is_json_mode() {
+                crate::output::print_json(&info);
+            } else {
+                println!(
+                    "{} paymaster: 0x{}",
+                    "OK".green().bold(),
+                    info.paymaster_address_hex
+                );
+                println!("   chain_id:           {}", info.chain_id);
+                println!("   next paymaster nonce: {}", info.next_paymaster_nonce);
+            }
+        }
+        PaymasterAction::Send {
+            to,
+            amount,
+            paymaster,
+            call_gas_limit,
+            wait,
+        } => {
+            validation::validate_recipient(&to)?;
+            validation::validate_amount(amount)?;
+            if call_gas_limit < evaporchain_execution_gas_transfer() {
+                return Err(format!(
+                    "call_gas_limit must be ≥ GAS_TRANSFER ({}); got {}",
+                    evaporchain_execution_gas_transfer(),
+                    call_gas_limit
+                )
+                .into());
+            }
+
+            let keystore = load_or_create_keystore(keystore_path);
+            let mut mgr = AccountManager::new(keystore, rpc);
+            let name = require_active(&mgr)?;
+            let from_addr_hex = mgr.active_address_hex().unwrap_or_default();
+
+            // Resolve sender address to the AccountAddress bytes.
+            let sender = parse_address(&from_addr_hex)?;
+            let to_addr = parse_address(&to)?;
+
+            // Discover paymaster + read its next-nonce.
+            let pm_client = PaymasterClient::new(&paymaster)?;
+            let pm_info = pm_client.info().await?;
+            let pm_addr_bytes: [u8; 32] = {
+                let mut buf = [0u8; 32];
+                hex::decode_to_slice(&pm_info.paymaster_address_hex, &mut buf)
+                    .map_err(|e| format!("paymaster /info returned bad address hex: {e}"))?;
+                buf
+            };
+
+            // Active account's chain-side nonce.
+            let (_balance, sender_nonce) = mgr.refresh_balance(&name).await?;
+
+            // Unlock the hybrid keypair. Sponsored UserOps require
+            // hybrid signing (post-2026 audit default); the
+            // `unlock_hybrid_key` path will surface a clear error if
+            // the entry is ML-DSA-only — caller can re-import as
+            // hybrid via `account import`.
+            let password = prompt_password("Enter password")?;
+            let hybrid_kp = mgr.keystore().unlock_hybrid_key(&name, &password)?;
+
+            // Build the inner Transfer + wrap it in a UserOp.
+            let inner = Transaction::Transfer(TransferTx {
+                from: sender,
+                to: to_addr,
+                amount,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            });
+            let mut user_op =
+                build_unsigned_user_op(sender, sender_nonce, &inner, call_gas_limit)?;
+            user_op.paymaster = Some(pm_addr_bytes);
+            user_op.paymaster_nonce = Some(pm_info.next_paymaster_nonce);
+
+            // 1) User signs the UserOp body (chain-id-aware).
+            sign_user_op_as_sender(&mut user_op, &pm_info.chain_id, &hybrid_kp);
+
+            // 2) Paymaster service stamps its sponsorship sig.
+            let resp = pm_client.sponsor(user_op).await?;
+            let signed = resp.user_op;
+
+            // 3) Submit the doubly-signed UserOp to the chain.
+            let result = mgr.rpc().submit_user_op(&signed).await?;
+
+            if let Some(ref hash) = result.tx_hash {
+                record_tx(
+                    history_path,
+                    "PaymasterSend",
+                    &from_addr_hex,
+                    Some(&to),
+                    Some(amount),
+                    hash,
+                );
+            }
+
+            if crate::output::is_json_mode() {
+                crate::output::print_json(&result);
+            } else if result.success {
+                println!("{} {}", "OK".green().bold(), result.message);
+                if let Some(ref hash) = result.tx_hash {
+                    println!("   Tx Hash: {}", hash);
+                    println!("   Paymaster: 0x{}", resp.paymaster_address_hex);
+                    println!("   Paymaster nonce: {}", resp.paymaster_nonce);
+                    if wait {
+                        let rpc2 = RpcClient::new(mgr.rpc().base_url())?;
+                        let pipeline = TxPipeline::new(rpc2);
+                        await_confirmation(&pipeline, hash).await;
+                    }
+                }
+            } else {
+                println!(
+                    "{} {}",
+                    "FAIL".red().bold(),
+                    result.message
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bridge to the chain's `GAS_TRANSFER` constant (= 21,000) without
+/// pulling `evaporchain-execution` into the wallet's dependency
+/// graph. The constant is stable; if it ever changes, this needs an
+/// update — guarded by the value-check at the top of cmd_paymaster.
+fn evaporchain_execution_gas_transfer() -> u64 {
+    21_000
 }
 
 async fn cmd_objects(rpc: RpcClient) -> Result<(), Box<dyn std::error::Error>> {
