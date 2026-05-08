@@ -29,9 +29,32 @@ use evaporchain_types::{
 
 use evaporchain_crypto::signatures::HybridKeypair;
 
-/// Spawn the real paymaster HTTP server in a tokio task.
+/// Spawn the real paymaster HTTP server in a tokio task with the
+/// permissive profile (no user-sig pre-check, no rate limiting). Used
+/// by tests that exercise chain-side enforcement and don't construct
+/// user-side signatures.
 async fn spawn_paymaster(
     chain_id: &str,
+) -> (
+    String, /* base url */
+    AccountAddress,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    spawn_paymaster_with_config(
+        chain_id,
+        evaporchain_paymaster::PaymasterConfig::permissive(),
+    )
+    .await
+}
+
+/// Spawn the real paymaster HTTP server with explicit config. The
+/// strict-mode E2E test (audit fix #7) uses this with the default
+/// (`require_user_sig: true`) config so the full
+/// chain-id-bound-user-sig + sponsorship-sig + execute_block
+/// pipeline is proven end-to-end in a single test.
+async fn spawn_paymaster_with_config(
+    chain_id: &str,
+    config: evaporchain_paymaster::PaymasterConfig,
 ) -> (
     String, /* base url */
     AccountAddress,
@@ -46,17 +69,9 @@ async fn spawn_paymaster(
     Box::leak(Box::new(tmp));
 
     let kp = HybridKeypair::generate();
-    // Permissive profile — the integration tests don't construct
-    // user-side sigs, they exercise the chain-side enforcement path.
-    // Strict-mode behaviour is unit-tested in evaporchain-paymaster.
     let paymaster = Arc::new(
-        Paymaster::new_with_config(
-            kp,
-            chain_id.to_string(),
-            nonce_file,
-            evaporchain_paymaster::PaymasterConfig::permissive(),
-        )
-        .expect("paymaster"),
+        Paymaster::new_with_config(kp, chain_id.to_string(), nonce_file, config)
+            .expect("paymaster"),
     );
     let pm_addr = paymaster.address();
 
@@ -352,4 +367,196 @@ async fn paymaster_e2e_rejects_tampered_call_data_at_chain_layer() {
     assert_eq!(pm.nonce, 0);
     let s = db.get_account(&sender).expect("sender exists");
     assert_eq!(s.balance, 1_000, "sender NOT debited on tamper");
+}
+
+// ─── Audit fix #7 (2026-05-09): strict-mode E2E ────────────────────────
+//
+// Pre-fix the paymaster_e2e suite ran exclusively under
+// `PaymasterConfig::permissive()` (no user-sig pre-check). The full
+// chain-id-bound user-sig + sponsorship-sig + execute_block pipeline
+// worked by construction — both ends use the same canonical messages
+// — but no test exercised it together.
+//
+// This test closes that gap. Pipeline:
+//   1. Chain runs with verify_signatures: true, chain_id bound.
+//   2. Wallet (user) signs `Transaction::UserOp(user_op).signing_message(chain_id)`.
+//   3. POST /sponsor — paymaster verifies the user sig (strict mode)
+//      and only then signs sponsorship.
+//   4. Returned UserOp wrapped in a Block.
+//   5. SimpleExecutor::new_with_sig_verification verifies the user
+//      sig AGAIN at execute time (chain-side); execute_user_op
+//      verifies the sponsorship sig.
+//   6. Inner Transfer dispatched — sender debited, recipient credited,
+//      paymaster gas debited.
+//
+// Two invariants asserted: txs_executed == 1, AND every sig check
+// along the way passed (otherwise the tx would land as txs_failed).
+
+#[tokio::test]
+async fn paymaster_e2e_strict_mode_full_pipeline() {
+    use evaporchain_crypto::signatures::{HybridKeypair, Signer};
+
+    let chain_id = "evaporchain-strict-e2e";
+    let (pm_url, pm_addr, _shutdown) = spawn_paymaster_with_config(
+        chain_id,
+        evaporchain_paymaster::PaymasterConfig::default(),
+    )
+    .await;
+
+    // ── Wallet side: build + sign UserOp.
+    let user_kp = HybridKeypair::generate();
+    let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+    let recipient: AccountAddress = [9u8; 32];
+
+    let inner = Transaction::Transfer(TransferTx {
+        from: sender,
+        to: recipient,
+        amount: 500,
+        nonce: 0,
+        signature: None,
+        public_key: None,
+        mev_refund_eligible: None,
+    });
+    let mut user_op = UserOpTx {
+        sender,
+        nonce: 0,
+        call_data: serde_json::to_vec(&inner).unwrap(),
+        call_gas_limit: 50_000,
+        // Wallet pre-stamps paymaster + paymaster_nonce so the user sig
+        // commits to BOTH (the paymaster overwrites paymaster to its
+        // own address before the strict-mode user-sig check; if the
+        // wallet pre-stamps a different paymaster, the user sig would
+        // mismatch and /sponsor would 400).
+        paymaster: Some(pm_addr),
+        paymaster_nonce: Some(0),
+        paymaster_data: None,
+        paymaster_signature: None,
+        paymaster_public_key: None,
+        signature: None,
+        public_key: None,
+    };
+    // User signs over the chain-canonical message (same shape both
+    // paymaster strict-mode AND chain verify_tx_signature use).
+    let canonical = Transaction::UserOp(user_op.clone()).signing_message(chain_id);
+    user_op.signature = Some(user_kp.sign(&canonical));
+    user_op.public_key = Some(user_kp.public_key_bytes());
+
+    // ── POST /sponsor — paymaster verifies user sig + signs sponsorship.
+    let http = reqwest::Client::new();
+    let req = SponsorshipRequest { user_op };
+    let resp: SponsorshipResponse = http
+        .post(format!("{pm_url}/sponsor"))
+        .json(&req)
+        .send()
+        .await
+        .expect("POST")
+        .error_for_status()
+        .expect("strict-mode /sponsor must succeed for properly signed UserOp")
+        .json()
+        .await
+        .expect("decode");
+    let signed_user_op = resp.user_op;
+    assert!(signed_user_op.signature.is_some(), "user sig preserved");
+    assert!(signed_user_op.paymaster_signature.is_some(), "sponsorship sig stamped");
+
+    // ── Chain side: full verify_signatures=true block execution.
+    let mut db = InMemoryStateDB::new();
+    db.put_account(Account {
+        address: sender,
+        balance: 1_000,
+        nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
+        last_touched_epoch: 0,
+        vesting: None,
+    });
+    db.put_account(Account {
+        address: pm_addr,
+        balance: 1_000_000,
+        nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
+        last_touched_epoch: 0,
+        vesting: None,
+    });
+
+    let mut executor = evaporchain_execution::SimpleExecutor::new_with_sig_verification(7);
+    executor.set_chain_id(chain_id.to_string());
+
+    let mut block = block_with_one_tx(1, Transaction::UserOp(signed_user_op));
+    block.chain_id = chain_id.to_string();
+    let result = executor
+        .execute_block(&mut db, &block)
+        .expect("execute_block returns Ok with per-tx outcomes");
+    assert_eq!(
+        result.txs_failed, 0,
+        "strict-mode E2E must pass every sig check; outcomes={:?}",
+        result.tx_outcomes
+    );
+    assert_eq!(result.txs_executed, 1);
+
+    // ── State assertions.
+    let s = db.get_account(&sender).expect("sender");
+    assert_eq!(s.balance, 500, "sender debited inner transfer");
+    assert_eq!(s.nonce, 1, "sender nonce bumped exactly once");
+    let r = db.get_account(&recipient).expect("recipient");
+    assert_eq!(r.balance, 500);
+    let pm = db.get_account(&pm_addr).expect("paymaster");
+    assert!(pm.balance < 1_000_000, "paymaster gas-debited");
+    assert_eq!(pm.nonce, 1, "paymaster nonce bumped");
+}
+
+#[tokio::test]
+async fn paymaster_e2e_strict_mode_rejects_unsigned_userop() {
+    // Negative case: strict-mode paymaster receives a UserOp without
+    // a user signature. /sponsor returns 400 InvalidUserSignature
+    // BEFORE allocating a sponsorship nonce — the paymaster pays no
+    // gas and the chain never sees the bad request.
+    let chain_id = "evaporchain-strict-e2e-neg";
+    let (pm_url, pm_addr, _shutdown) = spawn_paymaster_with_config(
+        chain_id,
+        evaporchain_paymaster::PaymasterConfig::default(),
+    )
+    .await;
+
+    let inner = Transaction::Transfer(TransferTx {
+        from: [1u8; 32],
+        to: [9u8; 32],
+        amount: 1,
+        nonce: 0,
+        signature: None,
+        public_key: None,
+        mev_refund_eligible: None,
+    });
+    let user_op = UserOpTx {
+        sender: [1u8; 32],
+        nonce: 0,
+        call_data: serde_json::to_vec(&inner).unwrap(),
+        call_gas_limit: 1_000,
+        paymaster: Some(pm_addr),
+        paymaster_nonce: Some(0),
+        paymaster_data: None,
+        paymaster_signature: None,
+        paymaster_public_key: None,
+        signature: None, // ← no user sig
+        public_key: None,
+    };
+
+    let http = reqwest::Client::new();
+    let resp = http
+        .post(format!("{pm_url}/sponsor"))
+        .json(&SponsorshipRequest { user_op })
+        .send()
+        .await
+        .expect("POST");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "strict-mode /sponsor must reject UserOp without user sig"
+    );
+    let body = resp.text().await.unwrap_or_default();
+    assert!(
+        body.contains("user signature missing or invalid"),
+        "error body must name the user sig as the cause: got {body:?}"
+    );
 }
