@@ -62,7 +62,7 @@ Coming soon. Infrastructure is Terraform-ready (`deploy/terraform/modules/hetzne
 | Layer | Implementation |
 |-------|----------------|
 | Language | Rust |
-| Smart Contracts | 8 template contracts + EvaporScript (custom 65-opcode VM) |
+| Smart Contracts | 8 template contracts + EvaporScript (custom 44-opcode VM) |
 | Consensus | Tendermint BFT with BLS aggregation + VRF leader election |
 | Execution | SimpleExecutor with gas metering + PID fee controller |
 | ZK Proofs | Nova IVC recursive proof folding |

@@ -4,7 +4,7 @@
 Decay-Native Smart Contract Patterns: Lifecycle Hooks Inspired by Move
 
 ## Description
-EvaporChain is an independent Layer-1 blockchain whose smart contract VM (EvaporScript) implements thermodynamic state decay as a first-class language primitive — every on-chain object carries an explicit energy budget that depletes over time, and contracts react via lifecycle hooks (`on_grace`, `on_refresh`, `on_evaporate`). EvaporScript is **not** Move-compatible — it is a custom 65-opcode integer-arithmetic VM. The grant funds research demonstrating lifecycle patterns Move could adopt to extend its object model with temporal types.
+EvaporChain is an independent Layer-1 blockchain whose smart contract VM (EvaporScript) implements thermodynamic state decay as a first-class language primitive — every on-chain object carries an explicit energy budget that depletes over time, and contracts react via lifecycle hooks (`on_grace`, `on_refresh`, `on_evaporate`). EvaporScript is **not** Move-compatible — it is a custom 44-opcode integer-arithmetic VM. The grant funds research demonstrating lifecycle patterns Move could adopt to extend its object model with temporal types.
 
 We are not asking Sui to depend on EvaporChain. We are asking Sui to fund the research that prototypes patterns Move-the-language could choose to adopt later — an independent reference implementation showing that temporal validity can live at the type level, with empirical performance + correctness data the Move language designers can use as input.
 
