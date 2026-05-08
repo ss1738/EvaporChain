@@ -101,9 +101,10 @@ The wallet now catches this and reports `REJECTED at block #N (failed at executi
 | `/api/tx/create-object` | gas + storage_deposit | `b54ef9a` |
 | `/api/tx/deploy_contract` | gas + storage_deposit | `6c830a4` |
 | `/api/tx/deploy_script` | gas + storage_deposit | `6c830a4` |
+| `/api/tx/undelegate` | gas only (no balance OUT, just adjusts delegation amount) | `5f3caf4` |
 | `/api/tx/refresh` | N/A — `Transaction::sender()` returns `None` for refresh; no balance debit, no bug | — |
 
-Other endpoints exist (`/api/tx/validator_stake`, `/api/tx/shield`, `/api/tx/undelegate`, governance, multisig, etc) but are lower-priority (less common user-facing paths) — same pre-check pattern applies if/when needed.
+`validator_stake` / `shield` don't have dedicated `/api/tx/...` endpoints (submitted via batch, governance, or multisig wrapping). Same pre-check pattern applies if those endpoints are ever exposed.
 
 The originally-mis-framed "reorg-rejection finality instability" of finding #1 — diagnosed via code audit at `9474891` to be the missing-gas pre-check in `api.rs:10038` — is now closed at every endpoint where the bug can occur. Sister-session can deploy the new chain binary at any cadence; the wallet's runtime UX (commit `72f7b49`) correctly reports the post-execution rejection until the binary catches up, then becomes mostly cosmetic for these paths.
 
