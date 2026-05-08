@@ -69,14 +69,22 @@ async fn spawn_paymaster(
     }
     async fn sponsor(
         State(s): State<AppState>,
+        headers: axum::http::HeaderMap,
         Json(req): Json<SponsorshipRequest>,
     ) -> Result<Json<SponsorshipResponse>, (StatusCode, String)> {
+        // Mirror the binary's Day 12 idempotency wiring.
+        let idempotency_key = headers
+            .get("idempotency-key")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
         let mut user_op = req.user_op;
-        let assigned = s.paymaster.sponsor(&mut user_op).map_err(
-            |e: evaporchain_paymaster::PaymasterError| {
+        let outcome = s
+            .paymaster
+            .sponsor_idempotent(idempotency_key.as_deref(), &mut user_op)
+            .map_err(|e: evaporchain_paymaster::PaymasterError| {
                 (StatusCode::BAD_REQUEST, e.to_string())
-            },
-        )?;
+            })?;
+        let assigned = outcome.paymaster_nonce();
         Ok(Json(SponsorshipResponse {
             user_op,
             paymaster_address_hex: hex::encode(s.paymaster.address()),

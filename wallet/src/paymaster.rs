@@ -101,16 +101,49 @@ impl PaymasterClient {
     /// signature on `user_op`. The paymaster overwrites `paymaster`,
     /// `paymaster_nonce`, `paymaster_signature`, and
     /// `paymaster_public_key`; everything else round-trips unchanged.
+    ///
+    /// Day 12B: an `Idempotency-Key` header derived from the UserOp
+    /// body is auto-attached. Wallet retries on the same logical
+    /// sponsorship (e.g., reqwest connection-reset → retry) collide
+    /// on the same key, so the paymaster returns its cached response
+    /// instead of allocating a fresh nonce. See
+    /// `idempotency_key_for_user_op` for the derivation.
+    ///
+    /// Paymasters with idempotency disabled (`idempotency_max_keys =
+    /// 0`) silently ignore the header — there's no behaviour
+    /// regression for the wallet.
     pub async fn sponsor(
         &self,
         user_op: UserOpTx,
+    ) -> Result<SponsorshipResponse, PaymasterClientError> {
+        let key = idempotency_key_for_user_op(&user_op);
+        self.sponsor_with_idempotency_key(user_op, &key).await
+    }
+
+    /// Caller-supplied idempotency key variant. Use this when the
+    /// wallet wants to override the deterministic body-derived key —
+    /// e.g., a UUID-per-sponsorship policy that prevents accidental
+    /// cross-restart replays. Most wallets should use `sponsor()`,
+    /// which uses the body-derived key (retry-safe across wallet
+    /// restarts because the same UserOp body always hashes to the
+    /// same key).
+    pub async fn sponsor_with_idempotency_key(
+        &self,
+        user_op: UserOpTx,
+        idempotency_key: &str,
     ) -> Result<SponsorshipResponse, PaymasterClientError> {
         let url = self
             .base_url
             .join("sponsor")
             .map_err(|e| PaymasterClientError::InvalidUrl(e.to_string()))?;
         let req = SponsorshipRequest { user_op };
-        let resp = self.http.post(url).json(&req).send().await?;
+        let resp = self
+            .http
+            .post(url)
+            .header("idempotency-key", idempotency_key)
+            .json(&req)
+            .send()
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -121,6 +154,50 @@ impl PaymasterClient {
         }
         Ok(resp.json().await?)
     }
+}
+
+/// Deterministic idempotency key derived from the UserOp body. Two
+/// retries of the same logical sponsorship collide on the same key
+/// (so the paymaster replays its cached response); two different
+/// sponsorships from the same sender (different `sender_nonce` or
+/// different `call_data`) get different keys.
+///
+/// Inputs hashed:
+///   - `sender`             (32 bytes)
+///   - `sender_nonce`       (8 bytes LE)
+///   - `call_gas_limit`     (8 bytes LE)
+///   - `call_data`          (variable; length-prefixed)
+///   - `paymaster`          (32 bytes if Some, else 0u8)
+///
+/// Excluded:
+///   - `paymaster_nonce`    (the paymaster controls this; wallet
+///     doesn't know it ahead of time and shouldn't have to)
+///   - `paymaster_signature` / `paymaster_public_key` (filled by
+///     the paymaster post-/sponsor)
+///   - `signature` / `public_key` (the user's sig — but two retries
+///     of the same intent should sign the same body, so excluding
+///     for forwards-compat with future signing-flow changes)
+///
+/// The result is a hex-encoded BLAKE3-256 digest, suitable as an
+/// `Idempotency-Key` header value (ASCII, no special characters).
+pub fn idempotency_key_for_user_op(user_op: &UserOpTx) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"evaporchain:wallet:idempotency:v1\0");
+    hasher.update(&user_op.sender);
+    hasher.update(&user_op.nonce.to_le_bytes());
+    hasher.update(&user_op.call_gas_limit.to_le_bytes());
+    hasher.update(&(user_op.call_data.len() as u64).to_le_bytes());
+    hasher.update(&user_op.call_data);
+    match user_op.paymaster {
+        Some(addr) => {
+            hasher.update(&[1u8]);
+            hasher.update(&addr);
+        }
+        None => {
+            hasher.update(&[0u8]);
+        }
+    }
+    hex::encode(hasher.finalize().as_bytes())
 }
 
 /// Build the half-formed `UserOpTx` a wallet sends to a paymaster.
@@ -261,14 +338,24 @@ mod tests {
         }
         async fn sponsor(
             State(state): State<AppState>,
+            headers: axum::http::HeaderMap,
             Json(req): Json<SponsorshipRequest>,
         ) -> Result<Json<SponsorshipResponse>, (StatusCode, String)> {
+            // Mirror the binary's Day 12 idempotency wiring so wallet
+            // tests that POST with an Idempotency-Key header exercise
+            // the cache.
+            let idempotency_key = headers
+                .get("idempotency-key")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let mut user_op = req.user_op;
-            let assigned = state.paymaster.sponsor(&mut user_op).map_err(
-                |e: evaporchain_paymaster::PaymasterError| {
+            let outcome = state
+                .paymaster
+                .sponsor_idempotent(idempotency_key.as_deref(), &mut user_op)
+                .map_err(|e: evaporchain_paymaster::PaymasterError| {
                     (StatusCode::BAD_REQUEST, e.to_string())
-                },
-            )?;
+                })?;
+            let assigned = outcome.paymaster_nonce();
             Ok(Json(SponsorshipResponse {
                 user_op,
                 paymaster_address_hex: hex::encode(state.paymaster.address()),
@@ -354,6 +441,9 @@ mod tests {
 
     #[tokio::test]
     async fn sponsor_assigns_monotonic_nonces_across_calls() {
+        // Three DISTINCT sponsorships from the same wallet — sender
+        // nonce advances each iteration (the realistic flow). Distinct
+        // bodies → distinct idempotency keys → distinct paymaster_nonces.
         let (client, _, _shutdown) = spawn_paymaster_for_test("test").await;
         let sender: AccountAddress = [1u8; 32];
         let inner = Transaction::Transfer(TransferTx {
@@ -367,8 +457,8 @@ mod tests {
         });
 
         let mut nonces = Vec::new();
-        for _ in 0..3 {
-            let uo = build_unsigned_user_op(sender, 0, &inner, 1000).unwrap();
+        for sender_nonce in 0..3 {
+            let uo = build_unsigned_user_op(sender, sender_nonce, &inner, 1000).unwrap();
             let resp = client.sponsor(uo).await.unwrap();
             nonces.push(resp.paymaster_nonce);
         }
@@ -514,6 +604,149 @@ mod tests {
         // signed over. Otherwise a malicious paymaster could redirect
         // the user's intent.
         assert_eq!(returned.paymaster, Some(pm_addr));
+    }
+
+    // ─── Day 12B: wallet-side idempotency tests ───────────────────────
+
+    #[tokio::test]
+    async fn wallet_retry_under_same_user_op_returns_same_paymaster_nonce() {
+        // The big claim: with auto-idempotency, a wallet retry on the
+        // same logical sponsorship gets the SAME paymaster_nonce + sig
+        // back from the paymaster (not a fresh allocation). This is
+        // what closes the "two distinct UserOps; chain accepts one"
+        // bug.
+        let chain_id = "evaporchain-mainnet";
+        let (client, pm_addr, _shutdown) = spawn_paymaster_for_test(chain_id).await;
+
+        let inner = Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [9u8; 32],
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let user_op = build_unsigned_user_op([1u8; 32], 0, &inner, 50_000).unwrap();
+
+        // First call — Fresh on the paymaster side.
+        let r1 = client.sponsor(user_op.clone()).await.unwrap();
+        let r1_nonce = r1.paymaster_nonce;
+        let r1_sig = r1.user_op.paymaster_signature.clone().unwrap();
+
+        // Retry — the wallet rebuilds the same UserOp body and calls
+        // sponsor() again. The body-derived idempotency key collides;
+        // the paymaster replays its cached response.
+        let r2 = client.sponsor(user_op).await.unwrap();
+        assert_eq!(r2.paymaster_nonce, r1_nonce, "retry must replay nonce");
+        assert_eq!(
+            r2.user_op.paymaster_signature.as_ref().unwrap(),
+            &r1_sig,
+            "retry must replay signature byte-for-byte"
+        );
+        assert_eq!(r2.paymaster_address_hex, hex::encode(pm_addr));
+    }
+
+    #[tokio::test]
+    async fn distinct_user_ops_get_distinct_paymaster_nonces() {
+        // Different UserOps (different sender_nonce) hash to different
+        // idempotency keys → both get fresh allocations.
+        let (client, _, _shutdown) = spawn_paymaster_for_test("test").await;
+        let inner = Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [9u8; 32],
+            amount: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let uo1 = build_unsigned_user_op([1u8; 32], 0, &inner, 1000).unwrap();
+        let uo2 = build_unsigned_user_op([1u8; 32], 1, &inner, 1000).unwrap();
+        let r1 = client.sponsor(uo1).await.unwrap();
+        let r2 = client.sponsor(uo2).await.unwrap();
+        assert_ne!(r1.paymaster_nonce, r2.paymaster_nonce);
+    }
+
+    #[test]
+    fn idempotency_key_is_deterministic_for_same_body() {
+        let inner = Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [9u8; 32],
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let uo1 = build_unsigned_user_op([1u8; 32], 0, &inner, 50_000).unwrap();
+        let uo2 = build_unsigned_user_op([1u8; 32], 0, &inner, 50_000).unwrap();
+        assert_eq!(
+            idempotency_key_for_user_op(&uo1),
+            idempotency_key_for_user_op(&uo2)
+        );
+    }
+
+    #[test]
+    fn idempotency_key_diverges_on_meaningful_changes() {
+        let inner = Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [9u8; 32],
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let base = build_unsigned_user_op([1u8; 32], 0, &inner, 50_000).unwrap();
+        let base_key = idempotency_key_for_user_op(&base);
+
+        // Different sender_nonce
+        let mut variant = base.clone();
+        variant.nonce = 1;
+        assert_ne!(idempotency_key_for_user_op(&variant), base_key);
+
+        // Different call_data
+        let mut variant = base.clone();
+        variant.call_data = b"different-intent".to_vec();
+        assert_ne!(idempotency_key_for_user_op(&variant), base_key);
+
+        // Different call_gas_limit
+        let mut variant = base.clone();
+        variant.call_gas_limit = 99_999;
+        assert_ne!(idempotency_key_for_user_op(&variant), base_key);
+
+        // Different paymaster (None vs Some)
+        let mut variant = base.clone();
+        variant.paymaster = Some([7u8; 32]);
+        assert_ne!(idempotency_key_for_user_op(&variant), base_key);
+    }
+
+    #[test]
+    fn idempotency_key_ignores_post_signing_fields() {
+        // paymaster_nonce, paymaster_signature, paymaster_public_key
+        // are filled in by the paymaster service AFTER /sponsor, so
+        // they MUST NOT influence the wallet-side idempotency key —
+        // otherwise a retry would compute a different key (the wallet
+        // would have stamped the post-/sponsor fields on the first
+        // attempt) and fail to replay.
+        let inner = Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [9u8; 32],
+            amount: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let base = build_unsigned_user_op([1u8; 32], 0, &inner, 1000).unwrap();
+        let base_key = idempotency_key_for_user_op(&base);
+
+        let mut after_sponsor = base.clone();
+        after_sponsor.paymaster_nonce = Some(7);
+        after_sponsor.paymaster_signature = Some(vec![0u8; 32]);
+        after_sponsor.paymaster_public_key = Some(vec![1u8; 32]);
+        assert_eq!(idempotency_key_for_user_op(&after_sponsor), base_key);
     }
 
     #[test]
