@@ -3653,7 +3653,9 @@ async fn main() -> Result<()> {
             hbct_oracle: Arc::new(Mutex::new(
                 evaporchain_hbct::oracle::MockOracleFeed::default(),
             )),
-            singh_pools: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
+            singh_pools: Arc::new(Mutex::new(api::load_pools(Some(
+                &std::path::PathBuf::from(&args.data_dir),
+            )))),
             // 1_000_000-energy quantum: per doctrine §4.1 #3 the tick
             // rate is governance-set; this is a launch placeholder.
             lamport_clock: Arc::new(Mutex::new(evaporchain_decay_lamport::LamportClock::new(

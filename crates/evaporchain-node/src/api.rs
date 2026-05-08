@@ -12975,6 +12975,79 @@ async fn get_pool_detail(
     }))
 }
 
+// ── Stage 3b persistence helpers ──────────────────────────────────────
+
+/// Path to the on-disk pool state file inside the node's data dir.
+/// `<data_dir>/singh_pools.json`. None when no data_dir is configured
+/// (in-memory-only mode — used for tests + fresh nodes).
+fn pool_state_path(data_dir: Option<&std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    data_dir.map(|d| d.join("singh_pools.json"))
+}
+
+/// Persist the current Singh Pool ledger to `<data_dir>/singh_pools.json`.
+/// Writes to a `.tmp` file first then renames atomically so a crash
+/// mid-write can't leave a corrupted JSON file behind. No-op when no
+/// data dir is configured. Errors logged but not propagated — pool
+/// mutations succeed in-memory regardless.
+fn persist_pools(state: &ApiState) {
+    let Some(target) = pool_state_path(state.data_dir.as_ref()) else {
+        return;
+    };
+    let pools = safe_lock(&state.singh_pools);
+    let payload = match serde_json::to_string(&*pools) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "singh_pools persist: serialize failed");
+            return;
+        }
+    };
+    drop(pools);
+    let tmp = target.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, payload.as_bytes()) {
+        tracing::warn!(error = %e, "singh_pools persist: tmp write failed");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        tracing::warn!(error = %e, "singh_pools persist: atomic rename failed");
+    }
+}
+
+/// Load the Singh Pool ledger from `<data_dir>/singh_pools.json` at
+/// node startup. Returns an empty map when the file doesn't exist
+/// (fresh node) or fails to deserialise (warn + treat as empty so
+/// the node still boots — operators can recreate pools from scratch).
+pub fn load_pools(
+    data_dir: Option<&std::path::PathBuf>,
+) -> std::collections::BTreeMap<String, evaporchain_cl_amm::SinghPool> {
+    let Some(path) = pool_state_path(data_dir) else {
+        return std::collections::BTreeMap::new();
+    };
+    if !path.exists() {
+        return std::collections::BTreeMap::new();
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "singh_pools load: deserialize failed — starting with empty pool map"
+                );
+                std::collections::BTreeMap::new()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %path.display(),
+                "singh_pools load: read failed — starting with empty pool map"
+            );
+            std::collections::BTreeMap::new()
+        }
+    }
+}
+
 // ── Stage 2 mutators ──────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -13015,6 +13088,8 @@ async fn post_pool_create(
         }
     };
     pools.insert(req.id.clone(), pool);
+    drop(pools);
+    persist_pools(&state);
     Json(serde_json::json!({
         "success": true,
         "id": req.id,
@@ -13063,16 +13138,22 @@ async fn post_pool_mint(
         return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
     };
     let holder = evaporchain_cl_amm::HolderId(holder_addr);
-    match pool.mint_initial(holder, amt_x, amt_y, req.anchor_energy, req.epoch) {
-        Ok(shares) => Json(serde_json::json!({
+    let result = pool.mint_initial(holder, amt_x, amt_y, req.anchor_energy, req.epoch);
+    let response = match result {
+        Ok(shares) => serde_json::json!({
             "success": true,
             "shares_minted": shares.to_string(),
             "reserve_x": pool.reserve_x().to_string(),
             "reserve_y": pool.reserve_y().to_string(),
             "total_shares": pool.total_shares().to_string(),
-        })),
-        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+        }),
+        Err(e) => serde_json::json!({"success": false, "message": format!("{:?}", e)}),
+    };
+    drop(pools);
+    if response["success"] == serde_json::Value::Bool(true) {
+        persist_pools(&state);
     }
+    Json(response)
 }
 
 #[derive(Deserialize)]
@@ -13106,17 +13187,23 @@ async fn post_pool_withdraw(
         return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
     };
     let holder = evaporchain_cl_amm::HolderId(holder_addr);
-    match pool.withdraw(holder, shares) {
-        Ok((out_x, out_y)) => Json(serde_json::json!({
+    let result = pool.withdraw(holder, shares);
+    let response = match result {
+        Ok((out_x, out_y)) => serde_json::json!({
             "success": true,
             "out_x": out_x.to_string(),
             "out_y": out_y.to_string(),
             "reserve_x": pool.reserve_x().to_string(),
             "reserve_y": pool.reserve_y().to_string(),
             "total_shares": pool.total_shares().to_string(),
-        })),
-        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+        }),
+        Err(e) => serde_json::json!({"success": false, "message": format!("{:?}", e)}),
+    };
+    drop(pools);
+    if response["success"] == serde_json::Value::Bool(true) {
+        persist_pools(&state);
     }
+    Json(response)
 }
 
 #[derive(Deserialize)]
@@ -13142,16 +13229,22 @@ async fn post_pool_swap_x_for_y(
     let Some(pool) = pools.get_mut(&id) else {
         return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
     };
-    match pool.swap_x_for_y(amt) {
-        Ok(out) => Json(serde_json::json!({
+    let result = pool.swap_x_for_y(amt);
+    let response = match result {
+        Ok(out) => serde_json::json!({
             "success": true,
             "amount_in": amt.to_string(),
             "amount_out": out.to_string(),
             "reserve_x": pool.reserve_x().to_string(),
             "reserve_y": pool.reserve_y().to_string(),
-        })),
-        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+        }),
+        Err(e) => serde_json::json!({"success": false, "message": format!("{:?}", e)}),
+    };
+    drop(pools);
+    if response["success"] == serde_json::Value::Bool(true) {
+        persist_pools(&state);
     }
+    Json(response)
 }
 
 /// POST /api/pool/:id/swap_y_for_x — symmetric counterpart.
@@ -13172,16 +13265,22 @@ async fn post_pool_swap_y_for_x(
     let Some(pool) = pools.get_mut(&id) else {
         return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
     };
-    match pool.swap_y_for_x(amt) {
-        Ok(out) => Json(serde_json::json!({
+    let result = pool.swap_y_for_x(amt);
+    let response = match result {
+        Ok(out) => serde_json::json!({
             "success": true,
             "amount_in": amt.to_string(),
             "amount_out": out.to_string(),
             "reserve_x": pool.reserve_x().to_string(),
             "reserve_y": pool.reserve_y().to_string(),
-        })),
-        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+        }),
+        Err(e) => serde_json::json!({"success": false, "message": format!("{:?}", e)}),
+    };
+    drop(pools);
+    if response["success"] == serde_json::Value::Bool(true) {
+        persist_pools(&state);
     }
+    Json(response)
 }
 
 #[derive(Deserialize)]
@@ -13213,10 +13312,16 @@ async fn post_pool_reanchor(
         return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
     };
     let holder = evaporchain_cl_amm::HolderId(holder_addr);
-    match pool.reanchor(holder, req.anchor_energy, req.epoch) {
-        Ok(()) => Json(serde_json::json!({"success": true})),
-        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+    let result = pool.reanchor(holder, req.anchor_energy, req.epoch);
+    let response = match result {
+        Ok(()) => serde_json::json!({"success": true}),
+        Err(e) => serde_json::json!({"success": false, "message": format!("{:?}", e)}),
+    };
+    drop(pools);
+    if response["success"] == serde_json::Value::Bool(true) {
+        persist_pools(&state);
     }
+    Json(response)
 }
 
 // ──────────────────────────── Swap (CFM-priced + Singh-Pool-routed) ────
@@ -13432,6 +13537,8 @@ async fn post_swap_execute(
                         }
                         // Commit the cloned (mutated) pool back as new state.
                         pools.insert(pool_id.clone(), clone);
+                        drop(pools);
+                        persist_pools(&state);
                         break 'route (out_u64, format!("pool:{}", pool_id));
                     }
                 }
