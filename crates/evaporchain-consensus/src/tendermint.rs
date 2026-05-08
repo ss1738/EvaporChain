@@ -6563,35 +6563,34 @@ impl TendermintConsensus {
             );
         }
 
-        // Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md is parked
-        // on the cluster: the speculative-execute approach (db.begin_batch
-        // → executor.execute_block → db.rollback_batch) is not safe
-        // because executor.execute_block mutates ParallelExecutor-
-        // internal state — reward_accumulator, mempool draining,
-        // contract_engine state — that begin_batch / rollback_batch
-        // does NOT restore. Calling the executor twice (pre-broadcast
-        // here, then post-broadcast on apply) produces non-deterministic
-        // results, and the cluster wedged on the cert-block-hash
-        // mismatch + DA-supermajority-not-reached pattern when the
-        // pre-execution variant of this hook was deployed 2026-05-08
-        // ~10:33Z.
+        // Phase 2 — POST_EXEC_STATE_VERIFICATION_PLAN.md.
         //
-        // Correct shapes for the next round:
-        //   (a) Snapshot executor state alongside db.begin_batch (and
-        //       restore on rollback). Touches every field on
-        //       ParallelExecutor.
-        //   (b) Clone-based simulate_execute (option iii of the design
-        //       doc). Allocates a full state copy every block.
-        //   (c) Move post_state_root assembly to the apply path: the
-        //       proposer's first real execution on its own broadcast
-        //       (which already happens) sets post_state_root on the
-        //       block BEFORE the cert is signed. Requires consensus
-        //       protocol change to delay cert assembly.
+        // Speculatively execute the finalised block to stamp
+        // `post_state_root` before broadcasting. Uses option (b)
+        // clone-based simulate_execute (see ParallelExecutorSnapshot):
         //
-        // Phase 2 stays parked while the design choice is made.
-        // Phase 3's warn-mode check stays in apply_block — it's a
-        // no-op when post_state_root is None, so it imposes no cost.
-        let _ = _db;
+        //   1. Snapshot the executor (O(n) clone of all accumulators).
+        //   2. Checkpoint the DB via `begin_batch`.
+        //   3. Run `execute_block` — executor + DB both mutate.
+        //   4. Capture `state_root` from the result.
+        //   5. Roll back DB (`rollback_batch`) + restore executor snapshot.
+        //      Both are now bit-identical to pre-simulation state.
+        //   6. Set `block.post_state_root = Some(state_root)`.
+        //
+        // If simulation errors (bad tx, out-of-gas, etc.) `post_state_root`
+        // stays `None`. Phase 3's warn-mode check silently skips `None`
+        // fields — no spurious mismatch warnings. `rollback_batch` is
+        // called unconditionally so the DB cannot leak simulation state.
+        {
+            let snap = self.executor.snapshot_for_simulation();
+            _db.begin_batch();
+            let sim = self.executor.execute_block(_db, &block);
+            _db.rollback_batch();
+            self.executor.restore_from_simulation(snap);
+            if let Ok(r) = sim {
+                block.post_state_root = Some(r.state_root);
+            }
+        }
 
         Some(block)
     }
