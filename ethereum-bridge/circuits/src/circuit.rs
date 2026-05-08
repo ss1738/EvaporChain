@@ -18,6 +18,7 @@
 
 use core::marker::PhantomData;
 
+use ff::Field;
 use generic_array::typenum::U24;
 use nova_snark::{
     frontend::{
@@ -153,7 +154,7 @@ impl<G: Group> StepCircuit<G::Scalar> for VerkleStepCircuit<G> {
             sponge.start(parameter, None, acc);
             SpongeAPI::absorb(&mut sponge, ABSORB_N, &elts, acc);
             let output = SpongeAPI::squeeze(&mut sponge, 1, acc);
-            sponge.finish(acc).map_err(|_| SynthesisError::Unsatisfiable)?;
+            sponge.finish(acc).unwrap();
             Elt::ensure_allocated(&output[0], &mut ns.namespace(|| "z_out_alloc"))?
         };
 

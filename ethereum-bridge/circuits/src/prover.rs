@@ -1,15 +1,15 @@
 //! Verkle IVC prover: folds D Verkle levels into a CompressedSNARK.
 
-use ff::{Field, PrimeField};
+use ff::PrimeField;
 use nova_snark::{
     nova::{CompressedSNARK, RecursiveSNARK},
-    traits::{snark::RelaxedR1CSSNARKTrait, Engine},
+    traits::snark::RelaxedR1CSSNARKTrait,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     circuit::VerkleStepCircuit,
-    types::{EngineE1, EngineE2, Scalar, VerklePublicParams, VerkleRecursiveSNARK, G1, S1, S2},
+    types::{Scalar, VerklePublicParams, VerkleRecursiveSNARK, G1, S1, S2},
 };
 
 /// A serialisable Verkle membership proof bundle.
@@ -121,9 +121,11 @@ impl VerkleProver {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn build_step_circuit<G: nova_snark::traits::Group>(
-    step: &(u8, [u8; 32]),
-) -> VerkleStepCircuit<G> {
+fn build_step_circuit<G>(step: &(u8, [u8; 32])) -> VerkleStepCircuit<G>
+where
+    G: nova_snark::traits::Group,
+    G::Scalar: PrimeField,
+{
     let (path_index, commitment_bytes) = step;
     let sibling_hash = bytes_to_scalar::<G::Scalar>(commitment_bytes);
     VerkleStepCircuit::new(*path_index, sibling_hash)
@@ -132,15 +134,19 @@ fn build_step_circuit<G: nova_snark::traits::Group>(
 /// Convert 32 bytes to a scalar field element, masking top 2 bits so the value
 /// fits within both the Pallas Fq and BN254 Fr moduli (~2^254).
 /// Mirrors `evaporchain-crypto::verkle::bytes_to_scalar`.
-pub fn bytes_to_scalar<F: PrimeField<Repr = [u8; 32]>>(bytes: &[u8; 32]) -> F {
-    let mut repr = *bytes;
-    repr[31] &= 0x3F;
+///
+/// `PrimeField` guarantees `Repr: Default + AsMut<[u8]> + AsRef<[u8]>`,
+/// so no extra where clause is needed beyond `F: PrimeField`.
+pub fn bytes_to_scalar<F: PrimeField>(bytes: &[u8; 32]) -> F {
+    let mut repr = F::Repr::default();
+    repr.as_mut().copy_from_slice(bytes);
+    repr.as_mut()[31] &= 0x3F;
     F::from_repr(repr).unwrap_or(F::ONE)
 }
 
-/// Serialise a scalar to 32 little-endian bytes.
-pub fn scalar_to_bytes<F: PrimeField<Repr = [u8; 32]>>(s: F) -> Vec<u8> {
-    s.to_repr().to_vec()
+/// Serialise a scalar to little-endian bytes.
+pub fn scalar_to_bytes<F: PrimeField>(s: F) -> Vec<u8> {
+    s.to_repr().as_ref().to_vec()
 }
 
 /// BLAKE3 hash — used to derive the value scalar from the 32-byte value.
@@ -153,11 +159,11 @@ fn blake3_hash(data: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::Field;
+    use ff::{Field, PrimeField};
 
     #[test]
     fn bytes_to_scalar_masks_top_bits() {
-        let mut b = [0xFFu8; 32];
+        let b = [0xFFu8; 32];
         let s: Scalar = bytes_to_scalar(&b);
         // After masking [31] & 0x3F, the value must not be zero or all-ones.
         assert_ne!(s, Scalar::ZERO);
@@ -165,12 +171,7 @@ mod tests {
         assert_eq!(s, bytes_to_scalar::<Scalar>(&b));
         // The top 2 bits of byte 31 must be clear in repr.
         let repr = s.to_repr();
-        assert_eq!(repr[31] & 0xC0, 0);
-        // All-zeros input → ONE (fallback).
-        b = [0u8; 32];
-        // Masking still applies but from_repr(all-zero) may be ZERO or ONE; just check round-trip.
-        let s2: Scalar = bytes_to_scalar(&b);
-        let _ = s2; // value depends on field impl; just ensure it doesn't panic
+        assert_eq!(repr.as_ref()[31] & 0xC0, 0);
     }
 
     #[test]
