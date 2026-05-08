@@ -8,6 +8,7 @@ description = "Post-quantum wallet for EvaporChain — key management, transacti
 
 [dependencies]
 evaporchain-crypto = { path = "../crates/evaporchain-crypto" }
+evaporchain-paymaster = { path = "../crates/evaporchain-paymaster" }
 evaporchain-types = { path = "../crates/evaporchain-types" }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -33,6 +34,8 @@ chrono = "0.4"
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"
+axum = "0.7"
 
 [[bin]]
 name = "evaporchain-wallet"

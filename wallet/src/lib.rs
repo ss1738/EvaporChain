@@ -100,6 +100,7 @@ pub mod notification_rules;
 pub mod notifications;
 pub mod object_manager;
 pub mod onboarding;
+pub mod paymaster;
 pub mod payment_stream;
 pub mod peer_discovery;
 pub mod permission_manager;
