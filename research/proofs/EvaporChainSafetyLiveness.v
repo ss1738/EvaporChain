@@ -1241,6 +1241,10 @@ Proof.
   intros h1 h2 Hin1 Hin2 Hne b1 b2 Hb1 Hb2 Hh1 Hh2 Hheight.
   rewrite Hcommitted in Hin1, Hin2.
   rewrite Hdag in Hb1, Hb2.
+  (* Goal still mentions [ss_dag s'] in the disjunction conclusion;
+     [Hsafe] produces the same disjunction over [ss_dag s]. Rewrite
+     the goal once more to bridge them. *)
+  rewrite Hdag.
   apply (Hsafe h1 h2 Hin1 Hin2 Hne b1 b2 Hb1 Hb2 Hh1 Hh2 Hheight).
 Qed.
 
@@ -1309,15 +1313,28 @@ Proof.
   intros h1 h2 Hin1 Hin2 Hne b1 b2 Hb1 Hb2 Hh1 Hh2 Hheight.
   rewrite Hcommitted in Hin1, Hin2.
   rewrite Hdag in Hb1, Hb2.
+  (* Bridge the goal too: it still references [ss_dag s'] in the
+     conclusion disjunction, but Hno_conflict / Hsafe both produce
+     conclusions over [ss_dag s]. Same trick as
+     [safety_preserved_under_state_unchanged]. *)
+  rewrite Hdag.
   (* Three cases on whether h1 / h2 are the new hash or old. *)
   destruct Hin1 as [Heq1 | Hin1_old]; destruct Hin2 as [Heq2 | Hin2_old].
   - (* h1 = h_new = h2. Contradicts h1 <> h2. *)
-    subst h_new. exfalso. apply Hne. rewrite <- Heq1, <- Heq2. reflexivity.
-  - (* h1 = h_new, h2 in old committed. Apply no-conflict (rotated). *)
-    subst h_new. rewrite <- Heq1 in *.
+    (* [subst h_new] consumes [Heq1 : h_new = h1] and rewrites
+       [Heq2] in place to [h1 = h2]; we then close via [congruence]
+       against [Hne : h1 <> h2]. *)
+    subst h_new. congruence.
+  - (* h1 = h_new, h2 in old committed. Apply no-conflict (rotated).
+       [subst h_new] consumes Heq1 and rewrites h_new -> h1
+       throughout context+goal+Hno_conflict; the [rewrite <- Heq1]
+       step that used to follow was redundant (Heq1 is gone) and
+       its only effect would have been to undo the substitution. *)
+    subst h_new.
     apply (Hno_conflict h2 b1 b2 Hin2_old Hb1 Hb2 Hh1 Hh2 Hheight Hne).
-  - (* h1 in old committed, h2 = h_new. Apply no-conflict (swap arguments). *)
-    subst h_new. rewrite <- Heq2 in *.
+  - (* h1 in old committed, h2 = h_new. Apply no-conflict (swap arguments).
+       Symmetric to the previous branch; same redundant rewrite removed. *)
+    subst h_new.
     assert (Hne_swapped : h2 <> h1) by (intro Heq; apply Hne; symmetry; exact Heq).
     destruct (Hno_conflict h1 b2 b1 Hin1_old Hb2 Hb1 Hh2 Hh1 (eq_sym Hheight)
                 Hne_swapped) as [Hpre | [Hpre | Hac]].
@@ -1452,9 +1469,18 @@ Proof.
          b_new by Hfresh. *)
       intros h Hin_h.
       simpl in Hin_h.
-      destruct Hin_h as [Heq | [Heq | []]]; subst.
-      * intro Heq_b. apply (Hfresh h1 Hin1). exact Heq_b.
-      * intro Heq_b. apply (Hfresh h2 Hin2). exact Heq_b.
+      (* Don't [subst] here — it would consume the variable [h1]
+         (resp. [h2]) and remove it from context, breaking the
+         [Hfresh h1 Hin1] (resp. [Hfresh h2 Hin2]) reference below.
+         Instead, rewrite Heq into Heq_b in each branch. *)
+      destruct Hin_h as [Heq | [Heq | []]].
+      * (* [Heq : h1 = h], [Heq_b : h = b_hash b_new]; rewrite Heq into
+           Heq_b to get [h1 = b_hash b_new], then symmetrize before
+           feeding to Hfresh (which expects [b_hash b_new = h1]). *)
+        intro Heq_b. apply (Hfresh h1 Hin1).
+        rewrite <- Heq in Heq_b. symmetry. exact Heq_b.
+      * intro Heq_b. apply (Hfresh h2 Hin2).
+        rewrite <- Heq in Heq_b. symmetry. exact Heq_b.
 Qed.
 
 (** Note on the lemma's two unused hypotheses: [Hno_conflict] is part

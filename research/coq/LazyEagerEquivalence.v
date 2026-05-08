@@ -582,7 +582,16 @@ Lemma concrete_step_subadditive_cross_halving :
 Proof.
   intros e h k Hh Hcross.
   destruct (cross_halving_remainders h k Hh Hcross) as [Hrem_k Hrem_sk].
-  unfold EnergyDecayMonotonicity.energy_at_epoch at 1 2.
+  (* Unfold occurrences 1 and 3: the outer LHS [energy_at_epoch e h (S k)]
+     and the INNER RHS [energy_at_epoch e h k]. We deliberately leave
+     the OUTER RHS [energy_at_epoch _ h 1] (occurrence 2) folded — it
+     gets unfolded later (line ~610) once the inner shape is known.
+
+     Occurrences are counted left-to-right, depth-first:
+       1 = LHS [energy_at_epoch e h (S k)]
+       2 = RHS outer [energy_at_epoch (energy_at_epoch e h k) h 1]
+       3 = RHS inner [energy_at_epoch e h k]                          *)
+  unfold EnergyDecayMonotonicity.energy_at_epoch at 1 3.
   rewrite (proj2 (Nat.eqb_neq h 0) Hh).
   rewrite Hcross, Hrem_sk, Hrem_k.
   destruct (leb EnergyDecayMonotonicity.halving_cutoff (Nat.div k h + 1)) eqn:Ecut_sk.
