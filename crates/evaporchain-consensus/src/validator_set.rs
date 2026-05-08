@@ -21,17 +21,18 @@ use serde::{Deserialize, Serialize};
 /// consumes this constant is deferred to a separate session.
 pub const VS_PPM_DENOMINATOR: u64 = 1_000_000;
 
-/// Maximum health score bonus (20% extra weight).
-const HEALTH_BONUS_CAP: f64 = 0.2;
+// ── Phase 3a (2026-05-08): ValidatorInfo + 2 leader-selection consts
+// moved to `evaporchain-consensus-types`. Re-exported here so all
+// existing callers (`evaporchain_consensus::validator_set::ValidatorInfo`)
+// keep working unchanged. See `crates/evaporchain-consensus-types/src/lib.rs`
+// for the type definition.
+pub use evaporchain_consensus_types::{ValidatorInfo, HEALTH_BONUS_CAP, MAX_HEALTH_SCORE};
 
 /// Health score decay per epoch (small decay to keep validators active).
 const HEALTH_DECAY_RATE: f64 = 0.01;
 
 /// Health score increment per evaporation processed.
 const HEALTH_PER_EVAPORATION: f64 = 0.05;
-
-/// Maximum health score.
-const MAX_HEALTH_SCORE: f64 = 1.0;
 
 /// Minimum stake to remain a validator.
 const MIN_STAKE: u64 = 100;
@@ -41,143 +42,6 @@ const SLASH_EQUIVOCATION_PCT: f64 = 0.10;
 
 /// Slash penalty for downtime (missed blocks): 1% of stake per miss.
 const SLASH_DOWNTIME_PCT: f64 = 0.01;
-
-// ─────────────────────── ValidatorInfo ────────────────────────────────────
-
-/// Information about a registered validator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidatorInfo {
-    /// Unique validator identifier.
-    pub id: u64,
-    /// Staked amount (determines base weight in leader selection).
-    pub stake: u64,
-    /// Validator's network address / public key.
-    pub address: [u8; 32],
-    /// BLS12-381 public key for consensus attestation (48 bytes compressed).
-    /// None if the validator hasn't registered a BLS key yet.
-    #[serde(default)]
-    pub bls_public_key: Option<Vec<u8>>,
-    /// Post-quantum VRF public key (ML-DSA, 1952 bytes) for VRF-based
-    /// leader election and randomness generation.
-    #[serde(default)]
-    pub vrf_public_key: Option<Vec<u8>>,
-    /// Total blocks produced by this validator.
-    pub blocks_produced: u64,
-    /// Total evaporations processed across all blocks.
-    pub evaporations_processed: u64,
-    /// Health score (0.0–1.0) reflecting thermodynamic contribution.
-    pub health_score: f64,
-    /// Whether this validator has been jailed (temporarily removed from rotation).
-    #[serde(default)]
-    pub jailed: bool,
-    /// Total stake slashed historically.
-    #[serde(default)]
-    pub total_slashed: u64,
-    /// BLS proof-of-possession (signature over pk with POP DST).
-    /// Prevents rogue-key attack on aggregate signatures.
-    #[serde(default)]
-    pub bls_pop: Option<Vec<u8>>,
-    /// Whether the BLS proof-of-possession has been verified.
-    #[serde(default)]
-    pub pop_verified: bool,
-    /// Previous BLS public key, retained during the rotation grace window
-    /// so in-flight votes signed with the old key still verify. Cleared
-    /// (set to `None`) once `bls_prev_key_expiry_epoch` has elapsed.
-    /// Closes punch-list 4b.
-    #[serde(default)]
-    pub bls_public_key_prev: Option<Vec<u8>>,
-    /// Last epoch (inclusive) at which `bls_public_key_prev` is still
-    /// accepted by `verify_commit_certificate`. After this epoch, only
-    /// `bls_public_key` is consulted.
-    #[serde(default)]
-    pub bls_prev_key_expiry_epoch: Option<u64>,
-    /// Total stake delegated to this validator by other token holders,
-    /// summed across the live `DelegationRecord` set in StateDB. Cached
-    /// here so the consensus quorum check (and other hot paths) don't
-    /// have to walk the delegation map every block. Refreshed by
-    /// `ValidatorSet::refresh_delegated_stakes` at block-production
-    /// boundaries. Defaults to 0 — pre-delegation chains keep the same
-    /// effective stake as their `stake` field.
-    #[serde(default)]
-    pub delegated_stake: u64,
-}
-
-impl ValidatorInfo {
-    /// Create a new validator with the given id, stake, and address.
-    pub fn new(id: u64, stake: u64, address: [u8; 32]) -> Self {
-        Self {
-            id,
-            stake,
-            address,
-            bls_public_key: None,
-            vrf_public_key: None,
-            blocks_produced: 0,
-            evaporations_processed: 0,
-            health_score: 0.0,
-            jailed: false,
-            total_slashed: 0,
-            bls_pop: None,
-            pop_verified: false,
-            bls_public_key_prev: None,
-            bls_prev_key_expiry_epoch: None,
-            delegated_stake: 0,
-        }
-    }
-
-    /// Total voting power = own stake + cached delegated stake. Used by
-    /// quorum checks. Saturating add prevents overflow under Byzantine
-    /// stake-injection scenarios.
-    pub fn effective_stake(&self) -> u64 {
-        self.stake.saturating_add(self.delegated_stake)
-    }
-
-    /// Create a validator with a BLS public key and proof-of-possession.
-    pub fn with_bls_key(id: u64, stake: u64, address: [u8; 32], bls_pk: Vec<u8>) -> Self {
-        Self {
-            bls_public_key: Some(bls_pk),
-            ..Self::new(id, stake, address)
-        }
-    }
-
-    /// Create a validator with a BLS key + verified proof-of-possession.
-    pub fn with_bls_pop(
-        id: u64,
-        stake: u64,
-        address: [u8; 32],
-        bls_pk: Vec<u8>,
-        pop: Vec<u8>,
-    ) -> Self {
-        Self {
-            bls_public_key: Some(bls_pk),
-            bls_pop: Some(pop),
-            pop_verified: false, // Caller must verify via ValidatorSet::verify_pop
-            ..Self::new(id, stake, address)
-        }
-    }
-
-    /// Create a validator with both BLS and VRF public keys.
-    pub fn with_keys(
-        id: u64,
-        stake: u64,
-        address: [u8; 32],
-        bls_pk: Option<Vec<u8>>,
-        vrf_pk: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            bls_public_key: bls_pk,
-            vrf_public_key: vrf_pk,
-            ..Self::new(id, stake, address)
-        }
-    }
-
-    /// Compute this validator's effective weight for leader selection.
-    /// weight = stake * (1.0 + min(health_score, 1.0) * 0.2)
-    pub fn effective_weight(&self) -> u64 {
-        let health_capped = self.health_score.min(MAX_HEALTH_SCORE);
-        let multiplier = 1.0 + health_capped * HEALTH_BONUS_CAP;
-        (self.stake as f64 * multiplier).round() as u64
-    }
-}
 
 // ─────────────────────── ValidatorSet ─────────────────────────────────────
 
