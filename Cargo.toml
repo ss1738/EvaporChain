@@ -149,6 +149,7 @@ members = [
     "crates/evaporchain-node",
     "crates/evaporchain-da",
     "crates/evaporchain-cli",
+    "crates/evaporchain-paymaster",
     "crates/evaporchain-script",
     "crates/evaporchain-mcp",
     "crates/evaporchain-oracle",

@@ -1,0 +1,28 @@
+[package]
+name = "evaporchain-paymaster"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "evaporchain-paymaster"
+path = "src/bin/server.rs"
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-crypto = { path = "../evaporchain-crypto" }
+axum = "0.7"
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
