@@ -486,6 +486,33 @@ impl ValidatorSet {
         actual
     }
 
+    /// Jail every active validator whose address appears in
+    /// `tombstone_addresses`. Doctrine: per
+    /// `evaporchain-tombstone::EulogyTrie`, "the chain's death is
+    /// final" — once an account is memorialised in the eulogy trie,
+    /// its validator must not appear in leader rotation. Already-
+    /// jailed validators are not double-counted. Returns the number
+    /// newly jailed.
+    ///
+    /// Idempotent: safe to call repeatedly with the same address set.
+    /// O(n_validators × n_tombstones), which is bounded by the
+    /// validator-set cap and the eulogy-trie's append-only growth
+    /// rate (one tombstone per zero-balance event).
+    pub fn jail_tombstoned_by_address(&mut self, tombstone_addresses: &[[u8; 32]]) -> usize {
+        if tombstone_addresses.is_empty() {
+            return 0;
+        }
+        let mut newly_jailed = 0;
+        for v in self.validators.iter_mut() {
+            if !v.jailed && tombstone_addresses.contains(&v.address) {
+                v.jailed = true;
+                v.health_score = 0.0;
+                newly_jailed += 1;
+            }
+        }
+        newly_jailed
+    }
+
     /// Unjail a validator (allow them back into rotation).
     pub fn unjail(&mut self, validator_id: u64) -> bool {
         if let Some(v) = self.get_mut(validator_id) {
@@ -995,5 +1022,68 @@ mod tests {
         let mut v = ValidatorInfo::new(1, 1000, [0; 32]);
         v.health_score = 5.0; // Out-of-bounds — must clamp.
         assert_eq!(v.effective_weight(), 1200); // Same as score=1.0
+    }
+
+    #[test]
+    fn jail_tombstoned_by_address_jails_matching_validator() {
+        let mut vs = ValidatorSet::new();
+        let addr_dead = [0x03u8; 32];
+        let addr_alive = [0x05u8; 32];
+        vs.add_validator(ValidatorInfo::new(1, 1000, addr_dead));
+        vs.add_validator(ValidatorInfo::new(2, 1000, addr_alive));
+
+        let n = vs.jail_tombstoned_by_address(&[addr_dead]);
+        assert_eq!(n, 1, "exactly the tombstoned validator was newly jailed");
+        assert!(vs.get(1).unwrap().jailed, "matched validator must be jailed");
+        assert!(!vs.get(2).unwrap().jailed, "non-matching validator unaffected");
+        // Health zeroed on jail.
+        assert_eq!(vs.get(1).unwrap().health_score, 0.0);
+    }
+
+    #[test]
+    fn jail_tombstoned_by_address_idempotent() {
+        let mut vs = ValidatorSet::new();
+        let addr_dead = [0x03u8; 32];
+        vs.add_validator(ValidatorInfo::new(1, 1000, addr_dead));
+
+        assert_eq!(vs.jail_tombstoned_by_address(&[addr_dead]), 1);
+        // Already jailed — second call must not re-count.
+        assert_eq!(
+            vs.jail_tombstoned_by_address(&[addr_dead]),
+            0,
+            "already-jailed validator must not be re-counted"
+        );
+        assert!(vs.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn jail_tombstoned_by_address_empty_input_no_op() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x03; 32]));
+        assert_eq!(vs.jail_tombstoned_by_address(&[]), 0);
+        assert!(!vs.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn jail_tombstoned_excludes_dead_validator_from_leader_rotation() {
+        // Doctrine end-to-end: a tombstoned validator must never be
+        // returned by leader_for_epoch.
+        let mut vs = ValidatorSet::new();
+        let addr_dead = [0x03u8; 32];
+        let addr_alive = [0x05u8; 32];
+        vs.add_validator(ValidatorInfo::new(1, 1000, addr_dead));
+        vs.add_validator(ValidatorInfo::new(2, 1000, addr_alive));
+
+        vs.jail_tombstoned_by_address(&[addr_dead]);
+
+        // Across a wide range of epochs, the tombstoned validator
+        // (id=1) must never be elected.
+        for epoch in 0..1000u64 {
+            let leader = vs.leader_for_epoch(epoch).expect("a leader must exist");
+            assert_ne!(
+                leader.id, 1,
+                "tombstoned validator was elected at epoch {epoch}",
+            );
+        }
     }
 }
