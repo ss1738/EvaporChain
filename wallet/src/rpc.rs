@@ -1062,6 +1062,29 @@ impl RpcClient {
         self.post("/api/tx/transfer", req).await
     }
 
+    /// Submit a `UserOpTx` (potentially paymaster-sponsored) for
+    /// inclusion in the mempool. Pairs with the `evaporchain-paymaster`
+    /// service: the wallet builds a `UserOpTx`, asks a paymaster to
+    /// stamp its sponsorship sig via `PaymasterClient::sponsor`, signs
+    /// the user side via `wallet::paymaster::sign_user_op_as_sender`,
+    /// then calls this method to submit.
+    ///
+    /// Heavy validation (signature verification, nonce match,
+    /// paymaster balance, inner call_data whitelist) happens at execute
+    /// time. The wallet should poll `GET /api/tx/<hash>` to learn the
+    /// verdict — `tx_hash` in the response is the canonical
+    /// `blake3(signable_bytes)` value the chain indexes by.
+    pub async fn submit_user_op(
+        &self,
+        user_op: &evaporchain_types::UserOpTx,
+    ) -> Result<TxResultResponse, RpcError> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            user_op: &'a evaporchain_types::UserOpTx,
+        }
+        self.post("/api/tx/user_op", &Body { user_op }).await
+    }
+
     /// Submit a create-object transaction.
     pub async fn submit_create_object(
         &self,

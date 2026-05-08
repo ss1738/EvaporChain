@@ -1169,6 +1169,17 @@ struct TxResultResponse {
     tx_hash: Option<String>,
 }
 
+/// Wire body for `POST /api/tx/user_op`. The wallet sends a
+/// fully-formed `UserOpTx` (both user-side `signature` and
+/// paymaster-side `paymaster_signature` already stamped) — the chain
+/// re-verifies both at execute time. Mirrors the
+/// `evaporchain_paymaster::SponsorshipRequest` shape so the wallet
+/// can use one type across paymaster and chain submission.
+#[derive(Deserialize)]
+struct UserOpSubmitRequest {
+    user_op: evaporchain_types::UserOpTx,
+}
+
 #[derive(Deserialize)]
 struct FaucetRequest {
     address: serde_json::Value,
@@ -8288,6 +8299,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
 
     // Validator delegation (P0 #4 — wallet-facing)
+    ApiDocEntry { method: "POST", path: "/api/tx/user_op",                   category: "identity", description: "Submit a UserOpTx for inclusion in the mempool. Body: {user_op: UserOpTx} where UserOpTx has both user signature and (optionally) paymaster sponsorship signature stamped. For sponsored UserOps, run POST /sponsor against an evaporchain-paymaster service first (Option B per docs/MULTI_TOKEN_GAS_OPTIONS.md). Heavy validation (sig verification, nonce match, paymaster balance, inner call_data decode + whitelist) lands at execute time as tx_failed outcomes; this endpoint is shape-check + dedup + mempool insertion only.", example: Some(r#"{"user_op":{"sender":[1,1,...],"nonce":0,"call_data":[...],"call_gas_limit":50000,"paymaster":[7,7,...],"paymaster_nonce":3,"paymaster_signature":[...],"paymaster_public_key":[...],"signature":[...],"public_key":[...]}}"#) },
     ApiDocEntry { method: "POST", path: "/api/tx/delegate",                  category: "consensus", description: "Bond stake from `delegator` to a validator. ML-DSA signature required over canonical DelegateTx bytes. The chain refreshes per-validator delegated_stake at the next consensus tick (effective_stake = stake + delegated_stake).", example: Some(r#"{"delegator":"0x…","validator_id":7,"amount":1000,"nonce":0,"signature":"<hex>","public_key":"<hex>"}"#) },
     ApiDocEntry { method: "POST", path: "/api/tx/undelegate",                category: "consensus", description: "Begin unbonding `amount` from an existing delegation. Funds are not credited back to balance until UNBONDING_PERIOD_EPOCHS (256) have elapsed; subsequent /api/tx/claim_delegation reclaims them.", example: Some(r#"{"delegator":"0x…","validator_id":7,"amount":600,"nonce":1,"signature":"<hex>","public_key":"<hex>"}"#) },
     ApiDocEntry { method: "POST", path: "/api/tx/claim_delegation",          category: "consensus", description: "Claim previously-undelegated funds back to delegator's balance once the unbonding window has elapsed (chain enforces at execute time).", example: Some(r#"{"delegator":"0x…","validator_id":7,"nonce":2,"signature":"<hex>","public_key":"<hex>"}"#) },
@@ -10364,6 +10376,111 @@ async fn post_transfer(
             account_name(&to),
             req.amount
         ),
+        tx_hash: Some(hash),
+    })
+}
+
+/// `POST /api/tx/user_op` — submit a (potentially paymaster-sponsored)
+/// `UserOpTx` for inclusion in the mempool. This is the chain-side
+/// counterpart to the `evaporchain-paymaster` service: a wallet
+/// builds a `UserOpTx` (with paymaster fields filled in by the
+/// service via `POST /sponsor`), signs the user-side body, and POSTs
+/// the result here. The chain re-verifies both signatures at execute
+/// time; this endpoint only does basic shape validation + dedup +
+/// mempool insertion.
+///
+/// Heavy validation deferred to execute time:
+///   - User signature verification (against
+///     `Transaction::UserOp(user_op).signing_message(chain_id)`).
+///   - Paymaster signature verification (against
+///     `UserOpTx::paymaster_sponsorship_payload(chain_id)`) — closes
+///     the drain-by-forged-paymaster bug per `dc89531`.
+///   - Sender nonce match.
+///   - Paymaster nonce match (if `paymaster.is_some()`).
+///   - Paymaster balance ≥ `call_gas_limit + GAS_USER_OP`.
+///   - Inner `call_data` decode + whitelist check (Transfer-only in
+///     V1 per `3ccf4f7`).
+///
+/// All those land as `tx_failed` outcomes with descriptive errors —
+/// the wallet polls `/api/tx/<hash>` to learn the verdict.
+async fn post_user_op(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<UserOpSubmitRequest>,
+) -> Json<TxResultResponse> {
+    let has_signature = req.user_op.signature.is_some();
+    if let Err(resp) = require_tx_auth(&headers, &state, has_signature) {
+        return resp;
+    }
+
+    if req.user_op.call_gas_limit == 0 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "call_gas_limit must be greater than zero".into(),
+            tx_hash: None,
+        });
+    }
+
+    // Sponsored UserOps require all four paymaster fields to be set
+    // before submission. The chain rejects partial sets at execute
+    // time too, but failing fast at the API saves a mempool slot.
+    if req.user_op.paymaster.is_some() {
+        if req.user_op.paymaster_nonce.is_none() {
+            return Json(TxResultResponse {
+                success: false,
+                message: "paymaster set but paymaster_nonce missing — \
+                          run /sponsor against the paymaster service first"
+                    .into(),
+                tx_hash: None,
+            });
+        }
+        if req.user_op.paymaster_signature.is_none() {
+            return Json(TxResultResponse {
+                success: false,
+                message: "paymaster set but paymaster_signature missing — \
+                          run /sponsor against the paymaster service first"
+                    .into(),
+                tx_hash: None,
+            });
+        }
+        if req.user_op.paymaster_public_key.is_none() {
+            return Json(TxResultResponse {
+                success: false,
+                message: "paymaster set but paymaster_public_key missing".into(),
+                tx_hash: None,
+            });
+        }
+    }
+
+    // Dedup: same (sender, nonce) already in mempool? Multiple
+    // distinct sponsored UserOps from the same sender at the same
+    // nonce can only ever land one of them; the executor's nonce
+    // gate rejects the rest. Bouncing duplicates at the API saves
+    // the mempool a slot.
+    {
+        let is_dup = state.mempool_contains(|tx| {
+            if let Transaction::UserOp(u) = tx {
+                u.sender == req.user_op.sender && u.nonce == req.user_op.nonce
+            } else {
+                false
+            }
+        });
+        if is_dup {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Duplicate UserOp (sender, nonce) already in mempool".into(),
+                tx_hash: None,
+            });
+        }
+    }
+
+    let tx = Transaction::UserOp(req.user_op);
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+    state.submit_tx(tx);
+
+    Json(TxResultResponse {
+        success: true,
+        message: "UserOp queued".into(),
         tx_hash: Some(hash),
     })
 }
@@ -17681,6 +17798,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/validators", get(get_validators))
         // Wallet / Transactions
         .route("/api/tx/transfer", post(post_transfer))
+        .route("/api/tx/user_op", post(post_user_op))
         .route("/api/tx/create-object", post(post_create_object))
         .route("/api/tx/refresh", post(post_refresh))
         .route("/api/tx/resurrect", post(post_resurrect))
