@@ -544,6 +544,7 @@ contract HelloPress {
 }
 
 /// Engine managing all deployed script contracts.
+#[derive(Clone)]
 pub struct ScriptEngine {
     contracts: HashMap<u64, ScriptContract>,
     next_id: u64,

@@ -563,6 +563,7 @@ struct PartitionResult {
 /// transactions touch independent state), achieves O(1) block execution time
 /// regardless of transaction count. In the worst case (all transactions
 /// conflict), falls back to sequential execution.
+#[derive(Clone)]
 pub struct ParallelExecutor {
     evaporation_engine: EvaporationEngine,
     /// Energy-stamped nullifier accumulator. One leaf per evaporated
@@ -740,6 +741,69 @@ impl ParallelExecutor {
     /// Get a mutable reference to the reward accumulator (if enabled).
     pub fn reward_accumulator_mut(&mut self) -> Option<&mut crate::rewards::RewardAccumulator> {
         self.reward_accumulator.as_mut()
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 2 scaffold
+    //
+    // The proposer can speculatively execute a block to obtain its
+    // post-execution `state_root` BEFORE broadcasting (so the broadcast
+    // block carries `post_state_root` filled in). The speculative
+    // execution must NOT affect future real applies. This requires
+    // reverting both the StateDB (via `db.begin_batch` /
+    // `rollback_batch` — already implemented) AND the executor's own
+    // mutable state (the gap this scaffold closes).
+    //
+    // Approach: snapshot the executor before speculation, run
+    // execute_block on it as normal, then restore from the snapshot
+    // afterward. Backed by `Clone` — every field on ParallelExecutor
+    // and every type it transitively contains is `Clone` as of the
+    // 2026-05-08 snapshot scaffold landing.
+    //
+    // Usage shape (caller side, in the propose path):
+    //
+    //     let snap = executor.snapshot_for_simulation();
+    //     db.begin_batch();
+    //     let result = executor.execute_block(&mut db, ...)?;
+    //     let post_state_root = result.state_root;
+    //     db.rollback_batch();
+    //     executor.restore_from_simulation(snap);
+    //     // executor and db are now bit-identical to pre-snapshot.
+    //     block.post_state_root = Some(post_state_root);
+    //     // ... broadcast block ...
+    //
+    // NOT YET WIRED into `tendermint.rs::propose` — the call site
+    // change waits for a clean window vs. the parallel paymaster
+    // arc to avoid merge conflicts in the consensus path. This
+    // method is the structural primitive the wiring will use.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Capture the executor's current mutable state as a snapshot
+    /// suitable for restoration after a speculative `execute_block`
+    /// call. Pairs with [`StateDB::begin_batch`] /
+    /// [`StateDB::rollback_batch`] on the DB side to give the
+    /// proposer a fully-reversible "what would the post-state be"
+    /// query.
+    ///
+    /// O(n) in the size of the executor's accumulators (MMR nodes,
+    /// nullifier set, eulogy entries, refresh-pool snapshot, etc.).
+    /// Memory-equivalent to an extra ParallelExecutor for the
+    /// duration of the simulation.
+    pub fn snapshot_for_simulation(&self) -> Self {
+        self.clone()
+    }
+
+    /// Restore the executor's state from a snapshot produced by
+    /// [`Self::snapshot_for_simulation`]. After this call returns,
+    /// `self` is bit-identical to the executor at the moment the
+    /// snapshot was taken.
+    ///
+    /// Caller is responsible for pairing this with
+    /// `db.rollback_batch()` to also revert the DB state captured
+    /// by [`StateDB::begin_batch`]. Calling restore without a DB
+    /// rollback leaves the executor and DB in inconsistent states.
+    pub fn restore_from_simulation(&mut self, snapshot: Self) {
+        *self = snapshot;
     }
 
     /// Create executor with a small privacy tree for fast test initialization.
@@ -3353,5 +3417,64 @@ mod tests {
             executor.lyapunov_fee_state.energy,
             target_e
         );
+    }
+
+    // ─── POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 2 scaffold ─────────
+
+    /// Snapshot + restore returns the executor to a bit-identical
+    /// pre-snapshot state across every mutable field. This is the
+    /// load-bearing primitive for speculative execute in Phase 2 —
+    /// if any mutable field leaks through restore, the proposer's
+    /// real apply (post-broadcast) will diverge from the proposer's
+    /// speculative apply (pre-broadcast), which would corrupt the
+    /// `post_state_root` claim and silently break the warn-mode gate.
+    #[test]
+    fn snapshot_then_restore_is_bit_identical() {
+        let mut executor = ParallelExecutor::new_for_test(10);
+
+        // Mutate a representative subset of fields so we have something
+        // to restore *from*. The point of the test is that ANY mutation
+        // we make after snapshotting is reversed by restore.
+        executor.consecutive_clean_audits = 7;
+        executor.last_audit_epoch = Some(42);
+        executor.lyapunov_fee_state.energy = 999_999;
+        // mmr is private — push via the public API the executor itself
+        // exposes during execution. For the snapshot test we just snapshot
+        // current state and check the post-mutation snapshot/restore path.
+
+        let snap = executor.snapshot_for_simulation();
+
+        // Mutate after snapshot — every field below should revert.
+        executor.consecutive_clean_audits = 9999;
+        executor.last_audit_epoch = Some(7777);
+        executor.lyapunov_fee_state.energy = 0;
+
+        // Restore — executor should match its pre-mutation state.
+        executor.restore_from_simulation(snap);
+
+        assert_eq!(executor.consecutive_clean_audits, 7);
+        assert_eq!(executor.last_audit_epoch, Some(42));
+        assert_eq!(executor.lyapunov_fee_state.energy, 999_999);
+    }
+
+    /// Snapshot semantics: the snapshot is OWNED — mutating the
+    /// executor after snapshot does NOT mutate the snapshot. Verifies
+    /// `snapshot_for_simulation` returns a deep clone, not a shared
+    /// reference. (If it ever became shared, the post-broadcast apply
+    /// path would silently observe pre-broadcast simulation effects.)
+    #[test]
+    fn snapshot_is_an_owned_deep_copy() {
+        let mut executor = ParallelExecutor::new_for_test(10);
+        executor.consecutive_clean_audits = 5;
+
+        let snap = executor.snapshot_for_simulation();
+
+        // Mutate the original — snap should be unaffected.
+        executor.consecutive_clean_audits = 999;
+
+        // Restore — original goes back to 5 (matching snap), confirming
+        // the snap was independent of the post-snap mutation.
+        executor.restore_from_simulation(snap);
+        assert_eq!(executor.consecutive_clean_audits, 5);
     }
 }

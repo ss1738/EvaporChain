@@ -114,6 +114,7 @@ const PNT_DEFAULT_PHASE_INTERVAL_EPOCHS: u64 = 100;
 
 /// The privacy execution engine. Maintains the in-memory note tree and
 /// nullifier set, syncing state to/from StateDB at block boundaries.
+#[derive(Clone)]
 pub struct PrivacyExecutor {
     /// The underlying cryptographic privacy engine.
     engine: PrivacyEngine,

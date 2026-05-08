@@ -115,6 +115,7 @@ impl ConfidentialNote {
 
 /// Fixed-depth Poseidon Merkle tree for note membership proofs.
 /// Leaves are note commitments; internal nodes are `Poseidon(left || right)`.
+#[derive(Clone)]
 pub struct NoteTree {
     depth: usize,
     /// All nodes stored in a flat array (index 1 = root, 2..3 = depth-1, etc.)
@@ -563,6 +564,7 @@ pub fn verify_balance_binding(
 // ─── Nullifier Set ─────────────────────────────────────────────────────────
 
 /// Tracks spent nullifiers to prevent double-spending.
+#[derive(Clone)]
 pub struct NullifierSet {
     spent: std::collections::HashSet<[u8; 32]>,
 }
@@ -608,6 +610,7 @@ impl Default for NullifierSet {
 /// - Unshielding (private → transparent)
 /// - Private transfers (private → private)
 /// - Private energy decay verification
+#[derive(Clone)]
 pub struct PrivacyEngine {
     /// Merkle tree of note commitments.
     pub note_tree: NoteTree,

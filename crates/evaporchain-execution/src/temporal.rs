@@ -120,6 +120,7 @@ pub struct DeferredQueueResult {
 }
 
 /// Priority queue of deferred transactions that execute when temporal conditions are met.
+#[derive(Clone)]
 pub struct DeferredQueue {
     queue: BinaryHeap<DeferredEntry>,
     next_seq: u64,
@@ -353,6 +354,7 @@ pub struct WatcherResult {
 ///
 /// Integrated into the per-block evaporation tick. After energy is decayed for all objects,
 /// the watcher engine checks registered watchers and fires matching callbacks.
+#[derive(Clone)]
 pub struct DecayWatcherEngine {
     watchers: Vec<EnergyWatcher>,
     next_id: u64,

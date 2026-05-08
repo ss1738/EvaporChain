@@ -52,7 +52,7 @@ impl CrossShardReceipt {
 }
 
 /// Routes cross-shard messages with energy-aware prioritization.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CrossShardRouter {
     queues: BTreeMap<ShardId, VecDeque<CrossShardMessage>>,
     pending_receipts: BTreeMap<u64, CrossShardMessage>,

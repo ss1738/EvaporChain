@@ -33,7 +33,7 @@ use crate::compartment::EnergyAccumulator;
 use crate::lambda::ChainLambda;
 use evaporchain_types::{energy_at_epoch, Energy};
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq, Clone)]
 pub enum ConservationViolation {
     #[error("redirect step changed total: before={before}, after={after}")]
     RedirectChangedTotal { before: Energy, after: Energy },

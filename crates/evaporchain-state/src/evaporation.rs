@@ -29,6 +29,7 @@ pub struct EvaporationResult {
 /// 4. Creates ghost records (nullifier proofs) for evaporated objects
 pub const DEFAULT_MAX_EVAP_SCAN: usize = 50_000;
 
+#[derive(Clone)]
 pub struct EvaporationEngine {
     /// Number of epochs an object stays in Grace before evaporation.
     pub grace_period: u64,

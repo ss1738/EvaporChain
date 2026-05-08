@@ -75,6 +75,7 @@ pub struct MMRProof {
 ///
 /// Internally stores all nodes (leaves + internal) in a flat array.
 /// Peaks are the roots of the perfect binary trees that compose the MMR.
+#[derive(Clone)]
 pub struct MerkleMountainRange {
     /// All nodes in insertion order. Leaves are hashes of nullifiers;
     /// internal nodes are hash(left || right).
