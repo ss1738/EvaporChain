@@ -21,561 +21,58 @@ use serde::{Deserialize, Serialize};
 /// consumes this constant is deferred to a separate session.
 pub const VS_PPM_DENOMINATOR: u64 = 1_000_000;
 
-// ── Phase 3a (2026-05-08): ValidatorInfo + 2 leader-selection consts
-// moved to `evaporchain-consensus-types`. Re-exported here so all
-// existing callers (`evaporchain_consensus::validator_set::ValidatorInfo`)
-// keep working unchanged. See `crates/evaporchain-consensus-types/src/lib.rs`
-// for the type definition.
-pub use evaporchain_consensus_types::{ValidatorInfo, HEALTH_BONUS_CAP, MAX_HEALTH_SCORE};
-
-/// Health score decay per epoch (small decay to keep validators active).
-const HEALTH_DECAY_RATE: f64 = 0.01;
-
-/// Health score increment per evaporation processed.
-const HEALTH_PER_EVAPORATION: f64 = 0.05;
-
-/// Minimum stake to remain a validator.
-const MIN_STAKE: u64 = 100;
-
-/// Slash penalty for equivocation (double-signing): 10% of stake.
-const SLASH_EQUIVOCATION_PCT: f64 = 0.10;
-
-/// Slash penalty for downtime (missed blocks): 1% of stake per miss.
-const SLASH_DOWNTIME_PCT: f64 = 0.01;
+// ── Phase 3a/3b (2026-05-08): ValidatorInfo, ValidatorSet, leader-
+// selection + slashing constants moved to `evaporchain-consensus-types`.
+// Re-exported here so all existing callers
+// (`evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet}`)
+// keep working unchanged. The single method that depends on
+// `evaporchain-state` (`refresh_delegated_stakes`) was extracted to a
+// free function below — see definition near line ~620 of this file.
+pub use evaporchain_consensus_types::{
+    ValidatorInfo, ValidatorSet, HEALTH_BONUS_CAP, HEALTH_DECAY_RATE,
+    HEALTH_PER_EVAPORATION, MAX_HEALTH_SCORE, MIN_STAKE,
+    SLASH_DOWNTIME_PCT, SLASH_EQUIVOCATION_PCT,
+};
 
 // ─────────────────────── ValidatorSet ─────────────────────────────────────
+//
+// Phase 3b (2026-05-08): the ValidatorSet struct + impl + Default impl
+// moved to `evaporchain-consensus-types` (see top of this file). Only
+// the method that depends on `evaporchain-state` —
+// `refresh_delegated_stakes` — stays here as a free function, since
+// inherent impls cannot span crates.
 
-/// Set of validators with energy-weighted leader selection.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ValidatorSet {
-    validators: Vec<ValidatorInfo>,
-}
-
-impl ValidatorSet {
-    /// Create an empty validator set.
-    pub fn new() -> Self {
-        Self {
-            validators: Vec::new(),
-        }
+/// Refresh each validator's `delegated_stake` from the live
+/// DelegationRecord set in StateDB. Should be called at the start
+/// of every block production cycle so quorum checks within that
+/// block use up-to-date voting power. Within-block delegations
+/// take effect on the next block.
+///
+/// Originally an inherent method on `ValidatorSet`; extracted to a
+/// free function 2026-05-08 because the type now lives in
+/// `evaporchain-consensus-types` (which intentionally excludes the
+/// `evaporchain-state` dep). Existing callers should migrate from
+/// `set.refresh_delegated_stakes(db)` to
+/// `validator_set::refresh_delegated_stakes(set, db)`.
+pub fn refresh_delegated_stakes(
+    set: &mut ValidatorSet,
+    db: &dyn evaporchain_state::db::StateDB,
+) {
+    let mut totals: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+    for d in db.all_delegations() {
+        *totals.entry(d.validator_id).or_insert(0) = totals
+            .get(&d.validator_id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(d.amount);
     }
-
-    /// Create a validator set from a list of validators.
-    pub fn with_validators(validators: Vec<ValidatorInfo>) -> Self {
-        Self { validators }
-    }
-
-    /// Add a validator to the set.
-    ///
-    /// Returns `false` (no-op) if:
-    /// - The validator ID already exists.
-    /// - The validator carries a BLS public key but `pop_verified` is false.
-    ///   Use [`add_validator_with_pop`] to register BLS-keyed validators; it
-    ///   verifies the proof-of-possession and sets `pop_verified = true`.
-    ///   Accepting an unverified BLS key opens rogue-key attacks on aggregate
-    ///   signature verification.
-    pub fn add_validator(&mut self, info: ValidatorInfo) -> bool {
-        // Reject duplicate
-        if self.validators.iter().any(|v| v.id == info.id) {
-            return false;
-        }
-        // BLS key with unverified PoP is rejected — rogue-key attack surface.
-        if info.bls_public_key.as_ref().is_some_and(|k| !k.is_empty()) && !info.pop_verified {
-            return false;
-        }
-        self.validators.push(info);
-        true
-    }
-
-    /// Add a validator with BLS proof-of-possession verification.
-    ///
-    /// The proof-of-possession is: BLS.Sign(secret_key, public_key_bytes).
-    /// This prevents rogue-key attacks where an attacker crafts a public key
-    /// that cancels out honest validators' keys in aggregate signatures.
-    ///
-    /// Returns false if:
-    /// - No BLS key is provided
-    /// - The proof-of-possession is invalid
-    /// - The validator already exists
-    pub fn add_validator_with_pop(
-        &mut self,
-        info: ValidatorInfo,
-        proof_of_possession: &[u8],
-    ) -> bool {
-        // Check for duplicates
-        if self.validators.iter().any(|v| v.id == info.id) {
-            return false;
-        }
-
-        // Require BLS key
-        let bls_pk_bytes = match &info.bls_public_key {
-            Some(pk) if !pk.is_empty() => pk,
-            _ => return false,
-        };
-
-        // Verify proof-of-possession: sig = BLS.Sign(sk, pk_bytes, DST=POP)
-        // The message being signed IS the public key itself.
-        if !Self::verify_bls_pop(bls_pk_bytes, proof_of_possession) {
-            return false;
-        }
-
-        let mut validated = info;
-        validated.bls_pop = Some(proof_of_possession.to_vec());
-        validated.pop_verified = true;
-        self.validators.push(validated);
-        true
-    }
-
-    /// Verify a BLS proof-of-possession using real BLS12-381 signature
-    /// verification with the POP domain separation tag.
-    /// PoP = BLS.Sign(sk, pk_bytes, DST=BLS_POP_DST)
-    /// Verify: BLS.Verify(pk, pk_bytes, pop_sig, DST=BLS_POP_DST)
-    fn verify_bls_pop(public_key_bytes: &[u8], pop_signature: &[u8]) -> bool {
-        use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
-
-        let pk = BlsPublicKey(public_key_bytes.to_vec());
-        let pop = BlsSignature(pop_signature.to_vec());
-        BlsVerifier::verify_proof_of_possession(&pk, &pop)
-    }
-
-    /// Public PoP verification helper. Used by the execution layer to
-    /// validate `RotateValidatorKey` proof-of-possession on both the old
-    /// and new keys before applying a rotation.
-    pub fn verify_pop(public_key_bytes: &[u8], pop_signature: &[u8]) -> bool {
-        Self::verify_bls_pop(public_key_bytes, pop_signature)
-    }
-
-    /// Apply a validator BLS key rotation. The previous public key is
-    /// stashed in `bls_public_key_prev` until `expiry_epoch` so in-flight
-    /// votes signed with the old key still verify during the grace window.
-    ///
-    /// Caller responsibilities (NOT checked here, since this is the
-    /// final-step state mutator):
-    ///   - PoP-verify the new key with the supplied `bls_pop_new`
-    ///   - PoP-verify that the old key (currently on-chain) signed the new
-    ///     key claim (`bls_pop_old`) — proves continuity of control
-    ///   - Confirm `expiry_epoch >= current_epoch`
-    ///
-    /// Returns false if the validator is unknown or has no current BLS key.
-    /// Closes punch-list 4b state mutation half.
-    pub fn rotate_validator_key(
-        &mut self,
-        validator_id: u64,
-        new_pk: Vec<u8>,
-        new_pop: Vec<u8>,
-        expiry_epoch: u64,
-    ) -> bool {
-        let v = match self.validators.iter_mut().find(|v| v.id == validator_id) {
-            Some(v) => v,
-            None => return false,
-        };
-        let prev = match v.bls_public_key.take() {
-            Some(p) if !p.is_empty() => p,
-            _ => return false,
-        };
-        v.bls_public_key_prev = Some(prev);
-        v.bls_prev_key_expiry_epoch = Some(expiry_epoch);
-        v.bls_public_key = Some(new_pk);
-        v.bls_pop = Some(new_pop);
-        // The new key has been PoP-verified by the caller; record it.
-        v.pop_verified = true;
-        true
-    }
-
-    /// Drop the previous key for any validator whose grace window has
-    /// elapsed. Cheap O(n) sweep; called once per epoch from the
-    /// execution layer.
-    pub fn purge_expired_prev_keys(&mut self, current_epoch: u64) -> usize {
-        let mut purged = 0usize;
-        for v in self.validators.iter_mut() {
-            if let Some(expiry) = v.bls_prev_key_expiry_epoch {
-                if current_epoch > expiry {
-                    v.bls_public_key_prev = None;
-                    v.bls_prev_key_expiry_epoch = None;
-                    purged += 1;
-                }
-            }
-        }
-        purged
-    }
-
-    /// Remove a validator by id.
-    pub fn remove_validator(&mut self, id: u64) -> bool {
-        let len_before = self.validators.len();
-        self.validators.retain(|v| v.id != id);
-        self.validators.len() < len_before
-    }
-
-    /// Number of validators.
-    pub fn len(&self) -> usize {
-        self.validators.len()
-    }
-
-    /// Whether the set is empty.
-    pub fn is_empty(&self) -> bool {
-        self.validators.is_empty()
-    }
-
-    /// Get a validator by id.
-    pub fn get(&self, id: u64) -> Option<&ValidatorInfo> {
-        self.validators.iter().find(|v| v.id == id)
-    }
-
-    /// Get a mutable reference to a validator by id.
-    pub fn get_mut(&mut self, id: u64) -> Option<&mut ValidatorInfo> {
-        self.validators.iter_mut().find(|v| v.id == id)
-    }
-
-    /// Get all validators.
-    pub fn validators(&self) -> &[ValidatorInfo] {
-        &self.validators
-    }
-
-    /// Compute total effective weight across all active (non-jailed) validators.
-    pub fn total_weight(&self) -> u64 {
-        self.validators
-            .iter()
-            .filter(|v| !v.jailed)
-            .map(|v| v.effective_weight())
-            .sum()
-    }
-
-    /// Deterministic leader selection for a given epoch.
-    /// Jailed validators are excluded from leader rotation.
-    ///
-    /// Uses `hash(epoch || "leader") mod total_weight` to pick a weighted
-    /// index, then iterates active validators accumulating weights until the
-    /// accumulated weight exceeds the index.
-    pub fn leader_for_epoch(&self, epoch: u64) -> Option<&ValidatorInfo> {
-        let active: Vec<&ValidatorInfo> = self.validators.iter().filter(|v| !v.jailed).collect();
-        if active.is_empty() {
-            return None;
-        }
-
-        // CRITICAL DETERMINISM INVARIANT: leader selection uses base `stake`,
-        // NOT health-weighted `effective_weight`. Different nodes may compute
-        // slightly different health_score values (timing of health updates is
-        // not strictly synchronised), and any divergence here would cause
-        // different nodes to pick different leaders — breaking liveness.
-        // effective_weight is reserved for non-consensus-critical paths.
-        let total: u64 = active
-            .iter()
-            .map(|v| v.stake)
-            .fold(0u64, |a, w| a.saturating_add(w));
-        if total == 0 {
-            let idx = epoch as usize % active.len();
-            return Some(active[idx]);
-        }
-
-        let weighted_index = Self::epoch_hash(epoch) % total;
-        let mut accumulated = 0u64;
-
-        for validator in &active {
-            accumulated = accumulated.saturating_add(validator.stake);
-            if accumulated > weighted_index {
-                return Some(validator);
-            }
-        }
-
-        // Should not reach here, but fallback to last active validator
-        active.last().copied()
-    }
-
-    /// Check if a given validator is the leader for the given epoch.
-    pub fn is_leader(&self, validator_id: u64, epoch: u64) -> bool {
-        self.leader_for_epoch(epoch)
-            .is_some_and(|v| v.id == validator_id)
-    }
-
-    /// Update a validator's health score after it produced a block.
-    ///
-    /// Health score increases based on evaporations processed in the block.
-    /// This incentivizes validators to run efficient evaporation, not just
-    /// produce empty blocks.
-    pub fn update_health_score(&mut self, validator_id: u64, evaporations_in_block: usize) {
-        if let Some(v) = self.get_mut(validator_id) {
-            v.blocks_produced += 1;
-            v.evaporations_processed += evaporations_in_block as u64;
-
-            // Increase health score based on evaporations processed
-            let health_increase = evaporations_in_block as f64 * HEALTH_PER_EVAPORATION;
-            v.health_score = (v.health_score + health_increase).min(MAX_HEALTH_SCORE);
-        }
-    }
-
-    /// Apply health score decay to all validators (called once per epoch).
-    /// This ensures validators must keep contributing to maintain their bonus.
-    pub fn decay_health_scores(&mut self) {
-        for v in &mut self.validators {
-            v.health_score = (v.health_score - HEALTH_DECAY_RATE).max(0.0);
-        }
-    }
-
-    /// Get the number of active (non-jailed) validators.
-    pub fn active_count(&self) -> usize {
-        self.validators.iter().filter(|v| !v.jailed).count()
-    }
-
-    // ─────────────────── Slashing ────────────────────────────────────────
-
-    /// Slash a validator for equivocation (double-signing).
-    /// Removes 10% of stake and jails the validator.
-    /// Returns the amount slashed.
-    pub fn slash_equivocation(&mut self, validator_id: u64) -> u64 {
-        if let Some(v) = self.get_mut(validator_id) {
-            let penalty = (v.stake as f64 * SLASH_EQUIVOCATION_PCT).round() as u64;
-            v.stake = v.stake.saturating_sub(penalty);
-            v.total_slashed += penalty;
-            v.jailed = true;
-            v.health_score = 0.0;
-            // Auto-remove if stake below minimum
-            if v.stake < MIN_STAKE {
-                self.remove_validator(validator_id);
-            }
-            penalty
-        } else {
-            0
-        }
-    }
-
-    /// Slash a validator for downtime (missed block production).
-    /// Removes 1% of stake per missed block. Jails after 3+ misses.
-    /// Returns the amount slashed.
-    pub fn slash_downtime(&mut self, validator_id: u64, missed_blocks: u64) -> u64 {
-        if let Some(v) = self.get_mut(validator_id) {
-            let per_miss = (v.stake as f64 * SLASH_DOWNTIME_PCT).round() as u64;
-            let penalty = per_miss.saturating_mul(missed_blocks);
-            v.stake = v.stake.saturating_sub(penalty);
-            v.total_slashed += penalty;
-            if missed_blocks >= 3 {
-                v.jailed = true;
-            }
-            v.health_score = (v.health_score - missed_blocks as f64 * 0.1).max(0.0);
-            // Auto-remove if stake below minimum
-            if v.stake < MIN_STAKE {
-                self.remove_validator(validator_id);
-            }
-            penalty
-        } else {
-            0
-        }
-    }
-
-    /// Apply a precomputed slash amount (from Sanov or any theorem-grade
-    /// formula) to a validator. Handles jailing and auto-remove below
-    /// `MIN_STAKE`. Returns the amount actually deducted (capped at stake).
-    pub fn slash_with_amount(&mut self, validator_id: u64, amount: u64, jail: bool) -> u64 {
-        let actual = if let Some(v) = self.get_mut(validator_id) {
-            let deducted = amount.min(v.stake);
-            v.stake = v.stake.saturating_sub(deducted);
-            v.total_slashed += deducted;
-            if jail {
-                v.jailed = true;
-                v.health_score = 0.0;
-            }
-            deducted
-        } else {
-            return 0;
-        };
-        if actual > 0 {
-            if let Some(v) = self.get(validator_id) {
-                if v.stake < MIN_STAKE {
-                    self.remove_validator(validator_id);
-                }
-            }
-        }
-        actual
-    }
-
-    /// Unjail a validator (allow them back into rotation).
-    pub fn unjail(&mut self, validator_id: u64) -> bool {
-        if let Some(v) = self.get_mut(validator_id) {
-            if v.jailed && v.stake >= MIN_STAKE {
-                v.jailed = false;
-                return true;
-            }
-        }
-        false
-    }
-
-    // ─────────────────── VRF-Based Leader Election ──────────────────────────
-
-    /// Verify that a block's VRF proof is valid for the claimed proposer.
-    ///
-    /// Checks:
-    /// 1. The proposer has a registered VRF public key
-    /// 2. The VRF proof verifies against `leader_vrf_input(height, round)`
-    /// 3. The VRF output matches the proof
-    pub fn verify_vrf_proposal(
-        &self,
-        proposer_id: u64,
-        height: u64,
-        round: u32,
-        vrf_output: &[u8; 32],
-        vrf_proof: &[u8],
-    ) -> bool {
-        let validator = match self.get(proposer_id) {
-            Some(v) => v,
-            None => return false,
-        };
-
-        let vrf_pk = match &validator.vrf_public_key {
-            Some(pk) => pk,
-            None => return false,
-        };
-
-        let alpha = evaporchain_crypto::vrf::leader_vrf_input(height, round);
-        evaporchain_crypto::vrf::vrf_verify(
-            vrf_pk,
-            &alpha,
-            &evaporchain_crypto::vrf::VrfOutput(*vrf_output),
-            &evaporchain_crypto::vrf::VrfProof(vrf_proof.to_vec()),
-        )
-    }
-
-    /// Check if a validator's VRF output qualifies them as leader.
-    /// Uses stake-weighted threshold: probability proportional to stake.
-    pub fn vrf_leader_qualifies(&self, validator_id: u64, vrf_output: &[u8; 32]) -> bool {
-        let validator = match self.get(validator_id) {
-            Some(v) if !v.jailed => v,
-            _ => return false,
-        };
-        let total = self.total_stake();
-        evaporchain_crypto::vrf::vrf_leader_check(
-            &evaporchain_crypto::vrf::VrfOutput(*vrf_output),
-            validator.stake,
-            total,
-        )
-    }
-
-    /// Compute committee seats for a validator using VRF sortition.
-    pub fn vrf_sortition(
-        &self,
-        validator_id: u64,
-        vrf_output: &[u8; 32],
-        expected_committee_size: u64,
-    ) -> u64 {
-        let validator = match self.get(validator_id) {
-            Some(v) if !v.jailed => v,
-            _ => return 0,
-        };
-        let total = self.total_stake();
-        evaporchain_crypto::vrf::sortition(
-            &evaporchain_crypto::vrf::VrfOutput(*vrf_output),
-            validator.stake,
-            total,
-            expected_committee_size,
-        )
-    }
-
-    /// Total raw stake across all active (non-jailed) validators.
-    /// Uses saturating arithmetic to prevent overflow in Byzantine scenarios.
-    /// Includes both self-stake and cached delegated stake (P0 #4 Phase 6).
-    /// Quorum checks compare signing voting power against this total.
-    pub fn total_stake(&self) -> u64 {
-        self.validators
-            .iter()
-            .filter(|v| !v.jailed)
-            .map(|v| v.effective_stake())
-            .fold(0u64, |acc, s| acc.saturating_add(s))
-    }
-
-    /// Total *self-stake only* across active validators. Useful when
-    /// reporting protocol-fundamentals separately from delegations.
-    pub fn total_self_stake(&self) -> u64 {
-        self.validators
-            .iter()
-            .filter(|v| !v.jailed)
-            .map(|v| v.stake)
-            .fold(0u64, |acc, s| acc.saturating_add(s))
-    }
-
-    /// Refresh each validator's `delegated_stake` from the live
-    /// DelegationRecord set in StateDB. Should be called at the start
-    /// of every block production cycle so quorum checks within that
-    /// block use up-to-date voting power. Within-block delegations
-    /// take effect on the next block.
-    pub fn refresh_delegated_stakes(&mut self, db: &dyn evaporchain_state::db::StateDB) {
-        // Build a per-validator total from the delegation set in one pass.
-        let mut totals: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
-        for d in db.all_delegations() {
-            *totals.entry(d.validator_id).or_insert(0) = totals
-                .get(&d.validator_id)
-                .copied()
-                .unwrap_or(0)
-                .saturating_add(d.amount);
-        }
-        for v in self.validators.iter_mut() {
+    for v_id in set.validators().iter().map(|v| v.id).collect::<Vec<_>>() {
+        if let Some(v) = set.get_mut(v_id) {
             v.delegated_stake = totals.get(&v.id).copied().unwrap_or(0);
         }
     }
-
-    /// Get a validator by ID.
-    pub fn get_validator(&self, id: u64) -> Option<&ValidatorInfo> {
-        self.validators.iter().find(|v| v.id == id)
-    }
-
-    /// Check if any validator has a BLS key registered (enables BLS enforcement).
-    pub fn has_bls_keys(&self) -> bool {
-        !self.validators.is_empty() && self.validators.iter().all(|v| v.bls_public_key.is_some())
-    }
-
-    /// Check if any validator has a VRF key registered (enables VRF mode).
-    pub fn has_vrf_keys(&self) -> bool {
-        self.validators.iter().any(|v| v.vrf_public_key.is_some())
-    }
-
-    pub fn leader_for_epoch_with_seed(
-        &self,
-        epoch: u64,
-        beacon_seed: &[u8; 32],
-    ) -> Option<&ValidatorInfo> {
-        let active: Vec<&ValidatorInfo> = self.validators.iter().filter(|v| !v.jailed).collect();
-        if active.is_empty() {
-            return None;
-        }
-        // Determinism invariant — use base stake, not health-weighted weight.
-        // See `leader_for_epoch` for the full rationale.
-        let total: u64 = active
-            .iter()
-            .map(|v| v.stake)
-            .fold(0u64, |a, w| a.saturating_add(w));
-        if total == 0 {
-            let idx = epoch as usize % active.len();
-            return Some(active[idx]);
-        }
-        let weighted_index = Self::epoch_hash_with_seed(epoch, beacon_seed) % total;
-        let mut accumulated = 0u64;
-        for validator in &active {
-            accumulated = accumulated.saturating_add(validator.stake);
-            if accumulated > weighted_index {
-                return Some(validator);
-            }
-        }
-        active.last().copied()
-    }
-
-    /// Compute a deterministic hash for an epoch (used for leader selection).
-    fn epoch_hash(epoch: u64) -> u64 {
-        Self::epoch_hash_with_seed(epoch, &[0u8; 32])
-    }
-
-    fn epoch_hash_with_seed(epoch: u64, seed: &[u8; 32]) -> u64 {
-        let mut input = Vec::with_capacity(46);
-        input.extend_from_slice(&epoch.to_le_bytes());
-        input.extend_from_slice(b"leader");
-        input.extend_from_slice(seed);
-        let hash = blake3_hash(&input);
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&hash[..8]);
-        u64::from_le_bytes(buf)
-    }
 }
 
-impl Default for ValidatorSet {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Apply a proportional slash to every delegation against `validator_id`
 /// (P0 #4 Phase 5). Use after [`ValidatorSet::slash_equivocation`] or
@@ -1513,7 +1010,7 @@ mod tests {
         db.put_delegation(delegation(11, 1, 700));
         db.put_delegation(delegation(12, 2, 200));
 
-        vs.refresh_delegated_stakes(&db);
+        super::refresh_delegated_stakes(&mut vs, &db);
 
         assert_eq!(vs.get(1).unwrap().delegated_stake, 1200);
         assert_eq!(vs.get(2).unwrap().delegated_stake, 200);

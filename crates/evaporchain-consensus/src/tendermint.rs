@@ -4013,7 +4013,7 @@ impl TendermintConsensus {
         // K-11 wiring: refresh per-validator delegated_stake from the live
         // DelegationRecord set so quorum/voting-power decisions in this tick
         // reflect newly bonded/unbonded delegations.
-        self.validator_set.refresh_delegated_stakes(&*db);
+        crate::validator_set::refresh_delegated_stakes(&mut self.validator_set, &*db);
 
         // Re-broadcast BLS KeyAnnounce every 50 blocks so late-joining peers get our key
         if self.height > 0
