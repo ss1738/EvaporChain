@@ -163,15 +163,6 @@ pub fn validate_half_life_field(args: &Value, field: &'static str) -> Result<u64
     validate_amount_field(args, field, MAX_HALF_LIFE_EPOCHS)
 }
 
-/// Validate a 64-char hex transaction hash. Reuses address rules —
-/// both are 32-byte BLAKE3 digests with identical wire encoding.
-pub fn validate_tx_hash_field(
-    args: &Value,
-    field: &'static str,
-) -> Result<String, ValidationError> {
-    validate_address_field(args, field)
-}
-
 /// Validate a block height — any non-negative u64 (zero = genesis).
 pub fn validate_block_height_field(
     args: &Value,

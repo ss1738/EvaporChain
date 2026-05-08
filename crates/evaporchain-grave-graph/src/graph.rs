@@ -1,6 +1,6 @@
 //! `GraveGraph` — the directed-graph state machine.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

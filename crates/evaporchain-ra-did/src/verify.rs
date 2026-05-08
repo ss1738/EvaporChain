@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::attr::{Attribute, AttributeKey};
+use crate::attr::AttributeKey;
 use crate::did::Presentation;
 
 #[derive(Debug, Error, PartialEq, Eq)]

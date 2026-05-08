@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::arena::{Arena, MoveId, Owner};
-use crate::play::{Move, Play};
+use crate::play::Play;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum StrategyError {
@@ -114,6 +114,7 @@ pub fn is_innocent(arena: &Arena, cases: &[(Play, MoveId)]) -> Result<(), Strate
 mod tests {
     use super::*;
     use crate::arena::{MoveDecl, MoveLabel};
+    use crate::play::Move;
 
     fn id(b: u8) -> MoveId {
         let mut x = [0u8; 32];

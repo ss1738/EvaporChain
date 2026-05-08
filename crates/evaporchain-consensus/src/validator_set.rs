@@ -12,7 +12,6 @@
 //! iterate validators: accumulate weights until >= weighted_index
 //! ```
 
-use evaporchain_crypto::hash::blake3_hash;
 use serde::{Deserialize, Serialize};
 
 /// Parts-per-million denominator for ratio fields. Lane R.7: minimal
