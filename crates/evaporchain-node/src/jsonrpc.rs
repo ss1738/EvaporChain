@@ -1537,6 +1537,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
         let json = block_to_json(&block, false);
         assert_eq!(json["number"], "0x2a");

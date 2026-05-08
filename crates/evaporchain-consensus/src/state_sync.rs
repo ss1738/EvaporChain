@@ -621,17 +621,31 @@ impl StateSyncManager {
             }
         }
 
-        // Verify the assembled state against the state root
-        let computed_root = blake3_hash(&full_data);
-        if computed_root != meta.state_root {
-            self.phase = SyncPhase::Failed("State root mismatch after assembly".into());
-            return vec![];
-        }
-
+        // Per-chunk integrity is already verified via meta.chunk_hashes
+        // in handle_chunk_response. The previous code compared
+        // blake3_hash(&full_data) to meta.state_root, but those are
+        // semantically different values: meta.state_root is the
+        // *chain* state root (a verkle-trie root over accounts +
+        // objects), set at registration time from
+        // `execution.state_root`. blake3_hash of the serialized
+        // snapshot bytes will never equal that.
+        //
+        // Cluster-soak evidence 2026-05-08: M1 reached this branch
+        // after every state-sync trigger and immediately failed with
+        // "State root mismatch after assembly", killing the bootstrap
+        // path even though the protocol completed correctly.
+        //
+        // The proper post-assembly check is: apply the snapshot to a
+        // local DB, compute the resulting verkle root, and compare to
+        // meta.state_root. main.rs::ApplySnapshot already does the
+        // apply step; verifying the post-apply root vs claim is a
+        // follow-up that needs the executor in scope. For now we
+        // trust chunk-level integrity (which is real) and emit
+        // Complete so main.rs can proceed.
         info!(
             height = meta.height,
             size = full_data.len(),
-            "Snapshot verified — applying state"
+            "Snapshot assembled — chunks integrity-verified, applying state (post-apply state-root verification deferred to main.rs)"
         );
 
         self.phase = SyncPhase::Complete {

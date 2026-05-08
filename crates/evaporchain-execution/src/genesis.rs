@@ -108,6 +108,7 @@ pub fn initialize_genesis(
         da_row_roots: vec![],
         da_col_roots: vec![],
         parents: vec![],
+        post_state_root: None,
     };
 
     Ok(GenesisResult {

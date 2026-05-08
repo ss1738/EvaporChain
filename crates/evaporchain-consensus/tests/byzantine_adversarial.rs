@@ -50,6 +50,7 @@ fn make_test_block(height: u64, producer_id: u64) -> Block {
         state_root_version: 0,
         submit_epoch_hints: vec![],
         parents: vec![],
+        post_state_root: None,
     }
 }
 

@@ -70,6 +70,7 @@ fn make_block_with_transfers(height: u64, num_txs: usize, account_count: u64) ->
         state_root_version: 0,
         submit_epoch_hints: vec![],
         parents: vec![],
+        post_state_root: None,
     }
 }
 
@@ -163,6 +164,7 @@ fn bench_parallel_vs_sequential(c: &mut Criterion) {
                     state_root_version: 0,
                     submit_epoch_hints: vec![],
                     parents: vec![],
+                    post_state_root: None,
                 };
                 (db, executor, block)
             },

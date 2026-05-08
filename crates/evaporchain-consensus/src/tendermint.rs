@@ -6260,6 +6260,7 @@ impl TendermintConsensus {
             da_row_roots: vec![],
             da_col_roots: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         // Enforce max block size — drop transactions from the tail until the
@@ -7738,6 +7739,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -7773,6 +7775,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -7936,6 +7939,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         let fake_proposal = ConsensusMessage::Proposal {
@@ -8011,6 +8015,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             };
             ConsensusMessage::Proposal {
                 height: 1,
@@ -8183,6 +8188,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -8371,6 +8377,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -9087,6 +9094,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -9240,6 +9248,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -9438,6 +9447,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -9495,6 +9505,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
         block.timestamp = 24;
 
@@ -9543,6 +9554,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         // Deliberately skip record_state_branch.
@@ -9762,6 +9774,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -9878,6 +9891,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -9966,6 +9980,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -10102,6 +10117,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -10210,6 +10226,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -10315,6 +10332,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -10407,6 +10425,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -11513,6 +11532,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
         let blocks = std::collections::HashMap::from([(id(2), target_block)]);
         let block_apply = |db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| {
@@ -11619,6 +11639,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
         let blocks = std::collections::HashMap::from([(id(2), target_block)]);
 
@@ -11830,6 +11851,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             },
         );
 
@@ -11973,6 +11995,7 @@ mod tests {
                     state_root_version: 0,
                     submit_epoch_hints: vec![],
                     parents: vec![],
+                    post_state_root: None,
                 })
             },
             |_db: &mut dyn evaporchain_state::db::StateDB, _b: &TxBlock| {
@@ -12408,6 +12431,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -12514,6 +12538,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents: vec![],
+                post_state_root: None,
             }
         }
 
@@ -12890,6 +12915,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
         let proposal = ConsensusMessage::Proposal {
             height: 1,
@@ -13265,6 +13291,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -13319,6 +13346,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -13374,6 +13402,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -14175,6 +14204,7 @@ mod vrf_tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -14408,6 +14438,7 @@ mod epoch_tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         }
     }
 
@@ -15835,6 +15866,7 @@ mod da_tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         }
     }
 

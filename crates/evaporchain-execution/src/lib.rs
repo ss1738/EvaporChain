@@ -3362,6 +3362,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
             da_row_roots: vec![],
             da_col_roots: vec![],
         }

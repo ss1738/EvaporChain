@@ -5163,18 +5163,44 @@ async fn main() -> Result<()> {
                                         "{} \x1b[1;32mState sync: applying snapshot at height {} ({}B)\x1b[0m",
                                         node_tag, height, data.len()
                                     );
-                                    if let Ok(snapshot) = serde_json::from_slice::<evaporchain_state::snapshot::StateSnapshot>(&data) {
-                                        let mut db_guard = safe_lock(&db);
-                                        let _ = evaporchain_state::snapshot::SnapshotApplier::apply(&mut *db_guard, &snapshot);
-                                        drop(db_guard);
-                                        if let Some(ref tc) = tendermint {
-                                            let mut c = safe_lock(tc);
-                                            c.set_height(height + 1);
+                                    // Snapshots are serialized via bincode in
+                                    // `evaporchain_state::snapshot::serialize_snapshot`
+                                    // at create time (snapshot.rs:535). The
+                                    // previous code here tried `serde_json::
+                                    // from_slice` which silently failed and
+                                    // skipped the apply step — M1 reached
+                                    // ApplySnapshot but never advanced past
+                                    // h=0. Cluster-soak evidence 2026-05-08.
+                                    match evaporchain_state::snapshot::deserialize_snapshot(&data) {
+                                        Ok(snapshot) => {
+                                            let mut db_guard = safe_lock(&db);
+                                            match evaporchain_state::snapshot::SnapshotApplier::apply(&mut *db_guard, &snapshot) {
+                                                Ok(_) => {
+                                                    drop(db_guard);
+                                                    if let Some(ref tc) = tendermint {
+                                                        let mut c = safe_lock(tc);
+                                                        c.set_height(height + 1);
+                                                    }
+                                                    println!(
+                                                        "{} \x1b[1;32mState sync complete — resuming at height {}\x1b[0m",
+                                                        node_tag, height + 1
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    drop(db_guard);
+                                                    eprintln!(
+                                                        "{} \x1b[31mSnapshot apply failed: {}\x1b[0m",
+                                                        node_tag, e
+                                                    );
+                                                }
+                                            }
                                         }
-                                        println!(
-                                            "{} \x1b[1;32mState sync complete — resuming at height {}\x1b[0m",
-                                            node_tag, height + 1
-                                        );
+                                        Err(e) => {
+                                            eprintln!(
+                                                "{} \x1b[31mSnapshot deserialize failed: {}\x1b[0m",
+                                                node_tag, e
+                                            );
+                                        }
                                     }
                                     state_sync = None;
                                     sync_in_flight = false;
@@ -5316,8 +5342,36 @@ async fn main() -> Result<()> {
                         actions, &consensus_net_sender, &node_tag,
                     ).await;
 
+                    if !commits.is_empty() {
+                        eprintln!(
+                            "{} [DIAG-drain] on_message produced {} commit-action(s); kinds: {}",
+                            node_tag,
+                            commits.len(),
+                            commits
+                                .iter()
+                                .map(|a| match a {
+                                    ConsensusAction::CommitBlock(_) => "CommitBlock",
+                                    ConsensusAction::RequestSync(_, _) => "RequestSync",
+                                    ConsensusAction::SlashValidator { .. } => "SlashValidator",
+                                    ConsensusAction::BroadcastMessage(_) => "BroadcastMessage",
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
+                    }
+
                     // Handle any commits from message processing
                     for action in commits.drain(..) {
+                        eprintln!(
+                            "{} [DIAG-drain] iter action variant={}",
+                            node_tag,
+                            match &action {
+                                ConsensusAction::CommitBlock(_) => "CommitBlock",
+                                ConsensusAction::RequestSync(_, _) => "RequestSync",
+                                ConsensusAction::SlashValidator { .. } => "SlashValidator",
+                                ConsensusAction::BroadcastMessage(_) => "BroadcastMessage",
+                            }
+                        );
                         if let ConsensusAction::SlashValidator { validator_id, amount, ref reason } = action {
                             let mut db_guard = safe_lock(&db);
                             if let Some(mut stake) = db_guard.get_stake(validator_id).cloned() {
@@ -6820,7 +6874,44 @@ async fn main() -> Result<()> {
                         "{} \x1b[36mPeer tip is #{}, local is #{} — requesting catch-up\x1b[0m",
                         node_tag, tip_height, local_height
                     );
-                    if let Some(ref sender) = sync_request_sender {
+                    // Route through state-sync (snapshot-based) for
+                    // large gaps where block-by-block backfill won't
+                    // find historical blocks (peers prune past their
+                    // retention window). For small gaps, block-by-block
+                    // is fine and faster.
+                    //
+                    // Cluster-soak evidence 2026-05-08: this peer-tip
+                    // trigger fires FIRST at boot, sets sync_in_flight
+                    // = true, and locked the M1 cold-boot path into
+                    // block-by-block backfill — which then got 0 blocks
+                    // because peers had pruned 1..62000 from disk.
+                    // Without the gap-based escalation here, my other
+                    // state-sync triggers at main.rs:4279/5341/6256
+                    // never had a chance to fire (sync_in_flight was
+                    // already true when their RequestSync actions
+                    // arrived).
+                    if StateSyncManager::needs_state_sync(local_height, tip_height)
+                        && state_sync.is_none()
+                    {
+                        println!(
+                            "{} \x1b[1;33mPeer-tip gap too large ({} blocks) — escalating to snapshot state sync\x1b[0m",
+                            node_tag,
+                            tip_height.saturating_sub(local_height)
+                        );
+                        let mut ssm = StateSyncManager::new(local_height);
+                        let actions = ssm.start();
+                        for action in actions {
+                            if let SyncAction::Broadcast { message } = action {
+                                if let Some(ref sender) = consensus_net_sender {
+                                    if let Ok(data) = serde_json::to_vec(&message) {
+                                        let _ = sender.send(data).await;
+                                    }
+                                }
+                            }
+                        }
+                        state_sync = Some(ssm);
+                        sync_in_flight = true;
+                    } else if let Some(ref sender) = sync_request_sender {
                         let _ = sender.send((local_height + 1, tip_height)).await;
                         sync_in_flight = true;
                     }

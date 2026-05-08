@@ -238,6 +238,38 @@ pub struct Block {
     /// hashing, the protocol_version bump will be the gate.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parents: Vec<[u8; 32]>,
+    /// Phase 1 of `POST_EXEC_STATE_VERIFICATION_PLAN.md` — the
+    /// proposer's claim of the **post-execution** state root for
+    /// THIS block. Distinct from `state_root`, which by current
+    /// chain semantics carries the *pre-execution* state root (i.e.
+    /// the parent block's post-exec, computed at proposal time
+    /// from `self.current_state_root` in the proposer's tendermint
+    /// engine — see `tendermint.rs:6179`).
+    ///
+    /// `None` on legacy blocks. Phase 2 (proposer fill) will set
+    /// this to `Some(execution.state_root)` after the proposer's
+    /// own local execution, before broadcasting the proposal.
+    /// Phase 3 (warn-mode) will compare the validator's local
+    /// execution result against this claim and `warn!` on
+    /// mismatch. Phase 4 (enforce) will prevote NIL on mismatch.
+    /// Phase 5 will roll this field into `block_hash`, making the
+    /// commit certificate bind to the post-exec claim.
+    ///
+    /// Bug context: today's chain commits `block_hash` over the
+    /// header without any signed post-exec commitment, so a node
+    /// with corrupt local state silently forks while only its
+    /// votes get rejected by quorum. M1 cluster soak 2026-05-08
+    /// reproduced this pattern across geography (UK Macs vs
+    /// Helsinki Hetzners) on a fresh genesis — confirming it's
+    /// deterministic, not a hot-rsync artifact.
+    ///
+    /// Wire-format: `serde(default, skip_serializing_if =
+    /// "Option::is_none")` keeps legacy blocks bit-identical, and
+    /// the bincode positional schema stays unchanged for old
+    /// snapshots / persisted blocks because the field is appended
+    /// at the END of the struct (post `parents`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_state_root: Option<[u8; 32]>,
 }
 
 /// Phase 2.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — wire-format
