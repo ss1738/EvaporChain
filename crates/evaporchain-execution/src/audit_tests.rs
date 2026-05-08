@@ -1002,31 +1002,55 @@ mod conservation_enforce_tests {
     /// above `DemurrageParams.threshold` must accrue a positive
     /// refresh-pool balance — proving the integration runs in the
     /// production hot path, not just in `SimpleExecutor`.
+    ///
+    /// **Test-design note (2026-05-09 fix to a pre-existing failure):**
+    /// the original test funded ONLY addr(1) and addr(2), then ran a
+    /// transfer between them. After the 2026-05-07 anchor-refresh fix
+    /// (commit `7bdbfaf`), the transfer execution stamps both
+    /// addresses' `last_touched_epoch = current_epoch` BEFORE the
+    /// end-of-block demurrage sweep runs — so when the sweep sees
+    /// `anchor = current_epoch`, idle window = 0, owed = 0. The pool
+    /// stayed at 0 and the test failed.
+    ///
+    /// Updated: fund addr(3) above-threshold but DON'T include it in
+    /// the transfer. Its `last_touched_epoch` remains 0 through the
+    /// block, the sweep sees `anchor = 0, current = 10, idle = 10`,
+    /// and demurrage fires correctly.
     #[test]
     fn demurrage_fires_in_parallel_execute_block() {
         let mut db = InMemoryStateDB::new();
-        // Above default threshold (1024) so demurrage will charge.
-        fund(&mut db, 1, 10_000_000);
+        // Transfer parties — these will get anchor-refreshed by the
+        // transfer execution, so demurrage on them at end-of-block
+        // computes idle=0, owed=0. NOT what we're testing.
+        fund(&mut db, 1, 1_000_000);
+        fund(&mut db, 2, 0);
+        // The actual demurrage subject — ABOVE threshold, NOT touched
+        // by the block's transfer, so its anchor stays stale.
+        fund(&mut db, 3, 10_000_000);
+
         let mut executor = ParallelExecutor::new_for_test(5);
         // Aggressive params so the test sees a non-trivial charge
-        // within one block. Production uses `default()` which
+        // within a 10-epoch window. Production uses `default()` which
         // accrues much more slowly.
         executor.demurrage_params = evaporchain_demurrage::DemurrageParams::new(100, 1_000);
-        let bal_before = db.get_account(&addr(1)).unwrap().balance;
+        let bal3_before = db.get_account(&addr(3)).unwrap().balance;
         executor
             .execute_block(&mut db, &block_with_one_transfer(1, 10))
             .expect("normal block must commit");
-        let bal_after = db.get_account(&addr(1)).unwrap().balance;
+        let bal3_after = db.get_account(&addr(3)).unwrap().balance;
         let pool = executor.refresh_pool.total_accrued();
-        assert!(pool > 0, "demurrage must accrue to refresh pool");
-        // The drained balance must equal the pool credit
-        // (transferred-out separately handled by the transfer flow).
-        // Account 1 was the *recipient* of the transfer, so its
-        // balance after = bal_before + 100 (received) − pool_share.
-        // We only assert pool > 0 here; per-account accounting is
-        // covered by the demurrage_integration unit tests.
-        let _ = bal_before;
-        let _ = bal_after;
+        assert!(
+            pool > 0,
+            "demurrage must accrue to refresh pool — addr(3) untouched-by-tx \
+             with anchor=0 at epoch=10 must be charged"
+        );
+        // The pool credit equals exactly the amount addr(3) lost.
+        let lost = bal3_before - bal3_after;
+        assert_eq!(
+            pool, lost,
+            "refresh_pool credit must equal addr(3)'s balance loss \
+             (no other account is above threshold + has a stale anchor)"
+        );
     }
 
     /// Negative-case coverage for the gate's branching logic

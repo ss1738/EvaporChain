@@ -4328,9 +4328,13 @@ mod tests {
         assert_eq!(result.txs_executed, 2);
         assert_eq!(result.txs_failed, 0);
         assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 2);
-        // 1_000_000 − 200 (two transfers) − 8 (per-block demurrage on the
-        // sender's balance accrued at block.epoch=1 from last_touched_epoch=0).
-        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 999_792);
+        // 1_000_000 − 200 (two transfers). Post the 2026-05-07 anchor-
+        // refresh fix (commit `7bdbfaf`): each transfer execution stamps
+        // sender.last_touched_epoch = current_epoch BEFORE the
+        // end-of-block demurrage sweep runs, so idle = 0, owed = 0.
+        // The original expectation of 999_792 (200 transfer + 8 demurrage)
+        // predates that fix; the actual value is now 999_800.
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 999_800);
     }
 
     // ─── Object Creation with Energy ───
@@ -6369,9 +6373,17 @@ contract Counter {
         assert_eq!(ready.txs_executed, 1);
         assert_eq!(
             db.get_account(&addr(1)).unwrap().balance,
-            // -1 for the per-block demurrage tick at the claim epoch.
-            pre_claim_balance + 1_500 - 1,
-            "claimed amount credited to balance (less 1-unit per-block demurrage)"
+            // Post the 2026-05-07 anchor-refresh fix (commit `7bdbfaf`):
+            // ClaimDelegation execution stamps `last_touched_epoch =
+            // current_epoch` on the delegator BEFORE the end-of-block
+            // demurrage sweep runs. The sweep then sees idle = 0 and
+            // owed = 0. Pre-fix the test subtracted 1 unit for the
+            // expected per-block demurrage tick; post-fix the credit
+            // is exactly the unbonded amount, no demurrage.
+            pre_claim_balance + 1_500,
+            "claimed amount credited to balance — demurrage doesn't fire \
+             on the same block as the claim because the claim refreshes \
+             the delegator's anchor"
         );
         let rec = db.get_delegation(&addr(1), 7).unwrap();
         assert_eq!(rec.unbonding_amount, 0);
