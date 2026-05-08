@@ -1,8 +1,5 @@
 //! Main relayer event loop. Pull finalised headers from EvaporChain,
 //! push them to Ethereum in order, sleep, repeat.
-//!
-//! Phase 3b scaffold. Submission is a no-op until `eth_client::submit_header`
-//! is wired against the alloy contract binding (see TODO there).
 
 use anyhow::Result;
 use std::time::Duration;
@@ -76,7 +73,7 @@ pub async fn run(chain: ChainClient, eth: EthClient, cfg: Config) -> Result<()> 
                 .await
             {
                 Ok(tx) => info!(height = h.height, tx, "submitted"),
-                Err(e) => warn!(height = h.height, err = %e, "submission failed (Phase 3b stub)"),
+                Err(e) => warn!(height = h.height, err = %e, "submission failed"),
             }
 
             next_height = h.height + 1;

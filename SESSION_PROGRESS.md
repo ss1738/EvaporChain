@@ -48,6 +48,42 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (late) — §2.2 doc-drift audit + punch-list closure
+
+**Focus:** verify actual codebase state vs session-summary claims; close doc-drift in punch list and relayer.
+
+**Commits shipped:** 1 (`tbd`).
+
+**Deliverables:**
+- Verified: §2.1 + §2.2 + §2.5 tokenomics items all committed in `a6bc9df` (2026-05-08). Session summary had them as "next"; they were already done.
+- Verified: Day 12C (`e368224`) + Day 13 (`d7a37a0`) already committed before session started.
+- DOCTRINE_PUNCH_LIST.md Tokenomics row updated: ⚠ Partial → ✅ 6/6 done (was stale since `a6bc9df`).
+- Relayer `loop_runner.rs` doc-drift fixed: "Phase 3b stub" comment removed; submission is fully wired via alloy contract binding.
+- Confirmed bridge endpoint trio (`/api/bridge/headers/finalized`, `/:height/commit_cert`, `/api/bridge/validators`) are live in `api.rs:18236-18238` — Phase 3b fully operational.
+
+**Empirical results:**
+- No new test runs; all changes are doc/comment-only.
+
+**Decisions made:**
+- Tokenomics §2 (all 6 items) is done at the engineering level. Remaining work is ceremony questions (Q1-Q28 in `TOKENOMICS.md`) for tokenomics advisors — these are NOT engineering blockers.
+
+**What's next:**
+1. Live cluster smoke via bridge relayer (`cargo run --release -p evaporchain-eth-relayer` pointing at Mini 1 + Anvil/Sepolia).
+2. Governance ladder: ride `scripts/governance-flip.sh` once the cluster is on the post-bundle binary.
+3. Next code build: look at remaining mainnet readiness gaps (Phase 7 pre-conditions: emergency pause, multisig, gas optimisation).
+
+**Blockers / open questions:**
+- Phase C cluster deploy: BLOCKED on Hetzner SSH credentials.
+- Sepolia deploy: BLOCKED on `PRIVATE_KEY` + `ETHEREUM_RPC` from operator.
+- Governance activation ladder: BLOCKED until cluster is running post-bundle binary.
+
+**Cross-references:**
+- `DOCTRINE_PUNCH_LIST.md` Tokenomics row
+- `ethereum-bridge/relayer/src/loop_runner.rs`
+- `a6bc9df` (§2.1+§2.2+§2.5 tokenomics bundle, 2026-05-08)
+
+---
+
 ## 2026-05-09 (continued) — paymaster Days 6→12B: inner-tx whitelist expansion + production hardening
 
 **Focus:** continue the Option B paymaster arc that landed Days 1–5 in `7242e59`. Expand the chain's sponsorable inner-tx whitelist, then add the production-hardening surface a real operator needs (spam-signing protection, audit log, metrics, per-paymaster policy, idempotency keys both chain-side and wallet-side, /info policy exposure). Closes the V1 paymaster build.
