@@ -48,6 +48,85 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (continued) — paymaster Days 6→12B: inner-tx whitelist expansion + production hardening
+
+**Focus:** continue the Option B paymaster arc that landed Days 1–5 in `7242e59`. Expand the chain's sponsorable inner-tx whitelist, then add the production-hardening surface a real operator needs (spam-signing protection, audit log, metrics, per-paymaster policy, idempotency keys both chain-side and wallet-side, /info policy exposure). Closes the V1 paymaster build.
+
+**Commits shipped:** 8 (`14fed62` → `9b8f65d`).
+
+| # | Commit | Layer |
+|---|---|---|
+| 1 | `14fed62` | Day 6 chain: expand UserOp inner-tx whitelist to {Transfer, CallScript, CallContract} with no-impersonation guards on the contract-call variants. `execute_user_op` signature `&self → &mut self`. Sidequest: unwedged `tests/integration/src/lib.rs` 3 callsites broken by `3923ba6`'s `handle_request` arg addition. |
+| 2 | `e8a5242` | Day 6 wallet: `paymaster {call-script,call-contract}` CLI subcommands matching the chain whitelist. Shared `submit_sponsored_user_op` helper factored from `Send`. |
+| 3 | `24079f0` | Day 7: spam-signing hardening. `PaymasterConfig` with `require_user_sig` (default true — verify user sig over chain's canonical msg before spending sponsorship sig) + `per_sender_rps` + `per_sender_burst` (token-bucket rate limiter, idle GC). New errors `InvalidUserSignature`, `RateLimited` → 400 / 429. |
+| 4 | `a91b7fb` | Day 8: append-only audit log (`{ts_unix_ms, sender, paymaster_nonce, call_gas_limit, call_data_hash, chain_id}`). fsync per line. Fail-closed: IO error → 503. Operators reconcile billing against this; `call_data_hash` is bit-identical to chain's sponsorship payload. |
+| 5 | `2585011` | Day 9: `/metrics` Prometheus endpoint. 7 sponsorship outcome counters + gauges for `next_nonce` / `active_senders` / `uptime`. Hand-written exposition (no `prometheus` crate dep). 5 suggested alerts in runbook. |
+| 6 | `17a0b9a` | Day 10: per-paymaster inner-tx whitelist (`PaymasterConfig::allowed_inner_variants`, CLI `--allow-inner=transfer,call_script,call_contract`). Defense-in-depth above the chain's global set — Transfer-only paymasters can refuse contract calls. Surfaces decode + variant errors. |
+| 7 | `d66f0d8` | Day 11: extend `/info` with policy fields (`require_user_sig`, `per_sender_rps`, `per_sender_burst`, `audit_log_enabled`, `allowed_inner_variants?`). Wallets pre-validate before spending a round-trip on a doomed `/sponsor`. Wire backwards-compat via serde defaults. |
+| 8 | `b0c883a` | Day 12 chain-side idempotency: `Idempotency-Key` HTTP header → LRU+TTL cache (default 1024 keys × 1h). Wallet retries on the same logical sponsorship return the cached SponsorshipResponse byte-for-byte. New `SponsorOutcome::{Fresh,Replay}` enum + `sponsor_idempotent` method. New `evaporchain_paymaster_idempotent_replays_total` counter. Failed sponsorships explicitly NOT cached (no key poisoning). |
+| 9 | `9b8f65d` | Day 12B wallet-side idempotency: `PaymasterClient::sponsor` auto-derives a deterministic body-hash key (blake3 over sender+sender_nonce+call_gas_limit+call_data+paymaster) and attaches as `idempotency-key` header. Same body → same key → cache hit. Excludes post-/sponsor fields so retries hash identically. Test-server stubs in wallet + integration updated to honor the header. |
+
+**Deliverables:**
+
+- Chain `execute_user_op` whitelist: {Transfer, CallScript, CallContract}; explicit reject lists for nested UserOp / Refund / Blob / MultiSig / privacy variants / Deferred.
+- Wallet CLI: `evaporchain-wallet paymaster {info,send,call-script,call-contract}` — full surface for V1 sponsorable intents.
+- Operator-side controls: `--require-user-sig`, `--per-sender-rps`, `--per-sender-burst`, `--audit-log`, `--allow-inner`, `--idempotency-max-keys`, `--idempotency-ttl-secs`. Defaults are production-strict; `PaymasterConfig::permissive()` available for testnet.
+- Observability: `/metrics` (Prometheus) + audit log (JSON-lines) + structured tracing.
+- `/info` policy exposure so wallets fail locally on doomed requests.
+- Idempotency loop closed both sides — wallet auto-sends key, paymaster honors it.
+- Runbook (`docs/runbooks/paymaster.md`) extended with new sections: Inner-tx whitelist, Metrics, Audit log, Idempotency, /info policy surface. CLI flag table now lists 11 flags. Failure-modes table covers all 4 HTTP error paths.
+
+**Test surface — ~65 paymaster tests across 5 crates, all green on Mini 1:**
+
+| Crate | Tests added in this arc | Cumulative |
+|---|---|---|
+| `evaporchain-execution` | 3 (CallScript dispatch, CallScript impersonation, CallContract impersonation) | 15 |
+| `evaporchain-paymaster` | 28 (8 strict-mode + 4 audit + 3 metrics + 6 inner-whitelist + 6 /info + 8 idempotency) | 39 |
+| `evaporchain-wallet` | 5 (3 idempotency-key derivation + 1 retry round-trip + 1 distinct nonces) | 12 |
+| `evaporchain-integration-tests` | 0 (existing 2 still pass after Day 6 + Day 12B test-server updates) | 2 |
+
+**Decisions made:**
+
+- **execute_user_op `&self → &mut self`.** Required to call `execute_call_script` / `execute_call_contract` which mutate `self.script_engine` / `self.contract_engine`. Caller (`execute_block` dispatch) already had `&mut self`, so no upstream change. Test sites changed `let executor` → `let mut executor`.
+- **Day 7 default = strict.** `require_user_sig: true`, `per_sender_rps: 5.0`, `per_sender_burst: 10`. Production-safe out of the box. `PaymasterConfig::permissive()` (off, off, off) for testnet only.
+- **Audit-log fail-closed.** An IO error during line write returns 503, not a silently-skipped audit entry. Operators billing in token X can't reconcile what wasn't logged.
+- **Hand-written Prometheus exposition** (no `prometheus` crate dep). Surface is small (7 counters + 4 gauges); the dep would add weight without payoff.
+- **Per-paymaster whitelist defaults to None** (trust chain). Forwards-compatible with future chain whitelist expansion. Operators opt in to narrowing.
+- **/info policy exposure uses `serde(default)`** for every new field. Old wallets ignore them; new wallets hitting an old paymaster see permissive-baseline defaults and treat that as "unknown policy; submit and see".
+- **Idempotency cache: failed sponsorships NOT cached.** A retry with a clean UserOp under the same key gets fresh handling (no error-poisoning).
+- **Wallet-side idempotency key is body-derived** (blake3 over sender + sender_nonce + call_gas_limit + call_data + paymaster). Survives wallet restart — UUID-per-sponsorship would lose the key on crash mid-flight. Excludes paymaster_nonce / paymaster_signature / paymaster_public_key / user signature so retries hash to the same key.
+- **Default `idempotency_max_keys = 1024`, `ttl_secs = 3600`.** Bounded HashMap, idle GC every 60s. Tunable via CLI.
+- **Test-server stubs updated to mirror the binary.** When the binary's behavior diverges from the test-server (e.g., Day 12 idempotency wiring), tests against the stub silently miss the divergence. Updated `spawn_paymaster_for_test` (wallet) and `spawn_paymaster` (integration) to read the `idempotency-key` header. Caught a real test gap when wiring this commit.
+
+**Empirical observations:**
+
+- Mini 1 disk hit 100% twice during this arc (recurring per session memory). Cleared `target/debug/incremental` (1.6GB) and `target/release` (2.1GB) to recover. 209 GiB / 228 GiB still used — operationally we should add a Hetzner/external SSD before the next big build.
+- All paymaster lib tests run in <1s; rate-limiter tests use `per_sender_rps: 0.000_001` (effectively zero refill) to be deterministic without slowing the suite.
+- 12-day continuous arc compiled cleanly throughout — no rebases, no fixups. Each day's commit is independently testable.
+
+**What's next (real, narrow):**
+
+1. SIGHUP-driven audit-log rotation. Currently rotation requires service stop+restart; small ops polish.
+2. Wallet pre-checks `/info` policy locally before submitting — declined this round; fine as a follow-up.
+3. Operator-driven live cluster smoke per `docs/runbooks/paymaster.md`. Operator-driven only.
+
+**Blockers / open questions:**
+
+- Mini disk pressure (228 GiB at 100%) — needs external SSD before another big arc.
+- The user sig pre-check (Day 7) verifies the user signed for THIS paymaster (overwrites `paymaster` before checking). A wallet that pre-stamps a different paymaster fails the check — wallet must read `/info` first to learn the address. Documented in runbook §`/info` policy surface; reasonable default.
+
+**Cross-references:**
+
+- `docs/MULTI_TOKEN_GAS_OPTIONS.md` — Option B decision artifact.
+- `docs/runbooks/paymaster.md` — operator runbook (extended ~150 lines this arc).
+- `crates/evaporchain-paymaster/{src/lib.rs, src/bin/server.rs, README.md}`.
+- `wallet/src/paymaster.rs` — client + sign_user_op_as_sender + idempotency_key_for_user_op.
+- `tests/integration/src/paymaster_e2e.rs` — E2E reference flow.
+- All 8 commits `14fed62 → 9b8f65d` (visible at `git log --oneline | head -10`).
+- Earlier arc: `7242e59` (Days 1–5 entry).
+
+---
+
 ## 2026-05-09 (afternoon, continued #4) — Coq corpus build unblocked end-to-end
 
 **Focus:** while staging the §6b LLSA work I noticed `make` in `research/coq/` failed at `LazyEagerEquivalence.v` (the documented `aa540e7 "tactical blocker after 4 attempts"`). Investigated whether the blocker was substantive or just a rewrite-sequencing drift — turned out to be the latter, with two sibling drifts in `EvaporChainSafetyLiveness.v` blocking the rest of the build.
