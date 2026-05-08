@@ -111,6 +111,12 @@ The reverse-chronological layout means the most recent session is always at the 
 
 **This is a coordination entry for parallel sessions, not a ship log.** Two Claude sessions have been committing concurrently on this repo (Sonnet 4.6 paymaster arc Days 1–14, Opus 4.7 Coq + Phase 2 scaffold + audit). The collision pattern below has already produced one accidental cross-session commit (`dfd7c79`). Future sessions must read this section before doing anything that touches `git`, Mini 1, or the live cluster.
 
+### → See also: `MAINNET_READINESS.md`
+
+For *what to work on next*, the layered lane index lives in `MAINNET_READINESS.md` (created `7188b5e`). It enumerates 30 lanes across Tier 3/0/1/2, organizes them by conflict group (CONSENSUS, EXECUTION, PRIVACY, NETWORK, BRIDGE-RUST, BRIDGE-SOL, PAYMASTER, OPS-RUNBOOK, AUDIT-SWEEP, STATE-DB) so parallel sessions can claim non-conflicting lanes, and specifies an atomic claim protocol (edit your lane's status line, stage only that file, commit + push immediately).
+
+**Workflow for a new session:** read `SESSION_PROGRESS.md` (this file's coordination note + recent entries) → read `MAINNET_READINESS.md` → claim a 🟡 OPEN lane in a different conflict group from any 🟢 CLAIMED lane → ship it.
+
 ### Live cluster reality (HTTP probe 2026-05-09 ~23:30)
 
 | Node | Tailscale | API@:8081 | chain_id observed | block height |
