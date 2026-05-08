@@ -71,5 +71,11 @@ evaporchain-sharding = { path = "../../crates/evaporchain-sharding" }
 evaporchain-script = { path = "../../crates/evaporchain-script" }
 evaporchain-script-lad = { path = "../../crates/evaporchain-script-lad" }
 evaporchain-hbct-elexon = { path = "../../crates/evaporchain-hbct-elexon" }
+evaporchain-paymaster = { path = "../../crates/evaporchain-paymaster" }
 serde_json = "1"
 hex = "0.4"
+blake3 = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
+reqwest = { version = "0.12", features = ["json"] }
+axum = "0.7"
+tempfile = "3"

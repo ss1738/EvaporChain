@@ -5,6 +5,9 @@
 //! integrate correctly.
 
 #[cfg(test)]
+mod paymaster_e2e;
+
+#[cfg(test)]
 mod tests {
     use evaporchain_consensus::finality::{FinalityStatus, FinalityTracker};
     use evaporchain_consensus::light_client::{
