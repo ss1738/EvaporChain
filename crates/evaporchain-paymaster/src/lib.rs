@@ -38,6 +38,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -254,6 +255,61 @@ impl RateLimiter {
     }
 }
 
+/// Counters + gauges exposed via `GET /metrics` in the binary.
+/// Atomic so concurrent sponsor calls increment without locking, and
+/// the metrics endpoint reads without blocking either. All counters
+/// are monotonic; gauges are sampled at read time.
+///
+/// Labels (Prometheus convention) live in the metric NAME — Rust
+/// doesn't have label-aware counter aggregation in std, and we don't
+/// want to pull in a full `prometheus` crate dep for a handful of
+/// counters. The exposition format hand-written in
+/// `Paymaster::prometheus_metrics()` translates these into labelled
+/// `evaporchain_paymaster_sponsorships_total{status="..."}` lines.
+#[derive(Debug)]
+pub struct PaymasterMetrics {
+    pub sponsorships_ok: AtomicU64,
+    pub sponsorships_already_signed: AtomicU64,
+    pub sponsorships_invalid_user_sig: AtomicU64,
+    pub sponsorships_rate_limited: AtomicU64,
+    pub sponsorships_nonce_io: AtomicU64,
+    pub sponsorships_audit_io: AtomicU64,
+    pub sponsorships_other: AtomicU64,
+    pub started_at: Instant,
+}
+
+impl Default for PaymasterMetrics {
+    fn default() -> Self {
+        Self {
+            sponsorships_ok: AtomicU64::new(0),
+            sponsorships_already_signed: AtomicU64::new(0),
+            sponsorships_invalid_user_sig: AtomicU64::new(0),
+            sponsorships_rate_limited: AtomicU64::new(0),
+            sponsorships_nonce_io: AtomicU64::new(0),
+            sponsorships_audit_io: AtomicU64::new(0),
+            sponsorships_other: AtomicU64::new(0),
+            started_at: Instant::now(),
+        }
+    }
+}
+
+impl PaymasterMetrics {
+    fn record(&self, outcome: Result<(), &PaymasterError>) {
+        let counter = match outcome {
+            Ok(()) => &self.sponsorships_ok,
+            Err(PaymasterError::AlreadySigned) => &self.sponsorships_already_signed,
+            Err(PaymasterError::InvalidUserSignature) => &self.sponsorships_invalid_user_sig,
+            Err(PaymasterError::RateLimited { .. }) => &self.sponsorships_rate_limited,
+            Err(PaymasterError::NonceIo(_)) | Err(PaymasterError::NonceParse(_)) => {
+                &self.sponsorships_nonce_io
+            }
+            Err(PaymasterError::AuditIo(_)) => &self.sponsorships_audit_io,
+            Err(_) => &self.sponsorships_other,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Long-lived state held by a paymaster service.
 ///
 /// Wraps the keypair, derives the paymaster's account address from
@@ -269,6 +325,7 @@ pub struct Paymaster {
     config: PaymasterConfig,
     rate_limiter: Arc<Mutex<RateLimiter>>,
     audit_log: Option<Arc<Mutex<AuditLogger>>>,
+    metrics: Arc<PaymasterMetrics>,
 }
 
 /// Append-only JSON-lines audit log writer. Held inside `Paymaster`
@@ -355,6 +412,7 @@ impl Paymaster {
             config,
             rate_limiter: Arc::new(Mutex::new(rate_limiter)),
             audit_log,
+            metrics: Arc::new(PaymasterMetrics::default()),
         })
     }
 
@@ -386,6 +444,17 @@ impl Paymaster {
     /// the nonce file is fsync'd before the in-memory counter
     /// advances, and the in-memory counter is never consumed twice.
     pub fn sponsor(&self, user_op: &mut UserOpTx) -> Result<u64, PaymasterError> {
+        // Wrap the implementation so every outcome — Ok or Err of any
+        // variant — increments exactly one metrics counter.
+        let result = self.sponsor_inner(user_op);
+        match &result {
+            Ok(_) => self.metrics.record(Ok(())),
+            Err(e) => self.metrics.record(Err(e)),
+        }
+        result
+    }
+
+    fn sponsor_inner(&self, user_op: &mut UserOpTx) -> Result<u64, PaymasterError> {
         if user_op.paymaster_signature.is_some() {
             return Err(PaymasterError::AlreadySigned);
         }
@@ -501,6 +570,79 @@ impl Paymaster {
             next_paymaster_nonce: self.next_paymaster_nonce(),
             chain_id: self.chain_id.clone(),
         }
+    }
+
+    /// Read-only handle to the metrics struct. Intended for tests +
+    /// the `/metrics` HTTP handler in the binary.
+    pub fn metrics(&self) -> &PaymasterMetrics {
+        &self.metrics
+    }
+
+    /// Render Prometheus exposition format. Hand-written rather than
+    /// pulled in via the `prometheus` crate — we have a small, stable
+    /// metrics surface and the format is simple. Operators scrape
+    /// this with `prometheus`, `vmagent`, `vector`, etc. via standard
+    /// HTTP GET. Returns text/plain with `; version=0.0.4` content
+    /// per the Prometheus exposition spec (the binary supplies that
+    /// header).
+    pub fn prometheus_metrics(&self) -> String {
+        let m = &self.metrics;
+        let now = Instant::now();
+        let uptime = now.duration_since(m.started_at).as_secs();
+        let next_nonce = self.next_paymaster_nonce();
+        let active_senders = self
+            .rate_limiter
+            .lock()
+            .map(|r| r.buckets.len() as u64)
+            .unwrap_or(0);
+        let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
+
+        let mut out = String::new();
+        out.push_str(
+            "# HELP evaporchain_paymaster_sponsorships_total \
+             Number of /sponsor requests by outcome.\n\
+             # TYPE evaporchain_paymaster_sponsorships_total counter\n",
+        );
+        let pairs = [
+            ("ok", load(&m.sponsorships_ok)),
+            ("already_signed", load(&m.sponsorships_already_signed)),
+            ("invalid_user_sig", load(&m.sponsorships_invalid_user_sig)),
+            ("rate_limited", load(&m.sponsorships_rate_limited)),
+            ("nonce_io", load(&m.sponsorships_nonce_io)),
+            ("audit_io", load(&m.sponsorships_audit_io)),
+            ("other", load(&m.sponsorships_other)),
+        ];
+        for (status, count) in pairs {
+            out.push_str(&format!(
+                "evaporchain_paymaster_sponsorships_total{{status=\"{status}\"}} {count}\n"
+            ));
+        }
+        out.push_str(
+            "# HELP evaporchain_paymaster_next_nonce \
+             Next sponsorship nonce that will be assigned.\n\
+             # TYPE evaporchain_paymaster_next_nonce gauge\n",
+        );
+        out.push_str(&format!(
+            "evaporchain_paymaster_next_nonce {next_nonce}\n"
+        ));
+        out.push_str(
+            "# HELP evaporchain_paymaster_active_senders \
+             Number of senders currently held in the rate-limiter \
+             HashMap (active or in flight, before idle GC).\n\
+             # TYPE evaporchain_paymaster_active_senders gauge\n",
+        );
+        out.push_str(&format!(
+            "evaporchain_paymaster_active_senders {active_senders}\n"
+        ));
+        out.push_str(
+            "# HELP evaporchain_paymaster_uptime_seconds \
+             Process uptime in seconds since paymaster construction.\n\
+             # TYPE evaporchain_paymaster_uptime_seconds gauge\n",
+        );
+        out.push_str(&format!(
+            "evaporchain_paymaster_uptime_seconds {uptime}\n"
+        ));
+        out
     }
 }
 
@@ -1072,6 +1214,115 @@ mod tests {
         let entry: serde_json::Value =
             serde_json::from_str(contents.lines().next().unwrap()).unwrap();
         assert_eq!(entry["call_data_hash"], expected);
+    }
+
+    // ─── Day 9: metrics tests ─────────────────────────────────────────
+
+    #[test]
+    fn metrics_increment_on_successful_sponsor() {
+        let tmp = TempDir::new().unwrap();
+        let pm = fresh_paymaster(&tmp, "test");
+        assert_eq!(pm.metrics().sponsorships_ok.load(Ordering::Relaxed), 0);
+        for _ in 0..3 {
+            pm.sponsor(&mut blank_user_op()).unwrap();
+        }
+        assert_eq!(pm.metrics().sponsorships_ok.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn metrics_increment_per_error_variant() {
+        // Build a strict paymaster + rate-limited bucket so we can
+        // hit invalid_user_sig + rate_limited counters distinctly.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: true,
+                per_sender_rps: 0.000_001,
+                per_sender_burst: 1,
+                audit_log: None,
+            },
+        )
+        .unwrap();
+
+        // 1 invalid_user_sig (rate limit grants 1 then user-sig
+        // check fails because no signature).
+        let r = pm.sponsor(&mut blank_user_op());
+        assert!(matches!(r, Err(PaymasterError::InvalidUserSignature)));
+        // 1 rate_limited (bucket exhausted).
+        let r = pm.sponsor(&mut blank_user_op());
+        assert!(matches!(r, Err(PaymasterError::RateLimited { .. })));
+        // 1 already_signed (different sender so rate limit fresh).
+        let mut uo = blank_user_op();
+        uo.sender = [0xCC; 32];
+        uo.paymaster_signature = Some(vec![0u8; 32]);
+        let r = pm.sponsor(&mut uo);
+        assert!(matches!(r, Err(PaymasterError::AlreadySigned)));
+
+        let m = pm.metrics();
+        assert_eq!(m.sponsorships_invalid_user_sig.load(Ordering::Relaxed), 1);
+        assert_eq!(m.sponsorships_rate_limited.load(Ordering::Relaxed), 1);
+        assert_eq!(m.sponsorships_already_signed.load(Ordering::Relaxed), 1);
+        assert_eq!(m.sponsorships_ok.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn prometheus_metrics_format_is_well_formed() {
+        let tmp = TempDir::new().unwrap();
+        let pm = fresh_paymaster(&tmp, "test");
+        pm.sponsor(&mut blank_user_op()).unwrap();
+        pm.sponsor(&mut blank_user_op()).unwrap();
+        let body = pm.prometheus_metrics();
+
+        // Each metric MUST have HELP + TYPE + at least one sample line.
+        for (metric, ty) in [
+            ("evaporchain_paymaster_sponsorships_total", "counter"),
+            ("evaporchain_paymaster_next_nonce", "gauge"),
+            ("evaporchain_paymaster_active_senders", "gauge"),
+            ("evaporchain_paymaster_uptime_seconds", "gauge"),
+        ] {
+            assert!(
+                body.contains(&format!("# HELP {metric}")),
+                "missing HELP for {metric}"
+            );
+            assert!(
+                body.contains(&format!("# TYPE {metric} {ty}")),
+                "missing TYPE for {metric}"
+            );
+        }
+        // ok counter reflects the two successful sponsorships.
+        assert!(
+            body.contains("evaporchain_paymaster_sponsorships_total{status=\"ok\"} 2"),
+            "ok counter not at 2; body:\n{body}"
+        );
+        // next_nonce gauge advanced to 2.
+        assert!(
+            body.contains("evaporchain_paymaster_next_nonce 2"),
+            "next_nonce gauge not at 2; body:\n{body}"
+        );
+        // All 7 sponsorship outcome labels MUST be emitted (even at 0)
+        // so Prometheus rate() / increase() over status="..." selectors
+        // never returns a NaN for the unseen variants.
+        for status in [
+            "ok",
+            "already_signed",
+            "invalid_user_sig",
+            "rate_limited",
+            "nonce_io",
+            "audit_io",
+            "other",
+        ] {
+            assert!(
+                body.contains(&format!(
+                    "evaporchain_paymaster_sponsorships_total{{status=\"{status}\"}}"
+                )),
+                "missing status='{status}' line in metrics body"
+            );
+        }
     }
 
     #[test]

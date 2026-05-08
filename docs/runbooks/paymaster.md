@@ -101,6 +101,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 |---|---|---|---|
 | GET | `/healthz` | — | `"ok"` |
 | GET | `/info` | — | `{paymaster_address_hex, next_paymaster_nonce, chain_id}` |
+| GET | `/metrics` | — | Prometheus exposition format (see §Metrics) |
 | POST | `/sponsor` | `{user_op}` | `{user_op, paymaster_address_hex, paymaster_nonce}` |
 
 ### Logs
@@ -185,6 +186,26 @@ If you need to reset (e.g. fresh paymaster account), delete both `paymaster_nonc
 - `GET /healthz` for liveness probes.
 - `GET /info` exposes `next_paymaster_nonce`. The on-chain `account.nonce` for the paymaster address should always be `next_paymaster_nonce - <in-flight sponsored UserOps not yet finalized>`. A persistent gap > a few blocks signals dropped UserOps or a chain reorg.
 - Tail the paymaster log for `sponsor failed` lines — every entry is a wallet bug or a wallet-side abuse attempt (e.g. resubmitting an `AlreadySigned` UserOp).
+
+### Metrics
+
+`GET /metrics` returns the standard Prometheus exposition format (Content-Type `text/plain; version=0.0.4`). Scrape with Prometheus / vmagent / vector / DataDog / etc. on the standard 15s cadence — the response is cheap (atomic counter loads + a mutex-guarded HashMap len read).
+
+Surface:
+
+| Metric | Type | Description |
+|---|---|---|
+| `evaporchain_paymaster_sponsorships_total{status=...}` | counter | Number of `/sponsor` requests by outcome. Status labels: `ok`, `already_signed`, `invalid_user_sig`, `rate_limited`, `nonce_io`, `audit_io`, `other`. All 7 emit (even at 0) so `rate()` / `increase()` over a status selector never NaN's |
+| `evaporchain_paymaster_next_nonce` | gauge | Next sponsorship nonce that will be assigned — should advance monotonically; flat for several minutes implies the paymaster is idle |
+| `evaporchain_paymaster_active_senders` | gauge | Number of senders held in the rate-limiter HashMap (active or in flight, before idle GC). Spikes here often correlate with `rate_limited` ticks |
+| `evaporchain_paymaster_uptime_seconds` | gauge | Process uptime since paymaster construction. Restarts reset to 0 |
+
+Suggested alerts:
+- `rate(evaporchain_paymaster_sponsorships_total{status="invalid_user_sig"}[5m]) > 1` — sustained malformed sigs from wallets; investigate.
+- `rate(evaporchain_paymaster_sponsorships_total{status="rate_limited"}[5m]) > 1` — sustained throttling; either bump `--per-sender-rps` or investigate which senders are flooding.
+- `rate(evaporchain_paymaster_sponsorships_total{status=~"nonce_io|audit_io"}[1m]) > 0` — disk problems; page operator.
+- `delta(evaporchain_paymaster_next_nonce[10m]) == 0 AND active_senders > 0` — the paymaster is rejecting every request despite traffic.
+- `evaporchain_paymaster_uptime_seconds < 60 AND on(instance) prev value > 60` — recent restart.
 
 ### Audit log
 

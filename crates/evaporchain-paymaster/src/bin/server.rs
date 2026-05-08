@@ -131,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/info", get(get_info))
+        .route("/metrics", get(get_metrics))
         .route("/sponsor", post(sponsor))
         .with_state(state);
 
@@ -146,6 +147,23 @@ async fn healthz() -> &'static str {
 
 async fn get_info(State(state): State<AppState>) -> Json<PaymasterInfo> {
     Json(state.paymaster.info())
+}
+
+/// Prometheus exposition. Content-Type per the Prometheus spec is
+/// `text/plain; version=0.0.4`. Scrapers (Prometheus, vmagent,
+/// vector, etc.) hit this on a fixed cadence (15s default) — keep
+/// the response cheap.
+async fn get_metrics(State(state): State<AppState>) -> Response {
+    let body = state.paymaster.prometheus_metrics();
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        body,
+    )
+        .into_response()
 }
 
 async fn sponsor(
