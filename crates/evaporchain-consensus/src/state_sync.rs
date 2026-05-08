@@ -290,23 +290,52 @@ impl StateSyncManager {
 
         if let Some((tip_height, agreement)) = best {
             if agreement >= MIN_TIP_AGREEMENT && tip_height > self.local_height {
-                // We have consensus on the tip — request the header
                 self.target_height = Some(tip_height);
-                self.phase = SyncPhase::VerifyingHeader;
 
-                // Request header from a peer at this height
-                let peer = *self
-                    .peer_tips
-                    .iter()
-                    .find(|(_, &(h, _))| h == tip_height)
-                    .map(|(pid, _)| pid)
-                    .unwrap();
+                // PROTOCOL SHORTCUT (cluster-soak fix 2026-05-08):
+                //
+                // The original flow at this point was to send a
+                // `SyncMessage::HeaderRequest { height: tip_height }` to
+                // a peer and transition `phase = VerifyingHeader`, then
+                // light-client-verify the returned `LightBlockHeader`
+                // against the genesis checkpoint or rolling trust state.
+                //
+                // Problem (M1 cold-boot trace 2026-05-08T08:17): no peer
+                // implements `HeaderRequest` on the server side.
+                // `state_sync.rs::handle_request` matches only
+                // `TipRequest`, `SnapshotMetadataRequest`, and
+                // `ChunkRequest`; `HeaderRequest` falls through to
+                // `_ => None`, so peers respond with no payload at all.
+                // M1 sat at `VerifyingHeader` forever waiting for a
+                // `HeaderResponse` that would never come, and the
+                // entire state-sync flow stalled before snapshot fetch.
+                //
+                // For the trusted-validator cluster soak we skip the
+                // header-verification phase and go directly to
+                // `DownloadingSnapshot`. The snapshot's content hash
+                // and the eventual `verify_snapshot_against_root` step
+                // still validate that what we got is structurally
+                // self-consistent; we just trust the peer-reported tip
+                // height instead of cross-verifying via a signed
+                // light-client header. Fine for a 5-validator
+                // permissioned cluster; production needs a real
+                // server-side `HeaderRequest` impl that returns a
+                // proper `LightBlockHeader` from `chain_store` +
+                // `validator_set` + `commit_certificate`.
+                self.phase = SyncPhase::DownloadingSnapshot {
+                    target_height: tip_height,
+                    total_chunks: 0,
+                    received_chunks: 0,
+                };
 
-                info!(tip_height, agreement, peer, "STATE-SYNC tip discovered → HeaderRequest");
+                info!(
+                    tip_height,
+                    agreement,
+                    "STATE-SYNC tip discovered → SnapshotMetadataRequest (skipping VerifyingHeader)"
+                );
 
-                return vec![SyncAction::SendToPeer {
-                    peer_id: peer,
-                    message: SyncMessage::HeaderRequest { height: tip_height },
+                return vec![SyncAction::Broadcast {
+                    message: SyncMessage::SnapshotMetadataRequest { height: tip_height },
                 }];
             }
         }
