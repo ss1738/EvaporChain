@@ -8246,6 +8246,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/network/health",                category: "explorer", description: "One-call oncall snapshot: height, last_block_age, peer_count, mempool_size, validator/jailed counts, finality lag, status verdict (healthy|syncing|stalled|isolated).", example: None },
     ApiDocEntry { method: "GET",  path: "/api/account/:address",              category: "explorer", description: "Single-account snapshot: balance, nonce, owned_object_count, first 25 owned objects, indexed_tx_count and last_seen_block from the persistent index.", example: Some("/api/account/0x0100000000000000000000000000000000000000000000000000000000000000") },
     ApiDocEntry { method: "GET",  path: "/api/account/:address/transactions", category: "explorer", description: "Paginated address tx history backed by the chain_store address-history index. Newest first. Query: ?limit=N (default 50, cap 500). 503 in light mode (no chain_store).", example: Some("/api/account/0x01…/transactions?limit=20") },
+    ApiDocEntry { method: "GET",  path: "/api/account/:address/demurrage_preview", category: "explorer", description: "Forward-looking demurrage view: balance, last_touched_epoch, current_epoch, pending_demurrage (what the next per-epoch sweep would burn), balance_after_sweep, params. Pure read; no chain mutation.", example: Some("/api/account/0x0100000000000000000000000000000000000000000000000000000000000000/demurrage_preview") },
     ApiDocEntry { method: "GET",  path: "/api/block/:number/transactions",    category: "explorer", description: "Full tx list for a specific block. Reads in-memory ring first, falls back to chain_store full-block payload for older blocks.", example: Some("/api/block/100/transactions") },
     ApiDocEntry { method: "GET",  path: "/api/search/:query",                 category: "explorer", description: "Smart explorer search. Decimal → block height. 64-hex → tx hash if indexed, else address. Shorter hex → address. Returns {kind:'block'|'transaction'|'account'|'not_found', ...} on HTTP 200.", example: Some("/api/search/100") },
     ApiDocEntry { method: "GET",  path: "/api/mera/activations",              category: "explorer", description: "MERA gate telemetry: per-block account-touch activation matrix from the in-memory block_history ring. Default content-type text/csv pipes directly into `evaporchain genesis run-gate --csv`. Query: ?from=H&to=H&format=csv|json&max_accounts=N (default 256, capped to top-N by row sum then sorted by hex).", example: Some("/api/mera/activations?from=100&to=300&max_accounts=128") },
@@ -9734,6 +9735,69 @@ async fn get_account_detail(
         indexed_tx_count,
         last_seen_block,
     }))
+}
+
+/// `GET /api/account/:address/demurrage_preview` — forward-looking
+/// demurrage view. Surfaces the existing accrual math from
+/// `evaporchain-demurrage::demurrage_owed` as a public read so users
+/// can see expected per-account decay before it fires at the next
+/// per-epoch sweep.
+///
+/// Operationalises Agent 4 Candidate 1 ("make demurrage observable")
+/// at scoped-down scope: rather than per-tx receipt persistence
+/// (which would touch the receipt store), this is a pure read against
+/// current account state + the canonical accrual function.
+///
+/// Notes:
+/// - Uses `DemurrageParams::default()` as the production parameter
+///   set (same default used by `ParallelExecutor` initialisers in
+///   `parallel.rs:659/769/802`). When governance overrides land,
+///   this endpoint should read the live params instead.
+/// - "Pending" amount is what would be owed if a demurrage sweep ran
+///   at the current block's epoch. The chain only sweeps on epoch
+///   boundaries (rent-collection cadence in `parallel.rs:2002`), so
+///   this is a forward-looking projection between sweeps.
+async fn get_account_demurrage_preview(
+    State(state): State<Arc<ApiState>>,
+    Path(address): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let addr = parse_hex_address(&address).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let current_epoch = {
+        let history = safe_lock(&state.block_history);
+        history.back().map(|b| b.epoch).unwrap_or(0)
+    };
+    let db = safe_lock(&state.db);
+    let acct = db.get_account(&addr);
+    let (balance, last_touched_epoch, account_exists) = match &acct {
+        Some(a) => (a.balance, a.last_touched_epoch, true),
+        None => (0, 0, false),
+    };
+    drop(db);
+
+    let params = evaporchain_demurrage::DemurrageParams::default();
+    let pending = evaporchain_demurrage::demurrage_owed(
+        balance,
+        last_touched_epoch,
+        current_epoch,
+        &params,
+    );
+    let elapsed_epochs = current_epoch.saturating_sub(last_touched_epoch);
+
+    Ok(Json(serde_json::json!({
+        "address":              format!("0x{}", hex::encode(addr)),
+        "account_exists":       account_exists,
+        "balance":              balance,
+        "last_touched_epoch":   last_touched_epoch,
+        "current_epoch":        current_epoch,
+        "elapsed_epochs":       elapsed_epochs,
+        "pending_demurrage":    pending,
+        "balance_after_sweep":  balance.saturating_sub(pending),
+        "params": {
+            "lambda_base_ppm":  params.lambda_base_ppm,
+            "threshold":        params.threshold,
+        },
+        "note": "pending_demurrage is a forward-looking projection of what the next per-epoch sweep would burn. Returns 0 when balance ≤ threshold, balance == 0, or current_epoch ≤ last_touched_epoch.",
+    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -17314,6 +17378,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route(
             "/api/account/:address/transactions",
             get(get_account_transactions),
+        )
+        .route(
+            "/api/account/:address/demurrage_preview",
+            get(get_account_demurrage_preview),
         )
         .route("/api/search/:query", get(explorer_search))
         .route("/api/mera/activations", get(get_mera_activations))
