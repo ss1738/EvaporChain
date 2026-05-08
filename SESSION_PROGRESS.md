@@ -48,6 +48,42 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (latest+2) — cluster wedge diagnosis (HTTP-only probe)
+
+**Focus:** diagnose why all 4 reachable cluster nodes are at h=0, without SSH.
+
+**Commits shipped:** 0 (diagnostic only).
+
+**Findings (HTTP probe via Tailscale, all readonly):**
+
+- **5 validators are registered + all BLS-keyed + none jailed + all clean** (from Mini 2's `/api/validators`). `total_stake: 1_250_000`, all `blocks_produced: 0`, all `health_score: 0.0`. The validator set is bootstrapped.
+- **All 4 reachable nodes are fully peer-connected** (Mini 2's `/api/network/peers` shows 4 peers all clean, score=0, ghost_count=0).
+- **Hetzner-1 sees Mini 1's libp2p peer with age 7431s (~2 hrs)**, but Mini 1's HTTP API on `:8081` is dead. Mini 1's node process is partially up — the libp2p stack survived but the API server is gone (crashed, disabled, or never started).
+- **All 4 reachable nodes are at h=0** with `lamport_tick: 0`, `lambda_fold step_count: 0`, `tur_liveness: "warming-up"` window 0/64. Consensus has zero samples — it has never executed a round.
+- **Governance flags are at default**: `block_source_mode=fifo`, `parent_acceptance_mode=linear`, `lambda_fold_mode=hash_chain`, `conservation_enforcement=observe`. Bit-compatible defaults; nothing exotic gating progress.
+
+**Diagnosis:** the cluster is "loaded but not advancing" — set + peers + flags are in place, but no validator has produced a block. Three plausible root causes, all need on-host inspection (SSH) to confirm:
+
+1. **Block-interval timer never fires.** `--block-interval-ms` config or proposer-clock startup gate is keeping consensus dormant.
+2. **Mini 1 was the genesis proposer / lead and its HTTP-side death cascades to its consensus loop.** With Mini 1's API dead, it may also not be participating in BFT rounds (libp2p alone doesn't run consensus). 4-of-5 with one validator dark is below the 2f+1 = 4-of-5 supermajority for f=1 — the cluster sits at the boundary if Mini 1 is silent.
+3. **Genesis-amendment gate.** The chain may be waiting on an LLSA invariant proof or genesis-init signal that hasn't been broadcast.
+
+**What an SSH-authorised session needs to check first:**
+
+- `launchctl list | grep evapor` on Mini 1 — is the process running at all?
+- `tail -200 /var/log/evaporchain.log` on each node (or wherever logs go) — search for "proposer", "round", "consensus", "blocked".
+- `ps aux | grep evapor` to verify the binary is actually live on each host.
+- `--block-interval-ms` value in the launch script vs. expected.
+
+**What's NOT next this session:**
+
+- I am **not** going to submit a tx to kick consensus from the outside (would mutate cluster state and could be obviated by the user's planned 5-node-Tailscale switch + data wipe).
+- I am **not** going to attempt SSH again — the safeguard requires explicit chat-typed authorization naming the prod targets.
+
+**Cross-references:** Coordination note below (live-cluster-reality table). Phase C deploy plan blocked on SSH auth.
+
+---
+
 ## 2026-05-09 (latest+1) — Phase 2 in-memory batch fix
 
 **Focus:** close the InMemoryStateDB gap in Phase 2's wiring discovered while preparing a round-trip test.
