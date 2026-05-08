@@ -3799,6 +3799,21 @@ async fn main() -> Result<()> {
     let mut sync_in_flight = false;
     // State sync manager for fast-syncing when >1000 blocks behind
     let mut state_sync: Option<StateSyncManager> = None;
+    // Synthetic peer_id counter for state-sync inbound messages. The
+    // libp2p network layer drops the source PeerId before forwarding
+    // bytes to the consensus channel, so we can't pass the real peer
+    // identity to StateSyncManager::on_message. A monotonic counter
+    // per inbound message lets the manager's tip-agreement logic
+    // (`peer_tips: HashMap<peer_id, ...>` + `MIN_TIP_AGREEMENT >= 2`)
+    // accumulate distinct entries instead of overwriting a single
+    // peer_id=0 entry forever. Cluster-soak evidence 2026-05-08:
+    // M1 sat at h=1 with state_sync=Some forever because all 4 peer
+    // TipResponses landed under peer_id=0, height_votes never reached
+    // the agreement threshold, and the state machine never advanced
+    // out of DiscoveringTip. This counter is a stopgap — proper sybil
+    // protection needs actual PeerId forwarding from libp2p, filed
+    // as a follow-up.
+    let mut state_sync_msg_counter: u64 = 0;
 
     // ── Populate block cache from persistence (enables sync after restart) ──
     if let Some(ref cache) = block_cache {
@@ -5118,7 +5133,8 @@ async fn main() -> Result<()> {
             }, if tendermint.is_some() => {
                 if let Ok(sync_msg) = serde_json::from_slice::<SyncMessage>(&data) {
                     if let Some(ref mut ssm) = state_sync {
-                        let actions = ssm.on_message(0, sync_msg);
+                        state_sync_msg_counter = state_sync_msg_counter.wrapping_add(1);
+                        let actions = ssm.on_message(state_sync_msg_counter, sync_msg);
                         for action in actions {
                             match action {
                                 SyncAction::Broadcast { message } | SyncAction::SendToPeer { message, .. } => {
