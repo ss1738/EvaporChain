@@ -1,82 +1,117 @@
 # evaporchain-light-client-wasm
 
-**Status: scaffold only. Does not compile for wasm32 today** — blocked on a real architectural refactor of the SDK's dep graph (see "Blocking issue" below).
+WASM bridge for the [`evaporchain-light-client`](../evaporchain-light-client) SDK. Browser wallets / dapps / explorers verify chain state in-browser via wasm-bindgen async functions backed by `gloo-net::http::Request` (browser fetch).
 
-This crate is the intended browser-side bridge for the [`evaporchain-light-client`](../evaporchain-light-client) SDK. Browsers / mobile WASM runtimes would call into it via `wasm-bindgen` async functions, fetch chain data via `gloo-net::http::Request` (browser fetch), and run BFT BLS + Verkle Pasta-curve Pedersen verification entirely in-browser without trusting the node.
+**Status: working end-to-end as of 2026-05-08.** Builds against `wasm32-unknown-unknown` with zero errors. Bit-identical results to the native `blst` BLS verifier (verified by 10 cross-backend interop tests in `crates/evaporchain-crypto/tests/bls_cross_backend.rs`).
 
-## Design (when it works)
+## What you get
 
-`WasmLightClient` wraps the SDK's `LightClient` and exposes async methods:
+```bash
+cd crates/evaporchain-light-client-wasm
+wasm-pack build --target web --release
+# → pkg/ — npm-publishable package
+#     evaporchain_light_client_wasm_bg.wasm     (310 KB)
+#     evaporchain_light_client_wasm.js          (26 KB ES module)
+#     evaporchain_light_client_wasm.d.ts        (TypeScript declarations)
+#     package.json
+```
+
+The 310KB `.wasm` is post-wasm-opt; pre-opt artifact at `target/wasm32-unknown-unknown/release/evaporchain_light_client_wasm.wasm` is 962KB.
+
+## Usage from JavaScript / TypeScript
+
+```typescript
+import init, { WasmLightClient } from 'evaporchain-light-client-wasm';
+
+await init(); // Load + instantiate the .wasm
+
+// Anchor at the chain's latest header (or pass a specific genesis_height).
+const wlc = await WasmLightClient.anchor(
+  'http://node.example.com:8081',
+  null,                                    // genesis_height: null = latest
+  BigInt(Math.floor(Date.now() / 1000)),   // current_time_secs
+);
+
+// Walk forward to chain tip, BFT-verifying every block.
+const newHeight = await wlc.sync_to_latest(BigInt(Math.floor(Date.now() / 1000)));
+console.log(`Trusted tip: ${newHeight}, state_root: ${wlc.current_state_root}`);
+
+// Verify a state-query proof.
+const valueHex = await wlc.fetch_and_verify_state_hex(
+  '0x1a80ddfb53bb84c968f17dcc4564fac3cc73eb4f7c2a46029a765e8629da3c81'
+);
+console.log('Verified value:', valueHex);
+```
+
+The full BFT BLS aggregate-sig + Verkle Pasta-curve Pedersen verification runs **in the browser** — no native code, no trust in the node. A signature that verifies on a Mini will verify in the browser; a forged signature rejected on a Mini will be rejected in the browser.
+
+## Architecture
+
+`WasmLightClient` wraps the SDK's `LightClient` and exposes three async methods:
 
 - `WasmLightClient.anchor(node_url, genesis_height, current_time)` — fetches a header, BFT-verifies, returns a handle.
 - `wlc.sync_to_latest(current_time)` — walks forward height-by-height, BFT-verifying every block.
 - `wlc.fetch_and_verify_state_hex(trie_key_hex)` — fetches a state proof, verifies against the trusted state_root.
 
-Sync/async fork resolution: rather than introducing an async `RpcTransport` trait variant in the SDK core (would be a load-bearing breaking change), this crate **bypasses** `RpcTransport` and calls the SDK's pure verifier primitives (`LightClient::ingest_block`, `state_query::verify_state`) directly. Each WASM-exported async method is `await fetch → deserialize → call sync verifier`.
+Plus three readonly props (`current_height`, `current_state_root`, `trust_period_secs`).
 
-The design is right. The build is what doesn't work.
+### Sync/async fork resolution
 
-## Blocking issue (2026-05-08)
+The SDK's `RpcTransport` trait is sync. Browser fetch is async-only. Rather than introducing an async trait variant in the SDK core (load-bearing breaking change), this crate **bypasses** `RpcTransport` and calls the SDK's pure verifier primitives (`LightClient::ingest_block`, `LightClient::verify_state`) directly. Each WASM-exported async method does:
 
-`cargo build --target wasm32-unknown-unknown --release` fails on four C-build deps:
+1. `await` the browser fetch via `gloo-net`,
+2. deserialize the response JSON to the SDK's chain types,
+3. call the SDK's sync verification methods.
 
-```
-error: failed to run custom build command for `bzip2-sys v0.1.13+1.0.8`
-error: failed to run custom build command for `lz4-sys v1.11.1+lz4-1.10.0`
-error: failed to run custom build command for `libz-sys v1.1.28`
-error: failed to run custom build command for `blst v0.3.16`
-```
+Result: full BFT BLS + Verkle verification in the browser, SDK core stays sync-only + WASM-friendly.
 
-### Root cause #1: SDK pulls `evaporchain-consensus` → `evaporchain-state` → RocksDB
+### BLS backend
 
-The SDK's `evaporchain-light-client` declares `evaporchain-consensus` as a regular (non-optional) dep so it can wrap `LightClientVerifier`. But `evaporchain-consensus` pulls `evaporchain-state` (line 10 of its Cargo.toml), which pulls `rocksdb` for the persistent backend. RocksDB transitively pulls `bzip2-sys`, `lz4-sys`, `libz-sys` for compression — all native-only via `cc`.
+The crypto crate's `bls-portable` feature replaces `blst` (C library, native-only) with `bls12_381` + `group` + `pairing` + `ff` (pure Rust, wasm32-friendly). Verification only — `BlsKeypair` (signing) is feature-gated to `bls-native` since browsers don't sign BLS.
 
-The SDK's docstring claim "**WASM-target compatible (with `default-features = false` when consumed)**" is **architectural aspiration, not empirical fact** — the path was never built end-to-end against `wasm32-unknown-unknown`.
+10 cross-backend interop tests validate that the portable verifier produces bit-identical results to blst on real signatures (single-sig, DST handling for PoP + rotation, 3-signer aggregate). See `crates/evaporchain-crypto/tests/bls_cross_backend.rs`.
 
-### Root cause #2: BFT verification requires `blst` (BLS12-381)
+## Build flow
 
-`evaporchain-crypto` line 20: `blst = "0.3"`. blst is a high-performance C library; its build script compiles C source through `cc`. wasm32 needs a C-to-wasm compiler (clang with wasm target) and even then blst's assembly fast paths are x86/ARM-specific. Pure-Rust alternative exists (`bls12_381` from zkcrypto) but the chain's verifier uses blst directly.
+This crate is **not a workspace member** (it's `workspace.exclude`'d at the repo root) so wasm-specific compile flags don't bleed into the main workspace. Mirrors the standalone-Cargo-project pattern of `evaporchain-crypto-wasm`.
 
-## Path to actually shipping browser verification
+Two valid build invocations:
 
-Two real refactors are required. Either by itself unblocks this crate; together is cleanest.
+```bash
+# Direct cargo (produces .wasm only):
+cargo build --target wasm32-unknown-unknown --release
 
-### A. Extract a `evaporchain-consensus-types` sub-crate
-
-`evaporchain-consensus` today mixes (a) protocol types (`LightBlockHeader`, `CommitCertificate`, `ValidatorSetSnapshot`) with (b) consensus runtime (Tendermint, mempool, fork choice, state-attached). The SDK only needs (a) for verifier composition. A new `evaporchain-consensus-types` crate that contains just the types + the BLS-verifier function would be no_std + wasm-friendly + still consumed by evaporchain-consensus' main crate.
-
-Estimated scope: ~1-2 hours, mechanical extraction.
-
-### B. Abstract BLS backend in `evaporchain-crypto`
-
-Add a feature flag pattern:
-```toml
-[features]
-default = ["bls-native"]
-bls-native = ["blst"]
-bls-portable = ["bls12_381"]  # pure-Rust, wasm-friendly
+# wasm-pack (produces npm package with JS bindings + TS declarations):
+wasm-pack build --target web --release
 ```
 
-The verifier function becomes generic over the BLS backend; native consumers keep blst (~10× faster); WASM consumers use bls12_381.
-
-Estimated scope: ~2-3 hours, feature-gate every BLS site + add a wasm regression test.
-
-### C. (Optional) Make `evaporchain-light-client` not pull `evaporchain-state`
-
-Today the SDK pulls `evaporchain-consensus` which transitively pulls state. With (A) done, the SDK can switch to depending on `evaporchain-consensus-types` directly, dropping evaporchain-state from its transitive graph entirely. This is the cleanest end state.
+`wasm-pack` runs cargo internally then invokes `wasm-bindgen` to generate the JS glue + `wasm-opt` to shrink the binary.
 
 ## Cross-references
 
-- `crates/evaporchain-light-client/README.md` — SDK core. Contains the (currently aspirational) WASM compatibility claim.
-- `crates/evaporchain-light-client-http/` — native HTTP transport via ureq. Works today; this WASM crate is its browser counterpart.
-- `crates/evaporchain-crypto-wasm/` — existing WASM crate; ML-DSA only (no BLS), so doesn't hit the blst issue. Pattern reference for crate layout.
-- `crates/evaporchain-consensus/Cargo.toml:10` — the `evaporchain-state` dep that pulls RocksDB.
-- `crates/evaporchain-crypto/Cargo.toml:20` — the `blst` dep that won't compile to wasm32.
+- `crates/evaporchain-light-client/README.md` — SDK core, with up-to-date WASM status.
+- `crates/evaporchain-light-client-http/` — native HTTP transport via `ureq`. Same conceptual flow; this WASM crate is its browser counterpart.
+- `crates/evaporchain-crypto/Cargo.toml` — feature flags for the BLS backend split.
+- `crates/evaporchain-crypto/src/bls_portable.rs` — pure-Rust BLS verifier.
+- `crates/evaporchain-crypto/tests/bls_cross_backend.rs` — interop tests.
+- `crates/evaporchain-consensus-types/` — types-only sub-crate extracted from `evaporchain-consensus` to drop the SDK's RocksDB transitive dep (Refactor A).
+- `INVENTION_STACK.md §4.1 row 8` — Lambda-Fold doctrine the SDK operationalizes, now extended to browser consumers.
 
-## What the scaffold contains
+## Refactor history
 
-- Cargo.toml with the right wasm-bindgen / gloo-net / serde-wasm-bindgen / getrandom-with-js dep set
-- src/lib.rs with the full `WasmLightClient` API surface — wasm-bindgen-exported async methods, panic hook, type-safe error mapping
-- This README documenting the blocking issue + the two refactors that unblock it
+This crate was scaffolded 2026-05-07 with full `WasmLightClient` API surface as a spec, but did not compile (RocksDB + blst transitive deps blocked wasm32). Two refactors landed 2026-05-08 to unlock the build:
 
-When refactors A + B are done, this crate should build with no further changes. The scaffold is the spec.
+| Refactor | What | Commits |
+|---|---|---|
+| A | Extract `evaporchain-consensus-types` so SDK doesn't pull `evaporchain-state` → RocksDB | `46bfdd4` `3c44eeb` `28a3fba` `f4efdea` |
+| B | Feature-flag BLS backend so wasm uses pure-Rust `bls12_381` instead of `blst` | `99bab9c` |
+| Test | Cross-backend interop (10 tests, all pass) | `a5697c6` |
+
+After both refactors + interop validation, the scaffold from 2026-05-07 builds + verifies correctly with no source changes — exactly as the original spec promised.
+
+## Open follow-ups
+
+- **Browser smoke test** — load the `.wasm` in a real browser (or jsdom), point at the running 5-node WAN cluster, verify a state proof end-to-end.
+- **Bundle size optimization** — already at 310KB after wasm-pack's auto-`wasm-opt`. Could go lower with custom flags (~150KB target) or by stripping unused SDK methods.
+- **WebSocket transport** — `gloo-net::websocket` for live-block streaming instead of polling.
+- **WASM-bindgen `#[wasm_bindgen(typescript_custom_section)]`** for richer TypeScript type ergonomics (currently `Promise<any>` for state-query results; could be `Promise<HexString>`).

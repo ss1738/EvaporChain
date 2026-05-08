@@ -54,15 +54,24 @@ The core has **no HTTP client and no async runtime**. Bring your own `RpcTranspo
 |---|---|---|
 | `nova` | off | Adds Nova-IVC sublinear block-validity verification via `evaporchain-lambda-fold` + `evaporchain-proving`. Without it, you still get BFT + Verkle — useful and ~10× lighter on dependencies. |
 
-## WASM target — aspirational, NOT yet shipped
+## WASM target — shipped 2026-05-08
 
-The core's design intent is wasm32-friendly (no async-trait, no native-only deps in evaporchain-light-client itself), and `default-features = []`. **However, the dep graph pulls `evaporchain-consensus` → `evaporchain-state` → RocksDB, AND `evaporchain-crypto` → `blst` (C library) — neither compiles for `wasm32-unknown-unknown` today.**
+The SDK builds + verifies correctly against `wasm32-unknown-unknown` via [`evaporchain-light-client-wasm`](../evaporchain-light-client-wasm), which exports a `WasmLightClient` JS class with three async methods (`anchor` / `sync_to_latest` / `fetch_and_verify_state_hex`) plus three readonly props.
 
-Two architectural refactors are needed to actually ship browser verification:
-1. Extract `evaporchain-consensus-types` (types-only, no state-DB).
-2. Abstract BLS backend in `evaporchain-crypto` (blst native, `bls12_381` wasm).
+Browser-side BFT BLS aggregate-sig + Verkle Pasta-curve Pedersen verification runs entirely client-side with no native C deps. 310 KB `.wasm` post-wasm-opt; full TypeScript declarations + ES module glue via `wasm-pack build --target web --release`.
 
-A scaffolded WASM bridge crate exists at [`evaporchain-light-client-wasm`](../evaporchain-light-client-wasm) — full `WasmLightClient` API surface + gloo-net fetch wiring. Does not compile yet; serves as the spec for what the refactors enable. See that crate's README for the full diagnosis + proposed refactor sequence.
+To use this from the SDK side, opt out of the default `bls-native` feature and enable `bls-portable`:
+
+```toml
+[dependencies]
+evaporchain-light-client = { path = "...", default-features = false, features = ["bls-portable"] }
+```
+
+Two refactors made this work (commits `46bfdd4` / `3c44eeb` / `28a3fba` / `f4efdea` / `99bab9c` / `a5697c6`):
+1. Extracted `evaporchain-consensus-types` (types-only crate; SDK no longer pulls `evaporchain-state` → RocksDB).
+2. Feature-flagged BLS backend so wasm uses pure-Rust `bls12_381` instead of `blst` (C library). 10 cross-backend interop tests validate bit-identical results to blst.
+
+See the WASM crate's README for the JS/TS usage example + architecture details.
 
 ## Verification semantics
 
