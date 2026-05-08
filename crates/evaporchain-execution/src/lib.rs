@@ -227,6 +227,13 @@ pub struct BlockExecutionResult {
     /// all account energies after this block.  None if the MERA tree could not
     /// be computed (empty state).
     pub mera_commitment: Option<[u8; 32]>,
+    /// Total demurrage debited from idle accounts in this block's per-epoch
+    /// sweep (zero on non-sweep blocks). Surfaced through `BlockRecord` and
+    /// the receipt index so chain-wide decay flow is observable per-block
+    /// without joining against the refresh-pool ledger. The per-account
+    /// breakdown is in `DemurrageOutcome::charges` if a downstream consumer
+    /// needs it; this field is the chain-wide total.
+    pub demurrage_collected: u64,
     /// Per-transaction execution outcomes, in block.transactions order.
     /// Empty when the executor predates the outcomes wiring (legacy path —
     /// the node layer logs a warn and falls back to the prior behaviour).
@@ -691,6 +698,7 @@ impl SimpleExecutor {
             last_epoch,
             current_epoch,
         )
+        .total
     }
 
     /// Per-block hook: advance the Singh-Lyapunov fee state against
@@ -3408,19 +3416,21 @@ impl ExecutionEngine for SimpleExecutor {
         // `blocks_per_epoch` (≈50× at 2s blocks). A Foundation account
         // would be drained roughly 50× faster than the tokenomics
         // declare. Closes the SimpleExecutor half of #6.
+        let mut demurrage_collected: u64 = 0;
         if block.epoch > db.get_last_rent_epoch() {
             self.collect_storage_rent(db, block.epoch);
             // Native demurrage sweep — charges idle balances above the
             // threshold and credits the refresh pool.  Fires at the same
             // per-epoch cadence as storage rent.
             let last_rent_epoch = db.get_last_rent_epoch();
-            crate::demurrage_integration::collect_demurrage(
+            let outcome = crate::demurrage_integration::collect_demurrage(
                 db,
                 &mut self.refresh_pool,
                 &self.demurrage_params,
                 last_rent_epoch,
                 block.epoch,
             );
+            demurrage_collected = outcome.total;
             db.put_last_rent_epoch(block.epoch);
         }
 
@@ -3570,6 +3580,7 @@ impl ExecutionEngine for SimpleExecutor {
             cross_shard_receipts: Vec::new(),
             validator_key_rotations,
             mera_commitment,
+            demurrage_collected,
             tx_outcomes,
         })
     }

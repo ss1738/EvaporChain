@@ -2113,6 +2113,7 @@ impl ExecutionEngine for BlockStmExecutor {
         // lockstep with rent. Until this commit BlockStmExecutor had
         // no demurrage call site at all — the third executor was
         // out-of-sync with SimpleExecutor + ParallelExecutor.
+        let mut demurrage_collected: u64 = 0;
         if block.epoch > db.get_last_rent_epoch() {
             let prev_rent_epoch = db.get_last_rent_epoch();
             let addresses = db.all_account_addresses();
@@ -2139,13 +2140,14 @@ impl ExecutionEngine for BlockStmExecutor {
                     acct.storage_bytes = 0;
                 }
             }
-            crate::demurrage_integration::collect_demurrage(
+            let outcome = crate::demurrage_integration::collect_demurrage(
                 db,
                 &mut self.refresh_pool,
                 &self.demurrage_params,
                 prev_rent_epoch,
                 block.epoch,
             );
+            demurrage_collected = outcome.total;
             db.put_last_rent_epoch(block.epoch);
         }
 
@@ -2231,6 +2233,7 @@ impl ExecutionEngine for BlockStmExecutor {
             // arm in `execute_tx_view`) so Block-STM never accumulates them.
             validator_key_rotations: Vec::new(),
             mera_commitment,
+            demurrage_collected,
             tx_outcomes,
         })
     }

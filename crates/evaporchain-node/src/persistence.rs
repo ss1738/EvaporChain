@@ -1478,6 +1478,7 @@ mod tests {
             has_state_commitment: false,
             is_anchor: false,
             anchor_epoch: 0,
+            demurrage_collected: 0,
         }
     }
 

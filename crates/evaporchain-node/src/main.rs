@@ -1764,6 +1764,7 @@ fn record_block(
             .state_function_commitment
             .as_ref()
             .map_or(0, |c| c.anchor_epoch),
+        demurrage_collected: execution.demurrage_collected,
     };
 
     // Push to block history
@@ -6631,6 +6632,7 @@ async fn main() -> Result<()> {
                                             has_state_commitment: block.state_function_commitment.is_some(),
                                             is_anchor: block.state_function_commitment.as_ref().is_some_and(|c| c.is_anchor),
                                             anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
+                                            demurrage_collected: result.execution.demurrage_collected,
                                         };
                                         let mut history = safe_lock(&block_history);
                                         history.push_back(record.clone());

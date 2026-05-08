@@ -1999,6 +1999,7 @@ impl ExecutionEngine for ParallelExecutor {
         // `ParallelExecutor` (the executor production tendermint
         // actually drives) had no field for `demurrage_params` and no
         // call site — so on the live chain demurrage was a no-op.
+        let mut demurrage_collected: u64 = 0;
         if block.epoch > db.get_last_rent_epoch() {
             let prev_rent_epoch = db.get_last_rent_epoch();
             let addresses = db.all_account_addresses();
@@ -2050,13 +2051,14 @@ impl ExecutionEngine for ParallelExecutor {
             // `block.epoch` is the upper bound. `collect_demurrage`
             // skips accounts below `DemurrageParams.threshold` so
             // small genesis accounts are never drained.
-            crate::demurrage_integration::collect_demurrage(
+            let outcome = crate::demurrage_integration::collect_demurrage(
                 db,
                 &mut self.refresh_pool,
                 &self.demurrage_params,
                 prev_rent_epoch,
                 block.epoch,
             );
+            demurrage_collected = outcome.total;
             db.put_last_rent_epoch(block.epoch);
         }
 
@@ -2310,6 +2312,7 @@ impl ExecutionEngine for ParallelExecutor {
             cross_shard_receipts,
             validator_key_rotations,
             mera_commitment,
+            demurrage_collected,
             tx_outcomes,
         })
     }

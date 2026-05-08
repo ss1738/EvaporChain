@@ -20,24 +20,43 @@
 use evaporchain_demurrage::{demurrage_owed, DemurrageParams};
 use evaporchain_energy_kernel::RefreshPool;
 use evaporchain_state::db::StateDB;
+use evaporchain_types::AccountAddress;
+use std::collections::BTreeMap;
 use tracing::debug;
+
+/// Per-block outcome of the demurrage sweep. `total` matches the
+/// pre-existing `collect_demurrage` return value (sum of charges);
+/// `charges` is the per-account breakdown so per-tx receipts can stamp
+/// the holding fee that was applied to the tx's sender in this block.
+///
+/// `BTreeMap` (not HashMap) so iteration order is deterministic — the
+/// receipts surface this map's contents through serialised JSON in
+/// dev tools and indexers, and a stable order is friendlier to diff
+/// tooling without imposing a serialisation cost.
+#[derive(Debug, Clone, Default)]
+pub struct DemurrageOutcome {
+    pub total: u64,
+    pub charges: BTreeMap<AccountAddress, u64>,
+}
 
 /// Apply demurrage to every account in the StateDB for one epoch transition.
 ///
-/// Returns the total demurrage collected across all accounts.
+/// Returns a [`DemurrageOutcome`] with both the chain-wide total and the
+/// per-account breakdown. Backward-compat callers that only care about the
+/// total can read `outcome.total`.
 pub fn collect_demurrage(
     db: &mut dyn StateDB,
     pool: &mut RefreshPool,
     params: &DemurrageParams,
     last_epoch: u64,
     current_epoch: u64,
-) -> u64 {
+) -> DemurrageOutcome {
+    let mut outcome = DemurrageOutcome::default();
     if current_epoch <= last_epoch {
-        return 0;
+        return outcome;
     }
 
     let addrs = db.all_account_addresses();
-    let mut total_collected: u64 = 0;
 
     for addr in addrs {
         // Bug fix (2026-05-07): previously this passed the global
@@ -94,16 +113,17 @@ pub fn collect_demurrage(
 
         // Credit the refresh pool under the account address as namespace.
         pool.accrue(addr.to_vec(), actual, current_epoch);
-        total_collected = total_collected.saturating_add(actual);
+        outcome.total = outcome.total.saturating_add(actual);
+        outcome.charges.insert(addr, actual);
     }
 
     debug!(
         epoch = current_epoch,
-        collected = total_collected,
+        collected = outcome.total,
         "demurrage sweep complete"
     );
 
-    total_collected
+    outcome
 }
 
 #[cfg(test)]
@@ -138,7 +158,7 @@ mod tests {
         let mut db = make_db(&[(1, 512)]);
         let mut pool = RefreshPool::new();
         let params = DemurrageParams::default();
-        let collected = collect_demurrage(&mut db, &mut pool, &params, 0, 1);
+        let collected = collect_demurrage(&mut db, &mut pool, &params, 0, 1).total;
         assert_eq!(collected, 0);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 512);
     }
@@ -148,7 +168,7 @@ mod tests {
         let mut db = make_db(&[(1, 10_000_000)]);
         let mut pool = RefreshPool::new();
         let params = DemurrageParams::new(100, 1_000); // aggressive for test
-        let collected = collect_demurrage(&mut db, &mut pool, &params, 0, 10);
+        let collected = collect_demurrage(&mut db, &mut pool, &params, 0, 10).total;
         assert!(
             collected > 0,
             "should charge non-zero demurrage on large balance"
@@ -163,7 +183,7 @@ mod tests {
         let mut db = make_db(&[(1, 10_000_000)]);
         let mut pool = RefreshPool::new();
         let params = DemurrageParams::default();
-        let collected = collect_demurrage(&mut db, &mut pool, &params, 5, 5);
+        let collected = collect_demurrage(&mut db, &mut pool, &params, 5, 5).total;
         assert_eq!(collected, 0);
     }
 
@@ -172,7 +192,7 @@ mod tests {
         let mut db = make_db(&[(1, 10_000_000), (2, 10_000_000), (3, 100)]);
         let mut pool = RefreshPool::new();
         let params = DemurrageParams::new(100, 1_000);
-        let collected = collect_demurrage(&mut db, &mut pool, &params, 0, 10);
+        let collected = collect_demurrage(&mut db, &mut pool, &params, 0, 10).total;
         // Accounts 1 and 2 should be charged; account 3 (100 < threshold) should not.
         let bal1 = db.get_account(&addr(1)).unwrap().balance;
         let bal2 = db.get_account(&addr(2)).unwrap().balance;
@@ -233,7 +253,7 @@ mod tests {
         let params = DemurrageParams::new(100, 1_000);
         // last_rent_epoch = 0 (long-ago previous sweep).
         // current_epoch  = 1_000.
-        let _collected = collect_demurrage(&mut db, &mut pool, &params, 0, current_epoch);
+        let _collected = collect_demurrage(&mut db, &mut pool, &params, 0, current_epoch).total;
 
         let bal1 = db.get_account(&addr(1)).unwrap().balance;
         let bal2 = db.get_account(&addr(2)).unwrap().balance;
@@ -274,5 +294,29 @@ mod tests {
              confirms the post-debit anchor refresh keeps subsequent \
              sweeps proportional to the small additional window."
         );
+    }
+
+    /// Verifies the per-account `charges` map exposed on `DemurrageOutcome`.
+    /// Two stale accounts above the threshold + one below; map should hold
+    /// entries only for the two charged accounts, each with a positive
+    /// amount, and the entries must sum to `outcome.total`.
+    #[test]
+    fn outcome_charges_map_records_per_account_breakdown() {
+        let mut db = make_db(&[(1, 10_000_000), (2, 10_000_000), (3, 100)]);
+        let mut pool = RefreshPool::new();
+        let params = DemurrageParams::new(100, 1_000);
+        let outcome = collect_demurrage(&mut db, &mut pool, &params, 0, 10);
+        // Below-threshold account 3 must NOT appear in the map.
+        assert!(
+            !outcome.charges.contains_key(&addr(3)),
+            "below-threshold account must not appear in charges map"
+        );
+        // Above-threshold accounts must appear with positive amounts.
+        let c1 = outcome.charges.get(&addr(1)).copied().unwrap_or(0);
+        let c2 = outcome.charges.get(&addr(2)).copied().unwrap_or(0);
+        assert!(c1 > 0 && c2 > 0, "both charged accounts present, c1={c1} c2={c2}");
+        // Map sum must equal the outcome total.
+        let sum: u64 = outcome.charges.values().sum();
+        assert_eq!(sum, outcome.total, "per-account charges must sum to outcome.total");
     }
 }
