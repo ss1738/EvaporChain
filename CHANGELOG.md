@@ -1,5 +1,77 @@
 # EvaporChain Changelog
 
+## 2026-05-08 (afternoon) — death-is-final bundle + Singh Pool API + 0x-prefix audit completion + deploy runbook (9 commits)
+
+The afternoon arc closed three threads in parallel: doctrine ratchets around the eulogy/jail mechanism (commits `24920e6`, `a421321`), API consistency hardening (the 0x-prefix sweep, commits `0321b50`, `8c79129`), and a Singh-Pool-AMM API surface (commits `0404d27`, `3333dab`). All committed; bundle `24920e6` deployed end-to-end across the 5-node WAN cluster after a chaotic 30-minute recovery from a launchd-respawn race; remaining 7 follow-up commits accumulated for the next deploy. Plus a session-arc audit doc and a deploy runbook capturing the lessons learned.
+
+**End state:** 6 ratchets live in production (`24920e6`); 5 doctrine layers empirically validated on the running cluster; the chain is enforcing **"the chain's death is final"** in production (val-3 + val-1 organically tombstoned + jailed; refresh pool absorbing redirected energy from drained accounts).
+
+### The death-is-final bundle (`24920e6`, deployed)
+
+Six interlocking ratchets around `evaporchain-tombstone::EulogyTrie`'s "the chain's death is final" doctrine:
+
+1. **0x-prefix bug fix in `/api/object/:id` + `/api/ghosts/:id`** — both endpoints rejected `0x`-prefixed hex while sister endpoints (`/api/account/:addr`) handled it via `parse_hex_address`.
+2. **`/api/four_act` augmentation** — added `ghost_object_count`, `evaporation_mmr_size`, `evaporation_mmr_root` so object-side mortality is visible at the canonical death-state endpoint (which previously surfaced only account-level Mortis state).
+3. **Tombstoned-producer credit guard** — `process_block_rewards` and `apply_priority_bonus` gain `producer_alive: bool` + `Option<&mut RefreshPool>`. When a tombstoned validator is elected proposer, block reward + fee share + priority bonus redirect into the refresh pool under namespace `b"evaporchain-dead-producer-refresh"` instead of crediting the dead account. Preserves §1.2 conservation. **3 new tests.**
+4. **Tombstoned-validator jail-on-tombstone** — `ValidatorSet::jail_tombstoned_by_address` (consensus-types) + `TendermintConsensus::enforce_validator_tombstones` (consensus). Per-block hook walks `executor.eulogy_trie` and jails matching validators in `validator_set` so `leader_for_epoch` (which already filters jailed) stops electing them. Idempotent. **4 new tests.**
+5. **Dead-producer redirect counter visible** in `/api/four_act` — distinct namespace from rent-exhaustion accruals so the doctrine-enforcement counter is auditable independently. New `RefreshPool::accrued_for(namespace)` accessor + 1 test.
+6. **20↔32-byte swap-address normalization** — `/api/swap/execute` couldn't actually move tokens because the token store keys 20-byte hex strings while the EVAP side parsed via `parse_hex_address` (32-byte strict). Real holders passing their 20-byte address got HTTP 400. New `parse_swap_addr` helper accepts either form, left-pads 20-byte to 32-byte (Ethereum convention), and collapses zero-padded 32-byte input to the 20-byte canonical key so legacy holders remain reachable. **5 new tests.**
+
+13 new tests, 0 regressions. Deployed via stop-the-world to the 5-node cluster after a launchd-respawn race forked the chain initially (recovery: data-dir wipe + clean restart).
+
+### Empirical validation on the live cluster
+
+Re-ran the empirical decay test on the bundle binary (test object `0xdecade...0002`):
+
+```
+blk=633  Active   energy=15
+blk=733  Grace    (entered_grace=1)
+blk=738  Ghost    (evaporations=1, ghost_count=1, mmr_position=0)
+```
+
+Plus organic empirical observations during the session:
+- **val-3 tombstoned** at block ~233 from storage rent draining its balance to 0; **ratchet 4 jailed it** the next block. `blocks_produced` stuck at 233 while others advanced to 1300+.
+- **val-1 tombstoned** at block ~1344 after creating 2 stream-test objects; balance went 381k → 0 in ~5 minutes; ratchet 4 jailed it on the next block.
+- **HBCT H+1 capacity expiry** validated end-to-end: seed_demo populated 8 positions across 6 locations; `tick(481260)` removed all 8 and burned 1,348 MWh.
+- **Refresh pool** absorbed ~155k EVP from drained accounts under §1.2 conservation.
+- **3-of-5 BFT quorum** held under stress (val-1 + val-3 jailed simultaneously). Chain advancing at ~3 blocks/sec post-deploy; reached block 7600+ during the session.
+
+### 0x-prefix audit completion (`0321b50` + `8c79129`)
+
+Three more endpoints had the same raw-`hex::decode`-without-strip-prefix pattern as the bundle's R1: `/api/pnt/is_spent/:nullifier_hex`, `/api/light/state-proof/account/:addr`, `/api/light/state-proof/object/:id`, `/api/evaporation-da-proof/:object_id`. All replaced with `parse_hex_address`. **Total 6 0x-prefix bugs closed across the session.** Audit complete.
+
+### Singh Pool AMM wiring — Stages 1 + 2 (`0404d27`, `3333dab`)
+
+Per Agent 4's Candidate-2 punch list, `evaporchain-cl-amm` was 692 LOC of substrate-shipped code with zero API surface. Wiring Singh Pool unlocks actual price discovery with an honest mercenary-resistant moat (LP shares carry energy tags, holders below `energy_floor` cannot withdraw).
+
+- **Stage 1 (`0404d27`)** — foundation: `evaporchain-cl-amm` dep added; `ApiState.singh_pools: Arc<Mutex<BTreeMap<String, SinghPool>>>` field; `GET /api/pool/list` + `GET /api/pool/:id` read-only endpoints.
+- **Stage 2 (`3333dab`)** — full mutator surface (256 LOC, 6 endpoints): `POST /api/pool/create`, `mint`, `withdraw`, `swap_x_for_y`, `swap_y_for_x`, `reanchor`. u128 quantities serialised as decimal strings (avoids JS-number precision loss); holder addresses parse via `parse_hex_address`. All mutators gated by `require_tx_auth`. Pool state is in-memory only — Stage 3 (replace `/api/swap` oracle pricing with Singh-Pool routing + RocksDB persistence) deferred.
+
+### Documentation gap closures (`f8605d7`, `a421321`)
+
+- **`f8605d7`** — `light_cone_block_count` was documented as "Equal to committed-height count modulo genesis edges" implying it tracks block height. In reality it's `LightCone::len()` — sliding-window-pruned via `prune_before_epoch` on every epoch boundary, can DROP between probes. Sister and parent both used it as a height proxy and got misleading liveness signals during the deploy. Also documented the `ghost_object_count` vs `evaporation_mmr_size` divergence as by-design (MMR is append-only cryptographic commitment; ghost set rolls back with reorgs).
+- **`a421321`** — exposed `last_conservation_violation_type: Option<String>` on `/api/four_act` so operators can distinguish the known doctrine-vs-emission gap (`DecayIncreasedTotal` every block under inflationary block rewards) from a genuine invariant breach.
+
+### Deploy runbook (`3b7bc8d`)
+
+348-line `docs/runbooks/cluster-deploy.md` capturing the lessons: macOS launchd race (`launchctl unload` BEFORE `pkill`); systemd `Restart=on-failure` surprise (use `.new` path); rolling vs stop-the-world classification; synchronized-halt countdown for two-operator deploys; recovery from a forked cluster.
+
+### 9 commits, in order
+
+```
+24920e6  feat(node,execution,consensus): death-is-final doctrine bundle + swap address normalization
+4ec297d  docs(audit): session-arc audit + decay-thesis empirical proof + bundle deploy postmortem
+0321b50  fix(api): accept 0x-prefixed hex on /api/pnt/is_spent/:nullifier_hex
+f8605d7  docs(four_act): clarify light_cone_block_count is a windowed count, not block height
+a421321  feat(four_act): expose conservation-violation discriminant — disambiguate the false signal
+8c79129  fix(api): complete 0x-prefix audit on Verkle / DA proof endpoints
+0404d27  feat(api): wire Singh Pool AMM read-only endpoints — Stage 1
+3333dab  feat(api): Singh Pool AMM Stage 2 — mint / swap / withdraw / reanchor mutators
+3b7bc8d  docs(runbooks): cluster-deploy.md — capture 2026-05-08 deploy lessons
+```
+
+`24920e6` deployed end-to-end. `4ec297d` through `3b7bc8d` accumulated for the next deploy.
+
 ## 2026-05-08 (morning) — Refactor A + Refactor B + cross-backend interop (9 commits)
 
 Closes the architectural-debt finding from the prior session's WASM scaffold work. Yesterday's `evaporchain-light-client-wasm` README documented two refactors needed to actually unlock browser-side BFT BLS + Verkle Pasta-curve Pedersen verification: (A) extract a `evaporchain-consensus-types` sub-crate to drop the SDK's transitive `evaporchain-state` → RocksDB dep; (B) feature-flag the BLS backend so wasm32 can use a pure-Rust `bls12_381` instead of the C library `blst`. Both done this morning, with cross-backend interop tests proving the portable verifier produces bit-identical results to blst.
