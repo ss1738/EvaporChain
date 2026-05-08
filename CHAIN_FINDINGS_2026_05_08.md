@@ -40,18 +40,40 @@ The "finalised → rejected" flicker the wallet observed is the chain reporting 
 
 In every case, the sender's on-chain `account.nonce` did NOT advance, confirming execution-time rejection (not just a soft-finality flip).
 
-**Confirmed root cause (post-investigation):**
+**Confirmed root cause (revised after code audit):**
 
-In-block demurrage applied to the sender BEFORE the executor runs `execute_transfer`. For an inactive account at default `Exponential { half_life: 100 epochs }` (~13 min at 2s blocks), the burn between submission and execution is large enough to drop balance below `tx.amount + gas`. Pre-check at submission passes; execution check at lib.rs:~1180 fails.
+The pre-check at `crates/evaporchain-node/src/api.rs:10038` is the bug:
 
-For V1 specifically: balance was 20,198 EVP at session end, gas per transfer is 21,000 — **even an idle account can never afford a transfer once below 21k EVP, and demurrage is actively burning the budget**. See finding #3 for the demurrage-rate critique.
+```rust
+if acct.balance < req.amount {
+    return Err("Insufficient balance: X < Y");
+}
+```
 
-Sister-session next steps:
-- Confirm via execution trace that demurrage is being applied to senders mid-block, before the tx-execution pass.
-- Decide application order: demurrage-then-tx (current) vs tx-then-demurrage (would let in-flight txs land before decay applies).
-- Or: tune demurrage half-life (TOKENOMICS Q1) so within-block burn becomes negligible.
+It checks `balance < amount` but does **NOT include gas**. The executor (`crates/evaporchain-execution/src/lib.rs:~2724-2742`) deducts `total_tx_fee = gas_fee + extra_fee` BEFORE applying the transfer. If `balance < amount + gas` at execution time, the tx_outcome is pushed with `success: false, error: "insufficient balance for gas: X/Y"` and `tx.status = "rejected"`.
 
-**This narrows finding #1 from "reorg instability" to "demurrage application order + half-life calibration."** No reorg is happening; consensus is sound at the depth-1 BFT finality the chain claims (`tendermint.rs:5831`).
+For V1 with balance 20,198 EVP submitting a 50 EVP transfer: pre-check passes (50 < 20,198), but execution needs 50 + 21,000 = 21,050 EVP. Tx fails with "insufficient balance for gas: 20198/21000."
+
+**My initial "in-block demurrage application order" hypothesis was wrong.** Demurrage runs at `lib.rs:3158`, which is AFTER the tx-execution loop ends — gated behind `if block.epoch > db.get_last_rent_epoch()` so it fires once per epoch, not before tx-execution. The "5-block flicker" the wallet observed is just polling cadence picking up the executor's status update.
+
+Sister-session next step (single-line fix):
+
+Add gas budget to the pre-check at `api.rs:10038`:
+
+```rust
+// before:
+if acct.balance < req.amount { reject }
+
+// after:
+let estimated_gas = 21_000;  // GAS_TRANSFER from execution/lib.rs
+if acct.balance < req.amount.saturating_add(estimated_gas) { reject }
+```
+
+Or import `evaporchain_execution::GAS_TRANSFER` directly to keep the constant in one place. Same pattern needed for `/api/tx/delegate`, `/api/tx/create_object`, `/api/tx/deploy_contract`, `/api/tx/deploy_script`, `/api/tx/validator_stake` — each has a different gas constant per `lib.rs:262-286`.
+
+Connection to finding #3: V1's underlying problem is demurrage burning its budget below gas-affordability over time. Even if the pre-check were fixed, V1 still can't transact at 20,198 EVP. The pre-check fix prevents user confusion (clearer error message); the demurrage tuning fixes V1's actual viability.
+
+**This narrows finding #1 from "reorg instability" to "pre-check missing gas budget."** No reorg, no demurrage ordering issue — just a one-line pre-check that doesn't include gas. Consensus is sound at the depth-1 BFT finality the chain claims (`tendermint.rs:5831`).
 
 **Reproduction.**
 
