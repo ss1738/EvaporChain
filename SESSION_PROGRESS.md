@@ -48,6 +48,29 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (latest+1) — Phase 2 in-memory batch fix
+
+**Focus:** close the InMemoryStateDB gap in Phase 2's wiring discovered while preparing a round-trip test.
+
+**Commits shipped:** 1 (`69ed84e`).
+
+**The finding:** Phase 2's wiring (`tendermint.rs:6582-6592`, shipped in `af6876d`) calls `_db.begin_batch()` → `execute_block` → `_db.rollback_batch()` to compute a post-state-root without committing. RocksDB has had real undo semantics since 2026-04 (`rocksdb_backend.rs:815`). InMemoryStateDB fell through to the trait's default no-op `begin_batch`/`rollback_batch`, so a proposer using in-memory backing permanently mutates the DB during the speculative execute. The parallel session's `cargo test -p evaporchain-consensus` (10/0) didn't catch this because consensus tests don't run propose → apply round-trips on a single InMemoryStateDB.
+
+**Deliverables:**
+- `InMemoryBatchSnapshot` struct + `batch_snapshot: Option<Box<...>>` field on InMemoryStateDB.
+- Real `begin_batch` (full-state clone) / `commit_batch` (drop snapshot) / `rollback_batch` (restore from snapshot) impls.
+- `HistoricalSnapshot` now derives Clone (was missing — surfaced by the snapshot struct's transitive needs).
+- 3 unit tests in `db.rs::tests`: rollback-reverts-writes, commit-keeps-writes, rollback-without-active-batch-is-noop.
+
+**What's NOT done:**
+- Round-trip end-to-end test (proposer's stamped `post_state_root` vs. validator's apply-time root). Touches `tendermint.rs` test module which the parallel session is editing (eprintln→debug cleanup unstaged in working tree). Backlog.
+
+**Build verification:** Deferred. Mini 1 still locked by parallel paymaster arc. All snapshot-field types verified to derive Clone via grep before writing. Single-file change in `evaporchain-state`, no consensus path touched.
+
+**Cross-references:** `42a318e` (Opus scaffold) → `af6876d` (Sonnet Phase 2 wiring) → `cb12cf1` (Sonnet docs) → `69ed84e` (Opus in-memory batch fix). Phase 2 is now correct on both StateDB backends.
+
+---
+
 ## 2026-05-09 (latest) — ⚠ COORDINATION NOTE — read before any cluster-touching work
 
 **This is a coordination entry for parallel sessions, not a ship log.** Two Claude sessions have been committing concurrently on this repo (Sonnet 4.6 paymaster arc Days 1–14, Opus 4.7 Coq + Phase 2 scaffold + audit). The collision pattern below has already produced one accidental cross-session commit (`dfd7c79`). Future sessions must read this section before doing anything that touches `git`, Mini 1, or the live cluster.
