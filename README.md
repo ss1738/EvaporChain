@@ -18,7 +18,10 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
 - [x] **Doctrine arc shipped 2026-05** — Lambda-Fold Nova IVC (sublinear light-client verification), Crooks-MEV refund pipeline (sandwich detection → settlement → stake-slash), Light-Cone Full DAG mode (multi-parent blocks, antichain finality, cross-validator commit-cert digest), Causal-CHSH cartel detection (real-Eth gate PASS), MultiAuditorVerifier k-of-n governance attestation, M2 Coq build-verified under Rocq 9.1.1
-- [x] **12,500+ test functions** across **147 workspace crates** (substrate primitives, consensus, execution, proving, DA, networking, frontier primitives, plus doctrine "press-claim" tests asserting headline properties as structural invariants)
+- [x] **Browser-side light client** — `evaporchain-light-client-wasm` (310 KB `.wasm` post-`wasm-pack`) verifies BFT BLS aggregate signatures + Verkle Pasta-curve Pedersen state proofs entirely in-browser; pure-Rust `bls12_381` backend (10 cross-backend interop tests vs. native `blst`)
+- [x] **Death-is-final doctrine enforcement** (2026-05-08) — tombstoned validators jailed automatically (`enforce_validator_tombstones`), would-be block rewards redirected to refresh pool, eulogy trie + evaporation MMR + ghost-object counters surfaced at `/api/four_act`. Empirically validated live: val-3 + val-1 organically tombstoned; refresh pool absorbed redirected energy under §1.2 conservation
+- [x] **Singh Pool AMM API** (2026-05-08) — decay-aware xy=k AMM with energy-tagged LP shares (mercenary-resistant: holders below `energy_floor` cannot withdraw). Full HTTP surface: `POST /api/pool/{create,mint,withdraw,swap_x_for_y,swap_y_for_x,reanchor}` + `GET /api/pool/{list,:id}`. `/api/swap` automatically routes through pools when one exists for the canonical pair-id ("EVAP-FLUX"); oracle-priced fallback otherwise. Pool state persists across restarts via bincode-encoded ledger in the data dir
+- [x] **25,435+ test functions** across **147 workspace crates** (substrate primitives, consensus, execution, proving, DA, networking, frontier primitives, plus doctrine "press-claim" tests asserting headline properties as structural invariants)
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -51,6 +54,7 @@ Coming soon. Infrastructure is Terraform-ready (`deploy/terraform/modules/hetzne
 | [Getting Started](docs/README.md) | API reference, curl examples, how to connect |
 | [EvaporScript Guide](docs/EVAPORSCRIPT.md) | Scripting language syntax, types, examples |
 | [Architecture](docs/ARCHITECTURE.md) | System diagram, crate descriptions, how decay/proofs/consensus work |
+| [Cluster Deploy Runbook](docs/runbooks/cluster-deploy.md) | Stop-the-world deploy procedure for the 5-node Mac+Hetzner WAN cluster (launchd race, systemd surprise, recovery from forked state) |
 | [Whitepaper](research/) | Full technical specification |
 
 ## Technical Stack
