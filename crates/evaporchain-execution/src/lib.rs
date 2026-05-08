@@ -2259,6 +2259,127 @@ impl SimpleExecutor {
             pm.last_touched_epoch = epoch;
         }
 
+        // Day 1C (Option B paymaster, 2026-05-08): dispatch the inner
+        // intent encoded in call_data. The paymaster's sponsorship sig
+        // already committed to `blake3(call_data)`, so any inner intent
+        // that runs here is one the paymaster (or self-funded sender)
+        // signed off on.
+        //
+        // Empty call_data is a valid no-op (gas-only UserOp). Non-empty
+        // call_data is JSON-decoded into a `Transaction`, then a
+        // strict whitelist routes it to the slim `execute_inner_*`
+        // path that skips the outer-already-done nonce/sig checks.
+        //
+        // Whitelist for V1: Transfer only. Other variants (Refresh,
+        // CreateObject, CallScript, CallContract, etc.) get added in
+        // subsequent Day 2+ work as the paymaster service binary
+        // demands them. Nested UserOp / Refund / Blob / MultiSig /
+        // PrivateTransfer / Unshield / Shield / Deferred are
+        // explicitly rejected — sponsoring them via UserOp doesn't
+        // make sense (they're either protocol-issued, ZK-authenticated
+        // with their own gas paths, or themselves an envelope).
+        if !tx.call_data.is_empty() {
+            // call_data is a JSON-encoded `Transaction`. bincode is
+            // positional and `TransferTx` (and many other variants)
+            // use `#[serde(skip_serializing_if = "Option::is_none")]`
+            // for the `signature` / `public_key` slots, so a bincode
+            // round-trip mid-decodes. JSON is self-describing and
+            // handles the omitted fields naturally — the per-tx size
+            // overhead is acceptable; future optimization can swap to
+            // a dedicated wire format if needed.
+            let inner: Transaction = serde_json::from_slice(&tx.call_data).map_err(|e| {
+                ExecutionError::ContractError(format!(
+                    "UserOp call_data: failed to decode inner Transaction: {e}"
+                ))
+            })?;
+            match &inner {
+                Transaction::Transfer(t) => {
+                    self.execute_inner_transfer(db, t, &tx.sender, epoch)?;
+                }
+                Transaction::UserOp(_)
+                | Transaction::Refund(_)
+                | Transaction::Blob(_)
+                | Transaction::MultiSig(_)
+                | Transaction::Shield(_)
+                | Transaction::Unshield(_)
+                | Transaction::PrivateTransfer(_)
+                | Transaction::Deferred(_) => {
+                    return Err(ExecutionError::ContractError(format!(
+                        "UserOp call_data: inner variant not sponsorable \
+                         (got {:?})",
+                        std::mem::discriminant(&inner)
+                    )));
+                }
+                _ => {
+                    return Err(ExecutionError::ContractError(
+                        "UserOp call_data: only Transfer is whitelisted in \
+                         V1 — see Day 1C scope. Other variants will land in \
+                         Day 2+ as the paymaster service requires them."
+                            .into(),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Day 1C (2026-05-08): execute a Transfer that's the inner intent of
+    /// a UserOp envelope. Differs from `execute_transfer` in that:
+    ///
+    /// - No nonce check / no nonce bump. The outer UserOp already
+    ///   consumed sender's nonce. Re-checking would fail (sender.nonce
+    ///   already advanced); re-bumping would double-consume.
+    /// - No signature verification on the inner. The user signed over the
+    ///   entire UserOp (which includes call_data); the paymaster signed
+    ///   over blake3(call_data). The inner TransferTx's own signature /
+    ///   public_key fields can be omitted.
+    /// - Sender binding enforced explicitly: `inner.from` must equal
+    ///   `user_op_sender`. Otherwise a sender could sponsor a transfer
+    ///   FROM someone else's account.
+    ///
+    /// Vesting gate, balance debit, demurrage anchor, receiver credit all
+    /// behave identically to `execute_transfer`.
+    fn execute_inner_transfer(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &TransferTx,
+        user_op_sender: &evaporchain_types::AccountAddress,
+        epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        if &tx.from != user_op_sender {
+            return Err(ExecutionError::ContractError(format!(
+                "UserOp inner Transfer: from-address {} does not match \
+                 outer UserOp sender {} (no-impersonation rule)",
+                hex::encode(tx.from),
+                hex::encode(user_op_sender)
+            )));
+        }
+        if tx.from == tx.to {
+            return Err(ExecutionError::SelfTransfer);
+        }
+        if tx.amount == 0 {
+            return Err(ExecutionError::ZeroAmount);
+        }
+
+        let sender = db.get_or_create_account(&tx.from);
+        // Vesting gate — same as execute_transfer.
+        let available = sender.transferable_balance(epoch);
+        if available < tx.amount {
+            return Err(ExecutionError::InsufficientBalance {
+                account: hex::encode(tx.from),
+                available,
+                required: tx.amount,
+            });
+        }
+        sender.balance -= tx.amount;
+        // No nonce bump — outer UserOp already consumed it.
+        sender.last_touched_epoch = epoch;
+
+        let receiver = db.get_or_create_account(&tx.to);
+        receiver.balance = receiver.balance.saturating_add(tx.amount);
+        receiver.last_touched_epoch = epoch;
+
         Ok(())
     }
 
@@ -6982,7 +7103,8 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         let executor = SimpleExecutor::new_for_test(7);
-        let (tx, pm_addr, _kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
+        // Empty call_data — gas-only sponsorship, no inner intent dispatched.
+        let (tx, pm_addr, _kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![]);
         fund_account_at(&mut db, pm_addr, 1_000_000);
 
         executor
@@ -7008,7 +7130,8 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         let executor = SimpleExecutor::new_for_test(7);
-        let (tx, pm_addr, kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
+        // Empty call_data — gas-only sponsorship.
+        let (tx, pm_addr, kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![]);
         fund_account_at(&mut db, pm_addr, 1_000_000);
 
         executor
@@ -7028,7 +7151,7 @@ contract Counter {
         let mut replay = evaporchain_types::UserOpTx {
             sender: addr(1),
             nonce: 1,
-            call_data: vec![0u8; 16],
+            call_data: vec![],
             call_gas_limit: 1000,
             paymaster: Some(pm_addr),
             paymaster_nonce: Some(0), // ← reused
@@ -7205,6 +7328,151 @@ contract Counter {
         assert!(
             matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("verification failed")),
             "tampered call_data must invalidate sponsorship sig: got {r:?}"
+        );
+    }
+
+    // ─── Day 1C (2026-05-08): call_data → inner Transaction dispatch ──────
+    //
+    // The four tests below lock the call_data dispatch behaviour:
+    //   - empty call_data is a valid no-op (gas-only sponsorship)
+    //   - JSON-encoded inner Transfer executes against the SENDER's
+    //     balance with paymaster paying gas
+    //   - inner Transfer's `from` must equal the outer UserOp's sender
+    //     (no impersonation)
+    //   - non-whitelisted variants and undecodable bytes both reject
+
+    fn encode_inner_tx(tx: &Transaction) -> Vec<u8> {
+        serde_json::to_vec(tx).expect("serialize inner tx")
+    }
+
+    #[test]
+    fn test_user_op_call_data_dispatches_inner_transfer() {
+        // End-to-end: paymaster pays gas; inner Transfer executes,
+        // debiting sender and crediting recipient.
+        let mut db = InMemoryStateDB::new();
+        let sender_addr = addr(1);
+        fund_account_at(&mut db, sender_addr, 5_000); // sender holds 5k EVP
+        fund_account(&mut db, 9, 0); // recipient (addr(9))
+
+        let executor = SimpleExecutor::new_for_test(7);
+
+        // Inner Transfer: sender → recipient, 1,000 EVP. Nonce in the
+        // inner tx is ignored by execute_inner_transfer (outer
+        // UserOp's sender_nonce is what gets consumed).
+        let inner = Transaction::Transfer(TransferTx {
+            from: sender_addr,
+            to: addr(9),
+            amount: 1_000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+
+        let (tx, pm_addr, _kp) =
+            make_signed_user_op(&executor, 1, 0, 0, 50_000, encode_inner_tx(&inner));
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        executor
+            .execute_user_op(&mut db, &tx, 0)
+            .expect("dispatch should succeed");
+
+        // Sender debited by 1,000.
+        let s = db.get_account(&sender_addr).expect("sender exists");
+        assert_eq!(s.balance, 4_000);
+        // Sender's nonce bumped exactly once (outer UserOp), not twice.
+        assert_eq!(s.nonce, 1);
+        // Recipient credited 1,000.
+        let r = db.get_account(&addr(9)).expect("recipient exists");
+        assert_eq!(r.balance, 1_000);
+        // Paymaster paid gas; balance below original.
+        let pm = db.get_account(&pm_addr).expect("paymaster exists");
+        assert!(pm.balance < 1_000_000);
+    }
+
+    #[test]
+    fn test_user_op_inner_transfer_rejects_impersonation() {
+        // Inner Transfer's `from` is a different address than the outer
+        // UserOp.sender. The chain must reject — otherwise sender could
+        // sponsor a transfer FROM someone else's account.
+        let mut db = InMemoryStateDB::new();
+        let user_op_sender = addr(1);
+        let victim_with_balance = addr(0xAB);
+        fund_account_at(&mut db, user_op_sender, 0);
+        fund_account_at(&mut db, victim_with_balance, 5_000);
+        fund_account(&mut db, 9, 0);
+
+        let executor = SimpleExecutor::new_for_test(7);
+        let inner = Transaction::Transfer(TransferTx {
+            from: victim_with_balance, // ← attacker spoofs from
+            to: addr(9),
+            amount: 1_000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let (tx, pm_addr, _kp) =
+            make_signed_user_op(&executor, 1, 0, 0, 50_000, encode_inner_tx(&inner));
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("no-impersonation")),
+            "inner.from != outer sender must reject: got {r:?}"
+        );
+        // Victim's balance untouched.
+        let v = db.get_account(&victim_with_balance).expect("victim exists");
+        assert_eq!(v.balance, 5_000);
+    }
+
+    #[test]
+    fn test_user_op_call_data_rejects_non_whitelisted_variant() {
+        // Wrap a Refund (protocol-issued, not sponsorable) — must reject.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let inner = Transaction::Refund(evaporchain_types::RefundTx {
+            source_block_height: 1,
+            source_observation_idx: 0,
+            attacker: addr(7),
+            victim: addr(8),
+            amount: 100,
+            settle_block_height: 2,
+        });
+        let (tx, pm_addr, _kp) =
+            make_signed_user_op(&executor, 1, 0, 0, 50_000, encode_inner_tx(&inner));
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("not sponsorable")),
+            "Refund inner must reject: got {r:?}"
+        );
+    }
+
+    #[test]
+    fn test_user_op_call_data_rejects_undecodable_bytes() {
+        // Random bytes that aren't a JSON-encoded Transaction.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let (tx, pm_addr, _kp) = make_signed_user_op(
+            &executor,
+            1,
+            0,
+            0,
+            50_000,
+            b"not-a-transaction".to_vec(),
+        );
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("failed to decode")),
+            "undecodable call_data must reject: got {r:?}"
         );
     }
 
