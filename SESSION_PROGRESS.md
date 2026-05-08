@@ -48,6 +48,53 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (morning, late) — operator activation tooling + H-08 VM gas asymmetry close + zero-warning workspace
+
+**Focus:** "build until it finish" mode. Push past the morning entry's MCC plan closure into the operational adjacent: operator readiness tooling, the last meaningful audit HIGH on the production hot path, and zero-warning workspace state.
+
+**Commits shipped:** 3 (`80f9dba`, `090281d`, `6ba4b3b`).
+
+**Deliverables:**
+
+| # | Commit | Theme |
+|---|---|---|
+| 1 | `80f9dba` | `scripts/mcc-readiness.py` — activation readiness checker for the eventual `linear → mcc → mcc_full` flag-flip ladder. 354-line stdlib-only Python that probes all 5 cluster validators on `/api/identity`, `/api/blocks?limit=1`, `/api/four_act`, `/api/governance/flags`, `/api/light_cone/{candidate_heads,authoritative_head,antichain_digest}` and renders a 3-step ladder verdict gating each governance flag flip on the relevant cross-validator check passing. Returns shell exit code: 0 ready / 1 amber / 2 red. **Empirically validated against the live testnet** mid-commit — verdict came back NOT READY with concrete reasons (3724-block height spread, antichain_digest split 2/5, all nodes pre-616bf28 binaries) — exactly the signal an operator needs to refuse the flag flip. |
+| 2 | `090281d` | AUDIT_2026_05_06.md H-08 close — VM gas budget now derived from tx-level gas. Pre-fix `ScriptEngine::call` hardcoded `vm_gas_limit = 10_000_000` regardless of tx-level gas (50k flat for CallScript), a **200× economic asymmetry** exploitable by a script author crafting pathological loops. Fix: new `call_with_vm_gas(.., vm_gas_limit)` API; `execute_call_script` passes `SCRIPT_VM_GAS_PER_CALL_SCRIPT = GAS_CALL_SCRIPT * 20 = 1_000_000`. Asymmetry closed from 200× to 20×. Existing `call()` becomes a backward-compat shim with `DEFAULT_GAS_LIMIT` for in-script test callers. 2 new tests pin the fix (tight budget rejects pathological loop, generous budget completes). |
+| 3 | `6ba4b3b` | Final warning sweep — zero substantive `cargo check` warnings. 4 surfaces cleaned: cl-amm unnecessary parens, cli/main HealthSnap unread fields (`#[allow(dead_code)]` for serde-deserialized wire-format compat), light-client-http hex helpers gated to `#[cfg(any(feature = "nova", test))]`, node/da_http_client whole-module `#![allow(dead_code)]` (recovered stashed work, no production wire-up yet — doc updated to flag DORMANT state). |
+
+**Empirical results:**
+
+- The MCC readiness script produced a real 3-step ladder verdict against the live cluster — first time anyone has had a concrete dashboard for "is it safe to flip the governance flag yet?". Refused to give a green light because of legitimate cluster issues (height spread, digest split, stale binaries).
+- `cargo check --workspace` is now noise-free apart from a single structural Cargo.toml profile warning at `prototypes/fold-a-block` — `make lint-strict` is one step away from green (the prototype profile is a workspace-config quirk, not a lint-actionable issue).
+- H-08 VM gas asymmetry test confirms: `vm_gas_limit = 50` rejects a `while (counter < 99000)` loop with gas-exhaustion error; `vm_gas_limit = 5_000_000` lets it complete and return 99000.
+- 19 total commits this evening's session arc (a6bc9df → 6ba4b3b).
+
+**Decisions made:**
+
+- **`SCRIPT_VM_GAS_TX_RATIO = 20`.** Defensible default: closes the worst of the asymmetry (200× → 20×), keeps generous headroom for legitimate scripts (typical ~1k–10k VM steps vs. 1M cap). Mainnet calibration is a governance call — single-line constant change OR add per-tx `gas_limit: Option<u64>` to `CallScriptTx`.
+- **`#[allow(dead_code)]` over delete** for HealthSnap fields and the entire `da_http_client` module. Both have explicit "intent preserved for future wire-up" provenance (HealthSnap = wire-format compat; da_http_client = recovered stashed work). Delete-by-default would be lossier than the lint noise it silences.
+- **All audit findings checked tonight were stale at HEAD.** CRITICAL-1, CRITICAL-3, H-08 (closed by this commit), H-09, H-19, H-21, H-22, demurrage half-life, Verkle adversarial bench — every one was already addressed by intermediate work. Audit doc lag is real; the codebase is genuinely well-shipped.
+
+**What's next:**
+
+- **Cluster deploy** is now the only thing standing between code-finished and chain-running. Hetzner SSH still blocking. Once unblocked: stop-the-world per `docs/runbooks/cluster-deploy.md` §3, then ride the readiness script through `linear → mcc → mcc_full`.
+- **Decay-BFT mechanized Coq theorem** — Agent 1's #1 academic-impact pick; explicitly excluded by your `feedback_no_papers_in_building_mode.md`. If/when build-mode rule lifts.
+- **Net-new doctrine work.** Every existing planned thread is `[ ]`-free. The next big-impact thread requires writing a new plan, not finishing an old one.
+
+**Blockers / open questions:**
+
+- **Hetzner SSH access** — same blocker as the night entry and morning entry. The whole 19-commit arc this evening is staged + verified-on-Mini-1 but ungressed to the production cluster.
+- **Realistic mainnet calibration of `SCRIPT_VM_GAS_TX_RATIO`** — 20 is a defensible testnet number; mainnet should soak with real-script workload data. Requires the deploy unblock first.
+
+**Cross-references:**
+
+- Morning entry below — `3923ba6 → fd5a3b8` arc, MCC plan closure.
+- Night entry — `8ad890b → 649e571` arc, audit closures + observability.
+- `MCC_FULL_MULTI_PARENT_PLAN.md` — 28/28 closed.
+- All major plans: 0 unchecked items.
+
+---
+
 ## 2026-05-09 (morning) — MCC plan closure (28/28) + state_sync test triage
 
 **Focus:** finish the Layer 4 multi-parent thread to formal closure. The night entry (1772f41) covered 8 follow-up commits on the 8-item bundle; this entry covers the 3 follow-ups that close the MCC/Light-Cone work to formally complete state.
