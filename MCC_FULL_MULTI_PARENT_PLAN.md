@@ -1,7 +1,7 @@
 # MCC Fork-Choice Full Multi-Parent Enumeration — Plan
 
 **Created:** 2026-05-05
-**Status (2026-05-07):** **majority shipped** — 27 of 28 task boxes are `[x]` (~96%). Phases A–D substantively SHIPPED across substrate + soak + runbook (see commits ba5d591, d886573, f34cf07, b93195d, 108e60e). 1 task box remains. The original "Phase 0 (planning) — implementation not started" line was authored 2026-05-05 and was stale by ba5d591 (Phase D.1 ship, same day) — this header tracks live state going forward; the inline `[x]/[ ]` checkboxes are the authoritative per-task ledger.
+**Status (2026-05-08):** **28/28 task boxes complete** — Phases A through E fully shipped at the substrate-and-test level. The last open task box (A.2 caliber cache) was resolved-by-deferral on 2026-05-08 with empirical evidence from Phase 6.3 perf benchmark: `select_tip` runs at ~365 ns/round amortised, 137× under budget — the hypothesised bottleneck never materialised. The load-bearing C.6 hot-path test (`proposer_emits_multi_parent_block_under_mcc_full`) shipped 2026-05-08 in `mcc_phase_c_hot_path_proposer_emits_multi_parent_block` + bit-compat companion. The remaining work is operational: deploy the binary that already contains all of this to the 5-node cluster, then ride the governance ladder `linear → mcc → mcc_full`. Currently blocked on Hetzner SSH access (see SESSION_PROGRESS.md).
 **Owner:** Satyawan Singh
 **Sibling plans:** `LIGHT_CONE_FULL_DAG_PLAN.md`, `CROOKS_MEV_INTEGRATION_PLAN.md`, `LAMBDA_FOLD_NOVA_PLAN.md`.
 
@@ -54,12 +54,18 @@ Each phase has substrate + integration + tests. Phase letters used
       validator-deterministic via `BTreeMap`-key iteration order on
       the underlying `LightCone`.
 
-- [ ] **A.2 — Per-head trajectory caliber cache. DEFERRED to Phase C.**
-      Premature optimisation at substrate level. The N-candidate
-      scoring cost is observable only when the hot-path actually
-      enumerates per-round; if Phase C reveals it's a bottleneck,
-      revisit. Cache `(head_id, last_known_caliber, last_scored_block)`
-      with O(1) re-score and invalidate on commit.
+- [x] **A.2 — Per-head trajectory caliber cache. ✅ RESOLVED-BY-DEFERRAL 2026-05-08.**
+      Empirical evidence from Phase 6.3 (`benchmark_light_cone_phase_6_3`,
+      LIGHT_CONE_FULL_DAG_PLAN.md) shows `MccForkChoice::select_tip`
+      runs at **365 µs over 1000 blocks** under 4 concurrent forks
+      = ~365 ns/round amortised, ~137× under the 50 ms budget. Phase C
+      shipped without the cache; Phase D's perf and adversarial tests
+      ran clean. The hypothesised bottleneck never materialised.
+      Closing as not-needed rather than building dead code per
+      CLAUDE.md "don't add features for hypothetical future
+      requirements". Reactivate iff a future profiling pass shows
+      `enumerate_with_caliber` consuming >5% of the consensus tick
+      budget under realistic mainnet load.
 
 - [x] **A.3 — `enumerate_candidate_heads()` sorted-by-caliber.** ✅ SHIPPED 2026-05-05.
       Returns `Vec<([u8; 32], u64)>` of `(BlockId, caliber)` pairs
@@ -411,10 +417,24 @@ Promote `authoritative_head` from admin-RPC to consensus hot path.
         rollback safety net).
       Consensus suite: 509 / 0 / 1.
       Original C.6 candidates that move to D:
-        - `authoritative_head_selected_at_start_round` → D.1 add-on
-        - `votes_route_to_authoritative_head_tally` → D.1 add-on
-        - `proposer_emits_multi_parent_block_under_mcc_full` → D.1 add-on
-        - `cross_fork_equivocation_increments_on_double_prevote` → D.2
+        - `authoritative_head_selected_at_start_round` → D.1 add-on.
+          OBSERVATIONAL: subsumed by C.5's per-round determinism
+          property which already asserts authoritative-head agreement
+          across 256 random DAGs.
+        - `votes_route_to_authoritative_head_tally` → D.1 add-on.
+          OBSERVATIONAL: the existing `check_prevote_quorum` /
+          `check_precommit_quorum` tally votes by `block_hash`, and
+          differing parent sets produce differing `block_hash`es
+          (verified by `Self::block_hash`'s commitment to
+          `block.parents` as part of the digest). The tally already
+          differentiates multi-parent blocks correctly.
+        - `proposer_emits_multi_parent_block_under_mcc_full` →
+          ✅ SHIPPED 2026-05-08 in `mcc_phase_c_hot_path_proposer_
+          emits_multi_parent_block` (in-crate test in tendermint.rs)
+          plus the bit-compat companion
+          `mcc_phase_c_hot_path_proposer_emits_empty_parents_under_linear`.
+          Closes the load-bearing wiring assertion.
+        - `cross_fork_equivocation_increments_on_double_prevote` → D.2.
         - `authoritative_head_converges_across_validators` 256x —
           ALREADY SHIPPED as C.5.
 

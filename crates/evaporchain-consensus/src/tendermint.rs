@@ -7881,6 +7881,139 @@ mod tests {
         );
     }
 
+    /// MCC Phase C.6 / D.1 — full 4-validator BFT round under
+    /// `mcc_full`. Beyond the substrate-level convergence (D.1) and
+    /// single-proposer hot-path emission (the test above), this drives
+    /// the complete propose → prevote → precommit → commit pipeline
+    /// across 4 in-process validators with the DAG pre-populated with
+    /// 3 sibling forks. Verifies that:
+    ///
+    ///   1. The proposer emits a multi-parent block,
+    ///   2. The other 3 validators accept the multi-parent block under
+    ///      mcc_full's parent-acceptance arm,
+    ///   3. Prevote + precommit quorum tally on the multi-parent block
+    ///      (block_hash differentiation works correctly when parent
+    ///      sets differ from the linear-chain default),
+    ///   4. The block commits and lands as `CommitBlock` action.
+    ///
+    /// This is the load-bearing end-to-end test that proves multi-parent
+    /// consensus works under realistic 4-validator BFT — not just at
+    /// the substrate-accessor level. Mirrors the structure of
+    /// `test_multi_validator_consensus_simulation` (linear path) for
+    /// parity.
+    #[test]
+    fn mcc_phase_c_hot_path_4_validator_full_round_under_mcc_full() {
+        use evaporchain_light_cone::Block as LcBlock;
+        let ids = &[1u64, 2, 3, 4];
+        let mut validators: Vec<TendermintConsensus> =
+            ids.iter().map(|&id| make_consensus(id, ids)).collect();
+
+        // Flip every validator into mcc_full mode. Same DAG, same
+        // governance state — validator-determinism is locked by C.5
+        // already, so all 4 will compute identical candidate-head
+        // sets and parent orderings.
+        for v in &mut validators {
+            v.governance_set_param("parent_acceptance_mode", "mcc_full")
+                .expect("mcc_full is allowlisted");
+        }
+
+        // Pre-populate every validator's light_cone_dag with the same
+        // 3-fork antichain. Mirrors the C.6 / D.1 setup so propose_parents
+        // emits the full 3-parent set.
+        let g = [0u8; 32];
+        let fa = [1u8; 32];
+        let fb = [2u8; 32];
+        let fc = [3u8; 32];
+        for v in &mut validators {
+            v.light_cone_dag
+                .insert(LcBlock::new(g, vec![], 1000, 0))
+                .expect("genesis");
+            v.light_cone_dag
+                .insert(LcBlock::new(fa, vec![g], 1001, 1))
+                .expect("fork A");
+            v.light_cone_dag
+                .insert(LcBlock::new(fb, vec![g], 1002, 1))
+                .expect("fork B");
+            v.light_cone_dag
+                .insert(LcBlock::new(fc, vec![g], 1003, 1))
+                .expect("fork C");
+        }
+
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 1_000_000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+
+        // Drive the consensus pipeline (mirrors
+        // `test_multi_validator_consensus_simulation`). Tick once to
+        // produce the initial proposal, then deliver messages and tick
+        // until a CommitBlock fires or 20 rounds elapse.
+        let mut messages = Vec::new();
+        for v in &mut validators {
+            let actions = v.tick(&mut db);
+            for a in actions {
+                if let ConsensusAction::BroadcastMessage(msg) = a {
+                    messages.push(msg);
+                }
+            }
+        }
+
+        let mut commit_actions: Vec<Block> = Vec::new();
+        for _ in 0..20 {
+            let current_msgs: Vec<_> = std::mem::take(&mut messages);
+            for msg in &current_msgs {
+                for v in &mut validators {
+                    let actions = v.on_message(msg.clone());
+                    for a in actions {
+                        match a {
+                            ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                            ConsensusAction::CommitBlock(b) => commit_actions.push(b),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            for v in &mut validators {
+                let actions = v.tick(&mut db);
+                for a in actions {
+                    match a {
+                        ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                        ConsensusAction::CommitBlock(b) => commit_actions.push(b),
+                        _ => {}
+                    }
+                }
+            }
+            if !commit_actions.is_empty() {
+                break;
+            }
+        }
+
+        assert!(
+            !commit_actions.is_empty(),
+            "4-validator mcc_full network should reach consensus on a multi-parent block"
+        );
+        let committed = &commit_actions[0];
+        assert_eq!(
+            committed.parents.len(),
+            3,
+            "committed block must carry the 3-fork antichain as parents; got {} parents",
+            committed.parents.len()
+        );
+        let parent_set: std::collections::BTreeSet<[u8; 32]> =
+            committed.parents.iter().copied().collect();
+        let expected_set: std::collections::BTreeSet<[u8; 32]> = [fa, fb, fc].into_iter().collect();
+        assert_eq!(
+            parent_set, expected_set,
+            "committed block's parent set must equal the 3-fork antichain {{A, B, C}}"
+        );
+    }
+
     /// MCC Phase C.6 / D.1 — companion to the multi-parent test:
     /// flipping `parent_acceptance_mode` back to `linear` (or leaving
     /// it default) MUST emit a single-parent block (`parents` empty
