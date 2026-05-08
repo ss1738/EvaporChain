@@ -58,7 +58,30 @@ impl SyncServer {
 
     /// Handle an incoming sync request from a peer.
     pub fn handle_request(&self, msg: &SyncMessage) -> Option<SyncMessage> {
-        self.provider.handle_request(msg, self.local_height)
+        let kind = match msg {
+            SyncMessage::TipRequest => "TipRequest",
+            SyncMessage::HeaderRequest { .. } => "HeaderRequest",
+            SyncMessage::SnapshotMetadataRequest { .. } => "SnapshotMetadataRequest",
+            SyncMessage::ChunkRequest { .. } => "ChunkRequest",
+            _ => "non-request",
+        };
+        let resp = self.provider.handle_request(msg, self.local_height);
+        let resp_kind = match &resp {
+            Some(SyncMessage::TipResponse { .. }) => "TipResponse",
+            Some(SyncMessage::HeaderResponse { .. }) => "HeaderResponse",
+            Some(SyncMessage::SnapshotMetadataResponse { .. }) => "SnapshotMetadataResponse",
+            Some(SyncMessage::ChunkResponse { .. }) => "ChunkResponse",
+            Some(_) => "other",
+            None => "no-response",
+        };
+        tracing::info!(
+            req = kind,
+            resp = resp_kind,
+            local_height = self.local_height,
+            snapshot_count = self.provider.snapshot_count(),
+            "STATE-SYNC server handle_request"
+        );
+        resp
     }
 
     pub fn set_height(&mut self, height: u64) {

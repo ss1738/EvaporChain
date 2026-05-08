@@ -216,6 +216,7 @@ impl StateSyncManager {
     /// Start the sync process by requesting tips from peers.
     pub fn start(&mut self) -> Vec<SyncAction> {
         self.phase = SyncPhase::DiscoveringTip;
+        info!(local_height = self.local_height, "STATE-SYNC start: broadcasting TipRequest");
         vec![SyncAction::Broadcast {
             message: SyncMessage::TipRequest,
         }]
@@ -223,7 +224,18 @@ impl StateSyncManager {
 
     /// Handle a sync message from a peer. Returns actions to take.
     pub fn on_message(&mut self, peer_id: u64, msg: SyncMessage) -> Vec<SyncAction> {
-        match msg {
+        let msg_kind = match &msg {
+            SyncMessage::TipRequest => "TipRequest",
+            SyncMessage::TipResponse { .. } => "TipResponse",
+            SyncMessage::HeaderRequest { .. } => "HeaderRequest",
+            SyncMessage::HeaderResponse { .. } => "HeaderResponse",
+            SyncMessage::SnapshotMetadataRequest { .. } => "SnapshotMetadataRequest",
+            SyncMessage::SnapshotMetadataResponse { .. } => "SnapshotMetadataResponse",
+            SyncMessage::ChunkRequest { .. } => "ChunkRequest",
+            SyncMessage::ChunkResponse { .. } => "ChunkResponse",
+        };
+        info!(peer_id, msg_kind, phase = ?self.phase, "STATE-SYNC on_message received");
+        let actions = match msg {
             SyncMessage::TipResponse { height, block_hash } => {
                 self.handle_tip_response(peer_id, height, block_hash)
             }
@@ -233,7 +245,9 @@ impl StateSyncManager {
             }
             SyncMessage::ChunkResponse { chunk } => self.handle_chunk_response(chunk),
             _ => vec![], // We don't handle request messages (those go to the server side)
-        }
+        };
+        info!(action_count = actions.len(), phase_after = ?self.phase, "STATE-SYNC on_message done");
+        actions
     }
 
     /// Handle a tip response from a peer.
@@ -244,6 +258,7 @@ impl StateSyncManager {
         block_hash: [u8; 32],
     ) -> Vec<SyncAction> {
         if self.phase != SyncPhase::DiscoveringTip {
+            info!(phase = ?self.phase, "STATE-SYNC handle_tip_response: ignored (wrong phase)");
             return vec![];
         }
 
@@ -260,6 +275,19 @@ impl StateSyncManager {
             .max_by_key(|(_, count)| *count)
             .map(|(&h, &count)| (h, count));
 
+        let best_h = best.map(|(h, _)| h).unwrap_or(0);
+        let best_agree = best.map(|(_, c)| c).unwrap_or(0);
+        info!(
+            peer_id,
+            tip_h = height,
+            local_h = self.local_height,
+            peer_tips_total = self.peer_tips.len(),
+            best_h,
+            best_agree,
+            min_agree = MIN_TIP_AGREEMENT,
+            "STATE-SYNC tip-vote tally"
+        );
+
         if let Some((tip_height, agreement)) = best {
             if agreement >= MIN_TIP_AGREEMENT && tip_height > self.local_height {
                 // We have consensus on the tip — request the header
@@ -274,7 +302,7 @@ impl StateSyncManager {
                     .map(|(pid, _)| pid)
                     .unwrap();
 
-                debug!(tip_height, agreement, "Tip discovered, requesting header");
+                info!(tip_height, agreement, peer, "STATE-SYNC tip discovered → HeaderRequest");
 
                 return vec![SyncAction::SendToPeer {
                     peer_id: peer,

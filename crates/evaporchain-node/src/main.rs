@@ -5132,6 +5132,20 @@ async fn main() -> Result<()> {
                 }
             }, if tendermint.is_some() => {
                 if let Ok(sync_msg) = serde_json::from_slice::<SyncMessage>(&data) {
+                    let _kind = match &sync_msg {
+                        SyncMessage::TipRequest => "TipRequest",
+                        SyncMessage::TipResponse { .. } => "TipResponse",
+                        SyncMessage::HeaderRequest { .. } => "HeaderRequest",
+                        SyncMessage::HeaderResponse { .. } => "HeaderResponse",
+                        SyncMessage::SnapshotMetadataRequest { .. } => "SnapshotMetadataRequest",
+                        SyncMessage::SnapshotMetadataResponse { .. } => "SnapshotMetadataResponse",
+                        SyncMessage::ChunkRequest { .. } => "ChunkRequest",
+                        SyncMessage::ChunkResponse { .. } => "ChunkResponse",
+                    };
+                    eprintln!(
+                        "{} [STATE-SYNC inbound] {} state_sync_active={} bytes={}",
+                        node_tag, _kind, state_sync.is_some(), data.len()
+                    );
                     if let Some(ref mut ssm) = state_sync {
                         state_sync_msg_counter = state_sync_msg_counter.wrapping_add(1);
                         let actions = ssm.on_message(state_sync_msg_counter, sync_msg);
