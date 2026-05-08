@@ -2206,26 +2206,48 @@ impl SimpleExecutor {
         tx: &evaporchain_types::UserOpTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
-        let sender = db.get_or_create_account(&tx.sender);
-        if sender.nonce != tx.nonce {
+        // ─── Audit fix #2 (2026-05-09): validate-then-mutate. ─────────
+        //
+        // Pre-Day-12C bug: the sender's nonce was bumped BEFORE the
+        // paymaster preconditions (signature, paymaster_nonce match,
+        // gas budget). Any post-sender-bump precondition failure
+        // returned Err while leaving sender.nonce already incremented.
+        // The block-level revert (lib.rs:3211) restores `tx.sender()`
+        // — which for a sponsored UserOp returns the PAYMASTER, not
+        // the user — so paymaster's pre-execution state was restored
+        // but the user's nonce stayed bumped. Under
+        // `verify_signatures: false` (legacy testnet) a third party
+        // could submit unsigned UserOps and bump the victim's nonce
+        // arbitrarily.
+        //
+        // This restructure reads all preconditions first (no
+        // mutation), and applies the sender-nonce bump + paymaster
+        // gas debit + paymaster-nonce bump together at the end. A
+        // pre-check failure leaves both accounts untouched. After
+        // pre-checks pass, all three mutations apply. Inner-tx
+        // dispatch failures still return Err but at that point the
+        // user's nonce is correctly consumed (Ethereum semantics:
+        // failed-but-attempted txs do consume the nonce slot).
+
+        // ── Section 1: read sender precondition ──────────────────────
+        let sender_current_nonce = db.get_or_create_account(&tx.sender).nonce;
+        if sender_current_nonce != tx.nonce {
             return Err(ExecutionError::InvalidNonce {
-                expected: sender.nonce,
+                expected: sender_current_nonce,
                 got: tx.nonce,
             });
         }
-        sender.nonce += 1;
-        // Nonce mutated — stamp the demurrage anchor.
-        sender.last_touched_epoch = epoch;
 
-        if let Some(ref paymaster) = tx.paymaster {
-            // Phase 4.1 (2026-05-03): wire paymaster_nonce into the
-            // execution path. The field has existed on UserOpTx since
-            // an earlier audit pass but `execute_user_op` ignored it —
-            // leaving the replay protection unwired. The paymaster's
-            // own `nonce` field doubles as a sponsorship counter
-            // (operationally a paymaster does not also send its own
-            // txs; it's a sponsorship-only account by convention).
-            let paymaster_nonce = tx.paymaster_nonce.ok_or_else(|| {
+        // ── Section 2: read + verify paymaster preconditions ─────────
+        // Returns `Some((pm_addr, total_gas_cost))` on success so
+        // section 3 can apply the mutations without re-reading.
+        let paymaster_state: Option<(evaporchain_types::AccountAddress, u64)> = if let Some(
+            ref paymaster,
+        ) = tx.paymaster
+        {
+            // Phase 4.1 (2026-05-03): paymaster_nonce required when
+            // paymaster is set, for replay protection.
+            let paymaster_nonce_arg = tx.paymaster_nonce.ok_or_else(|| {
                 ExecutionError::ContractError(
                     "UserOpTx with paymaster must include paymaster_nonce \
                      (replay protection — see audit §3 / 2026-05-03 closure)"
@@ -2233,14 +2255,11 @@ impl SimpleExecutor {
                 )
             })?;
 
-            // Day 1B (Option B paymaster, 2026-05-08): require + verify a
-            // hybrid sponsorship signature from the paymaster. Without
-            // this, any user could forge `paymaster: <victim>` and drain
-            // the victim's balance (the §3 audit closed paymaster_nonce
-            // replay but left the consent-to-sponsor gap open). We verify
-            // unconditionally — independent of `verify_signatures` —
-            // because the paymaster debit is a real state mutation that
-            // must always carry proof of consent.
+            // Day 1B (Option B paymaster, 2026-05-08): require + verify
+            // hybrid sponsorship signature. Without this, any user could
+            // forge `paymaster: <victim>` and drain the victim's balance.
+            // Verified unconditionally — paymaster debit is real state
+            // and must always carry proof of consent.
             let pm_sig = tx.paymaster_signature.as_deref().ok_or_else(|| {
                 ExecutionError::ContractError(
                     "UserOpTx with paymaster must include paymaster_signature \
@@ -2254,10 +2273,8 @@ impl SimpleExecutor {
                         .into(),
                 )
             })?;
-            // Bind paymaster public key to the paymaster address, same
-            // derivation as `generate_address_from_pubkey` in
-            // evaporchain-node/src/auth.rs and `execute_upgrade_contract`
-            // (line 2313 above).
+            // Bind paymaster public key to paymaster address (same
+            // blake3 derivation as `generate_address_from_pubkey`).
             let derived_pm_addr: [u8; 32] = *blake3::hash(pm_pk).as_bytes();
             if &derived_pm_addr != paymaster {
                 return Err(ExecutionError::ContractError(format!(
@@ -2267,9 +2284,8 @@ impl SimpleExecutor {
                     hex::encode(paymaster)
                 )));
             }
-            // Canonical sponsorship payload: see UserOpTx::paymaster_sponsorship_payload.
-            // `expect` is sound because `tx.paymaster.is_some()` and we
-            // unwrapped `tx.paymaster_nonce` immediately above.
+            // Canonical sponsorship payload — chain-id-bound,
+            // blake3(call_data)-bound. See UserOpTx::paymaster_sponsorship_payload.
             let payload = tx
                 .paymaster_sponsorship_payload(&self.chain_id)
                 .expect("paymaster + paymaster_nonce both checked Some above");
@@ -2279,24 +2295,40 @@ impl SimpleExecutor {
                 ));
             }
 
-            let pm = db.get_or_create_account(paymaster);
-            if pm.nonce != paymaster_nonce {
+            // Read-only paymaster account check. We DO NOT mutate
+            // here — section 3 applies the gas debit + nonce bump
+            // after sender-side validation has also passed.
+            let pm_acct = db.get_or_create_account(paymaster);
+            if pm_acct.nonce != paymaster_nonce_arg {
                 return Err(ExecutionError::InvalidNonce {
-                    expected: pm.nonce,
-                    got: paymaster_nonce,
+                    expected: pm_acct.nonce,
+                    got: paymaster_nonce_arg,
                 });
             }
             let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
-            if pm.balance < total_gas_cost {
+            if pm_acct.balance < total_gas_cost {
                 return Err(ExecutionError::InsufficientGas {
                     account: hex::encode(paymaster),
                     required: total_gas_cost,
-                    available: pm.balance,
+                    available: pm_acct.balance,
                 });
             }
+            // Mutable borrow ends with the if-let block.
+            Some((*paymaster, total_gas_cost))
+        } else {
+            None
+        };
+
+        // ── Section 3: apply mutations (all preconditions passed) ────
+        {
+            let sender = db.get_or_create_account(&tx.sender);
+            sender.nonce = sender.nonce.saturating_add(1);
+            sender.last_touched_epoch = epoch;
+        }
+        if let Some((pm_addr, total_gas_cost)) = paymaster_state {
+            let pm = db.get_or_create_account(&pm_addr);
             pm.balance = pm.balance.saturating_sub(total_gas_cost);
             pm.nonce = pm.nonce.saturating_add(1);
-            // Paymaster's balance just changed — reset its anchor too.
             pm.last_touched_epoch = epoch;
         }
 
@@ -7270,6 +7302,92 @@ contract Counter {
             matches!(r, Err(ExecutionError::InvalidNonce { .. })),
             "paymaster nonce check should reject replayed sponsorship: got {r:?}"
         );
+    }
+
+    // ─── Audit fix #2 (2026-05-09): no sender-nonce leak on paymaster-side failure ─
+
+    /// Pre-fix bug: under `verify_signatures: false`, an attacker could
+    /// flood `execute_user_op` with bad-paymaster UserOps and bump the
+    /// victim's sender nonce arbitrarily — sender nonce was bumped
+    /// BEFORE paymaster preconditions ran, and the block-level revert
+    /// snapshotted only `tx.sender()` (= paymaster for sponsored
+    /// UserOps), so sender's bump leaked across the failure.
+    ///
+    /// Post-fix: validate-then-mutate. Any pre-check failure returns
+    /// Err with sender + paymaster both untouched.
+    #[test]
+    fn test_user_op_paymaster_failure_leaves_sender_nonce_unbumped() {
+        let mut db = InMemoryStateDB::new();
+        // Sender's account has nonce = 7. Attacker submits a UserOp
+        // claiming nonce = 7 (matches), with paymaster set but
+        // paymaster_signature missing — paymaster precondition fails.
+        let sender_addr = addr(1);
+        db.put_account(Account {
+            address: sender_addr,
+            balance: 0,
+            nonce: 7,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        let kp = HybridKeypair::generate();
+        let victim_pm: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        fund_account_at(&mut db, victim_pm, 1_000_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let mut tx = make_user_op(1, 7, None, None, 1000);
+        tx.paymaster = Some(victim_pm);
+        tx.paymaster_nonce = Some(0);
+        // No paymaster_signature — paymaster precondition fails.
+        let r = executor.execute_user_op(&mut db, &tx, 99);
+        assert!(matches!(r, Err(ExecutionError::ContractError(_))));
+
+        // Sender's nonce + last_touched_epoch are UNTOUCHED.
+        let s = db.get_account(&sender_addr).expect("sender exists");
+        assert_eq!(s.nonce, 7, "sender nonce must NOT have been bumped");
+        assert_eq!(s.last_touched_epoch, 0, "demurrage anchor must NOT have moved");
+        // Paymaster also untouched.
+        let pm = db.get_account(&victim_pm).expect("paymaster exists");
+        assert_eq!(pm.balance, 1_000_000);
+        assert_eq!(pm.nonce, 0);
+    }
+
+    /// Symmetry check: when sender's nonce is wrong, paymaster
+    /// account is ALSO untouched (no debits, no nonce bump).
+    /// Pre-fix this was already true (sender check ran first), but
+    /// the ordering changed in the audit fix; pinning it.
+    #[test]
+    fn test_user_op_sender_nonce_mismatch_leaves_paymaster_untouched() {
+        let mut db = InMemoryStateDB::new();
+        let sender_addr = addr(1);
+        db.put_account(Account {
+            address: sender_addr,
+            balance: 0,
+            nonce: 5, // sender's actual nonce
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        let executor = SimpleExecutor::new_for_test(7);
+        // Build a properly signed UserOp but with wrong sender_nonce.
+        let (mut tx, pm_addr, _kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![]);
+        // Override sender_nonce to a stale value; re-sign.
+        tx.nonce = 99; // sender.nonce is 5, tx.nonce is 99 — mismatch
+        // Not bothering to re-sign user side (verify_signatures off in test).
+
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+        let mut executor = executor;
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(matches!(r, Err(ExecutionError::InvalidNonce { .. })));
+
+        // Paymaster account untouched even though paymaster_signature
+        // was valid — sender pre-check failed first.
+        let pm = db.get_account(&pm_addr).expect("paymaster exists");
+        assert_eq!(pm.balance, 1_000_000);
+        assert_eq!(pm.nonce, 0);
     }
 
     // ─── Day 1B (2026-05-08): paymaster sponsorship-signature gate ────────
