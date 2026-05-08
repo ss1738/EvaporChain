@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 
+import {BridgeConstants} from "../src/BridgeConstants.sol";
 import {BridgeTypes} from "../src/BridgeTypes.sol";
 import {CommitCertVerifier} from "../src/CommitCertVerifier.sol";
 import {EvaporationDispatcher} from "../src/EvaporationDispatcher.sol";
@@ -62,6 +63,12 @@ contract EvaporationDispatcherTest is Test {
         bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
         bytes memory aggSig = vm.parseJsonBytes(fixture, ".agg_signature_uncompressed");
         inbox.submitHeader(header, vs, pks, bitmap, aggSig);
+
+        // Lane T0.11 — advance L1 block.number past the finalization
+        // depth so subsequent `dispatch` calls in tests don't trip the
+        // HeaderTooRecent gate. Real callers wait for confirmations on
+        // the live chain; in forge we fast-forward.
+        vm.roll(block.number + BridgeConstants.MIN_FINALIZATION_DEPTH);
     }
 
     function _readValidator(uint256 i) internal view returns (BridgeTypes.Validator memory) {
@@ -197,11 +204,155 @@ contract EvaporationDispatcherTest is Test {
         bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
         dispatcher.registerHook(objectId, address(target), abi.encode(), 50_000);
         bytes memory empty = new bytes(0);
+        // Lane T0.11 — the new HeaderNotAccepted check fires first
+        // because l1AcceptedAt(99_999) returns 0 (never accepted).
+        // Distinct from MmrRootMissingForHeight so callers can tell
+        // "wrong height" from "not yet finalised".
         vm.expectRevert(
             abi.encodeWithSelector(
-                EvaporationDispatcher.MmrRootMissingForHeight.selector, uint64(99_999)
+                EvaporationDispatcher.HeaderNotAccepted.selector, uint64(99_999)
             )
         );
         dispatcher.dispatch(objectId, 99_999, 0, 0, 0, 1, empty, empty, empty);
+    }
+
+    // ─── Lane T0.11 — finalization-depth gate tests ──────────────────
+
+    /// Calling `dispatch` BEFORE the L1 finalization depth has elapsed
+    /// must revert with HeaderTooRecent. This is the protection
+    /// against L1 reorgs that revert `submitHeader`'s storage write
+    /// between acceptance and consumption — without it, a dispatch
+    /// could fire on a header that is later orphaned.
+    function test_dispatch_revertsBeforeFinalizationDepth() public {
+        // Re-deploy a fresh inbox/dispatcher pair so we control the
+        // L1 block.number relationship from scratch (the shared setUp
+        // already advanced past finalization depth).
+        EvaporHeaderInbox freshInbox = new EvaporHeaderInbox(registry);
+        EvaporationDispatcher freshDispatcher =
+            new EvaporationDispatcher(freshInbox);
+
+        EvaporHeaderInbox.Header memory header = _readHeader();
+        BridgeTypes.Validator[] memory vs = _readValidators();
+        bytes memory pks = vm.parseJsonBytes(fixture, ".prev_pubkeys_uncompressed");
+        bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
+        bytes memory aggSig = vm.parseJsonBytes(fixture, ".agg_signature_uncompressed");
+        freshInbox.submitHeader(header, vs, pks, bitmap, aggSig);
+
+        // We're at exactly the L1 block where submitHeader landed —
+        // depth = 0 < MIN_FINALIZATION_DEPTH = 12. dispatch must revert.
+
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        freshDispatcher.registerHook(objectId, address(target), abi.encode(), 50_000);
+        uint64 leafIndex = uint64(vm.parseJsonUint(fixture, ".leaf_index"));
+        uint64 treeSize = uint64(vm.parseJsonUint(fixture, ".tree_size"));
+        bytes memory mmrPath = vm.parseJsonBytes(fixture, ".mmr_path");
+        bytes memory peaksLeft = vm.parseJsonBytes(fixture, ".peaks_left");
+        bytes memory peaksRight = vm.parseJsonBytes(fixture, ".peaks_right");
+        uint64 evaporatedAtHeight =
+            uint64(vm.parseJsonUint(fixture, ".target_evaporated_at_height"));
+        uint128 finalEnergy =
+            uint128(vm.parseJsonUint(fixture, ".target_final_energy"));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EvaporationDispatcher.HeaderTooRecent.selector,
+                header.height,
+                uint64(block.number),                    // l1AcceptedAt
+                uint64(block.number),                    // currentL1Block
+                BridgeConstants.MIN_FINALIZATION_DEPTH
+            )
+        );
+        freshDispatcher.dispatch(
+            objectId,
+            header.height,
+            evaporatedAtHeight,
+            finalEnergy,
+            leafIndex,
+            treeSize,
+            mmrPath,
+            peaksLeft,
+            peaksRight
+        );
+    }
+
+    /// At depth = MIN_FINALIZATION_DEPTH - 1 still revert (boundary
+    /// check: the constant is "minimum depth required", strictly less
+    /// is insufficient).
+    function test_dispatch_revertsAtDepthMinus1() public {
+        EvaporHeaderInbox freshInbox = new EvaporHeaderInbox(registry);
+        EvaporationDispatcher freshDispatcher =
+            new EvaporationDispatcher(freshInbox);
+
+        EvaporHeaderInbox.Header memory header = _readHeader();
+        BridgeTypes.Validator[] memory vs = _readValidators();
+        bytes memory pks = vm.parseJsonBytes(fixture, ".prev_pubkeys_uncompressed");
+        bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
+        bytes memory aggSig = vm.parseJsonBytes(fixture, ".agg_signature_uncompressed");
+        freshInbox.submitHeader(header, vs, pks, bitmap, aggSig);
+
+        // Advance L1 to MIN_FINALIZATION_DEPTH - 1 blocks past
+        // submission. The check uses strict `<`, so this must still
+        // revert.
+        vm.roll(block.number + BridgeConstants.MIN_FINALIZATION_DEPTH - 1);
+
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        freshDispatcher.registerHook(objectId, address(target), abi.encode(), 50_000);
+        bytes memory empty = new bytes(0);
+
+        vm.expectRevert(); // HeaderTooRecent — args computed at runtime
+        freshDispatcher.dispatch(
+            objectId, header.height, 0, 0, 0, 1, empty, empty, empty
+        );
+    }
+
+    /// Crossing the boundary: at depth = MIN_FINALIZATION_DEPTH the
+    /// check passes (uses `<`, not `<=`). Use the real fixture so the
+    /// MMR proof verifies and we observe the hook actually fires.
+    function test_dispatch_succeedsAtExactFinalizationDepth() public {
+        EvaporHeaderInbox freshInbox = new EvaporHeaderInbox(registry);
+        EvaporationDispatcher freshDispatcher =
+            new EvaporationDispatcher(freshInbox);
+
+        EvaporHeaderInbox.Header memory header = _readHeader();
+        BridgeTypes.Validator[] memory vs = _readValidators();
+        bytes memory pks = vm.parseJsonBytes(fixture, ".prev_pubkeys_uncompressed");
+        bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
+        bytes memory aggSig = vm.parseJsonBytes(fixture, ".agg_signature_uncompressed");
+        freshInbox.submitHeader(header, vs, pks, bitmap, aggSig);
+
+        // Roll exactly MIN_FINALIZATION_DEPTH blocks. depth == MIN.
+        vm.roll(block.number + BridgeConstants.MIN_FINALIZATION_DEPTH);
+
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        uint64 evaporatedAtHeight =
+            uint64(vm.parseJsonUint(fixture, ".target_evaporated_at_height"));
+        uint128 finalEnergy =
+            uint128(vm.parseJsonUint(fixture, ".target_final_energy"));
+        uint64 leafIndex = uint64(vm.parseJsonUint(fixture, ".leaf_index"));
+        uint64 treeSize = uint64(vm.parseJsonUint(fixture, ".tree_size"));
+        bytes memory mmrPath = vm.parseJsonBytes(fixture, ".mmr_path");
+        bytes memory peaksLeft = vm.parseJsonBytes(fixture, ".peaks_left");
+        bytes memory peaksRight = vm.parseJsonBytes(fixture, ".peaks_right");
+
+        bytes memory data = abi.encodeWithSelector(
+            GhostTokenMinter.mintBecauseEvaporated.selector,
+            bytes("at-exact-depth")
+        );
+        freshDispatcher.registerHook(objectId, address(target), data, 200_000);
+
+        // Should succeed — the boundary case.
+        freshDispatcher.dispatch(
+            objectId,
+            header.height,
+            evaporatedAtHeight,
+            finalEnergy,
+            leafIndex,
+            treeSize,
+            mmrPath,
+            peaksLeft,
+            peaksRight
+        );
+
+        assertTrue(freshDispatcher.isFired(objectId));
     }
 }

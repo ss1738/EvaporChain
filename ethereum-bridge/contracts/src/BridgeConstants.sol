@@ -54,4 +54,23 @@ library BridgeConstants {
     /// @dev Stake threshold numerator/denominator for BFT 2/3+.
     uint256 internal constant STAKE_NUM = 2;
     uint256 internal constant STAKE_DEN = 3;
+
+    /// @dev Minimum L1 (Ethereum) confirmation depth before a submitted
+    ///      EvaporChain header may be consumed by downstream dispatchers
+    ///      (`EvaporationDispatcher`, `StateMembershipAttester`).
+    ///      Lane T0.11 from `MAINNET_READINESS.md` — protects against
+    ///      L1 reorgs that revert `submitHeader`'s storage write between
+    ///      acceptance and consumption.
+    ///
+    ///      Set to 12 — empirically the post-merge Ethereum finality
+    ///      window for soft confirmations (~2.5 minutes at 12 s/block).
+    ///      For Sepolia / Holesky use the same value: testnets use the
+    ///      same fork-choice semantics.
+    ///
+    ///      Operators that need stricter guarantees (e.g. exchange
+    ///      withdrawals, multi-billion-dollar bridges) should deploy a
+    ///      custom dispatcher that overrides this with `block.number
+    ///      - acceptedAt >= 64` (epoch-finality) or `>= 96` (post-
+    ///      hardfork-attested).
+    uint256 internal constant MIN_FINALIZATION_DEPTH = 12;
 }

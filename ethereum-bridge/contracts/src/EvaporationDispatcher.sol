@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
+import {BridgeConstants} from "./BridgeConstants.sol";
 import {EvaporHeaderInbox} from "./EvaporHeaderInbox.sol";
 import {MmrInclusion} from "./lib/MmrInclusion.sol";
 
@@ -50,6 +51,21 @@ contract EvaporationDispatcher {
     error MmrRootMissingForHeight(uint64 height);
     error LeafDoesNotBindObject(bytes32 objectId);
     error TargetCallReverted();
+    /// Lane T0.11 — header was accepted by inbox but not yet far enough
+    /// behind L1 head to be safe against reorgs that revert the
+    /// inbox's storage write.
+    error HeaderTooRecent(
+        uint64 height,
+        uint64 l1AcceptedAt,
+        uint64 currentL1Block,
+        uint256 minDepth
+    );
+    /// Lane T0.11 — header was never accepted by the inbox (the
+    /// dispatcher refuses to consult `mmrRootAt` because the
+    /// `l1AcceptedAt` mapping returns 0 for never-accepted heights).
+    /// Distinct from `MmrRootMissingForHeight` so callers can tell
+    /// "wrong height" from "not yet finalised".
+    error HeaderNotAccepted(uint64 height);
 
     event HookRegistered(bytes32 indexed objectId, address indexed target, address indexed registrar);
     event HookFired(
@@ -121,6 +137,30 @@ contract EvaporationDispatcher {
         Hook storage h = hooks[objectId];
         if (h.registrar == address(0)) revert HookNotFound(objectId);
         if (h.fired) revert HookAlreadyFired(objectId);
+
+        // Lane T0.11 — finalization-depth gate. The inbox records the
+        // L1 block.number at which `submitHeader` accepted each
+        // EvaporChain header. Refuse to dispatch until enough L1 blocks
+        // have passed that an L1 reorg reverting the inbox's storage
+        // write becomes economically infeasible (default
+        // BridgeConstants.MIN_FINALIZATION_DEPTH = 12 blocks ≈ 2.5 min
+        // post-merge).
+        //
+        // The mmrRoot != 0 check below remains the second line of
+        // defense — if the inbox returned a zero mmrRoot the header
+        // wasn't accepted at all. The l1AcceptedAt check fires first
+        // and provides a more specific revert reason.
+        uint64 acceptedAt = inbox.l1AcceptedAt(height);
+        if (acceptedAt == 0) revert HeaderNotAccepted(height);
+        uint256 depth = block.number - uint256(acceptedAt);
+        if (depth < BridgeConstants.MIN_FINALIZATION_DEPTH) {
+            revert HeaderTooRecent(
+                height,
+                acceptedAt,
+                uint64(block.number),
+                BridgeConstants.MIN_FINALIZATION_DEPTH
+            );
+        }
 
         bytes32 mmrRoot = inbox.mmrRootAt(height);
         if (mmrRoot == bytes32(0)) revert MmrRootMissingForHeight(height);

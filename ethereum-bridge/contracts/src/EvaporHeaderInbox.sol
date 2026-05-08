@@ -43,6 +43,21 @@ contract EvaporHeaderInbox {
     /// @notice Sparse mapping height → committed header.
     mapping(uint64 => Header) internal _headers;
 
+    /// @notice EvaporChain height → L1 (Ethereum) `block.number` at the
+    ///         time the header was accepted via `submitHeader`. Used by
+    ///         downstream dispatchers (`EvaporationDispatcher`,
+    ///         `StateMembershipAttester`) to enforce a minimum
+    ///         confirmation depth before consuming a header. Lane T0.11
+    ///         from `MAINNET_READINESS.md` — protects against L1 reorgs
+    ///         that revert `submitHeader`'s storage write between
+    ///         acceptance and downstream consumption.
+    ///
+    ///         A value of `0` means "never accepted" — distinguishable
+    ///         from a value of `block.number == 0` (genesis); an
+    ///         attacker with arbitrary block.number control still cannot
+    ///         get a fresh accept to read as `0`.
+    mapping(uint64 => uint64) public l1AcceptedAt;
+
     // ─── Errors ─────────────────────────────────────────────────────
 
     error HeightNotMonotonic(uint64 supplied, uint64 latest);
@@ -130,6 +145,11 @@ contract EvaporHeaderInbox {
         // Commit.
         _headers[header.height] = header;
         latestHeight = header.height;
+        // Lane T0.11 — record the L1 acceptance block for the
+        // finalization-depth gate enforced by downstream dispatchers.
+        // Done AFTER the verifier check so an unverified header never
+        // gets a non-zero acceptance timestamp.
+        l1AcceptedAt[header.height] = uint64(block.number);
 
         emit HeaderAccepted(
             header.height,
