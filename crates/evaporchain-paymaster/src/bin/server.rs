@@ -65,6 +65,14 @@ struct Args {
     /// Per-sender burst capacity. Default `10`.
     #[arg(long, default_value = "10")]
     per_sender_burst: u32,
+
+    /// Append-only JSON-lines audit log path. Each successful
+    /// sponsorship writes one line: `{ts_unix_ms, sender,
+    /// paymaster_nonce, call_gas_limit, call_data_hash, chain_id}`.
+    /// Used for billing reconciliation. Omitted means audit logging
+    /// is disabled.
+    #[arg(long)]
+    audit_log: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -100,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
         require_user_sig: !args.disable_user_sig_check,
         per_sender_rps: args.per_sender_rps,
         per_sender_burst: args.per_sender_burst,
+        audit_log: args.audit_log.clone(),
     };
     let paymaster = Paymaster::new_with_config(
         keypair,
@@ -180,6 +189,10 @@ impl AppError {
         match e {
             PaymasterError::RateLimited { sender_hex } => Self::RateLimited(sender_hex),
             PaymasterError::NonceIo(e) => Self::Io(e.to_string()),
+            // Audit-IO surfaces as 503 too — the operator can't bill
+            // a sponsorship they couldn't audit, so the wallet should
+            // not retry until the operator unblocks.
+            PaymasterError::AuditIo(msg) => Self::Io(format!("audit log: {msg}")),
             other => Self::SponsorFailed(other.to_string()),
         }
     }

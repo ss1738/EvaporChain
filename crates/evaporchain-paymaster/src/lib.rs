@@ -71,6 +71,11 @@ pub enum PaymasterError {
     /// sponsorship for this sender until the bucket refills.
     #[error("per-sender rate limit exceeded for sender 0x{sender_hex}")]
     RateLimited { sender_hex: String },
+    /// Audit-log IO error. Fail-closed: a sponsorship the operator
+    /// can't audit is one they can't bill against, so we surface
+    /// the failure rather than silently sponsoring without the line.
+    #[error("audit log write failed: {0}")]
+    AuditIo(String),
 }
 
 /// JSON request body POSTed to `/sponsor`. The wallet builds the body
@@ -126,6 +131,23 @@ pub struct PaymasterConfig {
     /// Per-sender burst: max sponsorships a fresh sender can
     /// allocate before the bucket starts throttling. Default `10`.
     pub per_sender_burst: u32,
+    /// Append-only JSON-lines audit log path. When set, every
+    /// successful sponsorship writes one line:
+    ///
+    /// ```json
+    /// {"ts_unix_ms":...,"sender":"0x..","paymaster_nonce":N,
+    ///  "call_gas_limit":N,"call_data_hash":"...","chain_id":"..."}
+    /// ```
+    ///
+    /// Used by operators for billing reconciliation (paymasters
+    /// charging users in another token can match audit lines to
+    /// off-chain payments). The log is append-only with fsync
+    /// per-line so a crash never loses a sponsored entry. IO
+    /// errors fail the sponsorship — there is no silent-drop
+    /// path.
+    ///
+    /// `None` (default) disables audit logging.
+    pub audit_log: Option<PathBuf>,
 }
 
 impl Default for PaymasterConfig {
@@ -134,6 +156,7 @@ impl Default for PaymasterConfig {
             require_user_sig: true,
             per_sender_rps: 5.0,
             per_sender_burst: 10,
+            audit_log: None,
         }
     }
 }
@@ -146,6 +169,7 @@ impl PaymasterConfig {
             require_user_sig: false,
             per_sender_rps: 0.0,
             per_sender_burst: 0,
+            audit_log: None,
         }
     }
 }
@@ -244,6 +268,26 @@ pub struct Paymaster {
     nonce_state: Arc<Mutex<NonceState>>,
     config: PaymasterConfig,
     rate_limiter: Arc<Mutex<RateLimiter>>,
+    audit_log: Option<Arc<Mutex<AuditLogger>>>,
+}
+
+/// Append-only JSON-lines audit log writer. Held inside `Paymaster`
+/// when `PaymasterConfig::audit_log` is set. The file handle is
+/// opened once with `O_APPEND` at construction so concurrent writers
+/// (across the same process) are kernel-serialised at write
+/// boundaries; the mutex is for our own line-buffer staging only.
+struct AuditLogger {
+    file: std::fs::File,
+}
+
+#[derive(Debug, Serialize)]
+struct AuditEntry<'a> {
+    ts_unix_ms: u128,
+    sender: String,
+    paymaster_nonce: u64,
+    call_gas_limit: u64,
+    call_data_hash: String,
+    chain_id: &'a str,
 }
 
 struct NonceState {
@@ -282,6 +326,24 @@ impl Paymaster {
         let next = load_nonce(&nonce_file)?;
         let rate_limiter =
             RateLimiter::new(config.per_sender_rps, config.per_sender_burst);
+        let audit_log = if let Some(path) = config.audit_log.clone() {
+            // Open with append + create. Each write is followed by
+            // an explicit fsync to land the line on disk before the
+            // sponsorship returns successfully.
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| {
+                    PaymasterError::AuditIo(format!(
+                        "open audit log {}: {e}",
+                        path.display()
+                    ))
+                })?;
+            Some(Arc::new(Mutex::new(AuditLogger { file })))
+        } else {
+            None
+        };
         Ok(Self {
             keypair,
             address,
@@ -292,6 +354,7 @@ impl Paymaster {
             })),
             config,
             rate_limiter: Arc::new(Mutex::new(rate_limiter)),
+            audit_log,
         })
     }
 
@@ -394,6 +457,39 @@ impl Paymaster {
             .paymaster_sponsorship_payload(&self.chain_id)
             .expect("paymaster + paymaster_nonce both Some after stamping");
         user_op.paymaster_signature = Some(self.keypair.sign(&payload));
+
+        // Day 8 — append audit line. Fail-closed: an unsponsorable
+        // sponsor request would be a billing-reconciliation hole, so
+        // we surface IO errors rather than silently dropping audit
+        // lines. We hold the nonce mutex across this write so audit
+        // line ordering matches paymaster_nonce ordering.
+        if let Some(ref logger) = self.audit_log {
+            let entry = AuditEntry {
+                ts_unix_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0),
+                sender: format!("0x{}", hex::encode(user_op.sender)),
+                paymaster_nonce: assigned,
+                call_gas_limit: user_op.call_gas_limit,
+                call_data_hash: format!(
+                    "0x{}",
+                    hex::encode(blake3::hash(&user_op.call_data).as_bytes())
+                ),
+                chain_id: &self.chain_id,
+            };
+            let mut line = serde_json::to_string(&entry)
+                .map_err(|e| PaymasterError::AuditIo(format!("serialize: {e}")))?;
+            line.push('\n');
+            let mut g = logger.lock().expect("audit log mutex");
+            use std::io::Write;
+            g.file
+                .write_all(line.as_bytes())
+                .map_err(|e| PaymasterError::AuditIo(format!("write: {e}")))?;
+            g.file
+                .sync_all()
+                .map_err(|e| PaymasterError::AuditIo(format!("fsync: {e}")))?;
+        }
 
         Ok(assigned)
     }
@@ -807,6 +903,7 @@ mod tests {
                 require_user_sig: false,
                 per_sender_rps: 0.000_001, // effectively zero refill in test window
                 per_sender_burst: 3,
+                audit_log: None,
             },
         )
         .unwrap();
@@ -837,6 +934,7 @@ mod tests {
                 require_user_sig: false,
                 per_sender_rps: 0.000_001,
                 per_sender_burst: 1,
+                audit_log: None,
             },
         )
         .unwrap();
@@ -856,6 +954,149 @@ mod tests {
         pm.sponsor(&mut b1).expect("B's first sponsor allowed");
     }
 
+    // ─── Day 8: audit log tests ───────────────────────────────────────
+
+    #[test]
+    fn audit_log_writes_one_line_per_successful_sponsor() {
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file.clone()),
+            },
+        )
+        .unwrap();
+
+        for _ in 0..3 {
+            let mut uo = blank_user_op();
+            pm.sponsor(&mut uo).unwrap();
+        }
+
+        let contents = std::fs::read_to_string(&audit_file).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 3, "one line per sponsorship");
+        for (i, line) in lines.iter().enumerate() {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(v["paymaster_nonce"].as_u64().unwrap(), i as u64);
+            assert_eq!(v["chain_id"], "test");
+            assert!(v["sender"].as_str().unwrap().starts_with("0x"));
+            assert!(v["call_data_hash"].as_str().unwrap().starts_with("0x"));
+            assert!(v["ts_unix_ms"].as_u64().unwrap() > 0);
+        }
+    }
+
+    #[test]
+    fn audit_log_persists_across_restart() {
+        // First instance writes 2 lines; second instance opens with
+        // O_APPEND and writes 2 more. Final file has 4 lines in
+        // monotonic paymaster_nonce order.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+        let cfg = || PaymasterConfig {
+            require_user_sig: false,
+            per_sender_rps: 0.0,
+            per_sender_burst: 0,
+            audit_log: Some(audit_file.clone()),
+        };
+
+        {
+            let kp = HybridKeypair::generate();
+            let pm =
+                Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
+            for _ in 0..2 {
+                pm.sponsor(&mut blank_user_op()).unwrap();
+            }
+        }
+        {
+            let kp = HybridKeypair::generate();
+            let pm =
+                Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
+            for _ in 0..2 {
+                pm.sponsor(&mut blank_user_op()).unwrap();
+            }
+        }
+
+        let contents = std::fs::read_to_string(&audit_file).unwrap();
+        let lines: Vec<_> = contents
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 4);
+        let nonces: Vec<u64> = lines
+            .iter()
+            .map(|v| v["paymaster_nonce"].as_u64().unwrap())
+            .collect();
+        assert_eq!(nonces, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn audit_log_records_call_data_hash() {
+        // call_data_hash in the audit line matches blake3(call_data)
+        // — operators reconcile against `paymaster_sponsorship_payload`
+        // which binds the same hash.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file.clone()),
+            },
+        )
+        .unwrap();
+
+        let mut uo = blank_user_op();
+        uo.call_data = b"hello-paymaster".to_vec();
+        let expected = format!(
+            "0x{}",
+            hex::encode(blake3::hash(&uo.call_data).as_bytes())
+        );
+        pm.sponsor(&mut uo).unwrap();
+
+        let contents = std::fs::read_to_string(&audit_file).unwrap();
+        let entry: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+        assert_eq!(entry["call_data_hash"], expected);
+    }
+
+    #[test]
+    fn audit_log_disabled_writes_nothing() {
+        // No audit_log set → no file is created and sponsorships proceed.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: None,
+            },
+        )
+        .unwrap();
+        pm.sponsor(&mut blank_user_op()).unwrap();
+        assert!(!audit_file.exists());
+    }
+
     #[test]
     fn rate_limit_disabled_when_rps_or_burst_is_zero() {
         // per_sender_rps = 0.0 → limiter disabled regardless of burst.
@@ -870,6 +1111,7 @@ mod tests {
                 require_user_sig: false,
                 per_sender_rps: 0.0,
                 per_sender_burst: 1,
+                audit_log: None,
             },
         )
         .unwrap();

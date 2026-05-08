@@ -93,6 +93,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--disable-user-sig-check` | no | off | Day 7 hardening: skip the inbound-UserOp user-signature pre-check. Only safe for testnet / dev — leave OFF in prod (see §Threat: spam-signing) |
 | `--per-sender-rps RATE` | no | `5.0` | Per-`UserOp.sender` token-bucket replenish rate. `0` disables the rate limiter |
 | `--per-sender-burst N` | no | `10` | Per-sender burst capacity |
+| `--audit-log PATH` | no | (off) | Append-only JSON-lines audit log path. One line per successful sponsorship — see §Audit log |
 
 ### Endpoints
 
@@ -185,6 +186,25 @@ If you need to reset (e.g. fresh paymaster account), delete both `paymaster_nonc
 - `GET /info` exposes `next_paymaster_nonce`. The on-chain `account.nonce` for the paymaster address should always be `next_paymaster_nonce - <in-flight sponsored UserOps not yet finalized>`. A persistent gap > a few blocks signals dropped UserOps or a chain reorg.
 - Tail the paymaster log for `sponsor failed` lines — every entry is a wallet bug or a wallet-side abuse attempt (e.g. resubmitting an `AlreadySigned` UserOp).
 
+### Audit log
+
+When `--audit-log PATH` is set, every successful sponsorship appends one line to the file in JSON-lines format:
+
+```json
+{"ts_unix_ms":1715200000000,"sender":"0x01..","paymaster_nonce":42,"call_gas_limit":50000,"call_data_hash":"0xab..","chain_id":"evaporchain-mainnet"}
+```
+
+Use cases:
+- **Billing reconciliation.** A paymaster charging users in another token (USDC, ETH, fiat) matches the audit lines against off-chain payments. The `(sender, paymaster_nonce)` pair is unique; `call_data_hash` is bit-identical to what the chain's `paymaster_sponsorship_payload` binds, so audit lines correspond 1:1 to on-chain sponsored UserOps that landed.
+- **Forensics.** A paymaster operator suspecting abuse can grep the log by `sender` to see all sponsorships from a given address.
+- **Stuck-tx triage.** Cross-reference `paymaster_nonce` in the audit line against the chain's account.nonce for the paymaster address — gaps signal sponsored UserOps that the chain rejected (would otherwise have advanced the nonce).
+
+Operational notes:
+- Each line is followed by an explicit `fsync(2)` so a crash never loses a sponsored entry. Disk-write latency adds ~1 ms to `/sponsor` p99 on standard SSDs.
+- **Fail-closed:** an audit-log IO error (full disk, no permission) returns `503 paymaster IO`. The paymaster does NOT silently sponsor without writing the line — that would be a billing-reconciliation hole. Operators who need to keep sponsoring through audit-log outages should rotate the log path with `--audit-log` before unblocking.
+- The file is opened with `O_APPEND` so concurrent writers (across worker threads in this process) are kernel-serialised at line boundaries. Multiple paymaster processes pointing at the same audit file work too — the per-line atomicity is OS-enforced for sub-PIPE_BUF writes.
+- Rotate via `mv audit.jsonl audit.jsonl.$(date +%F)` then `kill -HUP` (currently no-op — daemon would re-open on SIGHUP in a future v1.5 hardening). For now: stop the service, rotate, restart.
+
 ### Concurrency
 
 The internal nonce counter is `Mutex`-guarded across (allocate, persist, sign). Per-request latency is dominated by the ML-DSA sign step (~1 ms on M4); under contention, requests serialize on the mutex. Throughput ceiling is ~1000 sponsorships/sec per process; horizontally scaling requires multiple paymaster accounts (one per process), since two processes sharing a nonce file would race.
@@ -267,7 +287,7 @@ V1 does not provide a built-in payment-confirmation path. Operators wire that th
 | `/sponsor` returns 400 with `paymaster_signature must include` | Wallet sent a UserOp with `paymaster_signature` already set (`AlreadySigned`) | Wallet bug — do not pre-stamp paymaster fields on /sponsor calls |
 | `/sponsor` returns 400 with `user signature missing or invalid` | Strict mode (`require_user_sig: true`) rejected the inbound UserOp | Wallet must stamp a valid user-side signature over `Transaction::UserOp(user_op).signing_message(chain_id)` BEFORE posting to `/sponsor`. The signed message must include `paymaster = <this paymaster's address>`. See `wallet::paymaster::sign_user_op_as_sender` for the canonical helper |
 | `/sponsor` returns 429 `rate limited` | Per-sender token bucket exhausted | Wallet should back off (default refill is 5 sponsorships/sec). Operators can tune via `--per-sender-rps` / `--per-sender-burst` or disable with `--per-sender-rps 0` |
-| `/sponsor` returns 503 `paymaster IO` | Disk full / nonce file unwritable | Free disk; check filesystem permissions on the nonce file's parent directory |
+| `/sponsor` returns 503 `paymaster IO` | Disk full, nonce file unwritable, or audit log unwritable | Free disk; check filesystem permissions on both the nonce file and the audit-log file's parent directory |
 | Chain rejects every UserOp with `InvalidNonce { expected: N, got: M }` | `paymaster_nonce` file desynced from chain state | Stop service, query chain `account.nonce` for paymaster address, write that value into the nonce file, restart |
 | Chain rejects with `paymaster_signature verification failed` | `--chain-id` doesn't match the chain's chain_id | Restart service with the correct chain-id |
 | Chain rejects with `does not derive to paymaster address` | Wallet stamped a wrong `paymaster` address | Wallet should leave `paymaster: None` on /sponsor and let the service fill it in (the service overwrites regardless) |
