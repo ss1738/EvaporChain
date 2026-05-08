@@ -206,6 +206,15 @@ pub struct FourActSnapshot {
     /// `SimpleExecutor::last_conservation_audit`. `None` until first
     /// block; `Some(true)` = audit passed; `Some(false)` = violation.
     pub last_conservation_audit_ok: Option<bool>,
+    /// Discriminant of the most recent `ConservationViolation` when
+    /// `last_conservation_audit_ok == Some(false)`. Values:
+    /// `"RedirectChangedTotal"`, `"DecayIncreasedTotal"`, or
+    /// `"DecayExceededLambda"`. `None` when the last audit passed
+    /// or no audit has run yet. Lets operators distinguish between
+    /// the known doctrine-vs-implementation gap (`DecayIncreasedTotal`
+    /// every block under inflationary emission) and a genuine
+    /// invariant breach (other variants).
+    pub last_conservation_violation_type: Option<String>,
     /// Genesis amendment hash that the chain's constitution proof
     /// bound to. Empty until genesis ceremony runs.
     pub genesis_amendment_hash: Option<String>,

@@ -4442,6 +4442,9 @@ async fn main() -> Result<()> {
                                             mortis_epoch_of_death: s.mortis_epoch_of_death,
                                             mortis_final_state_root: s.mortis_final_state_root.map(hex::encode),
                                             last_conservation_audit_ok: s.last_conservation_audit_ok,
+                                            last_conservation_violation_type: s
+                                                .last_conservation_violation_type
+                                                .clone(),
                                             genesis_amendment_hash: None,
                                             light_cone_block_count: s.light_cone_block_count,
                                             ghost_object_count,
@@ -5735,6 +5738,9 @@ async fn main() -> Result<()> {
                                             mortis_epoch_of_death: four_act_snap.mortis_epoch_of_death,
                                             mortis_final_state_root: four_act_snap.mortis_final_state_root.map(hex::encode),
                                             last_conservation_audit_ok: four_act_snap.last_conservation_audit_ok,
+                                            last_conservation_violation_type: four_act_snap
+                                                .last_conservation_violation_type
+                                                .clone(),
                                             genesis_amendment_hash: None,
                                             light_cone_block_count: four_act_snap.light_cone_block_count,
                                             ghost_object_count,

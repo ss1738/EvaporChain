@@ -619,6 +619,20 @@ impl std::error::Error for GovernanceAmendmentError {}
 
 // ─────────────────────── TendermintConsensus ─────────────────────────────
 
+/// Discriminant string for a `ConservationViolation` variant. Used by
+/// `ConsensusFourActState` to expose *why* an audit failed without
+/// callers depending on the energy-kernel crate's enum directly.
+fn conservation_violation_discriminant(
+    v: &evaporchain_energy_kernel::ConservationViolation,
+) -> String {
+    use evaporchain_energy_kernel::ConservationViolation as V;
+    match v {
+        V::RedirectChangedTotal { .. } => "RedirectChangedTotal".to_string(),
+        V::DecayIncreasedTotal { .. } => "DecayIncreasedTotal".to_string(),
+        V::DecayExceededLambda { .. } => "DecayExceededLambda".to_string(),
+    }
+}
+
 /// Snapshot of the four-act narrative spine state for the API layer.
 /// Consensus produces this; the node binary translates into the
 /// public-facing `evaporchain_node::api::FourActSnapshot`. Per
@@ -636,6 +650,19 @@ pub struct ConsensusFourActState {
     /// `ParallelExecutor::last_conservation_audit`. None until first
     /// block; Some(true) = audit passed, Some(false) = violation.
     pub last_conservation_audit_ok: Option<bool>,
+    /// Violation discriminant when `last_conservation_audit_ok` is
+    /// `Some(false)` — one of `"RedirectChangedTotal"`,
+    /// `"DecayIncreasedTotal"`, `"DecayExceededLambda"`, mirroring the
+    /// `ConservationViolation` enum. `None` when the last audit passed,
+    /// or when no audit has run yet. Lets operators see *why* an audit
+    /// failed without reading the full executor state.
+    ///
+    /// Note: under emission-bearing tokenomics, `DecayIncreasedTotal`
+    /// fires every block where a block reward mints new EVP into the
+    /// compartment sum — this is a known doctrine-vs-implementation
+    /// gap (see DOCTRINE_PUNCH_LIST.md). The field exposes which
+    /// signal an operator is seeing so the gap is diagnosable.
+    pub last_conservation_violation_type: Option<String>,
     /// **Number of blocks currently retained in the Light-Cone DAG**, NOT
     /// the chain's block height or committed-finality count. The DAG is
     /// pruned via `LightCone::prune_before_epoch` (sliding-window
@@ -1445,6 +1472,11 @@ impl TendermintConsensus {
                 .last_conservation_audit
                 .as_ref()
                 .map(|r| r.is_ok()),
+            last_conservation_violation_type: self
+                .executor
+                .last_conservation_audit
+                .as_ref()
+                .and_then(|r| r.as_ref().err().map(conservation_violation_discriminant)),
             light_cone_block_count: self.light_cone_dag.len(),
             evaporation_mmr_size: self.executor.mmr.size(),
             evaporation_mmr_root: if self.executor.mmr.size() == 0 {
