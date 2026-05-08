@@ -2096,6 +2096,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents,
+                post_state_root: None,
             }
         }
 
@@ -2139,6 +2140,7 @@ mod tests {
                 state_root_version: 0,
                 submit_epoch_hints: vec![],
                 parents,
+                post_state_root: None,
             }
         }
 
@@ -2218,6 +2220,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
         let s = serde_json::to_string(&b).expect("serialize");
         assert!(
@@ -2226,6 +2229,100 @@ mod tests {
              chain-id continuity gate. Got: {}",
             s
         );
+    }
+
+    /// Phase 1 of `POST_EXEC_STATE_VERIFICATION_PLAN.md` — bit-compat
+    /// gate. Adding `post_state_root: Option<[u8; 32]>` with
+    /// `serde(default, skip_serializing_if = "Option::is_none")` MUST
+    /// NOT change the JSON serialization of legacy blocks
+    /// (`post_state_root = None`). Same critical chain-id-continuity
+    /// requirement as the `parents` field above.
+    #[test]
+    fn test_block_legacy_serialization_omits_post_state_root_field() {
+        let b = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0xAA; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        };
+        let s = serde_json::to_string(&b).expect("serialize");
+        assert!(
+            !s.contains("\"post_state_root\""),
+            "legacy block must not surface the new `post_state_root` field on the wire — \
+             chain-id continuity gate. Got: {}",
+            s
+        );
+
+        // JSON roundtrip: legacy bytes (without the field) must
+        // deserialize cleanly and produce post_state_root = None.
+        let back: Block = serde_json::from_str(&s).expect("json de");
+        assert_eq!(back.post_state_root, None, "roundtrip preserved None");
+    }
+
+    /// Phase 1 — Some(state_root) variant survives serde + bincode
+    /// roundtrip and surfaces on the JSON wire when populated.
+    #[test]
+    fn test_block_post_state_root_some_round_trips() {
+        let pr = [0x42u8; 32];
+        let mut b = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0xAA; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        };
+        b.post_state_root = Some(pr);
+        let s = serde_json::to_string(&b).expect("serialize");
+        assert!(
+            s.contains("\"post_state_root\""),
+            "non-None post_state_root must appear on wire. Got: {}",
+            s
+        );
+        let back: Block = serde_json::from_str(&s).expect("json de");
+        assert_eq!(back.post_state_root, Some(pr));
     }
 
     fn test_refund_tx_roundtrip_and_sender() {
@@ -2344,6 +2441,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
         let json = serde_json::to_vec(&block).unwrap();
         let back: Block = serde_json::from_slice(&json).unwrap();
