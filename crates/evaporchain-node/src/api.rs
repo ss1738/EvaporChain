@@ -10536,6 +10536,42 @@ async fn post_create_object(
         .data
         .map(|d| d.into_bytes())
         .unwrap_or_else(|| format!("obj-0x{}", &obj_label).into_bytes());
+    // Admission-time balance pre-check (TOKENOMICS finding #1 follow-up).
+    // The executor at execution/lib.rs:~2724 deducts gas BEFORE running
+    // execute_create_object, and execute_create_object then deducts
+    // MIN_STORAGE_DEPOSIT. A creator account that can't afford
+    // gas + storage_deposit gets two flavours of "rejected" later;
+    // this catches both at submission and returns a clear error.
+    {
+        let estimated_gas = evaporchain_execution::GAS_CREATE_OBJECT_BASE.saturating_add(
+            evaporchain_execution::GAS_CREATE_OBJECT_PER_BYTE
+                .saturating_mul(data.len() as u64),
+        );
+        let required = estimated_gas
+            .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+        let db = safe_lock(&state.db);
+        if let Some(acct) = db.get_account(&creator) {
+            if acct.balance < required {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Insufficient balance: {} < {} (gas {} + storage_deposit {})",
+                        acct.balance,
+                        required,
+                        estimated_gas,
+                        evaporchain_types::MIN_STORAGE_DEPOSIT
+                    ),
+                    tx_hash: None,
+                });
+            }
+        } else {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Account not found — use faucet first".into(),
+                tx_hash: None,
+            });
+        }
+    }
     let mut tx = Transaction::CreateObject(CreateObjectTx {
         creator,
         object_id: obj_id_val,
