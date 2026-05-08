@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["crates/evaporchain-crypto-wasm"]
+exclude = ["crates/evaporchain-crypto-wasm", "crates/evaporchain-light-client-wasm"]
 members = [
     "crates/evaporchain-types",
     "crates/evaporchain-energy-kernel",

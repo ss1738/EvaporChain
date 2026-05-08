@@ -54,9 +54,15 @@ The core has **no HTTP client and no async runtime**. Bring your own `RpcTranspo
 |---|---|---|
 | `nova` | off | Adds Nova-IVC sublinear block-validity verification via `evaporchain-lambda-fold` + `evaporchain-proving`. Without it, you still get BFT + Verkle — useful and ~10× lighter on dependencies. |
 
-## WASM target
+## WASM target — aspirational, NOT yet shipped
 
-The core compiles for `wasm32-unknown-unknown` with `default-features = false`. The HTTP transport crate is native-only — for browsers, implement `RpcTransport` over `web-sys::fetch` or `gloo-net`.
+The core's design intent is wasm32-friendly (no async-trait, no native-only deps in evaporchain-light-client itself), and `default-features = []`. **However, the dep graph pulls `evaporchain-consensus` → `evaporchain-state` → RocksDB, AND `evaporchain-crypto` → `blst` (C library) — neither compiles for `wasm32-unknown-unknown` today.**
+
+Two architectural refactors are needed to actually ship browser verification:
+1. Extract `evaporchain-consensus-types` (types-only, no state-DB).
+2. Abstract BLS backend in `evaporchain-crypto` (blst native, `bls12_381` wasm).
+
+A scaffolded WASM bridge crate exists at [`evaporchain-light-client-wasm`](../evaporchain-light-client-wasm) — full `WasmLightClient` API surface + gloo-net fetch wiring. Does not compile yet; serves as the spec for what the refactors enable. See that crate's README for the full diagnosis + proposed refactor sequence.
 
 ## Verification semantics
 
