@@ -166,6 +166,72 @@ dead_producer_redirect:  0 (no death-is-final triggers yet)
 
 ---
 
+## Addendum — empirical correction on demurrage attribution (2026-05-08, late afternoon)
+
+After shipping the `demurrage_preview` endpoint (commit `f1bc8c1`),
+probed `DemurrageParams::default_genesis()` and discovered
+**`threshold = 100_000_000 EVP`** with `lambda_base_ppm = 1`.
+
+The doctrine comment in `params.rs:46-48` is explicit:
+> *"Any validator with ≤250k EVP stake: zero demurrage."*
+
+All current cluster validators sit at 300k–600k EVP — **far below
+the 100M threshold**. **Demurrage on validator accounts is currently
+NOT FIRING** in production.
+
+### What actually drained val-1 / val-3
+
+Earlier in the session I attributed val-1's 381k → 0 drain (5 minutes)
+and val-3's tombstone to "demurrage". That was **wrong**.
+
+The actual mechanism for both validators:
+
+1. **Validator created an object** (val-1 directly via the stream test;
+   val-3 likely via genesis or earlier tx) → `storage_bytes > 0`
+2. **Storage rent fires per-epoch** at `STORAGE_RENT_PER_BYTE_PER_EPOCH = 1`
+   EVP/byte/epoch (`evaporchain-types/src/lib.rs:396`). This fires
+   regardless of `DemurrageParams.threshold` — different mechanism.
+3. **Storage rent + chain rollback** (the
+   `light_cone_block_count`-non-monotonic reorg behaviour we documented
+   in `f8605d7`) — rollbacks undo block rewards the validator had
+   received on forked branches, snapping balance back below the rent
+   floor. Combined drain accounts for the 260k+ "vanishing" EVP that
+   storage rent alone (~6k EVP/5min for 20 bytes) could not.
+
+### What still holds vs. what gets corrected
+
+✅ **Holds:** object Active→Grace→Ghost lifecycle, HBCT H+1 capacity
+expiry, storage rent → tombstone, ratchet-4 jail-on-tombstone, the
+refresh-pool absorbs energy under §1.2 conservation.
+
+⚠ **Corrected:** account-balance demurrage was claimed to be "firing
+in production" — actually it is **dormant**. No validator balance
+qualifies for it under the 100M threshold. The decay-thesis at the
+account layer remains a doctrinal mechanism that **substrate is fully
+wired but threshold-gated off** for current cluster scale.
+
+The Foundation Treasury (350M EVP) is the only account class for
+which the existing default params would actually fire demurrage; on
+the testnet cluster no such account exists.
+
+### Implication
+
+The chain enforces 4 of 5 layers of the decay thesis empirically right
+now (object decay, HBCT decay, storage-rent tombstone, validator jail).
+Layer-5 (account-balance demurrage) is **substrate-shipped + parameter-
+gated-dormant** for the current scale. To exercise it empirically:
+
+  - either lower `threshold` via governance (currently default-only),
+  - or fund a 100M+ EVP account and watch it get burned per epoch.
+
+The new `/api/account/:addr/demurrage_preview` endpoint (commit
+`f1bc8c1`) would have surfaced this immediately for any operator who
+queried it — `pending_demurrage` returns 0 for every validator we
+probed, exactly because they're below threshold. The endpoint
+operationalises the diagnosis.
+
+---
+
 ## Empirical confirmation — Option 1 executed 2026-05-08
 
 **Test object:**
