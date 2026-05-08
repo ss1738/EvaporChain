@@ -18,7 +18,7 @@ use std::path::Path;
 use thiserror::Error;
 
 use crate::address::format_address;
-use crate::pipeline::sign_and_encode;
+use crate::pipeline::sign_and_encode_for_chain;
 use crate::rpc::{RpcClient, RpcError, TransferRequest, TxResultResponse};
 use crate::signer::WalletSigner;
 use crate::tx_builder::TxBuilder;
@@ -87,16 +87,21 @@ impl SignedTransaction {
 pub struct OfflineSigner;
 
 impl OfflineSigner {
-    /// Sign a transfer transaction offline.
+    /// Sign a transfer transaction offline. `chain_id` MUST match
+    /// the target chain's `chain_id` — sigs are chain-id-bound and
+    /// the chain rejects mismatched ones under `verify_signatures:
+    /// true`. Pass `""` only when targeting a chain that runs with
+    /// `verify_signatures: false` (legacy testnet).
     pub fn sign_transfer(
         signer: &WalletSigner,
         to: &evaporchain_types::AccountAddress,
         amount: u64,
         nonce: u64,
+        chain_id: &str,
     ) -> SignedTransaction {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.transfer(*to, amount, nonce);
-        let (sig, pk) = sign_and_encode(signer, &tx);
+        let (sig, pk) = sign_and_encode_for_chain(signer, &tx, chain_id);
 
         SignedTransaction {
             tx_type: "Transfer".to_string(),
@@ -111,15 +116,17 @@ impl OfflineSigner {
         }
     }
 
-    /// Sign a refresh transaction offline.
+    /// Sign a refresh transaction offline. See `sign_transfer` for
+    /// the chain_id contract.
     pub fn sign_refresh(
         signer: &WalletSigner,
         object_id: &evaporchain_types::ObjectId,
         energy: u64,
+        chain_id: &str,
     ) -> SignedTransaction {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.refresh(*object_id, energy);
-        let (sig, pk) = sign_and_encode(signer, &tx);
+        let (sig, pk) = sign_and_encode_for_chain(signer, &tx, chain_id);
 
         SignedTransaction {
             tx_type: "Refresh".to_string(),
@@ -137,17 +144,19 @@ impl OfflineSigner {
         }
     }
 
-    /// Sign a create-object transaction offline.
+    /// Sign a create-object transaction offline. See `sign_transfer`
+    /// for the chain_id contract.
     pub fn sign_create_object(
         signer: &WalletSigner,
         object_id: &evaporchain_types::ObjectId,
         energy: u64,
         half_life: u64,
         data: Vec<u8>,
+        chain_id: &str,
     ) -> SignedTransaction {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.create_object(*object_id, energy, half_life, data);
-        let (sig, pk) = sign_and_encode(signer, &tx);
+        let (sig, pk) = sign_and_encode_for_chain(signer, &tx, chain_id);
 
         SignedTransaction {
             tx_type: "CreateObject".to_string(),
@@ -221,7 +230,7 @@ mod tests {
     fn test_sign_transfer_offline() {
         let signer = make_signer();
         let to = [1u8; 32];
-        let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 5);
+        let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 5, "");
 
         assert_eq!(signed.tx_type, "Transfer");
         assert_eq!(signed.amount, Some(1000));
@@ -234,7 +243,7 @@ mod tests {
     fn test_sign_refresh_offline() {
         let signer = make_signer();
         let obj_id = [2u8; 32];
-        let signed = OfflineSigner::sign_refresh(&signer, &obj_id, 500);
+        let signed = OfflineSigner::sign_refresh(&signer, &obj_id, 500, "");
 
         assert_eq!(signed.tx_type, "Refresh");
         assert!(signed.extra.is_some());
@@ -244,7 +253,7 @@ mod tests {
     fn test_sign_create_object_offline() {
         let signer = make_signer();
         let obj_id = [3u8; 32];
-        let signed = OfflineSigner::sign_create_object(&signer, &obj_id, 1000, 100, vec![0u8; 10]);
+        let signed = OfflineSigner::sign_create_object(&signer, &obj_id, 1000, 100, vec![0u8; 10], "");
 
         assert_eq!(signed.tx_type, "CreateObject");
         assert!(signed.extra.is_some());
@@ -254,7 +263,7 @@ mod tests {
     fn test_json_roundtrip() {
         let signer = make_signer();
         let to = [1u8; 32];
-        let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 5);
+        let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 5, "");
 
         let json = serde_json::to_string_pretty(&signed).unwrap();
         let loaded: SignedTransaction = serde_json::from_str(&json).unwrap();
@@ -268,7 +277,7 @@ mod tests {
     fn test_file_save_and_load() {
         let signer = make_signer();
         let to = [1u8; 32];
-        let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 5);
+        let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 5, "");
 
         let dir = std::env::temp_dir().join("evaporchain_offline_test");
         std::fs::create_dir_all(&dir).unwrap();
@@ -290,8 +299,8 @@ mod tests {
         let s2 = make_signer();
         let to = [1u8; 32];
 
-        let sig1 = OfflineSigner::sign_transfer(&s1, &to, 1000, 0);
-        let sig2 = OfflineSigner::sign_transfer(&s2, &to, 1000, 0);
+        let sig1 = OfflineSigner::sign_transfer(&s1, &to, 1000, 0, "");
+        let sig2 = OfflineSigner::sign_transfer(&s2, &to, 1000, 0, "");
 
         assert_ne!(sig1.signature, sig2.signature);
         assert_ne!(sig1.public_key, sig2.public_key);

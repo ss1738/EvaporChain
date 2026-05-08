@@ -50,6 +50,10 @@ pub struct PendingTx {
 pub struct TxPipeline {
     rpc: RpcClient,
     history: Vec<PendingTx>,
+    /// Cached chain_id from `/api/status` — populated lazily on
+    /// first call to `chain_id_cached()`. Pipeline-scoped: a wallet
+    /// switching chains should construct a fresh pipeline.
+    chain_id: tokio::sync::OnceCell<String>,
 }
 
 impl TxPipeline {
@@ -58,7 +62,28 @@ impl TxPipeline {
         Self {
             rpc,
             history: Vec::new(),
+            chain_id: tokio::sync::OnceCell::new(),
         }
+    }
+
+    /// Resolve the chain's `chain_id`, caching after first fetch.
+    /// Required for `verify_signatures: true` chains — the wallet
+    /// signs over `tx.signing_message(chain_id)` which the chain
+    /// then verifies under the same binding.
+    ///
+    /// Source: `GET /api/chain` returns `ChainInfoResponse.chain_id`.
+    /// (`/api/status`'s `StatusResponse` exposes `chain_name`, which
+    /// is human-readable and NOT the chain_id used in signature
+    /// binding — picking the wrong one was the original audit
+    /// gotcha.)
+    async fn chain_id_cached(&self) -> Result<&str, PipelineError> {
+        self.chain_id
+            .get_or_try_init(|| async {
+                let info = self.rpc.get_chain_info().await?;
+                Ok::<String, PipelineError>(info.chain_id)
+            })
+            .await
+            .map(|s| s.as_str())
     }
 
     /// Get a reference to the RPC client.
@@ -89,7 +114,8 @@ impl TxPipeline {
     ) -> Result<TxResultResponse, PipelineError> {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.transfer(*to, amount, nonce);
-        let signed = signer.sign(&tx);
+        let chain_id = self.chain_id_cached().await?;
+        let signed = signer.sign_for_chain(&tx, chain_id);
 
         let sig = hex::encode(signed.signature().unwrap());
         let pk = hex::encode(signed.public_key().unwrap());
@@ -134,7 +160,8 @@ impl TxPipeline {
     ) -> Result<TxResultResponse, PipelineError> {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.create_object(*object_id, energy, half_life, data);
-        let signed = signer.sign(&tx);
+        let chain_id = self.chain_id_cached().await?;
+        let signed = signer.sign_for_chain(&tx, chain_id);
 
         let sig = hex::encode(signed.signature().unwrap());
         let pk = hex::encode(signed.public_key().unwrap());
@@ -165,7 +192,8 @@ impl TxPipeline {
     ) -> Result<TxResultResponse, PipelineError> {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.refresh(*object_id, energy_deposit);
-        let signed = signer.sign(&tx);
+        let chain_id = self.chain_id_cached().await?;
+        let signed = signer.sign_for_chain(&tx, chain_id);
 
         let sig = hex::encode(signed.signature().unwrap());
         let pk = hex::encode(signed.public_key().unwrap());
@@ -194,7 +222,8 @@ impl TxPipeline {
     ) -> Result<TxResultResponse, PipelineError> {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.refresh(*object_id, energy_deposit);
-        let signed = signer.sign(&tx);
+        let chain_id = self.chain_id_cached().await?;
+        let signed = signer.sign_for_chain(&tx, chain_id);
 
         let sig = hex::encode(signed.signature().unwrap());
         let pk = hex::encode(signed.public_key().unwrap());
@@ -442,8 +471,33 @@ impl TxPipeline {
 // ──────────────────────────── Helper ───────────────────────────────────
 
 /// Sign a transaction and extract hex-encoded signature + public key.
+///
+/// **DEPRECATED — produces a signature without chain-id binding.**
+/// Use `sign_and_encode_for_chain` instead. Kept for backwards-compat
+/// with offline-signing tooling that doesn't have a chain_id handy
+/// at signing time.
+#[deprecated(
+    note = "produces signatures the chain rejects under verify_signatures=true; \
+            use sign_and_encode_for_chain"
+)]
 pub fn sign_and_encode(signer: &WalletSigner, tx: &Transaction) -> (String, String) {
+    #[allow(deprecated)]
     let signed = signer.sign(tx);
+    let sig = hex::encode(signed.signature().unwrap());
+    let pk = hex::encode(signed.public_key().unwrap());
+    (sig, pk)
+}
+
+/// Sign a transaction and extract hex-encoded signature + public key,
+/// binding the signature to `chain_id`. The chain's
+/// `verify_tx_signature` accepts the result under
+/// `verify_signatures: true`.
+pub fn sign_and_encode_for_chain(
+    signer: &WalletSigner,
+    tx: &Transaction,
+    chain_id: &str,
+) -> (String, String) {
+    let signed = signer.sign_for_chain(tx, chain_id);
     let sig = hex::encode(signed.signature().unwrap());
     let pk = hex::encode(signed.public_key().unwrap());
     (sig, pk)
@@ -478,7 +532,10 @@ mod tests {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.transfer([0xBBu8; 32], 1000, 0);
 
-        let (sig_hex, pk_hex) = sign_and_encode(&signer, &tx);
+        // Pipeline tests intentionally exercise the chain-id-bound
+        // signing helper (Day 12C audit fix). Using "" simulates the
+        // legacy verify_signatures=false test profile.
+        let (sig_hex, pk_hex) = sign_and_encode_for_chain(&signer, &tx, "");
         assert!(!sig_hex.is_empty());
         assert!(!pk_hex.is_empty());
 
@@ -497,12 +554,18 @@ mod tests {
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.transfer([0xBBu8; 32], 500, 1);
 
-        let (sig_hex, pk_hex) = sign_and_encode(&signer, &tx);
+        // Pipeline tests intentionally exercise the chain-id-bound
+        // signing helper (Day 12C audit fix). Using "" simulates the
+        // legacy verify_signatures=false test profile.
+        let (sig_hex, pk_hex) = sign_and_encode_for_chain(&signer, &tx, "");
         let sig = hex::decode(&sig_hex).unwrap();
         let pk = hex::decode(&pk_hex).unwrap();
 
-        // The signature should verify against the original signable bytes
-        let msg = tx.signable_bytes();
+        // The signature is now bound to the chain's canonical
+        // signing message (chain-id-prefixed signable_bytes), NOT
+        // signable_bytes alone. This matches what the chain's
+        // `verify_tx_signature` checks.
+        let msg = tx.signing_message("");
         assert!(MlDsaVerifier::verify(&msg, &sig, &pk));
     }
 

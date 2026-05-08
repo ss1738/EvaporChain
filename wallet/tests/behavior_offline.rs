@@ -30,7 +30,7 @@ fn offline_transfer_full_workflow() {
     let to = [0xBBu8; 32];
 
     // Step 1: Sign offline
-    let signed = OfflineSigner::sign_transfer(&signer, &to, 5000, 7);
+    let signed = OfflineSigner::sign_transfer(&signer, &to, 5000, 7, "");
     assert_eq!(signed.tx_type, "Transfer");
     assert_eq!(signed.from, format_address(signer.address()));
     assert_eq!(signed.to.as_deref(), Some(format_address(&to).as_str()));
@@ -66,7 +66,7 @@ fn offline_refresh_sign_and_export() {
     let signer = make_signer();
     let obj_id = [0xCCu8; 32];
 
-    let signed = OfflineSigner::sign_refresh(&signer, &obj_id, 1500);
+    let signed = OfflineSigner::sign_refresh(&signer, &obj_id, 1500, "");
     assert_eq!(signed.tx_type, "Refresh");
     assert!(signed.extra.is_some());
 
@@ -89,7 +89,7 @@ fn offline_create_object_sign_and_export() {
     let signer = make_signer();
     let obj_id = [0xDDu8; 32];
 
-    let signed = OfflineSigner::sign_create_object(&signer, &obj_id, 10000, 200, vec![0xAB; 64]);
+    let signed = OfflineSigner::sign_create_object(&signer, &obj_id, 10000, 200, vec![0xAB; 64], "");
     assert_eq!(signed.tx_type, "CreateObject");
     assert!(signed.extra.is_some());
 
@@ -117,8 +117,8 @@ fn different_signers_different_offline_signatures() {
     let s2 = make_signer();
     let to = [1u8; 32];
 
-    let sig1 = OfflineSigner::sign_transfer(&s1, &to, 1000, 0);
-    let sig2 = OfflineSigner::sign_transfer(&s2, &to, 1000, 0);
+    let sig1 = OfflineSigner::sign_transfer(&s1, &to, 1000, 0, "");
+    let sig2 = OfflineSigner::sign_transfer(&s2, &to, 1000, 0, "");
 
     assert_ne!(sig1.signature, sig2.signature);
     assert_ne!(sig1.public_key, sig2.public_key);
@@ -133,7 +133,7 @@ fn different_signers_different_offline_signatures() {
 fn signed_transaction_json_format() {
     let signer = make_signer();
     let to = [0xBBu8; 32];
-    let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 0);
+    let signed = OfflineSigner::sign_transfer(&signer, &to, 1000, 0, "");
 
     let json = serde_json::to_string_pretty(&signed).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -171,7 +171,7 @@ fn batch_offline_signing() {
     for i in 0..10u64 {
         let mut to = [0u8; 32];
         to[0] = (i + 1) as u8;
-        let signed = OfflineSigner::sign_transfer(&signer, &to, (i + 1) * 100, i);
+        let signed = OfflineSigner::sign_transfer(&signer, &to, (i + 1) * 100, i, "");
         signed_txs.push(signed);
     }
 

@@ -1120,6 +1120,14 @@ pub enum OfflineAction {
         amount: u64,
         /// Nonce to use.
         nonce: u64,
+        /// Target chain_id. The signature is bound to this chain;
+        /// the chain rejects mismatched values under
+        /// `verify_signatures: true`. Read the live value via
+        /// `wallet status` on the online side, then pass it here.
+        /// Pass `""` only when targeting a `verify_signatures: false`
+        /// testnet (legacy).
+        #[arg(long)]
+        chain_id: String,
         /// Output file for signed transaction.
         #[arg(short, long, default_value = "signed_tx.json")]
         file: PathBuf,
@@ -1130,6 +1138,9 @@ pub enum OfflineAction {
         id: String,
         /// Energy to deposit.
         energy: u64,
+        /// Target chain_id. See `Sign` for semantics.
+        #[arg(long)]
+        chain_id: String,
         /// Output file for signed transaction.
         #[arg(short, long, default_value = "signed_tx.json")]
         file: PathBuf,
@@ -7175,6 +7186,7 @@ async fn cmd_offline(
             to,
             amount,
             nonce,
+            chain_id,
             file,
         } => {
             validation::validate_address(&to)?;
@@ -7187,7 +7199,8 @@ async fn cmd_offline(
             let signer = mgr.get_signer(&name, &password)?;
 
             let to_addr = parse_address(&to)?;
-            let signed = OfflineSigner::sign_transfer(&signer, &to_addr, amount, nonce);
+            let signed =
+                OfflineSigner::sign_transfer(&signer, &to_addr, amount, nonce, &chain_id);
             signed.save(&file)?;
 
             println!(
@@ -7202,7 +7215,12 @@ async fn cmd_offline(
             println!("\n  Transfer this file to an online machine and run:");
             println!("  {} offline broadcast {:?}", "wallet".bold(), file);
         }
-        OfflineAction::SignRefresh { id, energy, file } => {
+        OfflineAction::SignRefresh {
+            id,
+            energy,
+            chain_id,
+            file,
+        } => {
             validation::validate_address(&id)?;
             validation::validate_energy(energy)?;
 
@@ -7213,7 +7231,7 @@ async fn cmd_offline(
             let signer = mgr.get_signer(&name, &password)?;
 
             let obj_id = parse_address(&id)?;
-            let signed = OfflineSigner::sign_refresh(&signer, &obj_id, energy);
+            let signed = OfflineSigner::sign_refresh(&signer, &obj_id, energy, &chain_id);
             signed.save(&file)?;
 
             println!("{} Signed refresh saved to {:?}", "OK".green().bold(), file);
@@ -19515,6 +19533,8 @@ mod tests {
             "0xabcd",
             "5000",
             "3",
+            "--chain-id",
+            "evaporchain-mainnet",
             "-f",
             "my_tx.json",
         ]);
@@ -19525,10 +19545,12 @@ mod tests {
                         to,
                         amount,
                         nonce,
+                        chain_id,
                         file,
                     },
             } => {
                 assert_eq!(to, "0xabcd");
+                assert_eq!(chain_id, "evaporchain-mainnet");
                 assert_eq!(amount, 5000);
                 assert_eq!(nonce, 3);
                 assert_eq!(file.to_str().unwrap(), "my_tx.json");
@@ -19613,15 +19635,24 @@ mod tests {
             "sign-refresh",
             "0xobj123",
             "500",
+            "--chain-id",
+            "evaporchain-mainnet",
             "-f",
             "refresh.json",
         ]);
         match cli.command {
             Commands::Offline {
-                action: OfflineAction::SignRefresh { id, energy, file },
+                action:
+                    OfflineAction::SignRefresh {
+                        id,
+                        energy,
+                        chain_id,
+                        file,
+                    },
             } => {
                 assert_eq!(id, "0xobj123");
                 assert_eq!(energy, 500);
+                assert_eq!(chain_id, "evaporchain-mainnet");
                 assert_eq!(file.to_str().unwrap(), "refresh.json");
             }
             _ => panic!("expected Offline SignRefresh"),

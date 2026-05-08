@@ -125,8 +125,25 @@ impl WalletSigner {
         self.inner.sign(msg)
     }
 
-    /// Sign a transaction in-place.
-    /// Sets the `signature` and `public_key` fields on the transaction.
+    /// Sign a transaction in-place WITHOUT chain-id binding.
+    ///
+    /// **DEPRECATED — produces signatures the chain rejects under
+    /// `verify_signatures: true`.** Use `sign_transaction_for_chain`
+    /// instead. This signs over `tx.signable_bytes()`, but the chain's
+    /// `verify_tx_signature` (`evaporchain-execution::SimpleExecutor`
+    /// at lib.rs:1146) verifies against
+    /// `tx.signing_message(chain_id)` which prefixes the body with
+    /// `LE32(chain_id.len()) || chain_id_bytes` for cross-chain
+    /// replay protection (EIP-155-style).
+    ///
+    /// Kept for backwards-compat with tests + tools that don't have
+    /// a chain_id handy yet (e.g., offline-signing flows where
+    /// chain_id is supplied later). Prefer the `_for_chain` variant
+    /// for any path that actually submits to a verifying chain.
+    #[deprecated(
+        note = "produces signatures the chain rejects under verify_signatures=true; \
+                use sign_transaction_for_chain (chain-id-bound)"
+    )]
     pub fn sign_transaction(&self, tx: &mut Transaction) {
         let msg = tx.signable_bytes();
         let sig = self.inner.sign(&msg);
@@ -134,10 +151,40 @@ impl WalletSigner {
         set_signature(tx, sig, pk);
     }
 
-    /// Sign a transaction and return a new signed copy.
+    /// Sign a transaction and return a new signed copy WITHOUT
+    /// chain-id binding. **DEPRECATED — see `sign_transaction`.**
+    #[deprecated(
+        note = "produces signatures the chain rejects under verify_signatures=true; \
+                use sign_for_chain (chain-id-bound)"
+    )]
     pub fn sign(&self, tx: &Transaction) -> Transaction {
         let mut signed = tx.clone();
+        // Allow self-call to deprecated method; the deprecation is
+        // about the public API surface, not internal use.
+        #[allow(deprecated)]
         self.sign_transaction(&mut signed);
+        signed
+    }
+
+    /// Sign a transaction in-place, binding the signature to
+    /// `chain_id`. The result satisfies the chain's
+    /// `verify_tx_signature` under `verify_signatures: true`.
+    ///
+    /// `chain_id` should match the target chain's `chain_id`
+    /// (queryable via `GET /api/status` → `chain_id`). Wallets
+    /// signing offline can stamp the chain_id at compose-time.
+    pub fn sign_transaction_for_chain(&self, tx: &mut Transaction, chain_id: &str) {
+        let msg = tx.signing_message(chain_id);
+        let sig = self.inner.sign(&msg);
+        let pk = self.inner.public_key_bytes();
+        set_signature(tx, sig, pk);
+    }
+
+    /// Sign a transaction and return a signed copy, binding the
+    /// signature to `chain_id`. See `sign_transaction_for_chain`.
+    pub fn sign_for_chain(&self, tx: &Transaction, chain_id: &str) -> Transaction {
+        let mut signed = tx.clone();
+        self.sign_transaction_for_chain(&mut signed, chain_id);
         signed
     }
 }
