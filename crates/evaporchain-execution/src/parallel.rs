@@ -565,7 +565,10 @@ struct PartitionResult {
 /// conflict), falls back to sequential execution.
 pub struct ParallelExecutor {
     evaporation_engine: EvaporationEngine,
-    mmr: MerkleMountainRange,
+    /// Energy-stamped nullifier accumulator. One leaf per evaporated
+    /// object; consumed by `four_act_state()` for the public
+    /// `/api/four_act` surface.
+    pub mmr: MerkleMountainRange,
     verify_signatures: bool,
     fee_controller: Option<fees::PidFeeController>,
     pub block_gas_limit: u64,
@@ -707,8 +710,17 @@ impl ParallelExecutor {
         priority_sum: u64,
         scale_per_unit: u64,
     ) -> u64 {
+        let producer_alive = !self.eulogy_trie.contains(producer);
         if let Some(ref mut ra) = self.reward_accumulator {
-            ra.apply_priority_bonus(db, producer, epoch, priority_sum, scale_per_unit)
+            ra.apply_priority_bonus(
+                db,
+                producer,
+                epoch,
+                priority_sum,
+                scale_per_unit,
+                producer_alive,
+                Some(&mut self.refresh_pool),
+            )
         } else {
             0
         }
@@ -2054,19 +2066,31 @@ impl ExecutionEngine for ParallelExecutor {
         // validators received no block rewards in production. Wiring
         // here is gated on `enable_rewards()` having been called at
         // node startup; if not enabled, behaviour is unchanged.
+        // Compute producer-alive once outside the reward-accumulator
+        // borrow so we can pass &mut self.refresh_pool alongside the
+        // &mut self.reward_accumulator (split borrows on disjoint fields).
+        let producer_addr = if let Some(pid) = block.producer_id {
+            db.get_stake(pid)
+                .map(|s| s.validator_address)
+                .unwrap_or_else(|| {
+                    let mut addr = [0u8; 32];
+                    addr[..8].copy_from_slice(&pid.to_le_bytes());
+                    addr
+                })
+        } else {
+            [0u8; 32]
+        };
+        let producer_alive = !self.eulogy_trie.contains(&producer_addr);
+
         if let Some(ref mut ra) = self.reward_accumulator {
-            let producer_addr = if let Some(pid) = block.producer_id {
-                db.get_stake(pid)
-                    .map(|s| s.validator_address)
-                    .unwrap_or_else(|| {
-                        let mut addr = [0u8; 32];
-                        addr[..8].copy_from_slice(&pid.to_le_bytes());
-                        addr
-                    })
-            } else {
-                [0u8; 32]
-            };
-            ra.process_block_rewards(db, &producer_addr, block.epoch, total_fees);
+            ra.process_block_rewards(
+                db,
+                &producer_addr,
+                block.epoch,
+                total_fees,
+                producer_alive,
+                Some(&mut self.refresh_pool),
+            );
 
             // Lane A.3: priority bonus auto-fire. The proposer stamped
             // `block.submit_epoch_hints` per Lane A.2 (commit 18beb29);
@@ -2095,7 +2119,15 @@ impl ExecutionEngine for ParallelExecutor {
                 // tx (elapsed=0) yields ~1 token. Operator-tunable in a
                 // future commit (genesis tokenomics field).
                 let bonus_scale = evaporchain_types::BASE_INCLUSION_ENERGY;
-                ra.apply_priority_bonus(db, &producer_addr, block.epoch, priority_sum, bonus_scale);
+                ra.apply_priority_bonus(
+                    db,
+                    &producer_addr,
+                    block.epoch,
+                    priority_sum,
+                    bonus_scale,
+                    producer_alive,
+                    Some(&mut self.refresh_pool),
+                );
             }
 
             // Distribute staker rewards every 100 blocks

@@ -640,6 +640,15 @@ pub struct ConsensusFourActState {
     /// Equal to committed-height count modulo genesis edges. Per
     /// INVENTION_STACK.md §4.1 #1.
     pub light_cone_block_count: usize,
+    /// Number of energy-stamped nullifiers accumulated in the
+    /// evaporation MMR (one per object that has transitioned
+    /// Active → Grace → Ghost). Object-side counterpart to
+    /// `eulogy_count` for the doctrine's "small deaths" act.
+    pub evaporation_mmr_size: usize,
+    /// Root of the evaporation nullifier MMR. None until the first
+    /// object evaporates; mirrors `eulogy_trie_root`'s empty-state
+    /// convention.
+    pub evaporation_mmr_root: Option<[u8; 32]>,
 }
 
 /// Window size for TUR Liveness Detector observations. Per
@@ -1419,6 +1428,12 @@ impl TendermintConsensus {
                 .as_ref()
                 .map(|r| r.is_ok()),
             light_cone_block_count: self.light_cone_dag.len(),
+            evaporation_mmr_size: self.executor.mmr.size(),
+            evaporation_mmr_root: if self.executor.mmr.size() == 0 {
+                None
+            } else {
+                Some(self.executor.mmr.root())
+            },
         }
     }
 
@@ -5948,6 +5963,37 @@ impl TendermintConsensus {
             },
         )?;
 
+        // Phase 3 of POST_EXEC_STATE_VERIFICATION_PLAN.md — warn-mode
+        // post-state-root verification. If the proposer included a
+        // claim (Phase 2 fills this on RocksDB-backed nodes), compare
+        // it to the local execution result. Mismatch = the proposer
+        // and this validator computed a different post-execution
+        // state for the same block. Phase 3 logs a structured warning
+        // but does NOT reject; Phase 4 will flip this to prevote-NIL
+        // behind a fork-epoch governance gate.
+        //
+        // Reproduced 2026-05-08 on the fresh 5-node cluster: state-
+        // root divergence between UK Macs and Helsinki Hetzners on a
+        // genesis-h=0 chain. This warning, once Phase 2 is deployed,
+        // makes the divergence visible at the per-block level
+        // instead of relying on external dashboard observation.
+        if let Some(claimed) = block.post_state_root {
+            if claimed != execution.state_root {
+                warn!(
+                    block_height = block.number,
+                    proposer_id = ?block.producer_id,
+                    local_state_root = %hex::encode(&execution.state_root[..8]),
+                    proposer_claim = %hex::encode(&claimed[..8]),
+                    "PHASE-3 post-state-root MISMATCH — local execution diverges from proposer claim"
+                );
+            } else {
+                debug!(
+                    block_height = block.number,
+                    "PHASE-3 post-state-root MATCH"
+                );
+            }
+        }
+
         // Apply any validator BLS key rotations emitted by execution. Done
         // after execute_block but before on_block_committed so the new
         // pubkey set is visible to any commit-time hooks. Closes 4b.
@@ -6406,6 +6452,47 @@ impl TendermintConsensus {
                 "DIAG-MEMPOOL: block.transactions populated"
             );
         }
+
+        // Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md — proposer
+        // pre-execution. Speculatively execute the block on the
+        // current db with begin_batch / rollback_batch so the
+        // resulting state_root can be claimed in block.post_state_root
+        // before broadcast. The actual real execution happens later
+        // when the proposer (and all validators) processes the
+        // proposal as a received message — same input, deterministic
+        // same output.
+        //
+        // begin_batch/rollback_batch are default no-ops on backends
+        // without transactional rollback (InMemoryStateDB,
+        // OverlayStateDB). Those backends would have post_state_root
+        // claimed correctly here too, but the rollback wouldn't
+        // restore mutations — so the SECOND execution at apply time
+        // would see already-mutated state and produce a different
+        // result. Acceptable for now because the cluster-soak
+        // RocksDBStateDB has real rollback semantics; tests that use
+        // InMemoryStateDB don't drive consensus.
+        _db.begin_batch();
+        match self.executor.execute_block(_db, &block) {
+            Ok(result) => {
+                block.post_state_root = Some(result.state_root);
+                debug!(
+                    height = self.height,
+                    post_state_root = %hex::encode(&result.state_root[..8]),
+                    "Phase 2: post_state_root claimed by proposer"
+                );
+            }
+            Err(e) => {
+                // Pre-execution failed — propose without claim. Phase 3
+                // validators will skip the check (Option::is_none),
+                // degrading gracefully to current behaviour.
+                warn!(
+                    height = self.height,
+                    error = %e,
+                    "Phase 2: proposer pre-execution failed; proposing without post_state_root"
+                );
+            }
+        }
+        _db.rollback_batch();
 
         Some(block)
     }

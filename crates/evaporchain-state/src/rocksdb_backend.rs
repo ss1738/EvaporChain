@@ -486,87 +486,6 @@ impl RocksDBStateDB {
         })
     }
 
-    /// Start buffering writes for atomic commit. Call `commit_batch()` to flush.
-    pub fn begin_batch(&mut self) {
-        *self.pending_batch.lock().unwrap() = Some(WriteBatch::default());
-        self.sync_dirty_to_trie();
-        self.batch_undo = Some(BatchUndoLog {
-            objects: Vec::new(),
-            accounts: Vec::new(),
-            ghosts: Vec::new(),
-            dirty_objects: self.dirty_objects.clone(),
-            dirty_accounts: self.dirty_accounts.clone(),
-            trie_snapshot: self.trie.to_bytes(),
-            note_tree_root: self.note_tree_root,
-            nullifiers_snapshot: self.spent_nullifiers.clone(),
-            shielded_pool_balance: self.shielded_pool_balance,
-            note_count: self.note_count,
-            note_commitments_snapshot: self.note_commitments.clone(),
-        });
-    }
-
-    /// Atomically write all buffered mutations to disk.
-    pub fn commit_batch(&mut self) -> Result<(), String> {
-        self.batch_undo = None;
-        let batch = self
-            .pending_batch
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or("no active batch")?;
-        self.db
-            .write(batch)
-            .map_err(|e| format!("WriteBatch commit failed: {e}"))
-    }
-
-    /// Discard any buffered writes and revert in-memory state.
-    pub fn rollback_batch(&mut self) {
-        *self.pending_batch.lock().unwrap() = None;
-        if let Some(undo) = self.batch_undo.take() {
-            for (id, old_val) in undo.objects.into_iter().rev() {
-                match old_val {
-                    Some(obj) => {
-                        self.objects.insert(id, obj);
-                    }
-                    None => {
-                        self.objects.remove(&id);
-                    }
-                }
-            }
-            for (addr, old_val) in undo.accounts.into_iter().rev() {
-                match old_val {
-                    Some(acc) => {
-                        self.accounts.insert(addr, acc);
-                    }
-                    None => {
-                        self.accounts.remove(&addr);
-                    }
-                }
-            }
-            for (id, old_val) in undo.ghosts.into_iter().rev() {
-                match old_val {
-                    Some(ghost) => {
-                        self.ghosts.insert(id, ghost);
-                    }
-                    None => {
-                        self.ghosts.remove(&id);
-                    }
-                }
-            }
-            self.dirty_objects = undo.dirty_objects;
-            self.dirty_accounts = undo.dirty_accounts;
-            if let Ok(trie) = EnergyVerkleTrie::from_bytes(&undo.trie_snapshot) {
-                self.trie = trie;
-            }
-            // Revert privacy state
-            self.note_tree_root = undo.note_tree_root;
-            self.spent_nullifiers = undo.nullifiers_snapshot;
-            self.shielded_pool_balance = undo.shielded_pool_balance;
-            self.note_count = undo.note_count;
-            self.note_commitments = undo.note_commitments_snapshot;
-        }
-    }
-
     /// Returns true if the database has any accounts (i.e., not a fresh start).
     pub fn has_data(&self) -> bool {
         !self.accounts.is_empty()
@@ -894,6 +813,89 @@ fn deserialize_legacy_ghost(
 }
 
 impl StateDB for RocksDBStateDB {
+    /// Start buffering writes for atomic commit. Captures a full undo
+    /// log so `rollback_batch` can restore in-memory + trie state.
+    fn begin_batch(&mut self) {
+        *self.pending_batch.lock().unwrap() = Some(WriteBatch::default());
+        self.sync_dirty_to_trie();
+        self.batch_undo = Some(BatchUndoLog {
+            objects: Vec::new(),
+            accounts: Vec::new(),
+            ghosts: Vec::new(),
+            dirty_objects: self.dirty_objects.clone(),
+            dirty_accounts: self.dirty_accounts.clone(),
+            trie_snapshot: self.trie.to_bytes(),
+            note_tree_root: self.note_tree_root,
+            nullifiers_snapshot: self.spent_nullifiers.clone(),
+            shielded_pool_balance: self.shielded_pool_balance,
+            note_count: self.note_count,
+            note_commitments_snapshot: self.note_commitments.clone(),
+        });
+    }
+
+    /// Atomically write all buffered mutations to disk.
+    fn commit_batch(&mut self) -> Result<(), String> {
+        self.batch_undo = None;
+        let batch = self
+            .pending_batch
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("no active batch")?;
+        self.db
+            .write(batch)
+            .map_err(|e| format!("WriteBatch commit failed: {e}"))
+    }
+
+    /// Discard buffered writes and revert in-memory + trie state to
+    /// the snapshot captured at `begin_batch`.
+    fn rollback_batch(&mut self) {
+        *self.pending_batch.lock().unwrap() = None;
+        if let Some(undo) = self.batch_undo.take() {
+            for (id, old_val) in undo.objects.into_iter().rev() {
+                match old_val {
+                    Some(obj) => {
+                        self.objects.insert(id, obj);
+                    }
+                    None => {
+                        self.objects.remove(&id);
+                    }
+                }
+            }
+            for (addr, old_val) in undo.accounts.into_iter().rev() {
+                match old_val {
+                    Some(acc) => {
+                        self.accounts.insert(addr, acc);
+                    }
+                    None => {
+                        self.accounts.remove(&addr);
+                    }
+                }
+            }
+            for (id, old_val) in undo.ghosts.into_iter().rev() {
+                match old_val {
+                    Some(ghost) => {
+                        self.ghosts.insert(id, ghost);
+                    }
+                    None => {
+                        self.ghosts.remove(&id);
+                    }
+                }
+            }
+            self.dirty_objects = undo.dirty_objects;
+            self.dirty_accounts = undo.dirty_accounts;
+            if let Ok(trie) = EnergyVerkleTrie::from_bytes(&undo.trie_snapshot) {
+                self.trie = trie;
+            }
+            // Revert privacy state
+            self.note_tree_root = undo.note_tree_root;
+            self.spent_nullifiers = undo.nullifiers_snapshot;
+            self.shielded_pool_balance = undo.shielded_pool_balance;
+            self.note_count = undo.note_count;
+            self.note_commitments = undo.note_commitments_snapshot;
+        }
+    }
+
     fn get_object(&self, id: &ObjectId) -> Option<&StateObject> {
         self.objects.get(id)
     }

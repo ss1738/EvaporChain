@@ -6,10 +6,17 @@
 //! 2. **Fee distribution** — Non-burned fee revenue split between producer
 //!    and stakers according to tokenomics parameters.
 
+use evaporchain_energy_kernel::RefreshPool;
 use evaporchain_state::db::StateDB;
 use evaporchain_types::genesis::Tokenomics;
 use evaporchain_types::{AccountAddress, Epoch};
 use tracing::{debug, info};
+
+/// Refresh-pool namespace for energy redirected away from tombstoned
+/// producers. Mirrors the constant in `lib.rs` to keep `rewards.rs`
+/// crate-internal-clean. If they ever diverge, the storage-rent and
+/// dead-producer accruals would land in separate refresh-pool buckets.
+const DEAD_PRODUCER_REFRESH_NAMESPACE: &[u8] = b"evaporchain-system-refresh";
 
 /// Tracks cumulative staker reward pool for proportional distribution.
 #[derive(Debug, Clone)]
@@ -65,6 +72,8 @@ impl RewardAccumulator {
         epoch: Epoch,
         priority_sum: u64,
         scale_per_unit: u64,
+        producer_alive: bool,
+        refresh_pool_for_dead_producer: Option<&mut RefreshPool>,
     ) -> u64 {
         if scale_per_unit == 0 || priority_sum == 0 {
             return 0;
@@ -73,15 +82,30 @@ impl RewardAccumulator {
         if bonus == 0 {
             return 0;
         }
-        let acct = db.get_or_create_account(producer);
-        acct.balance = acct.balance.saturating_add(bonus);
-        acct.last_touched_epoch = epoch;
         self.total_minted = self.total_minted.saturating_add(bonus);
-        debug!(
-            producer = hex::encode(producer),
-            priority_sum, scale_per_unit, bonus, epoch, "Proposer priority bonus minted"
-        );
-        bonus
+        if producer_alive {
+            let acct = db.get_or_create_account(producer);
+            acct.balance = acct.balance.saturating_add(bonus);
+            acct.last_touched_epoch = epoch;
+            debug!(
+                producer = hex::encode(producer),
+                priority_sum, scale_per_unit, bonus, epoch, "Proposer priority bonus minted"
+            );
+            bonus
+        } else if let Some(pool) = refresh_pool_for_dead_producer {
+            pool.accrue(DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(), bonus, epoch);
+            info!(
+                producer = hex::encode(producer),
+                bonus,
+                epoch,
+                "Priority bonus redirected to refresh_pool: producer is tombstoned"
+            );
+            // Caller's "credited to producer" semantics: 0 since the
+            // producer received nothing.
+            0
+        } else {
+            0
+        }
     }
 
     /// Process rewards for a single block.
@@ -89,15 +113,32 @@ impl RewardAccumulator {
     /// 1. Mints block reward to the producer.
     /// 2. Distributes collected fees according to tokenomics.
     ///
-    /// Returns the total tokens credited to the producer this block.
+    /// `producer_alive` is `false` iff the producer's address is
+    /// memorialised in the eulogy trie (i.e. the account has been
+    /// tombstoned). Per `evaporchain-tombstone::EulogyTrie` doctrine
+    /// "the chain's death is final" — a tombstoned account must not
+    /// receive credits. When `producer_alive == false`, the producer-
+    /// bound block reward and fee share are redirected into
+    /// `refresh_pool_for_dead_producer` instead, preserving §1.2
+    /// energy conservation. Staker share is unaffected (it is not
+    /// account-bound).
+    ///
+    /// Returns the total tokens credited to the producer this block
+    /// (always 0 if the producer is tombstoned).
     pub fn process_block_rewards(
         &mut self,
         db: &mut dyn StateDB,
         producer: &AccountAddress,
         epoch: Epoch,
         total_fees_collected: u64,
+        producer_alive: bool,
+        refresh_pool_for_dead_producer: Option<&mut RefreshPool>,
     ) -> u64 {
         let mut producer_credit = 0u64;
+        // Reusable redirect closure: take the producer-bound amount and
+        // accrue into refresh_pool under the dead-producer namespace if
+        // both (a) producer is dead and (b) the pool was supplied.
+        let mut redirect_pool = refresh_pool_for_dead_producer;
 
         // 1. Block reward (minted). Dispatches via
         //    `Tokenomics::block_reward`:
@@ -110,19 +151,38 @@ impl RewardAccumulator {
         //        respect their own cap mechanism.
         let block_reward = self.tokenomics.block_reward(epoch, self.total_minted);
         if block_reward > 0 {
-            let acct = db.get_or_create_account(producer);
-            acct.balance = acct.balance.saturating_add(block_reward);
-            // Reward credit refreshes the demurrage anchor — block-producing
-            // validators are visibly active.
-            acct.last_touched_epoch = epoch;
             self.total_minted = self.total_minted.saturating_add(block_reward);
-            producer_credit += block_reward;
-            debug!(
-                producer = hex::encode(producer),
-                reward = block_reward,
-                epoch,
-                "Block reward minted"
-            );
+            if producer_alive {
+                let acct = db.get_or_create_account(producer);
+                acct.balance = acct.balance.saturating_add(block_reward);
+                // Reward credit refreshes the demurrage anchor — block-producing
+                // validators are visibly active.
+                acct.last_touched_epoch = epoch;
+                producer_credit += block_reward;
+                debug!(
+                    producer = hex::encode(producer),
+                    reward = block_reward,
+                    epoch,
+                    "Block reward minted"
+                );
+            } else if let Some(pool) = redirect_pool.as_deref_mut() {
+                pool.accrue(
+                    DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
+                    block_reward,
+                    epoch,
+                );
+                info!(
+                    producer = hex::encode(producer),
+                    reward = block_reward,
+                    epoch,
+                    "Block reward redirected to refresh_pool: producer is tombstoned"
+                );
+            }
+            // If !producer_alive and no pool was supplied, the
+            // block_reward is still counted in total_minted (it was
+            // notionally minted) but lands nowhere. Production call
+            // sites always supply the pool so this branch is unreachable;
+            // it exists only to keep the function total over its inputs.
         }
 
         // 2. Fee distribution
@@ -132,14 +192,23 @@ impl RewardAccumulator {
 
             // Producer share
             if dist.to_producer > 0 {
-                let acct = db.get_or_create_account(producer);
-                acct.balance = acct.balance.saturating_add(dist.to_producer);
-                acct.last_touched_epoch = epoch;
                 self.total_to_producers = self.total_to_producers.saturating_add(dist.to_producer);
-                producer_credit += dist.to_producer;
+                if producer_alive {
+                    let acct = db.get_or_create_account(producer);
+                    acct.balance = acct.balance.saturating_add(dist.to_producer);
+                    acct.last_touched_epoch = epoch;
+                    producer_credit += dist.to_producer;
+                } else if let Some(pool) = redirect_pool.as_deref_mut() {
+                    pool.accrue(
+                        DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
+                        dist.to_producer,
+                        epoch,
+                    );
+                }
             }
 
-            // Staker share (accumulated for proportional distribution)
+            // Staker share (accumulated for proportional distribution).
+            // Not account-bound; unaffected by producer tombstone state.
             if dist.to_stakers > 0 {
                 self.pending_staker_rewards =
                     self.pending_staker_rewards.saturating_add(dist.to_stakers);
@@ -150,6 +219,7 @@ impl RewardAccumulator {
                 burned = dist.burned,
                 to_producer = dist.to_producer,
                 to_stakers = dist.to_stakers,
+                producer_alive,
                 "Fees distributed"
             );
         }
@@ -313,7 +383,7 @@ mod tests {
         let mut acc = RewardAccumulator::new(tk);
 
         // Epoch 0: full reward.
-        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0, true, None);
         assert_eq!(r0, 1000);
 
         // Epoch 50 (midpoint): ~half. linear: 1000 * (100-50) / 100 = 500.
@@ -328,7 +398,7 @@ mod tests {
             .unwrap(),
         );
         let mut acc2 = RewardAccumulator::new(tk2);
-        let r50 = acc2.process_block_rewards(&mut db, &addr(1), 50, 0);
+        let r50 = acc2.process_block_rewards(&mut db, &addr(1), 50, 0, true, None);
         assert_eq!(r50, 500);
 
         // Epoch 100 (post-window): 0.
@@ -341,7 +411,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let r100 = acc3.process_block_rewards(&mut db, &addr(1), 100, 0);
+        let r100 = acc3.process_block_rewards(&mut db, &addr(1), 100, 0, true, None);
         assert_eq!(r100, 0);
     }
 
@@ -365,17 +435,17 @@ mod tests {
         let mut acc = RewardAccumulator::new(tk);
 
         // Block 0: full 100.
-        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0, true, None);
         assert_eq!(r0, 100);
         assert_eq!(acc.total_minted, 100);
 
         // Block 1: clipped to 50 (only 50 headroom left).
-        let r1 = acc.process_block_rewards(&mut db, &addr(1), 1, 0);
+        let r1 = acc.process_block_rewards(&mut db, &addr(1), 1, 0, true, None);
         assert_eq!(r1, 50);
         assert_eq!(acc.total_minted, 150);
 
         // Block 2: 0 (cap reached).
-        let r2 = acc.process_block_rewards(&mut db, &addr(1), 2, 0);
+        let r2 = acc.process_block_rewards(&mut db, &addr(1), 2, 0, true, None);
         assert_eq!(r2, 0);
         assert_eq!(acc.total_minted, 150);
     }
@@ -392,7 +462,7 @@ mod tests {
 
         // Standard legacy path: block_reward=100, half_life=1000, no cap
         // → at epoch 0 reward=100, at epoch 1000 reward=50.
-        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        let r0 = acc.process_block_rewards(&mut db, &addr(1), 0, 0, true, None);
         assert_eq!(r0, 100);
 
         // Verify Tokenomics::block_reward dispatcher equals
@@ -417,7 +487,7 @@ mod tests {
         fund(&mut db, 1, 0);
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
-        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 0, true, None);
         assert_eq!(credit, 100);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
         assert_eq!(acc.total_minted, 100);
@@ -432,7 +502,7 @@ mod tests {
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
         // priority_sum=10_000, scale=1000 → bonus=10
-        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 5, 10_000, 1_000);
+        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 5, 10_000, 1_000, true, None);
         assert_eq!(bonus, 10);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 10);
         assert_eq!(acc.total_minted, 10);
@@ -447,7 +517,7 @@ mod tests {
         fund(&mut db, 1, 0);
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
-        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 0, 1_000_000, 0);
+        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 0, 1_000_000, 0, true, None);
         assert_eq!(bonus, 0);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 0);
         assert_eq!(acc.total_minted, 0);
@@ -460,7 +530,7 @@ mod tests {
         fund(&mut db, 1, 0);
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
-        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 0, 100, 1_000);
+        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 0, 100, 1_000, true, None);
         assert_eq!(bonus, 0);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 0);
     }
@@ -472,7 +542,7 @@ mod tests {
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
         // At epoch 1000 (one half-life), reward should be 50
-        let credit = acc.process_block_rewards(&mut db, &addr(1), 1000, 0);
+        let credit = acc.process_block_rewards(&mut db, &addr(1), 1000, 0, true, None);
         assert_eq!(credit, 50);
     }
 
@@ -483,7 +553,7 @@ mod tests {
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
         // 1000 fees: 500 burned, 250 to producer, 250 to stakers
-        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 1000);
+        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 1000, true, None);
         // Producer gets block_reward(100) + fee_share(250) = 350
         assert_eq!(credit, 350);
         assert_eq!(acc.total_burned, 500);
@@ -499,7 +569,7 @@ mod tests {
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
         // Accumulate some staker rewards
-        acc.process_block_rewards(&mut db, &addr(1), 0, 2000);
+        acc.process_block_rewards(&mut db, &addr(1), 0, 2000, true, None);
         // 2000 * 0.5 = 1000 burned, 500 to producer, 500 to stakers
         assert_eq!(acc.pending_staker_rewards, 500);
 
@@ -518,7 +588,7 @@ mod tests {
         fund(&mut db, 1, 0);
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
-        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 0);
+        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 0, true, None);
         assert_eq!(credit, 100); // just block reward
         assert_eq!(acc.total_burned, 0);
         assert_eq!(acc.pending_staker_rewards, 0);
@@ -533,7 +603,7 @@ mod tests {
             ..test_tokenomics()
         });
 
-        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 1000);
+        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 1000, true, None);
         assert_eq!(credit, 100); // just block reward, all fees burned
         assert_eq!(acc.total_burned, 1000);
         assert_eq!(acc.pending_staker_rewards, 0);
@@ -548,7 +618,7 @@ mod tests {
             ..test_tokenomics()
         });
 
-        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 1000);
+        let credit = acc.process_block_rewards(&mut db, &addr(1), 0, 1000, true, None);
         // Only fee share: 1000 * 0.5 = 500 burned, 250 to producer
         assert_eq!(credit, 250);
     }
@@ -559,7 +629,7 @@ mod tests {
         fund(&mut db, 1, 0);
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
-        acc.process_block_rewards(&mut db, &addr(1), 0, 2000);
+        acc.process_block_rewards(&mut db, &addr(1), 0, 2000, true, None);
         let summary = acc.summary();
         assert_eq!(summary.total_minted, 100);
         assert_eq!(summary.total_burned, 1000);
@@ -573,7 +643,7 @@ mod tests {
         let mut acc = RewardAccumulator::new(test_tokenomics());
 
         for epoch in 0..10u64 {
-            acc.process_block_rewards(&mut db, &addr(1), epoch, 100);
+            acc.process_block_rewards(&mut db, &addr(1), epoch, 100, true, None);
         }
         // 10 blocks × 100 reward + fee shares
         assert!(acc.total_minted >= 1000);

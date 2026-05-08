@@ -4406,6 +4406,7 @@ async fn main() -> Result<()> {
                                         // Per INVENTION_STACK.md §A2.5.
                                         autonomic_sentinel_tick(&api.db, block.epoch);
 
+                                        let ghost_object_count = safe_lock(&api.db).ghost_count();
                                         api.update_four_act_snapshot(api::FourActSnapshot {
                                             eulogy_count: s.eulogy_count,
                                             eulogy_trie_root: s.eulogy_trie_root.map(hex::encode),
@@ -4421,6 +4422,9 @@ async fn main() -> Result<()> {
                                             last_conservation_audit_ok: s.last_conservation_audit_ok,
                                             genesis_amendment_hash: None,
                                             light_cone_block_count: s.light_cone_block_count,
+                                            ghost_object_count,
+                                            evaporation_mmr_size: s.evaporation_mmr_size,
+                                            evaporation_mmr_root: s.evaporation_mmr_root.map(hex::encode),
                                         });
                                     }
                                 }
@@ -5690,6 +5694,7 @@ async fn main() -> Result<()> {
                                         autonomic_sentinel_tick(&api.db, block.epoch);
                                         // Four-act narrative spine: publish the snapshot
                                         // captured above to /api/four_act.
+                                        let ghost_object_count = safe_lock(&api.db).ghost_count();
                                         api.update_four_act_snapshot(api::FourActSnapshot {
                                             eulogy_count: four_act_snap.eulogy_count,
                                             eulogy_trie_root: four_act_snap.eulogy_trie_root.map(hex::encode),
@@ -5705,6 +5710,9 @@ async fn main() -> Result<()> {
                                             last_conservation_audit_ok: four_act_snap.last_conservation_audit_ok,
                                             genesis_amendment_hash: None,
                                             light_cone_block_count: four_act_snap.light_cone_block_count,
+                                            ghost_object_count,
+                                            evaporation_mmr_size: four_act_snap.evaporation_mmr_size,
+                                            evaporation_mmr_root: four_act_snap.evaporation_mmr_root.map(hex::encode),
                                         });
                                     }
 

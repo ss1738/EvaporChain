@@ -212,6 +212,18 @@ pub struct FourActSnapshot {
     /// Number of blocks recorded in the parallel Light-Cone DAG that
     /// runs alongside Tendermint per INVENTION_STACK.md §4.1 #1.
     pub light_cone_block_count: usize,
+    /// Number of objects that have evaporated (Active → Grace → Ghost).
+    /// Object-side counterpart to `eulogy_count` (which is account-level)
+    /// for the doctrine's "small deaths" act. Read live from
+    /// `StateDB::ghost_count()` at snapshot publish time.
+    pub ghost_object_count: usize,
+    /// Number of energy-stamped nullifiers in the evaporation MMR.
+    /// Equals `ghost_object_count` for a non-pruned chain; can diverge
+    /// once historical pruning is enabled.
+    pub evaporation_mmr_size: usize,
+    /// Hex-encoded root of the evaporation nullifier MMR. None until
+    /// the first object evaporates.
+    pub evaporation_mmr_root: Option<String>,
 }
 
 impl ApiState {
@@ -8634,12 +8646,7 @@ async fn get_single_object(
     State(state): State<Arc<ApiState>>,
     Path(id_hex): Path<String>,
 ) -> Result<Json<ObjectResponse>, StatusCode> {
-    let id_bytes = hex::decode(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
-    if id_bytes.len() != 32 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let mut id = [0u8; 32];
-    id.copy_from_slice(&id_bytes);
+    let id = parse_hex_address(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let db = safe_lock(&state.db);
     let history = safe_lock(&state.block_history);
@@ -12111,11 +12118,10 @@ async fn get_ghost_detail(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Json<serde_json::Value> {
-    let mut obj_id = [0u8; 32];
-    if let Ok(bytes) = hex::decode(&id) {
-        let len = bytes.len().min(32);
-        obj_id[..len].copy_from_slice(&bytes[..len]);
-    }
+    let obj_id = match parse_hex_address(&id) {
+        Ok(a) => a,
+        Err(_) => return Json(serde_json::json!({ "found": false, "object_id": id })),
+    };
     let db = safe_lock(&state.db);
     if let Some(ghost) = db.get_ghost(&obj_id) {
         Json(serde_json::json!({

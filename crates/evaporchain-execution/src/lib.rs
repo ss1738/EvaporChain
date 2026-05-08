@@ -1052,8 +1052,17 @@ impl SimpleExecutor {
         priority_sum: u64,
         scale_per_unit: u64,
     ) -> u64 {
+        let producer_alive = !self.eulogy_trie.contains(producer);
         if let Some(ref mut ra) = self.reward_accumulator {
-            ra.apply_priority_bonus(db, producer, epoch, priority_sum, scale_per_unit)
+            ra.apply_priority_bonus(
+                db,
+                producer,
+                epoch,
+                priority_sum,
+                scale_per_unit,
+                producer_alive,
+                Some(&mut self.refresh_pool),
+            )
         } else {
             0
         }
@@ -3082,20 +3091,31 @@ impl ExecutionEngine for SimpleExecutor {
             }
         }
 
-        // Reward distribution: route fees through tokenomics instead of pure burn
+        // Reward distribution: route fees through tokenomics instead of pure burn.
+        // Compute producer-alive once outside the reward-accumulator borrow so
+        // we can pass &mut self.refresh_pool alongside &mut self.reward_accumulator.
+        let producer_addr = if let Some(pid) = block.producer_id {
+            db.get_stake(pid)
+                .map(|s| s.validator_address)
+                .unwrap_or_else(|| {
+                    let mut addr = [0u8; 32];
+                    addr[..8].copy_from_slice(&pid.to_le_bytes());
+                    addr
+                })
+        } else {
+            [0u8; 32]
+        };
+        let producer_alive = !self.eulogy_trie.contains(&producer_addr);
+
         if let Some(ref mut ra) = self.reward_accumulator {
-            let producer_addr = if let Some(pid) = block.producer_id {
-                db.get_stake(pid)
-                    .map(|s| s.validator_address)
-                    .unwrap_or_else(|| {
-                        let mut addr = [0u8; 32];
-                        addr[..8].copy_from_slice(&pid.to_le_bytes());
-                        addr
-                    })
-            } else {
-                [0u8; 32]
-            };
-            ra.process_block_rewards(db, &producer_addr, block.epoch, total_fees);
+            ra.process_block_rewards(
+                db,
+                &producer_addr,
+                block.epoch,
+                total_fees,
+                producer_alive,
+                Some(&mut self.refresh_pool),
+            );
 
             // Lane A.3: priority bonus auto-fire (mirrors parallel.rs).
             if !block.submit_epoch_hints.is_empty() {
@@ -3113,7 +3133,15 @@ impl ExecutionEngine for SimpleExecutor {
                     })
                     .fold(0u64, u64::saturating_add);
                 let bonus_scale = evaporchain_types::BASE_INCLUSION_ENERGY;
-                ra.apply_priority_bonus(db, &producer_addr, block.epoch, priority_sum, bonus_scale);
+                ra.apply_priority_bonus(
+                    db,
+                    &producer_addr,
+                    block.epoch,
+                    priority_sum,
+                    bonus_scale,
+                    producer_alive,
+                    Some(&mut self.refresh_pool),
+                );
             }
 
             // Distribute staker rewards every 100 blocks

@@ -69,6 +69,32 @@ pub fn build_energy_trie(
 
 /// Trait for state database backends.
 pub trait StateDB: Send + Sync {
+    /// Begin a write-batch. Mutations between this call and
+    /// `commit_batch`/`rollback_batch` are buffered. The default impl
+    /// is a no-op — backends that don't support transactional rollback
+    /// (e.g. `InMemoryStateDB`, `OverlayStateDB`) treat batches as
+    /// pass-through. RocksDBStateDB overrides with real semantics:
+    /// in-memory mutations are still applied immediately, but the
+    /// batch_undo log is captured so `rollback_batch` can restore.
+    ///
+    /// Use case: proposer-side speculative execution for Phase 2 of
+    /// `POST_EXEC_STATE_VERIFICATION_PLAN.md` — execute the block on
+    /// the live DB, capture the resulting `state_root`, roll back so
+    /// the second (real) execution after broadcast computes the same
+    /// answer deterministically.
+    fn begin_batch(&mut self) {}
+
+    /// Commit a previously-started batch. Default no-op for backends
+    /// without persistent storage.
+    fn commit_batch(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Roll back a previously-started batch. Default no-op for
+    /// backends without rollback support — caller is responsible for
+    /// avoiding speculative execution against such backends.
+    fn rollback_batch(&mut self) {}
+
     /// Retrieve a state object by its ID.
     fn get_object(&self, id: &ObjectId) -> Option<&StateObject>;
 
