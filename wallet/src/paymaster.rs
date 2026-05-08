@@ -235,8 +235,20 @@ mod tests {
         Box::leak(Box::new(tmp));
 
         let kp = HybridKeypair::generate();
+        // Use the permissive profile so existing tests that don't set
+        // up user-side signatures still pass. The
+        // `double_signed_user_op_satisfies_both_chain_checks` test
+        // builds a real user sig and would also pass under strict
+        // mode; the strict-mode behaviour is unit-tested in
+        // `evaporchain-paymaster::tests::strict_mode_*`.
         let paymaster = Arc::new(
-            Paymaster::new(kp, chain_id.to_string(), nonce_file).expect("paymaster"),
+            evaporchain_paymaster::Paymaster::new_with_config(
+                kp,
+                chain_id.to_string(),
+                nonce_file,
+                evaporchain_paymaster::PaymasterConfig::permissive(),
+            )
+            .expect("paymaster"),
         );
         let pm_addr = paymaster.address();
 

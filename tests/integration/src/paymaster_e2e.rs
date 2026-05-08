@@ -46,8 +46,18 @@ async fn spawn_paymaster(
     Box::leak(Box::new(tmp));
 
     let kp = HybridKeypair::generate();
-    let paymaster =
-        Arc::new(Paymaster::new(kp, chain_id.to_string(), nonce_file).expect("paymaster"));
+    // Permissive profile — the integration tests don't construct
+    // user-side sigs, they exercise the chain-side enforcement path.
+    // Strict-mode behaviour is unit-tested in evaporchain-paymaster.
+    let paymaster = Arc::new(
+        Paymaster::new_with_config(
+            kp,
+            chain_id.to_string(),
+            nonce_file,
+            evaporchain_paymaster::PaymasterConfig::permissive(),
+        )
+        .expect("paymaster"),
+    );
     let pm_addr = paymaster.address();
 
     #[derive(Clone)]

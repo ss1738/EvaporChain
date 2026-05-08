@@ -90,6 +90,9 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--chain-id ID` | **yes** | — | Must match the chain's chain_id; sponsorship sigs are chain-id-bound |
 | `--listen ADDR` | no | `0.0.0.0:8088` | TCP listen address |
 | `--generate-keypair-if-missing` | no | off | First-run convenience; off in prod so a missing file fails loudly |
+| `--disable-user-sig-check` | no | off | Day 7 hardening: skip the inbound-UserOp user-signature pre-check. Only safe for testnet / dev — leave OFF in prod (see §Threat: spam-signing) |
+| `--per-sender-rps RATE` | no | `5.0` | Per-`UserOp.sender` token-bucket replenish rate. `0` disables the rate limiter |
+| `--per-sender-burst N` | no | `10` | Per-sender burst capacity |
 
 ### Endpoints
 
@@ -213,12 +216,18 @@ The keypair file is the security boundary. A leaked keypair lets the attacker dr
 
 ### Threat: spam-signing
 
-V1 paymasters sign every well-formed request. A malicious wallet can flood `/sponsor` and burn through the paymaster's balance in minutes. Mitigations are out of scope for V1; suggested V1.5 hardening:
+A malicious wallet can flood `/sponsor` and burn through the paymaster's balance unless the service rejects bad/abusive requests before signing. The Day 7 hardening closes this in two layers (both on by default in production builds):
 
-- Per-`UserOp.sender` rate limit + budget.
-- Mandatory user signature verification before signing sponsorship.
-- Whitelist of permitted inner-tx variants per paymaster operator.
-- Off-band payment-confirmation gate (the Option B "user reimburses paymaster in token X" flow).
+**Layer 1 — Mandatory user-signature pre-check** (`require_user_sig: true`, default). The paymaster verifies the inbound `UserOpTx`'s user-side signature against the same canonical message the chain checks (`Transaction::UserOp(user_op).signing_message(chain_id)`) BEFORE allocating a sponsorship nonce or signing. A wallet sending malformed sigs gets rejected with `400` and pays no paymaster gas. Disable only for testnet via `--disable-user-sig-check`.
+
+The pre-check also enforces that the user signed for THIS paymaster: the service overwrites `user_op.paymaster` with its own address before the signature check, so a UserOp signed for some-other-paymaster fails verification and rejects.
+
+**Layer 2 — Per-sender token-bucket rate limit** (`per_sender_rps: 5.0`, `per_sender_burst: 10`, defaults). Each `UserOp.sender` gets its own bucket; new senders start full. Replenish rate `--per-sender-rps` (sponsorships/sec) and burst `--per-sender-burst` are tunable. Set `--per-sender-rps 0` to disable. Hits surface as `429 Too Many Requests` so wallets can back off cleanly. Idle buckets GC'd after 10 min so the HashMap stays bounded by active senders, not historical total.
+
+**Still V1.5 / operator-specific (not in the binary):**
+
+- Whitelist of permitted inner-tx variants per paymaster operator (chain enforces a global whitelist; operators may want a tighter subset).
+- Off-band payment-confirmation gate (the Option B "user reimburses paymaster in token X" flow — needs a billing system per operator).
 
 ---
 
@@ -256,6 +265,9 @@ V1 does not provide a built-in payment-confirmation path. Operators wire that th
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/sponsor` returns 400 with `paymaster_signature must include` | Wallet sent a UserOp with `paymaster_signature` already set (`AlreadySigned`) | Wallet bug — do not pre-stamp paymaster fields on /sponsor calls |
+| `/sponsor` returns 400 with `user signature missing or invalid` | Strict mode (`require_user_sig: true`) rejected the inbound UserOp | Wallet must stamp a valid user-side signature over `Transaction::UserOp(user_op).signing_message(chain_id)` BEFORE posting to `/sponsor`. The signed message must include `paymaster = <this paymaster's address>`. See `wallet::paymaster::sign_user_op_as_sender` for the canonical helper |
+| `/sponsor` returns 429 `rate limited` | Per-sender token bucket exhausted | Wallet should back off (default refill is 5 sponsorships/sec). Operators can tune via `--per-sender-rps` / `--per-sender-burst` or disable with `--per-sender-rps 0` |
+| `/sponsor` returns 503 `paymaster IO` | Disk full / nonce file unwritable | Free disk; check filesystem permissions on the nonce file's parent directory |
 | Chain rejects every UserOp with `InvalidNonce { expected: N, got: M }` | `paymaster_nonce` file desynced from chain state | Stop service, query chain `account.nonce` for paymaster address, write that value into the nonce file, restart |
 | Chain rejects with `paymaster_signature verification failed` | `--chain-id` doesn't match the chain's chain_id | Restart service with the correct chain-id |
 | Chain rejects with `does not derive to paymaster address` | Wallet stamped a wrong `paymaster` address | Wallet should leave `paymaster: None` on /sponsor and let the service fill it in (the service overwrites regardless) |

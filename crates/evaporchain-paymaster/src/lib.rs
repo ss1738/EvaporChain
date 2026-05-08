@@ -36,11 +36,13 @@
 //!   `verify_tx_signature`, costing the paymaster the gas it just
 //!   sponsored — which is paymaster-side risk, not consensus risk).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use evaporchain_crypto::signatures::{HybridKeypair, Signer};
-use evaporchain_types::{AccountAddress, UserOpTx};
+use evaporchain_crypto::signatures::{HybridKeypair, HybridVerifier, Signer, Verifier};
+use evaporchain_types::{AccountAddress, Transaction, UserOpTx};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -57,6 +59,18 @@ pub enum PaymasterError {
     NonceParse(String),
     #[error("keypair file IO: {0}")]
     KeypairIo(String),
+    /// Spam-signing hardening per `docs/runbooks/paymaster.md` §Threat:
+    /// spam-signing. A malformed user signature on the inbound UserOp
+    /// would cost the paymaster gas at execute time for a tx the chain
+    /// rejects — so we pre-validate when `require_user_sig: true` (the
+    /// production default).
+    #[error("user signature missing or invalid (require_user_sig is enabled)")]
+    InvalidUserSignature,
+    /// Per-`UserOp.sender` token-bucket rate limit hit. The wallet
+    /// should back off and retry; the paymaster will not sign another
+    /// sponsorship for this sender until the bucket refills.
+    #[error("per-sender rate limit exceeded for sender 0x{sender_hex}")]
+    RateLimited { sender_hex: String },
 }
 
 /// JSON request body POSTed to `/sponsor`. The wallet builds the body
@@ -89,6 +103,133 @@ pub struct PaymasterInfo {
     pub chain_id: String,
 }
 
+/// Hardening knobs the operator can flip per deployment. Defaults
+/// match the production-safe profile recommended in
+/// `docs/runbooks/paymaster.md` §Threat: spam-signing — strict in
+/// prod, relaxed for testnet / debug if desired.
+#[derive(Debug, Clone)]
+pub struct PaymasterConfig {
+    /// Verify the user-side signature on the inbound `UserOpTx`
+    /// before signing sponsorship. Closes the spam-drain attack
+    /// where a bad-actor wallet floods `/sponsor` with malformed
+    /// UserOps that the chain will reject (charging the paymaster
+    /// gas for nothing). Default `true` — disable only for testnet
+    /// experiments where wallets are still wiring their signing
+    /// path.
+    pub require_user_sig: bool,
+    /// Per-`UserOp.sender` token-bucket replenish rate, in
+    /// sponsorships per second. `0.0` disables the rate limiter
+    /// (every request gets through). Default `5.0` — adequate for
+    /// normal wallet behaviour, throttles a single account that
+    /// tries to flood the paymaster.
+    pub per_sender_rps: f64,
+    /// Per-sender burst: max sponsorships a fresh sender can
+    /// allocate before the bucket starts throttling. Default `10`.
+    pub per_sender_burst: u32,
+}
+
+impl Default for PaymasterConfig {
+    fn default() -> Self {
+        Self {
+            require_user_sig: true,
+            per_sender_rps: 5.0,
+            per_sender_burst: 10,
+        }
+    }
+}
+
+impl PaymasterConfig {
+    /// Permissive profile for testnet / dev — disables both the
+    /// user-sig pre-check and the rate limiter. Do NOT use in prod.
+    pub fn permissive() -> Self {
+        Self {
+            require_user_sig: false,
+            per_sender_rps: 0.0,
+            per_sender_burst: 0,
+        }
+    }
+}
+
+/// Token-bucket rate limiter, keyed by `UserOp.sender`. Buckets
+/// refill at `per_sender_rps` tokens per second up to
+/// `per_sender_burst`. A sponsor request consumes one token; if the
+/// bucket is empty, the request is rejected.
+///
+/// Garbage collection: on every check, buckets that have been full
+/// (i.e., idle) for `IDLE_GC_THRESHOLD` get pruned. Bounds the
+/// HashMap size proportional to active senders, not historical
+/// total.
+struct RateLimiter {
+    buckets: HashMap<AccountAddress, Bucket>,
+    rps: f64,
+    burst: u32,
+    last_gc: Instant,
+}
+
+#[derive(Clone, Copy)]
+struct Bucket {
+    tokens: f64,
+    last_refill: Instant,
+}
+
+const IDLE_GC_THRESHOLD: Duration = Duration::from_secs(600);
+const GC_INTERVAL: Duration = Duration::from_secs(60);
+
+impl RateLimiter {
+    fn new(rps: f64, burst: u32) -> Self {
+        Self {
+            buckets: HashMap::new(),
+            rps,
+            burst,
+            last_gc: Instant::now(),
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.rps > 0.0 && self.burst > 0
+    }
+
+    /// Try to consume one token for `sender`. Returns `true` if
+    /// allowed, `false` if rate-limited.
+    fn try_consume(&mut self, sender: AccountAddress) -> bool {
+        if !self.enabled() {
+            return true;
+        }
+        let now = Instant::now();
+        if now.duration_since(self.last_gc) >= GC_INTERVAL {
+            self.gc(now);
+            self.last_gc = now;
+        }
+        let burst = self.burst as f64;
+        let bucket = self.buckets.entry(sender).or_insert(Bucket {
+            tokens: burst,
+            last_refill: now,
+        });
+        let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
+        bucket.tokens = (bucket.tokens + elapsed * self.rps).min(burst);
+        bucket.last_refill = now;
+        if bucket.tokens >= 1.0 {
+            bucket.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn gc(&mut self, now: Instant) {
+        let burst = self.burst as f64;
+        self.buckets.retain(|_, b| {
+            // A bucket that's idle long enough — i.e., its tokens
+            // have refilled to the cap and it hasn't been touched —
+            // is safe to drop. Re-creating it on next request gives
+            // the sender a fresh-cap bucket, which matches what GC-
+            // dropping then re-creating would produce anyway.
+            let idle = now.duration_since(b.last_refill);
+            idle < IDLE_GC_THRESHOLD || b.tokens < burst
+        });
+    }
+}
+
 /// Long-lived state held by a paymaster service.
 ///
 /// Wraps the keypair, derives the paymaster's account address from
@@ -101,6 +242,8 @@ pub struct Paymaster {
     address: AccountAddress,
     chain_id: String,
     nonce_state: Arc<Mutex<NonceState>>,
+    config: PaymasterConfig,
+    rate_limiter: Arc<Mutex<RateLimiter>>,
 }
 
 struct NonceState {
@@ -109,19 +252,36 @@ struct NonceState {
 }
 
 impl Paymaster {
-    /// Build a paymaster from an in-memory keypair. The caller is
-    /// responsible for keeping the keypair file-permissioned — a
-    /// leaked keypair lets anyone drain the paymaster's balance up to
-    /// its on-chain nonce-allocation horizon.
+    /// Build a paymaster from an in-memory keypair with default
+    /// hardening (`require_user_sig: true`, `per_sender_rps: 5.0`,
+    /// `per_sender_burst: 10`). The caller is responsible for keeping
+    /// the keypair file-permissioned — a leaked keypair lets anyone
+    /// drain the paymaster's balance up to its on-chain
+    /// nonce-allocation horizon.
     pub fn new(
         keypair: HybridKeypair,
         chain_id: impl Into<String>,
         nonce_file: impl Into<PathBuf>,
     ) -> Result<Self, PaymasterError> {
+        Self::new_with_config(keypair, chain_id, nonce_file, PaymasterConfig::default())
+    }
+
+    /// Build a paymaster with explicit hardening config. Use
+    /// `PaymasterConfig::permissive()` for testnet / dev profiles
+    /// where wallets are still wiring their signing path. Production
+    /// deployments should stick with `PaymasterConfig::default()`.
+    pub fn new_with_config(
+        keypair: HybridKeypair,
+        chain_id: impl Into<String>,
+        nonce_file: impl Into<PathBuf>,
+        config: PaymasterConfig,
+    ) -> Result<Self, PaymasterError> {
         let pk = keypair.public_key_bytes();
         let address: AccountAddress = *blake3::hash(&pk).as_bytes();
         let nonce_file: PathBuf = nonce_file.into();
         let next = load_nonce(&nonce_file)?;
+        let rate_limiter =
+            RateLimiter::new(config.per_sender_rps, config.per_sender_burst);
         Ok(Self {
             keypair,
             address,
@@ -130,6 +290,8 @@ impl Paymaster {
                 next,
                 file: nonce_file,
             })),
+            config,
+            rate_limiter: Arc::new(Mutex::new(rate_limiter)),
         })
     }
 
@@ -163,6 +325,53 @@ impl Paymaster {
     pub fn sponsor(&self, user_op: &mut UserOpTx) -> Result<u64, PaymasterError> {
         if user_op.paymaster_signature.is_some() {
             return Err(PaymasterError::AlreadySigned);
+        }
+
+        // Day 7 hardening — per-sender rate limit. Done BEFORE the
+        // user-sig check + nonce allocation so a flooding sender
+        // doesn't pay our verification CPU either, only their own
+        // bucket arithmetic.
+        {
+            let mut limiter = self.rate_limiter.lock().expect("rate-limiter mutex");
+            if !limiter.try_consume(user_op.sender) {
+                return Err(PaymasterError::RateLimited {
+                    sender_hex: hex::encode(user_op.sender),
+                });
+            }
+        }
+
+        // Stamp `paymaster` BEFORE the user-sig check so the canonical
+        // message we verify against matches what the chain will
+        // verify against post-sponsor. Overwriting any stale value
+        // is intentional: a wallet that pre-stamped `paymaster` did
+        // so to commit to THIS paymaster (its address); if the
+        // pre-stamped value differs from `self.address`, the
+        // overwrite invalidates the user sig and we reject below —
+        // protecting against a wallet that signed for a different
+        // paymaster. We do NOT stamp `paymaster_nonce` here; that's
+        // allocated only after the user-sig check passes, so a
+        // rejected request doesn't burn a nonce.
+        user_op.paymaster = Some(self.address);
+
+        // Day 7 hardening — pre-validate the user-side signature.
+        // The chain rejects a UserOp with a bad user sig at execute
+        // time, but by then the paymaster has already paid gas. We
+        // verify here under the SAME canonical message the chain
+        // uses (`Transaction::UserOp(user_op).signing_message(chain_id)`)
+        // — a passing check means the chain will also accept.
+        if self.config.require_user_sig {
+            let sig = user_op
+                .signature
+                .as_deref()
+                .ok_or(PaymasterError::InvalidUserSignature)?;
+            let pk = user_op
+                .public_key
+                .as_deref()
+                .ok_or(PaymasterError::InvalidUserSignature)?;
+            let canonical = Transaction::UserOp(user_op.clone()).signing_message(&self.chain_id);
+            if !HybridVerifier::verify(&canonical, sig, pk) {
+                return Err(PaymasterError::InvalidUserSignature);
+            }
         }
 
         let mut state = self.nonce_state.lock().expect("nonce mutex");
@@ -304,9 +513,14 @@ mod tests {
     use tempfile::TempDir;
 
     fn fresh_paymaster(tmp: &TempDir, chain_id: &str) -> Paymaster {
+        // Existing tests pre-date the Day 7 hardening — they exercise
+        // nonce monotonicity, persistence, sponsor stamping, etc. and
+        // don't construct user-signed UserOps. Use the permissive
+        // profile so they still test what they intend to.
         let kp = HybridKeypair::generate();
         let nonce_file = tmp.path().join("paymaster_nonce");
-        Paymaster::new(kp, chain_id, nonce_file).expect("paymaster")
+        Paymaster::new_with_config(kp, chain_id, nonce_file, PaymasterConfig::permissive())
+            .expect("paymaster")
     }
 
     #[test]
@@ -360,7 +574,13 @@ mod tests {
             // `Paymaster::new` consumes it; we don't call `new` twice
             // with the same kp here — the persistence test only cares
             // about the nonce counter.
-            let pm = Paymaster::new(kp, "test", &nonce_file).unwrap();
+            let pm = Paymaster::new_with_config(
+                kp,
+                "test",
+                &nonce_file,
+                PaymasterConfig::permissive(),
+            )
+            .unwrap();
             pm.sponsor(&mut blank_user_op()).unwrap();
             pm.sponsor(&mut blank_user_op()).unwrap();
             assert_eq!(pm.next_paymaster_nonce(), 2);
@@ -371,7 +591,13 @@ mod tests {
         // Sanity: regenerating gives a different pk (so it's a real
         // restart-with-new-key scenario).
         assert_ne!(pk_bytes, kp2.public_key_bytes());
-        let pm2 = Paymaster::new(kp2, "test", &nonce_file).unwrap();
+        let pm2 = Paymaster::new_with_config(
+            kp2,
+            "test",
+            &nonce_file,
+            PaymasterConfig::permissive(),
+        )
+        .unwrap();
         assert_eq!(pm2.next_paymaster_nonce(), 2);
     }
 
@@ -453,5 +679,204 @@ mod tests {
             signature: None,
             public_key: None,
         }
+    }
+
+    // ─── Day 7: spam-signing hardening tests ──────────────────────────
+
+    /// Build a paymaster with default (strict) config — require_user_sig
+    /// = true + per_sender_rps = 5.0 + per_sender_burst = 10.
+    fn strict_paymaster(tmp: &TempDir, chain_id: &str) -> Paymaster {
+        let kp = HybridKeypair::generate();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        Paymaster::new(kp, chain_id, nonce_file).expect("paymaster")
+    }
+
+    /// Build a UserOp with a valid user-side signature stamped over
+    /// the canonical message the chain (and now the paymaster) check
+    /// against. Returns (UserOp, user_keypair) so callers can mutate
+    /// + re-sign for tampering tests.
+    fn user_signed_user_op_for(
+        pm: &Paymaster,
+        sender_byte: u8,
+    ) -> (UserOpTx, HybridKeypair) {
+        let user_kp = HybridKeypair::generate();
+        let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+        let _ = sender_byte; // sender derived from key; param kept for tests that may want a fixed slot
+        let mut user_op = UserOpTx {
+            sender,
+            nonce: 0,
+            call_data: vec![],
+            call_gas_limit: 1000,
+            // Wallet pre-stamps paymaster so the user sig commits to it;
+            // the paymaster will overwrite this to its own address before
+            // the user-sig check, so the value MUST already match.
+            paymaster: Some(pm.address()),
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+        let canonical = Transaction::UserOp(user_op.clone()).signing_message(pm.chain_id());
+        user_op.signature = Some(user_kp.sign(&canonical));
+        user_op.public_key = Some(user_kp.public_key_bytes());
+        (user_op, user_kp)
+    }
+
+    #[test]
+    fn strict_mode_rejects_userop_without_user_signature() {
+        // require_user_sig = true; UserOp with signature = None gets
+        // rejected before the paymaster spends its sponsorship sig.
+        let tmp = TempDir::new().unwrap();
+        let pm = strict_paymaster(&tmp, "test");
+        let mut user_op = blank_user_op();
+        let r = pm.sponsor(&mut user_op);
+        assert!(matches!(r, Err(PaymasterError::InvalidUserSignature)));
+        // Counter NOT advanced — rejected before nonce allocation.
+        assert_eq!(pm.next_paymaster_nonce(), 0);
+    }
+
+    #[test]
+    fn strict_mode_rejects_userop_with_invalid_user_signature() {
+        // Wallet attempts to flood `/sponsor` with bad sigs; paymaster
+        // catches it pre-allocation.
+        let tmp = TempDir::new().unwrap();
+        let pm = strict_paymaster(&tmp, "test");
+        let mut user_op = blank_user_op();
+        user_op.paymaster = Some(pm.address());
+        user_op.signature = Some(vec![0u8; 4001]); // bogus
+        user_op.public_key = Some(vec![0u8; 1986]); // wrong-shape pk
+        let r = pm.sponsor(&mut user_op);
+        assert!(matches!(r, Err(PaymasterError::InvalidUserSignature)));
+        assert_eq!(pm.next_paymaster_nonce(), 0);
+    }
+
+    #[test]
+    fn strict_mode_accepts_correctly_signed_userop() {
+        let tmp = TempDir::new().unwrap();
+        let pm = strict_paymaster(&tmp, "evaporchain-mainnet");
+        let (mut user_op, _) = user_signed_user_op_for(&pm, 1);
+        let assigned = pm.sponsor(&mut user_op).expect("strict-mode sponsor");
+        assert_eq!(assigned, 0);
+        assert!(user_op.paymaster_signature.is_some());
+    }
+
+    #[test]
+    fn strict_mode_rejects_user_signed_for_different_paymaster() {
+        // Wallet signs with paymaster = some-other-address, then
+        // tries to redirect to us. Our overwrite + user-sig check
+        // catches the redirect.
+        let tmp = TempDir::new().unwrap();
+        let pm = strict_paymaster(&tmp, "test");
+        let user_kp = HybridKeypair::generate();
+        let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+        let mut user_op = UserOpTx {
+            sender,
+            nonce: 0,
+            call_data: vec![],
+            call_gas_limit: 1000,
+            paymaster: Some([0xAA; 32]), // ← signed for a different paymaster
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+        let canonical = Transaction::UserOp(user_op.clone()).signing_message(pm.chain_id());
+        user_op.signature = Some(user_kp.sign(&canonical));
+        user_op.public_key = Some(user_kp.public_key_bytes());
+
+        let r = pm.sponsor(&mut user_op);
+        assert!(matches!(r, Err(PaymasterError::InvalidUserSignature)));
+    }
+
+    #[test]
+    fn rate_limiter_throttles_after_burst_exceeded() {
+        // Burst = 3, rps = 0 (no replenishment) — first 3 sponsors
+        // succeed, the 4th hits RateLimited.
+        let tmp = TempDir::new().unwrap();
+        let kp = HybridKeypair::generate();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.000_001, // effectively zero refill in test window
+                per_sender_burst: 3,
+            },
+        )
+        .unwrap();
+
+        for i in 0..3 {
+            let mut uo = blank_user_op();
+            pm.sponsor(&mut uo).expect("first 3 succeed");
+            assert_eq!(pm.next_paymaster_nonce(), i + 1);
+        }
+        let mut uo4 = blank_user_op();
+        let r = pm.sponsor(&mut uo4);
+        assert!(matches!(r, Err(PaymasterError::RateLimited { .. })));
+        // Counter NOT advanced — rejected before nonce allocation.
+        assert_eq!(pm.next_paymaster_nonce(), 3);
+    }
+
+    #[test]
+    fn rate_limiter_keys_per_sender() {
+        // Rate limit hit on sender A doesn't affect sender B.
+        let tmp = TempDir::new().unwrap();
+        let kp = HybridKeypair::generate();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.000_001,
+                per_sender_burst: 1,
+            },
+        )
+        .unwrap();
+
+        // Sender A gets one through, then is throttled.
+        let mut a1 = blank_user_op();
+        a1.sender = [0xAA; 32];
+        pm.sponsor(&mut a1).unwrap();
+        let mut a2 = blank_user_op();
+        a2.sender = [0xAA; 32];
+        let r = pm.sponsor(&mut a2);
+        assert!(matches!(r, Err(PaymasterError::RateLimited { .. })));
+
+        // Sender B has its own bucket — gets through.
+        let mut b1 = blank_user_op();
+        b1.sender = [0xBB; 32];
+        pm.sponsor(&mut b1).expect("B's first sponsor allowed");
+    }
+
+    #[test]
+    fn rate_limit_disabled_when_rps_or_burst_is_zero() {
+        // per_sender_rps = 0.0 → limiter disabled regardless of burst.
+        let tmp = TempDir::new().unwrap();
+        let kp = HybridKeypair::generate();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 1,
+            },
+        )
+        .unwrap();
+        for _ in 0..50 {
+            let mut uo = blank_user_op();
+            pm.sponsor(&mut uo).expect("rate limit disabled");
+        }
+        assert_eq!(pm.next_paymaster_nonce(), 50);
     }
 }
