@@ -6648,32 +6648,15 @@ impl TendermintConsensus {
 
     /// Move to the next round within the same height.
     fn advance_round(&mut self) {
-        // TEMP DIAG: dump vote state when round advances
-        eprintln!(
-            "[DIAG] advance_round h={} r={} phase={:?} prevotes={} precommits={} proposed={}",
-            self.height,
-            self.round_state.round,
-            self.round_state.phase,
-            self.round_state.prevotes.len(),
-            self.round_state.precommits.len(),
-            self.round_state.proposed_block.is_some()
+        debug!(
+            height = self.height,
+            round = self.round_state.round,
+            phase = ?self.round_state.phase,
+            prevotes = self.round_state.prevotes.len(),
+            precommits = self.round_state.precommits.len(),
+            proposed = self.round_state.proposed_block.is_some(),
+            "advance_round"
         );
-        for (vid, h) in &self.round_state.precommits {
-            eprintln!(
-                "[DIAG]   precommit vid={} hash={}",
-                vid,
-                h.map(|hash| hex::encode(&hash[..4]))
-                    .unwrap_or_else(|| "nil".into())
-            );
-        }
-        for (vid, h) in &self.round_state.prevotes {
-            eprintln!(
-                "[DIAG]   prevote vid={} hash={}",
-                vid,
-                h.map(|hash| hex::encode(&hash[..4]))
-                    .unwrap_or_else(|| "nil".into())
-            );
-        }
         // ── Downtime Detection ──
         // If no proposal was received this round, the expected proposer missed.
         // Track consecutive misses and slash after threshold.
