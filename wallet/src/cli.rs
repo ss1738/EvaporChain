@@ -5213,6 +5213,49 @@ async fn cmd_paymaster(
     Ok(())
 }
 
+/// Day 12C — pre-flight check that the paymaster's policy (read
+/// from `/info`) accepts this intent. Runs BEFORE we prompt the user
+/// for their keystore password or hit the chain for the latest nonce
+/// — failing locally on a doomed request avoids three forms of
+/// wasted work: a password prompt, a chain RPC, and a paymaster
+/// round-trip.
+///
+/// Currently checks one thing: the paymaster's `allowed_inner_variants`
+/// against the variant we're about to wrap. The strict-mode user-sig
+/// requirement (`require_user_sig`) is implicitly satisfied by the
+/// fact that this CLI flow always signs the user side via
+/// `sign_user_op_as_sender`. The hybrid-keypair requirement is
+/// implicitly checked downstream in `unlock_hybrid_key` (which
+/// errors clearly if the active account is ML-DSA-only).
+fn pre_check_paymaster_policy(
+    info: &evaporchain_paymaster::PaymasterInfo,
+    inner: &evaporchain_types::Transaction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(ref allowed) = info.allowed_inner_variants {
+        let variant = match inner {
+            evaporchain_types::Transaction::Transfer(_) => "transfer",
+            evaporchain_types::Transaction::CallScript(_) => "call_script",
+            evaporchain_types::Transaction::CallContract(_) => "call_contract",
+            _ => {
+                return Err(format!(
+                    "this paymaster's policy lists only {allowed:?}; the requested \
+                     intent isn't a chain-sponsorable variant — pick a different paymaster",
+                )
+                .into())
+            }
+        };
+        if !allowed.iter().any(|s| s == variant) {
+            return Err(format!(
+                "this paymaster doesn't sponsor '{variant}' \
+                 (allowed: {allowed:?}). Pick a different paymaster, or use \
+                 a paymaster with a broader policy."
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 /// Shared sponsored-UserOp pipeline used by `Send`, `CallScript`,
 /// and `CallContract`. Steps:
 ///
@@ -5251,6 +5294,11 @@ async fn submit_sponsored_user_op(
             .map_err(|e| format!("paymaster /info returned bad address hex: {e}"))?;
         buf
     };
+
+    // Day 12C — pre-check the paymaster's policy against this intent
+    // BEFORE prompting for the keystore password or refreshing balance.
+    // Saves the user typing their password for a doomed sponsor request.
+    pre_check_paymaster_policy(&pm_info, &inner)?;
 
     let (_balance, sender_nonce) = mgr.refresh_balance(account_name).await?;
 
@@ -20959,5 +21007,94 @@ mod tests {
             }
             _ => panic!("expected Summary"),
         }
+    }
+
+    // ─── Day 12C: paymaster policy pre-check tests ───────────────────────
+
+    fn make_info(allowed: Option<Vec<&str>>) -> evaporchain_paymaster::PaymasterInfo {
+        evaporchain_paymaster::PaymasterInfo {
+            paymaster_address_hex: "00".repeat(32),
+            next_paymaster_nonce: 0,
+            chain_id: "test".into(),
+            require_user_sig: true,
+            per_sender_rps: 5.0,
+            per_sender_burst: 10,
+            audit_log_enabled: false,
+            allowed_inner_variants: allowed.map(|v| v.into_iter().map(String::from).collect()),
+            idempotency_max_keys: 1024,
+            idempotency_ttl_secs: 3600,
+        }
+    }
+
+    fn transfer() -> evaporchain_types::Transaction {
+        evaporchain_types::Transaction::Transfer(evaporchain_types::TransferTx {
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        })
+    }
+
+    fn call_script() -> evaporchain_types::Transaction {
+        evaporchain_types::Transaction::CallScript(evaporchain_types::CallScriptTx {
+            caller: [1u8; 32],
+            contract_id: 1,
+            method: "noop".into(),
+            args: "[]".into(),
+            epoch: 0,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    #[test]
+    fn pre_check_passes_when_paymaster_trusts_chain() {
+        // allowed_inner_variants: None → no narrowing; everything passes.
+        let info = make_info(None);
+        assert!(pre_check_paymaster_policy(&info, &transfer()).is_ok());
+        assert!(pre_check_paymaster_policy(&info, &call_script()).is_ok());
+    }
+
+    #[test]
+    fn pre_check_passes_when_intent_is_in_whitelist() {
+        let info = make_info(Some(vec!["transfer", "call_script"]));
+        assert!(pre_check_paymaster_policy(&info, &transfer()).is_ok());
+        assert!(pre_check_paymaster_policy(&info, &call_script()).is_ok());
+    }
+
+    #[test]
+    fn pre_check_rejects_intent_outside_whitelist() {
+        // Transfer-only paymaster; CallScript intent → reject.
+        let info = make_info(Some(vec!["transfer"]));
+        let r = pre_check_paymaster_policy(&info, &call_script());
+        assert!(r.is_err());
+        let msg = r.unwrap_err().to_string();
+        assert!(
+            msg.contains("call_script") && msg.contains("transfer"),
+            "error must name both the rejected variant and the allowed set: got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn pre_check_rejects_non_chain_sponsorable_intent_under_whitelist() {
+        // MultiSig isn't a chain-sponsorable variant; under a whitelist
+        // it should reject with a clear message about variant mismatch.
+        let info = make_info(Some(vec!["transfer"]));
+        let inner = evaporchain_types::Transaction::MultiSig(
+            evaporchain_types::MultiSigTx {
+                multisig_address: [1u8; 32],
+                threshold: 1,
+                signers: vec![],
+                inner_tx_bytes: vec![],
+                signatures: vec![],
+                public_keys: vec![],
+                nonce: 0,
+            },
+        );
+        let r = pre_check_paymaster_policy(&info, &inner);
+        assert!(r.is_err());
     }
 }
