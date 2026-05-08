@@ -10035,10 +10035,24 @@ async fn post_transfer(
     {
         let db = safe_lock(&state.db);
         if let Some(acct) = db.get_account(&from) {
-            if acct.balance < req.amount {
+            // Pre-check must include gas — the executor deducts
+            // GAS_TRANSFER (21,000) before applying the transfer, so a
+            // tx with `amount` requires `amount + GAS_TRANSFER` to
+            // succeed. Pre-fix this check passed at submission but the
+            // tx then failed at execution with "insufficient balance
+            // for gas: X/Y", confusing users (status flips
+            // accepted→rejected). See CHAIN_FINDINGS_2026_05_08.md
+            // finding #1 for the empirical surfacing.
+            let required = req
+                .amount
+                .saturating_add(evaporchain_execution::GAS_TRANSFER);
+            if acct.balance < required {
                 return Json(TxResultResponse {
                     success: false,
-                    message: format!("Insufficient balance: {} < {}", acct.balance, req.amount),
+                    message: format!(
+                        "Insufficient balance: {} < {} (amount {} + gas {})",
+                        acct.balance, required, req.amount, evaporchain_execution::GAS_TRANSFER
+                    ),
                     tx_hash: None,
                 });
             }
@@ -10158,10 +10172,18 @@ async fn post_delegate(
     {
         let db = safe_lock(&state.db);
         if let Some(acct) = db.get_account(&delegator) {
-            if acct.balance < req.amount {
+            // Include GAS_DELEGATE in the pre-check — see the
+            // /api/tx/transfer fix above for rationale.
+            let required = req
+                .amount
+                .saturating_add(evaporchain_execution::GAS_DELEGATE);
+            if acct.balance < required {
                 return Json(TxResultResponse {
                     success: false,
-                    message: format!("Insufficient balance: {} < {}", acct.balance, req.amount),
+                    message: format!(
+                        "Insufficient balance: {} < {} (amount {} + gas {})",
+                        acct.balance, required, req.amount, evaporchain_execution::GAS_DELEGATE
+                    ),
                     tx_hash: None,
                 });
             }

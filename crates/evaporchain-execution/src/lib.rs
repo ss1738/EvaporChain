@@ -287,33 +287,33 @@ pub trait ExecutionEngine: Send + Sync {
 }
 
 /// Gas cost constants for transaction types.
-pub(crate) const GAS_TRANSFER: u64 = 21_000;
-pub(crate) const GAS_CREATE_OBJECT_BASE: u64 = 50_000;
-pub(crate) const GAS_CREATE_OBJECT_PER_BYTE: u64 = 200;
-pub(crate) const GAS_REFRESH: u64 = 30_000;
-pub(crate) const GAS_DEPLOY_CONTRACT: u64 = 100_000;
-pub(crate) const GAS_CALL_CONTRACT: u64 = 40_000;
-pub(crate) const GAS_DEPLOY_SCRIPT: u64 = 150_000;
-pub(crate) const GAS_CALL_SCRIPT: u64 = 50_000;
-pub(crate) const GAS_VALIDATOR_STAKE: u64 = 50_000;
-pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
-pub(crate) const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
-pub(crate) const GAS_GOVERNANCE: u64 = 25_000;
-pub(crate) const GAS_MULTISIG: u64 = 50_000;
-pub(crate) const GAS_USER_OP: u64 = 30_000;
-pub(crate) const GAS_UPGRADE_CONTRACT: u64 = 100_000;
-pub(crate) const GAS_DELEGATE: u64 = 40_000;
-pub(crate) const GAS_UNDELEGATE: u64 = 40_000;
-pub(crate) const GAS_CLAIM_DELEGATION: u64 = 30_000;
+pub const GAS_TRANSFER: u64 = 21_000;
+pub const GAS_CREATE_OBJECT_BASE: u64 = 50_000;
+pub const GAS_CREATE_OBJECT_PER_BYTE: u64 = 200;
+pub const GAS_REFRESH: u64 = 30_000;
+pub const GAS_DEPLOY_CONTRACT: u64 = 100_000;
+pub const GAS_CALL_CONTRACT: u64 = 40_000;
+pub const GAS_DEPLOY_SCRIPT: u64 = 150_000;
+pub const GAS_CALL_SCRIPT: u64 = 50_000;
+pub const GAS_VALIDATOR_STAKE: u64 = 50_000;
+pub const GAS_VALIDATOR_EXIT: u64 = 30_000;
+pub const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
+pub const GAS_GOVERNANCE: u64 = 25_000;
+pub const GAS_MULTISIG: u64 = 50_000;
+pub const GAS_USER_OP: u64 = 30_000;
+pub const GAS_UPGRADE_CONTRACT: u64 = 100_000;
+pub const GAS_DELEGATE: u64 = 40_000;
+pub const GAS_UNDELEGATE: u64 = 40_000;
+pub const GAS_CLAIM_DELEGATION: u64 = 30_000;
 /// Crooks-MEV Phase 3.1 — protocol-issued refund tx. Two account
 /// touches (debit + credit). Set low because the proposer (not a
 /// user) pays — high gas would discourage proposers from settling
 /// observations they're contractually obligated to settle.
-pub(crate) const GAS_REFUND: u64 = 5_000;
+pub const GAS_REFUND: u64 = 5_000;
 /// BLS key rotation: covers two PoP-style verifications (old + new) plus
 /// the validator-set update. Higher than stake/exit because of the
 /// double signature check.
-pub(crate) const GAS_ROTATE_VALIDATOR_KEY: u64 = 80_000;
+pub const GAS_ROTATE_VALIDATOR_KEY: u64 = 80_000;
 
 /// Unbonding period: validators must wait this many epochs after exit before claiming stake.
 const UNBONDING_PERIOD_EPOCHS: u64 = 256;
