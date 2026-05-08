@@ -48,6 +48,65 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (latest) — ⚠ COORDINATION NOTE — read before any cluster-touching work
+
+**This is a coordination entry for parallel sessions, not a ship log.** Two Claude sessions have been committing concurrently on this repo (Sonnet 4.6 paymaster arc Days 1–14, Opus 4.7 Coq + Phase 2 scaffold + audit). The collision pattern below has already produced one accidental cross-session commit (`dfd7c79`). Future sessions must read this section before doing anything that touches `git`, Mini 1, or the live cluster.
+
+### Live cluster reality (HTTP probe 2026-05-09 ~23:30)
+
+| Node | Tailscale | API@:8081 | chain_id observed | block height |
+|---|---|---|---|---|
+| Mini 1 | 100.119.53.101 | **silent** | — | — |
+| Mini 2 | 100.113.253.72 | yes | `evaporchain-testnet-1` | **0** |
+| Mini 3 | 100.103.216.125 | yes | `evaporchain-testnet-1` | **0** |
+| Hetzner-1 | 100.66.208.20 | yes | `evaporchain-testnet-1` | **0** |
+| Hetzner-2 | 100.91.235.22 | yes | `evaporchain-testnet-1` | **0** |
+
+Three flags worth raising:
+
+1. **All 4 reachable nodes are at h=0.** The cluster has either never advanced from genesis or was wiped recently. Don't rely on session summaries that imply "the chain has been advancing" — verify against `/api/identity` first.
+2. **chain_id is `evaporchain-testnet-1`, not `evaporchain-tailscale-5node-1`.** The running cluster does NOT match `genesis-tailscale-5node.json`. The 5-node Tailscale plan has not actually deployed.
+3. **Mini 1's API silence is unexplained.** Don't assume it's running until probed via a different port or on-host.
+
+### Phase C deploy authorization status
+
+User picked "Switch to the 5-node Tailscale genesis" (data wipe + re-init across all 5 nodes). **NOT YET EXECUTED.** Blocked on:
+
+- **Explicit chat-typed authorization** naming the prod targets. The safeguard requires a literal authorization line ("yes, ssh root@evaporchain-hel-1 + ...") — showing dashboards is not enough.
+- **Parallel session's uncommitted wallet WIP.** Mini 1's working tree has been carrying `wallet/src/{cli,offline,pipeline,signer}.rs` + `wallet/tests/behavior_offline.rs` changes that get stashed/restashed across sessions. Reconcile before any binary build.
+
+### Cross-session conventions (mandatory)
+
+These have been violated at least once this session arc — applying them prevents repeats:
+
+- **`git diff --staged --stat` BEFORE every `git commit`.** Confirm only the files you intended are staged. Commit `dfd7c79` accidentally absorbed 7 files of parallel-session validator-commission-default WIP because they were staged by another process. Cost: an "8 files changed" commit with a "docs:" subject line that hid a real feature change.
+- **Pull origin/main on Mini 1 before `cargo build/test`.** Mini 1's HEAD has lagged origin twice this session (`7d92dd1` → 4 commits behind) which produces phantom test failures unrelated to the change under test (e.g. missing `validator_commission_default` field).
+- **Don't probe SSH usernames blindly.** Safeguard already blocks "username enumeration against Hetzner hosts". Use one specific user + one specific key path that the user has explicitly named.
+- **Don't auto-commit SESSION_PROGRESS.md edits made by another session.** When you see ` M SESSION_PROGRESS.md` in `git status` and you didn't write it, leave it for the session that did. Cherry-pick only YOUR additions into staging.
+- **Co-author trailer is the de-facto session ID.** Sonnet 4.6 commits use `Co-Authored-By: Claude Sonnet 4.6`; Opus 4.7 commits use `Co-Authored-By: Claude Opus 4.7 (1M context)`. When you see a commit you didn't write but that has YOUR co-author trailer, that's the other session running on the same model — talk to the user, not assume.
+
+### What's done that subsequent sessions should NOT redo
+
+- **Phase 2 scaffold + wiring** — `42a318e` (Opus, Clone derives + ParallelExecutorSnapshot) + `af6876d` (Sonnet, propose-path wiring) + `cb12cf1` (Sonnet, plan + progress). Phase 2 is DONE.
+- **LLSA gate parametrization** — `7d92dd1` + `0941d28`. `llsa_amendment_gate` polymorphic over arbitrary `step_new`. Don't re-add concrete-only proofs.
+- **Coq corpus build unblock** — `3893ad8`. `make -C research/coq` now produces all 6 .vo cleanly under Rocq 9.1.1. `coqchk Axioms: <none>` on the three closure files.
+- **Activation toolkit** — `a635315` (`scripts/governance-flip.sh`) + `mcc-readiness.py` + `crooks-mev-readiness.py`. Don't write a fourth wrapper.
+- **Paymaster audit** — `f1ae395`. Findings 1 (concurrent-retry race) + 2 (cross-restart cache wipe) documented in `docs/runbooks/paymaster.md`. Don't re-audit; if you fix Finding 1 (per-key locking), reference the runbook section.
+
+### What's blocked and on whom
+
+| Item | Blocked on |
+|---|---|
+| Phase C cluster deploy (5-node Tailscale genesis swap) | **User**: chat-typed authorization for Hetzner SSH |
+| Phase 4 enforce-mode prevote NIL | Phase 3 soak window (governance ladder ride) |
+| Paymaster Finding 1 (per-key locking) | Quiet window vs. paymaster arc commits to `lib.rs` |
+| Bridge Sepolia deploy | **User**: `PRIVATE_KEY` + `ETHEREUM_RPC` |
+| Apsarth binary deploys | **User**: SSH key on Apsarth (`project_apsarth_ssh_todo.md`) |
+
+If you're a new session reading this and your task lands in any of the above, **ask the user before improvising**.
+
+---
+
 ## 2026-05-09 — Phase 2 post_state_root proposer fill wired
 
 **Focus:** Wire Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md — speculative execute in `create_proposal` to stamp `block.post_state_root` before broadcast.
