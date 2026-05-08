@@ -208,6 +208,10 @@ Note on `light_cone_block_count`: this is a windowed count of currently-retained
 
 Stop-the-world deploy procedure: see `docs/runbooks/cluster-deploy.md` — captures the macOS launchd race (`launchctl unload` BEFORE `pkill`), the systemd `Restart=on-failure` surprise (use a `.new` path during deploy), and recovery from a forked cluster via data-dir wipe + sync from peers.
 
+### Paymaster (gas sponsorship — Option B)
+
+`evaporchain-paymaster` is the off-chain service that signs sponsorship messages so wallets can submit `UserOpTx` transactions with someone other than the sender paying gas. Decision context: `docs/MULTI_TOKEN_GAS_OPTIONS.md` (Option B). Operator runbook: `docs/runbooks/paymaster.md` (key generation, deploy, live-cluster smoke, security, failure modes). E2E reference flow: `tests/integration/src/paymaster_e2e.rs`.
+
 ## Run Locally
 
 ```bash
