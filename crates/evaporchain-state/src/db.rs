@@ -391,10 +391,49 @@ pub struct InMemoryStateDB {
     sentinel_votes: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
     // Historical snapshots
     snapshots: BTreeMap<u64, HistoricalSnapshot>,
+    /// Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md — speculative
+    /// execute. The proposer calls `begin_batch` → `execute_block` →
+    /// `rollback_batch` to compute a post-state-root without
+    /// committing the mutation. RocksDB has had this since 2026-04;
+    /// InMemoryStateDB used the trait-default no-op until the
+    /// Phase 2 wiring at `tendermint.rs:6582-6592` made the gap
+    /// observable. Boxed so the resting-state size is one pointer,
+    /// not the full snapshot inline.
+    batch_snapshot: Option<Box<InMemoryBatchSnapshot>>,
+}
+
+/// Full-state snapshot taken on [`StateDB::begin_batch`] for
+/// in-memory backends. RocksDB uses an undo log + a `WriteBatch`
+/// that's discarded on rollback; in-memory has no transactional
+/// surface to revert against, so we just copy every mutable field
+/// and put it back on rollback. Memory cost: one InMemoryStateDB-
+/// equivalent for the duration of the simulation.
+struct InMemoryBatchSnapshot {
+    objects: HashMap<ObjectId, StateObject>,
+    ghosts: HashMap<ObjectId, GhostRecord>,
+    accounts: HashMap<AccountAddress, Account>,
+    trie: EnergyVerkleTrie,
+    dirty_objects: std::collections::HashSet<ObjectId>,
+    dirty_accounts: std::collections::HashSet<AccountAddress>,
+    note_tree_root: [u8; 32],
+    spent_nullifiers: std::collections::HashSet<[u8; 32]>,
+    shielded_pool_balance: u64,
+    note_count: u64,
+    note_commitments: BTreeMap<u64, [u8; 32]>,
+    last_rent_epoch: u64,
+    stakes: HashMap<u64, StakeRecord>,
+    delegations: HashMap<(AccountAddress, u64), DelegationRecord>,
+    proposals: HashMap<u64, GovernanceProposal>,
+    governance_params: HashMap<String, String>,
+    vesting_schedules: HashMap<u64, evaporchain_types::VestingSchedule>,
+    sentinel_params: BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
+    sentinel_votes: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
+    snapshots: BTreeMap<u64, HistoricalSnapshot>,
 }
 
 const MAX_SNAPSHOTS: usize = 256;
 
+#[derive(Clone)]
 struct HistoricalSnapshot {
     accounts: HashMap<AccountAddress, Account>,
     objects: HashMap<ObjectId, StateObject>,
@@ -423,6 +462,7 @@ impl InMemoryStateDB {
             sentinel_params: BTreeMap::new(),
             sentinel_votes: BTreeMap::new(),
             snapshots: BTreeMap::new(),
+            batch_snapshot: None,
         }
     }
 
@@ -840,6 +880,84 @@ impl StateDB for InMemoryStateDB {
     fn put_sentinel_votes(&mut self, parameter_id: u32, votes: Vec<evaporchain_sentinel::Vote>) {
         self.sentinel_votes.insert(parameter_id, votes);
     }
+
+    // ─── Batch (begin/commit/rollback) ───────────────────────────────
+    //
+    // Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md (wired at
+    // `tendermint.rs:6582-6592`) calls `begin_batch` →
+    // `execute_block` → `rollback_batch` to compute a post-state-root
+    // without committing the mutation. RocksDB has supported this
+    // since 2026-04 via per-write undo logging + WriteBatch
+    // discard. The trait's default no-op impl was acceptable when
+    // nothing speculative-executed against InMemoryStateDB; Phase 2
+    // changed that. Without these overrides, a proposer's
+    // speculative execute permanently mutates the in-memory state
+    // and the validator-path apply re-runs against an already-
+    // mutated DB, producing nonce / balance / MMR divergence.
+    //
+    // Approach: snapshot every mutable field on `begin_batch`,
+    // restore on `rollback_batch`. Memory cost: one InMemoryStateDB-
+    // equivalent for the duration of a simulation. No per-write
+    // tracking — simpler than RocksDB's undo log, fine for in-
+    // memory because we have no transactional surface to revert
+    // against.
+
+    fn begin_batch(&mut self) {
+        self.batch_snapshot = Some(Box::new(InMemoryBatchSnapshot {
+            objects: self.objects.clone(),
+            ghosts: self.ghosts.clone(),
+            accounts: self.accounts.clone(),
+            trie: self.trie.clone(),
+            dirty_objects: self.dirty_objects.clone(),
+            dirty_accounts: self.dirty_accounts.clone(),
+            note_tree_root: self.note_tree_root,
+            spent_nullifiers: self.spent_nullifiers.clone(),
+            shielded_pool_balance: self.shielded_pool_balance,
+            note_count: self.note_count,
+            note_commitments: self.note_commitments.clone(),
+            last_rent_epoch: self.last_rent_epoch,
+            stakes: self.stakes.clone(),
+            delegations: self.delegations.clone(),
+            proposals: self.proposals.clone(),
+            governance_params: self.governance_params.clone(),
+            vesting_schedules: self.vesting_schedules.clone(),
+            sentinel_params: self.sentinel_params.clone(),
+            sentinel_votes: self.sentinel_votes.clone(),
+            snapshots: self.snapshots.clone(),
+        }));
+    }
+
+    fn commit_batch(&mut self) -> Result<(), String> {
+        // Drop the snapshot — mutations already in self are now permanent.
+        self.batch_snapshot = None;
+        Ok(())
+    }
+
+    fn rollback_batch(&mut self) {
+        if let Some(snap) = self.batch_snapshot.take() {
+            self.objects = snap.objects;
+            self.ghosts = snap.ghosts;
+            self.accounts = snap.accounts;
+            self.trie = snap.trie;
+            self.dirty_objects = snap.dirty_objects;
+            self.dirty_accounts = snap.dirty_accounts;
+            self.note_tree_root = snap.note_tree_root;
+            self.spent_nullifiers = snap.spent_nullifiers;
+            self.shielded_pool_balance = snap.shielded_pool_balance;
+            self.note_count = snap.note_count;
+            self.note_commitments = snap.note_commitments;
+            self.last_rent_epoch = snap.last_rent_epoch;
+            self.stakes = snap.stakes;
+            self.delegations = snap.delegations;
+            self.proposals = snap.proposals;
+            self.governance_params = snap.governance_params;
+            self.vesting_schedules = snap.vesting_schedules;
+            self.sentinel_params = snap.sentinel_params;
+            self.sentinel_votes = snap.sentinel_votes;
+            self.snapshots = snap.snapshots;
+        }
+        // No snapshot active = no-op, mirroring RocksDB behaviour.
+    }
 }
 
 pub fn object_state_to_u8(s: &evaporchain_types::ObjectState) -> u8 {
@@ -1070,5 +1188,88 @@ mod tests {
         // monotonicity at their layer; this layer is just a kv).
         db.put_last_rent_epoch(13);
         assert_eq!(db.get_last_rent_epoch(), 13);
+    }
+
+    // ─── Phase 2 (POST_EXEC_STATE_VERIFICATION_PLAN.md) ──────────────
+    //
+    // Without these batch overrides, the proposer's speculative
+    // execute mutates the in-memory DB and the validator-path apply
+    // re-runs against an already-mutated state. RocksDB rollback
+    // works in prod; in-memory was the gap.
+
+    fn make_account(addr_byte: u8, balance: u64, nonce: u64) -> Account {
+        let mut a = Account::default();
+        a.address = [addr_byte; 32];
+        a.balance = balance;
+        a.nonce = nonce;
+        a
+    }
+
+    #[test]
+    fn batch_rollback_reverts_account_writes() {
+        let mut db = InMemoryStateDB::new();
+
+        // Pre-batch state: one account at balance 100.
+        let addr1 = [1u8; 32];
+        db.put_account(make_account(1, 100, 0));
+        assert_eq!(db.get_account(&addr1).unwrap().balance, 100);
+
+        // Begin a batch and mutate.
+        db.begin_batch();
+        db.put_account(make_account(1, 999, 5));
+        let addr2 = [2u8; 32];
+        db.put_account(make_account(2, 50, 0));
+        // Mid-batch, mutations are visible.
+        assert_eq!(db.get_account(&addr1).unwrap().balance, 999);
+        assert_eq!(db.get_account(&addr1).unwrap().nonce, 5);
+        assert_eq!(db.get_account(&addr2).unwrap().balance, 50);
+
+        // Rollback — both mutations must vanish.
+        db.rollback_batch();
+        assert_eq!(
+            db.get_account(&addr1).unwrap().balance,
+            100,
+            "rollback must restore pre-batch balance on existing account"
+        );
+        assert_eq!(
+            db.get_account(&addr1).unwrap().nonce,
+            0,
+            "rollback must restore pre-batch nonce"
+        );
+        assert!(
+            db.get_account(&addr2).is_none(),
+            "rollback must drop account that didn't exist pre-batch"
+        );
+    }
+
+    #[test]
+    fn batch_commit_keeps_writes() {
+        let mut db = InMemoryStateDB::new();
+        let addr = [3u8; 32];
+
+        db.begin_batch();
+        db.put_account(make_account(3, 777, 0));
+        let _ = db.commit_batch();
+
+        // Commit keeps mutations; rollback after commit is a no-op
+        // because the snapshot was dropped.
+        assert_eq!(db.get_account(&addr).unwrap().balance, 777);
+        db.rollback_batch();
+        assert_eq!(
+            db.get_account(&addr).unwrap().balance,
+            777,
+            "rollback after commit must be a no-op"
+        );
+    }
+
+    #[test]
+    fn batch_rollback_no_active_batch_is_noop() {
+        let mut db = InMemoryStateDB::new();
+        let addr = [4u8; 32];
+        db.put_account(make_account(4, 42, 0));
+
+        // Calling rollback without begin_batch must not corrupt state.
+        db.rollback_batch();
+        assert_eq!(db.get_account(&addr).unwrap().balance, 42);
     }
 }
