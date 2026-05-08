@@ -429,3 +429,83 @@ That ~$10-20 pre-launch sanity check is the **only** real-token expense in the e
 | Total real-token cost for full multi-token gas verification? | **$0 during verification.** Maybe $10-20 one-time pre-mainnet sanity check, optional. |
 
 The mechanism + concept verification IS the verification. Real tokens prove nothing about your code that synthetic tokens don't already prove. Buying tokens for verification is a category error — the chain doesn't see "real" vs "synthetic" tokens; it sees its own internal accounting.
+
+---
+
+## 10. "If I spend $10-20 anyway, what extra verification do I actually get?"
+
+Common follow-up question. Honest engineering answer: **near-zero technical value, possibly real psychological/stakeholder value.** Quantified below.
+
+### What $10-20 of real-money mainnet activity buys
+
+```
+~5-10 Ethereum mainnet transactions at current gas prices
+OR  ~$10 USDC for one cross-chain bridge test
+OR  ~3 priority-fee Solana transactions
+OR  a single Bitcoin mainnet transaction (~$2 in fees)
+```
+
+Total realistic budget: 3-5 real mainnet interactions before exhausting $20.
+
+### What those 3-5 txs would technically prove (over what testnet already proves)
+
+| Check | Value | Already covered by Sepolia? |
+|---|---|---|
+| Mainnet bridge contract address resolves | Useful sanity bit | Yes (testnet has the same shape) |
+| Indexer picks up the bridged event | Real-world Etherscan integration | Partial — testnet has Etherscan-Sepolia |
+| Wallet UX (MetaMask/Rabby) shows bridged balance | UX reality check | Partial — testnet wallets work the same |
+| Real network propagation | Gas-estimation accuracy | No — testnet gas dynamics differ |
+| MEV bot exposure | Adversarial reality | No — testnet has no real MEV bots |
+| Real liquidity behavior | Slippage realism | No — testnet liquidity is artificial |
+
+So 3 of 6 checks are genuinely "real-only" verifications. But:
+
+### Why those 3 don't move the dial at $10-20 scale
+
+1. **Gas-estimation accuracy** with one tx is a sample size of 1. You can't draw any conclusions about whether your gas estimator is calibrated correctly from a single observation. You'd need 50+ txs across different network-load conditions to characterise the estimator's accuracy.
+
+2. **MEV bot exposure** with one tx is statistically zero. Bots don't always strike. Sometimes they do, sometimes they don't. You need hundreds of txs over weeks before you can claim "we have MEV exposure data."
+
+3. **Real liquidity behavior** with $10 of capital can't move any pool's price meaningfully. You're testing against the calm surface of a deep pool — which behaves identically to a testnet's artificial liquidity for any swap that small.
+
+### The dead zone and the meaningful threshold
+
+```
+$0           synthetic + testnet — technically sufficient for verification
+$10-20       dead zone — psychological closure, not technical value
+$100-200     marginal real signal — maybe a few hours of bot exposure to observe
+$1000+       starts to surface adversarial reality (MEV, race conditions, real liquidity)
+$10K+        real external bug-bounty / red-team budget
+$50K+        professional external audit (the real money — already budgeted for in £100K sprint)
+```
+
+**$10-20 sits in the dead zone.** Too small to reveal real-world adversarial behavior, just enough to feel like "we did something real." If that psychological closure has value (e.g., lets you tell stakeholders "we tested on mainnet"), spend it. If you want actual technical signal, either commit $0 or skip to $1000+.
+
+### What the same $10-20 buys elsewhere with more impact
+
+| Alternative spend | What it produces |
+|---|---|
+| **$15 of extra Hetzner hours** | 24+ hours of additional cluster soak — exposes timing/race bugs that synthetic alone doesn't surface over short test runs |
+| **$15 to a freelance code reviewer** | One fresh pair of eyes on the paymaster crate; reviewer catches more bugs than $15 of test capital |
+| **$15 of bug-bounty seed** | Public bug bounty even at $15 attracts security researchers — the threshold to attention is "is there ANY money," not "how much" |
+| **$15 toward the external audit deposit** | The highest-leverage line item in the £100K sprint budget; bringing the audit forward by even days has compound value |
+
+### Concrete recommendation per timeline
+
+**Right now (May 2026):**
+- Spend $0. The 5-month sprint runway is the leverage; don't divert attention to mainnet sanity checks for code that will be different by the time mainnet lands.
+- If $20 is itching to be spent, move it to the audit deposit fund.
+
+**Pre-mainnet (Sep–Oct 2026, the final 2 weeks before genesis):**
+- Spend $10-20 ONCE for a single "we tested on mainnet" sanity bridge tx. By that point the code is ship-frozen, so the tx actually tests the launch-state.
+- Still psychological more than technical, but the code is no longer changing — so it's the only point at which the test is meaningful.
+
+**Post-launch (Oct 2026 onwards):**
+- Real users bring real tokens. Their txs are the sustained adversarial verification. You don't need to fund this yourself.
+- If you have a security/bug-bounty budget, $1000-5000 split across 5-10 reports surfaces real bugs.
+
+### Honest summary in one sentence
+
+> **For multi-token gas verification, $10-20 of real money buys you the psychological feeling of "we did one mainnet tx" — not a technical verification gain over the $0 path. Spend it on audit deposit fund or extra cluster soak hours instead.**
+
+This is the same answer that applies to verification of any consensus-adjacent feature, not just multi-token gas. Real-money verification is a binary in practice: either $0 (sufficient) or $1000+ (meaningful). The middle is dead zone.
