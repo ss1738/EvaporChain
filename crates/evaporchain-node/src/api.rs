@@ -141,6 +141,13 @@ pub struct ApiState {
     pub hbct_book: Arc<Mutex<evaporchain_hbct::HbctBook>>,
     /// Mock oracle feed for HBCT settlement attestations.
     pub hbct_oracle: Arc<Mutex<evaporchain_hbct::oracle::MockOracleFeed>>,
+    /// Singh Pool decay-aware xy=k AMM ledger. Per `evaporchain-cl-amm`,
+    /// each pool is energy-tagged: LP shares whose energy decays below
+    /// the pool's `energy_floor` cannot withdraw, structurally
+    /// disincentivising mercenary capital. Stage-1 wiring exposes
+    /// read-only state via `/api/pool/list` + `/api/pool/:id`; mint /
+    /// swap / withdraw mutators land in Stage 2.
+    pub singh_pools: Arc<Mutex<std::collections::BTreeMap<String, evaporchain_cl_amm::SinghPool>>>,
     /// Decay-Lamport energy-driven logical clock per §4.1 #3.
     /// Ticked from main.rs after each block by gas_used. Pure
     /// observability — chain still uses block.epoch as the
@@ -8044,6 +8051,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/patronage/immune",      category: "patronage", description: "Query eviction immunity and patronage_score for an object at an epoch.", example: Some("?object_id_hex=0101010101010101&epoch=1") },
 
     // HBCT launch wedge
+    ApiDocEntry { method: "GET",  path: "/api/pool/list",             category: "amm",  description: "List every Singh Pool's summary state (reserves, shares, fee_bp, energy_floor)", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/pool/:id",               category: "amm",  description: "Full state of a single Singh Pool. Returns {found:false} for unknown id.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/hbct/state",            category: "hbct", description: "HBCT book summary (entry count, total MWh, top positions)", example: None },
     ApiDocEntry { method: "POST", path: "/api/hbct/seed_demo",        category: "hbct", description: "Seed 8 realistic HBCT positions (GB BMUs + DE-LU)", example: None },
     ApiDocEntry { method: "POST", path: "/api/hbct/mint",             category: "hbct", description: "Mint a single HBCT position", example: Some(r#"{"delivery_location":"BMU-T_DRAXX-1","hour_slot":481248,"mwh_amount":250,"holder_hex":"…","issued_at_epoch":0}"#) },
@@ -12904,6 +12913,62 @@ async fn post_token_balance(
     )
 }
 
+// ──────────────────────────── Singh Pool AMM ────────────────────────────
+//
+// Decay-aware xy=k AMM, per `evaporchain-cl-amm`. LP shares carry an
+// energy tag — holders below the pool's `energy_floor` cannot withdraw,
+// structurally disincentivising mercenary-capital cycles. Stage-1
+// wiring (this section): read-only endpoints. Stage-2 will add
+// mint / swap / withdraw mutators.
+
+/// GET /api/pool/list — every Singh Pool's summary state.
+async fn get_pool_list(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    let pools = safe_lock(&state.singh_pools);
+    let entries: Vec<serde_json::Value> = pools
+        .iter()
+        .map(|(id, p)| {
+            serde_json::json!({
+                "id": id,
+                "reserve_x": p.reserve_x().to_string(),
+                "reserve_y": p.reserve_y().to_string(),
+                "k": p.k().to_string(),
+                "total_shares": p.total_shares().to_string(),
+                "fee_bp": p.fee_bp,
+                "energy_floor": p.energy_floor,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "count": entries.len(),
+        "pools": entries,
+    }))
+}
+
+/// GET /api/pool/:id — full state of a single Singh Pool, including
+/// the holder share table (capped at 100 entries for response size).
+async fn get_pool_detail(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let pools = safe_lock(&state.singh_pools);
+    let Some(pool) = pools.get(&id) else {
+        return Json(serde_json::json!({
+            "found": false,
+            "id": id,
+        }));
+    };
+    Json(serde_json::json!({
+        "found": true,
+        "id": id,
+        "reserve_x": pool.reserve_x().to_string(),
+        "reserve_y": pool.reserve_y().to_string(),
+        "k": pool.k().to_string(),
+        "total_shares": pool.total_shares().to_string(),
+        "fee_bp": pool.fee_bp,
+        "energy_floor": pool.energy_floor,
+    }))
+}
+
 // ──────────────────────────── Swap (CFM-priced) ─────────────────────────
 
 /// Swap fee in basis points (30 bps = 0.3 %).
@@ -16495,6 +16560,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/mortis_cert", get(get_mortis_cert))
         .route("/api/refresh_pool", get(get_refresh_pool))
         .route("/api/tombstone/:addr_hex", get(get_tombstone))
+        .route("/api/pool/list", get(get_pool_list))
+        .route("/api/pool/:id", get(get_pool_detail))
         .route("/api/hbct/state", get(get_hbct_state))
         .route("/api/hbct/seed_demo", post(post_hbct_seed_demo))
         .route("/api/hbct/mint", post(post_hbct_mint))

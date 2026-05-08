@@ -36,6 +36,7 @@ evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-oracle = { path = "../evaporchain-oracle" }
 evaporchain-hbct = { path = "../evaporchain-hbct" }
 evaporchain-hbct-elexon = { path = "../evaporchain-hbct-elexon" }
+evaporchain-cl-amm = { path = "../evaporchain-cl-amm" }
 evaporchain-sentinel = { path = "../evaporchain-sentinel" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
