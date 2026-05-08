@@ -4458,6 +4458,46 @@ async fn get_mev_observations(State(state): State<Arc<ApiState>>) -> Json<MevObs
     })
 }
 
+// ─────────── Crooks-MEV state digest endpoint ──────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct MevStateDigestResp {
+    pub digest: String,
+    pub observation_count: usize,
+    pub running_alongside_tendermint: bool,
+}
+
+/// GET /api/mev/state_digest — operator-facing cross-validator
+/// agreement check for Crooks-MEV. Returns the BLAKE3-domain-separated
+/// digest of `(observations, attacker_stats)` from
+/// `evaporchain_mev_detect::mev_state_digest`. Cluster operators
+/// `curl` this across all 5 validators and pattern-match the digests:
+/// divergence is the freeze-class signal for MEV-state disagreement.
+/// Pairs with `/api/light_cone/antichain_digest` (DAG state) as the
+/// second canonical inter-validator digest. Used by
+/// `scripts/crooks-mev-readiness.py` to gate the
+/// `crooks_mev_settlement_mode → enforce` flag flip on agreement.
+async fn get_mev_state_digest(State(state): State<Arc<ApiState>>) -> Json<MevStateDigestResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(MevStateDigestResp {
+                digest: "0".repeat(64),
+                observation_count: 0,
+                running_alongside_tendermint: false,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let digest = tc.mev_state_digest();
+    let count = tc.mev_observations().len();
+    Json(MevStateDigestResp {
+        digest: hex::encode(digest),
+        observation_count: count,
+        running_alongside_tendermint: true,
+    })
+}
+
 // ─────────── Crooks-MEV dispute endpoint (Phase 4.4) ───────────────
 
 #[derive(Debug, Deserialize)]
@@ -17833,6 +17873,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/lambda_fold/verify", post(post_lambda_fold_verify))
         // Crooks-MEV Phase 1.4 — observe-only MEV ring buffer view.
         .route("/api/mev/observations", get(get_mev_observations))
+        .route("/api/mev/state_digest", get(get_mev_state_digest))
         // Crooks-MEV Phase 4.4 — operator dispute endpoint.
         .route("/api/mev/dispute", post(post_mev_dispute))
         .route("/api/singh_attractor", post(post_singh_attractor))
