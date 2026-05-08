@@ -14111,6 +14111,119 @@ async fn get_admin_drain_status(
     }))
 }
 
+/// Body for `POST /api/admin/validator/reinstate` — re-add a validator
+/// that was auto-removed when its slashed stake fell below
+/// `MIN_STAKE` (`validator_set.rs:491`).
+///
+/// **Trust model**: this is an operator hatch gated by
+/// `EVAPORCHAIN_ADMIN_KEY`. The caller is responsible for verifying
+/// `bls_public_key_hex` against the genesis file out-of-band — the
+/// endpoint trusts the supplied key and sets `pop_verified = true`
+/// without re-checking the proof-of-possession (which the original
+/// genesis loader already validated). Useful for testnet/devnet
+/// recovery; production chains should drive this through governance.
+#[derive(Debug, serde::Deserialize)]
+pub struct ReinstateValidatorRequest {
+    pub validator_id: u64,
+    /// 32-byte validator address as hex (with or without `0x` prefix).
+    pub address_hex: String,
+    /// Initial stake to re-grant (must be >= chain `min_validator_stake`).
+    pub stake: u64,
+    /// 48-byte BLS12-381 compressed public key as hex.
+    pub bls_public_key_hex: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ReinstateValidatorResponse {
+    pub status: &'static str,
+    pub validator_id: u64,
+    pub stake: u64,
+    pub validators_after: usize,
+}
+
+/// `POST /api/admin/validator/reinstate` — operator-side undo of the
+/// stake-below-min auto-removal. Idempotent: returns `already_present`
+/// if the validator is already in the set.
+///
+/// Per-node call required: validator-set state is in-memory and lives
+/// inside each node's `TendermintConsensus`. To restore a 5-validator
+/// quorum, the operator must call this on every healthy peer with the
+/// same body — there's no governance broadcast yet.
+async fn post_admin_validator_reinstate(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(body): Json<ReinstateValidatorRequest>,
+) -> Result<Json<ReinstateValidatorResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let Some(tc_arc) = state.tendermint.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "validator reinstate unsupported in mock-consensus mode"
+            })),
+        ));
+    };
+
+    let address: [u8; 32] = parse_hex32(&body.address_hex).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("bad address_hex: {e}")
+            })),
+        )
+    })?;
+    let bls_pk = hex::decode(body.bls_public_key_hex.trim_start_matches("0x")).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("bad bls_public_key_hex: {e}")
+            })),
+        )
+    })?;
+    if bls_pk.len() != 48 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("bls_public_key must be 48 bytes (got {})", bls_pk.len())
+            })),
+        ));
+    }
+
+    let mut info = evaporchain_consensus::validator_set::ValidatorInfo::new(
+        body.validator_id,
+        body.stake,
+        address,
+    );
+    info.bls_public_key = Some(bls_pk);
+    // Operator vouches for the key; original genesis loader already
+    // validated the PoP. See trust-model note on the request struct.
+    info.pop_verified = true;
+
+    let added = {
+        let mut tc = safe_lock(tc_arc);
+        tc.reinstate_validator(info)
+    };
+    let validators_after = {
+        let tc = safe_lock(tc_arc);
+        tc.validator_set().validators().len()
+    };
+
+    tracing::warn!(
+        validator_id = body.validator_id,
+        stake = body.stake,
+        added,
+        validators_after,
+        "Admin re-instated validator"
+    );
+
+    Ok(Json(ReinstateValidatorResponse {
+        status: if added { "reinstated" } else { "already_present" },
+        validator_id: body.validator_id,
+        stake: body.stake,
+        validators_after,
+    }))
+}
+
 /// GET /metrics — Prometheus text exposition format for scraping.
 async fn get_prometheus_metrics(
     State(state): State<Arc<ApiState>>,
@@ -16579,6 +16692,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/admin/drain", post(post_admin_drain))
         .route("/api/admin/undrain", post(post_admin_undrain))
         .route("/api/admin/drain/status", get(get_admin_drain_status))
+        .route(
+            "/api/admin/validator/reinstate",
+            post(post_admin_validator_reinstate),
+        )
         // Nova Proofs / Light Client
         .route("/api/proof/latest", get(get_proof_latest))
         .route("/api/proof/status", get(get_proof_status))

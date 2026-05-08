@@ -3672,6 +3672,39 @@ impl TendermintConsensus {
         &self.validator_set
     }
 
+    /// Operator-side re-instatement of a validator that was
+    /// auto-removed by the slashing path (typically: stake fell below
+    /// `MIN_STAKE` after sustained downtime, see
+    /// `validator_set.rs:491`). This adds the validator back to the
+    /// in-memory active set with the supplied `ValidatorInfo`, resets
+    /// the slashing-counter state (`missed_proposals`, `missed_votes`),
+    /// and clears any DA-attestation rejections that were accumulating
+    /// because the validator id was previously unknown.
+    ///
+    /// **Trust model**: this is an admin / governance hatch — the
+    /// caller must verify the BLS public key out-of-band (e.g. against
+    /// the genesis file). `pop_verified` on the supplied info is
+    /// honoured as-given; for genesis-keyed validators the operator
+    /// should set `pop_verified = true` after locally verifying the
+    /// PoP (or supplying a fresh PoP signature). The endpoint that
+    /// drives this is gated by `EVAPORCHAIN_ADMIN_KEY` so only an
+    /// operator with that secret can call it.
+    ///
+    /// Returns `true` if the validator was newly added; `false` if
+    /// already present (idempotent).
+    pub fn reinstate_validator(&mut self, info: ValidatorInfo) -> bool {
+        let id = info.id;
+        if self.validator_set.get(id).is_some() {
+            return false;
+        }
+        let added = self.validator_set.add_validator(info);
+        if added {
+            self.missed_proposals.insert(id, 0);
+            self.missed_votes.insert(id, 0);
+        }
+        added
+    }
+
     /// Recent per-validator block-production timing samples, oldest
     /// first. Each entry is `(producer_id, exec_time_seconds)` and
     /// gets appended after every successful block commit; bounded by
