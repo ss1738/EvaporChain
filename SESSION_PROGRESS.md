@@ -48,6 +48,61 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-08 (evening) — 8-item bundle: tx-hash fix, eulogy wiring, TOKENOMICS §2.1+§2.2+§2.5, conservation observe-mode fix, MCP hardening
+
+**Focus:** ship a verified-but-undeployed bundle of 8 correctness/observability items. Verify on Mini 1; commit + push; defer cluster deploy to next session pending Hetzner SSH access.
+
+**Commits shipped:** 1 (`a6bc9df`). +383/-49 across 20 files.
+
+**Deliverables:**
+
+| # | Item | Files |
+|---|---|---|
+| 1 | Demo NFT/HEAT half-life 100 → 1000 | `node/main.rs` |
+| 2 | `compute_tx_hash` → `tx.tx_hash()` (canonical signing bytes) — closes "tx vanishes from `/api/tx/<hash>` after ring expiry" | `node/persistence.rs` |
+| 3 | Eulogy-trie wiring on every newly-evaporated object (matches §A2.5 "small deaths" doctrine) | `execution/lib.rs` |
+| 4 | TOKENOMICS §2.1: `process_block_rewards_v2` 60/40 proposer/attester split, dust to first attester, falls back to v1 when no attesters | `execution/rewards.rs`, `lib.rs`, `parallel.rs` |
+| 5 | TOKENOMICS §2.2: `commission_ppm` field on ValidatorInfo (serde-default 100_000 ppm = 10%) | `consensus-types/lib.rs` |
+| 6 | TOKENOMICS §2.5: `blocks_per_year` field + `apy_capped_reward` method on Tokenomics; v2 wires the cap. 4 genesis JSONs updated. | `types/genesis.rs`, `genesis-{mainnet,tailscale-3node,tailscale-5node,target}.json` |
+| 7 | Conservation §1.2 fix: `minted_this_block` credited into pre-block compartment snapshot before `audit_block_step` so DecayIncreasedTotal stops false-firing on legitimate minting | `execution/lib.rs` |
+| 8 | MCP hardening: 3 new validators (`validate_hex_id_field` w/ path-injection guard, tx-hash, block-height); 5 hardened tool handlers; auth default inverted (token present → require auth unless explicitly relaxed) | `mcp/{validation,tools,main}.rs` |
+
+Plus 4 backward-compat fixups for the new struct fields (Tokenomics × 5 literals, ValidatorInfo × 1, Block.post_state_root × 2 in integration tests, dfri-fs MOD_P import).
+
+**Empirical results:**
+
+- `cargo check --workspace` on Mini 1: green.
+- `cargo test --workspace --no-fail-fast` on Mini 1: only 4 pre-existing failures remain (`state_sync::test_snapshot_metadata_state_root_mismatch_rejected`, `state_sync::test_tip_discovery`, `state_sync::test_full_sync_flow_with_provider`, `cli::cli_snapshot_create_then_verify`). All 4 are in code untouched by this bundle — regressions from intermediate work between the 2026-05-02 baseline and HEAD. Bundle adds zero new failures.
+- Round 2 of the test suite (with my originally-flipped governance defaults) had 11 failures (7 from the flips + 4 pre-existing). Round 3 with the reverted defaults dropped to 4. Confirms the reverts.
+
+**Decisions made:**
+
+- **Doctrine-grade governance flag flips (antichain mempool, Nova IVC, conservation enforce) are NOT ridden in via default change.** The flips happen via `POST /api/governance/param` after a clean stop-the-world deploy, so the binary stays bit-compatible with a running cluster on default settings. Changing the defaults in code would hard-fork any running cluster on the next binary swap — verified via the `governance_flags_snapshot` API surface that returns effective values.
+- Demurrage threshold: my session's edit (raise to 100M EVP) was superseded by the better committed work in commit `7bdbfaf` (testnet 250k / mainnet 100M split with goldilocks calibration math). My edit not included in this bundle.
+- Conservation enforcement default kept at `"observe"` until in-cluster validation that `minted_this_block` credit fully nullifies DecayIncreasedTotal. Live testnet shows `last_conservation_audit_ok: false` with the violation discriminant unexposed — flipping to `"enforce"` blind would halt the chain.
+
+**Blockers / open questions:**
+
+- **Hetzner SSH access blocks Phase C cluster deploy.** Nodes 100.66.208.20 (`evaporchain-hel-1`) and 100.91.235.22 (`evaporchain-hel-2`) are not reachable for the operator account that has access to the 3 Minis. Stop-the-world is mandatory because `process_block_rewards_v2` changes block-reward distribution semantics — partial deploy would fork the chain. Operator must supply credentials.
+- **Cluster heightspread:** at probe time, 3 nodes lockstep at h~12700 (Mini 1 + 2 Hetzners), Mini 2 lagged 296 blocks, Mini 3 lagged 317 blocks (the val-1+val-3 organically tombstoned pair from 2026-05-08 afternoon). They should sync up once block production is steady.
+- **Deploy procedure unchanged:** `docs/runbooks/cluster-deploy.md` §3 stop-the-world. After deploy, post-deploy governance flips: `block_source_mode→antichain`, `lambda_fold_mode→nova`, then `conservation_enforcement→enforce` (in that order, with cluster observation between each).
+- **Tx-hash forward-only:** old tx receipts in chain_store keyed by JSON-byte hash will be unreachable from new binary lookups (which use canonical hash). Acceptable for testnet; mainnet would want a re-index migration.
+
+**What's next:**
+
+- Get Hetzner SSH credentials → run Phase C stop-the-world deploy on the 5-node cluster.
+- Post-deploy: governance-param tx flips for the three doctrine flags (with verification windows between).
+- Write tests for `process_block_rewards_v2` 60/40 split (currently exercised only via existing v1 fallback path; v2 split paths uncovered).
+
+**Cross-references:**
+
+- `CHANGELOG.md` 2026-05-08 (evening) — to be appended.
+- `docs/runbooks/cluster-deploy.md` — stop-the-world procedure.
+- Plan file `~/.claude-account-b/plans/glittery-jumping-cat.md` — verify+deploy strategy.
+- Commit `a6bc9df` — the bundle.
+
+---
+
 ## 2026-05-08 (afternoon) — death-is-final doctrine + Singh Pool API + decay observability
 
 **Focus:** ratchet the chain's namesake decay thesis from "substrate-shipped" to "empirically operational" across all 5 layers; fully wire Singh Pool AMM HTTP surface.
