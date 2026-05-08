@@ -48,6 +48,27 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (afternoon, continued #2) — governance-flip.sh wrapper
+
+**Focus:** close the loop on the activation-toolkit ladder so the operator runs ONE command per flag flip instead of three.
+
+**Commits shipped:** 1 (`a635315`).
+
+**Deliverables:**
+- `scripts/governance-flip.sh` (177 lines, executable) — wraps the existing `mcc-readiness.py` and `crooks-mev-readiness.py` into a single safe-by-default sequence. Captures current value (rollback hint) → runs the relevant readiness script (refuses if non-zero) → prints rollback command + prompts for explicit `yes` → POSTs `/api/governance/param` → polls `/api/governance/flags` until propagation observed (30 s timeout, 2 s interval). Distinct exit codes 0/1/2/3/4 map to success / readiness-rejected / operator-cancelled / curl-failed / propagation-timeout — scriptable in a wider activation pipeline. Auto-routes flag→readiness-script: `parent_acceptance_mode | block_source_mode | lambda_fold_mode | conservation_enforcement` → `mcc-readiness.py`; `crooks_mev_settlement_mode` → `crooks-mev-readiness.py`. Refuses unknown flags by design.
+- Replaces the previous manual sequence: `python3 scripts/mcc-readiness.py` + `curl -X POST .../api/governance/param ...` + `watch -n2 'curl ... /api/governance/flags | jq'` with rollback command typed up by the operator on a separate scratchpad.
+
+**What's next:**
+- Operator action: ride the 3-flag governance ladder via this wrapper once the cluster is back to lockstep on the post-bundle binary.
+- Phase C cluster deploy (still BLOCKED on Hetzner SSH credentials per `glittery-jumping-cat.md` plan).
+
+**Blockers / open questions:**
+- Hetzner SSH access still blocking the 5-node stop-the-world deploy.
+
+**Cross-references:** `scripts/governance-flip.sh`, `scripts/mcc-readiness.py`, `scripts/crooks-mev-readiness.py`, `docs/runbooks/doctrine-rollout-2026-05.md`
+
+---
+
 ## 2026-05-09 (afternoon, continued) — Phase 6 Sepolia deployment pipeline
 
 **Focus:** All contracts deploying in one shot; genesis-init calldata generation; operator env-var playbook.
