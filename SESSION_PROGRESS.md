@@ -48,6 +48,47 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (afternoon, continued #4) — Coq corpus build unblocked end-to-end
+
+**Focus:** while staging the §6b LLSA work I noticed `make` in `research/coq/` failed at `LazyEagerEquivalence.v` (the documented `aa540e7 "tactical blocker after 4 attempts"`). Investigated whether the blocker was substantive or just a rewrite-sequencing drift — turned out to be the latter, with two sibling drifts in `EvaporChainSafetyLiveness.v` blocking the rest of the build.
+
+**Commits shipped:** 1 (`3893ad8`).
+
+**Deliverables:**
+- `LazyEagerEquivalence.v` line 585 — `concrete_step_subadditive_cross_halving`. The `unfold ... at 1 2` was selecting LHS + RHS-outer (so `k mod h` from RHS-inner was still folded), making the subsequent `rewrite Hrem_k` fail. Coq counts occurrences left-to-right depth-first, so RHS-inner is occurrence 3, not 2. Switched to `at 1 3`. Inline comment documents the convention so the next person doesn't redo the trial-and-error.
+- `EvaporChainSafetyLiveness.v` `safety_preserved_under_state_unchanged` — added `rewrite Hdag.` to bridge the goal's `ss_dag s'` to the `ss_dag s` form that `Hsafe` produces. Without it the final `apply Hsafe` failed unification.
+- `EvaporChainSafetyLiveness.v` `SAFETY-COMMIT-RULE` (line 1318ff) — three sub-fixes: (a) `subst h_new. exfalso. apply Hne. rewrite <- Heq1, <- Heq2.` → `subst h_new. congruence.` (subst consumed Heq1, the rewrite couldn't find it); (b) two branches: `subst h_new. rewrite <- Heq1 in *.` → just `subst h_new.` (rewrite was redundant + broken); (c) Added `rewrite Hdag.` after `rewrite Hdag in Hb1, Hb2.` — same goal-bridging trick.
+- `EvaporChainSafetyLiveness.v` line 1473ish (third major branch) — `destruct ... ; subst.` was eating h1/h2, breaking the subsequent `apply (Hfresh h1 Hin1)`. Replaced with `destruct ... .` + manual `rewrite <- Heq in Heq_b. symmetry. exact Heq_b.` (the `symmetry` is needed because `Hfresh : b_hash b_new <> h1` expects the equation in the `b_hash b_new = h1` direction).
+
+**Empirical results (Mini 1, Rocq 9.1.1, OCaml 5.4.1):**
+- `make -C research/coq` — **clean build, 6/6 .vo files**.
+- `coqchk` per file:
+  | File | Axioms |
+  |---|---|
+  | `EnergyDecayMonotonicity` | **none** |
+  | `EnergyVerkleCompression` | 2 (intentional Parameters: `subtree_hash`, `compress_preserves_commitment`) |
+  | `PoHAFreeloading` | 6 (intentional probabilistic primitives: `s_positive`, `prob_zero`, `forge_cell_proof_prob`, `negligible_le`, `negligible_sum`, `k_positive`) |
+  | `LazyEagerEquivalence` | 5 (intentional abstract model: `energy`, `decay_step`, `half_life`, `decay_step_compose`, `decay_step_zero`) |
+  | `LLSAInvariantPreservation` | **none** |
+  | `EvaporChainSafetyLiveness` | **none** |
+- `grep -P "^\s*Admitted\." research/coq/*.v research/proofs/*.v` — **zero matches** across the entire corpus.
+
+**Decisions made:**
+- Distinguished intentional `Parameter`/`Axiom` declarations (abstract model surfaces — probabilistic primitives, abstract types with named properties) from unfinished `Admitted` proof obligations. Both report under `coqchk`'s `* Axioms:` section, but only the latter is a doctrine violation. The corpus has zero of the latter.
+- The `aa540e7` "tactical blocker after 4 attempts" turned out to be a sequencing/rewrite-direction issue, NOT a substantive proof gap. The integer-arithmetic core (`cross_halving_arith`, `nia`-discharged) was already correct since `cc22230`.
+
+**What's next:**
+- Operator-side: ride the activation ladder via `scripts/governance-flip.sh` once cluster is on the bundle binary.
+- Phase C cluster deploy (still BLOCKED on Hetzner SSH).
+
+**Blockers / open questions:**
+- None for the Coq corpus.
+- Hetzner SSH still blocking 5-node deploy.
+
+**Cross-references:** `research/coq/LazyEagerEquivalence.v` §`concrete_step_subadditive_cross_halving`, `research/proofs/EvaporChainSafetyLiveness.v` §`SAFETY-COMMIT-RULE`, prior attempt commits `cc22230` / `aa540e7` / `b9b10c7`
+
+---
+
 ## 2026-05-09 (afternoon, continued #3) — LLSA gate parametrized over arbitrary step_new
 
 **Focus:** close the `DOCTRINE_PUNCH_LIST.md` item "Parametrize `LLSAInvariantPreservation.v` over `step_new`" — today the gate proved invariant preservation for the *current* `RedirectStep`/`DecayStep`, not for an arbitrary new step relation supplied by an upgrade.

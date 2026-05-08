@@ -158,6 +158,7 @@ mod tests {
                 fee_burn_rate: 0.5,
                 staker_fee_share: 0.5,
                 target_staking_apy: 0.05,
+                validator_commission_default: Tokenomics::default_commission(),
                 max_supply_cap: None,
                 emission: None,
                 blocks_per_year: Tokenomics::default_blocks_per_year(),

@@ -317,7 +317,8 @@ impl RewardAccumulator {
             }
         }
 
-        // Fee distribution (unchanged — producer gets tokenomics share)
+        // Fee distribution — TOKENOMICS §2.2: validator commission applied to
+        // the staker pool before delegators receive their pro-rata share.
         if total_fees_collected > 0 {
             let dist = self.tokenomics.distribute_fees(total_fees_collected);
             self.total_burned = self.total_burned.saturating_add(dist.burned);
@@ -333,9 +334,32 @@ impl RewardAccumulator {
                 }
             }
             if dist.to_stakers > 0 {
-                self.pending_staker_rewards =
-                    self.pending_staker_rewards.saturating_add(dist.to_stakers);
-                self.total_to_stakers = self.total_to_stakers.saturating_add(dist.to_stakers);
+                // §2.2: split staker pool into delegator share + validator commission.
+                let (net_staker, commission) = self.tokenomics.split_staker_pool(dist.to_stakers);
+                // Validator commission goes to the producer (same tombstone logic).
+                if commission > 0 {
+                    if producer_alive {
+                        let acct = db.get_or_create_account(producer);
+                        acct.balance = acct.balance.saturating_add(commission);
+                        acct.last_touched_epoch = epoch;
+                        producer_credit += commission;
+                    } else if let Some(pool) = redirect_pool.as_deref_mut() {
+                        pool.accrue(
+                            DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
+                            commission,
+                            epoch,
+                        );
+                    }
+                    self.total_to_producers =
+                        self.total_to_producers.saturating_add(commission);
+                }
+                // Net delegator share goes to the pending staker rewards pool.
+                if net_staker > 0 {
+                    self.pending_staker_rewards =
+                        self.pending_staker_rewards.saturating_add(net_staker);
+                    self.total_to_stakers =
+                        self.total_to_stakers.saturating_add(net_staker);
+                }
             }
         }
 
@@ -463,6 +487,9 @@ mod tests {
             fee_burn_rate: 0.50,
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
+            // Zero commission keeps existing tests unaffected; §2.2 tests
+            // construct their own Tokenomics with the desired rate.
+            validator_commission_default: 0.0,
             max_supply_cap: None,
             emission: None,
             blocks_per_year: Tokenomics::default_blocks_per_year(),
@@ -847,5 +874,119 @@ mod tests {
         // 10 blocks × 100 reward + fee shares
         assert!(acc.total_minted >= 1000);
         assert!(db.get_account(&addr(1)).unwrap().balance > 1000);
+    }
+
+    // ── TOKENOMICS §2.2 validator commission tests ─────────────────────────
+
+    /// §2.2 happy path: 10% commission on the staker pool goes to the
+    /// producer; delegators receive the remaining 90%.
+    #[test]
+    fn test_commission_splits_staker_pool_v2() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0); // producer
+        fund(&mut db, 2, 0); // attester
+
+        let mut tk = test_tokenomics();
+        tk.validator_commission_default = 0.10; // 10% commission
+        let mut acc = RewardAccumulator::new(tk);
+
+        // 1000 fees: 500 burned, remaining 500 split:
+        //   50% staker_fee_share → 250 to staker pool
+        //   50% to producer directly (dist.to_producer) = 125
+        //   Wait: fee_burn_rate=0.5 → 500 burned.
+        //   Remaining 500: staker_fee_share=0.5 → 250 to stakers, 250 to producer.
+        //   Of 250 staker pool: 10% = 25 commission to producer, 225 to pending.
+        let credit = acc.process_block_rewards_v2(
+            &mut db,
+            &addr(1),
+            0,
+            1000, // total_fees
+            true,
+            None,
+            &[addr(2)],
+            100_000, // total_staked (large enough APY cap doesn't bite)
+        );
+        // Block reward (100) with 60/40 split (attester present): 60 to producer.
+        // + producer fee share: 250.
+        // + commission on staker pool: 25.
+        // Total producer credit = 60 + 250 + 25 = 335.
+        assert_eq!(credit, 335, "producer credit with 10% commission");
+        // Net staker pool: 250 - 25 = 225.
+        assert_eq!(acc.pending_staker_rewards, 225, "delegators get 90% of staker pool");
+        // Burned is independent of commission.
+        assert_eq!(acc.total_burned, 500);
+    }
+
+    /// §2.2 zero commission: backward-compat — staker pool flows unchanged.
+    #[test]
+    fn test_zero_commission_v2_matches_no_commission() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+
+        let mut tk = test_tokenomics();
+        tk.validator_commission_default = 0.0;
+        let mut acc = RewardAccumulator::new(tk);
+
+        acc.process_block_rewards_v2(
+            &mut db,
+            &addr(1),
+            0,
+            1000,
+            true,
+            None,
+            &[], // no attesters → 100% to proposer
+            0,   // total_staked=0 → APY cap bypassed
+        );
+        // 1000 fees: 500 burned, 250 to producer, 250 to stakers.
+        // Commission = 0 → pending staker = 250.
+        assert_eq!(acc.pending_staker_rewards, 250);
+        assert_eq!(acc.total_burned, 500);
+    }
+
+    /// §2.2 adversarial: commission > 100% is clamped — should never
+    /// credit more than the staker pool total.
+    #[test]
+    fn test_commission_clamp_prevents_overflow() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+
+        let mut tk = test_tokenomics();
+        // Deliberately out-of-bounds (caught by genesis validation, but
+        // split_staker_pool must still be safe).
+        tk.validator_commission_default = 2.0; // 200% — clamped to 100%
+        let (net, commission) = tk.split_staker_pool(500);
+        assert_eq!(commission, 500, "clamped to 100% → full pool is commission");
+        assert_eq!(net, 0, "delegators receive nothing at 100% commission");
+    }
+
+    /// §2.2 commission on dead producer: commission redirects to refresh
+    /// pool exactly like the producer fee share does.
+    #[test]
+    fn test_commission_redirects_when_producer_dead() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+
+        let mut tk = test_tokenomics();
+        tk.validator_commission_default = 0.10;
+        let mut acc = RewardAccumulator::new(tk);
+        let mut pool = RefreshPool::new();
+
+        // 1000 fees, producer dead.
+        // Burned=500; dist.to_producer=250 (dead→pool); staker pool=250.
+        // Commission 10% = 25 (dead→pool); net staker = 225.
+        let credit = acc.process_block_rewards_v2(
+            &mut db,
+            &addr(1),
+            0,
+            1000,
+            false,
+            Some(&mut pool),
+            &[],
+            0,
+        );
+        assert_eq!(credit, 0, "dead producer receives nothing");
+        // block_reward(100) + to_producer(250) + commission(25) = 375 redirected.
+        assert_eq!(pool.total_accrued(), 375, "all producer-bound amounts redirected");
+        assert_eq!(acc.pending_staker_rewards, 225, "net delegator share preserved");
     }
 }

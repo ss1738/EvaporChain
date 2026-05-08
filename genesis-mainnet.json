@@ -18,6 +18,7 @@
     "fee_burn_rate": 0.50,
     "staker_fee_share": 0.50,
     "target_staking_apy": 0.05,
+    "validator_commission_default": 0.10,
     "blocks_per_year": 15768000
   },
   "_genesis_time_note": "Aspirational target — set during ceremony per genesis-target.json Step 4. Do NOT use this date in production metrics.",

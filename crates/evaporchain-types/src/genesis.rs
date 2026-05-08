@@ -103,6 +103,14 @@ pub struct Tokenomics {
     /// TOKENOMICS §2.5 / Q21 ceremony decision 2026-05-08.
     pub target_staking_apy: f64,
 
+    /// Default validator commission rate (0.0 = no commission, 1.0 = 100%).
+    /// Applied to the staker pool before proportional distribution:
+    /// validator receives `commission × staker_pool`, delegators share the rest.
+    /// TOKENOMICS §2.2 / Q7. Default 0.10 (10%) — governance-adjustable per validator.
+    /// Backwards-compat: old genesis files without this field default to 0.10.
+    #[serde(default = "Tokenomics::default_commission")]
+    pub validator_commission_default: f64,
+
     /// Blocks produced per year at 2-second block time.
     /// Used by the APY cap controller. Default: 15_768_000 (2s blocks).
     #[serde(default = "Tokenomics::default_blocks_per_year")]
@@ -140,6 +148,7 @@ impl Default for Tokenomics {
             fee_burn_rate: 0.50,
             staker_fee_share: 0.50,
             target_staking_apy: 0.05,
+            validator_commission_default: Self::default_commission(),
             max_supply_cap: None,
             emission: None,
             blocks_per_year: Self::default_blocks_per_year(),
@@ -150,6 +159,27 @@ impl Default for Tokenomics {
 impl Tokenomics {
     pub const fn default_blocks_per_year() -> u64 {
         15_768_000 // 365 * 24 * 1800 at 2-second blocks
+    }
+
+    /// Default validator commission rate. Used by `#[serde(default)]`.
+    pub fn default_commission() -> f64 {
+        0.10
+    }
+
+    /// Split a staker pool into `(net_to_delegators, validator_commission)`.
+    ///
+    /// Applies TOKENOMICS §2.2: the validator retains `commission_rate` of the
+    /// staker pool; delegators share the remainder proportionally.
+    ///
+    /// `commission_rate` is clamped to `[0.0, 1.0]` defensively.
+    pub fn split_staker_pool(&self, staker_pool: u64) -> (u64, u64) {
+        if staker_pool == 0 {
+            return (0, 0);
+        }
+        let rate = self.validator_commission_default.clamp(0.0, 1.0);
+        let commission = (staker_pool as f64 * rate).round() as u64;
+        let commission = commission.min(staker_pool);
+        (staker_pool.saturating_sub(commission), commission)
     }
 
     /// Compute the APY-capped block reward.
@@ -447,6 +477,14 @@ impl GenesisConfig {
             ));
         }
 
+        // Validator commission must be in [0, 1]
+        if !(0.0..=1.0).contains(&self.tokenomics.validator_commission_default) {
+            errors.push(format!(
+                "validator_commission_default must be 0.0–1.0, got {}",
+                self.tokenomics.validator_commission_default
+            ));
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -472,6 +510,7 @@ impl GenesisConfig {
                 fee_burn_rate: 0.50,
                 staker_fee_share: 0.50,
                 target_staking_apy: 0.05,
+                validator_commission_default: Tokenomics::default_commission(),
                 max_supply_cap: None,
                 emission: None,
                 blocks_per_year: Tokenomics::default_blocks_per_year(),
