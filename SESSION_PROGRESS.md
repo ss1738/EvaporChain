@@ -48,6 +48,62 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-08 (late-evening) — multi-token gas decision package + smart-contract empirical proof + cluster-health finding
+
+**Focus:** convert the "should I buy crypto / does the chain take ETH for gas" conversation into a structured decision artifact + empirically verify smart contracts are actually wired through the chain (not just shipped as code).
+
+**Commits shipped:** 6 (`8ab9666` → tracker continuation). Plus a sister-session commit `a6bc9df` arrived in parallel — see the entry below this one.
+
+**Deliverables:**
+
+| # | Commit | Theme |
+|---|---|---|
+| 1 | `8ab9666` | `docs/MULTI_TOKEN_GAS_OPTIONS.md` — research + decision artifact (3 options, comparative research across 11 chains, recommendation locked: V1 status quo / V1.5 paymaster / NEVER protocol-level) |
+| 2 | `3cc6341` | `docs/MULTI_TOKEN_GAS_VERIFICATION.md` — 6-layer verification strategy for the eventual paymaster build |
+| 3 | `c68e236` | §9 added: synthetic-vs-real tokens; verification costs $0 |
+| 4 | `68f63a7` | §10 added: $10-20 dead-zone analysis; binary in practice — either $0 or $1000+ |
+| 5 | (this entry) | `SESSION_PROGRESS.md` updated with this turn's findings (the discipline working) |
+
+Pre-existing context: `94f5c9f` (CLAUDE.md enforces SESSION_PROGRESS read-at-start + append-at-end) + `901966c` (tracker file created).
+
+**Empirical results:**
+
+- **Smart contracts ARE wired end-to-end** — verified via 2 deploy txs (`8d99382f...` and `261bba98e4...`) included in real chain blocks (#12790 + #13145). Both rejected at execution layer with `error: rejected, gas_used: 100000, confirmations: 246/1`. **Reject likely caused by anonymous-user-vs-deployer-address mismatch** (`require_wallet_ownership` gate — random session user can't deploy as val-2/val-5). Pipeline is intact: tx → mempool → block inclusion → execution verdict.
+- **Already-running contracts on cluster:** EVAP, FLUX, HEAT (DecayingToken instances). We exercised them all session via `/api/swap/quote` + `/api/tokens` (HEAT was at 98.7% decay during the empirical decay test).
+- **Cluster health spread observed:** at probe time (~h=12779 canonical), M1 stuck at h=12742 (37 blocks behind), M2 stuck at h=12323 (**456 blocks behind** — significant silent desync). Quorum held by M3 + H1 + H2 (3 of 5 = exact threshold). One more node going dark = chain halts.
+
+**Decisions made:**
+
+- **Multi-token gas direction locked** in the new docs:
+  - V1 (now → mainnet Oct 2026): EVP-only gas (status quo)
+  - V1.5 (~Jan 2027 post-mainnet): wallet paymaster pattern (1 week build + 2.5 week verification)
+  - NEVER: protocol-level multi-token gas (consensus-liveness risk; loses native-token demand anchor; ~30% larger audit scope)
+- **Real-money verification IS a category error** for any feature pre-mainnet. Synthetic tokens on EvaporChain (DecayingToken templates) exercise the same code paths as real tokens. **$0 verification is sufficient until the very last pre-launch sanity check.** Spending $10-20 buys "psychological closure," not technical signal — dead zone between $0 and $1000+.
+- **Smart contracts are NOT on the V1 critical path** — they're already shipped. More contracts is app-layer work that any dApp builder can do in parallel without blocking mainnet.
+
+**What's next:**
+
+- **Debug the deploy reject** — likely fix is keystore-signed txs instead of session-auth'd anonymous deploys. Quick.
+- **Cluster recovery: M1 + M2 desync.** Per `docs/runbooks/cluster-deploy.md` recovery section: launchctl unload + data dir wipe + launchctl load. They re-sync from H1/H2 peers. ~5 min per node.
+- **Sister-session coordination**: they shipped `a6bc9df` with Week-1 items (TOKENOMICS §2.1+§2.2+§2.5, conservation §1.2 fix). Their entry below covers it. Don't duplicate.
+- **The 1-month plan from the afternoon entry is still authoritative** — Week 1 items partially shipped via sister; Week 2 (per-tx demurrage receipt full version + ConcurrentFinality events) still open.
+
+**Blockers / open questions:**
+
+- **Anonymous-deploy auth gate** — operator workflow needs keystore-signed deploys, not session-auth'd. Not a feature gap; just a UX path.
+- **Cluster spread (M1, M2 desync)** — same observation sister noted in their evening entry. Hetzner SSH access still blocking proper recovery on some validators.
+- **Per-node mempool isolation** — txs submitted to one node don't propagate to others' mempools without re-broadcast. Affects single-shot smoke tests. (Faucet script's "submit to all 5 in parallel" pattern is the workaround.)
+
+**Cross-references:**
+
+- `docs/MULTI_TOKEN_GAS_OPTIONS.md` — research + decision; OPTIONS.md
+- `docs/MULTI_TOKEN_GAS_VERIFICATION.md` — 6-layer verification + $0 cost answer + dead-zone analysis
+- `docs/runbooks/cluster-deploy.md` — recovery procedure for M1, M2 desync
+- Sister-session entry below — `a6bc9df` covers the orthogonal Week-1 items
+- The "smart contracts are shipped" finding is empirically grounded by tx hashes `8d99382f...` and `261bba98e4...` — both visible at `GET /api/tx/<hash>` on H1/H2
+
+---
+
 ## 2026-05-08 (evening) — 8-item bundle: tx-hash fix, eulogy wiring, TOKENOMICS §2.1+§2.2+§2.5, conservation observe-mode fix, MCP hardening
 
 **Focus:** ship a verified-but-undeployed bundle of 8 correctness/observability items. Verify on Mini 1; commit + push; defer cluster deploy to next session pending Hetzner SSH access.
