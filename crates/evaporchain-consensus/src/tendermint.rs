@@ -7788,6 +7788,142 @@ mod tests {
         assert!(found, "Should be proposer for at least one round");
     }
 
+    /// MCC Phase C.6 / D.1 — load-bearing hot-path test. Deferred from
+    /// the original Phase C.6 list ("proposer_emits_multi_parent_block_
+    /// under_mcc_full → D.1 add-on") but never landed in `tests/
+    /// mcc_phase_d.rs` (which only exercises substrate-level accessor
+    /// convergence, not the actual `create_proposal` round behaviour).
+    /// This is the test that proves the wiring at line ~6402
+    /// (`parents: self.propose_parents()`) actually fires under
+    /// `mcc_full` mode and emits a block whose parents form the
+    /// committed antichain.
+    ///
+    /// Setup: single proposer, 4-validator set, `parent_acceptance_mode
+    /// = mcc_full`, light_cone_dag populated with genesis + 3 sibling
+    /// forks. Drives `create_proposal` and asserts the resulting block
+    /// carries `parents.len() == 3` (the full antichain) AND the parent
+    /// set matches the proposer's `propose_parents()` accessor —
+    /// substrate-vs-hot-path agreement.
+    #[test]
+    fn mcc_phase_c_hot_path_proposer_emits_multi_parent_block() {
+        use evaporchain_light_cone::Block as LcBlock;
+        let mut db = InMemoryStateDB::new();
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("parent_acceptance_mode", "mcc_full")
+            .expect("mcc_full is allowlisted");
+
+        // Populate the light-cone DAG with 3 sibling forks at h=1 off
+        // genesis. Same shape as `mcc_phase_d1_four_validators_converge_
+        // on_three_forks` so the antichain is exactly {fork-A, fork-B,
+        // fork-C}.
+        let g = [0u8; 32];
+        let fa = [1u8; 32];
+        let fb = [2u8; 32];
+        let fc = [3u8; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(g, vec![], 1000, 0))
+            .expect("insert genesis");
+        tc.light_cone_dag
+            .insert(LcBlock::new(fa, vec![g], 1001, 1))
+            .expect("insert fork A");
+        tc.light_cone_dag
+            .insert(LcBlock::new(fb, vec![g], 1002, 1))
+            .expect("insert fork B");
+        tc.light_cone_dag
+            .insert(LcBlock::new(fc, vec![g], 1003, 1))
+            .expect("insert fork C");
+
+        // Substrate-level expectation: 3 candidate heads, propose_parents
+        // emits all 3.
+        let expected_parents = tc.propose_parents();
+        assert_eq!(
+            expected_parents.len(),
+            3,
+            "propose_parents() under mcc_full must emit the 3-fork antichain; \
+             got {:?}",
+            expected_parents
+        );
+        let expected_parent_set: std::collections::BTreeSet<[u8; 32]> =
+            expected_parents.iter().copied().collect();
+
+        // Find a round where we're the proposer (mirrors test_proposal_creation).
+        let mut emitted: Option<Block> = None;
+        for round in 0..100 {
+            tc.round_state = RoundState::new(round);
+            if tc.am_i_proposer() {
+                emitted = tc.create_proposal(&mut db);
+                break;
+            }
+        }
+        let block = emitted.expect("proposer must emit a block in some round");
+
+        // Hot-path-vs-substrate agreement: the block's parents field
+        // matches the substrate accessor exactly. This is what verifies
+        // the wiring at create_proposal's `parents: self.propose_parents()`
+        // line is correctly fed by the same code path the substrate
+        // tests exercise.
+        let block_parent_set: std::collections::BTreeSet<[u8; 32]> =
+            block.parents.iter().copied().collect();
+        assert_eq!(
+            block.parents.len(),
+            3,
+            "proposer must emit a 3-parent block under mcc_full; got {} parents",
+            block.parents.len()
+        );
+        assert_eq!(
+            block_parent_set, expected_parent_set,
+            "block.parents set must match propose_parents() set"
+        );
+        // First parent is the authoritative head (highest caliber).
+        assert_eq!(
+            block.parents[0], expected_parents[0],
+            "block.parents[0] must lead with the authoritative head"
+        );
+    }
+
+    /// MCC Phase C.6 / D.1 — companion to the multi-parent test:
+    /// flipping `parent_acceptance_mode` back to `linear` (or leaving
+    /// it default) MUST emit a single-parent block (`parents` empty
+    /// — the wire-format default that `serde(skip_if_empty)` collapses
+    /// to a linear-chain block). This is the bit-compatibility safety
+    /// net: a governance flag flip back to `linear` immediately
+    /// restores pre-MCC wire format.
+    #[test]
+    fn mcc_phase_c_hot_path_proposer_emits_empty_parents_under_linear() {
+        use evaporchain_light_cone::Block as LcBlock;
+        let mut db = InMemoryStateDB::new();
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Default mode is "linear"; populate the DAG anyway so the
+        // assertion is non-trivial — proves the proposer DOESN'T pick
+        // up the multi-parent set even when the substrate has one.
+        let g = [0u8; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(g, vec![], 1000, 0))
+            .expect("insert genesis");
+        tc.light_cone_dag
+            .insert(LcBlock::new([1u8; 32], vec![g], 1001, 1))
+            .expect("insert fork A");
+        tc.light_cone_dag
+            .insert(LcBlock::new([2u8; 32], vec![g], 1002, 1))
+            .expect("insert fork B");
+
+        let mut emitted: Option<Block> = None;
+        for round in 0..100 {
+            tc.round_state = RoundState::new(round);
+            if tc.am_i_proposer() {
+                emitted = tc.create_proposal(&mut db);
+                break;
+            }
+        }
+        let block = emitted.expect("proposer must emit a block");
+        assert!(
+            block.parents.is_empty(),
+            "linear mode must emit empty parents (single-parent wire format); \
+             got {:?}",
+            block.parents
+        );
+    }
+
     #[test]
     fn test_full_consensus_round_single_validator() {
         let mut db = InMemoryStateDB::new();
