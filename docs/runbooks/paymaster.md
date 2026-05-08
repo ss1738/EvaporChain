@@ -101,7 +101,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/healthz` | — | `"ok"` |
-| GET | `/info` | — | `{paymaster_address_hex, next_paymaster_nonce, chain_id}` |
+| GET | `/info` | — | `{paymaster_address_hex, next_paymaster_nonce, chain_id, require_user_sig, per_sender_rps, per_sender_burst, audit_log_enabled, allowed_inner_variants?}` |
 | GET | `/metrics` | — | Prometheus exposition format (see §Metrics) |
 | POST | `/sponsor` | `{user_op}` | `{user_op, paymaster_address_hex, paymaster_nonce}` |
 
@@ -187,6 +187,31 @@ If you need to reset (e.g. fresh paymaster account), delete both `paymaster_nonc
 - `GET /healthz` for liveness probes.
 - `GET /info` exposes `next_paymaster_nonce`. The on-chain `account.nonce` for the paymaster address should always be `next_paymaster_nonce - <in-flight sponsored UserOps not yet finalized>`. A persistent gap > a few blocks signals dropped UserOps or a chain reorg.
 - Tail the paymaster log for `sponsor failed` lines — every entry is a wallet bug or a wallet-side abuse attempt (e.g. resubmitting an `AlreadySigned` UserOp).
+
+### `/info` policy surface
+
+Wallets read `GET /info` before submitting `/sponsor` to discover the paymaster's address, next-nonce, chain_id, AND its operator policy. A wallet that pre-checks policy can fail a doomed request locally (e.g. wallet doesn't have a hybrid keypair → paymaster requires user-sig → reject locally rather than burn the round-trip).
+
+```bash
+curl http://localhost:8088/info
+```
+
+```json
+{
+  "paymaster_address_hex": "ab12...",
+  "next_paymaster_nonce": 1234,
+  "chain_id": "evaporchain-mainnet",
+  "require_user_sig": true,
+  "per_sender_rps": 5.0,
+  "per_sender_burst": 10,
+  "audit_log_enabled": true,
+  "allowed_inner_variants": ["transfer", "call_script"]
+}
+```
+
+`allowed_inner_variants` is omitted entirely when the paymaster trusts the chain's whitelist (no operator narrowing). The audit-log PATH is intentionally NOT exposed — operational hygiene; only whether logging is on.
+
+Wire backwards-compat: every policy field has `serde(default)`. A wallet built post-Day-11 hitting an old paymaster sees the policy fields filled with permissive-baseline defaults (`require_user_sig: false`, `per_sender_rps: 0.0`, etc.) — the wallet should treat that as "unknown policy; submit and see".
 
 ### Inner-tx whitelist
 

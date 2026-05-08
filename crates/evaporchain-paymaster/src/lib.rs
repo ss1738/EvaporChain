@@ -168,12 +168,47 @@ pub struct SponsorshipResponse {
     pub paymaster_nonce: u64,
 }
 
-/// JSON response body for `/info`.
+/// JSON response body for `/info`. Wallets read this before
+/// submitting a `/sponsor` request to discover (a) where to address
+/// the sponsorship — `paymaster_address_hex` — (b) what nonce to
+/// stamp — `next_paymaster_nonce` — (c) what chain to sign for —
+/// `chain_id` — and (d) the operator's policy so the wallet can
+/// fail a doomed request locally rather than burning a round-trip.
+///
+/// Wire shape backwards-compat: the policy fields all have
+/// `#[serde(default)]` so a wallet built before Day 11 ignores
+/// them, and a wallet built after Day 11 hitting an old paymaster
+/// gets sensible defaults (`require_user_sig: false`, etc. — the
+/// permissive baseline). Wallets that want to pre-validate against
+/// the policy MUST handle the missing-field case as "unknown
+/// policy; submit and see".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymasterInfo {
     pub paymaster_address_hex: String,
     pub next_paymaster_nonce: u64,
     pub chain_id: String,
+    /// Day 7 hardening — strict mode rejects UserOps without a
+    /// valid user signature.
+    #[serde(default)]
+    pub require_user_sig: bool,
+    /// Day 7 hardening — per-sender token-bucket replenish rate.
+    /// `0.0` means rate limiting is off.
+    #[serde(default)]
+    pub per_sender_rps: f64,
+    /// Day 7 hardening — per-sender burst capacity.
+    #[serde(default)]
+    pub per_sender_burst: u32,
+    /// Day 8 hardening — operator is keeping a billing-
+    /// reconciliation audit log. The path itself is NOT exposed
+    /// (operational hygiene); only whether the log exists.
+    #[serde(default)]
+    pub audit_log_enabled: bool,
+    /// Day 10 — operator's inner-tx whitelist. `None` means the
+    /// paymaster trusts the chain's global whitelist; `Some(set)`
+    /// is a strict subset. Strings are the snake_case CLI form
+    /// (`transfer`, `call_script`, `call_contract`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_inner_variants: Option<Vec<String>>,
 }
 
 /// Hardening knobs the operator can flip per deployment. Defaults
@@ -683,6 +718,13 @@ impl Paymaster {
             paymaster_address_hex: hex::encode(self.address),
             next_paymaster_nonce: self.next_paymaster_nonce(),
             chain_id: self.chain_id.clone(),
+            require_user_sig: self.config.require_user_sig,
+            per_sender_rps: self.config.per_sender_rps,
+            per_sender_burst: self.config.per_sender_burst,
+            audit_log_enabled: self.config.audit_log.is_some(),
+            allowed_inner_variants: self.config.allowed_inner_variants.as_ref().map(|set| {
+                set.iter().map(|v| v.as_str().to_string()).collect()
+            }),
         }
     }
 
@@ -1516,6 +1558,112 @@ mod tests {
         uo.call_data = b"not-json".to_vec();
         let r = pm.sponsor(&mut uo);
         assert!(matches!(r, Err(PaymasterError::CallDataDecode(_))));
+    }
+
+    // ─── Day 11: /info policy surface tests ──────────────────────────
+
+    #[test]
+    fn info_exposes_default_strict_config() {
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new(kp, "evaporchain-mainnet", nonce_file).unwrap();
+        let info = pm.info();
+        assert!(info.require_user_sig, "default is strict");
+        assert_eq!(info.per_sender_rps, 5.0);
+        assert_eq!(info.per_sender_burst, 10);
+        assert!(!info.audit_log_enabled);
+        assert!(info.allowed_inner_variants.is_none());
+    }
+
+    #[test]
+    fn info_exposes_permissive_config() {
+        let tmp = TempDir::new().unwrap();
+        let pm = fresh_paymaster(&tmp, "evaporchain-mainnet");
+        let info = pm.info();
+        assert!(!info.require_user_sig);
+        assert_eq!(info.per_sender_rps, 0.0);
+        assert_eq!(info.per_sender_burst, 0);
+    }
+
+    #[test]
+    fn info_exposes_audit_log_enabled_when_set() {
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file),
+                allowed_inner_variants: None,
+            },
+        )
+        .unwrap();
+        let info = pm.info();
+        assert!(info.audit_log_enabled);
+    }
+
+    #[test]
+    fn info_exposes_inner_variants_whitelist_in_cli_form() {
+        let tmp = TempDir::new().unwrap();
+        let pm = permissive_with_inner_whitelist(
+            &tmp,
+            "test",
+            Some(vec![InnerVariant::Transfer, InnerVariant::CallScript]),
+        );
+        let info = pm.info();
+        assert_eq!(
+            info.allowed_inner_variants,
+            Some(vec!["transfer".to_string(), "call_script".to_string()])
+        );
+    }
+
+    #[test]
+    fn info_round_trips_through_serde() {
+        // Wire-format check — a wallet built against the post-Day-11
+        // shape can decode an info response that's been marshalled
+        // through serde_json (the actual transport).
+        let tmp = TempDir::new().unwrap();
+        let pm = permissive_with_inner_whitelist(
+            &tmp,
+            "evaporchain-mainnet",
+            Some(vec![InnerVariant::Transfer]),
+        );
+        let info = pm.info();
+        let json = serde_json::to_string(&info).unwrap();
+        let decoded: PaymasterInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.paymaster_address_hex, info.paymaster_address_hex);
+        assert_eq!(decoded.chain_id, info.chain_id);
+        assert_eq!(decoded.allowed_inner_variants, info.allowed_inner_variants);
+        assert_eq!(decoded.audit_log_enabled, info.audit_log_enabled);
+    }
+
+    #[test]
+    fn info_decodes_old_paymaster_response_with_missing_fields() {
+        // Backwards compat — a wallet built post-Day-11 hitting a
+        // paymaster from the Day-1..10 era sees a response without
+        // the policy fields. serde defaults must fill in
+        // permissive-baseline values.
+        let old_response = serde_json::json!({
+            "paymaster_address_hex": "deadbeef",
+            "next_paymaster_nonce": 7,
+            "chain_id": "test"
+        })
+        .to_string();
+        let info: PaymasterInfo = serde_json::from_str(&old_response).unwrap();
+        assert_eq!(info.next_paymaster_nonce, 7);
+        // All policy fields default to permissive-baseline.
+        assert!(!info.require_user_sig);
+        assert_eq!(info.per_sender_rps, 0.0);
+        assert_eq!(info.per_sender_burst, 0);
+        assert!(!info.audit_log_enabled);
+        assert!(info.allowed_inner_variants.is_none());
     }
 
     #[test]
