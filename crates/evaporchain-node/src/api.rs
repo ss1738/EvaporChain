@@ -10420,6 +10420,20 @@ async fn post_claim_delegation(
                     tx_hash: None,
                 });
             }
+            // Gas pre-check (TOKENOMICS finding #1 follow-up). Same
+            // pattern as undelegate (5f3caf4): claim_delegation
+            // doesn't move balance OUT but the executor still deducts
+            // GAS_DELEGATE up front.
+            if acct.balance < evaporchain_execution::GAS_DELEGATE {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Insufficient balance for gas: {} < {}",
+                        acct.balance, evaporchain_execution::GAS_DELEGATE
+                    ),
+                    tx_hash: None,
+                });
+            }
         } else {
             return Json(TxResultResponse {
                 success: false,
