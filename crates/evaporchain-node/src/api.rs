@@ -13219,10 +13219,49 @@ async fn post_pool_reanchor(
     }
 }
 
-// ──────────────────────────── Swap (CFM-priced) ─────────────────────────
+// ──────────────────────────── Swap (CFM-priced + Singh-Pool-routed) ────
 
-/// Swap fee in basis points (30 bps = 0.3 %).
+/// Swap fee in basis points (30 bps = 0.3 %). Used for the oracle
+/// fallback path; Singh-Pool-routed swaps use the pool's own
+/// `fee_bp` instead.
 const SWAP_FEE_BPS: u64 = 30;
+
+/// Map a (from_token, to_token) pair to the canonical Singh Pool id
+/// and the swap direction within that pool. Convention: pool ids are
+/// sorted-pair-joined-by-dash (e.g. "EVAP-FLUX"); the alphabetically
+/// smaller token is X, the larger is Y. So a request to swap from the
+/// smaller token to the larger uses `swap_x_for_y`; the reverse uses
+/// `swap_y_for_x`.
+///
+/// Returns `(pool_id, x_to_y)` where `x_to_y == true` iff `from` is the
+/// alphabetically-smaller (X) token of the pair. `None` if `from == to`.
+fn pool_id_for_pair(from: &str, to: &str) -> Option<(String, bool)> {
+    let f = from.to_ascii_uppercase();
+    let t = to.to_ascii_uppercase();
+    if f == t {
+        return None;
+    }
+    if f < t {
+        Some((format!("{}-{}", f, t), true))
+    } else {
+        Some((format!("{}-{}", t, f), false))
+    }
+}
+
+/// Non-mutating preview of a pool swap: clone the pool, apply the swap
+/// on the clone, return the output amount. Original pool unchanged.
+fn pool_quote_preview(
+    pool: &evaporchain_cl_amm::SinghPool,
+    x_to_y: bool,
+    amount_in: u128,
+) -> Result<u128, evaporchain_cl_amm::PoolError> {
+    let mut clone = pool.clone();
+    if x_to_y {
+        clone.swap_x_for_y(amount_in)
+    } else {
+        clone.swap_y_for_x(amount_in)
+    }
+}
 
 #[derive(Deserialize)]
 struct SwapQuoteRequest {
@@ -13245,7 +13284,8 @@ struct SwapExecuteRequest {
     public_key: Option<String>,
 }
 
-/// Return a swap quote using oracle mid-prices (or 1:1 EVAP as fallback).
+/// Return a swap quote. Routes through a Singh Pool with the canonical
+/// pair-id if one exists; otherwise falls back to oracle-priced 1:1.
 async fn post_swap_quote(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<SwapQuoteRequest>,
@@ -13253,6 +13293,65 @@ async fn post_swap_quote(
     if req.amount == 0 {
         return Json(serde_json::json!({ "error": "amount must be > 0" }));
     }
+
+    // Pool routing first. If a Singh Pool exists with the canonical
+    // (sorted, dash-joined) pair-id and has liquidity, quote against it.
+    if let Some((pool_id, x_to_y)) = pool_id_for_pair(&req.from_token, &req.to_token) {
+        let pools = safe_lock(&state.singh_pools);
+        if let Some(pool) = pools.get(&pool_id) {
+            if pool.reserve_x() > 0 && pool.reserve_y() > 0 {
+                let amount_in_u128 = req.amount as u128;
+                match pool_quote_preview(pool, x_to_y, amount_in_u128) {
+                    Ok(out) => {
+                        // Pool fee is already applied inside the swap math
+                        // (Uniswap-v2 convention on input side). Compute the
+                        // displayed `fee` as the input-side fee for parity
+                        // with the oracle-path response shape.
+                        let fee_input = amount_in_u128
+                            .saturating_mul(pool.fee_bp as u128)
+                            / 10_000;
+                        let rate = if amount_in_u128 > 0 {
+                            out as f64 / amount_in_u128 as f64
+                        } else {
+                            0.0
+                        };
+                        // Price impact: for a quote of size Δx against
+                        // reserve x, impact ≈ Δx / (x + Δx) (% terms).
+                        let impact = if pool.reserve_x() + amount_in_u128 > 0 {
+                            (amount_in_u128 as f64
+                                / (pool.reserve_x() as f64 + amount_in_u128 as f64))
+                                * 100.0
+                        } else {
+                            0.0
+                        };
+                        return Json(serde_json::json!({
+                            "from_token":   req.from_token,
+                            "to_token":     req.to_token,
+                            "amount_in":    req.amount,
+                            "amount_out":   out.to_string(),
+                            "fee":          fee_input.to_string(),
+                            "rate":         (rate * 1_000_000.0).round() / 1_000_000.0,
+                            "price_impact": (impact * 100.0).round() / 100.0,
+                            "route":        "pool",
+                            "pool_id":      pool_id,
+                            "pool_fee_bp":  pool.fee_bp,
+                        }));
+                    }
+                    Err(e) => {
+                        // Pool exists but quote failed (e.g. InsufficientOutput);
+                        // fall through to oracle so the caller still gets a number.
+                        tracing::debug!(
+                            pool_id = pool_id,
+                            error = ?e,
+                            "Pool quote failed, falling back to oracle"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Oracle fallback (legacy path).
     let rate = oracle_rate(&state, &req.from_token, &req.to_token);
     let gross_out = (req.amount as f64 * rate) as u64;
     let fee = (gross_out * SWAP_FEE_BPS / 10_000).max(1);
@@ -13270,6 +13369,7 @@ async fn post_swap_quote(
         "fee":        fee,
         "rate":       rate,
         "price_impact": (price_impact * 100.0).round() / 100.0,
+        "route":      "oracle",
     }))
 }
 
@@ -13292,26 +13392,71 @@ async fn post_swap_execute(
         });
     }
 
-    let rate = oracle_rate(&state, &req.from_token, &req.to_token);
-    let gross_out = (req.amount as f64 * rate) as u64;
-    let fee = (gross_out * SWAP_FEE_BPS / 10_000).max(1);
-    let amount_out = gross_out.saturating_sub(fee);
-
-    // Slippage guard: if computed amount_out < amount * (1 - slippage), reject.
-    let min_out = (req.amount as f64 * rate * (1.0 - req.slippage / 100.0)) as u64;
-    if amount_out < min_out {
-        return Json(TxResultResponse {
-            success: false,
-            message: format!(
-                "Slippage exceeded: expected min {} but got {}",
-                min_out, amount_out
-            ),
-            tx_hash: None,
-        });
-    }
-
     let from_upper = req.from_token.to_ascii_uppercase();
     let to_upper = req.to_token.to_ascii_uppercase();
+
+    // Compute amount_out + record the route taken. Pool routing tries
+    // first (atomic via clone-then-replace so a slippage failure does not
+    // partially mutate the pool); oracle fallback covers no-pool /
+    // empty-pool / direction-mismatch cases.
+    let (amount_out, _route_used): (u64, String) = 'route: {
+        if let Some((pool_id, x_to_y)) = pool_id_for_pair(&req.from_token, &req.to_token) {
+            let mut pools = safe_lock(&state.singh_pools);
+            if let Some(original) = pools.get(&pool_id) {
+                if original.reserve_x() > 0 && original.reserve_y() > 0 {
+                    let amount_in_u128 = req.amount as u128;
+                    let mut clone = original.clone();
+                    let result = if x_to_y {
+                        clone.swap_x_for_y(amount_in_u128)
+                    } else {
+                        clone.swap_y_for_x(amount_in_u128)
+                    };
+                    if let Ok(out_u128) = result {
+                        let out_u64 = if out_u128 > u64::MAX as u128 {
+                            u64::MAX
+                        } else {
+                            out_u128 as u64
+                        };
+                        // Pool-route slippage: req.amount × (1 − slippage%).
+                        let min_out =
+                            (req.amount as f64 * (1.0 - req.slippage / 100.0)) as u64;
+                        if out_u64 < min_out {
+                            return Json(TxResultResponse {
+                                success: false,
+                                message: format!(
+                                    "Pool slippage exceeded: {} < {} (route: pool:{})",
+                                    out_u64, min_out, pool_id
+                                ),
+                                tx_hash: None,
+                            });
+                        }
+                        // Commit the cloned (mutated) pool back as new state.
+                        pools.insert(pool_id.clone(), clone);
+                        break 'route (out_u64, format!("pool:{}", pool_id));
+                    }
+                }
+            }
+        }
+
+        // Oracle fallback (legacy path).
+        let rate = oracle_rate(&state, &req.from_token, &req.to_token);
+        let gross_out = (req.amount as f64 * rate) as u64;
+        let fee = (gross_out * SWAP_FEE_BPS / 10_000).max(1);
+        let out = gross_out.saturating_sub(fee);
+        let min_out =
+            (req.amount as f64 * rate * (1.0 - req.slippage / 100.0)) as u64;
+        if out < min_out {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!(
+                    "Slippage exceeded: expected min {} but got {}",
+                    min_out, out
+                ),
+                tx_hash: None,
+            });
+        }
+        (out, "oracle".to_string())
+    };
 
     // Bridge the 20↔32-byte address-space gap once, up front. Both
     // halves of the swap (token store + EVAP chain account) consume
