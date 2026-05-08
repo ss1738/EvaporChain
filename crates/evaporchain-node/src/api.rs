@@ -10297,6 +10297,21 @@ async fn post_undelegate(
                     tx_hash: None,
                 });
             }
+            // Gas pre-check (TOKENOMICS finding #1 follow-up). Undelegate
+            // doesn't move balance OUT (it adjusts an existing delegation),
+            // but the executor still deducts GAS_DELEGATE from the
+            // delegator's balance up front. Without this check, an
+            // underfunded delegator's tx silently fails at execution.
+            if acct.balance < evaporchain_execution::GAS_DELEGATE {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Insufficient balance for gas: {} < {}",
+                        acct.balance, evaporchain_execution::GAS_DELEGATE
+                    ),
+                    tx_hash: None,
+                });
+            }
         } else {
             return Json(TxResultResponse {
                 success: false,
