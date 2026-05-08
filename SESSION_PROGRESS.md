@@ -48,6 +48,37 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (afternoon, continued #3) — LLSA gate parametrized over arbitrary step_new
+
+**Focus:** close the `DOCTRINE_PUNCH_LIST.md` item "Parametrize `LLSAInvariantPreservation.v` over `step_new`" — today the gate proved invariant preservation for the *current* `RedirectStep`/`DecayStep`, not for an arbitrary new step relation supplied by an upgrade.
+
+**Commits shipped:** 1 (`7d92dd1`).
+
+**Deliverables:**
+- `research/proofs/LLSAInvariantPreservation.v` §6b — generic step abstraction. New definitions/lemmas: `StepMonotone : (ChainState → ChainState → InvParams → Prop) → Prop` (the single proof obligation); `step_new_preserves_inv` (generic preservation); `llsa_amendment_gate` (polymorphic gate). Plus three corollaries showing `RedirectStep` / `DecayStep` are special cases (`RedirectStepP`/`DecayStepP` lifts + `redirect_step_monotone` / `decay_step_monotone` + `redirect_preserves_inv_via_gate` / `decay_preserves_inv_via_gate`).
+- The reduction: every step that preserves `Inv` under the canonical successor convention `{prior_total := TotalEnergy s'; epochs_elapsed := 0}` collapses to ONE proof obligation — total energy non-increasing across the step. The decay-floor branch becomes vacuous in the successor parameters via `energy_at_epoch_zero_elapsed` (already in §5b).
+- Future amendments now need only: define their `step_new`, discharge `StepMonotone step_new`, then `apply llsa_amendment_gate`. No edit to this file required.
+
+**Empirical results:**
+- `coqc -Q . EvaporChain -Q ../proofs EvaporChain ../proofs/LLSAInvariantPreservation.v` clean compile on Mini 1 (Rocq 9.1.1, OCaml 5.4.1). Only deprecated-`From Coq` warnings (pre-existing, file-wide).
+- `coqchk` kernel verifier: **`Axioms: <none>`**. Zero `Admitted`, no `Axiom`, no type-in-type, no unsafe (co)fixpoints, all inductives positivity-checked. The doctrine §A1.2 T4 demand "forall s, Inv(s) -> Inv(step_new(s))" is now mechanised in its parametric form, kernel-confirmed.
+- Note: `LazyEagerEquivalence.v` line 587 fails to build (pre-existing — `aa540e7 "tactical blocker after 4 attempts"`). Unrelated to this change; full `make` in `research/coq/` still aborts on that file before reaching LLSA. LLSA file builds clean directly via `coqc`.
+
+**Decisions made:**
+- Parametrize **additively**, not by rewriting. The existing `redirect_preserves_inv` / `decay_preserves_inv` / `llsa_conservation_invariant_preservation` in §6 stay as canonical reference. §6b is the new polymorphic surface for amendments.
+- Concrete steps are recovered via lifting predicates (`RedirectStepP` ignores its `InvParams` arg) so we don't have to change the `Inductive` declarations and break callers.
+
+**What's next:**
+- Operator-side: ride the activation ladder via `scripts/governance-flip.sh` once cluster is on the bundle binary.
+- Phase C cluster deploy (still BLOCKED on Hetzner SSH).
+
+**Blockers / open questions:**
+- `LazyEagerEquivalence.v` tactical blocker is pre-existing and unrelated; whoever was last on that file (`b9b10c7` / `aa540e7`) should pick it up. Not in this session's scope.
+
+**Cross-references:** `research/proofs/LLSAInvariantPreservation.v` §6b, `DOCTRINE_PUNCH_LIST.md` "Parametrize LLSAInvariantPreservation.v over step_new" (now closed)
+
+---
+
 ## 2026-05-09 (afternoon, continued #2) — governance-flip.sh wrapper
 
 **Focus:** close the loop on the activation-toolkit ladder so the operator runs ONE command per flag flip instead of three.
