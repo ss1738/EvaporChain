@@ -4133,6 +4133,30 @@ impl TendermintConsensus {
             input.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
             input.extend_from_slice(&bytes);
         }
+        // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 5 (lane T0.4) —
+        // commit post_state_root into the block hash so the
+        // validator-claimed post-execution state becomes
+        // consensus-load-bearing. A divergent proposer can no longer
+        // produce two blocks with the same hash but different
+        // post_state_root claims.
+        //
+        // Bit-compat shape (per plan): when `post_state_root` is None
+        // we append NOTHING (not even a tag byte). Pre-Phase 5 blocks
+        // and post-Phase 2 blocks proposed under
+        // `post_state_verify_mode = "off"` both have None and so keep
+        // their legacy hash. Only blocks where the proposer filled
+        // post_state_root (warn or enforce mode under T0.3) gain the
+        // new hash contribution.
+        //
+        // The asymmetric (no-tag-when-None) pattern is intentional and
+        // distinct from the tag-prefixed Optionals above. Adding a
+        // tag-0 here would break the hash of every existing legacy
+        // block, which would brick any chain that has ever produced
+        // a block under the pre-Phase-5 binary.
+        if let Some(post_root) = block.post_state_root {
+            input.push(1);
+            input.extend_from_slice(&post_root);
+        }
         blake3_hash(&input)
     }
 
@@ -17373,6 +17397,114 @@ mod phase2_round_trip_tests {
             "enforce-mode error must reference PHASE-4; got: {}",
             err_str
         );
+    }
+
+    // ─── Lane T0.4 — Phase 5 block-hash inclusion tests ──────────────
+
+    /// Pre-Phase-5 / off-mode blocks have post_state_root = None.
+    /// Their hash MUST match the pre-T0.4 legacy formula bit-for-bit.
+    /// If this test breaks, every chain that has ever produced a
+    /// block under the pre-Phase-5 binary is bricked.
+    #[test]
+    fn phase5_none_preserves_legacy_block_hash() {
+        let mut block = make_block(1, [0xAA; 32], 100);
+        block.post_state_root = None;
+        let hash_with_none = TendermintConsensus::block_hash(&block);
+
+        // Compute the legacy hash by hand using the exact bytes the
+        // pre-T0.4 formula appended (number, epoch, parent_hash,
+        // state_root, timestamp, producer tag-0, vrf_output tag-0,
+        // vrf_proof tag-0, data_root tag-0, no transactions). If the
+        // test passes, the new code path took the `if let Some = None`
+        // false branch and did NOT append anything for post_state_root.
+        let mut legacy_input = Vec::new();
+        legacy_input.extend_from_slice(&block.number.to_le_bytes());
+        legacy_input.extend_from_slice(&block.epoch.to_le_bytes());
+        legacy_input.extend_from_slice(&block.parent_hash);
+        legacy_input.extend_from_slice(&block.state_root);
+        legacy_input.extend_from_slice(&block.timestamp.to_le_bytes());
+        legacy_input.push(0); // producer_id None
+        legacy_input.push(0); // vrf_output None
+        legacy_input.push(0); // vrf_proof None
+        legacy_input.push(0); // data_root None
+        // no txs
+        let legacy_hash = blake3_hash(&legacy_input);
+
+        assert_eq!(
+            hash_with_none, legacy_hash,
+            "Phase 5 broke legacy hash: post_state_root=None must NOT contribute to hash"
+        );
+    }
+
+    /// Phase 5 active path: post_state_root = Some changes the hash.
+    /// Two blocks identical in every other field but with one having
+    /// post_state_root and the other None must produce DIFFERENT hashes.
+    #[test]
+    fn phase5_some_changes_block_hash() {
+        let mut block_none = make_block(1, [0xAA; 32], 100);
+        block_none.post_state_root = None;
+
+        let mut block_some = make_block(1, [0xAA; 32], 100);
+        block_some.post_state_root = Some([0xBB; 32]);
+
+        let hash_none = TendermintConsensus::block_hash(&block_none);
+        let hash_some = TendermintConsensus::block_hash(&block_some);
+
+        assert_ne!(
+            hash_none, hash_some,
+            "Phase 5 broken: post_state_root must affect block hash when Some"
+        );
+    }
+
+    /// Two blocks with DIFFERENT post_state_root values must produce
+    /// different hashes — proves the field's bytes flow into the hash
+    /// (not just a presence tag).
+    #[test]
+    fn phase5_different_post_state_roots_produce_different_hashes() {
+        let mut block_a = make_block(1, [0xAA; 32], 100);
+        block_a.post_state_root = Some([0xCC; 32]);
+        let mut block_b = make_block(1, [0xAA; 32], 100);
+        block_b.post_state_root = Some([0xDD; 32]);
+
+        let hash_a = TendermintConsensus::block_hash(&block_a);
+        let hash_b = TendermintConsensus::block_hash(&block_b);
+
+        assert_ne!(
+            hash_a, hash_b,
+            "Phase 5 broken: distinct post_state_root values must hash differently"
+        );
+    }
+
+    /// Helper for the Phase 5 hash tests.
+    fn make_block(number: u64, parent: [u8; 32], timestamp: u64) -> Block {
+        Block {
+            number,
+            epoch: number,
+            parent_hash: parent,
+            state_root: [1u8; 32],
+            transactions: vec![],
+            timestamp,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        }
     }
 
     #[test]
