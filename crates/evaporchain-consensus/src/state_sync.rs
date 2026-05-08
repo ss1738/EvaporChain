@@ -763,6 +763,18 @@ impl SnapshotProvider {
             } => {
                 let data = self.chunk_data.get(&(*height, *chunk_index))?;
                 let meta = self.snapshots.get(height)?;
+                // Server-side bounds check: a malicious or buggy peer could
+                // send a ChunkRequest whose chunk_index sits inside
+                // chunk_data (the data store) but past chunk_hashes
+                // (which would panic the indexer). Guarding here turns a
+                // panic into a silent drop — the requesting peer
+                // re-requests from another responder. Client-side already
+                // validates `index < total_chunks` (handle_chunk_response).
+                if *chunk_index >= meta.chunk_hashes.len()
+                    || *chunk_index >= meta.total_chunks
+                {
+                    return None;
+                }
                 Some(SyncMessage::ChunkResponse {
                     chunk: SnapshotChunk {
                         height: *height,
@@ -956,6 +968,47 @@ mod tests {
                 _ => panic!("Expected ChunkResponse"),
             }
         }
+    }
+
+    /// Server-side robustness: a ChunkRequest whose `chunk_index` sits past
+    /// `chunk_hashes.len()` must NOT panic — drop the request silently
+    /// and let the requesting peer re-route. Pre-fix `handle_request`
+    /// indexed `meta.chunk_hashes[*chunk_index]` unconditionally, which
+    /// panicked any responder a malicious peer could pump
+    /// `chunk_index = usize::MAX` requests at.
+    #[test]
+    fn chunk_request_with_out_of_bounds_index_returns_none_not_panic() {
+        let mut provider = SnapshotProvider::new();
+        let data = vec![0xCD; CHUNK_SIZE * 2];
+        let root = blake3_hash(&data);
+        provider.create_snapshot(50, 1, root, &data);
+        // Force-inject a stale chunk_data entry past chunk_hashes.len() so
+        // the path `chunk_data.get(...).is_some() && chunk_index past
+        // hashes` is reachable. (In normal operation total_chunks ==
+        // chunk_hashes.len() so this can't happen, but a stale or
+        // manually-mutated provider must not panic.)
+        provider.chunk_data.insert((50, 99), vec![0u8; 1]);
+        let resp = provider.handle_request(
+            &SyncMessage::ChunkRequest {
+                height: 50,
+                chunk_index: 99,
+            },
+            50,
+        );
+        assert!(
+            resp.is_none(),
+            "out-of-bounds chunk_index must return None, not panic; \
+             got Some(...) which means the bounds check was bypassed"
+        );
+        // And the more-natural attacker case: chunk_data has no entry at all.
+        let resp_no_data = provider.handle_request(
+            &SyncMessage::ChunkRequest {
+                height: 50,
+                chunk_index: usize::MAX,
+            },
+            50,
+        );
+        assert!(resp_no_data.is_none(), "missing chunk_data must also yield None");
     }
 
     #[test]
