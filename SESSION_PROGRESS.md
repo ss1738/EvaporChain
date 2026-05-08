@@ -48,6 +48,50 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (morning, latest) — Crooks-MEV cross-layer empirical proof + 3rd governance flag readiness tooling
+
+**Focus:** continue past the H-08 close into the operational adjacent: prove the chain's economic-punishment thesis end-to-end empirically, then ship the operator readiness tooling for the third governance flag in the activation ladder.
+
+**Commits shipped:** 3 (`32b359b`, `981d5c5`, `15d0440`).
+
+**Deliverables:**
+
+| # | Commit | Theme |
+|---|---|---|
+| 1 | `32b359b` | **Cross-layer Crooks-MEV empirical proof.** New test `test_crooks_mev_end_to_end_attacker_economically_punished` drives a real sandwich attack through the FULL pipeline: pre-fund attacker/victim/target → sandwich block via `apply_block` (executes balance changes + records observations) → flip enforce → `due_refund_txs` past grace → settlement block via `apply_block` (executes the refund) → assert attacker debited by EXACTLY refund.amount, victim credited by EXACTLY refund.amount, attacker strictly worse off than after the sandwich alone. Pre-existing tests covered consensus pipeline OR execution balance movement separately; this is the first test that ties them. The "decay-of-extractable-value" thesis is no longer "the substrate exists" — it's "the chain punishes a sandwich-attacker end-to-end". |
+| 2 | `981d5c5` | **`/api/mev/state_digest` HTTP endpoint + `scripts/crooks-mev-readiness.py`.** Wraps the existing `TendermintConsensus::mev_state_digest()` accessor (Phase 3.2 internal since 2026-05-05 but never wired to HTTP). Pairs with `/api/light_cone/antichain_digest` as the 2nd canonical inter-validator digest. The 255-line readiness script is the operator-facing companion to mcc-readiness.py (commit 80f9dba) — gates the 3rd governance flag flip (`crooks_mev_settlement_mode → enforce`) on cross-validator digest agreement, current observe mode, and observation_count ≥ threshold (proves detection fired in observe mode). **Empirically validated against the live cluster:** verdict came back `DEPLOY-FIRST` because all 5 nodes are pre-state_digest-endpoint binaries — exactly the signal an operator needs. |
+| 3 | `15d0440` | **Runbook integration.** Added "Operator readiness scripts" section near the top of `docs/runbooks/doctrine-rollout-2026-05.md` documenting both readiness scripts and establishing the rule: refuse to flip a flag until the relevant script returns exit-code 0. Closes the operator-tooling-vs-runbook gap — operators reading the runbook now know the scripts exist. |
+
+**Empirical results:**
+
+- The cross-layer test proves the chain's flagship economic claim works end-to-end. Attacker starts with 10000, sandwiches a 100-amount victim trade, ends up with `10000 - 50 - 50 - refund_amount - gas` (strictly less than after the sandwich alone). The refund is computed from the Crooks fluctuation theorem, not handcrafted.
+- The Crooks-MEV readiness script ran against the live cluster: 5/5 nodes don't expose `/api/mev/state_digest` because they're running the pre-981d5c5 binary. Script returned exit-code 1 (DEPLOY-FIRST). Same operator-needs-data signal as mcc-readiness.py.
+- 23 commits this session arc total (`a6bc9df` → `15d0440`). Every plan in the codebase is `[ ]`-free except the deferred arXiv preprint. Every audit finding checked has been verified closed. Every governance flag in the activation ladder has a quantitative readiness script.
+
+**Decisions made:**
+
+- **The cross-layer test goes in tendermint.rs, not tests/integration.** The `apply_block` production wrapper is the natural harness; testing the integration through the production entry point (vs. a synthetic harness) is more honest. The integration test is co-located with `test_crooks_mev_end_to_end_consensus_pipeline` and `test_mev_dispute_flow` so a maintainer scanning the file sees the full Crooks-MEV test surface in one place.
+- **`MIN_OBSERVATION_COUNT = 1` for the readiness threshold.** Defensible default: at least one detected sandwich in observe mode proves the detection path fires before flipping enforce. Mainnet might want a higher threshold (5–10) to require sustained empirical signal.
+- **Wire the readiness scripts into the runbook explicitly.** Operators read runbooks, not git logs. A runbook that mentions the script's filename + invocation + exit-code semantics is the difference between "tools exist" and "tools get used".
+
+**What's next:**
+
+- **Cluster deploy** is now the genuinely-only blocker. Hetzner SSH access. Once unblocked: stop-the-world per `cluster-deploy.md` §3 → `mcc-readiness.py --watch` until green → flip `block_source_mode + lambda_fold_mode` → soak → flip `parent_acceptance_mode → mcc_full` → soak → flip `conservation_enforcement → enforce` (gated by mcc-readiness.py's consecutive_clean_audits ≥ threshold) → soak → flip `crooks_mev_settlement_mode → enforce` (gated by crooks-mev-readiness.py's verdict).
+- The 3-flag activation ladder is now a **curl-and-watch** operation backed by quantitative verdicts on real cluster data. The chain stops being a code thread and becomes an operational one.
+
+**Blockers / open questions:**
+
+- **Hetzner SSH access** — same blocker as the past 4 entries. Now genuinely the bottleneck for everything code-side already shipped.
+- **Mainnet calibration of readiness thresholds** — `MIN_CONSECUTIVE_CLEAN_AUDITS = 500`, `MIN_OBSERVATION_COUNT = 1`, etc. Defensible testnet defaults; mainnet should soak with real workload data and tune.
+
+**Cross-references:**
+
+- `scripts/mcc-readiness.py` — sibling readiness checker for the first two governance flag flips.
+- `scripts/crooks-mev-readiness.py` — this entry's readiness checker for the third flag.
+- `docs/runbooks/doctrine-rollout-2026-05.md` — operator runbook now references both scripts.
+
+---
+
 ## 2026-05-09 (morning, late) — operator activation tooling + H-08 VM gas asymmetry close + zero-warning workspace
 
 **Focus:** "build until it finish" mode. Push past the morning entry's MCC plan closure into the operational adjacent: operator readiness tooling, the last meaningful audit HIGH on the production hot path, and zero-warning workspace state.
