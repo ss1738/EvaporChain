@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -84,6 +84,19 @@ struct Args {
     /// allowed.
     #[arg(long, value_delimiter = ',')]
     allow_inner: Vec<String>,
+
+    /// Day 12 — idempotency cache size. Wallets that send an
+    /// `Idempotency-Key` header on `/sponsor` and retry under the
+    /// same key get the cached response (same paymaster_nonce,
+    /// same sig). `0` disables the cache. Default `1024`.
+    #[arg(long, default_value = "1024")]
+    idempotency_max_keys: usize,
+
+    /// Day 12 — idempotency cache TTL in seconds. Default `3600`
+    /// (1h). Tune higher for wallets that may retry across longer
+    /// periods (e.g. user laptop sleeping mid-flight).
+    #[arg(long, default_value = "3600")]
+    idempotency_ttl_secs: u64,
 }
 
 #[derive(Clone)]
@@ -136,6 +149,8 @@ async fn main() -> anyhow::Result<()> {
         per_sender_burst: args.per_sender_burst,
         audit_log: args.audit_log.clone(),
         allowed_inner_variants,
+        idempotency_max_keys: args.idempotency_max_keys,
+        idempotency_ttl_secs: args.idempotency_ttl_secs,
     };
     let paymaster = Paymaster::new_with_config(
         keypair,
@@ -195,18 +210,33 @@ async fn get_metrics(State(state): State<AppState>) -> Response {
 
 async fn sponsor(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<SponsorshipRequest>,
 ) -> Result<Json<SponsorshipResponse>, AppError> {
+    // Day 12 — wallets can opt into idempotent retry by sending an
+    // `Idempotency-Key: <opaque>` header (HTTP convention; see
+    // draft-ietf-httpapi-idempotency-key-header). The paymaster
+    // caches the response keyed on this string for `idempotency_ttl`,
+    // so a wallet retry returns the same paymaster_nonce + sig
+    // instead of a fresh allocation.
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let mut user_op = req.user_op;
     let paymaster_addr = state.paymaster.address();
-    let assigned_nonce = state.paymaster.sponsor(&mut user_op).map_err(|e| {
-        error!(error = %e, "sponsor failed");
-        AppError::from_paymaster(e)
-    })?;
+    let outcome = state
+        .paymaster
+        .sponsor_idempotent(idempotency_key.as_deref(), &mut user_op)
+        .map_err(|e| {
+            error!(error = %e, "sponsor failed");
+            AppError::from_paymaster(e)
+        })?;
     Ok(Json(SponsorshipResponse {
         user_op,
         paymaster_address_hex: hex::encode(paymaster_addr),
-        paymaster_nonce: assigned_nonce,
+        paymaster_nonce: outcome.paymaster_nonce(),
     }))
 }
 

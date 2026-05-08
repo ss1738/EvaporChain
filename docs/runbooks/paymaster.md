@@ -95,6 +95,8 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--per-sender-burst N` | no | `10` | Per-sender burst capacity |
 | `--audit-log PATH` | no | (off) | Append-only JSON-lines audit log path. One line per successful sponsorship — see §Audit log |
 | `--allow-inner LIST` | no | (trust chain) | Operator-side inner-tx whitelist. Comma-separated values from `transfer`, `call_script`, `call_contract`. Omitted = sponsor any chain-accepted variant. Example: `--allow-inner=transfer` for a transfer-only paymaster. See §Inner-tx whitelist |
+| `--idempotency-max-keys N` | no | `1024` | Day 12: idempotency cache size. `0` disables. Wallets sending `Idempotency-Key` retry-safely against this cache |
+| `--idempotency-ttl-secs N` | no | `3600` | Day 12: idempotency cache TTL in seconds |
 
 ### Endpoints
 
@@ -187,6 +189,27 @@ If you need to reset (e.g. fresh paymaster account), delete both `paymaster_nonc
 - `GET /healthz` for liveness probes.
 - `GET /info` exposes `next_paymaster_nonce`. The on-chain `account.nonce` for the paymaster address should always be `next_paymaster_nonce - <in-flight sponsored UserOps not yet finalized>`. A persistent gap > a few blocks signals dropped UserOps or a chain reorg.
 - Tail the paymaster log for `sponsor failed` lines — every entry is a wallet bug or a wallet-side abuse attempt (e.g. resubmitting an `AlreadySigned` UserOp).
+
+### Idempotency (wallet retries)
+
+Wallets retry `/sponsor` on network blips. Without idempotency, the second call allocates a fresh paymaster_nonce + signs a second time — the wallet ends up holding two distinct UserOps for what was logically one sponsorship, the chain accepts the first and rejects the second, and the paymaster has burned gas budget on a UserOp that won't land.
+
+The Day 12 fix: wallets send an `Idempotency-Key: <opaque>` HTTP header on every `/sponsor`. The paymaster keeps a bounded LRU cache (`idempotency_max_keys`, default `1024`) with per-entry TTL (`idempotency_ttl_secs`, default `3600` = 1h). Same key → return the cached `SponsorshipResponse` byte-for-byte (same paymaster_nonce, same sig). New key → process normally, cache the result.
+
+```bash
+# Wallet generates a UUID per logical sponsorship and sends it.
+curl -X POST http://localhost:8088/sponsor \
+  -H 'idempotency-key: 8ec40a3f-...' \
+  -H 'content-type: application/json' \
+  -d @user_op.json
+```
+
+Operationally:
+- **Failed sponsorships are NOT cached.** `AlreadySigned` / rate-limited / invalid user sig errors don't poison the key — a wallet retry with a clean UserOp under the same key gets fresh handling.
+- **TTL is generous by default** (1h). Tune higher if wallets retry across longer windows (laptop sleep mid-flight); lower if the paymaster's nonce horizon is short.
+- **`0` disables.** Set `--idempotency-max-keys=0` to opt out entirely; clients sending `Idempotency-Key` simply don't see the cache.
+- **/info exposes `idempotency_max_keys` + `idempotency_ttl_secs`** so wallets can decide whether to bother computing and sending keys.
+- **`evaporchain_paymaster_idempotent_replays_total` counter** — see §Metrics. Sustained high replay rate signals either flaky wallet → paymaster networking or a wallet bug retrying without backoff.
 
 ### `/info` policy surface
 

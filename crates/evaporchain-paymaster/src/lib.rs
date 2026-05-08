@@ -36,7 +36,7 @@
 //!   `verify_tx_signature`, costing the paymaster the gas it just
 //!   sponsored — which is paymaster-side risk, not consensus risk).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -209,6 +209,15 @@ pub struct PaymasterInfo {
     /// (`transfer`, `call_script`, `call_contract`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_inner_variants: Option<Vec<String>>,
+    /// Day 12 — idempotency cache size. `0` means idempotency is
+    /// disabled; the wallet's `Idempotency-Key` header (if sent)
+    /// is ignored. Wallets that retry should read this and back
+    /// off when 0.
+    #[serde(default)]
+    pub idempotency_max_keys: usize,
+    /// Day 12 — idempotency cache TTL in seconds.
+    #[serde(default)]
+    pub idempotency_ttl_secs: u64,
 }
 
 /// Hardening knobs the operator can flip per deployment. Defaults
@@ -251,6 +260,17 @@ pub struct PaymasterConfig {
     ///
     /// `None` (default) disables audit logging.
     pub audit_log: Option<PathBuf>,
+    /// Idempotency cache size. `0` disables idempotency entirely.
+    /// Default: `1024`. Wallets that retry a sponsorship under the
+    /// same `Idempotency-Key` get the cached response — same
+    /// paymaster_nonce, same signature — instead of a fresh
+    /// allocation. Prevents duplicate sponsorships on network blips.
+    pub idempotency_max_keys: usize,
+    /// Idempotency cache TTL in seconds. Default: `3600` (1h). After
+    /// this, the same key is treated as a fresh request. Tune higher
+    /// if wallet retries can span longer (e.g., user closes laptop
+    /// mid-flight); lower if the paymaster's nonce horizon is short.
+    pub idempotency_ttl_secs: u64,
     /// Operator-side narrowing of which inner-tx variants this
     /// paymaster will sponsor.
     ///
@@ -275,6 +295,8 @@ impl Default for PaymasterConfig {
             require_user_sig: true,
             per_sender_rps: 5.0,
             per_sender_burst: 10,
+            idempotency_max_keys: 1024,
+            idempotency_ttl_secs: 3600,
             audit_log: None,
             allowed_inner_variants: None,
         }
@@ -284,11 +306,15 @@ impl Default for PaymasterConfig {
 impl PaymasterConfig {
     /// Permissive profile for testnet / dev — disables both the
     /// user-sig pre-check and the rate limiter. Do NOT use in prod.
+    /// Idempotency cache is left ENABLED (1024 keys, 1h TTL) since
+    /// even testnet wallets benefit from retry-safety.
     pub fn permissive() -> Self {
         Self {
             require_user_sig: false,
             per_sender_rps: 0.0,
             per_sender_burst: 0,
+            idempotency_max_keys: 1024,
+            idempotency_ttl_secs: 3600,
             audit_log: None,
             allowed_inner_variants: None,
         }
@@ -395,6 +421,13 @@ pub struct PaymasterMetrics {
     pub sponsorships_nonce_io: AtomicU64,
     pub sponsorships_audit_io: AtomicU64,
     pub sponsorships_other: AtomicU64,
+    /// Day 12 — count of idempotent replays (i.e., `/sponsor` calls
+    /// where the wallet's `Idempotency-Key` matched a previous
+    /// request and the paymaster returned the cached response
+    /// instead of allocating a fresh nonce). High replay rate signals
+    /// either flaky wallet → paymaster networking or a wallet bug
+    /// retrying without backoff.
+    pub sponsorships_idempotent_replay: AtomicU64,
     pub started_at: Instant,
 }
 
@@ -408,6 +441,7 @@ impl Default for PaymasterMetrics {
             sponsorships_nonce_io: AtomicU64::new(0),
             sponsorships_audit_io: AtomicU64::new(0),
             sponsorships_other: AtomicU64::new(0),
+            sponsorships_idempotent_replay: AtomicU64::new(0),
             started_at: Instant::now(),
         }
     }
@@ -430,6 +464,109 @@ impl PaymasterMetrics {
     }
 }
 
+/// LRU + TTL cache mapping wallet-supplied idempotency keys to the
+/// SponsorshipResponse the paymaster originally returned. Bounded
+/// by `max_keys` (oldest evicted on insertion when full); per-entry
+/// TTL `ttl` (expired entries treated as cache miss on read).
+///
+/// Wallets opt in by sending an `Idempotency-Key: <hex>` header on
+/// `/sponsor`. A retry under the same key gets the same response —
+/// same paymaster_nonce, same signature — so the wallet doesn't end
+/// up holding two distinct UserOps for what was logically one
+/// sponsorship.
+#[derive(Debug)]
+struct IdempotencyCache {
+    entries: HashMap<String, (SponsorshipResponse, Instant)>,
+    insertion_order: VecDeque<String>,
+    max_keys: usize,
+    ttl: Duration,
+}
+
+impl IdempotencyCache {
+    fn new(max_keys: usize, ttl: Duration) -> Self {
+        Self {
+            entries: HashMap::new(),
+            insertion_order: VecDeque::new(),
+            max_keys,
+            ttl,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.max_keys > 0
+    }
+
+    fn get(&mut self, key: &str) -> Option<SponsorshipResponse> {
+        if !self.enabled() {
+            return None;
+        }
+        let now = Instant::now();
+        let expired = self
+            .entries
+            .get(key)
+            .map(|(_, ts)| now.duration_since(*ts) > self.ttl)
+            .unwrap_or(false);
+        if expired {
+            self.entries.remove(key);
+            return None;
+        }
+        self.entries.get(key).map(|(r, _)| r.clone())
+    }
+
+    fn insert(&mut self, key: String, response: SponsorshipResponse) {
+        if !self.enabled() {
+            return;
+        }
+        // If the key already exists (shouldn't, but defend), refresh
+        // it without touching the LRU order — caller already saw a
+        // miss path so we record this as a fresh-but-overwriting
+        // event.
+        if self.entries.contains_key(&key) {
+            self.entries.insert(key, (response, Instant::now()));
+            return;
+        }
+        if self.entries.len() >= self.max_keys {
+            // Evict oldest. The deque holds insertion order; the
+            // HashMap holds the values. They can briefly disagree if
+            // a key was overwritten above, so loop until we evict an
+            // entry that's actually still present.
+            while let Some(oldest) = self.insertion_order.pop_front() {
+                if self.entries.remove(&oldest).is_some() {
+                    break;
+                }
+            }
+        }
+        self.insertion_order.push_back(key.clone());
+        self.entries.insert(key, (response, Instant::now()));
+    }
+}
+
+/// Outcome of a `sponsor_idempotent` call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SponsorOutcome {
+    /// First time we saw this idempotency key (or no key was
+    /// provided). The paymaster allocated a fresh sponsorship
+    /// nonce and signed; `user_op` was mutated in place to carry
+    /// the new sponsorship fields.
+    Fresh { paymaster_nonce: u64 },
+    /// The supplied idempotency key matched a previous request.
+    /// `user_op` was filled with the cached response — same
+    /// paymaster_nonce, same signature — so a wallet retry gets
+    /// the SAME wire-ready transaction it got the first time.
+    Replay { paymaster_nonce: u64 },
+}
+
+impl SponsorOutcome {
+    pub fn paymaster_nonce(&self) -> u64 {
+        match self {
+            Self::Fresh { paymaster_nonce } | Self::Replay { paymaster_nonce } => {
+                *paymaster_nonce
+            }
+        }
+    }
+}
+
 /// Long-lived state held by a paymaster service.
 ///
 /// Wraps the keypair, derives the paymaster's account address from
@@ -445,6 +582,7 @@ pub struct Paymaster {
     config: PaymasterConfig,
     rate_limiter: Arc<Mutex<RateLimiter>>,
     audit_log: Option<Arc<Mutex<AuditLogger>>>,
+    idempotency: Arc<Mutex<IdempotencyCache>>,
     metrics: Arc<PaymasterMetrics>,
 }
 
@@ -521,6 +659,10 @@ impl Paymaster {
         } else {
             None
         };
+        let idempotency = IdempotencyCache::new(
+            config.idempotency_max_keys,
+            Duration::from_secs(config.idempotency_ttl_secs),
+        );
         Ok(Self {
             keypair,
             address,
@@ -532,6 +674,7 @@ impl Paymaster {
             config,
             rate_limiter: Arc::new(Mutex::new(rate_limiter)),
             audit_log,
+            idempotency: Arc::new(Mutex::new(idempotency)),
             metrics: Arc::new(PaymasterMetrics::default()),
         })
     }
@@ -572,6 +715,67 @@ impl Paymaster {
             Err(e) => self.metrics.record(Err(e)),
         }
         result
+    }
+
+    /// Idempotent variant of `sponsor`. If `idempotency_key` is `Some`
+    /// and matches a cached response, returns the cached
+    /// SponsorshipResponse fields (mutating `user_op` in place to
+    /// match) — same paymaster_nonce, same signature. The wallet
+    /// retries gracefully without burning a fresh nonce.
+    ///
+    /// Calling with `idempotency_key: None` is equivalent to calling
+    /// `sponsor` directly: no cache lookup, no cache insert, fresh
+    /// allocation always.
+    ///
+    /// Each call records exactly one metrics counter:
+    ///   - cache hit → `sponsorships_idempotent_replay`
+    ///   - cache miss + Ok → `sponsorships_ok`
+    ///   - cache miss + Err(variant) → `sponsorships_<variant>`
+    pub fn sponsor_idempotent(
+        &self,
+        idempotency_key: Option<&str>,
+        user_op: &mut UserOpTx,
+    ) -> Result<SponsorOutcome, PaymasterError> {
+        // Cache lookup BEFORE any state mutation.
+        if let Some(key) = idempotency_key {
+            let mut cache = self.idempotency.lock().expect("idempotency mutex");
+            if let Some(cached) = cache.get(key) {
+                drop(cache);
+                let nonce = cached.paymaster_nonce;
+                *user_op = cached.user_op;
+                self.metrics
+                    .sponsorships_idempotent_replay
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(SponsorOutcome::Replay {
+                    paymaster_nonce: nonce,
+                });
+            }
+        }
+
+        // Cache miss (or no key) — run the normal sponsor path.
+        let result = self.sponsor_inner(user_op);
+        match &result {
+            Ok(_) => self.metrics.record(Ok(())),
+            Err(e) => self.metrics.record(Err(e)),
+        }
+        let nonce = result?;
+
+        // Cache the response for future retries under this key.
+        if let Some(key) = idempotency_key {
+            let response = SponsorshipResponse {
+                user_op: user_op.clone(),
+                paymaster_address_hex: hex::encode(self.address),
+                paymaster_nonce: nonce,
+            };
+            self.idempotency
+                .lock()
+                .expect("idempotency mutex")
+                .insert(key.to_string(), response);
+        }
+
+        Ok(SponsorOutcome::Fresh {
+            paymaster_nonce: nonce,
+        })
     }
 
     fn sponsor_inner(&self, user_op: &mut UserOpTx) -> Result<u64, PaymasterError> {
@@ -725,6 +929,8 @@ impl Paymaster {
             allowed_inner_variants: self.config.allowed_inner_variants.as_ref().map(|set| {
                 set.iter().map(|v| v.as_str().to_string()).collect()
             }),
+            idempotency_max_keys: self.config.idempotency_max_keys,
+            idempotency_ttl_secs: self.config.idempotency_ttl_secs,
         }
     }
 
@@ -797,6 +1003,15 @@ impl Paymaster {
         );
         out.push_str(&format!(
             "evaporchain_paymaster_uptime_seconds {uptime}\n"
+        ));
+        out.push_str(
+            "# HELP evaporchain_paymaster_idempotent_replays_total \
+             Number of /sponsor calls served from the idempotency cache.\n\
+             # TYPE evaporchain_paymaster_idempotent_replays_total counter\n",
+        );
+        out.push_str(&format!(
+            "evaporchain_paymaster_idempotent_replays_total {}\n",
+            load(&m.sponsorships_idempotent_replay)
         ));
         out
     }
@@ -1203,6 +1418,8 @@ mod tests {
                 per_sender_burst: 3,
                 audit_log: None,
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
@@ -1235,6 +1452,8 @@ mod tests {
                 per_sender_burst: 1,
                 audit_log: None,
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
@@ -1272,6 +1491,8 @@ mod tests {
                 per_sender_burst: 0,
                 audit_log: Some(audit_file.clone()),
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
@@ -1308,6 +1529,8 @@ mod tests {
             per_sender_burst: 0,
             audit_log: Some(audit_file.clone()),
             allowed_inner_variants: None,
+            idempotency_max_keys: 0,
+            idempotency_ttl_secs: 0,
         };
 
         {
@@ -1359,6 +1582,8 @@ mod tests {
                 per_sender_burst: 0,
                 audit_log: Some(audit_file.clone()),
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
@@ -1396,6 +1621,8 @@ mod tests {
                 per_sender_burst: 0,
                 audit_log: None,
                 allowed_inner_variants: allowed,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap()
@@ -1560,6 +1787,221 @@ mod tests {
         assert!(matches!(r, Err(PaymasterError::CallDataDecode(_))));
     }
 
+    // ─── Day 12: idempotency tests ───────────────────────────────────
+
+    fn idempotent_paymaster(tmp: &TempDir) -> Paymaster {
+        let kp = HybridKeypair::generate();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: None,
+                allowed_inner_variants: None,
+                idempotency_max_keys: 16,
+                idempotency_ttl_secs: 60,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn idempotent_replay_returns_cached_response() {
+        let tmp = TempDir::new().unwrap();
+        let pm = idempotent_paymaster(&tmp);
+        let mut a = blank_user_op();
+        let key = "wallet-tx-uuid-123";
+        let first = pm.sponsor_idempotent(Some(key), &mut a).unwrap();
+        let first_nonce = match first {
+            SponsorOutcome::Fresh { paymaster_nonce } => paymaster_nonce,
+            SponsorOutcome::Replay { .. } => panic!("first call must be Fresh"),
+        };
+        let first_sig = a.paymaster_signature.clone().unwrap();
+
+        // Retry under the same key — must replay.
+        let mut b = blank_user_op();
+        let second = pm.sponsor_idempotent(Some(key), &mut b).unwrap();
+        match second {
+            SponsorOutcome::Replay { paymaster_nonce } => {
+                assert_eq!(paymaster_nonce, first_nonce);
+            }
+            SponsorOutcome::Fresh { .. } => panic!("retry must be Replay"),
+        }
+        assert_eq!(b.paymaster_signature.as_ref().unwrap(), &first_sig);
+        assert_eq!(b.paymaster_nonce, Some(first_nonce));
+
+        // Counter NOT advanced on replay.
+        assert_eq!(pm.next_paymaster_nonce(), 1);
+    }
+
+    #[test]
+    fn idempotent_distinct_keys_get_distinct_nonces() {
+        let tmp = TempDir::new().unwrap();
+        let pm = idempotent_paymaster(&tmp);
+        let mut a = blank_user_op();
+        let mut b = blank_user_op();
+        let mut c = blank_user_op();
+        let n1 = pm.sponsor_idempotent(Some("k1"), &mut a).unwrap();
+        let n2 = pm.sponsor_idempotent(Some("k2"), &mut b).unwrap();
+        let n3 = pm.sponsor_idempotent(Some("k3"), &mut c).unwrap();
+        assert_eq!(n1.paymaster_nonce(), 0);
+        assert_eq!(n2.paymaster_nonce(), 1);
+        assert_eq!(n3.paymaster_nonce(), 2);
+    }
+
+    #[test]
+    fn idempotent_no_key_always_fresh() {
+        // None for key bypasses the cache entirely.
+        let tmp = TempDir::new().unwrap();
+        let pm = idempotent_paymaster(&tmp);
+        let mut a = blank_user_op();
+        let mut b = blank_user_op();
+        let n1 = pm.sponsor_idempotent(None, &mut a).unwrap();
+        let n2 = pm.sponsor_idempotent(None, &mut b).unwrap();
+        assert!(matches!(n1, SponsorOutcome::Fresh { paymaster_nonce: 0 }));
+        assert!(matches!(n2, SponsorOutcome::Fresh { paymaster_nonce: 1 }));
+    }
+
+    #[test]
+    fn idempotent_replay_increments_replay_metric_not_ok() {
+        let tmp = TempDir::new().unwrap();
+        let pm = idempotent_paymaster(&tmp);
+        let mut a = blank_user_op();
+        let mut b = blank_user_op();
+        pm.sponsor_idempotent(Some("k"), &mut a).unwrap(); // Fresh → ok
+        pm.sponsor_idempotent(Some("k"), &mut b).unwrap(); // Replay → replay metric
+        let m = pm.metrics();
+        assert_eq!(m.sponsorships_ok.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            m.sponsorships_idempotent_replay.load(Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[test]
+    fn idempotent_failure_does_not_cache() {
+        // A sponsor failure (e.g. AlreadySigned) MUST NOT cache —
+        // otherwise a retry would also fail with the cached error,
+        // and any future request with that key would be poisoned.
+        let tmp = TempDir::new().unwrap();
+        let pm = idempotent_paymaster(&tmp);
+        let mut a = blank_user_op();
+        a.paymaster_signature = Some(vec![0u8; 32]); // forces AlreadySigned
+        let r = pm.sponsor_idempotent(Some("k"), &mut a);
+        assert!(matches!(r, Err(PaymasterError::AlreadySigned)));
+
+        // Retry with a clean UserOp under the same key — must be
+        // Fresh (the prior failure was not cached).
+        let mut b = blank_user_op();
+        let outcome = pm.sponsor_idempotent(Some("k"), &mut b).unwrap();
+        assert!(matches!(outcome, SponsorOutcome::Fresh { .. }));
+    }
+
+    #[test]
+    fn idempotent_disabled_when_max_keys_zero() {
+        // Paymaster with idempotency_max_keys = 0: keys are silently
+        // ignored; every call is Fresh.
+        let tmp = TempDir::new().unwrap();
+        // Construct a paymaster with idempotency_max_keys = 0 to test
+        // the disabled path (permissive() now leaves the cache enabled).
+        let kp = HybridKeypair::generate();
+        let nonce_file = tmp.path().join("alt_paymaster_nonce");
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: None,
+                allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
+            },
+        )
+        .unwrap();
+        let mut a = blank_user_op();
+        let mut b = blank_user_op();
+        let n1 = pm.sponsor_idempotent(Some("k"), &mut a).unwrap();
+        let n2 = pm.sponsor_idempotent(Some("k"), &mut b).unwrap();
+        // Both Fresh; second got a different nonce (no replay).
+        assert!(matches!(n1, SponsorOutcome::Fresh { paymaster_nonce: 0 }));
+        assert!(matches!(n2, SponsorOutcome::Fresh { paymaster_nonce: 1 }));
+    }
+
+    #[test]
+    fn idempotent_lru_evicts_oldest_when_full() {
+        // max_keys = 2; after inserting 3 distinct keys, the oldest
+        // (k1) should be evicted. We then verify k1 misses while k2
+        // and k3 still hit. We DON'T retry k1 first because that
+        // miss would itself insert k1 into the cache and evict
+        // another key, contaminating the LRU semantics under test.
+        let kp = HybridKeypair::generate();
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: None,
+                allowed_inner_variants: None,
+                idempotency_max_keys: 2,
+                idempotency_ttl_secs: 60,
+            },
+        )
+        .unwrap();
+
+        for k in ["k1", "k2", "k3"] {
+            pm.sponsor_idempotent(Some(k), &mut blank_user_op()).unwrap();
+        }
+        // Cache state after 3 inserts: [k2, k3]; k1 evicted as oldest.
+        // Retry k2 + k3 first — both must Replay.
+        let outcome = pm
+            .sponsor_idempotent(Some("k2"), &mut blank_user_op())
+            .unwrap();
+        assert!(
+            matches!(outcome, SponsorOutcome::Replay { .. }),
+            "k2 should still be cached"
+        );
+        let outcome = pm
+            .sponsor_idempotent(Some("k3"), &mut blank_user_op())
+            .unwrap();
+        assert!(
+            matches!(outcome, SponsorOutcome::Replay { .. }),
+            "k3 should still be cached"
+        );
+        // Now confirm k1 was evicted (would Fresh, but inserting k1
+        // back would evict k2 or k3 — that's fine, we already
+        // verified above).
+        let outcome = pm
+            .sponsor_idempotent(Some("k1"), &mut blank_user_op())
+            .unwrap();
+        assert!(
+            matches!(outcome, SponsorOutcome::Fresh { .. }),
+            "k1 should have been evicted"
+        );
+    }
+
+    #[test]
+    fn info_exposes_idempotency_config() {
+        // /info surfaces the cache size + TTL so wallets know whether
+        // sending Idempotency-Key will actually do anything.
+        let tmp = TempDir::new().unwrap();
+        let pm = idempotent_paymaster(&tmp);
+        let info = pm.info();
+        assert_eq!(info.idempotency_max_keys, 16);
+        assert_eq!(info.idempotency_ttl_secs, 60);
+    }
+
     // ─── Day 11: /info policy surface tests ──────────────────────────
 
     #[test]
@@ -1602,6 +2044,8 @@ mod tests {
                 per_sender_burst: 0,
                 audit_log: Some(audit_file),
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
@@ -1709,6 +2153,8 @@ mod tests {
                 per_sender_burst: 1,
                 audit_log: None,
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
@@ -1748,6 +2194,7 @@ mod tests {
             ("evaporchain_paymaster_next_nonce", "gauge"),
             ("evaporchain_paymaster_active_senders", "gauge"),
             ("evaporchain_paymaster_uptime_seconds", "gauge"),
+            ("evaporchain_paymaster_idempotent_replays_total", "counter"),
         ] {
             assert!(
                 body.contains(&format!("# HELP {metric}")),
@@ -1806,6 +2253,8 @@ mod tests {
                 per_sender_burst: 0,
                 audit_log: None,
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
@@ -1829,6 +2278,8 @@ mod tests {
                 per_sender_burst: 1,
                 audit_log: None,
                 allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
             },
         )
         .unwrap();
