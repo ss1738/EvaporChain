@@ -663,6 +663,13 @@ pub struct ConsensusFourActState {
     /// gap (see DOCTRINE_PUNCH_LIST.md). The field exposes which
     /// signal an operator is seeing so the gap is diagnosable.
     pub last_conservation_violation_type: Option<String>,
+    /// Number of consecutive blocks whose §1.2 audit verdict was Ok.
+    /// Resets to 0 on any Err (even under `observe` mode where the
+    /// block still commits). This is the operator-facing readiness
+    /// signal for flipping `conservation_enforcement` to `enforce`:
+    /// a sustained non-zero counter is the precondition. Threshold
+    /// for "safe to flip" is a governance call, not enforced here.
+    pub consecutive_clean_audits: u64,
     /// **Number of blocks currently retained in the Light-Cone DAG**, NOT
     /// the chain's block height or committed-finality count. The DAG is
     /// pruned via `LightCone::prune_before_epoch` (sliding-window
@@ -1477,6 +1484,7 @@ impl TendermintConsensus {
                 .last_conservation_audit
                 .as_ref()
                 .and_then(|r| r.as_ref().err().map(conservation_violation_discriminant)),
+            consecutive_clean_audits: self.executor.consecutive_clean_audits,
             light_cone_block_count: self.light_cone_dag.len(),
             evaporation_mmr_size: self.executor.mmr.size(),
             evaporation_mmr_root: if self.executor.mmr.size() == 0 {

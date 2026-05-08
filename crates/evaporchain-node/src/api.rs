@@ -222,6 +222,13 @@ pub struct FourActSnapshot {
     /// every block under inflationary emission) and a genuine
     /// invariant breach (other variants).
     pub last_conservation_violation_type: Option<String>,
+    /// Consecutive blocks whose §1.2 audit verdict was Ok. Resets on
+    /// any Err (even under observe mode). Operator readiness signal
+    /// for `POST /api/governance/param conservation_enforcement=enforce`:
+    /// a sustained non-zero counter is the precondition for the flip.
+    /// 0 until the first block has been audited.
+    #[serde(default)]
+    pub consecutive_clean_audits: u64,
     /// Genesis amendment hash that the chain's constitution proof
     /// bound to. Empty until genesis ceremony runs.
     pub genesis_amendment_hash: Option<String>,

@@ -602,6 +602,11 @@ pub struct ParallelExecutor {
     /// `epochs_elapsed` argument fed to `energy_at_epoch`. `None`
     /// until the first audit runs.
     pub last_audit_epoch: Option<u64>,
+    /// Consecutive-clean-audit counter (mirrors SimpleExecutor field).
+    /// Operator-facing readiness signal for the
+    /// `conservation_enforcement` flag flip. Increments on Ok; resets
+    /// to 0 on Err verdicts. 0 until the first block runs.
+    pub consecutive_clean_audits: u64,
     /// Reward accumulator for block rewards + fee distribution. Mirrors
     /// `SimpleExecutor.reward_accumulator`; until this commit production
     /// tendermint validators received NO block rewards because
@@ -651,6 +656,7 @@ impl ParallelExecutor {
             mortis_certificate: None,
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             reward_accumulator: None,
             lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
@@ -761,6 +767,7 @@ impl ParallelExecutor {
             mortis_certificate: None,
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             reward_accumulator: None,
             lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
@@ -794,6 +801,7 @@ impl ParallelExecutor {
             mortis_certificate: None,
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             reward_accumulator: None,
             lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
@@ -826,6 +834,7 @@ impl ParallelExecutor {
             mortis_certificate: None,
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             reward_accumulator: None,
             lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
@@ -862,6 +871,7 @@ impl ParallelExecutor {
             mortis_certificate: None,
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             reward_accumulator: None,
             lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
@@ -2310,6 +2320,13 @@ impl ExecutionEngine for ParallelExecutor {
         );
         // Same gate as SimpleExecutor — see `evaluate_conservation_gate`.
         let stored = crate::evaluate_conservation_gate(audit_verdict, must_enforce)?;
+        // Consecutive-clean-audit counter (operator readiness signal for
+        // the `conservation_enforcement` flag flip). Mirrors SimpleExecutor.
+        if stored.is_ok() {
+            self.consecutive_clean_audits = self.consecutive_clean_audits.saturating_add(1);
+        } else {
+            self.consecutive_clean_audits = 0;
+        }
         self.last_conservation_audit = Some(stored);
         self.last_audit_epoch = Some(block.epoch);
 

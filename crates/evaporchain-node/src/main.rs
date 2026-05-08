@@ -4449,6 +4449,7 @@ async fn main() -> Result<()> {
                                             last_conservation_violation_type: s
                                                 .last_conservation_violation_type
                                                 .clone(),
+                                            consecutive_clean_audits: s.consecutive_clean_audits,
                                             genesis_amendment_hash: None,
                                             light_cone_block_count: s.light_cone_block_count,
                                             ghost_object_count,
@@ -5745,6 +5746,7 @@ async fn main() -> Result<()> {
                                             last_conservation_violation_type: four_act_snap
                                                 .last_conservation_violation_type
                                                 .clone(),
+                                            consecutive_clean_audits: four_act_snap.consecutive_clean_audits,
                                             genesis_amendment_hash: None,
                                             light_cone_block_count: four_act_snap.light_cone_block_count,
                                             ghost_object_count,

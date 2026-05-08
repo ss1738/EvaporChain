@@ -600,6 +600,15 @@ pub struct SimpleExecutor {
     /// audits, not a `saturating_sub(0)` proxy on storage-rent epoch.
     /// `None` until the first audit runs.
     pub last_audit_epoch: Option<u64>,
+    /// Number of consecutive blocks whose `evaluate_conservation_gate`
+    /// returned `Ok(Ok(()))` — operator-facing readiness signal for the
+    /// `conservation_enforcement` flag flip. Resets to 0 on any
+    /// `Err(violation)` verdict (even under `observe` mode where the
+    /// block still commits) and on `ExecutionError::ConservationViolation`
+    /// rejections under `enforce`. The threshold for "safe to flip" is a
+    /// governance call, not enforced here — but a sustained non-zero
+    /// counter is the precondition. 0 until the first block runs.
+    pub consecutive_clean_audits: u64,
     /// Last Cμ-Gate verdict (Shalizi-Crutchfield identity Cμ ≤ E + hμ).
     /// Populated when the chain calls `record_cmu_observation`. Pure
     /// observability — governance can promote to consensus-rejection later.
@@ -656,6 +665,7 @@ impl SimpleExecutor {
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -820,6 +830,7 @@ impl SimpleExecutor {
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -857,6 +868,7 @@ impl SimpleExecutor {
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -894,6 +906,7 @@ impl SimpleExecutor {
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -935,6 +948,7 @@ impl SimpleExecutor {
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -976,6 +990,7 @@ impl SimpleExecutor {
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -1018,6 +1033,7 @@ impl SimpleExecutor {
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
             last_audit_epoch: None,
+            consecutive_clean_audits: 0,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -3554,6 +3570,15 @@ impl ExecutionEngine for SimpleExecutor {
         // at their prior values (the next attempt compares against
         // the same baseline).
         let stored = evaluate_conservation_gate(audit_verdict, must_enforce)?;
+        // Maintain the consecutive-clean-audits counter as the operator-
+        // facing readiness signal for flipping `conservation_enforcement`
+        // to "enforce". Increment on Ok; reset on any Err (even under
+        // observe mode where the block still commits).
+        if stored.is_ok() {
+            self.consecutive_clean_audits = self.consecutive_clean_audits.saturating_add(1);
+        } else {
+            self.consecutive_clean_audits = 0;
+        }
         self.last_conservation_audit = Some(stored);
         self.last_audit_epoch = Some(block.epoch);
 
