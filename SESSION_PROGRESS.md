@@ -48,6 +48,34 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (afternoon, continued) — Phase 6 Sepolia deployment pipeline
+
+**Focus:** All contracts deploying in one shot; genesis-init calldata generation; operator env-var playbook.
+
+**Commits shipped:** 4 (2b7e114 → 2faea72). See `ETHEREUM_BRIDGE_PLAN.md` status log for detail.
+
+**Deliverables:**
+- `Deploy.s.sol`: deploys all 5 bridge contracts in one broadcast; `GENESIS_CALLDATA` env var triggers `genesisInit` in same bundle; all addresses printed as `KEY=0x…`.
+- `ethereum-bridge/scripts/genesis_init.py`: stdlib-only Python script; reads `/api/bridge/validators?epoch=N` from live node, ABI-encodes `genesisInit` calldata, outputs 0x hex. Graceful error handling.
+- `.env.sepolia.example`: full operator playbook — all env vars, step-by-step commands (deploy → fill addresses → start relayer), gas budget estimates.
+- Bug fix: `.gitignore lib/` was too broad, excluded `src/lib/` and `test/lib/`. Fixed to `/lib/`. Committed 4 previously-untracked Solidity files (`BLS381.sol`, `HashToCurve.sol`, `MmrInclusion.sol`, `MockCommitCertVerifier.sol`).
+
+**Empirical results:**
+- `forge test`: 43/43 pass on Mini 1. 0 failed, 0 skipped.
+- `smoke_prove_3_steps` (Nova IVC 3-step proof): **33.03 s** debug-mode. Release estimate ~3-8 s. Well within 60 s plan budget.
+
+**What's next:**
+- Sepolia deploy: needs `PRIVATE_KEY` (funded with Sepolia ETH) + `ETHEREUM_RPC`. Run `genesis_init.py` + `Deploy.s.sol` when ready.
+- `VerkleProofVerifier.sol` + Groth16 on-chain verifier (Phase 4 full V2) — needs arkworks/bellman Groth16 circuit or Spartan Solidity verifier.
+- Relayer 24/7 on Mini after Sepolia deploy.
+
+**Blockers / open questions:**
+- Sepolia credentials needed from operator to proceed with Phase 6.
+
+**Cross-references:** `ETHEREUM_BRIDGE_PLAN.md` status log 2026-05-09 entries
+
+---
+
 ## 2026-05-09 (afternoon) — Phase 4 full IVC circuit scaffold
 
 **Focus:** `ethereum-bridge/circuits/` — `VerkleStepCircuit` IVC proof of Verkle membership (nova-snark 0.68, BN254).
