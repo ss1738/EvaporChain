@@ -10911,8 +10911,40 @@ async fn post_deploy_contract(
     if let Err(resp) = require_tx_auth(&headers, &state, false) {
         return resp;
     }
+    let deployer_addr = addr_from_byte(req.deployer);
+    // Admission pre-check (TOKENOMICS finding #1 follow-up; pairs with
+    // the create_object pre-check at b54ef9a). Executor deducts
+    // GAS_DEPLOY_CONTRACT + MIN_STORAGE_DEPOSIT; without this check the
+    // deployer's tx silently fails at execution with
+    // "insufficient balance for gas: X/Y".
+    {
+        let required = evaporchain_execution::GAS_DEPLOY_CONTRACT
+            .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+        let db = safe_lock(&state.db);
+        if let Some(acct) = db.get_account(&deployer_addr) {
+            if acct.balance < required {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Insufficient balance: {} < {} (gas {} + storage_deposit {})",
+                        acct.balance,
+                        required,
+                        evaporchain_execution::GAS_DEPLOY_CONTRACT,
+                        evaporchain_types::MIN_STORAGE_DEPOSIT
+                    ),
+                    tx_hash: None,
+                });
+            }
+        } else {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Account not found — use faucet first".into(),
+                tx_hash: None,
+            });
+        }
+    }
     let mut tx = Transaction::DeployContract(DeployContractTx {
-        deployer: addr_from_byte(req.deployer),
+        deployer: deployer_addr,
         template: req.template.clone(),
         init_args: serde_json::to_string(&req.init_args).unwrap_or_default(),
         energy: req.energy,
@@ -11048,8 +11080,41 @@ async fn post_deploy_script(
     if let Err(resp) = require_tx_auth(&headers, &state, false) {
         return resp;
     }
+    let deployer_addr = addr_from_byte(req.deployer);
+    // Admission pre-check — same pattern as post_deploy_contract above.
+    // Source-code length affects gas linearly via the executor's
+    // sender-fee deduction; pre-check uses the BASE GAS_DEPLOY_SCRIPT
+    // constant which underestimates for very large scripts but catches
+    // the common "deployer is broke" case at submission instead of
+    // letting it silently fail at execution.
+    {
+        let required = evaporchain_execution::GAS_DEPLOY_SCRIPT
+            .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+        let db = safe_lock(&state.db);
+        if let Some(acct) = db.get_account(&deployer_addr) {
+            if acct.balance < required {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Insufficient balance: {} < {} (gas {} + storage_deposit {})",
+                        acct.balance,
+                        required,
+                        evaporchain_execution::GAS_DEPLOY_SCRIPT,
+                        evaporchain_types::MIN_STORAGE_DEPOSIT
+                    ),
+                    tx_hash: None,
+                });
+            }
+        } else {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Account not found — use faucet first".into(),
+                tx_hash: None,
+            });
+        }
+    }
     let mut tx = Transaction::DeployScript(evaporchain_types::DeployScriptTx {
-        deployer: addr_from_byte(req.deployer),
+        deployer: deployer_addr,
         source_code: req.source_code.clone(),
         energy: req.energy,
         half_life: req.half_life,
