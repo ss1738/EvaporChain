@@ -15008,12 +15008,7 @@ async fn get_account_state_proof(
     State(state): State<Arc<ApiState>>,
     Path(addr_hex): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let addr_bytes = hex::decode(&addr_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
-    if addr_bytes.len() != 32 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let mut addr = [0u8; 32];
-    addr.copy_from_slice(&addr_bytes);
+    let addr = parse_hex_address(&addr_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let mut db = safe_lock(&state.db);
     let state_root = db.compute_state_root();
@@ -15047,12 +15042,7 @@ async fn get_object_state_proof(
     State(state): State<Arc<ApiState>>,
     Path(obj_id_hex): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let id_bytes = hex::decode(&obj_id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
-    if id_bytes.len() != 32 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let mut id = [0u8; 32];
-    id.copy_from_slice(&id_bytes);
+    let id = parse_hex_address(&obj_id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let mut db = safe_lock(&state.db);
     let state_root = db.compute_state_root();
@@ -15634,13 +15624,9 @@ async fn get_evaporation_da_proof(
     State(state): State<Arc<ApiState>>,
     Path(object_id_hex): Path<String>,
 ) -> impl IntoResponse {
-    let object_id = match hex::decode(&object_id_hex) {
-        Ok(bytes) if bytes.len() == 32 => {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            arr
-        }
-        _ => {
+    let object_id = match parse_hex_address(&object_id_hex) {
+        Ok(a) => a,
+        Err(_) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": "invalid object_id hex (need 32 bytes)"})),
