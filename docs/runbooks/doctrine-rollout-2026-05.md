@@ -16,6 +16,43 @@ Pairs with: `LAMBDA_FOLD_NOVA_PLAN.md`, `CROOKS_MEV_INTEGRATION_PLAN.md`,
 
 ---
 
+## Operator readiness scripts (run these BEFORE every flag flip)
+
+Two stdlib-only Python scripts gate the governance flag flips with
+quantitative cross-validator agreement checks. Each renders a
+green/amber/red verdict and exits with a corresponding shell exit
+code. **Refuse to flip a flag until the relevant script returns 0.**
+
+```bash
+# Gates parent_acceptance_mode → mcc_full
+# AND conservation_enforcement → enforce
+python3 scripts/mcc-readiness.py
+python3 scripts/mcc-readiness.py --watch 5   # continuous during soak
+
+# Gates crooks_mev_settlement_mode → enforce
+python3 scripts/crooks-mev-readiness.py
+python3 scripts/crooks-mev-readiness.py --watch 5
+```
+
+Each script probes all 5 cluster validators and asserts:
+
+- `mcc-readiness.py` — chain_id parity, height spread ≤ threshold,
+  antichain_digest unanimous, candidate_heads sets unanimous,
+  authoritative_head unanimous, consecutive_clean_audits min ≥
+  threshold (default 500). Renders a 3-step ladder verdict for the
+  three governance flag flips.
+
+- `crooks-mev-readiness.py` — chain_id parity, mev_state_digest
+  unanimous, settlement_mode currently "observe", observation_count
+  ≥ threshold (proves detection has fired in observe mode without
+  anyone being slashed yet — empirical confidence before the flip).
+
+If a script returns non-zero, the verdict text names the specific
+blocker: deploy-first (binaries lack the endpoint), not-ready (cluster
+disagreement), wait (insufficient empirical signal). Don't override.
+
+---
+
 ## Universal pre-flight (do this before any lane)
 
 1. **Confirm the cluster is on a release that includes the doctrine
