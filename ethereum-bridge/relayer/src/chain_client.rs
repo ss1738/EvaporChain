@@ -3,15 +3,11 @@
 //! Fetches finalised headers and the per-header commit-cert payload
 //! the relayer needs to invoke `EvaporHeaderInbox.submitHeader`.
 //!
-//! Endpoints used (all already exposed by `evaporchain-node`):
+//! Endpoints used (all exposed by `evaporchain-node` under `/api/bridge/`):
 //!   - `GET /api/four_act` — current chain state (height, mmr_root, …)
-//!   - `GET /api/headers/finalized?from=N` — list of finalised headers
-//!   - `GET /api/headers/<height>/commit_cert` — BLS aggregate sig + bitmap
-//!   - `GET /api/validators?epoch=N` — full validator set at the given epoch
-//!
-//! Phase 3b note: only the type stubs and the polling skeleton are here.
-//! The actual response schemas need to be reconciled with the live API
-//! (some endpoints may need to be added on the EvaporChain side first).
+//!   - `GET /api/bridge/headers/finalized?from=N` — list of finalised headers
+//!   - `GET /api/bridge/headers/<height>/commit_cert` — BLS aggregate sig + bitmap
+//!   - `GET /api/bridge/validators?epoch=N` — BLS-registered validator set
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -58,19 +54,19 @@ impl ChainClient {
     }
 
     pub async fn finalised_headers_since(&self, from: u64) -> Result<Vec<FinalisedHeader>> {
-        let url = format!("{}/api/headers/finalized?from={}", self.base, from);
+        let url = format!("{}/api/bridge/headers/finalized?from={}", self.base, from);
         let resp: Vec<FinalisedHeader> = self.http.get(&url).send().await?.error_for_status()?.json().await?;
         Ok(resp)
     }
 
     pub async fn commit_cert(&self, height: u64) -> Result<CommitCertResponse> {
-        let url = format!("{}/api/headers/{}/commit_cert", self.base, height);
+        let url = format!("{}/api/bridge/headers/{}/commit_cert", self.base, height);
         let resp: CommitCertResponse = self.http.get(&url).send().await?.error_for_status()?.json().await?;
         Ok(resp)
     }
 
     pub async fn validators_at(&self, epoch: u64) -> Result<Vec<ValidatorEntry>> {
-        let url = format!("{}/api/validators?epoch={}", self.base, epoch);
+        let url = format!("{}/api/bridge/validators?epoch={}", self.base, epoch);
         let resp: Vec<ValidatorEntry> = self.http.get(&url).send().await?.error_for_status()?.json().await?;
         Ok(resp)
     }

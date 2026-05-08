@@ -2,6 +2,7 @@ pub mod accumulator;
 pub mod bls_key_store;
 #[cfg(feature = "bls-portable")]
 pub mod bls_portable;
+pub mod eip2537;
 pub mod energy_verkle;
 pub mod hash;
 pub mod secret_file_store;
@@ -25,6 +26,9 @@ pub use signatures::{
 // BlsKeypair gated to native backend (signing requires blst).
 #[cfg(feature = "bls-native")]
 pub use signatures::BlsKeypair;
+#[cfg(feature = "bls-native")]
+pub use eip2537::{g1_compressed_to_eip2537, g2_compressed_to_eip2537};
+pub use eip2537::{g1_raw_to_eip2537, g2_raw_to_eip2537};
 pub use verkle::{VerkleProof, VerkleTrie};
 pub use vrf::{
     leader_vrf_input, sortition, sortition_vrf_input, vrf_leader_check, vrf_verify,

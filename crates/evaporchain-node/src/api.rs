@@ -8317,6 +8317,10 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/network/unban",                category: "admin", description: "Clear an active ban for the given IP. Body: {ip}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: Some(r#"{"ip":"192.0.2.1"}"#) },
     // Finality observability (Mainnet P1)
     ApiDocEntry { method: "GET",  path: "/api/finality/gap",                  category: "consensus", description: "Per-height commit→finalise gap snapshot. Returns {unfinalised:[{height,age_seconds}], worst_gap_seconds, recent_gaps:[{height,gap_seconds}]} (recent capped at 100, newest-first). Drives the EvapFinalityStalled Prometheus alert.", example: None },
+    // Ethereum bridge relayer API
+    ApiDocEntry { method: "GET",  path: "/api/bridge/headers/finalized",      category: "bridge", description: "Bridge relayer: list of BLS-finalised headers for the given range. Query: ?from=N (default 0). Returns up to 200 {height,block_hash,state_root,mmr_root,epoch} objects. Used by ethereum-bridge/relayer to discover headers to relay to EvaporHeaderInbox.sol.", example: Some("/api/bridge/headers/finalized?from=100") },
+    ApiDocEntry { method: "GET",  path: "/api/bridge/headers/:height/commit_cert", category: "bridge", description: "Bridge relayer: BLS aggregate commit-cert for the block at :height in EIP-2537 format. Returns {agg_signature_uncompressed (G2, 256-byte hex), signed_bitmap (LSB-first hex), prev_pubkeys_uncompressed (concatenated G1, 128 bytes/validator, hex)}. Drives CommitCertVerifier.sol.", example: Some("/api/bridge/headers/1000/commit_cert") },
+    ApiDocEntry { method: "GET",  path: "/api/bridge/validators",             category: "bridge", description: "Bridge relayer: BLS-registered validator set with compressed pubkeys and stake. Query: ?epoch=N accepted but ignored (current set only; historical snapshots not yet stored). Returns [{pubkey_compressed, stake}] sorted by pubkey hex.", example: Some("/api/bridge/validators?epoch=2") },
 
     // Block-explorer surface
     ApiDocEntry { method: "GET",  path: "/api/validators",                    category: "explorer", description: "Full active validator list with stake, effective_stake, jailed, BLS-registered flag, health_score, blocks_produced, total_slashed, plus aggregate totals.", example: None },
@@ -17197,6 +17201,242 @@ async fn get_finality_gap(State(state): State<Arc<ApiState>>) -> impl IntoRespon
     }))
 }
 
+// ── Ethereum bridge relayer endpoints ────────────────────────────────────────
+//
+// Three routes consumed by `ethereum-bridge/relayer`'s ChainClient:
+//   GET /api/headers/finalized?from=N  — list of BLS-finalised headers
+//   GET /api/headers/:height/commit_cert — commit-cert payload for EIP-2537 bridge
+//   GET /api/validators?epoch=N        — validator set (current; historical not stored)
+
+#[derive(Serialize)]
+struct BridgeFinalisedHeader {
+    height: u64,
+    block_hash: String,  // 0x-hex 32 bytes
+    state_root: String,  // 0x-hex 32 bytes
+    mmr_root: String,    // 0x-hex 32 bytes
+    epoch: u64,
+}
+
+#[derive(Serialize)]
+struct BridgeCommitCertResponse {
+    /// BLS-G2 aggregate signature in EIP-2537 uncompressed format (256 bytes hex).
+    agg_signature_uncompressed: String,
+    /// LSB-first packed bitmap: bit i set ↔ validator at index i in the valset signed.
+    signed_bitmap: String,
+    /// Concatenated EIP-2537 G1 pubkeys for all validators (128 bytes each, hex).
+    prev_pubkeys_uncompressed: String,
+}
+
+#[derive(Serialize)]
+struct BridgeValidatorEntry {
+    pubkey_compressed: String, // 0x-hex 48 bytes (BLS G1 compressed)
+    stake: u128,
+}
+
+/// `GET /api/headers/finalized?from=N`
+///
+/// Returns up to 200 BLS-finalised headers starting at height `from`. The
+/// relayer calls this in a polling loop to discover new headers to relay to
+/// `EvaporHeaderInbox.sol`. Heights above `latest_finalized_height` are never
+/// included; heights with no stored full-block (pruned) are silently skipped.
+async fn get_bridge_finalized_headers(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let from: u64 = params
+        .get("from")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let latest_finalized = {
+        let ft = state.finality_tracker.lock().unwrap();
+        ft.latest_finalized_height()
+    };
+
+    let Some(ref store) = state.chain_store else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "chain_store not available in light mode"})),
+        )
+            .into_response();
+    };
+
+    const MAX_PER_CALL: u64 = 200;
+    let to = latest_finalized.min(from.saturating_add(MAX_PER_CALL).saturating_sub(1));
+
+    let mut out: Vec<BridgeFinalisedHeader> = Vec::new();
+    for h in from..=to {
+        let Some(block) = store.load_full_block(h) else {
+            continue;
+        };
+        let mmr_root = block.data_root.unwrap_or([0u8; 32]);
+        out.push(BridgeFinalisedHeader {
+            height: block.number,
+            block_hash: format!(
+                "0x{}",
+                hex::encode(block.commit_certificate.as_ref().map_or([0u8; 32], |c| c.block_hash))
+            ),
+            state_root: format!("0x{}", hex::encode(block.state_root)),
+            mmr_root: format!("0x{}", hex::encode(mmr_root)),
+            epoch: block.epoch,
+        });
+    }
+
+    (StatusCode::OK, Json(serde_json::to_value(out).unwrap())).into_response()
+}
+
+/// `GET /api/headers/:height/commit_cert`
+///
+/// Returns the BLS aggregate commit-certificate for the block at `height` in
+/// the format expected by `CommitCertVerifier.sol` / `EvaporHeaderInbox.submitHeader`:
+///   - `agg_signature_uncompressed`: G2 in EIP-2537 256-byte encoding (hex)
+///   - `signed_bitmap`: LSB-first bitmap over the current validator set (hex)
+///   - `prev_pubkeys_uncompressed`: concatenated G1 pubkeys in EIP-2537 128-byte
+///     encoding (hex), one per validator in valset-ID order
+///
+/// **Epoch caveats**: the current implementation returns the *running* validator
+/// set regardless of which epoch produced the block. Historical epoch snapshots
+/// are not yet stored; once validator-set rotation lands, this will need a
+/// per-epoch snapshot store.
+async fn get_bridge_commit_cert(
+    State(state): State<Arc<ApiState>>,
+    Path(height): Path<u64>,
+) -> impl IntoResponse {
+    let Some(ref store) = state.chain_store else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "chain_store not available in light mode"})),
+        )
+            .into_response();
+    };
+
+    let Some(block) = store.load_full_block(height) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "block not found or pruned"})),
+        )
+            .into_response();
+    };
+
+    let Some(cert) = block.commit_certificate else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "block has no commit certificate (not yet finalised)"})),
+        )
+            .into_response();
+    };
+
+    // Get the current validator set (ordered by validator ID ascending — canonical).
+    let Some(tc) = &state.tendermint else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "no consensus engine; cannot read validator set"})),
+        )
+            .into_response();
+    };
+    let validators: Vec<(u64, Vec<u8>)> = {
+        let tc = safe_lock(tc);
+        let mut vs: Vec<(u64, Vec<u8>)> = tc
+            .validator_set()
+            .validators()
+            .iter()
+            .filter_map(|v| {
+                v.bls_public_key
+                    .as_ref()
+                    .map(|pk| (v.id, pk.clone()))
+            })
+            .collect();
+        vs.sort_by_key(|(id, _)| *id);
+        vs
+    };
+
+    // Build the LSB-first bitmap: bit i is set when validators[i].id is in signer_ids.
+    let signer_set: std::collections::HashSet<u64> = cert.signer_ids.iter().copied().collect();
+    let n = validators.len();
+    let bitmap_bytes = (n + 7) / 8;
+    let mut bitmap = vec![0u8; bitmap_bytes.max(1)];
+    for (i, (id, _)) in validators.iter().enumerate() {
+        if signer_set.contains(id) {
+            bitmap[i / 8] |= 1 << (i % 8);
+        }
+    }
+
+    // Decompress + EIP-2537-encode each validator's G1 pubkey.
+    let mut pubkeys_enc: Vec<u8> = Vec::with_capacity(validators.len() * 128);
+    for (_, pk_compressed) in &validators {
+        match evaporchain_crypto::g1_compressed_to_eip2537(pk_compressed) {
+            Some(enc) => pubkeys_enc.extend_from_slice(&enc),
+            None => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "failed to decode validator BLS pubkey"})),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Decompress + EIP-2537-encode the aggregate G2 signature.
+    let Some(agg_enc) = evaporchain_crypto::g2_compressed_to_eip2537(&cert.aggregate_signature)
+    else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "failed to decode aggregate BLS signature"})),
+        )
+            .into_response();
+    };
+
+    (
+        StatusCode::OK,
+        Json(
+            serde_json::to_value(BridgeCommitCertResponse {
+                agg_signature_uncompressed: format!("0x{}", hex::encode(agg_enc)),
+                signed_bitmap: format!("0x{}", hex::encode(&bitmap)),
+                prev_pubkeys_uncompressed: format!("0x{}", hex::encode(&pubkeys_enc)),
+            })
+            .unwrap(),
+        ),
+    )
+        .into_response()
+}
+
+/// `GET /api/validators?epoch=N`
+///
+/// Returns the current active validator set with BLS-compressed pubkeys and
+/// stake. The `epoch` query parameter is accepted for API compatibility with
+/// the relayer but is currently ignored — the node does not store per-epoch
+/// validator-set snapshots. Validators without a registered BLS key are
+/// excluded (the bridge only needs BLS-registered validators).
+async fn get_bridge_validators(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Query(_params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(tc) = &state.tendermint else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "no consensus engine"})),
+        )
+            .into_response();
+    };
+    let mut entries: Vec<BridgeValidatorEntry> = {
+        let tc = safe_lock(tc);
+        tc.validator_set()
+            .validators()
+            .iter()
+            .filter_map(|v| {
+                v.bls_public_key.as_ref().map(|pk| BridgeValidatorEntry {
+                    pubkey_compressed: format!("0x{}", hex::encode(pk)),
+                    stake: v.stake as u128,
+                })
+            })
+            .collect()
+    };
+    // Canonical order: ascending validator ID.
+    entries.sort_by(|a, b| a.pubkey_compressed.cmp(&b.pubkey_compressed));
+
+    (StatusCode::OK, Json(serde_json::to_value(entries).unwrap())).into_response()
+}
+
 async fn get_sync_snapshot_info(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let info = state.snapshot_info.lock().unwrap();
     match *info {
@@ -17951,6 +18191,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/finality", get(get_finality))
         .route("/api/finality/proof/:height", get(get_finality_proof))
         .route("/api/finality/gap", get(get_finality_gap))
+        // Ethereum bridge relayer endpoints
+        .route("/api/bridge/headers/finalized", get(get_bridge_finalized_headers))
+        .route("/api/bridge/headers/:height/commit_cert", get(get_bridge_commit_cert))
+        .route("/api/bridge/validators", get(get_bridge_validators))
         // State sync
         .route("/api/sync/snapshot-info", get(get_sync_snapshot_info))
         // Fast-sync snapshot (zstd .zst blob format, see SnapshotFile)
