@@ -66,9 +66,9 @@
       "label": "Validator-3 Operator"
     },
     {
-      "address": [160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      "balance": 250000,
-      "label": "Devnet Faucet"
+      "address": [250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250],
+      "balance": 100000000,
+      "label": "Devnet Faucet (FAUCET_ADDRESS = [0xFA; 32], evaporchain-types/src/lib.rs:403)"
     }
   ],
   "objects": [],
