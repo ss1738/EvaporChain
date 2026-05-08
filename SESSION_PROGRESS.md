@@ -48,6 +48,50 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (morning) — bridge relayer node endpoints + EIP-2537 helpers
+
+**Focus:** wire the ethereum-bridge relayer to the live node by adding the 3 missing chain-side API routes, and add the EIP-2537 G1/G2 encoding helpers to evaporchain-crypto.
+
+**Commits shipped:** 3 (`279d504` bridge commit, `72a4148` dashboard fix, `606df39` relayer endpoints).
+
+**Deliverables:**
+
+- `evaporchain-crypto::eip2537` — new module: `g1_raw_to_eip2537` / `g2_raw_to_eip2537` (pure math, no blst dep), `g1_compressed_to_eip2537` / `g2_compressed_to_eip2537` (bls-native only). 4 unit tests. The ZCash/blst → EIP-2537 coordinate mapping (LSB padding, c0/c1 swap for G2) is now a tested canon.
+- 3 new Axum routes on `/api/bridge/`:
+  - `GET /api/bridge/headers/finalized?from=N` — up to 200 BLS-finalised headers per call
+  - `GET /api/bridge/headers/:height/commit_cert` — CommitCertificate in EIP-2537 format ready for `CommitCertVerifier.sol`
+  - `GET /api/bridge/validators?epoch=N` — BLS-registered validators (current set; epoch= ignored)
+- Updated `ethereum-bridge/relayer/src/chain_client.rs` URLs to `/api/bridge/*`.
+- Committed 44-file Ethereum bridge (Phases 0-5 + Phase 4 MVP) that was sitting uncommitted.
+- Fixed cluster-dashboard convergence detection (fork vs sync-lag distinction).
+
+**Empirical results:**
+- `cargo check -p evaporchain-crypto -p evaporchain-node` clean on Mini 1 (7.28 s, 0 errors, 6 pre-existing warnings).
+- 4/4 eip2537 unit tests pass.
+
+**Decisions made:**
+- Bridge endpoints use `/api/bridge/` prefix (not `/api/headers/` + `/api/validators`) to avoid collision with the existing `GET /api/validators` explorer route.
+- `GET /api/bridge/validators?epoch=N` returns the *current* validator set regardless of epoch — historical epoch snapshots are not yet stored. Documented as future work.
+- Bitcoin-style MMR root is forwarded as `block.data_root` (the DA root) for the bridge; the native BLAKE3 MMR is a parallel structure. Consistent with the bridge-layer keccak256 MMR decision from the bridge session.
+
+**What's next:**
+
+1. **Stop-the-world cluster deploy** — activates all accumulated commits including faucet fix, demurrage re-calibration, conservation logic. Needs Hetzner SSH (H1 + H2 nodes).
+2. **Live relayer smoke** — after deploy: run the relayer against the live cluster's `/api/bridge/*` endpoints to verify the full header-relay pipeline end-to-end against a real node.
+3. **Phase 4 full** — Halo2 → Groth16 wrap of the Pallas-IPA state proof. Multi-day cryptographic build.
+
+**Blockers / open questions:**
+- Hetzner SSH (H1: `100.66.208.20`, H2: `100.91.235.22`) still needed for cluster deploy.
+- `epoch=` on `/api/bridge/validators` is always ignored. Once validator-set rotation lands, the node needs a per-epoch snapshot store.
+- The `mmr_root` in `BridgeFinalisedHeader` is forwarded as `block.data_root` (DA root). If the bridge should use the BLAKE3 native MMR root instead, that field needs to be exposed separately.
+
+**Cross-references:**
+- `ETHEREUM_BRIDGE_PLAN.md` — canonical phase status
+- `crates/evaporchain-crypto/src/eip2537.rs` — encoding helpers
+- Commit `606df39` — bridge API endpoints
+
+---
+
 ## 2026-05-08 (evening) — paymaster sponsorship (Option B) shipped end-to-end across 5 days
 
 **Focus:** pull Option B forward from V1.5 deferral into the V1 sprint per `docs/MULTI_TOKEN_GAS_OPTIONS.md`. Built chain-side enforcement, off-chain service, wallet client, full E2E test, and operator runbook in one session arc. Closed a live drain bug on the way (forged-paymaster debit was previously allowed; chain now requires a hybrid sponsorship signature unconditionally).
