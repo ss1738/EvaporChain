@@ -1283,6 +1283,22 @@ impl TendermintConsensus {
             // the slashing rule that pairs with `enforce`.
             "crooks_mev_settlement_mode" => &["observe", "enforce"],
             "cartel_alarm_mode" => &["observe", "alarm"],
+            // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 4 (lane T0.3) —
+            // tri-state gate over the Phase 2 speculative-execute wiring
+            // (`create_proposal`) and the Phase 3 apply-time mismatch
+            // check (`apply_block`).
+            //   "off"     — proposer skips speculative execute (no
+            //               per-block CPU cost); validator's apply
+            //               check is a no-op because post_state_root
+            //               stays None on the proposed block.
+            //   "warn"    — proposer fills post_state_root; validator
+            //               warns on mismatch but does NOT reject.
+            //               Default — bit-compatible with the
+            //               af6876d/cb12cf1-shipped behaviour.
+            //   "enforce" — proposer fills; validator returns Err on
+            //               mismatch from apply_block, refusing to
+            //               commit a divergent block locally.
+            "post_state_verify_mode" => &["off", "warn", "enforce"],
             // Phase 3.5 of LIGHT_CONE_FULL_DAG_PLAN.md — Decision 5
             // rollout gate. `false` (default) keeps the chain in
             // linear-state mode; `true` activates per-fork state
@@ -1932,6 +1948,12 @@ impl TendermintConsensus {
             ("conservation_enforcement", "observe"),
             ("lambda_fold_mode", "hash_chain"),
             ("cartel_alarm_mode", "observe"),
+            // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 4 (lane T0.3) —
+            // default "warn" preserves the af6876d/cb12cf1 always-on
+            // Phase 2+3 behaviour. Operators flip to "off" to disable
+            // the per-block speculative-execute CPU cost, or to
+            // "enforce" to make apply_block return Err on mismatch.
+            ("post_state_verify_mode", "warn"),
         ] {
             out.entry(key.to_string())
                 .or_insert_with(|| default.to_string());
@@ -6088,13 +6110,32 @@ impl TendermintConsensus {
         // instead of relying on external dashboard observation.
         if let Some(claimed) = block.post_state_root {
             if claimed != execution.state_root {
+                let mode = self
+                    .governance_params
+                    .get("post_state_verify_mode")
+                    .map(String::as_str)
+                    .unwrap_or("warn");
                 warn!(
                     block_height = block.number,
                     proposer_id = ?block.producer_id,
                     local_state_root = %hex::encode(&execution.state_root[..8]),
                     proposer_claim = %hex::encode(&claimed[..8]),
+                    verify_mode = %mode,
                     "PHASE-3 post-state-root MISMATCH — local execution diverges from proposer claim"
                 );
+                // Phase 4 (lane T0.3) — enforce-mode reject. The local
+                // node refuses to apply a divergent block. If 2f+1
+                // validators are in enforce-mode and agree the block
+                // is divergent, the chain stalls until a clean
+                // proposal is produced. Operators flip from "warn"
+                // to "enforce" only after a clean Phase 3 soak window.
+                if mode == "enforce" {
+                    return Err(ConsensusError::ExecutionFailed(format!(
+                        "PHASE-4 post-state-root mismatch: local={} proposer_claim={}",
+                        hex::encode(&execution.state_root[..8]),
+                        hex::encode(&claimed[..8])
+                    )));
+                }
             } else {
                 debug!(
                     block_height = block.number,
@@ -6581,7 +6622,20 @@ impl TendermintConsensus {
         // stays `None`. Phase 3's warn-mode check silently skips `None`
         // fields — no spurious mismatch warnings. `rollback_batch` is
         // called unconditionally so the DB cannot leak simulation state.
-        {
+        //
+        // Phase 4 (lane T0.3) gate: `post_state_verify_mode == "off"`
+        // skips the speculative execute entirely (proposer leaves
+        // post_state_root = None; validators with the same flag treat
+        // None as no-claim). Default "warn" preserves the
+        // af6876d/cb12cf1 always-on behaviour. "enforce" still does
+        // the speculative execute here; the apply_block check below
+        // upgrades the warn into a hard reject.
+        let post_state_verify_mode = self
+            .governance_params
+            .get("post_state_verify_mode")
+            .map(String::as_str)
+            .unwrap_or("warn");
+        if post_state_verify_mode != "off" {
             let snap = self.executor.snapshot_for_simulation();
             _db.begin_batch();
             let sim = self.executor.execute_block(_db, &block);
@@ -17230,6 +17284,116 @@ mod phase2_round_trip_tests {
             "multi-tx Phase 2 round-trip violation: speculative={} apply={}",
             hex::encode(&claimed[..8]),
             hex::encode(&result.execution.state_root[..8])
+        );
+    }
+
+    // ─── Lane T0.3 — Phase 4 governance flag tests ────────────────────
+    //
+    // `post_state_verify_mode ∈ {"off", "warn", "enforce"}`. Default
+    // "warn" preserves af6876d/cb12cf1 always-on behaviour.
+    //
+    //   "off"     — proposer skips speculative execute (per-block
+    //               CPU cost goes to zero).
+    //   "warn"    — proposer fills, validator warns on mismatch,
+    //               apply still succeeds.
+    //   "enforce" — proposer fills, validator returns Err on
+    //               mismatch from apply_block.
+
+    #[test]
+    fn phase4_off_mode_skips_speculative_execute() {
+        let mut tc = make_tc_with_validators();
+        // Flip flag to "off" before proposing.
+        tc.governance_set_param("post_state_verify_mode", "off")
+            .expect("flag set must succeed");
+        let mut db = InMemoryStateDB::new();
+        tc.mempool.submit(dummy_transfer(100));
+
+        let block = tc.create_proposal(&mut db).expect("proposer produces block");
+
+        assert!(
+            block.post_state_root.is_none(),
+            "off-mode proposer must NOT fill post_state_root; got {:?}",
+            block.post_state_root.map(|r| hex::encode(&r[..8]))
+        );
+    }
+
+    #[test]
+    fn phase4_warn_mode_fills_and_apply_accepts_mismatch() {
+        let mut tc = make_tc_with_validators();
+        // Default mode is "warn" but set explicitly to be unambiguous.
+        tc.governance_set_param("post_state_verify_mode", "warn")
+            .expect("flag set must succeed");
+        let mut db = InMemoryStateDB::new();
+        tc.mempool.submit(dummy_transfer(100));
+
+        let mut block = tc.create_proposal(&mut db).expect("proposer produces block");
+        // Confirm Phase 2 actually ran in warn mode.
+        assert!(
+            block.post_state_root.is_some(),
+            "warn-mode proposer must fill post_state_root"
+        );
+
+        // Forge a mismatch — replace the legitimate post_state_root
+        // with a junk value. Validator will warn but should NOT reject.
+        block.post_state_root = Some([0xAB; 32]);
+
+        let result = tc.apply_block(&mut db, &block);
+        assert!(
+            result.is_ok(),
+            "warn-mode validator must NOT reject on mismatch; got Err: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn phase4_enforce_mode_rejects_mismatch() {
+        let mut tc = make_tc_with_validators();
+        tc.governance_set_param("post_state_verify_mode", "enforce")
+            .expect("flag set must succeed");
+        let mut db = InMemoryStateDB::new();
+        tc.mempool.submit(dummy_transfer(100));
+
+        let mut block = tc.create_proposal(&mut db).expect("proposer produces block");
+        assert!(
+            block.post_state_root.is_some(),
+            "enforce-mode proposer must fill post_state_root"
+        );
+
+        // Forge a mismatch.
+        block.post_state_root = Some([0xCD; 32]);
+
+        let result = tc.apply_block(&mut db, &block);
+        assert!(
+            result.is_err(),
+            "enforce-mode validator MUST reject on mismatch; got Ok"
+        );
+        let err_str = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_str.contains("PHASE-4"),
+            "enforce-mode error must reference PHASE-4; got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn phase4_enforce_mode_accepts_matching_root() {
+        let mut tc = make_tc_with_validators();
+        tc.governance_set_param("post_state_verify_mode", "enforce")
+            .expect("flag set must succeed");
+        let mut db = InMemoryStateDB::new();
+        tc.mempool.submit(dummy_transfer(100));
+
+        // Proposer produces a block with correct post_state_root via
+        // the speculative execute path. apply_block should succeed
+        // because proposer's claim matches validator's local execution.
+        let block = tc.create_proposal(&mut db).expect("proposer produces block");
+        assert!(block.post_state_root.is_some());
+
+        let result = tc.apply_block(&mut db, &block);
+        assert!(
+            result.is_ok(),
+            "enforce-mode must accept matching root; got Err: {:?}",
+            result.err()
         );
     }
 }
