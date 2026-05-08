@@ -467,6 +467,64 @@ Pre-existing context: `94f5c9f` (CLAUDE.md enforces SESSION_PROGRESS read-at-sta
 
 ---
 
+## 2026-05-08 (night) — 8-commit follow-up arc on the bundle: 2 audit closures + observability stack + production correctness fix
+
+**Focus:** continue from the 8-item bundle (`a6bc9df`, entry below) on the same in-flight Mini 1 working tree. Drove from "verified bundle on disk, deploy blocked" through audit closures, observability surfaces, and a real production-path bug fix that explains the live cluster's persistent `last_conservation_audit_ok=false` symptom. Cluster deploy still blocked on Hetzner SSH; everything is committed and ready.
+
+**Commits shipped:** 8 (`8ad890b` → `649e571`). All green on Mini 1 (`cargo check --workspace`); targeted tests pass per crate.
+
+**Deliverables:**
+
+| # | Commit | Theme | Bytes |
+|---|---|---|---|
+| 1 | `8ad890b` | CRITICAL-1 close — `ZeroizingKeypair` RAII guard in evaporchain-crypto-wasm; Drop-on-unwind covers the panic path the inline `zeroize_keypair` call missed. 2 new tests (drop-zeroes, panic-witness). | +135 / -19 |
+| 2 | `fbc2ae2` | Block-level demurrage observability. `DemurrageOutcome { total, charges }` + `BlockExecutionResult.demurrage_collected` + `BlockRecord.demurrage_collected` + 3 production sweep call sites updated. Also incidentally fixes a HEAD compile gap from sister `344a0ae`. 1 new test. | +79 / -15 |
+| 3 | `3733d1f` | **Production correctness fix** — port the `minted_this_block` conservation adjustment from `SimpleExecutor` (lib.rs) to `ParallelExecutor` (parallel.rs, the actual hot path). Live cluster's `last_conservation_audit_ok=false` was firing every reward-bearing block because the production audit lacked the credit. 2 new tests pin the fix under both `observe` and `enforce` modes. | +91 / -1 |
+| 4 | `35ecb4c` | `/api/tx/:hash` surfaces `block_demurrage_collected` for the tx's containing block. New `ChainStore::get_block_record(n)` helper for direct single-block lookup. 1 new test. | +60 / -0 |
+| 5 | `616bf28` | `consecutive_clean_audits: u64` end-to-end (executor → ConsensusFourActState → api::FourActSnapshot → `/api/four_act`). Operator-facing readiness signal for the eventual `conservation_enforcement: enforce` flag flip. 2 new tests. | +123 / -0 |
+| 6 | `7830b2a` | H-21 part 1 — server-side bounds-check on `ChunkRequest.chunk_index` so a malicious peer can't panic the responder by indexing past `chunk_hashes.len()`. 1 new test. | +53 / -0 |
+| 7 | `0aa63f7` | H-21 part 2 (fully closed) — wire real `block_hash` through `TipResponse` instead of `[0u8; 32]` placeholder. `TendermintConsensus::block_hash` made `pub`; `SyncServer::set_tip(height, hash)` added; 2 production hooks (proposer-path + follower-path) call it per block. 2 new tests. | +136 / -11 |
+| 8 | `649e571` | Workspace cleanup — 5 unused-import warnings + 1 dead helper (`validate_tx_hash_field`). Gets `make lint-strict` closer to green. | +5 / -14 |
+
+**Empirical results:**
+
+- ✅ `cargo check --workspace` green after every commit on Mini 1 (1.94.0 toolchain, ssh `satyawansingh@100.119.53.101`).
+- ✅ `cargo test -p evaporchain-execution audit_tests::conservation_enforce_tests` 26/27 pass; the 1 failure is the pre-existing `demurrage_fires_in_parallel_execute_block` regression that predates the 2026-05-07 anchor-refresh fix (commit `7bdbfaf`) — verified independent of my changes by stashing all edits and re-running.
+- ✅ `cargo test -p evaporchain-node persistence` 34/34 pass.
+- ✅ `cargo test -p evaporchain-node sync::` 7/7 pass (2 new H-21 tests).
+- ✅ `cargo test -p evaporchain-consensus state_sync` 8/11 pass; 3 failures (`test_tip_discovery`, `test_snapshot_metadata_state_root_mismatch_rejected`, `test_full_sync_flow_with_provider`) are the pre-existing state_sync regressions documented in the bundle entry below.
+- ✅ Mini 1 release binary built mid-arc (see bundle entry); 36 MB at `~/EvaporChain/target/release/evaporchain-node`. Ready for staging.
+- 📊 Cluster diagnostic finding: 4 of 5 nodes (Mini 2, Mini 3, Hetzner 1, Hetzner 2) are running binaries OLDER than commit `a421321` — they don't even surface the `last_conservation_violation_type` field on `/api/four_act`. Mini 1 binary has it. Once deploy unblocks, the new cluster-wide observability lights up automatically.
+
+**Decisions made:**
+
+- **Per-tx `demurrage_charged` is the wrong abstraction.** Demurrage sweep runs AFTER tx execution, and tx execution refreshes the sender's `last_touched_epoch`. So `demurrage_owed(sender) = 0` for any account with a tx in the same block. Switched to **block-level** decay observability instead — accurate, useful for indexers, simple. The per-account map is captured in `DemurrageOutcome.charges` for downstream consumers but currently discarded after the block-total is stamped.
+- **Doctrine-grade governance flag flips happen via `POST /api/governance/param`, NOT default changes in code.** The bundle initially flipped the defaults; I reverted them so the binary is bit-compatible with a running cluster on default settings. Operators flip after a clean stop-the-world deploy. (See bundle entry for the full reasoning chain.)
+- **`consecutive_clean_audits` is the readiness signal, not the policy.** The threshold for "safe to flip to enforce" is a governance call; the counter just gives operators a concrete number to base it on. A sustained non-zero value is the precondition.
+- **The `SnapshotProvider::handle_request` test callers (9 sites) get `[0u8; 32]` for the new local_block_hash arg** — they don't exercise tip semantics. Production always passes the real hash via `SyncServer::set_tip`.
+
+**What's next:**
+
+- **Phase C deploy** the moment Hetzner SSH credentials land (per the bundle entry's deploy plan + `docs/runbooks/cluster-deploy.md` §3 stop-the-world).
+- **Post-deploy governance flips** in order: `block_source_mode→antichain` → `lambda_fold_mode→nova` → (after watching `consecutive_clean_audits` rise to N≥threshold) `conservation_enforcement→enforce`.
+- **Per-account demurrage map endpoint** — `DemurrageOutcome.charges` is captured but discarded; expose via `/api/block/:n/demurrage_charges` (substantial — needs persistence CF expansion).
+- **Remaining warning tail** (out of scope tonight): `light-client-http` 2 dead helpers, `cl-amm` parens, `node/da_http_client` whole module possibly dead, `cli/main` 2 unread fields.
+
+**Blockers / open questions:**
+
+- **Hetzner SSH access** — same as bundle entry. Critical-path blocker for Phase C.
+- **Cluster heightspread persists** — at probe time, Mini 2 lagging 296 blocks, Mini 3 lagging 317 blocks (likely the val-1+val-3 organically tombstoned pair from the 2026-05-08 afternoon arc). Should reconverge post-deploy + `enforce_validator_tombstones` ticks; if not, fast-sync from snapshot.
+- **3 pre-existing test failures** in `evaporchain-execution` and `evaporchain-consensus::state_sync` predate this arc and the bundle. Worth a separate triage pass.
+
+**Cross-references:**
+
+- Bundle entry below — `a6bc9df` covers the 8-item correctness bundle; this entry covers what came after it.
+- `AUDIT_2026_05_06.md` — CRITICAL-1 and H-21 fully closed by this arc.
+- `docs/runbooks/cluster-deploy.md` — stop-the-world deploy procedure for the eventual unblock.
+- `~/.claude-account-b/plans/glittery-jumping-cat.md` — original Phase A/B/C plan; Phases A+B done, C blocked.
+
+---
+
 ## 2026-05-08 (evening) — 8-item bundle: tx-hash fix, eulogy wiring, TOKENOMICS §2.1+§2.2+§2.5, conservation observe-mode fix, MCP hardening
 
 **Focus:** ship a verified-but-undeployed bundle of 8 correctness/observability items. Verify on Mini 1; commit + push; defer cluster deploy to next session pending Hetzner SSH access.
