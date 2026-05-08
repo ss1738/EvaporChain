@@ -4049,7 +4049,12 @@ impl TendermintConsensus {
     /// DA roots from a node-local 2D encode) MUST be excluded — those
     /// are computed per-validator after consensus and would diverge.
     /// State authenticity is already covered by `state_root`.
-    fn block_hash(block: &Block) -> [u8; 32] {
+    ///
+    /// Public so the node binary can use it to populate
+    /// `SyncServer::set_tip(height, hash)` after each block commit —
+    /// closes H-21 audit finding (TipResponse used to return
+    /// [0u8; 32] placeholder, leaving peer-tip verification useless).
+    pub fn block_hash(block: &Block) -> [u8; 32] {
         // Consensus-4 (re-audit 2026-05-02): also commit producer_id,
         // vrf_proof, and data_root so two distinct blocks can never
         // hash identically. Previously two blocks with the same tx

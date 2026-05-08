@@ -744,11 +744,16 @@ impl SnapshotProvider {
     }
 
     /// Handle an incoming sync request from a peer.
-    pub fn handle_request(&self, msg: &SyncMessage, local_height: u64) -> Option<SyncMessage> {
+    pub fn handle_request(
+        &self,
+        msg: &SyncMessage,
+        local_height: u64,
+        local_block_hash: [u8; 32],
+    ) -> Option<SyncMessage> {
         match msg {
             SyncMessage::TipRequest => Some(SyncMessage::TipResponse {
                 height: local_height,
-                block_hash: [0u8; 32], // Simplified; real impl uses actual hash
+                block_hash: local_block_hash,
             }),
             SyncMessage::SnapshotMetadataRequest { height } => {
                 self.snapshots
@@ -946,8 +951,11 @@ mod tests {
         assert_eq!(provider.snapshot_count(), 1);
 
         // Serve metadata request
-        let resp =
-            provider.handle_request(&SyncMessage::SnapshotMetadataRequest { height: 100 }, 100);
+        let resp = provider.handle_request(
+            &SyncMessage::SnapshotMetadataRequest { height: 100 },
+            100,
+            [0u8; 32],
+        );
         assert!(resp.is_some());
 
         // Serve chunk requests
@@ -958,6 +966,7 @@ mod tests {
                     chunk_index: i,
                 },
                 100,
+                [0u8; 32],
             );
             match resp {
                 Some(SyncMessage::ChunkResponse { chunk }) => {
@@ -994,6 +1003,7 @@ mod tests {
                 chunk_index: 99,
             },
             50,
+            [0u8; 32],
         );
         assert!(
             resp.is_none(),
@@ -1007,6 +1017,7 @@ mod tests {
                 chunk_index: usize::MAX,
             },
             50,
+            [0u8; 32],
         );
         assert!(resp_no_data.is_none(), "missing chunk_data must also yield None");
     }
@@ -1026,13 +1037,25 @@ mod tests {
 
         // Only the latest 2 should remain
         assert!(provider
-            .handle_request(&SyncMessage::SnapshotMetadataRequest { height: 100 }, 500)
+            .handle_request(
+                &SyncMessage::SnapshotMetadataRequest { height: 100 },
+                500,
+                [0u8; 32],
+            )
             .is_none());
         assert!(provider
-            .handle_request(&SyncMessage::SnapshotMetadataRequest { height: 400 }, 500)
+            .handle_request(
+                &SyncMessage::SnapshotMetadataRequest { height: 400 },
+                500,
+                [0u8; 32],
+            )
             .is_some());
         assert!(provider
-            .handle_request(&SyncMessage::SnapshotMetadataRequest { height: 500 }, 500)
+            .handle_request(
+                &SyncMessage::SnapshotMetadataRequest { height: 500 },
+                500,
+                [0u8; 32],
+            )
             .is_some());
     }
 
@@ -1158,7 +1181,11 @@ mod tests {
 
         // Serve metadata
         let meta_resp = provider
-            .handle_request(&SyncMessage::SnapshotMetadataRequest { height: 100 }, 100)
+            .handle_request(
+                &SyncMessage::SnapshotMetadataRequest { height: 100 },
+                100,
+                [0u8; 32],
+            )
             .unwrap();
         let actions = sync.on_message(1, meta_resp);
 
@@ -1168,7 +1195,7 @@ mod tests {
         // Serve all chunks
         for action in actions {
             if let SyncAction::SendToPeer { message, .. } = action {
-                if let Some(resp) = provider.handle_request(&message, 100) {
+                if let Some(resp) = provider.handle_request(&message, 100, [0u8; 32]) {
                     sync.on_message(1, resp);
                 }
             }
@@ -1186,6 +1213,7 @@ mod tests {
                                 chunk_index: i,
                             },
                             100,
+                            [0u8; 32],
                         )
                         .unwrap();
                     sync.on_message(1, resp);

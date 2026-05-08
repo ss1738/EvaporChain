@@ -4917,6 +4917,20 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
+                                // Per-block sync-server tip update — closes H-21
+                                // (TipResponse used to return [0u8; 32], leaving
+                                // peer-tip discovery cryptographically blind).
+                                // Compute the canonical block hash via the same
+                                // function consensus uses (TendermintConsensus::
+                                // block_hash) so peer verification matches the
+                                // hash signed in commit certificates.
+                                {
+                                    let bh = TendermintConsensus::block_hash(&block);
+                                    if let Ok(mut srv) = sync_server.lock() {
+                                        srv.set_tip(block.number, bh);
+                                    }
+                                }
+
                                 // Create state snapshot every 100 blocks for state sync
                                 if block.number % 100 == 0 && block.number > 0 {
                                     let mut db_guard = safe_lock(&db);
@@ -5914,6 +5928,16 @@ async fn main() -> Result<()> {
                                                     store.remove(&oldest);
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    // Per-block sync-server tip update on the follower
+                                    // path (mirrors the proposer-path hook above).
+                                    // H-21 close.
+                                    {
+                                        let bh = TendermintConsensus::block_hash(&block);
+                                        if let Ok(mut srv) = sync_server.lock() {
+                                            srv.set_tip(block.number, bh);
                                         }
                                     }
 

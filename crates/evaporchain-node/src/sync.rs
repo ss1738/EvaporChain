@@ -18,6 +18,12 @@ use crate::persistence::ChainStore;
 pub struct SyncServer {
     provider: SnapshotProvider,
     local_height: u64,
+    /// Canonical hash of the block at `local_height` — populated via
+    /// [`Self::set_tip`] after each block commit so that `TipResponse`
+    /// returns the real hash instead of `[0u8; 32]`. AUDIT_2026_05_06
+    /// H-21: peers depended on this to verify a responder's tip claim;
+    /// the placeholder zero made tip-discovery cryptographically blind.
+    local_block_hash: [u8; 32],
 }
 
 impl SyncServer {
@@ -25,6 +31,7 @@ impl SyncServer {
         Self {
             provider: SnapshotProvider::new(),
             local_height: 0,
+            local_block_hash: [0u8; 32],
         }
     }
 
@@ -65,7 +72,9 @@ impl SyncServer {
             SyncMessage::ChunkRequest { .. } => "ChunkRequest",
             _ => "non-request",
         };
-        let resp = self.provider.handle_request(msg, self.local_height);
+        let resp = self
+            .provider
+            .handle_request(msg, self.local_height, self.local_block_hash);
         let resp_kind = match &resp {
             Some(SyncMessage::TipResponse { .. }) => "TipResponse",
             Some(SyncMessage::HeaderResponse { .. }) => "HeaderResponse",
@@ -84,8 +93,23 @@ impl SyncServer {
         resp
     }
 
+    /// Update tip height alone — leaves `local_block_hash` at its prior
+    /// value. Use this on bootstrap (`load_from_store`) where the hash
+    /// is not yet known; production-path callers committing a real block
+    /// should use [`Self::set_tip`] instead so the TipResponse carries
+    /// the real hash.
     pub fn set_height(&mut self, height: u64) {
         self.local_height = height;
+    }
+
+    /// Update both height and canonical block hash atomically. Called
+    /// after each block commit with the value of
+    /// `TendermintConsensus::block_hash(&block)` so peers asking
+    /// "what's your tip?" get a verifiable answer instead of the
+    /// `[0u8; 32]` placeholder.
+    pub fn set_tip(&mut self, height: u64, block_hash: [u8; 32]) {
+        self.local_height = height;
+        self.local_block_hash = block_hash;
     }
 
     pub fn snapshot_count(&self) -> usize {
@@ -370,6 +394,50 @@ mod tests {
 
         let meta = server.handle_request(&SyncMessage::SnapshotMetadataRequest { height: 100 });
         assert!(meta.is_some());
+    }
+
+    /// H-21 close: `set_tip` plumbs the canonical block hash through to
+    /// `TipResponse.block_hash`. Pre-fix, the server returned the
+    /// `[0u8; 32]` placeholder regardless of local state, leaving peer
+    /// tip-claim verification cryptographically blind. This test pins
+    /// the fix.
+    #[test]
+    fn set_tip_propagates_block_hash_to_tip_response() {
+        let mut server = SyncServer::new();
+        let canonical_hash: [u8; 32] = [0xAB; 32];
+        server.set_tip(42, canonical_hash);
+
+        let resp = server.handle_request(&SyncMessage::TipRequest);
+        match resp {
+            Some(SyncMessage::TipResponse { height, block_hash }) => {
+                assert_eq!(height, 42, "height must mirror set_tip arg");
+                assert_eq!(
+                    block_hash, canonical_hash,
+                    "block_hash must mirror set_tip arg, NOT the [0u8; 32] placeholder"
+                );
+            }
+            other => panic!("expected TipResponse; got {other:?}"),
+        }
+    }
+
+    /// Default state (no `set_tip` called) returns zero hash — backward-
+    /// compatible with the pre-fix behaviour. `set_height` is documented
+    /// as not touching the hash; this test pins that contract.
+    #[test]
+    fn set_height_alone_leaves_block_hash_zero() {
+        let mut server = SyncServer::new();
+        server.set_height(7);
+        let resp = server.handle_request(&SyncMessage::TipRequest);
+        match resp {
+            Some(SyncMessage::TipResponse { height, block_hash }) => {
+                assert_eq!(height, 7);
+                assert_eq!(
+                    block_hash, [0u8; 32],
+                    "set_height must NOT touch block_hash — that's set_tip's job"
+                );
+            }
+            other => panic!("expected TipResponse; got {other:?}"),
+        }
     }
 
     #[test]
