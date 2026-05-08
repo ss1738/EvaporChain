@@ -155,6 +155,19 @@ impl ChainStore {
         self.db.put_cf(cf, key, value).map_err(|e| e.to_string())
     }
 
+    /// Direct single-block lookup by block number. Returns `None` when the
+    /// record has been pruned (CF_BLOCKS is sliding-window-pruned via
+    /// [`prune_blocks`]) or never existed. Used by `/api/tx/:hash` to enrich
+    /// receipts read from the deeper persistent index with their containing
+    /// block's per-block fields (e.g. `block_demurrage_collected`) without
+    /// scanning the whole history ring.
+    pub fn get_block_record(&self, block_number: u64) -> Option<BlockRecord> {
+        let cf = self.db.cf_handle(CF_BLOCKS)?;
+        let key = block_number.to_be_bytes();
+        let bytes = self.db.get_cf(cf, key).ok()??;
+        serde_json::from_slice(&bytes).ok()
+    }
+
     pub fn load_block_history(&self, limit: usize) -> VecDeque<BlockRecord> {
         let cf = self.db.cf_handle(CF_BLOCKS).unwrap();
         let mut blocks = VecDeque::new();
@@ -1541,6 +1554,33 @@ mod tests {
         let history = cs.load_block_history(2);
         let nums: Vec<u64> = history.iter().map(|r| r.number).collect();
         assert_eq!(nums, vec![4, 5]);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_get_block_record_roundtrip() {
+        let dir = fresh_dir("getblkrec");
+        let cs = ChainStore::open(&dir).unwrap();
+        // Custom record with a non-default `demurrage_collected` value so we
+        // can verify the field round-trips through the per-block lookup
+        // (used by /api/tx/:hash to enrich receipts read from the deeper
+        // persistent index — the path that `get_block_record` services).
+        let mut rec = empty_block_record(7);
+        rec.demurrage_collected = 4242;
+        cs.save_block(&rec).unwrap();
+
+        let loaded = cs
+            .get_block_record(7)
+            .expect("block 7 should load via get_block_record");
+        assert_eq!(loaded.number, 7);
+        assert_eq!(
+            loaded.demurrage_collected, 4242,
+            "demurrage_collected must round-trip through serde"
+        );
+        // Missing block returns None — caller falls back to omitting the
+        // enriched field rather than fabricating data.
+        assert!(cs.get_block_record(999).is_none());
         drop(cs);
         let _ = std::fs::remove_dir_all(&dir);
     }

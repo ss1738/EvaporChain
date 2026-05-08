@@ -9032,6 +9032,15 @@ pub struct TxStatusResponse {
     /// contract` against that id. Absent for non-deploy tx types.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_id: Option<u64>,
+    /// Total demurrage debited from idle accounts in the block this tx
+    /// landed in (zero on non-sweep blocks). Mirrors
+    /// `BlockRecord.demurrage_collected`. Lets wallet/explorer clients
+    /// surface decay-flow context for a tx's block without an extra
+    /// round-trip to `/api/block/:n`. Absent for `pending | mempool`
+    /// states (tx not yet in a block) and for txs read from the
+    /// chain_store path where the BlockRecord lookup misses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_demurrage_collected: Option<u64>,
 }
 
 /// Normalise a wallet-supplied hex hash into the canonical 64-char lowercase
@@ -9177,6 +9186,7 @@ async fn get_tx_by_hash(
                         confirmations: confirmations_for(tx.block_number),
                         tx_index: None,
                         gas_used,
+                        block_demurrage_collected: Some(block.demurrage_collected),
                         mempool_position: None,
                         mempool_size: None,
                         contract_id,
@@ -9208,6 +9218,13 @@ async fn get_tx_by_hash(
             } else {
                 None
             };
+            // Try to look up the BlockRecord so we can stamp
+            // block_demurrage_collected. Best-effort: chain_store retains
+            // a finite block-record window so older blocks may be missing,
+            // in which case the field is omitted (serde skip_if_none).
+            let block_demurrage_collected = store
+                .get_block_record(receipt.block_number)
+                .map(|br| br.demurrage_collected);
             return Ok(Json(TxStatusResponse {
                 hash: hash_hex,
                 state: state_label,
@@ -9221,6 +9238,7 @@ async fn get_tx_by_hash(
                 } else {
                     None
                 },
+                block_demurrage_collected,
                 mempool_position: None,
                 mempool_size: None,
                 contract_id,
@@ -9243,6 +9261,7 @@ async fn get_tx_by_hash(
             confirmations: None,
             tx_index: None,
             gas_used: None,
+            block_demurrage_collected: None,
             mempool_position: pos,
             mempool_size: total,
             contract_id: None,
@@ -9259,6 +9278,7 @@ async fn get_tx_by_hash(
         confirmations: None,
         tx_index: None,
         gas_used: None,
+        block_demurrage_collected: None,
         mempool_position: None,
         mempool_size: None,
         contract_id: None,
