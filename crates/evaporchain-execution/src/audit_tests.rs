@@ -854,6 +854,65 @@ mod conservation_enforce_tests {
         assert!(matches!(executor.last_conservation_audit, Some(Ok(()))));
     }
 
+    /// Regression: a block whose reward path mints positive supply must
+    /// NOT trip `DecayIncreasedTotal` under either observe or enforce
+    /// mode. The pre-fix ParallelExecutor took an unadjusted
+    /// `conservation_before` snapshot, so block_reward minting raised
+    /// `after.total()` above `before.total()` and the audit fired every
+    /// block — the live cluster's `last_conservation_audit_ok=false`
+    /// false-signal. Fix: credit `minted_this_block` into the snapshot
+    /// before the audit. This test pins the fix.
+    #[test]
+    fn parallel_minting_does_not_trip_decay_increased_total() {
+        use evaporchain_types::genesis::Tokenomics;
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1_000_000);
+        fund(&mut db, 2, 0);
+        let mut executor = ParallelExecutor::new_for_test(5);
+        // Wire rewards: every block now mints `block_reward` into the
+        // proposer's account. Without the minted_this_block credit, the
+        // §1.2 audit would see `after > before` and store
+        // `Some(Err(DecayIncreasedTotal))`.
+        executor.enable_rewards(Tokenomics::default());
+        executor
+            .execute_block(&mut db, &block_with_one_transfer(1, 1))
+            .expect("block with reward minting must commit");
+        match &executor.last_conservation_audit {
+            Some(Ok(())) => {} // expected post-fix
+            Some(Err(v)) => panic!(
+                "audit must pass when minted_this_block is credited; \
+                 saw violation = {v:?}"
+            ),
+            None => panic!("audit verdict should be set after a committed block"),
+        }
+    }
+
+    /// Same fix verified under `enforce` mode — the most operationally
+    /// dangerous regression. Pre-fix this would have rejected the block
+    /// with `ExecutionError::ConservationViolation` and halted the chain
+    /// the moment a cluster operator flipped the flag.
+    #[test]
+    fn parallel_minting_does_not_halt_chain_under_enforce() {
+        use evaporchain_types::genesis::Tokenomics;
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1_000_000);
+        fund(&mut db, 2, 0);
+        db.put_governance_param(
+            "conservation_enforcement".to_string(),
+            "enforce".to_string(),
+        );
+        let mut executor = ParallelExecutor::new_for_test(5);
+        executor.enable_rewards(Tokenomics::default());
+        executor
+            .execute_block(&mut db, &block_with_one_transfer(1, 1))
+            .expect(
+                "block with reward minting must commit under enforce mode \
+                 — pre-fix this would have rejected with \
+                 ConservationViolation(DecayIncreasedTotal)",
+            );
+        assert!(matches!(executor.last_conservation_audit, Some(Ok(()))));
+    }
+
     /// Enforce mode: a normal, well-formed block still commits — the
     /// gate must not break the happy path. Verdict still stored as Ok.
     /// This is the critical regression test: turning enforcement on

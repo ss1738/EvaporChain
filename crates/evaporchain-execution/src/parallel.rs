@@ -2084,6 +2084,18 @@ impl ExecutionEngine for ParallelExecutor {
         };
         let producer_alive = !self.eulogy_trie.contains(&producer_addr);
 
+        // Snapshot total_minted before block rewards so we can credit
+        // newly-minted supply into conservation_before below — same fix
+        // already applied to SimpleExecutor (lib.rs). Without this, the
+        // §1.2 audit fires DecayIncreasedTotal every block where the
+        // reward path mints non-zero supply, which is exactly the
+        // false-signal the live cluster surfaces as
+        // `last_conservation_audit_ok: false` despite no real violation.
+        let minted_before_rewards: u64 = self
+            .reward_accumulator
+            .as_ref()
+            .map_or(0, |ra| ra.total_minted);
+
         // Clone stake data before the mutable reward call (avoids overlapping borrows).
         let (attesters_parallel, total_staked_parallel): (Vec<[u8; 32]>, u64) = {
             let snap: Vec<(u64, [u8; 32], u64, Option<u64>)> = db
@@ -2267,8 +2279,27 @@ impl ExecutionEngine for ParallelExecutor {
             .last_audit_epoch
             .map(|prev| block.epoch.saturating_sub(prev))
             .unwrap_or(0);
+        // Compute the net minting that fired during the reward path so
+        // we can credit it into the pre-block compartment snapshot before
+        // running the audit — matching the SimpleExecutor::execute_block
+        // fix. Without this credit, the §1.2 audit fires
+        // `DecayIncreasedTotal` every block whose block_reward > 0,
+        // which is the live-cluster `last_conservation_audit_ok: false`
+        // false-signal.
+        let minted_this_block: u64 = self
+            .reward_accumulator
+            .as_ref()
+            .map_or(0, |ra| ra.total_minted)
+            .saturating_sub(minted_before_rewards);
+        let mut conservation_before_adjusted = conservation_before;
+        if minted_this_block > 0 {
+            conservation_before_adjusted.credit(
+                evaporchain_energy_kernel::Compartment::Accounts,
+                minted_this_block,
+            );
+        }
         let audit_verdict = crate::energy_audit::audit_block_step(
-            &conservation_before,
+            &conservation_before_adjusted,
             &conservation_after,
             epochs_elapsed,
             lambda,
