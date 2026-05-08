@@ -129,12 +129,13 @@ Pre-existing 3 failures (`test_sequential_nonces_work`, `test_claim_delegation_a
 | 3a | `EvaporHeaderInbox.sol` accepts BLS-signed `(height, blockHash, stateRoot, mmrRoot, epoch)` tuples. New `DOMAIN_TAG_HEADER`. |
 | 3b | Standalone relayer crate `ethereum-bridge/relayer/` with full alloy 0.8 ABI binding. **Headline E2E:** `anvil_e2e_relays_50_headers` — Anvil cold-start + deploys + 50 BLS-signed headers verified in **12.81 s** (plan budget was 30 min). |
 | 5 | `lib/MmrInclusion.sol`, `EvaporationDispatcher.sol` (one-shot replay-immune hooks), `evaporchain-eth-bridge::mmr` Rust module. **Headline E2E:** `anvil_full_pipeline_e2e_evaporation_to_ghost_mint` — deploys ALL 5 contracts cold, registers a hook, dispatches with the inclusion proof, watches `GhostTokenMinter.minted()` go 0 → 1. |
+| 4-MVP | `StateMembershipAttester.sol` + new `DOMAIN_TAG_STATE_MEMBERSHIP`. The plan's documented fallback path: instead of Halo2 → Groth16 wrap of a Pallas-IPA proof, validators directly BLS-sign `(tag, height, key, keccak(value))`. **Test green:** `key=keccak("account_balance/0xCAFEBABE")` is attested to value `1000000000000000000` (1e18) by aggregated 5-validator BLS. Value-tampering and bad-signature paths both reject. Gas = 862 k. |
 
 **Empirical results:**
 
-- 61 tests green:
-  - **39** forge tests across 8 suites (BridgeConstants, ValidatorSetRegistry, ValsetAgreement, BLS381, HashToCurve, CommitCertVerifier, EvaporHeaderInbox, EvaporationDispatcher).
-  - **19** Rust eth-bridge tests across 6 binaries (lib + 4 cross-side fixture tests + 1 ghost-leaf hash test).
+- 69 tests green:
+  - **43** forge tests across 9 suites (BridgeConstants, ValidatorSetRegistry, ValsetAgreement, BLS381, HashToCurve, CommitCertVerifier, EvaporHeaderInbox, EvaporationDispatcher, StateMembershipAttester).
+  - **23** Rust eth-bridge tests across 9 binaries.
   - **3** relayer tests including both Anvil headlines.
 - Anvil 50-header soak: 50/50 in 12.81 s. ~250 ms per submission round-trip.
 - Full-pipeline E2E (`GhostTokenMinter.minted()` 0 → 1) runs in seconds on a single Anvil node, no mocks.
@@ -142,6 +143,7 @@ Pre-existing 3 failures (`test_sequential_nonces_work`, `test_claim_delegation_a
   - `updateValset(5 signers)` = **841 k**
   - `submitHeader(5 signers)` = **980 k**
   - `dispatch(8-leaf MMR, depth-3 path)` = **672 k**
+  - `verifyStateMembership(5 signers)` = **862 k**
   - Hash-to-G2 (one call) = ~280 k; pairing(2) = ~104 k; G1MSM(5) = ~50 k.
 
 **Decisions made:**
@@ -174,6 +176,216 @@ Pre-existing 3 failures (`test_sequential_nonces_work`, `test_claim_delegation_a
 - `research/papers/paper_2_state_economics.md` — the doctrinal context (why state-decay is the only viable long-run path)
 - `crates/evaporchain-cone-bridge/` — the existing Tier-2 cone-merged bridge primitive that the §5 polish will port
 - `crates/evaporchain-crypto/src/signatures.rs` line 403 — `BLS_DST` constant the Solidity HashToCurve binds to
+
+---
+
+### How to resume the bridge build (handoff)
+
+**Working directories:**
+- `~/EvaporChain/ethereum-bridge/contracts/` — Foundry project (Solidity)
+- `~/EvaporChain/ethereum-bridge/relayer/` — standalone Rust workspace (alloy 0.8 + tokio)
+- `~/EvaporChain/crates/evaporchain-eth-bridge/` — main-workspace Rust crate (mirrors Solidity types)
+- `~/EvaporChain/ETHEREUM_BRIDGE_PLAN.md` — canonical phased plan (read this first)
+
+**Cluster SSH (all on Tailscale, internal-only):**
+
+```bash
+# Mini 1 — the host where cargo build/test runs and Anvil spawns
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 satyawansingh@100.119.53.101
+
+# Mini 2
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 satyawan-mini-1@100.113.253.72
+
+# Mini 3
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 satyawan-mini-2@100.103.216.125
+```
+
+Per `~/.claude/CLAUDE.md` doctrine: **never run `cargo build/test/check` on the MacBook**. All Rust work runs on Mini 1 via SSH. Foundry (`forge`/`cast`/`anvil`) lives at `~/.foundry/bin/` on both Mac and Mini 1 — installed during this session.
+
+**Build & test commands (paste-ready):**
+
+```bash
+# Solidity side — runs on Mac (Foundry is fast enough locally; doesn't violate the no-cargo rule)
+cd ~/EvaporChain/ethereum-bridge/contracts
+~/.foundry/bin/forge build
+~/.foundry/bin/forge test                         # 43 tests across 9 suites
+~/.foundry/bin/forge test --match-path "test/CommitCertVerifier.t.sol" -vv
+
+# Rust eth-bridge crate — runs on Mini 1
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 satyawansingh@100.119.53.101 \
+  "cd ~/EvaporChain && cargo test -p evaporchain-eth-bridge"     # 23 tests
+
+# Relayer (incl. Anvil-driven E2E) — runs on Mini 1, anvil must be on PATH
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 satyawansingh@100.119.53.101 \
+  "export PATH=\$HOME/.foundry/bin:\$PATH; cd ~/EvaporChain/ethereum-bridge/relayer && cargo test"
+# 3 tests including the headlines:
+#   - anvil_e2e_relays_50_headers              (50 BLS-signed headers in ~12.8 s)
+#   - anvil_full_pipeline_e2e_evaporation_to_ghost_mint  (cold-start to fired hook)
+```
+
+**Sync workflow (Mac authors, Mini compiles):**
+
+```bash
+cd ~/EvaporChain
+
+# Push code changes to Mini 1
+rsync -aviz --no-perms --omit-dir-times --delete \
+  crates/evaporchain-eth-bridge/ \
+  satyawansingh@100.119.53.101:/Users/satyawansingh/EvaporChain/crates/evaporchain-eth-bridge/
+
+rsync -aviz --no-perms --omit-dir-times --delete \
+  ethereum-bridge/relayer/ \
+  satyawansingh@100.119.53.101:/Users/satyawansingh/EvaporChain/ethereum-bridge/relayer/
+
+# IMPORTANT: relayer's `alloy::sol!` macro reads contract artifacts at build time.
+# Whenever Solidity changes, after `forge build` on Mac, sync the artifacts:
+rsync -aviz --no-perms --omit-dir-times \
+  ethereum-bridge/contracts/out/ \
+  satyawansingh@100.119.53.101:/Users/satyawansingh/EvaporChain/ethereum-bridge/contracts/out/
+
+# Workspace Cargo.toml registers the new eth-bridge crate at member position 158:
+rsync -aviz --no-perms --omit-dir-times \
+  Cargo.toml \
+  satyawansingh@100.119.53.101:/Users/satyawansingh/EvaporChain/Cargo.toml
+
+# Pull generated test fixtures (Rust generates → forge consumes via vm.readFile)
+rsync -aviz \
+  satyawansingh@100.119.53.101:/Users/satyawansingh/EvaporChain/ethereum-bridge/contracts/fixtures/ \
+  ethereum-bridge/contracts/fixtures/
+```
+
+**rsync gotcha hit during the session:** sometimes `rsync` would silently *not* sync a recently-edited file when invoked rapidly. If `cargo` complains about stale code, fall back to `scp` for the single file. Force one-time sync:
+
+```bash
+scp -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 \
+  ~/EvaporChain/path/to/file.rs \
+  satyawansingh@100.119.53.101:/Users/satyawansingh/EvaporChain/path/to/file.rs
+```
+
+**Foundry on Mini 1** (installed during this session — don't reinstall):
+
+```bash
+# If foundryup ever needs to be re-run on Mini 1:
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 satyawansingh@100.119.53.101 \
+  "export PATH=\$HOME/.foundry/bin:\$PATH; foundryup"
+```
+
+The PATH export is needed because non-interactive SSH doesn't load `~/.zshenv`.
+
+**Files shipped this session (full list):**
+
+```
+ETHEREUM_BRIDGE_PLAN.md                                         (root)
+SESSION_PROGRESS.md                                             (this file, prepended)
+Cargo.toml                                                      (added eth-bridge member)
+
+ethereum-bridge/contracts/                                      ← NEW Foundry tree
+├── foundry.toml                                                (Prague EVM, via_ir on)
+├── lib/forge-std/                                              (gitignored vendored)
+├── src/
+│   ├── BridgeConstants.sol                                     (domain tags, EIP-2537 addrs)
+│   ├── BridgeTypes.sol                                         (Validator struct)
+│   ├── ValidatorSetRegistry.sol                                (Phase 1)
+│   ├── CommitCertVerifier.sol                                  (Phase 2)
+│   ├── EvaporHeaderInbox.sol                                   (Phase 3a)
+│   ├── EvaporationDispatcher.sol                               (Phase 5)
+│   ├── StateMembershipAttester.sol                             (Phase 4 MVP)
+│   ├── interfaces/
+│   │   └── ICommitCertVerifier.sol
+│   └── lib/
+│       ├── BLS381.sol                                          (EIP-2537 wrapper)
+│       ├── HashToCurve.sol                                     (RFC 9380 hash-to-G2)
+│       └── MmrInclusion.sol                                    (keccak256 MMR verifier)
+├── test/
+│   ├── BridgeConstants.t.sol                                   (3 tests)
+│   ├── ValidatorSetRegistry.t.sol                              (12 tests)
+│   ├── ValsetAgreement.t.sol                                   (1 test, cross-side hash)
+│   ├── BLS381.t.sol                                            (7 tests)
+│   ├── HashToCurve.t.sol                                       (5 tests)
+│   ├── CommitCertVerifier.t.sol                                (3 tests, real BLS)
+│   ├── EvaporHeaderInbox.t.sol                                 (3 tests, real header)
+│   ├── EvaporationDispatcher.t.sol                             (5 tests + GhostTokenMinter)
+│   ├── StateMembershipAttester.t.sol                           (4 tests)
+│   └── lib/MockCommitCertVerifier.sol
+├── script/
+│   └── Deploy.s.sol                                            (forge script Deploy)
+└── fixtures/
+    ├── commit_cert_5.json
+    ├── header_inbox_5.json
+    ├── evaporation_dispatch_8.json
+    └── state_membership_5.json
+
+ethereum-bridge/relayer/                                        ← NEW standalone Cargo workspace
+├── Cargo.toml                                                  (alloy 0.8 + tokio + reqwest)
+├── src/
+│   ├── main.rs                                                 (tokio entry + tracing)
+│   ├── config.rs                                               (env-driven config)
+│   ├── chain_client.rs                                         (HTTP to evaporchain-node)
+│   ├── eth_client.rs                                           (alloy::sol! ABI binding)
+│   └── loop_runner.rs                                          (poll + dispatch loop)
+└── tests/
+    └── anvil_e2e.rs                                            (3 tests, 2 are headlines)
+
+crates/evaporchain-eth-bridge/                                  ← NEW workspace member
+├── Cargo.toml                                                  (depends on types/crypto/consensus-types)
+├── src/
+│   ├── lib.rs
+│   ├── constants.rs                                            (4 keccak domain tags)
+│   ├── valset.rs                                               (compute_root, mirrors Solidity)
+│   └── mmr.rs                                                  (keccak256 MMR + proofs)
+└── tests/
+    ├── hash_to_curve_vector.rs                                 (Rust ↔ Solidity hash-to-G2 lock)
+    ├── g1_generator_constants.rs                               (-G1_gen emitter)
+    ├── commit_cert_fixture.rs                                  (BLS aggregate test vector)
+    ├── header_inbox_fixture.rs                                 (Phase 3a fixture)
+    ├── evaporation_dispatch_fixture.rs                         (Phase 5 fixture)
+    └── state_membership_fixture.rs                             (Phase 4 MVP fixture)
+```
+
+**State at session end (test totals):**
+
+| Side | Tests | Suites |
+|---|---|---|
+| Solidity (forge) | **43** | 9 |
+| Rust eth-bridge | **23** | lib + 8 binaries |
+| Rust relayer | **3** | including 2 Anvil E2Es |
+| **Total** | **69** | — all green Mac (forge) + Mini 1 (cargo) |
+
+**Phase status:**
+
+| # | Phase | Done? |
+|---|---|---|
+| 0 | Scaffold | ✅ |
+| 1 | ValidatorSetRegistry + Rust mirror | ✅ |
+| 2 | BLS commit-cert verifier (EIP-2537) | ✅ |
+| 3a | EvaporHeaderInbox | ✅ |
+| 3b | Relayer + Anvil 50-header soak | ✅ |
+| 4 MVP | BLS-multisig state-membership | ✅ |
+| 5 | EvaporationDispatcher + MMR | ✅ |
+| 4 full | Halo2 → Groth16 wrap of Pallas IPA | ⏳ multi-day cryptographic build |
+| 5 polish | ConeIntersection.sol replay-immunity | ⏳ small port |
+| 6 | Sepolia E2E | ⏳ needs Sepolia ETH + ops setup |
+
+**Locked test-vector hashes (cross-side bindings — DO NOT change pre-image without updating both sides):**
+
+- `ValsetAgreement.t.sol`: epoch=7, 5 validators with seeded pubkeys [0x11..0x55]×48 + stakes [100,200,300,400,500] → `0xd9772b11c3a1277e03d3e44f3bee65806a0360c27ae1b98fab1ccb1ccc4a8a2b`
+- `HashToCurve.t.sol`: `hashToG2(b"hello evaporchain")` matches Rust's `bls12_381 0.8` `<G2 as HashToCurve<ExpandMsgXmd<Sha256>>>::hash_to_curve(msg, BLS_DST)` byte-for-byte under DST `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_`
+- `CommitCertVerifier.sol`: hardcoded `NEG_G1_GEN_UNCOMP` constant from `crates/evaporchain-eth-bridge/tests/g1_generator_constants.rs`. If the BLS curve ever changes, regenerate this constant.
+
+**Decision points for next session (what to ask first):**
+
+1. Phase 4 full (Halo2 → Groth16 wrap, multi-day) vs Phase 6 (Sepolia deploy, ops lift) vs `ConeIntersection.sol` polish?
+2. For Phase 6 specifically: which testnet — Sepolia or Holesky? Does the user have testnet ETH on hand?
+3. EvaporChain node-side endpoints (`/api/headers/finalized`, `/api/headers/<h>/commit_cert`, `/api/validators?epoch=N`) — when to add them? They're a chain-side patch the relayer needs to talk to the live Mini cluster (right now relayer is exercised only against synthetic fixtures + Anvil).
+
+**Known gotchas (write these into your head before resuming):**
+
+- alloy 0.8 generic Provider bounds fight with helper functions. Inline deploy code in tests rather than factor it out.
+- alloy `sol!` macro generates a `BridgeTypes` mod per artifact at module scope. Three sol! invocations in the same module collide. Solution: only ONE typed binding per test file, deploy others via raw bytecode + `TransactionRequest::with_deploy_code`.
+- For `via_ir = true` (foundry.toml) → required because HashToCurve hits stack-too-deep without it. Slows compile (~1s extra) but unblocks the build.
+- `evm_version = "prague"` is mandatory for EIP-2537 precompiles (G1ADD..MAP_FP2_TO_G2). Don't relax it.
+- `pubkey` in `BridgeTypes.Validator` is exactly 48 bytes (BLS12-381 G1 compressed). Solidity asserts this; Rust mirror enforces via `[u8; 48]`.
+- `signedBitmap` is **LSB-first per byte** (bit `i % 8` of byte `i / 8`). Rust producer naturally packs this way.
 
 ---
 

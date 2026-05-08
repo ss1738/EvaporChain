@@ -146,13 +146,29 @@ def build_state() -> dict[str, Any]:
                 "disk_series": disk_series,
                 "history_points": len(samples),
             })
-    # Cluster-wide convergence score: how many distinct (height, state_root) pairs
-    # are there right now. 1 = perfect lockstep; 5 = total fragmentation.
-    pairs: set[tuple[int | None, str]] = set()
+    # Cluster-wide convergence — properly distinguish sync lag from forks.
+    #
+    # Old check: count distinct (height, state_root) pairs. That treats
+    # nodes-at-different-heights-but-same-chain as "spread", which is
+    # misleading: with ~2 blocks/sec, sample-time aliasing routinely puts
+    # 2 nodes at h=N and 3 nodes at h=N+1 even when consensus is perfect.
+    #
+    # New check: group responding nodes by their current block_height and
+    # ask "do all nodes at the SAME height agree on state_root?". If every
+    # height-group is internally agreed → no fork. If any height-group has
+    # ≥2 distinct state_roots → real fork.
+    by_height: dict[int, set[str]] = {}
     for n in out["nodes"]:
         if n.get("ok") and n.get("block_height") is not None:
-            pairs.add((n["block_height"], n["state_root"]))
-    out["distinct_state_pairs"] = len(pairs)
+            by_height.setdefault(n["block_height"], set()).add(n.get("state_root") or "")
+    forked = any(len(roots) > 1 for roots in by_height.values())
+    heights = [h for h in by_height.keys()]
+    height_lag = (max(heights) - min(heights)) if heights else 0
+    # Keep the legacy `distinct_state_pairs` field for backward compatibility
+    # with the HTML — but its semantics shift to "1 if no fork, ≥2 if fork".
+    out["distinct_state_pairs"] = 1 if not forked else max(2, sum(len(r) for r in by_height.values()))
+    out["height_lag"] = height_lag
+    out["forked"] = forked
     out["nodes_responding"] = sum(1 for n in out["nodes"] if n.get("ok"))
     return out
 
@@ -312,13 +328,17 @@ async function tick() {
   let data;
   try { data = await (await fetch('/state.json')).json(); }
   catch (e) { document.getElementById('hdr').innerHTML = '<span class="bad">dashboard offline</span>'; return; }
-  const distinct = data.distinct_state_pairs;
+  const forked = !!data.forked;
+  const lag = data.height_lag || 0;
   const responding = data.nodes_responding;
-  const lockstep = distinct === 1 ? 'ok' : (distinct <= 2 ? 'warn' : 'bad');
+  const badgeClass = forked ? 'bad' : 'ok';
+  const convergence = forked
+    ? 'FORK — nodes at same height disagree on state_root'
+    : (lag === 0 ? '5/5 lockstep' : `5/5 lockstep (sync lag ${lag} block${lag > 1 ? 's' : ''})`);
   document.getElementById('hdr').innerHTML = `
     <div class="stat"><div class="lbl">Nodes responding</div><div class="val">${responding} / 5</div></div>
-    <div class="stat"><div class="lbl">Distinct state pairs</div><div class="val"><span class="badge ${lockstep}">${distinct}</span></div></div>
-    <div class="stat"><div class="lbl">Cluster convergence</div><div class="val">${distinct === 1 ? '5/5 lockstep' : 'spread'}</div></div>
+    <div class="stat"><div class="lbl">Same-height fork?</div><div class="val"><span class="badge ${badgeClass}">${forked ? 'YES' : 'NO'}</span></div></div>
+    <div class="stat"><div class="lbl">Cluster convergence</div><div class="val">${convergence}</div></div>
   `;
   const tbody = document.querySelector('#nodes tbody');
   drawDecayChart(data.nodes);
