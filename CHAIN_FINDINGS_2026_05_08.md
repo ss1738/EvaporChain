@@ -6,9 +6,29 @@ Empirical discoveries surfaced during overnight wallet-driven testing against th
 
 ---
 
-## 1. Reorg-rejection finality instability
+## 1. Execution-time rejection from in-block demurrage burn
 
-**Symptom.** Transactions are reported as `state: finalised, block_height: N` immediately after submission, then within ~5 blocks the same tx hash returns `state: rejected, block_height: N+5, error: "rejected"`. The chain never actually mutates the sender's state — nonce stays at its pre-tx value, balance unchanged.
+**Original framing was wrong.** Initial diagnosis (post-finalisation reorg) was misleading; the actual mechanism is execution-time rejection from demurrage burning the sender's balance between mempool admission and block execution. **This finding is now tightly coupled to finding #3 below.**
+
+**The actual flow:**
+
+1. `POST /api/tx/transfer` → pre-check at `crates/evaporchain-node/src/api.rs:~10035-10058`: if `acct.balance >= req.amount` and `req.nonce == acct.nonce`, accept into mempool.
+2. Tx queued; block proposer drains it; tx included in block N.
+3. **Within block N: demurrage tick runs BEFORE tx execution.** For an inactive account at the default 100-epoch half-life (~13 min @ 2s blocks), the burn between submission and execution can be a substantial fraction of balance.
+4. Executor `execute_transfer` (lib.rs:~1180) re-checks `transferable_balance(epoch) < tx.amount`. After in-block demurrage, this can fail even though pre-check passed.
+5. Executor sets `tx.status = "rejected"` (per the comment at `api.rs:17292`: *"InsufficientBalance / InvalidNonce → status = 'rejected'"*).
+6. `GET /api/tx/<hash>` classifies via `api.rs:9008-9015` — `tx.status == "success"` → finalised, otherwise → rejected:
+   ```rust
+   if tx.status == "success" {
+       ("finalised", None)
+   } else {
+       ("rejected", Some(tx.status.clone()))
+   }
+   ```
+
+The "finalised → rejected" flicker the wallet observed is the chain reporting the tx based on `tx.status` which gets updated between block-inclusion and post-execution write.
+
+**Symptom.** Wallet `--wait` first sees `state: finalised` (initial block-inclusion), then `state: rejected, error: "rejected"` (post-execution). The chain never actually mutates the sender's state — `nonce` stays at its pre-tx value, balance unchanged (the executor's rejection prevents the state delta from applying).
 
 **Evidence — three observations tonight:**
 
@@ -20,11 +40,18 @@ Empirical discoveries surfaced during overnight wallet-driven testing against th
 
 In every case, the sender's on-chain `account.nonce` did NOT advance, confirming execution-time rejection (not just a soft-finality flip).
 
-**Hypothesized root causes** (untested):
+**Confirmed root cause (post-investigation):**
 
-1. Late-stage execution check failing — possibly the post-vesting `transferable_balance(epoch)` check at `crates/evaporchain-execution/src/lib.rs:~1180` rejecting after demurrage is applied within the same block, even though the pre-check passed. (For V1: balance 20,198 < gas 21,000 by execution time. See finding #3.)
-2. Block reorg around the soft-finality boundary — Tendermint commit + downstream re-validation disagreeing.
-3. Some chain-internal economic check (slashing, demurrage settlement, MEV detection) rejecting the tx during block-application.
+In-block demurrage applied to the sender BEFORE the executor runs `execute_transfer`. For an inactive account at default `Exponential { half_life: 100 epochs }` (~13 min at 2s blocks), the burn between submission and execution is large enough to drop balance below `tx.amount + gas`. Pre-check at submission passes; execution check at lib.rs:~1180 fails.
+
+For V1 specifically: balance was 20,198 EVP at session end, gas per transfer is 21,000 — **even an idle account can never afford a transfer once below 21k EVP, and demurrage is actively burning the budget**. See finding #3 for the demurrage-rate critique.
+
+Sister-session next steps:
+- Confirm via execution trace that demurrage is being applied to senders mid-block, before the tx-execution pass.
+- Decide application order: demurrage-then-tx (current) vs tx-then-demurrage (would let in-flight txs land before decay applies).
+- Or: tune demurrage half-life (TOKENOMICS Q1) so within-block burn becomes negligible.
+
+**This narrows finding #1 from "reorg instability" to "demurrage application order + half-life calibration."** No reorg is happening; consensus is sound at the depth-1 BFT finality the chain claims (`tendermint.rs:5831`).
 
 **Reproduction.**
 
@@ -41,10 +68,7 @@ wallet --node http://100.113.253.72:8081 send \
 
 The wallet now catches this and reports `REJECTED at block #N (failed at execution)` immediately — see commit `72f7b49` (two-phase await_confirmation).
 
-**Sister-session next steps:**
-- Inspect `process_block_rewards` / `execute_transfer` for late-stage rejection paths.
-- Check whether demurrage is being applied to the sender mid-execution.
-- Review the consensus commit boundary — does soft-finality at h=N actually persist to h=N+5?
+**Wallet UX impact:** the wallet's two-phase await_confirmation (commit `72f7b49`) catches this correctly — first poll sees the executor's `tx.status = "rejected"` and reports `REJECTED at block #N (failed at execution)` immediately. No more silent timeouts.
 
 ---
 
