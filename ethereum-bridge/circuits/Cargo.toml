@@ -1,0 +1,37 @@
+[workspace]
+# Standalone workspace — heavy proving deps stay out of the 147-crate parent.
+# Build with `cargo build` from this directory (on a Mini).
+
+[package]
+name = "evaporchain-verkle-circuits"
+version = "0.1.0"
+edition = "2021"
+license = "BUSL-1.1"
+description = "Verkle membership IVC circuit for the EvaporChain → Ethereum bridge (Phase 4 full)"
+
+[[bin]]
+name = "verkle-prove"
+path = "src/bin/prove.rs"
+
+[lib]
+name = "evaporchain_verkle_circuits"
+path = "src/lib.rs"
+
+[dependencies]
+nova-snark    = { version = "0.68", features = ["test-utils"] }
+ff            = "0.13"
+generic-array = "1"
+blake3        = "1"
+serde         = { version = "1", features = ["derive"] }
+hex           = "0.4"
+flate2        = "1"
+bincode       = { version = "2", features = ["serde"] }
+serde_json    = "1"
+
+[dev-dependencies]
+rand = "0.8"
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
