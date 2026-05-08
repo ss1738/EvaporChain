@@ -8053,6 +8053,12 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // HBCT launch wedge
     ApiDocEntry { method: "GET",  path: "/api/pool/list",             category: "amm",  description: "List every Singh Pool's summary state (reserves, shares, fee_bp, energy_floor)", example: None },
     ApiDocEntry { method: "GET",  path: "/api/pool/:id",               category: "amm",  description: "Full state of a single Singh Pool. Returns {found:false} for unknown id.", example: None },
+    ApiDocEntry { method: "POST", path: "/api/pool/create",            category: "amm",  description: "Create a new empty Singh Pool. Body: {id, fee_bp, energy_floor}.", example: Some(r#"{"id":"EVAP-FLUX","fee_bp":30,"energy_floor":0}"#) },
+    ApiDocEntry { method: "POST", path: "/api/pool/:id/mint",          category: "amm",  description: "Mint LP shares (initial or proportional). Body: {holder (32-byte hex), amount_x, amount_y, anchor_energy, epoch}. Amounts are u128 decimal strings.", example: Some(r#"{"holder":"0x0100...","amount_x":"1000000","amount_y":"1000000","anchor_energy":1000,"epoch":7600}"#) },
+    ApiDocEntry { method: "POST", path: "/api/pool/:id/withdraw",      category: "amm",  description: "Burn shares for proportional reserves. Energy-floor-gated: holder energy ≤ floor → EnergyBelowFloor.", example: Some(r#"{"holder":"0x0100...","shares_to_burn":"500000"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/pool/:id/swap_x_for_y",  category: "amm",  description: "Swap X→Y at xy=k. Applies fee_bp on input (Uniswap-v2 convention).", example: Some(r#"{"amount_in":"1000"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/pool/:id/swap_y_for_x",  category: "amm",  description: "Symmetric swap Y→X.", example: Some(r#"{"amount_in":"1000"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/pool/:id/reanchor",      category: "amm",  description: "Top up a holder's LpShare energy back to anchor_energy. Resets the energy-decay clock to epoch. Required periodically to keep shares withdraw-able.", example: Some(r#"{"holder":"0x0100...","anchor_energy":1000,"epoch":7600}"#) },
     ApiDocEntry { method: "GET",  path: "/api/hbct/state",            category: "hbct", description: "HBCT book summary (entry count, total MWh, top positions)", example: None },
     ApiDocEntry { method: "POST", path: "/api/hbct/seed_demo",        category: "hbct", description: "Seed 8 realistic HBCT positions (GB BMUs + DE-LU)", example: None },
     ApiDocEntry { method: "POST", path: "/api/hbct/mint",             category: "hbct", description: "Mint a single HBCT position", example: Some(r#"{"delivery_location":"BMU-T_DRAXX-1","hour_slot":481248,"mwh_amount":250,"holder_hex":"…","issued_at_epoch":0}"#) },
@@ -12969,6 +12975,250 @@ async fn get_pool_detail(
     }))
 }
 
+// ── Stage 2 mutators ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct PoolCreateRequest {
+    id: String,
+    fee_bp: u64,
+    #[serde(default)]
+    energy_floor: u64,
+}
+
+/// POST /api/pool/create — create a fresh empty Singh Pool. Idempotent
+/// rejects on duplicate id (returns success:false).
+async fn post_pool_create(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<PoolCreateRequest>,
+) -> Json<serde_json::Value> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return Json(serde_json::json!({
+            "success": false,
+            "message": resp.0.message,
+        }));
+    }
+    let mut pools = safe_lock(&state.singh_pools);
+    if pools.contains_key(&req.id) {
+        return Json(serde_json::json!({
+            "success": false,
+            "message": format!("pool '{}' already exists", req.id),
+        }));
+    }
+    let pool = match evaporchain_cl_amm::SinghPool::new(req.fee_bp, req.energy_floor) {
+        Ok(p) => p,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "success": false,
+                "message": format!("{:?}", e),
+            }))
+        }
+    };
+    pools.insert(req.id.clone(), pool);
+    Json(serde_json::json!({
+        "success": true,
+        "id": req.id,
+        "fee_bp": req.fee_bp,
+        "energy_floor": req.energy_floor,
+    }))
+}
+
+#[derive(Deserialize)]
+struct PoolMintRequest {
+    /// 32-byte hex (with or without 0x prefix) — the LP holder's chain address.
+    holder: String,
+    /// u128 decimal string. Avoids JS-number precision loss.
+    amount_x: String,
+    amount_y: String,
+    anchor_energy: u64,
+    epoch: u64,
+}
+
+/// POST /api/pool/:id/mint — mint LP shares. Routes to
+/// `mint_initial` if pool empty, `mint_proportional` otherwise (the
+/// underlying call dispatches automatically).
+async fn post_pool_mint(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<PoolMintRequest>,
+) -> Json<serde_json::Value> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
+    }
+    let holder_addr = match parse_hex_address(&req.holder) {
+        Ok(a) => a,
+        Err(e) => return Json(serde_json::json!({"success": false, "message": e})),
+    };
+    let amt_x: u128 = match req.amount_x.parse() {
+        Ok(v) => v,
+        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_x must be a u128 decimal string"})),
+    };
+    let amt_y: u128 = match req.amount_y.parse() {
+        Ok(v) => v,
+        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_y must be a u128 decimal string"})),
+    };
+    let mut pools = safe_lock(&state.singh_pools);
+    let Some(pool) = pools.get_mut(&id) else {
+        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+    };
+    let holder = evaporchain_cl_amm::HolderId(holder_addr);
+    match pool.mint_initial(holder, amt_x, amt_y, req.anchor_energy, req.epoch) {
+        Ok(shares) => Json(serde_json::json!({
+            "success": true,
+            "shares_minted": shares.to_string(),
+            "reserve_x": pool.reserve_x().to_string(),
+            "reserve_y": pool.reserve_y().to_string(),
+            "total_shares": pool.total_shares().to_string(),
+        })),
+        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+    }
+}
+
+#[derive(Deserialize)]
+struct PoolWithdrawRequest {
+    holder: String,
+    shares_to_burn: String,
+}
+
+/// POST /api/pool/:id/withdraw — burn shares for proportional reserves.
+/// Energy-floor-gated: holders whose `LpShare.energy <= pool.energy_floor`
+/// are rejected with `EnergyBelowFloor`.
+async fn post_pool_withdraw(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<PoolWithdrawRequest>,
+) -> Json<serde_json::Value> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
+    }
+    let holder_addr = match parse_hex_address(&req.holder) {
+        Ok(a) => a,
+        Err(e) => return Json(serde_json::json!({"success": false, "message": e})),
+    };
+    let shares: u128 = match req.shares_to_burn.parse() {
+        Ok(v) => v,
+        Err(_) => return Json(serde_json::json!({"success": false, "message": "shares_to_burn must be a u128 decimal string"})),
+    };
+    let mut pools = safe_lock(&state.singh_pools);
+    let Some(pool) = pools.get_mut(&id) else {
+        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+    };
+    let holder = evaporchain_cl_amm::HolderId(holder_addr);
+    match pool.withdraw(holder, shares) {
+        Ok((out_x, out_y)) => Json(serde_json::json!({
+            "success": true,
+            "out_x": out_x.to_string(),
+            "out_y": out_y.to_string(),
+            "reserve_x": pool.reserve_x().to_string(),
+            "reserve_y": pool.reserve_y().to_string(),
+            "total_shares": pool.total_shares().to_string(),
+        })),
+        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+    }
+}
+
+#[derive(Deserialize)]
+struct PoolSwapRequest {
+    amount_in: String,
+}
+
+/// POST /api/pool/:id/swap_x_for_y — swap X→Y, applies fee_bp on input.
+async fn post_pool_swap_x_for_y(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<PoolSwapRequest>,
+) -> Json<serde_json::Value> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
+    }
+    let amt: u128 = match req.amount_in.parse() {
+        Ok(v) => v,
+        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_in must be a u128 decimal string"})),
+    };
+    let mut pools = safe_lock(&state.singh_pools);
+    let Some(pool) = pools.get_mut(&id) else {
+        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+    };
+    match pool.swap_x_for_y(amt) {
+        Ok(out) => Json(serde_json::json!({
+            "success": true,
+            "amount_in": amt.to_string(),
+            "amount_out": out.to_string(),
+            "reserve_x": pool.reserve_x().to_string(),
+            "reserve_y": pool.reserve_y().to_string(),
+        })),
+        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+    }
+}
+
+/// POST /api/pool/:id/swap_y_for_x — symmetric counterpart.
+async fn post_pool_swap_y_for_x(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<PoolSwapRequest>,
+) -> Json<serde_json::Value> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
+    }
+    let amt: u128 = match req.amount_in.parse() {
+        Ok(v) => v,
+        Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_in must be a u128 decimal string"})),
+    };
+    let mut pools = safe_lock(&state.singh_pools);
+    let Some(pool) = pools.get_mut(&id) else {
+        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+    };
+    match pool.swap_y_for_x(amt) {
+        Ok(out) => Json(serde_json::json!({
+            "success": true,
+            "amount_in": amt.to_string(),
+            "amount_out": out.to_string(),
+            "reserve_x": pool.reserve_x().to_string(),
+            "reserve_y": pool.reserve_y().to_string(),
+        })),
+        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+    }
+}
+
+#[derive(Deserialize)]
+struct PoolReanchorRequest {
+    holder: String,
+    anchor_energy: u64,
+    epoch: u64,
+}
+
+/// POST /api/pool/:id/reanchor — top up a holder's LpShare energy
+/// back to the supplied `anchor_energy`. The energy-decay clock is also
+/// reset to `epoch`. This is what providers must call periodically to
+/// keep their shares withdraw-able under `energy_floor`.
+async fn post_pool_reanchor(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<PoolReanchorRequest>,
+) -> Json<serde_json::Value> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
+    }
+    let holder_addr = match parse_hex_address(&req.holder) {
+        Ok(a) => a,
+        Err(e) => return Json(serde_json::json!({"success": false, "message": e})),
+    };
+    let mut pools = safe_lock(&state.singh_pools);
+    let Some(pool) = pools.get_mut(&id) else {
+        return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
+    };
+    let holder = evaporchain_cl_amm::HolderId(holder_addr);
+    match pool.reanchor(holder, req.anchor_energy, req.epoch) {
+        Ok(()) => Json(serde_json::json!({"success": true})),
+        Err(e) => Json(serde_json::json!({"success": false, "message": format!("{:?}", e)})),
+    }
+}
+
 // ──────────────────────────── Swap (CFM-priced) ─────────────────────────
 
 /// Swap fee in basis points (30 bps = 0.3 %).
@@ -16562,6 +16812,12 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tombstone/:addr_hex", get(get_tombstone))
         .route("/api/pool/list", get(get_pool_list))
         .route("/api/pool/:id", get(get_pool_detail))
+        .route("/api/pool/create", post(post_pool_create))
+        .route("/api/pool/:id/mint", post(post_pool_mint))
+        .route("/api/pool/:id/withdraw", post(post_pool_withdraw))
+        .route("/api/pool/:id/swap_x_for_y", post(post_pool_swap_x_for_y))
+        .route("/api/pool/:id/swap_y_for_x", post(post_pool_swap_y_for_x))
+        .route("/api/pool/:id/reanchor", post(post_pool_reanchor))
         .route("/api/hbct/state", get(get_hbct_state))
         .route("/api/hbct/seed_demo", post(post_hbct_seed_demo))
         .route("/api/hbct/mint", post(post_hbct_mint))
