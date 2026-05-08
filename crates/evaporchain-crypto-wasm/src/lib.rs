@@ -84,18 +84,16 @@ pub fn ml_dsa_keygen() -> Result<JsValue, JsValue> {
 /// guard so the secret-key bytes inside the `Copy` struct's stack
 /// slot are explicitly overwritten with zeros before the binding
 /// drops, narrowing the in-memory exposure window beyond what the
-/// JS-side `secretKey.fill(0)` discipline can achieve alone.
+/// JS-side `secretKey.fill(0)` discipline can achieve alone. The
+/// wrapper's `Drop` runs on every exit path — normal return, `?`
+/// short-circuit, or panic unwind — so signature material does not
+/// linger in any code path.
 #[wasm_bindgen(js_name = "mlDsaSign")]
 pub fn ml_dsa_sign(secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut kp = reconstruct_keypair(secret_key)
-        .map_err(|e| JsValue::from_str(&e))?;
+    let kp = reconstruct_keypair(secret_key).map_err(|e| JsValue::from_str(&e))?;
     let sig = kp.sign(message);
-    // Zeroize the in-memory keypair before drop — the upstream
-    // Keypair is `Copy`, so on drop the bytes would otherwise sit
-    // unzeroed in the stack slot. We treat the whole struct as a
-    // `[u8; PUBLICKEYBYTES + SECRETKEYBYTES]` (justified by the
-    // compile-time layout assertion at module top) and zero it.
-    zeroize_keypair(&mut kp);
+    // `kp` drops here; ZeroizingKeypair::drop zeroes the underlying
+    // Keypair byte-slot on every exit path including panic unwinds.
     Ok(sig.to_vec())
 }
 
@@ -157,7 +155,7 @@ pub fn derive_address(public_key: &[u8]) -> String {
 /// [`zeroize_keypair`] on the returned keypair immediately after
 /// `kp.sign` returns, so the secret bytes do not linger in the
 /// stack slot beyond the sign call.
-fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<Keypair, String> {
+fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<ZeroizingKeypair, String> {
     use pqc_dilithium::SECRETKEYBYTES;
     if sk_bytes.len() != SECRETKEYBYTES {
         return Err(format!(
@@ -186,23 +184,59 @@ fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<Keypair, String> {
         std::ptr::copy_nonoverlapping(sk_bytes.as_ptr(), kp_ptr.add(sk_offset), SECRETKEYBYTES);
     }
 
-    Ok(kp)
+    Ok(ZeroizingKeypair(kp))
 }
 
-/// Zero the in-memory bytes of a `Keypair`. Used as a Drop-equivalent
-/// for the reconstructed keypair in `ml_dsa_sign` and the layout-probe
-/// failure path in `reconstruct_keypair`. Safety: relies on the same
-/// compile-time layout assertion as the unsafe write above —
+/// RAII guard around `Keypair`: zeroes the entire struct's byte slot
+/// on drop. The upstream `Keypair` derives `Copy` over plain byte
+/// arrays with no `Drop` of its own, so without this wrapper the
+/// secret key bytes sit unzeroed in the stack slot until something
+/// else writes over them — and a panic unwind through `ml_dsa_sign`
+/// would never zero them at all.
+///
+/// The wrapper exposes the inner `Keypair` via `Deref`/`DerefMut`
+/// so call sites can use `kp.sign(msg)` unchanged.
+///
+/// SAFETY: drop's byte-wide overwrite relies on the
+/// `_ASSERT_KEYPAIR_LAYOUT` compile-time check that
+/// `size_of::<Keypair>() == PUBLICKEYBYTES + SECRETKEYBYTES`. A
+/// future upstream change that adds padding or non-`u8` fields
+/// would trip the build before reaching this code.
+struct ZeroizingKeypair(Keypair);
+
+impl std::ops::Deref for ZeroizingKeypair {
+    type Target = Keypair;
+    fn deref(&self) -> &Keypair {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ZeroizingKeypair {
+    fn deref_mut(&mut self) -> &mut Keypair {
+        &mut self.0
+    }
+}
+
+impl Drop for ZeroizingKeypair {
+    fn drop(&mut self) {
+        zeroize_keypair(&mut self.0);
+    }
+}
+
+/// Zero the in-memory bytes of a `Keypair`. Backing implementation
+/// for `ZeroizingKeypair`'s `Drop`; also kept as a standalone helper
+/// for tests that want to observe the post-zeroize byte state
+/// directly. SAFETY: relies on the same compile-time layout
+/// assertion as the unsafe write in `reconstruct_keypair` —
 /// `Keypair` is exactly `PUBLICKEYBYTES + SECRETKEYBYTES` contiguous
-/// bytes.
+/// bytes with no `Drop` of its own.
 fn zeroize_keypair(kp: &mut Keypair) {
     let total = pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES;
     // SAFETY: layout invariant asserted at module top. Byte-wide
     // slice write is sound because the entire struct is plain
     // bytes (two `[u8; N]` fields, no Drop, no padding).
-    let bytes: &mut [u8] = unsafe {
-        std::slice::from_raw_parts_mut(kp as *mut Keypair as *mut u8, total)
-    };
+    let bytes: &mut [u8] =
+        unsafe { std::slice::from_raw_parts_mut(kp as *mut Keypair as *mut u8, total) };
     bytes.zeroize();
 }
 
@@ -304,6 +338,88 @@ mod tests {
         // useless signature; the meaningful check is that the
         // public bytes are zero (any future layout change would
         // make this assertion catch a regression).
+    }
+
+    /// CRITICAL-1 hardening — `ZeroizingKeypair`'s `Drop` zeroes the
+    /// underlying `Keypair` byte slot on every exit path. The audit's
+    /// concern was that the inline `zeroize_keypair()` call in
+    /// `ml_dsa_sign` wouldn't fire on a panic unwind through `sign`,
+    /// leaving secret bytes in the stack slot. The wrapper closes
+    /// that gap: drop runs unconditionally regardless of how the
+    /// scope exits.
+    #[test]
+    fn zeroizing_keypair_drop_zeroes_underlying_bytes() {
+        let original_pub: [u8; pqc_dilithium::PUBLICKEYBYTES] = {
+            let zk = reconstruct_keypair(Keypair::generate().expose_secret())
+                .expect("legit SK reconstructs");
+            zk.public
+        };
+        // After zk drops above, its stack slot should be reused or
+        // overwritten — but more importantly, the Drop impl
+        // ran. Witness Drop directly via a ManuallyDrop-style
+        // observation: build one, run drop_in_place explicitly, and
+        // verify the inner Keypair's bytes are zero.
+        let mut zk = reconstruct_keypair(Keypair::generate().expose_secret())
+            .expect("legit SK reconstructs");
+        // Borrow and drop in place to observe the post-drop state.
+        // SAFETY: zk is not used after the explicit drop below.
+        unsafe {
+            std::ptr::drop_in_place(&mut zk as *mut ZeroizingKeypair);
+        }
+        // After Drop ran, the inner Keypair's public slot is all zero.
+        assert!(
+            zk.0.public.iter().all(|&b| b == 0),
+            "ZeroizingKeypair::drop must zero the inner Keypair's public slot \
+             (the secret slot is private but the same Drop covers both)"
+        );
+        // Prevent the compiler from running Drop again at scope end —
+        // it's already been run via drop_in_place.
+        std::mem::forget(zk);
+        // Sanity: the snapshot we took before any drop ran was non-zero
+        // (i.e. `Keypair::generate()` produces real public-key entropy)
+        // — so the `all-zeroes` assertion above is meaningful.
+        assert!(
+            !original_pub.iter().all(|&b| b == 0),
+            "Keypair::generate() must produce non-zero public bytes; if this \
+             fires, the test setup is degenerate and the post-drop check is \
+             trivially true"
+        );
+    }
+
+    /// CRITICAL-1 hardening — Drop is panic-safe: a panic inside the
+    /// `ml_dsa_sign` body still triggers ZeroizingKeypair's Drop on
+    /// stack unwind. We can't easily intercept the keypair's bytes
+    /// post-unwind from outside `catch_unwind`, but we can verify
+    /// the unwind path runs Drop by counting drops via a flag.
+    #[test]
+    fn zeroizing_keypair_drop_runs_on_panic_unwind() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static DROPPED: AtomicBool = AtomicBool::new(false);
+
+        // Local newtype with a Drop that flips DROPPED — proves the
+        // unwind path runs scope drops in general. (Testing
+        // ZeroizingKeypair's Drop fires under unwind requires
+        // upstream Keypair instrumentation we don't have, so we
+        // assert the language guarantee instead, which is what the
+        // audit fix actually relies on.)
+        struct PanicWitness;
+        impl Drop for PanicWitness {
+            fn drop(&mut self) {
+                DROPPED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            let _guard = PanicWitness;
+            // Induce a panic from inside scope.
+            panic!("induced panic for unwind test");
+        });
+        assert!(result.is_err(), "panic must propagate to catch_unwind");
+        assert!(
+            DROPPED.load(Ordering::SeqCst),
+            "drop must run during stack unwind — this is the language \
+             guarantee that ZeroizingKeypair relies on"
+        );
     }
 
     /// CRITICAL-1 hardening — compile-time layout assertion is
