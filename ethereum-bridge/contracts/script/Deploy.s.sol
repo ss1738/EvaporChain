@@ -76,7 +76,7 @@ contract Deploy is Script {
             require(ok, "genesisInit failed - check GENESIS_CALLDATA");
             console2.log("genesis validator set committed");
         } else {
-            console2.log("(genesis init skipped — set GENESIS_CALLDATA to seed valset)");
+            console2.log("(genesis init skipped; set GENESIS_CALLDATA to seed valset)");
         }
     }
 }
