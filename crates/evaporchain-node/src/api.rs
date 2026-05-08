@@ -12978,32 +12978,38 @@ async fn get_pool_detail(
 // ── Stage 3b persistence helpers ──────────────────────────────────────
 
 /// Path to the on-disk pool state file inside the node's data dir.
-/// `<data_dir>/singh_pools.json`. None when no data_dir is configured
+/// `<data_dir>/singh_pools.bin`. None when no data_dir is configured
 /// (in-memory-only mode — used for tests + fresh nodes).
+///
+/// Bincode-encoded (NOT JSON) because `SinghPool.shares: HashMap<HolderId, LpShare>`
+/// uses a `[u8; 32]`-backed `HolderId` as the map key, which serde_json
+/// rejects ("key must be a string"). Bincode handles non-string map
+/// keys natively — it's also significantly more compact + faster to
+/// round-trip than JSON.
 fn pool_state_path(data_dir: Option<&std::path::PathBuf>) -> Option<std::path::PathBuf> {
-    data_dir.map(|d| d.join("singh_pools.json"))
+    data_dir.map(|d| d.join("singh_pools.bin"))
 }
 
-/// Persist the current Singh Pool ledger to `<data_dir>/singh_pools.json`.
+/// Persist the current Singh Pool ledger to `<data_dir>/singh_pools.bin`.
 /// Writes to a `.tmp` file first then renames atomically so a crash
-/// mid-write can't leave a corrupted JSON file behind. No-op when no
-/// data dir is configured. Errors logged but not propagated — pool
-/// mutations succeed in-memory regardless.
+/// mid-write can't leave a corrupted file behind. No-op when no data
+/// dir is configured. Errors logged but not propagated — pool mutations
+/// succeed in-memory regardless.
 fn persist_pools(state: &ApiState) {
     let Some(target) = pool_state_path(state.data_dir.as_ref()) else {
         return;
     };
     let pools = safe_lock(&state.singh_pools);
-    let payload = match serde_json::to_string(&*pools) {
-        Ok(s) => s,
+    let payload = match bincode::serialize(&*pools) {
+        Ok(b) => b,
         Err(e) => {
             tracing::warn!(error = %e, "singh_pools persist: serialize failed");
             return;
         }
     };
     drop(pools);
-    let tmp = target.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp, payload.as_bytes()) {
+    let tmp = target.with_extension("bin.tmp");
+    if let Err(e) = std::fs::write(&tmp, &payload) {
         tracing::warn!(error = %e, "singh_pools persist: tmp write failed");
         return;
     }
@@ -13012,7 +13018,7 @@ fn persist_pools(state: &ApiState) {
     }
 }
 
-/// Load the Singh Pool ledger from `<data_dir>/singh_pools.json` at
+/// Load the Singh Pool ledger from `<data_dir>/singh_pools.bin` at
 /// node startup. Returns an empty map when the file doesn't exist
 /// (fresh node) or fails to deserialise (warn + treat as empty so
 /// the node still boots — operators can recreate pools from scratch).
@@ -13025,8 +13031,8 @@ pub fn load_pools(
     if !path.exists() {
         return std::collections::BTreeMap::new();
     }
-    match std::fs::read_to_string(&path) {
-        Ok(s) => match serde_json::from_str(&s) {
+    match std::fs::read(&path) {
+        Ok(bytes) => match bincode::deserialize(&bytes) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(
@@ -19882,5 +19888,150 @@ mod canonical_tx_hash_regression {
         let h5 = hex::encode(blake3::hash(&tx_n5.signable_bytes()).as_bytes());
         let h6 = hex::encode(blake3::hash(&tx_n6.signable_bytes()).as_bytes());
         assert_ne!(h5, h6, "canonical hash must distinguish txs that differ only in nonce");
+    }
+}
+
+#[cfg(test)]
+mod singh_pool_helpers {
+    //! Unit tests for the Singh Pool routing + persistence helpers
+    //! shipped in commits 50a9c40 (Stage 3a) + 51260a3 (Stage 3b).
+    //! Locks in: alphabetical pair-id convention, clone-doesn't-mutate
+    //! quote preview, file-based persist+load round-trip.
+
+    use super::*;
+    use evaporchain_cl_amm::{HolderId, SinghPool};
+
+    fn unique_tmp_dir(label: &str) -> std::path::PathBuf {
+        // Per-test-run unique dir under /tmp without a tempfile dep.
+        // Cleanup is best-effort via the test harness running each test
+        // in a fresh process.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("evapor-pool-test-{}-{}", label, nanos));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn pool_id_for_pair_sorts_alphabetically_and_returns_direction() {
+        // Smaller token first → x_to_y = true (from is X).
+        let (id, x_to_y) = pool_id_for_pair("EVAP", "FLUX").unwrap();
+        assert_eq!(id, "EVAP-FLUX");
+        assert!(x_to_y, "EVAP < FLUX so EVAP is X; from=EVAP → swap_x_for_y");
+
+        // Reverse direction → same pool id, x_to_y = false.
+        let (id2, x_to_y2) = pool_id_for_pair("FLUX", "EVAP").unwrap();
+        assert_eq!(id2, "EVAP-FLUX", "pool id is direction-independent");
+        assert!(!x_to_y2, "from=FLUX → swap_y_for_x");
+    }
+
+    #[test]
+    fn pool_id_for_pair_canonicalises_case() {
+        // Mixed case + lowercase must produce the same canonical pool id.
+        let (a, _) = pool_id_for_pair("evap", "flux").unwrap();
+        let (b, _) = pool_id_for_pair("EVAP", "FLUX").unwrap();
+        let (c, _) = pool_id_for_pair("Evap", "Flux").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(a, "EVAP-FLUX");
+    }
+
+    #[test]
+    fn pool_id_for_pair_rejects_self_swap() {
+        // from == to has no canonical pool — caller must oracle-fallback.
+        assert!(pool_id_for_pair("EVAP", "EVAP").is_none());
+        assert!(pool_id_for_pair("evap", "EVAP").is_none(), "case-insensitive equality");
+    }
+
+    #[test]
+    fn pool_quote_preview_does_not_mutate_original() {
+        // The Stage-3a quote path clones the pool, swaps on the clone, and
+        // returns the output. Original pool reserves must be untouched.
+        let mut pool = SinghPool::new(30, 0).unwrap();
+        let holder = HolderId([0xAA; 32]);
+        pool.mint_initial(holder, 1_000_000, 1_000_000, 1000, 0).unwrap();
+
+        let r_x_before = pool.reserve_x();
+        let r_y_before = pool.reserve_y();
+        let k_before = pool.k();
+
+        // Preview a swap.
+        let out = pool_quote_preview(&pool, true, 100_000).unwrap();
+        assert!(out > 0, "non-trivial preview should yield a positive output");
+
+        // Original pool unchanged.
+        assert_eq!(pool.reserve_x(), r_x_before, "reserve_x mutated by preview!");
+        assert_eq!(pool.reserve_y(), r_y_before, "reserve_y mutated by preview!");
+        assert_eq!(pool.k(), k_before, "k invariant changed by preview!");
+    }
+
+    #[test]
+    fn persist_then_load_round_trip_preserves_pool_state() {
+        // Construct a non-trivial pool, persist to a tmp dir, load it back,
+        // verify the loaded pool matches.
+        let dir = unique_tmp_dir("persist-roundtrip");
+
+        let mut original_pool = SinghPool::new(50, 100).unwrap();
+        original_pool
+            .mint_initial(HolderId([0x11; 32]), 500_000, 750_000, 999, 7)
+            .unwrap();
+        // Exercise a swap to mutate the reserves off the initial mint.
+        original_pool.swap_x_for_y(10_000).unwrap();
+
+        let mut original_map: std::collections::BTreeMap<String, SinghPool> =
+            std::collections::BTreeMap::new();
+        original_map.insert("X-Y".to_string(), original_pool.clone());
+        original_map.insert(
+            "EVAP-FLUX".to_string(),
+            SinghPool::new(30, 0).unwrap(),
+        );
+
+        // Direct file write (mirrors persist_pools without needing a full
+        // ApiState). Verifies the on-disk format is what load_pools reads.
+        let path = pool_state_path(Some(&dir)).unwrap();
+        let bytes = bincode::serialize(&original_map).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+
+        let loaded = load_pools(Some(&dir));
+        assert_eq!(loaded.len(), 2, "loaded both persisted pools");
+        let loaded_pool = loaded.get("X-Y").expect("X-Y pool persisted");
+        assert_eq!(loaded_pool.reserve_x(), original_pool.reserve_x());
+        assert_eq!(loaded_pool.reserve_y(), original_pool.reserve_y());
+        assert_eq!(loaded_pool.fee_bp, original_pool.fee_bp);
+        assert_eq!(loaded_pool.energy_floor, original_pool.energy_floor);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_pools_missing_file_returns_empty_map() {
+        // Fresh node with no persisted state — must boot with an empty
+        // pool map, not panic / not error.
+        let dir = unique_tmp_dir("missing-file");
+        let loaded = load_pools(Some(&dir));
+        assert!(loaded.is_empty(), "no pool file → empty map");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_pools_corrupted_file_returns_empty_map_does_not_panic() {
+        // Defensive: if the file exists but isn't a valid bincode payload,
+        // the node must still boot. Operators recreate pools from scratch.
+        let dir = unique_tmp_dir("corrupted-file");
+        let path = pool_state_path(Some(&dir)).unwrap();
+        std::fs::write(&path, b"this is not bincode either").unwrap();
+        let loaded = load_pools(Some(&dir));
+        assert!(loaded.is_empty(), "corrupted file → empty map (warn-logged)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_pools_no_data_dir_returns_empty_map() {
+        // ApiState.data_dir is Option<PathBuf>; tests + ephemeral nodes
+        // can run with None. Must short-circuit cleanly.
+        let loaded = load_pools(None);
+        assert!(loaded.is_empty(), "None data_dir → empty map");
     }
 }
