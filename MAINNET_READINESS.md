@@ -108,7 +108,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.1 | Layer 4 hot-path consensus surgery (C.1-C.6) | 🟡 OPEN | CONSENSUS |
 | T0.2 | Layer 4 D-track adversarial + perf + 72hr soak | 🔴 BLOCKED on T0.1 + T3.1 | CONSENSUS |
 | T0.3 | POST_EXEC Phase 4 enforce-mode (refuse-to-apply, not prevote-NIL — see spec note) | ✅ DONE (c191498) — flag + 4 tests; needs T0.4 fork-epoch + soak before flipping to enforce | CONSENSUS |
-| T0.4 | POST_EXEC Phase 5 block-hash inclusion | 🟡 OPEN (T0.3 done c191498) | CONSENSUS |
+| T0.4 | POST_EXEC Phase 5 block-hash inclusion | 🟢 CLAIMED by Opus 4.7 @ 2026-05-09T23:50Z · base: 66330fe | CONSENSUS |
 | T0.5 | PNT v1+ activation (privacy authoritative) | 🟡 OPEN | PRIVACY |
 | T0.6 | Slashing-at-scale empirical tests | 🟡 OPEN | EXECUTION + STATE-DB |
 | T0.7 | Mempool + signature DoS hardening | 🟡 OPEN | NETWORK + EXECUTION |
@@ -648,4 +648,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-09T23:25Z] Opus 4.7  · T1.16 ✅ DONE · ship: 7f36b46
 [2026-05-09T23:30Z] Opus 4.7  · T0.3 claimed · base: 6644589
 [2026-05-09T23:45Z] Opus 4.7  · T0.3 ✅ DONE · ship: c191498 · unblocks T0.4
+[2026-05-09T23:50Z] Opus 4.7  · T0.4 claimed · base: 66330fe
 ```
