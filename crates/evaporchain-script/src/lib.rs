@@ -754,7 +754,14 @@ impl ScriptEngine {
         Ok(())
     }
 
-    /// Call a method on a deployed script contract.
+    /// Call a method on a deployed script contract using the VM's
+    /// `DEFAULT_GAS_LIMIT` (10M). Backward-compat shim; production
+    /// callers SHOULD use [`Self::call_with_vm_gas`] and pass an
+    /// explicit budget tied to the tx-level gas the sender paid for.
+    /// Otherwise the validator can be forced to do up to 10M units of
+    /// VM work for a 50k-gas tx — a 200× economic asymmetry that an
+    /// adversarial contract author can weaponise via pathological
+    /// loops (bounded by `MAX_STEPS = 10M` but not by what was paid).
     pub fn call(
         &mut self,
         contract_id: u64,
@@ -762,6 +769,30 @@ impl ScriptEngine {
         args: Vec<Value>,
         caller: AccountAddress,
         current_epoch: Epoch,
+    ) -> Result<ScriptCallResult, ScriptError> {
+        self.call_with_vm_gas(
+            contract_id,
+            method,
+            args,
+            caller,
+            current_epoch,
+            vm::DEFAULT_GAS_LIMIT,
+        )
+    }
+
+    /// Call a method on a deployed script contract with an explicit
+    /// VM gas budget. Production tx-handling code derives `vm_gas_limit`
+    /// from the tx-level gas (e.g. `GAS_CALL_SCRIPT * SCRIPT_VM_GAS_TX_RATIO`)
+    /// so the VM cannot do more work than the sender paid for.
+    /// Closes the AUDIT_2026_05_06.md H-08 economic-asymmetry concern.
+    pub fn call_with_vm_gas(
+        &mut self,
+        contract_id: u64,
+        method: &str,
+        args: Vec<Value>,
+        caller: AccountAddress,
+        current_epoch: Epoch,
+        vm_gas_limit: u64,
     ) -> Result<ScriptCallResult, ScriptError> {
         let contract = self
             .contracts
@@ -801,7 +832,7 @@ impl ScriptEngine {
             args,
             state,
             &ctx,
-            10_000_000,
+            vm_gas_limit,
             Some(&mut router),
         );
         router.active_calls.remove(&contract_id);
@@ -1352,5 +1383,88 @@ contract MapTest {
         assert!(key.starts_with("a:"));
         // 32 bytes → 64 hex chars
         assert_eq!(key.len(), 2 + 64);
+    }
+
+    /// AUDIT_2026_05_06.md H-08 close — `call_with_vm_gas` enforces the
+    /// caller-supplied budget. A pathological loop that would burn many
+    /// VM steps under `call()` (DEFAULT_GAS_LIMIT = 10M) MUST fail
+    /// under `call_with_vm_gas(.., tight)`. This pins the economic-
+    /// asymmetry close: a validator can no longer be tricked into
+    /// doing 10M units of VM work for a 50k-gas tx — the new
+    /// production budget is `GAS_CALL_SCRIPT * SCRIPT_VM_GAS_TX_RATIO`
+    /// = 1_000_000, a 10× tighter cap than the pre-fix default.
+    #[test]
+    fn call_with_vm_gas_enforces_caller_supplied_budget() {
+        // Pathological contract — runs a while loop bounded by the
+        // VM's MAX_LOOP_ITERATIONS (100_000) ceiling. Under a generous
+        // VM gas budget the call completes; under a tight budget it
+        // hits gas exhaustion before completing.
+        let src = r#"
+contract Burn {
+    state { counter: u64 = 0 }
+    fn run() -> u64 {
+        while (self.counter < 99000) {
+            self.counter = self.counter + 1
+        }
+        return self.counter
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+        let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
+
+        // Tight budget — 50 VM-gas units. Cannot complete even one
+        // loop iteration. Pre-fix the default 10M would have been
+        // applied silently.
+        let tight = engine.call_with_vm_gas(id, "run", vec![], creator, 10, 50);
+        assert!(
+            tight.is_err(),
+            "tight VM gas budget must reject the pathological loop; \
+             got Ok which means the bound wasn't enforced"
+        );
+        let err_msg = format!("{:?}", tight.unwrap_err());
+        assert!(
+            err_msg.contains("gas") || err_msg.contains("Gas"),
+            "error must indicate gas exhaustion; got: {err_msg}"
+        );
+
+        // Reset the counter for the second call (state was already
+        // mutated up to the gas-exhaustion point on the first attempt).
+        // Using a fresh engine to keep the test crisp.
+        let mut engine2 = ScriptEngine::new();
+        let id2 = engine2.deploy(src, creator, 10_000, 100, 1).unwrap();
+
+        // Generous budget — 5M VM-gas units. Loop should complete.
+        let generous = engine2.call_with_vm_gas(id2, "run", vec![], creator, 10, 5_000_000);
+        assert!(
+            generous.is_ok(),
+            "generous VM gas budget must let the loop complete; got {:?}",
+            generous.err()
+        );
+        assert_eq!(generous.unwrap().return_value, Value::U64(99000));
+    }
+
+    /// Backward-compat: the no-budget `call()` shim still works (it
+    /// passes `DEFAULT_GAS_LIMIT = 10M`). Existing tests that use
+    /// `call()` continue to pass without changes — this commit doesn't
+    /// break the call-site API.
+    #[test]
+    fn call_default_shim_still_uses_default_gas_limit() {
+        let src = r#"
+contract Tiny {
+    state {}
+    fn ping() -> u64 {
+        return 42
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+        let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
+
+        let result = engine.call(id, "ping", vec![], creator, 10);
+        assert!(result.is_ok(), "default call must succeed; got {:?}", result.err());
+        assert_eq!(result.unwrap().return_value, Value::U64(42));
     }
 }

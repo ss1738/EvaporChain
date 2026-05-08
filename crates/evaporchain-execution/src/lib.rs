@@ -302,6 +302,16 @@ pub const GAS_DEPLOY_CONTRACT: u64 = 100_000;
 pub const GAS_CALL_CONTRACT: u64 = 40_000;
 pub const GAS_DEPLOY_SCRIPT: u64 = 150_000;
 pub const GAS_CALL_SCRIPT: u64 = 50_000;
+/// AUDIT_2026_05_06.md H-08 close — VM gas budget per CallScript tx is
+/// `GAS_CALL_SCRIPT * SCRIPT_VM_GAS_TX_RATIO`. Bounds the validator's
+/// VM workload to a multiple of what the sender paid for. Pre-fix the
+/// VM ran with `DEFAULT_GAS_LIMIT = 10M` regardless of tx-level gas
+/// (50k), a 200× economic asymmetry exploitable by a script author who
+/// crafts pathological loops. Ratio of 20 keeps generous headroom for
+/// legitimate scripts (typical contract burns ~1k–10k VM steps) while
+/// closing the asymmetry to 20×.
+pub const SCRIPT_VM_GAS_TX_RATIO: u64 = 20;
+pub const SCRIPT_VM_GAS_PER_CALL_SCRIPT: u64 = GAS_CALL_SCRIPT * SCRIPT_VM_GAS_TX_RATIO;
 pub const GAS_VALIDATOR_STAKE: u64 = 50_000;
 pub const GAS_VALIDATOR_EXIT: u64 = 30_000;
 pub const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
@@ -1587,7 +1597,14 @@ impl SimpleExecutor {
 
         let result = self
             .script_engine
-            .call(tx.contract_id, &tx.method, args, tx.caller, tx.epoch)
+            .call_with_vm_gas(
+                tx.contract_id,
+                &tx.method,
+                args,
+                tx.caller,
+                tx.epoch,
+                SCRIPT_VM_GAS_PER_CALL_SCRIPT,
+            )
             .map_err(|e| {
                 self.call_depth = self.call_depth.saturating_sub(1);
                 ExecutionError::ScriptError(e.to_string())
