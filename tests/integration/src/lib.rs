@@ -580,16 +580,23 @@ mod tests {
             SyncPhase::DownloadingSnapshot { .. }
         ));
 
-        // Serve metadata and all chunks through the provider
+        // Serve metadata and all chunks through the provider.
+        // 3rd arg `local_block_hash` (added in 3923ba6 for the
+        // ChunkRequest server-side bounds check); zeros are fine in
+        // tests that don't exercise the cross-chain block-hash binding.
         let meta_resp = provider
-            .handle_request(&SyncMessage::SnapshotMetadataRequest { height: 1000 }, 1000)
+            .handle_request(
+                &SyncMessage::SnapshotMetadataRequest { height: 1000 },
+                1000,
+                [0u8; 32],
+            )
             .unwrap();
         let actions = sync.on_message(1, meta_resp);
 
         // Serve all requested chunks
         for action in actions {
             if let SyncAction::SendToPeer { message, .. } = action {
-                if let Some(resp) = provider.handle_request(&message, 1000) {
+                if let Some(resp) = provider.handle_request(&message, 1000, [0u8; 32]) {
                     sync.on_message(1, resp);
                 }
             }
@@ -608,6 +615,7 @@ mod tests {
                         chunk_index: i,
                     },
                     1000,
+                    [0u8; 32],
                 );
                 if let Some(r) = resp {
                     sync.on_message(1, r);

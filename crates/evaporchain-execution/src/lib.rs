@@ -2184,7 +2184,7 @@ impl SimpleExecutor {
     /// same paymaster *and* got duplicated by a scheduler bug —
     /// every layer of that conjunction is independently prevented.
     fn execute_user_op(
-        &self,
+        &mut self,
         db: &mut dyn StateDB,
         tx: &evaporchain_types::UserOpTx,
         epoch: Epoch,
@@ -2294,14 +2294,20 @@ impl SimpleExecutor {
         // strict whitelist routes it to the slim `execute_inner_*`
         // path that skips the outer-already-done nonce/sig checks.
         //
-        // Whitelist for V1: Transfer only. Other variants (Refresh,
-        // CreateObject, CallScript, CallContract, etc.) get added in
-        // subsequent Day 2+ work as the paymaster service binary
-        // demands them. Nested UserOp / Refund / Blob / MultiSig /
-        // PrivateTransfer / Unshield / Shield / Deferred are
-        // explicitly rejected — sponsoring them via UserOp doesn't
-        // make sense (they're either protocol-issued, ZK-authenticated
-        // with their own gas paths, or themselves an envelope).
+        // Whitelist for V1: Transfer, CallScript, CallContract — the
+        // three most common sponsorable user intents. The two contract-
+        // call variants enforce a no-impersonation rule (inner caller
+        // must equal outer UserOp.sender) so a sponsor can't run a
+        // contract call AS someone else.
+        //
+        // Nested UserOp / Refund / Blob / MultiSig / PrivateTransfer /
+        // Unshield / Shield / Deferred are explicitly rejected —
+        // sponsoring them via UserOp doesn't make sense (they're
+        // either protocol-issued, ZK-authenticated with their own gas
+        // paths, or themselves an envelope). Refresh, CreateObject,
+        // DeployContract, DeployScript, validator/delegation ops, and
+        // Governance fall through the catch-all and are also rejected
+        // — extend the explicit whitelist if a use case demands it.
         if !tx.call_data.is_empty() {
             // call_data is a JSON-encoded `Transaction`. bincode is
             // positional and `TransferTx` (and many other variants)
@@ -2320,6 +2326,35 @@ impl SimpleExecutor {
                 Transaction::Transfer(t) => {
                     self.execute_inner_transfer(db, t, &tx.sender, epoch)?;
                 }
+                Transaction::CallScript(t) => {
+                    // No-impersonation: the inner caller must be the
+                    // same as the outer UserOp sender. Otherwise a
+                    // sponsor could call a contract AS someone else.
+                    if t.caller != tx.sender {
+                        return Err(ExecutionError::ContractError(format!(
+                            "UserOp inner CallScript: caller {} does not match \
+                             outer UserOp sender {} (no-impersonation rule)",
+                            hex::encode(t.caller),
+                            hex::encode(tx.sender)
+                        )));
+                    }
+                    // No nonce check — outer UserOp consumed sender
+                    // nonce already; CallScriptTx has no nonce field
+                    // anyway. Engine mutation goes through script_engine
+                    // and bumps no on-chain nonce of its own.
+                    self.execute_call_script(t)?;
+                }
+                Transaction::CallContract(t) => {
+                    if t.caller != tx.sender {
+                        return Err(ExecutionError::ContractError(format!(
+                            "UserOp inner CallContract: caller {} does not match \
+                             outer UserOp sender {} (no-impersonation rule)",
+                            hex::encode(t.caller),
+                            hex::encode(tx.sender)
+                        )));
+                    }
+                    self.execute_call_contract(t)?;
+                }
                 Transaction::UserOp(_)
                 | Transaction::Refund(_)
                 | Transaction::Blob(_)
@@ -2336,9 +2371,9 @@ impl SimpleExecutor {
                 }
                 _ => {
                     return Err(ExecutionError::ContractError(
-                        "UserOp call_data: only Transfer is whitelisted in \
-                         V1 — see Day 1C scope. Other variants will land in \
-                         Day 2+ as the paymaster service requires them."
+                        "UserOp call_data: this inner variant is not \
+                         whitelisted in V1. Whitelisted: Transfer, \
+                         CallScript, CallContract."
                             .into(),
                     ));
                 }
@@ -7127,7 +7162,7 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         fund_account(&mut db, 2, 1_000_000);
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         // paymaster_nonce = None must fail.
         let tx = make_user_op(1, 0, Some(2), None, 1000);
         let r = executor.execute_user_op(&mut db, &tx, 0);
@@ -7138,7 +7173,7 @@ contract Counter {
     fn test_user_op_paymaster_nonce_correct_succeeds_and_bumps() {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         // Empty call_data — gas-only sponsorship, no inner intent dispatched.
         let (tx, pm_addr, _kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![]);
         fund_account_at(&mut db, pm_addr, 1_000_000);
@@ -7165,7 +7200,7 @@ contract Counter {
         // check the paymaster could be drained twice.
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         // Empty call_data — gas-only sponsorship.
         let (tx, pm_addr, kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![]);
         fund_account_at(&mut db, pm_addr, 1_000_000);
@@ -7225,7 +7260,7 @@ contract Counter {
         let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
         fund_account_at(&mut db, victim_addr, 1_000_000);
 
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let mut tx = make_user_op(1, 0, None, None, 1000);
         tx.paymaster = Some(victim_addr);
         tx.paymaster_nonce = Some(0);
@@ -7248,7 +7283,7 @@ contract Counter {
         let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
         fund_account_at(&mut db, victim_addr, 1_000_000);
 
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         // Build a tx with paymaster + signature but NO public_key.
         let mut tx = evaporchain_types::UserOpTx {
             sender: addr(1),
@@ -7288,7 +7323,7 @@ contract Counter {
         let victim_addr = addr(0xAA); // arbitrary victim — no key needed
         fund_account_at(&mut db, victim_addr, 1_000_000);
 
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let mut tx = evaporchain_types::UserOpTx {
             sender: addr(1),
             nonce: 0,
@@ -7326,7 +7361,7 @@ contract Counter {
         // paymaster signed). HybridVerifier::verify must reject.
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let (mut tx, pm_addr, _kp) =
             make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
@@ -7351,7 +7386,7 @@ contract Counter {
         // can't be conscripted to sponsor "call Y".
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let (mut tx, pm_addr, _kp) =
             make_signed_user_op(&executor, 1, 0, 0, 1000, b"original-intent".to_vec());
@@ -7390,7 +7425,7 @@ contract Counter {
         fund_account_at(&mut db, sender_addr, 5_000); // sender holds 5k EVP
         fund_account(&mut db, 9, 0); // recipient (addr(9))
 
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         // Inner Transfer: sender → recipient, 1,000 EVP. Nonce in the
         // inner tx is ignored by execute_inner_transfer (outer
@@ -7438,7 +7473,7 @@ contract Counter {
         fund_account_at(&mut db, victim_with_balance, 5_000);
         fund_account(&mut db, 9, 0);
 
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let inner = Transaction::Transfer(TransferTx {
             from: victim_with_balance, // ← attacker spoofs from
             to: addr(9),
@@ -7467,7 +7502,7 @@ contract Counter {
         // Wrap a Refund (protocol-issued, not sponsorable) — must reject.
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let inner = Transaction::Refund(evaporchain_types::RefundTx {
             source_block_height: 1,
@@ -7493,7 +7528,7 @@ contract Counter {
         // Random bytes that aren't a JSON-encoded Transaction.
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        let executor = SimpleExecutor::new_for_test(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let (tx, pm_addr, _kp) = make_signed_user_op(
             &executor,
@@ -7510,6 +7545,160 @@ contract Counter {
             matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("failed to decode")),
             "undecodable call_data must reject: got {r:?}"
         );
+    }
+
+    // ─── Day-6 follow-up: CallScript / CallContract inner-tx whitelist ────
+    //
+    // The chain whitelist now extends beyond Transfer to cover the two
+    // most common contract-interaction tx variants. Each gains its own
+    // no-impersonation guard so a sponsor can't get the inner call
+    // executed AS someone else.
+
+    #[test]
+    fn test_user_op_call_script_dispatches_when_caller_matches_sender() {
+        // Positive test: deploy a real EvaporScript contract, then
+        // sponsor a CallScript against it via UserOp. The increment(N)
+        // method runs and the on-chain state advances.
+        let mut db = InMemoryStateDB::new();
+        let sender = addr(1);
+        fund_account_at(&mut db, sender, 10_000);
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        // 1. Deploy COUNTER_SCRIPT directly through execute_block (no
+        //    paymaster involved at deploy time — this is just setup).
+        let deploy_block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: sender,
+                    source_code: COUNTER_SCRIPT.to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+        executor.execute_block(&mut db, &deploy_block).unwrap();
+
+        // 2. Build a sponsored UserOp wrapping CallScript increment(7).
+        let inner = Transaction::CallScript(evaporchain_types::CallScriptTx {
+            caller: sender,
+            contract_id: 1,
+            method: "increment".to_string(),
+            args: r#"[{"U64": 7}]"#.to_string(),
+            epoch: 2,
+            signature: None,
+            public_key: None,
+        });
+        let (tx, pm_addr, _kp) = make_signed_user_op(
+            &executor,
+            1,
+            0,
+            0,
+            50_000,
+            serde_json::to_vec(&inner).unwrap(),
+        );
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        executor
+            .execute_user_op(&mut db, &tx, 2)
+            .expect("inner CallScript dispatches");
+
+        // Counter advanced to 7.
+        let contract = executor.script_engine.get(1).unwrap();
+        match contract.state.get("count") {
+            Some(evaporchain_script::Value::U64(n)) => assert_eq!(*n, 7),
+            other => panic!("expected count=7, got {other:?}"),
+        }
+        // Paymaster paid gas.
+        let pm = db.get_account(&pm_addr).expect("paymaster exists");
+        assert!(pm.balance < 1_000_000);
+    }
+
+    #[test]
+    fn test_user_op_inner_call_script_rejects_caller_impersonation() {
+        // The inner CallScript.caller is set to a victim's address —
+        // attacker tries to make it look like the victim is calling
+        // the contract. The chain rejects before reaching the script
+        // engine; victim's account isn't touched.
+        let mut db = InMemoryStateDB::new();
+        let user_op_sender = addr(1);
+        let victim = addr(0xAB);
+        fund_account_at(&mut db, user_op_sender, 5_000);
+        fund_account_at(&mut db, victim, 9_999);
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let inner = Transaction::CallScript(evaporchain_types::CallScriptTx {
+            caller: victim, // ← spoofed
+            contract_id: 1,
+            method: "increment".to_string(),
+            args: r#"[{"U64": 1}]"#.to_string(),
+            epoch: 1,
+            signature: None,
+            public_key: None,
+        });
+        let (tx, pm_addr, _kp) = make_signed_user_op(
+            &executor,
+            1,
+            0,
+            0,
+            50_000,
+            serde_json::to_vec(&inner).unwrap(),
+        );
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref m))
+                if m.contains("CallScript") && m.contains("no-impersonation")),
+            "inner CallScript caller != sender must reject: got {r:?}"
+        );
+        // Victim balance untouched.
+        let v = db.get_account(&victim).unwrap();
+        assert_eq!(v.balance, 9_999);
+    }
+
+    #[test]
+    fn test_user_op_inner_call_contract_rejects_caller_impersonation() {
+        // Same as above for CallContract. We don't deploy a contract
+        // here because the impersonation check fires BEFORE the
+        // contract engine is consulted.
+        let mut db = InMemoryStateDB::new();
+        let user_op_sender = addr(1);
+        let victim = addr(0xAB);
+        fund_account_at(&mut db, user_op_sender, 5_000);
+        fund_account_at(&mut db, victim, 9_999);
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let inner = Transaction::CallContract(evaporchain_types::CallContractTx {
+            caller: victim, // ← spoofed
+            contract_id: 1,
+            method: "transfer".to_string(),
+            args: "{}".to_string(),
+            epoch: 1,
+            signature: None,
+            public_key: None,
+        });
+        let (tx, pm_addr, _kp) = make_signed_user_op(
+            &executor,
+            1,
+            0,
+            0,
+            50_000,
+            serde_json::to_vec(&inner).unwrap(),
+        );
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref m))
+                if m.contains("CallContract") && m.contains("no-impersonation")),
+            "inner CallContract caller != sender must reject: got {r:?}"
+        );
+        let v = db.get_account(&victim).unwrap();
+        assert_eq!(v.balance, 9_999);
     }
 
     /// Crooks-MEV Phase 3.5 economic-design regression test.
