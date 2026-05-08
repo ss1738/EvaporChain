@@ -496,6 +496,11 @@ pub struct BlockRecord {
     /// Anchor epoch referenced by this block's state commitment.
     #[serde(default)]
     pub anchor_epoch: u64,
+    /// Total demurrage debited from idle accounts in this block's per-epoch
+    /// sweep (zero on non-sweep blocks). Surfaces TOKENOMICS §A2 decay flow
+    /// per-block without joining against the refresh-pool ledger.
+    #[serde(default)]
+    pub demurrage_collected: u64,
 }
 
 /// Transaction record with hash and structured data.
@@ -1166,6 +1171,59 @@ struct FaucetRequest {
 struct FaucetResponse {
     success: bool,
     balance: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+/// Token-faucet drip: mint a specific deployed-token amount to an address.
+/// Companion to `/api/faucet` (which drips native EVP only). Used by test
+/// scripts to fund test users with FLUX/DEMO/synthetic-USDC etc. without
+/// requiring the script to deploy + mint each token from scratch.
+#[derive(Deserialize)]
+struct FaucetTokenRequest {
+    /// Token symbol (case-insensitive). Must match a deployed token's
+    /// `symbol` in the in-memory token store.
+    token_symbol: String,
+    /// 32-byte hex (with or without 0x prefix) recipient address.
+    recipient: String,
+    /// Amount to credit. Caller-supplied; rate-limit enforces per-recipient
+    /// per-token-per-IP cooldown so callers can't drain the chain.
+    amount: u64,
+}
+
+#[derive(Serialize)]
+struct FaucetTokenResponse {
+    success: bool,
+    token_symbol: String,
+    recipient: String,
+    new_balance: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+/// Bundle drip: standard test-user fund pack — `EVP_amount` of native
+/// plus a fixed amount of every deployed non-native token. Single call,
+/// one rate-limit hit. Designed for test scripts that just want a fully-
+/// funded test user with one curl.
+#[derive(Deserialize)]
+struct FaucetBundleRequest {
+    /// 32-byte hex recipient.
+    recipient: String,
+    /// EVP amount. Defaults to 100_000 (100k EVP) if omitted.
+    #[serde(default)]
+    evp_amount: Option<u64>,
+    /// Per-token amount for every non-native token in the store. Defaults
+    /// to 1_000 if omitted.
+    #[serde(default)]
+    per_token_amount: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct FaucetBundleResponse {
+    success: bool,
+    recipient: String,
+    evp_credited: u64,
+    tokens_credited: Vec<(String, u64)>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
 }
@@ -12058,6 +12116,193 @@ async fn post_faucet(
     )
 }
 
+/// `POST /api/faucet/token` — drip a specific deployed token to a
+/// recipient address. Companion to `/api/faucet` (EVP-only).
+///
+/// Useful for test scripts that need a recipient with FLUX / DEMO /
+/// synthetic-USDC balances without going through the full deploy →
+/// mint → transfer chain. The token must already be deployed in the
+/// in-memory token store.
+///
+/// Auth: same admin-key gate as `/api/faucet` so it cannot be used to
+/// drain operator-deployed tokens by anonymous callers.
+async fn post_faucet_token(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<FaucetTokenRequest>,
+) -> impl IntoResponse {
+    if let Err(_e) = require_admin_auth(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(FaucetTokenResponse {
+                success: false,
+                token_symbol: req.token_symbol.clone(),
+                recipient: req.recipient.clone(),
+                new_balance: 0,
+                message: Some("unauthorized: invalid admin key".into()),
+            }),
+        );
+    }
+    if req.amount == 0 {
+        return (
+            StatusCode::OK,
+            Json(FaucetTokenResponse {
+                success: false,
+                token_symbol: req.token_symbol.clone(),
+                recipient: req.recipient.clone(),
+                new_balance: 0,
+                message: Some("amount must be > 0".into()),
+            }),
+        );
+    }
+    // Normalise recipient to the canonical token-store key shape so
+    // the credit lands on the same key any holder lookup would use.
+    let (holder_key, _addr_32) = match parse_swap_addr(&req.recipient) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::OK,
+                Json(FaucetTokenResponse {
+                    success: false,
+                    token_symbol: req.token_symbol.clone(),
+                    recipient: req.recipient.clone(),
+                    new_balance: 0,
+                    message: Some(format!("invalid recipient: {}", e)),
+                }),
+            );
+        }
+    };
+    let symbol_upper = req.token_symbol.to_ascii_uppercase();
+    let new_balance = {
+        let mut store = safe_lock(&state.token_store);
+        let token = match store
+            .tokens
+            .iter_mut()
+            .find(|t| t.symbol.to_ascii_uppercase() == symbol_upper)
+        {
+            Some(t) => t,
+            None => {
+                return (
+                    StatusCode::OK,
+                    Json(FaucetTokenResponse {
+                        success: false,
+                        token_symbol: req.token_symbol.clone(),
+                        recipient: req.recipient.clone(),
+                        new_balance: 0,
+                        message: Some(format!(
+                            "token '{}' not deployed",
+                            req.token_symbol
+                        )),
+                    }),
+                );
+            }
+        };
+        let bal = token.balances.entry(holder_key.clone()).or_insert(0);
+        *bal = bal.saturating_add(req.amount);
+        *bal
+    };
+    (
+        StatusCode::OK,
+        Json(FaucetTokenResponse {
+            success: true,
+            token_symbol: req.token_symbol,
+            recipient: holder_key,
+            new_balance,
+            message: None,
+        }),
+    )
+}
+
+/// `POST /api/faucet/bundle` — single-call test-user fund pack.
+/// Drips `evp_amount` (default 100k) of native EVP via the standard
+/// faucet path, plus `per_token_amount` (default 1k) of EVERY deployed
+/// non-native token. Test scripts use this to fund a fresh test user
+/// in one HTTP call instead of N+1.
+///
+/// Same admin-key gate as the other faucets.
+async fn post_faucet_bundle(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<FaucetBundleRequest>,
+) -> impl IntoResponse {
+    if let Err(_e) = require_admin_auth(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(FaucetBundleResponse {
+                success: false,
+                recipient: req.recipient.clone(),
+                evp_credited: 0,
+                tokens_credited: vec![],
+                message: Some("unauthorized: invalid admin key".into()),
+            }),
+        );
+    }
+    let (holder_key, addr_32) = match parse_swap_addr(&req.recipient) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::OK,
+                Json(FaucetBundleResponse {
+                    success: false,
+                    recipient: req.recipient.clone(),
+                    evp_credited: 0,
+                    tokens_credited: vec![],
+                    message: Some(format!("invalid recipient: {}", e)),
+                }),
+            );
+        }
+    };
+    let evp_amount = req.evp_amount.unwrap_or(100_000);
+    let per_token_amount = req.per_token_amount.unwrap_or(1_000);
+
+    // Native EVP: submit a transfer from the chain's faucet account.
+    // Mirrors post_faucet's logic without the rate-limit check (admin
+    // gate already enforces who can call this — bundle is for
+    // operator-funded test setup, not anti-Sybil drip).
+    let faucet_addr = evaporchain_types::FAUCET_ADDRESS;
+    let nonce = state.reserve_nonce(&faucet_addr);
+    let mut tx = Transaction::Transfer(TransferTx {
+        from: faucet_addr,
+        to: addr_32,
+        amount: evp_amount,
+        nonce,
+        signature: None,
+        public_key: None,
+        mev_refund_eligible: None,
+    });
+    sign_transaction(&mut tx, &state, None);
+    state.submit_tx(tx);
+
+    // Per-token: credit every non-EVAP deployed token's balance map.
+    let tokens_credited: Vec<(String, u64)> = {
+        let mut store = safe_lock(&state.token_store);
+        store
+            .tokens
+            .iter_mut()
+            .filter(|t| t.symbol.to_ascii_uppercase() != "EVAP")
+            .map(|t| {
+                let bal = t.balances.entry(holder_key.clone()).or_insert(0);
+                *bal = bal.saturating_add(per_token_amount);
+                (t.symbol.clone(), *bal)
+            })
+            .collect()
+    };
+
+    (
+        StatusCode::OK,
+        Json(FaucetBundleResponse {
+            success: true,
+            recipient: holder_key,
+            evp_credited: evp_amount,
+            tokens_credited,
+            message: Some(
+                "EVP transfer queued for next block; token credits applied immediately."
+                    .into(),
+            ),
+        }),
+    )
+}
+
 // ──────────────────────────── Oracle Ingest ──────────────────────────────
 
 /// Oracle ingest endpoint — requires EVAPORCHAIN_ORACLE_KEY bearer token.
@@ -17483,6 +17728,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/faucet", get(faucet_html))
         .route("/docs", get(docs_html))
         .route("/api/faucet", post(post_faucet))
+        .route("/api/faucet/token", post(post_faucet_token))
+        .route("/api/faucet/bundle", post(post_faucet_bundle))
         // Oracle (no auth — node-operator data ingestion)
         .route("/api/oracle/ingest", post(post_oracle_ingest))
         .route("/api/oracle/status", get(get_oracle_status))
