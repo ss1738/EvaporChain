@@ -1466,10 +1466,59 @@ pub struct UserOpTx {
     pub paymaster_nonce: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paymaster_data: Option<Vec<u8>>,
+    /// Paymaster's hybrid (Ed25519+ML-DSA) signature over the canonical
+    /// sponsorship payload — see `paymaster_sponsorship_payload`. Required
+    /// iff `paymaster` is `Some`. Without this, any user could forge
+    /// `paymaster: <victim>` and drain the victim at execution time.
+    /// Verified in `execute_user_op` independent of the global
+    /// `verify_signatures` flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paymaster_signature: Option<Vec<u8>>,
+    /// Paymaster's hybrid public key. Hashed via `blake3` and required to
+    /// derive to the `paymaster` address (same address-derivation pattern
+    /// as the rest of the chain).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paymaster_public_key: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_key: Option<Vec<u8>>,
+}
+
+impl UserOpTx {
+    /// Canonical bytes the paymaster signs to commit to sponsoring this
+    /// `UserOpTx`. Domain-separated under `evaporchain:paymaster_sponsorship:v1`
+    /// and chain-id-bound to prevent cross-chain replay.
+    ///
+    /// Binding set:
+    ///   - `sender`               — who is sponsored
+    ///   - `nonce`                — sender's tx nonce (single-use binding)
+    ///   - `paymaster`            — paymaster address
+    ///   - `paymaster_nonce`      — sponsorship counter (single-use binding)
+    ///   - `call_gas_limit`       — gas budget the paymaster commits to
+    ///   - `blake3(call_data)`    — what the user is being sponsored to do
+    ///
+    /// Returns `None` if `paymaster` or `paymaster_nonce` is unset; callers
+    /// should treat that as "no sponsorship to verify".
+    pub fn paymaster_sponsorship_payload(&self, chain_id: &str) -> Option<Vec<u8>> {
+        let paymaster = self.paymaster.as_ref()?;
+        let pm_nonce = self.paymaster_nonce?;
+        let call_data_hash = blake3::hash(&self.call_data);
+        const DOMAIN: &[u8] = b"evaporchain:paymaster_sponsorship:v1\0";
+        let mut buf = Vec::with_capacity(
+            DOMAIN.len() + 4 + chain_id.len() + 32 + 8 + 32 + 8 + 8 + 32,
+        );
+        buf.extend_from_slice(DOMAIN);
+        buf.extend_from_slice(&(chain_id.len() as u32).to_le_bytes());
+        buf.extend_from_slice(chain_id.as_bytes());
+        buf.extend_from_slice(&self.sender);
+        buf.extend_from_slice(&self.nonce.to_le_bytes());
+        buf.extend_from_slice(paymaster);
+        buf.extend_from_slice(&pm_nonce.to_le_bytes());
+        buf.extend_from_slice(&self.call_gas_limit.to_le_bytes());
+        buf.extend_from_slice(call_data_hash.as_bytes());
+        Some(buf)
+    }
 }
 
 /// Delegate stake to a validator. The delegator's balance is debited

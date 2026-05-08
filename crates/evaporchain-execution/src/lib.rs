@@ -2191,6 +2191,53 @@ impl SimpleExecutor {
                         .into(),
                 )
             })?;
+
+            // Day 1B (Option B paymaster, 2026-05-08): require + verify a
+            // hybrid sponsorship signature from the paymaster. Without
+            // this, any user could forge `paymaster: <victim>` and drain
+            // the victim's balance (the §3 audit closed paymaster_nonce
+            // replay but left the consent-to-sponsor gap open). We verify
+            // unconditionally — independent of `verify_signatures` —
+            // because the paymaster debit is a real state mutation that
+            // must always carry proof of consent.
+            let pm_sig = tx.paymaster_signature.as_deref().ok_or_else(|| {
+                ExecutionError::ContractError(
+                    "UserOpTx with paymaster must include paymaster_signature \
+                     (sponsorship-consent — closes drain-by-forged-paymaster)"
+                        .into(),
+                )
+            })?;
+            let pm_pk = tx.paymaster_public_key.as_deref().ok_or_else(|| {
+                ExecutionError::ContractError(
+                    "UserOpTx with paymaster must include paymaster_public_key"
+                        .into(),
+                )
+            })?;
+            // Bind paymaster public key to the paymaster address, same
+            // derivation as `generate_address_from_pubkey` in
+            // evaporchain-node/src/auth.rs and `execute_upgrade_contract`
+            // (line 2313 above).
+            let derived_pm_addr: [u8; 32] = *blake3::hash(pm_pk).as_bytes();
+            if &derived_pm_addr != paymaster {
+                return Err(ExecutionError::ContractError(format!(
+                    "UserOpTx: paymaster_public_key does not derive to paymaster address \
+                     (derived {} vs paymaster {})",
+                    hex::encode(derived_pm_addr),
+                    hex::encode(paymaster)
+                )));
+            }
+            // Canonical sponsorship payload: see UserOpTx::paymaster_sponsorship_payload.
+            // `expect` is sound because `tx.paymaster.is_some()` and we
+            // unwrapped `tx.paymaster_nonce` immediately above.
+            let payload = tx
+                .paymaster_sponsorship_payload(&self.chain_id)
+                .expect("paymaster + paymaster_nonce both checked Some above");
+            if !HybridVerifier::verify(&payload, pm_sig, pm_pk) {
+                return Err(ExecutionError::ContractError(
+                    "UserOpTx: paymaster_signature verification failed".into(),
+                ));
+            }
+
             let pm = db.get_or_create_account(paymaster);
             if pm.nonce != paymaster_nonce {
                 return Err(ExecutionError::InvalidNonce {
@@ -3025,6 +3072,22 @@ impl ExecutionEngine for SimpleExecutor {
             None
         };
 
+        // Memorialise each newly-evaporated object in the eulogy trie so
+        // /api/four_act correctly reports eulogy_count (§A2.5 "small deaths").
+        // Objects use their ObjectId as the address key — same [u8;32] type.
+        // Skips re-insertion silently: reorg replay can't overwrite tombstones.
+        for obj_id in &evap_result.evaporated {
+            if let Some(ghost) = db.get_ghost(obj_id) {
+                let tombstone = evaporchain_tombstone::mint(
+                    *obj_id,
+                    0,
+                    ghost.evaporated_at,
+                    evaporchain_tombstone::CauseOfDeath::Evaporated,
+                );
+                let _ = self.eulogy_trie.insert(*obj_id, tombstone);
+            }
+        }
+
         // Tick all contracts (energy decay, auto-finalize, etc.)
         self.contract_engine.tick(block.epoch);
 
@@ -3107,14 +3170,54 @@ impl ExecutionEngine for SimpleExecutor {
         };
         let producer_alive = !self.eulogy_trie.contains(&producer_addr);
 
+        // Snapshot total_minted before block rewards so we can credit
+        // newly-minted supply into conservation_before below, making
+        // audit_block_step compare like-for-like (minting is not a violation).
+        let minted_before_rewards: u64 =
+            self.reward_accumulator.as_ref().map_or(0, |ra| ra.total_minted);
+
+        // Collect commit-certificate signers as attesters for TOKENOMICS §2.1
+        // 60/40 proposer/attester split. Clone stake data out before the
+        // mutable reward call to avoid overlapping borrows on `db`.
+        let (attesters, total_staked): (Vec<[u8; 32]>, u64) = {
+            // (validator_id, address, staked_amount, unbonding_epoch)
+            let snap: Vec<(u64, [u8; 32], u64, Option<u64>)> = db
+                .all_stakes()
+                .iter()
+                .map(|s| (s.validator_id, s.validator_address, s.staked_amount, s.unbonding_epoch))
+                .collect();
+            let total_staked = snap
+                .iter()
+                .filter(|(_, _, _, unbonding)| unbonding.is_none())
+                .map(|(_, _, staked, _)| *staked)
+                .fold(0u64, u64::saturating_add);
+            let attesters = block
+                .commit_certificate
+                .as_ref()
+                .map(|cert| {
+                    cert.signer_ids
+                        .iter()
+                        .filter_map(|&vid| {
+                            snap.iter()
+                                .find(|(v, _, _, _)| *v == vid)
+                                .map(|(_, addr, _, _)| *addr)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (attesters, total_staked)
+        };
+
         if let Some(ref mut ra) = self.reward_accumulator {
-            ra.process_block_rewards(
+            ra.process_block_rewards_v2(
                 db,
                 &producer_addr,
                 block.epoch,
                 total_fees,
                 producer_alive,
                 Some(&mut self.refresh_pool),
+                &attesters,
+                total_staked,
             );
 
             // Lane A.3: priority bonus auto-fire (mirrors parallel.rs).
@@ -3163,6 +3266,13 @@ impl ExecutionEngine for SimpleExecutor {
                 }
             }
         }
+
+        // Tokens minted as block rewards this block — legitimate new supply.
+        let minted_this_block: u64 = self
+            .reward_accumulator
+            .as_ref()
+            .map_or(0, |ra| ra.total_minted)
+            .saturating_sub(minted_before_rewards);
 
         // Punch-list 6: gate storage-rent collection on the per-epoch
         // cursor (`last_rent_epoch`) so rent fires exactly once per
@@ -3286,8 +3396,18 @@ impl ExecutionEngine for SimpleExecutor {
             .last_audit_epoch
             .map(|prev| block.epoch.saturating_sub(prev))
             .unwrap_or(0);
+        // Credit newly-minted supply into the pre-block snapshot so the audit
+        // compares like-for-like: minting raises total legitimately and must not
+        // be counted as a DecayIncreasedTotal violation.
+        let mut conservation_before_adjusted = conservation_before.clone();
+        if minted_this_block > 0 {
+            conservation_before_adjusted.credit(
+                evaporchain_energy_kernel::Compartment::Accounts,
+                minted_this_block,
+            );
+        }
         let audit_verdict = crate::energy_audit::audit_block_step(
-            &conservation_before,
+            &conservation_before_adjusted,
             &conservation_after,
             epochs_elapsed,
             lambda,
@@ -6778,9 +6898,71 @@ contract Counter {
             paymaster: paymaster_byte.map(addr),
             paymaster_nonce,
             paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
             signature: None,
             public_key: None,
         }
+    }
+
+    // ─── Day 1B (2026-05-08): paymaster sponsorship-signature helpers ─────
+    //
+    // Address-derivation is `blake3(public_key_bytes)`, so we cannot pin the
+    // paymaster address to `addr(N)` for tests that exercise the real
+    // signature path. Instead we generate a fresh `HybridKeypair`, derive
+    // the address from its public key, fund THAT address, sign the canonical
+    // sponsorship payload, and stamp the result onto the UserOpTx.
+
+    use evaporchain_crypto::signatures::HybridKeypair;
+
+    fn fund_account_at(db: &mut InMemoryStateDB, address: [u8; 32], balance: u64) {
+        db.put_account(Account {
+            address,
+            balance,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+    }
+
+    /// Build a UserOpTx whose paymaster commitment is signed by a freshly
+    /// generated hybrid keypair, against the given executor's chain_id.
+    /// Returns the tx, the derived paymaster address, and the keypair (so
+    /// callers can mutate-and-resign for tampering tests).
+    fn make_signed_user_op(
+        executor: &SimpleExecutor,
+        sender_byte: u8,
+        sender_nonce: u64,
+        paymaster_nonce: u64,
+        gas_limit: u64,
+        call_data: Vec<u8>,
+    ) -> (evaporchain_types::UserOpTx, [u8; 32], HybridKeypair) {
+        let kp = HybridKeypair::generate();
+        let pk = kp.public_key_bytes();
+        let paymaster_addr: [u8; 32] = *blake3::hash(&pk).as_bytes();
+
+        let mut tx = evaporchain_types::UserOpTx {
+            sender: addr(sender_byte),
+            nonce: sender_nonce,
+            call_data,
+            call_gas_limit: gas_limit,
+            paymaster: Some(paymaster_addr),
+            paymaster_nonce: Some(paymaster_nonce),
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: Some(pk),
+            signature: None,
+            public_key: None,
+        };
+
+        let payload = tx
+            .paymaster_sponsorship_payload(&executor.chain_id)
+            .expect("sponsorship payload");
+        tx.paymaster_signature = Some(kp.sign(&payload));
+
+        (tx, paymaster_addr, kp)
     }
 
     #[test]
@@ -6799,14 +6981,15 @@ contract Counter {
     fn test_user_op_paymaster_nonce_correct_succeeds_and_bumps() {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        fund_account(&mut db, 2, 1_000_000);
         let executor = SimpleExecutor::new_for_test(7);
-        let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
+        let (tx, pm_addr, _kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
         executor
             .execute_user_op(&mut db, &tx, 0)
             .expect("first exec");
 
-        let pm = db.get_account(&addr(2)).expect("paymaster exists").clone();
+        let pm = db.get_account(&pm_addr).expect("paymaster exists").clone();
         assert_eq!(
             pm.nonce, 1,
             "paymaster nonce should bump from 0 to 1 after successful sponsorship"
@@ -6824,9 +7007,9 @@ contract Counter {
         // check the paymaster could be drained twice.
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
-        fund_account(&mut db, 2, 1_000_000);
         let executor = SimpleExecutor::new_for_test(7);
-        let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
+        let (tx, pm_addr, kp) = make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
+        fund_account_at(&mut db, pm_addr, 1_000_000);
 
         executor
             .execute_user_op(&mut db, &tx, 0)
@@ -6836,21 +7019,192 @@ contract Counter {
         let r = executor.execute_user_op(&mut db, &tx, 0);
         assert!(matches!(r, Err(ExecutionError::InvalidNonce { .. })));
 
-        // Even if a malicious actor somehow bumps the sender's nonce
-        // independently and then tries to replay only the paymaster
-        // sponsorship, the paymaster_nonce check catches it on the
-        // paymaster side.
-        // Simulate: bump sender nonce manually as if a new tx
-        // legitimately moved it forward.
+        // A malicious paymaster trying to reuse paymaster_nonce=0 by
+        // resigning for a new sender_nonce: signature verifies (we
+        // resign), but the paymaster_nonce check on the chain side
+        // catches the reuse (pm.nonce was bumped to 1 by the first exec).
         let s = db.get_or_create_account(&addr(1));
         s.nonce = 1;
-        // Same tx with sender nonce=1 but paymaster_nonce STILL 0
-        // (replay of the original sponsorship).
-        let replay = make_user_op(1, 1, Some(2), Some(0), 1000);
+        let mut replay = evaporchain_types::UserOpTx {
+            sender: addr(1),
+            nonce: 1,
+            call_data: vec![0u8; 16],
+            call_gas_limit: 1000,
+            paymaster: Some(pm_addr),
+            paymaster_nonce: Some(0), // ← reused
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: Some(kp.public_key_bytes()),
+            signature: None,
+            public_key: None,
+        };
+        let payload = replay
+            .paymaster_sponsorship_payload(&executor.chain_id)
+            .unwrap();
+        replay.paymaster_signature = Some(kp.sign(&payload));
         let r = executor.execute_user_op(&mut db, &replay, 0);
         assert!(
             matches!(r, Err(ExecutionError::InvalidNonce { .. })),
-            "paymaster nonce check should reject replayed sponsorship"
+            "paymaster nonce check should reject replayed sponsorship: got {r:?}"
+        );
+    }
+
+    // ─── Day 1B (2026-05-08): paymaster sponsorship-signature gate ────────
+    //
+    // Without these tests the chain shipped a drain bug: any user could
+    // forge `paymaster: <victim>` and debit a victim at execution time,
+    // because the chain accepted `paymaster_signature: None`. The four
+    // tests below lock the four corners of the consent-to-sponsor gate.
+
+    #[test]
+    fn test_user_op_paymaster_set_without_signature_rejects() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        // Fund a real-looking paymaster address. Whoever owns the matching
+        // private key isn't producing this tx — the attacker is.
+        let kp = HybridKeypair::generate();
+        let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        fund_account_at(&mut db, victim_addr, 1_000_000);
+
+        let executor = SimpleExecutor::new_for_test(7);
+        let mut tx = make_user_op(1, 0, None, None, 1000);
+        tx.paymaster = Some(victim_addr);
+        tx.paymaster_nonce = Some(0);
+        // Attacker omits the sponsorship signature — must reject.
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("paymaster_signature")),
+            "missing paymaster_signature must reject (drain gate): got {r:?}"
+        );
+        // Victim's balance is intact.
+        let pm = db.get_account(&victim_addr).expect("victim exists");
+        assert_eq!(pm.balance, 1_000_000);
+    }
+
+    #[test]
+    fn test_user_op_paymaster_set_without_public_key_rejects() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        let kp = HybridKeypair::generate();
+        let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        fund_account_at(&mut db, victim_addr, 1_000_000);
+
+        let executor = SimpleExecutor::new_for_test(7);
+        // Build a tx with paymaster + signature but NO public_key.
+        let mut tx = evaporchain_types::UserOpTx {
+            sender: addr(1),
+            nonce: 0,
+            call_data: vec![0u8; 16],
+            call_gas_limit: 1000,
+            paymaster: Some(victim_addr),
+            paymaster_nonce: Some(0),
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+        let payload = tx
+            .paymaster_sponsorship_payload(&executor.chain_id)
+            .unwrap();
+        tx.paymaster_signature = Some(kp.sign(&payload));
+        // public_key still None — must reject.
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("paymaster_public_key")),
+            "missing paymaster_public_key must reject: got {r:?}"
+        );
+    }
+
+    #[test]
+    fn test_user_op_paymaster_public_key_must_derive_to_paymaster_address() {
+        // Attacker provides a paymaster_public_key for a key they own, but
+        // sets `paymaster` to a victim's address. The derived blake3(pk)
+        // doesn't match `paymaster` → reject. This is the canonical
+        // drain-bug path.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+
+        let attacker_kp = HybridKeypair::generate();
+        let victim_addr = addr(0xAA); // arbitrary victim — no key needed
+        fund_account_at(&mut db, victim_addr, 1_000_000);
+
+        let executor = SimpleExecutor::new_for_test(7);
+        let mut tx = evaporchain_types::UserOpTx {
+            sender: addr(1),
+            nonce: 0,
+            call_data: vec![0u8; 16],
+            call_gas_limit: 1000,
+            paymaster: Some(victim_addr),
+            paymaster_nonce: Some(0),
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: Some(attacker_kp.public_key_bytes()),
+            signature: None,
+            public_key: None,
+        };
+        // Even with a valid signature over the canonical payload, the pk
+        // doesn't bind to the victim's address.
+        let payload = tx
+            .paymaster_sponsorship_payload(&executor.chain_id)
+            .unwrap();
+        tx.paymaster_signature = Some(attacker_kp.sign(&payload));
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("does not derive")),
+            "pk-not-deriving-to-paymaster must reject: got {r:?}"
+        );
+        // Victim balance still intact — drain blocked.
+        let v = db.get_account(&victim_addr).expect("victim exists");
+        assert_eq!(v.balance, 1_000_000);
+    }
+
+    #[test]
+    fn test_user_op_paymaster_wrong_signature_rejects() {
+        // pk derives to paymaster, but the signature is over a different
+        // payload (e.g., attacker swapped call_gas_limit after the
+        // paymaster signed). HybridVerifier::verify must reject.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let (mut tx, pm_addr, _kp) =
+            make_signed_user_op(&executor, 1, 0, 0, 1000, vec![0u8; 16]);
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        // Tamper after signing — bump call_gas_limit. Sponsorship payload
+        // hashes call_gas_limit, so the signature is now invalid.
+        tx.call_gas_limit = 10_000_000;
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("verification failed")),
+            "tampered call_gas_limit must invalidate sponsorship sig: got {r:?}"
+        );
+    }
+
+    #[test]
+    fn test_user_op_paymaster_sig_binds_call_data() {
+        // call_data is hashed into the sponsorship payload. Tampering
+        // call_data after the paymaster signs must invalidate the sig.
+        // This locks the property that a paymaster sponsoring "call X"
+        // can't be conscripted to sponsor "call Y".
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let (mut tx, pm_addr, _kp) =
+            make_signed_user_op(&executor, 1, 0, 0, 1000, b"original-intent".to_vec());
+        fund_account_at(&mut db, pm_addr, 1_000_000);
+
+        // Mutate call_data — sig no longer binds.
+        tx.call_data = b"swapped-intent!".to_vec();
+
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::ContractError(ref msg)) if msg.contains("verification failed")),
+            "tampered call_data must invalidate sponsorship sig: got {r:?}"
         );
     }
 
