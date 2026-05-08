@@ -211,6 +211,11 @@ Operationally:
 - **/info exposes `idempotency_max_keys` + `idempotency_ttl_secs`** so wallets can decide whether to bother computing and sending keys.
 - **`evaporchain_paymaster_idempotent_replays_total` counter** — see §Metrics. Sustained high replay rate signals either flaky wallet → paymaster networking or a wallet bug retrying without backoff.
 
+#### Limitations the cache does NOT cover
+
+- **Restart loses the cache.** The cache is in-memory (HashMap + insertion-order VecDeque on the `Paymaster` struct) — there's no on-disk persistence. A restart wipes the entire `idempotency_max_keys` window. A wallet retry that spans the restart gets a fresh `paymaster_nonce`, not a replay. If your operational profile involves frequent restarts (e.g. canary deploys, k8s pod cycling) and you depend on idempotency, prefer a longer wallet-side dedupe window (so the wallet can detect the duplicate response itself) over relying on the cache as the sole defense.
+- **Concurrent retries with the same key can both miss.** The cache lock is dropped between the lookup and the populate, so two retries arriving in flight at the same time can both run the full sponsor path and both allocate distinct `paymaster_nonces`. The second's response wins the cache slot; the first's nonce is "lost" — i.e., not replayable. The paymaster has spent gas budget on both. Wallets should retry sequentially with backoff to avoid this; the chain itself only accepts one of the two regardless. This is a known polish backlog item — fixable with per-key in-flight locking.
+
 ### `/info` policy surface
 
 Wallets read `GET /info` before submitting `/sponsor` to discover the paymaster's address, next-nonce, chain_id, AND its operator policy. A wallet that pre-checks policy can fail a doomed request locally (e.g. wallet doesn't have a hybrid keypair → paymaster requires user-sig → reject locally rather than burn the round-trip).
