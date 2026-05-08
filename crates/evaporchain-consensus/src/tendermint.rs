@@ -1447,6 +1447,29 @@ impl TendermintConsensus {
         self.executor.tick_mortis(current_epoch, state_root)
     }
 
+    /// Per-block hook: drop tombstoned validators from the active set.
+    /// Walks the executor's eulogy_trie; for any validator whose
+    /// address is memorialised, marks `jailed = true` so
+    /// `leader_for_epoch` (which already filters jailed validators)
+    /// stops electing it. Idempotent — safe to call every block.
+    /// Returns count newly jailed (typically 0).
+    ///
+    /// Caller (the node binary) invokes after `tick_mortis_on_executor`
+    /// at every block boundary.
+    pub fn enforce_validator_tombstones(&mut self) -> usize {
+        let tombstone_addresses: Vec<[u8; 32]> = self
+            .executor
+            .eulogy_trie
+            .iter()
+            .map(|(addr, _)| *addr)
+            .collect();
+        if tombstone_addresses.is_empty() {
+            return 0;
+        }
+        self.validator_set
+            .jail_tombstoned_by_address(&tombstone_addresses)
+    }
+
     /// Read-only access to the executor's MortisCertificate, if minted.
     pub fn mortis_certificate(&self) -> Option<&evaporchain_mortis::MortisCertificate> {
         self.executor.mortis_certificate.as_ref()
@@ -6453,46 +6476,35 @@ impl TendermintConsensus {
             );
         }
 
-        // Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md — proposer
-        // pre-execution. Speculatively execute the block on the
-        // current db with begin_batch / rollback_batch so the
-        // resulting state_root can be claimed in block.post_state_root
-        // before broadcast. The actual real execution happens later
-        // when the proposer (and all validators) processes the
-        // proposal as a received message — same input, deterministic
-        // same output.
+        // Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md is parked
+        // on the cluster: the speculative-execute approach (db.begin_batch
+        // → executor.execute_block → db.rollback_batch) is not safe
+        // because executor.execute_block mutates ParallelExecutor-
+        // internal state — reward_accumulator, mempool draining,
+        // contract_engine state — that begin_batch / rollback_batch
+        // does NOT restore. Calling the executor twice (pre-broadcast
+        // here, then post-broadcast on apply) produces non-deterministic
+        // results, and the cluster wedged on the cert-block-hash
+        // mismatch + DA-supermajority-not-reached pattern when the
+        // pre-execution variant of this hook was deployed 2026-05-08
+        // ~10:33Z.
         //
-        // begin_batch/rollback_batch are default no-ops on backends
-        // without transactional rollback (InMemoryStateDB,
-        // OverlayStateDB). Those backends would have post_state_root
-        // claimed correctly here too, but the rollback wouldn't
-        // restore mutations — so the SECOND execution at apply time
-        // would see already-mutated state and produce a different
-        // result. Acceptable for now because the cluster-soak
-        // RocksDBStateDB has real rollback semantics; tests that use
-        // InMemoryStateDB don't drive consensus.
-        _db.begin_batch();
-        match self.executor.execute_block(_db, &block) {
-            Ok(result) => {
-                block.post_state_root = Some(result.state_root);
-                debug!(
-                    height = self.height,
-                    post_state_root = %hex::encode(&result.state_root[..8]),
-                    "Phase 2: post_state_root claimed by proposer"
-                );
-            }
-            Err(e) => {
-                // Pre-execution failed — propose without claim. Phase 3
-                // validators will skip the check (Option::is_none),
-                // degrading gracefully to current behaviour.
-                warn!(
-                    height = self.height,
-                    error = %e,
-                    "Phase 2: proposer pre-execution failed; proposing without post_state_root"
-                );
-            }
-        }
-        _db.rollback_batch();
+        // Correct shapes for the next round:
+        //   (a) Snapshot executor state alongside db.begin_batch (and
+        //       restore on rollback). Touches every field on
+        //       ParallelExecutor.
+        //   (b) Clone-based simulate_execute (option iii of the design
+        //       doc). Allocates a full state copy every block.
+        //   (c) Move post_state_root assembly to the apply path: the
+        //       proposer's first real execution on its own broadcast
+        //       (which already happens) sets post_state_root on the
+        //       block BEFORE the cert is signed. Requires consensus
+        //       protocol change to delay cert assembly.
+        //
+        // Phase 2 stays parked while the design choice is made.
+        // Phase 3's warn-mode check stays in apply_block — it's a
+        // no-op when post_state_root is None, so it imposes no cost.
+        let _ = _db;
 
         Some(block)
     }
