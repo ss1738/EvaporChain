@@ -160,6 +160,7 @@ mod tests {
                 target_staking_apy: 0.05,
                 max_supply_cap: None,
                 emission: None,
+                blocks_per_year: Tokenomics::default_blocks_per_year(),
             },
             genesis_time: "2026-01-01T00:00:00Z".into(),
             validators: vec![GenesisValidator {

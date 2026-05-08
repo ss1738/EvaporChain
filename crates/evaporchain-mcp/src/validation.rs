@@ -163,6 +163,59 @@ pub fn validate_half_life_field(args: &Value, field: &'static str) -> Result<u64
     validate_amount_field(args, field, MAX_HALF_LIFE_EPOCHS)
 }
 
+/// Validate a 64-char hex transaction hash. Reuses address rules —
+/// both are 32-byte BLAKE3 digests with identical wire encoding.
+pub fn validate_tx_hash_field(
+    args: &Value,
+    field: &'static str,
+) -> Result<String, ValidationError> {
+    validate_address_field(args, field)
+}
+
+/// Validate a block height — any non-negative u64 (zero = genesis).
+pub fn validate_block_height_field(
+    args: &Value,
+    field: &'static str,
+) -> Result<u64, ValidationError> {
+    let v = args.get(field).ok_or(ValidationError::Missing(field))?;
+    v.as_u64().ok_or(ValidationError::WrongType {
+        field,
+        expected: "non-negative integer",
+    })
+}
+
+/// Validate a hex object-id path component — less strict than a full
+/// 32-byte address. Accepts 1–128 ASCII hex chars (with/without `0x`).
+/// Prevents path-traversal injection (`/`, `..`, `?`, `#`, etc.).
+pub fn validate_hex_id_field(
+    args: &Value,
+    field: &'static str,
+) -> Result<String, ValidationError> {
+    let raw = args
+        .get(field)
+        .ok_or(ValidationError::Missing(field))?
+        .as_str()
+        .ok_or(ValidationError::WrongType {
+            field,
+            expected: "hex-string",
+        })?;
+
+    let stripped = raw.strip_prefix("0x").unwrap_or(raw);
+    if stripped.is_empty() || stripped.len() > 128 {
+        return Err(ValidationError::MalformedAddress {
+            field,
+            reason: "must be 1–128 hex chars (with or without 0x prefix)",
+        });
+    }
+    if !stripped.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ValidationError::MalformedAddress {
+            field,
+            reason: "non-hex character",
+        });
+    }
+    Ok(stripped.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

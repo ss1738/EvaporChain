@@ -18,10 +18,11 @@
 //!     enforcement is currently advisory (the node API does not yet
 //!     verify the header — that work is queued as a follow-up).
 //!
-//!   `EVAPORCHAIN_MCP_REQUIRE_AUTH` (default: "false")
-//!     If "true" / "1" / "yes", the binary refuses to start unless
-//!     `EVAPORCHAIN_MCP_API_TOKEN` is also set. Use in production
-//!     deployments where zero-auth-by-default is unacceptable.
+//!   `EVAPORCHAIN_MCP_REQUIRE_AUTH` (default: auto — see below)
+//!     When `EVAPORCHAIN_MCP_API_TOKEN` is set, auth is required by
+//!     default; set to "false"/"0"/"no" to relax for dev-mode even
+//!     when a token is present. When no token is configured, defaults
+//!     to "false"; set to "true"/"1"/"yes" to force a startup failure.
 //!
 //!   `EVAPORCHAIN_MCP_NODE_URL` (default: http://127.0.0.1:8080)
 //!     Default node URL when `--node-url` flag is not supplied.
@@ -48,20 +49,35 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
 
     // ── Auth token + require-auth gate (CRITICAL-2 hardening) ──
+    //
+    // Inverted default: when EVAPORCHAIN_MCP_API_TOKEN is configured,
+    // auth is REQUIRED by default. Set EVAPORCHAIN_MCP_REQUIRE_AUTH=false
+    // to allow token-less dev-mode even when a token is available.
+    // When no token is configured, require_auth falls back to the
+    // explicit opt-in path (EVAPORCHAIN_MCP_REQUIRE_AUTH=true).
     let api_token = env::var("EVAPORCHAIN_MCP_API_TOKEN")
         .ok()
         .filter(|t| !t.is_empty());
-    let require_auth = matches!(
-        env::var("EVAPORCHAIN_MCP_REQUIRE_AUTH").as_deref(),
-        Ok("true") | Ok("1") | Ok("TRUE") | Ok("yes")
-    );
+    let require_auth = if api_token.is_some() {
+        // Token present → require auth unless explicitly suppressed.
+        !matches!(
+            env::var("EVAPORCHAIN_MCP_REQUIRE_AUTH").as_deref(),
+            Ok("false") | Ok("0") | Ok("FALSE") | Ok("no")
+        )
+    } else {
+        // No token → require auth only when explicitly requested.
+        matches!(
+            env::var("EVAPORCHAIN_MCP_REQUIRE_AUTH").as_deref(),
+            Ok("true") | Ok("1") | Ok("TRUE") | Ok("yes")
+        )
+    };
 
     if require_auth && api_token.is_none() {
         eprintln!(
             "evaporchain-mcp: refusing to start.\n\
-             EVAPORCHAIN_MCP_REQUIRE_AUTH is set but \
-             EVAPORCHAIN_MCP_API_TOKEN is not. Either set the token \
-             or unset EVAPORCHAIN_MCP_REQUIRE_AUTH for dev mode."
+             Auth is required but EVAPORCHAIN_MCP_API_TOKEN is not set.\n\
+             Either set the token or set EVAPORCHAIN_MCP_REQUIRE_AUTH=false \
+             for dev mode."
         );
         std::process::exit(2);
     }
@@ -69,10 +85,10 @@ async fn main() -> anyhow::Result<()> {
     eprintln!(
         "evaporchain-mcp: starting (node_url={}, auth={})",
         node_url,
-        if api_token.is_some() {
-            "Bearer-token"
-        } else {
-            "none-DEV-MODE"
+        match (api_token.is_some(), require_auth) {
+            (true, true) => "Bearer-token (enforced)",
+            (true, false) => "Bearer-token (relaxed)",
+            (false, _) => "none-DEV-MODE",
         }
     );
 

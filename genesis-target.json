@@ -18,7 +18,8 @@
     "reward_half_life": 1000000,
     "fee_burn_rate": 0.50,
     "staker_fee_share": 0.50,
-    "target_staking_apy": 0.05
+    "target_staking_apy": 0.05,
+    "blocks_per_year": 15768000
   },
 
   "_TODO_genesis_time": "Replace with real UTC ISO8601 at T-7 days per ceremony Step 4. NEVER ship the placeholder.",

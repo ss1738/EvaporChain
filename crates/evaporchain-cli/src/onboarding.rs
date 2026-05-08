@@ -291,6 +291,7 @@ pub fn cmd_build_genesis(
         target_staking_apy: 0.05,
         max_supply_cap: None,
         emission: None,
+        blocks_per_year: Tokenomics::default_blocks_per_year(),
     };
 
     let coordinator_pk_hex = hex::encode(kp.public_key());

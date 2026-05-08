@@ -95,7 +95,7 @@ pub fn derive_query_positions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_dfri::CodewordPosition;
+    use evaporchain_dfri::{CodewordPosition, MOD_P};
 
     fn cw_4(energy: u64) -> EnergyCodeword {
         // f(x) = x² over domain {1, 2, MOD_P-1, MOD_P-2}.

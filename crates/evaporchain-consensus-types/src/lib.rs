@@ -129,9 +129,19 @@ pub struct ValidatorInfo {
     /// effective stake as their `stake` field.
     #[serde(default)]
     pub delegated_stake: u64,
+    /// Fraction of delegator rewards the validator keeps before passing
+    /// the remainder to delegators, in parts-per-million.
+    /// 100_000 = 10% commission. Range 0–500_000 (0–50%).
+    /// TOKENOMICS §2.2 / Q7 ceremony decision 2026-05-08: default 10%.
+    #[serde(default = "ValidatorInfo::default_commission_ppm")]
+    pub commission_ppm: u64,
 }
 
 impl ValidatorInfo {
+    pub const fn default_commission_ppm() -> u64 {
+        100_000 // 10%
+    }
+
     /// Create a new validator with the given id, stake, and address.
     pub fn new(id: u64, stake: u64, address: [u8; 32]) -> Self {
         Self {
@@ -150,6 +160,7 @@ impl ValidatorInfo {
             bls_public_key_prev: None,
             bls_prev_key_expiry_epoch: None,
             delegated_stake: 0,
+            commission_ppm: Self::default_commission_ppm(),
         }
     }
 

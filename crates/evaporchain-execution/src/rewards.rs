@@ -239,6 +239,111 @@ impl RewardAccumulator {
         producer_credit
     }
 
+    /// Process block rewards with TOKENOMICS §2.1 / §2.5 ceremony decisions:
+    /// - 60% of block reward to proposer, 40% split equally among `attesters`
+    /// - `total_staked` drives the APY-cap controller (§2.5)
+    ///
+    /// When `attesters` is empty or `total_staked` is zero, falls back to
+    /// the original `process_block_rewards` behaviour (100% to proposer,
+    /// no APY cap). Existing call sites can migrate incrementally.
+    #[allow(clippy::too_many_arguments)]
+    pub fn process_block_rewards_v2(
+        &mut self,
+        db: &mut dyn StateDB,
+        producer: &AccountAddress,
+        epoch: Epoch,
+        total_fees_collected: u64,
+        producer_alive: bool,
+        refresh_pool_for_dead_producer: Option<&mut RefreshPool>,
+        attesters: &[AccountAddress],
+        total_staked: u64,
+    ) -> u64 {
+        // APY cap: scale the raw block reward down if staking yield would
+        // exceed target_staking_apy. TOKENOMICS §2.5 / Q21.
+        let raw_reward = self.tokenomics.block_reward(epoch, self.total_minted);
+        let capped_reward = self.tokenomics.apy_capped_reward(raw_reward, total_staked);
+
+        // Temporarily patch tokenomics so process_block_rewards uses the
+        // capped value. We restore afterward.
+        let orig_block_reward = self.tokenomics.block_reward;
+        // Scale the base field proportionally if not using the emission path.
+        if self.tokenomics.emission.is_none() && raw_reward > 0 {
+            self.tokenomics.block_reward = capped_reward
+                .saturating_mul(orig_block_reward)
+                .checked_div(raw_reward)
+                .unwrap_or(capped_reward);
+        }
+
+        let mut redirect_pool = refresh_pool_for_dead_producer;
+        let mut producer_credit = 0u64;
+        let block_reward = self.tokenomics.block_reward(epoch, self.total_minted);
+
+        if block_reward > 0 {
+            // 60/40 split only when attesters are present.
+            let (proposer_share, attester_total) = if attesters.is_empty() {
+                (block_reward, 0u64)
+            } else {
+                let p = block_reward * 60 / 100;
+                (p, block_reward.saturating_sub(p))
+            };
+
+            self.total_minted = self.total_minted.saturating_add(block_reward);
+
+            // Credit proposer share
+            if proposer_share > 0 {
+                if producer_alive {
+                    let acct = db.get_or_create_account(producer);
+                    acct.balance = acct.balance.saturating_add(proposer_share);
+                    acct.last_touched_epoch = epoch;
+                    producer_credit += proposer_share;
+                } else if let Some(pool) = redirect_pool.as_deref_mut() {
+                    pool.accrue(DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(), proposer_share, epoch);
+                }
+            }
+
+            // Credit attester shares (40% split equally; dust to first attester)
+            if attester_total > 0 && !attesters.is_empty() {
+                let per_attester = attester_total / attesters.len() as u64;
+                let mut dust = attester_total.saturating_sub(per_attester * attesters.len() as u64);
+                for (i, att) in attesters.iter().enumerate() {
+                    let share = if i == 0 { per_attester + dust } else { per_attester };
+                    if i == 0 { dust = 0; }
+                    if share > 0 {
+                        let acct = db.get_or_create_account(att);
+                        acct.balance = acct.balance.saturating_add(share);
+                        acct.last_touched_epoch = epoch;
+                    }
+                }
+            }
+        }
+
+        // Fee distribution (unchanged — producer gets tokenomics share)
+        if total_fees_collected > 0 {
+            let dist = self.tokenomics.distribute_fees(total_fees_collected);
+            self.total_burned = self.total_burned.saturating_add(dist.burned);
+            if dist.to_producer > 0 {
+                self.total_to_producers = self.total_to_producers.saturating_add(dist.to_producer);
+                if producer_alive {
+                    let acct = db.get_or_create_account(producer);
+                    acct.balance = acct.balance.saturating_add(dist.to_producer);
+                    acct.last_touched_epoch = epoch;
+                    producer_credit += dist.to_producer;
+                } else if let Some(pool) = redirect_pool.as_deref_mut() {
+                    pool.accrue(DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(), dist.to_producer, epoch);
+                }
+            }
+            if dist.to_stakers > 0 {
+                self.pending_staker_rewards =
+                    self.pending_staker_rewards.saturating_add(dist.to_stakers);
+                self.total_to_stakers = self.total_to_stakers.saturating_add(dist.to_stakers);
+            }
+        }
+
+        // Restore patched field
+        self.tokenomics.block_reward = orig_block_reward;
+        producer_credit
+    }
+
     /// Distribute accumulated staker rewards proportionally to a set of stakers.
     ///
     /// Each staker receives `pending_staker_rewards * (staker_stake / total_stake)`.
@@ -360,6 +465,7 @@ mod tests {
             target_staking_apy: 0.05,
             max_supply_cap: None,
             emission: None,
+            blocks_per_year: Tokenomics::default_blocks_per_year(),
         }
     }
 

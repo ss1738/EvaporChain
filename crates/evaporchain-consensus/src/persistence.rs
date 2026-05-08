@@ -131,6 +131,7 @@ impl ValidatorInfoSnapshot {
             bls_public_key_prev: None,
             bls_prev_key_expiry_epoch: None,
             delegated_stake: 0,
+            commission_ppm: crate::validator_set::ValidatorInfo::default_commission_ppm(),
         }
     }
 }

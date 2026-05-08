@@ -2052,7 +2052,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:005:first-light"),
             energy: 5_000,
             max_energy: 5_000,
-            half_life: 100, // decays visibly — shows the concept
+            half_life: 1_000, // decays visibly over ~33 min at 2s blocks
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -2138,7 +2138,7 @@ fn initialize_token_store() -> TokenStore {
                 name: "Thermal Credits".into(),
                 symbol: "HEAT".into(),
                 total_supply: 14_258,
-                decay_half_life: 100, // decays fast — demo token
+                decay_half_life: 1_000, // demo token: visible decay over ~33 min
                 deployed_epoch: 0,
                 deployer: f(GENESIS_COMMUNITY),
                 balances: heat_balances,

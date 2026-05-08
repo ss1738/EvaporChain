@@ -1911,6 +1911,12 @@ impl TendermintConsensus {
         // Document the soft-fork keys + their defaults so consumers
         // see the *effective* value, not just the explicit overrides.
         // Keys touched by Lane I.4 / Lane I.5 / Layer 0 #1.
+        // NOTE: governance defaults are intentionally cluster-compatible.
+        // Doctrine-grade behaviors (antichain mempool drain, real Nova IVC,
+        // strict conservation enforcement) are flipped via
+        // POST /api/governance/param after a clean stop-the-world deploy —
+        // not by changing these defaults. Changing the defaults in code
+        // would hard-fork any running cluster on the next binary swap.
         for (key, default) in [
             ("fork_choice_mode", "mcc"),
             ("parent_acceptance_mode", "linear"),
@@ -4120,6 +4126,11 @@ impl TendermintConsensus {
 
         match self.round_state.phase {
             Phase::Propose => {
+                // Phase C (Layer 4): refresh authoritative_head so propose_parents()
+                // and vote_target_head() have a current DAG snapshot for this round.
+                // No-op when parent_acceptance_mode is linear or mcc.
+                self.update_authoritative_head();
+
                 // Drain gate: a draining node refuses to propose or
                 // self-prevote so peers route around it (Ansible upgrade
                 // playbook → POST /api/admin/drain). The node still
@@ -4718,6 +4729,14 @@ impl TendermintConsensus {
                     .map(|s| s.as_str())
                     .unwrap_or("linear")
                 {
+                    "mcc_full" => {
+                        // Phase C/D (Layer 4): multi-parent DAG acceptance.
+                        // Accept if block.parent_hash is any current DAG candidate
+                        // head, OR matches our cached single head (normal path).
+                        let candidates = self.candidate_heads();
+                        candidates.contains(&block.parent_hash)
+                            || block.parent_hash == self.parent_hash
+                    }
                     "mcc" => {
                         // Lane I.6: derive β from the chain's λ instead
                         // of the hardcoded constant. Mirrors the formula
@@ -6382,7 +6401,8 @@ impl TendermintConsensus {
             },
             da_row_roots: vec![],
             da_col_roots: vec![],
-            parents: vec![],
+            // Phase C (Layer 4): emit parent set under mcc_full; vec![] for linear/mcc.
+            parents: self.propose_parents(),
             post_state_root: None,
         };
 

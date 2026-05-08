@@ -872,6 +872,7 @@ mod tests {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         };
 
         // Execute with sig verification — should skip the bad tx
@@ -2203,6 +2204,7 @@ mod proving_integration {
             state_root_version: 0,
             submit_epoch_hints: vec![],
             parents: vec![],
+            post_state_root: None,
         }
     }
 

@@ -1661,6 +1661,7 @@ fn cmd_testnet_init(
             target_staking_apy: 0.05,
             max_supply_cap: None,
             emission: None,
+            blocks_per_year: Tokenomics::default_blocks_per_year(),
         },
         genesis_time: format!("{}", now_secs),
         validators: genesis_validators,
@@ -2268,6 +2269,7 @@ fn cmd_genesis_create(
             target_staking_apy: 0.05,
             max_supply_cap: None,
             emission: None,
+            blocks_per_year: Tokenomics::default_blocks_per_year(),
         },
         genesis_time: {
             let secs = std::time::SystemTime::now()

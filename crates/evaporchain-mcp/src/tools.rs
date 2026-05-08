@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 use crate::protocol::Context;
 use crate::rate_limit::McpRateLimiter;
 use crate::validation::{
-    validate_address_field, validate_amount_field, validate_half_life_field, validate_nonce_field,
-    MAX_TOKEN_AMOUNT,
+    validate_address_field, validate_amount_field, validate_block_height_field,
+    validate_half_life_field, validate_hex_id_field, validate_nonce_field, MAX_TOKEN_AMOUNT,
 };
 
 /// Process-wide rate limiter. Lazily initialised on first
@@ -404,11 +404,7 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "get_object" => {
-            let id = args
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 'id' argument")?;
-            let clean = id.strip_prefix("0x").unwrap_or(id);
+            let clean = validate_hex_id_field(args, "id").map_err(|e| e.to_string())?;
             let data = ctx.get_json(&format!("/api/object/{clean}")).await?;
             format_text_result(&data)
         }
@@ -519,12 +515,28 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "compute_demurrage" => {
+            let balance =
+                validate_amount_field(args, "balance", MAX_TOKEN_AMOUNT).map_err(|e| e.to_string())?;
+            let last_touched_epoch = validate_block_height_field(args, "last_touched_epoch")
+                .map_err(|e| e.to_string())?;
+            let current_epoch = validate_block_height_field(args, "current_epoch")
+                .map_err(|e| e.to_string())?;
+            let lambda_base_ppm = args
+                .get("lambda_base_ppm")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1)
+                .min(1_000_000);
+            let threshold = args
+                .get("threshold")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(100_000_000)
+                .min(MAX_TOKEN_AMOUNT);
             let body = json!({
-                "balance": args.get("balance").ok_or("Missing 'balance'")?,
-                "last_touched_epoch": args.get("last_touched_epoch").ok_or("Missing 'last_touched_epoch'")?,
-                "current_epoch": args.get("current_epoch").ok_or("Missing 'current_epoch'")?,
-                "lambda_base_ppm": args.get("lambda_base_ppm").unwrap_or(&json!(1)),
-                "threshold": args.get("threshold").unwrap_or(&json!(1024)),
+                "balance": balance,
+                "last_touched_epoch": last_touched_epoch,
+                "current_epoch": current_epoch,
+                "lambda_base_ppm": lambda_base_ppm,
+                "threshold": threshold,
             });
             let data = ctx.post_json("/api/demurrage/owed", &body).await?;
             format_text_result(&data)
@@ -542,30 +554,72 @@ async fn call_tool_inner(ctx: &Context, name: &str, args: &Value) -> Result<Valu
             format_text_result(&data)
         }
         "check_annealing_temperature" => {
+            let lambda_half_life = validate_half_life_field(args, "lambda_half_life")
+                .map_err(|e| e.to_string())?;
+            let epoch =
+                validate_block_height_field(args, "epoch").map_err(|e| e.to_string())?;
             let body = json!({
-                "lambda_half_life": args.get("lambda_half_life").ok_or("Missing 'lambda_half_life'")?,
+                "lambda_half_life": lambda_half_life,
                 "beta_mb": 1000u64,
-                "epoch": args.get("epoch").ok_or("Missing 'epoch'")?,
+                "epoch": epoch,
             });
             let data = ctx.post_json("/api/annealing/temperature", &body).await?;
             format_text_result(&data)
         }
         "compute_mera_commitment" => {
+            let energies = args.get("energies").ok_or("Missing 'energies'")?;
+            // Guard against oversized arrays that could OOM the backend.
+            if let Some(arr) = energies.as_array() {
+                if arr.len() > 4096 {
+                    return Err("'energies' array must have at most 4096 entries".into());
+                }
+            } else {
+                return Err("'energies' must be a JSON array".into());
+            }
+            let lambda_half_life = args
+                .get("lambda_half_life")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(4096)
+                .max(1);
+            let base_half_life = args
+                .get("base_half_life")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(100)
+                .max(1);
             let body = json!({
-                "energies": args.get("energies").ok_or("Missing 'energies'")?,
-                "lambda_half_life": args.get("lambda_half_life").unwrap_or(&json!(4096)),
-                "base_half_life": args.get("base_half_life").unwrap_or(&json!(100)),
+                "energies": energies,
+                "lambda_half_life": lambda_half_life,
+                "base_half_life": base_half_life,
             });
             let data = ctx.post_json("/api/mera/commit", &body).await?;
             format_text_result(&data)
         }
         "prove_fork_evaporated" => {
+            // Validate fork_root_hex as a 64-char hex digest.
+            let fork_root_raw = args
+                .get("fork_root_hex")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing or non-string 'fork_root_hex'")?;
+            let stripped = fork_root_raw.strip_prefix("0x").unwrap_or(fork_root_raw);
+            if stripped.len() != 64 || !stripped.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err("'fork_root_hex' must be a 64-char hex digest".into());
+            }
+            let blocks = args.get("blocks").ok_or("Missing 'blocks'")?;
+            if !blocks.is_array() {
+                return Err("'blocks' must be a JSON array".into());
+            }
+            let evaluated_at_epoch =
+                validate_block_height_field(args, "evaluated_at_epoch").map_err(|e| e.to_string())?;
+            let threshold =
+                validate_amount_field(args, "threshold", MAX_TOKEN_AMOUNT).map_err(|e| e.to_string())?;
+            let lambda_epochs =
+                validate_half_life_field(args, "lambda_epochs").map_err(|e| e.to_string())?;
             let body = json!({
-                "fork_root_hex": args.get("fork_root_hex").ok_or("Missing 'fork_root_hex'")?,
-                "blocks": args.get("blocks").ok_or("Missing 'blocks'")?,
-                "evaluated_at_epoch": args.get("evaluated_at_epoch").ok_or("Missing 'evaluated_at_epoch'")?,
-                "threshold": args.get("threshold").ok_or("Missing 'threshold'")?,
-                "lambda_epochs": args.get("lambda_epochs").ok_or("Missing 'lambda_epochs'")?,
+                "fork_root_hex": fork_root_raw,
+                "blocks": blocks,
+                "evaluated_at_epoch": evaluated_at_epoch,
+                "threshold": threshold,
+                "lambda_epochs": lambda_epochs,
             });
             let data = ctx.post_json("/api/fork_cert/prove", &body).await?;
             format_text_result(&data)

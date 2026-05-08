@@ -527,9 +527,13 @@ impl ChainStore {
     // ─── Transaction receipt indexing ───
 
     /// Compute a deterministic blake3 hash for a transaction.
+    ///
+    /// Uses `tx.tx_hash()` (over signing-canonical bytes, excluding signature
+    /// and public_key) so the key matches what the wallet, API, and execution
+    /// engine all derive — avoiding the hash-mismatch that caused txs to
+    /// "disappear" from `/api/tx/:hash` after the in-memory ring expired.
     pub fn compute_tx_hash(tx: &evaporchain_types::Transaction) -> [u8; 32] {
-        let serialized = serde_json::to_vec(tx).unwrap_or_default();
-        *blake3::hash(&serialized).as_bytes()
+        tx.tx_hash()
     }
 
     /// Index all transactions in a block. Call after save_full_block().

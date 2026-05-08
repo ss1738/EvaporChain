@@ -97,8 +97,16 @@ pub struct Tokenomics {
     ///   50% burned, 25% to producer, 25% to stakers.
     pub staker_fee_share: f64,
 
-    /// Annual percentage yield target for staking rewards (informational).
+    /// Annual percentage yield target for staking rewards.
+    /// Used as a ceiling: if projected annual rewards exceed
+    /// `total_staked * target_staking_apy`, block rewards are scaled down.
+    /// TOKENOMICS §2.5 / Q21 ceremony decision 2026-05-08.
     pub target_staking_apy: f64,
+
+    /// Blocks produced per year at 2-second block time.
+    /// Used by the APY cap controller. Default: 15_768_000 (2s blocks).
+    #[serde(default = "Tokenomics::default_blocks_per_year")]
+    pub blocks_per_year: u64,
 
     /// Optional terminal cap on cumulative emissions (in token base units).
     /// Once `total_minted >= max_supply_cap`, `reward_at_epoch_capped`
@@ -134,11 +142,29 @@ impl Default for Tokenomics {
             target_staking_apy: 0.05,
             max_supply_cap: None,
             emission: None,
+            blocks_per_year: Self::default_blocks_per_year(),
         }
     }
 }
 
 impl Tokenomics {
+    pub const fn default_blocks_per_year() -> u64 {
+        15_768_000 // 365 * 24 * 1800 at 2-second blocks
+    }
+
+    /// Compute the APY-capped block reward.
+    /// If `total_staked > 0` and the projected annual reward exceeds
+    /// `total_staked * target_staking_apy`, scales the reward down to
+    /// the per-block APY budget. TOKENOMICS §2.5 / Q21.
+    pub fn apy_capped_reward(&self, raw_reward: u64, total_staked: u64) -> u64 {
+        if self.target_staking_apy <= 0.0 || total_staked == 0 {
+            return raw_reward;
+        }
+        let bpy = self.blocks_per_year.max(1);
+        let annual_budget = (total_staked as f64 * self.target_staking_apy) as u64;
+        let budget_per_block = annual_budget / bpy;
+        raw_reward.min(budget_per_block.max(1))
+    }
     /// Compute the block reward at a given epoch, accounting for halving.
     pub fn reward_at_epoch(&self, epoch: Epoch) -> u64 {
         if self.block_reward == 0 || self.reward_half_life == 0 {
@@ -448,6 +474,7 @@ impl GenesisConfig {
                 target_staking_apy: 0.05,
                 max_supply_cap: None,
                 emission: None,
+                blocks_per_year: Tokenomics::default_blocks_per_year(),
             },
             genesis_time: "2026-04-06T00:00:00Z".to_string(),
             validators: vec![

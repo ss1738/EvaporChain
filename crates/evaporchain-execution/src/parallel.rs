@@ -2082,14 +2082,43 @@ impl ExecutionEngine for ParallelExecutor {
         };
         let producer_alive = !self.eulogy_trie.contains(&producer_addr);
 
+        // Clone stake data before the mutable reward call (avoids overlapping borrows).
+        let (attesters_parallel, total_staked_parallel): (Vec<[u8; 32]>, u64) = {
+            let snap: Vec<(u64, [u8; 32], u64, Option<u64>)> = db
+                .all_stakes()
+                .iter()
+                .map(|s| (s.validator_id, s.validator_address, s.staked_amount, s.unbonding_epoch))
+                .collect();
+            let ts = snap
+                .iter()
+                .filter(|(_, _, _, u)| u.is_none())
+                .map(|(_, _, sa, _)| *sa)
+                .fold(0u64, u64::saturating_add);
+            let atts = block
+                .commit_certificate
+                .as_ref()
+                .map(|cert| {
+                    cert.signer_ids
+                        .iter()
+                        .filter_map(|&vid| {
+                            snap.iter().find(|(v, _, _, _)| *v == vid).map(|(_, a, _, _)| *a)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (atts, ts)
+        };
+
         if let Some(ref mut ra) = self.reward_accumulator {
-            ra.process_block_rewards(
+            ra.process_block_rewards_v2(
                 db,
                 &producer_addr,
                 block.epoch,
                 total_fees,
                 producer_alive,
                 Some(&mut self.refresh_pool),
+                &attesters_parallel,
+                total_staked_parallel,
             );
 
             // Lane A.3: priority bonus auto-fire. The proposer stamped
@@ -2603,6 +2632,7 @@ mod tests {
             target_staking_apy: 0.05,
             max_supply_cap: None,
             emission: None,
+            blocks_per_year: Tokenomics::default_blocks_per_year(),
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2663,6 +2693,7 @@ mod tests {
             target_staking_apy: 0.05,
             max_supply_cap: None,
             emission: None,
+            blocks_per_year: Tokenomics::default_blocks_per_year(),
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2771,6 +2802,7 @@ mod tests {
             target_staking_apy: 0.05,
             max_supply_cap: None,
             emission: None,
+            blocks_per_year: Tokenomics::default_blocks_per_year(),
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();

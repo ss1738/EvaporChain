@@ -16,7 +16,8 @@
     "reward_half_life": 1000000,
     "fee_burn_rate": 0.50,
     "staker_fee_share": 0.50,
-    "target_staking_apy": 0.05
+    "target_staking_apy": 0.05,
+    "blocks_per_year": 15768000
   },
   "genesis_time": "2026-05-03T12:00:00Z",
   "validators": [
