@@ -5550,10 +5550,24 @@ mod tests {
         // round-trips with matching state_root and integrity_hash.
         use evaporchain_state::{db::StateDB as _, RocksDBStateDB, SnapshotFile};
         use evaporchain_types::Account;
+        // Use pid + nanos for uniqueness; pid alone can collide across
+        // sequential test runs in the same shell when CARGO_TARGET_DIR
+        // is shared. More importantly: a previous run that failed BEFORE
+        // line ~end-of-fn's `remove_dir_all` would have left stale
+        // RocksDB files. Re-using the dir on the next run means the
+        // open at line below sees a DB that already has accounts; the
+        // 2 we insert here add to that, and `loaded.accounts.len() ==
+        // 2` fails. Clean-before-create + nanos-suffix kills both
+        // failure modes.
         let pid = std::process::id();
-        let dir = std::env::temp_dir().join(format!("evaporchain-cli-snap-{}", pid));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("evaporchain-cli-snap-{}-{}", pid, now));
         let data_dir = dir.join("data");
         let snap_path = dir.join("snap.zst");
+        let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&data_dir);
 
         // Seed a tiny state DB.
