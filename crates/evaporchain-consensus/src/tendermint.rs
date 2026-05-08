@@ -17075,3 +17075,161 @@ mod finality_gap_tests {
         assert_eq!(history[history.len() - 1].0, 1099);
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// Lane T1.14 — Phase 2 round-trip test
+// (POST_EXEC_STATE_VERIFICATION_PLAN.md, MAINNET_READINESS.md)
+// ════════════════════════════════════════════════════════════════════════
+//
+// End-to-end proof that the proposer's stamped `block.post_state_root`
+// (filled by Phase 2's speculative execute at `create_proposal`,
+// commit `af6876d`) equals the validator's apply-time `state_root`
+// when the same block is replayed via `apply_block`.
+//
+// Why this matters:
+//   - Phase 2 wiring uses `ParallelExecutor::snapshot_for_simulation`
+//     (commit `42a318e`) + `StateDB::begin_batch/rollback_batch` to
+//     run a speculative `execute_block`, capture `state_root`, then
+//     revert both executor + DB.
+//   - InMemoryStateDB had no real `begin_batch/rollback_batch` until
+//     commit `69ed84e` — so before this fix, in-memory tests could
+//     not detect a snapshot-restore drift in the speculative path.
+//   - This test exercises the full round-trip on the now-correct
+//     in-memory backend. Failure = a mutable field on
+//     `ParallelExecutor` is missed by `Clone`, OR a mutable field on
+//     `InMemoryStateDB` is missed by `InMemoryBatchSnapshot`.
+//
+// Failure mode shape: post_state_root will not equal the validator's
+// apply-time state_root, and the assertion below catches it BEFORE
+// Phase 3's runtime warn-mode logger fires (which is silently
+// observable on cluster but not test-blocking).
+
+#[cfg(test)]
+mod phase2_round_trip_tests {
+    use super::*;
+    use crate::validator_set::ValidatorInfo;
+    use evaporchain_state::db::InMemoryStateDB;
+    use evaporchain_types::TransferTx;
+
+    fn make_tc_with_validators() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        TendermintConsensus::new_for_test(1, 100, vs)
+    }
+
+    fn dummy_transfer(amount: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [0xAA; 32],
+            to: [0xBB; 32],
+            amount,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        })
+    }
+
+    /// **The headline lane T1.14 test.** Proposer creates a block via
+    /// `create_proposal` (Phase 2 wiring stamps `post_state_root`).
+    /// Validator runs `apply_block` on the same DB. The validator's
+    /// computed state_root must match the proposer's stamped claim.
+    #[test]
+    fn proposer_post_state_root_matches_validator_apply_state_root() {
+        let mut tc = make_tc_with_validators();
+        let mut db = InMemoryStateDB::new();
+
+        // Submit a tx so the block has real execution work to do —
+        // an empty block's post_state_root is much less useful as a
+        // round-trip witness.
+        tc.mempool.submit(dummy_transfer(100));
+
+        // Proposer fills `block.post_state_root` via Phase 2's
+        // speculative execute. After this returns, executor + db
+        // should be bit-identical to their pre-call state.
+        let block = tc
+            .create_proposal(&mut db)
+            .expect("proposer must produce a block");
+        let claimed = block
+            .post_state_root
+            .expect("Phase 2 wiring must fill post_state_root");
+
+        // Validator-path apply: real execute_block on the same db
+        // (which Phase 2's rollback restored). Returns
+        // BlockProductionResult { block, execution }.
+        let result = tc
+            .apply_block(&mut db, &block)
+            .expect("validator apply must succeed");
+
+        assert_eq!(
+            result.execution.state_root, claimed,
+            "Phase 2 round-trip violation: proposer's speculative state_root \
+             ({}) does not equal validator's apply-time state_root ({}). \
+             A mutable field on ParallelExecutor or InMemoryStateDB is \
+             missed by snapshot/restore — investigate which one diverged.",
+            hex::encode(&claimed[..8]),
+            hex::encode(&result.execution.state_root[..8])
+        );
+    }
+
+    /// Empty-block round-trip — even with no transactions, the
+    /// speculative execute still runs (block-reward path, demurrage,
+    /// epoch advance). The roots must still match.
+    #[test]
+    fn empty_block_post_state_root_matches_validator_apply_state_root() {
+        let mut tc = make_tc_with_validators();
+        let mut db = InMemoryStateDB::new();
+
+        // No txs submitted — empty proposal.
+        let block = tc
+            .create_proposal(&mut db)
+            .expect("proposer must produce an empty block");
+        let claimed = block
+            .post_state_root
+            .expect("Phase 2 wiring must fill post_state_root even on empty blocks");
+
+        let result = tc
+            .apply_block(&mut db, &block)
+            .expect("validator apply must succeed");
+
+        assert_eq!(
+            result.execution.state_root, claimed,
+            "empty-block Phase 2 round-trip violation: speculative={} apply={}",
+            hex::encode(&claimed[..8]),
+            hex::encode(&result.execution.state_root[..8])
+        );
+    }
+
+    /// Multi-tx round-trip — three txs in one block. Catches
+    /// snapshot drift that's tx-count-dependent (e.g. mempool draining
+    /// state, MMR insertion order, accumulator increments).
+    #[test]
+    fn multi_tx_block_post_state_root_matches_validator_apply_state_root() {
+        let mut tc = make_tc_with_validators();
+        let mut db = InMemoryStateDB::new();
+
+        for i in 0..3 {
+            tc.mempool.submit(dummy_transfer(100 + i));
+        }
+
+        let block = tc
+            .create_proposal(&mut db)
+            .expect("proposer must produce a block");
+        let claimed = block
+            .post_state_root
+            .expect("Phase 2 wiring must fill post_state_root");
+
+        let result = tc
+            .apply_block(&mut db, &block)
+            .expect("validator apply must succeed");
+
+        assert_eq!(
+            result.execution.state_root, claimed,
+            "multi-tx Phase 2 round-trip violation: speculative={} apply={}",
+            hex::encode(&claimed[..8]),
+            hex::encode(&result.execution.state_root[..8])
+        );
+    }
+}
