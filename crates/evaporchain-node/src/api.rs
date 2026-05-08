@@ -224,6 +224,12 @@ pub struct FourActSnapshot {
     /// Hex-encoded root of the evaporation nullifier MMR. None until
     /// the first object evaporates.
     pub evaporation_mmr_root: Option<String>,
+    /// Subset of `refresh_pool_total` representing energy redirected
+    /// from tombstoned producers' would-be block rewards / fee shares /
+    /// priority bonuses. Strictly monotonic; non-zero iff a tombstoned
+    /// validator was elected proposer at least once. Auditable proof
+    /// the doctrine "the chain's death is final" has fired in production.
+    pub dead_producer_redirect_total: u64,
 }
 
 impl ApiState {
@@ -675,6 +681,54 @@ pub fn parse_hex_address(s: &str) -> Result<[u8; 32], String> {
     let mut addr = [0u8; 32];
     addr.copy_from_slice(&bytes);
     Ok(addr)
+}
+
+/// Parse a hex address from the swap path, accepting BOTH the chain's
+/// native 32-byte form AND the token-store's legacy 20-byte
+/// (Ethereum-style) form. The swap layer lives at the seam between these
+/// two address spaces — chain accounts use 32-byte addresses, but
+/// `TokenStore` holder keys (and `GENESIS_FOUNDATION` et al.) are 20-byte
+/// hex strings carried over from Ethereum-compat tooling.
+///
+/// Returns `(holder_key, addr_32)`:
+///   * `holder_key` — the canonical hex string used to key into
+///     `DeployedToken.balances`. For 20-byte input or 32-byte input
+///     whose high 12 bytes are all zero, this is the 20-byte form
+///     (`0x` + 40 hex chars) so legacy holders (FLUX/HEAT/EVAP token
+///     accruals from genesis) remain reachable. For 32-byte input
+///     with non-zero high bytes (e.g. validator addresses
+///     `0x0300...`), the full 64-char form is used.
+///   * `addr_32` — the 32-byte form used by the chain DB
+///     (`db.get_account`). 20-byte input is left-padded with 12 zero
+///     bytes per Ethereum convention.
+pub fn parse_swap_addr(s: &str) -> Result<(String, [u8; 32]), String> {
+    let clean = s.strip_prefix("0x").unwrap_or(s).to_ascii_lowercase();
+    let bytes = hex::decode(&clean).map_err(|_| "invalid hex address".to_string())?;
+    match bytes.len() {
+        20 => {
+            let mut addr_32 = [0u8; 32];
+            addr_32[12..].copy_from_slice(&bytes);
+            Ok((format!("0x{}", clean), addr_32))
+        }
+        32 => {
+            let mut addr_32 = [0u8; 32];
+            addr_32.copy_from_slice(&bytes);
+            // High 12 bytes all zero → treat as the 20-byte equivalent
+            // for token-store-key purposes so a caller passing the
+            // zero-padded form lands on the same holder as a caller
+            // passing the bare 20-byte form.
+            let holder_key = if addr_32[..12].iter().all(|b| *b == 0) {
+                format!("0x{}", &clean[24..])
+            } else {
+                format!("0x{}", clean)
+            };
+            Ok((holder_key, addr_32))
+        }
+        n => Err(format!(
+            "address must be 20 or 32 bytes (40 or 64 hex chars), got {} bytes",
+            n
+        )),
+    }
 }
 
 /// Parse address from JSON value — accepts hex string or legacy integer byte.
@@ -12930,6 +12984,20 @@ async fn post_swap_execute(
     let from_upper = req.from_token.to_ascii_uppercase();
     let to_upper = req.to_token.to_ascii_uppercase();
 
+    // Bridge the 20↔32-byte address-space gap once, up front. Both
+    // halves of the swap (token store + EVAP chain account) consume
+    // the right form below.
+    let (holder_key, from_addr_32) = match parse_swap_addr(&req.from) {
+        Ok(p) => p,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
+    };
+
     // Helper: check/deduct from a DeployedToken balance, credit to another.
     {
         let mut store = safe_lock(&state.token_store);
@@ -12956,7 +13024,7 @@ async fn post_swap_execute(
                 .find(|t| t.symbol.to_ascii_uppercase() == from_upper)
                 .unwrap();
             token.tick_decay(epoch);
-            let bal = token.balances.entry(req.from.clone()).or_insert(0);
+            let bal = token.balances.entry(holder_key.clone()).or_insert(0);
             if *bal < req.amount {
                 return Json(TxResultResponse {
                     success: false,
@@ -12985,7 +13053,7 @@ async fn post_swap_execute(
                 .find(|t| t.symbol.to_ascii_uppercase() == to_upper)
                 .unwrap();
             token.tick_decay(epoch);
-            let bal = token.balances.entry(req.from.clone()).or_insert(0);
+            let bal = token.balances.entry(holder_key.clone()).or_insert(0);
             *bal = bal.saturating_add(amount_out);
         } else if to_upper != "EVAP" {
             return Json(TxResultResponse {
@@ -12999,16 +13067,7 @@ async fn post_swap_execute(
 
     // EVAP ↔ token: adjust EVAP account balance through the DB.
     if from_upper == "EVAP" || to_upper == "EVAP" {
-        let from_addr = match parse_address_value(&serde_json::Value::String(req.from.clone())) {
-            Ok(a) => a,
-            Err(e) => {
-                return Json(TxResultResponse {
-                    success: false,
-                    message: e,
-                    tx_hash: None,
-                })
-            }
-        };
+        let from_addr = from_addr_32;
         let mut db = safe_lock(&state.db);
         if from_upper == "EVAP" {
             // Deduct EVAP.
@@ -17553,6 +17612,62 @@ pub fn push_event(
     // Keep last 200 events
     while evts.len() > 200 {
         evts.pop_front();
+    }
+}
+
+#[cfg(test)]
+mod parse_swap_addr_tests {
+    use super::parse_swap_addr;
+
+    #[test]
+    fn accepts_20_byte_hex_left_pads_to_32() {
+        let s = "0x7f3a8b2ce419d605a1c74e823fb960d4159ae378";
+        let (key, addr32) = parse_swap_addr(s).unwrap();
+        assert_eq!(key, "0x7f3a8b2ce419d605a1c74e823fb960d4159ae378");
+        assert_eq!(addr32[..12], [0u8; 12]);
+        assert_eq!(
+            &addr32[12..],
+            &hex::decode("7f3a8b2ce419d605a1c74e823fb960d4159ae378").unwrap()[..]
+        );
+    }
+
+    #[test]
+    fn accepts_32_byte_hex_with_zero_high_bytes_collapses_to_20_byte_key() {
+        // Zero-padded 32-byte form must land on the same holder key as
+        // the bare 20-byte form (so a caller can pass either).
+        let bare_20 = "0x7f3a8b2ce419d605a1c74e823fb960d4159ae378";
+        let padded_32 =
+            "0x0000000000000000000000007f3a8b2ce419d605a1c74e823fb960d4159ae378";
+        let (k1, a1) = parse_swap_addr(bare_20).unwrap();
+        let (k2, a2) = parse_swap_addr(padded_32).unwrap();
+        assert_eq!(k1, k2, "20-byte and zero-padded-32-byte must share holder key");
+        assert_eq!(a1, a2, "and chain address bytes must be identical");
+    }
+
+    #[test]
+    fn accepts_native_32_byte_with_nonzero_high_bytes() {
+        // Validator-style address (high byte non-zero) keeps full 32-byte key.
+        let s = "0x0300000000000000000000000000000000000000000000000000000000000000";
+        let (key, addr32) = parse_swap_addr(s).unwrap();
+        assert_eq!(key.len(), 66, "0x + 64 hex chars");
+        assert_eq!(addr32[0], 0x03);
+        assert_eq!(&addr32[1..], &[0u8; 31][..]);
+    }
+
+    #[test]
+    fn rejects_wrong_length() {
+        assert!(parse_swap_addr("0xdeadbeef").is_err());
+        assert!(parse_swap_addr("not-hex").is_err());
+        // 21 bytes — neither 20 nor 32.
+        assert!(parse_swap_addr(&format!("0x{}", "ab".repeat(21))).is_err());
+    }
+
+    #[test]
+    fn case_insensitive_canonical_lowercase() {
+        // Mixed-case input must canonicalise to lowercase for HashMap key stability.
+        let upper = "0x7F3A8B2CE419D605A1C74E823FB960D4159AE378";
+        let lower = "0x7f3a8b2ce419d605a1c74e823fb960d4159ae378";
+        assert_eq!(parse_swap_addr(upper).unwrap().0, parse_swap_addr(lower).unwrap().0);
     }
 }
 

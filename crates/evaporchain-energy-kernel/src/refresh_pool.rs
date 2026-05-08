@@ -117,6 +117,14 @@ impl RefreshPool {
             .fold(0u64, |a, b| a.saturating_add(b))
     }
 
+    /// Total accrued for a single namespace, or 0 if the namespace has
+    /// no credit entry. Used by the `/api/four_act` surface to expose
+    /// per-namespace accruals (e.g. dead-producer redirect vs.
+    /// rent-exhaustion residual) independently.
+    pub fn accrued_for(&self, namespace: &NamespaceId) -> Energy {
+        self.credits.get(namespace).map(|c| c.accrued).unwrap_or(0)
+    }
+
     /// Read-only iteration for audit / payout-scheduling consumers.
     pub fn credits(&self) -> impl Iterator<Item = &RefreshCredit> {
         self.credits.values()
@@ -150,6 +158,22 @@ mod tests {
         let mut p = RefreshPool::new();
         p.accrue(ns(1), 0, 5);
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn accrued_for_returns_per_namespace_total() {
+        // Two namespaces — accrued_for must isolate them (used by
+        // /api/four_act to report the dead-producer-redirect slice
+        // separately from the rent-exhaustion slice, even though
+        // both flow into the same RefreshPool aggregate).
+        let mut p = RefreshPool::new();
+        p.accrue(ns(1), 100, 0);
+        p.accrue(ns(2), 250, 0);
+
+        assert_eq!(p.accrued_for(&ns(1)), 100);
+        assert_eq!(p.accrued_for(&ns(2)), 250);
+        assert_eq!(p.accrued_for(&ns(99)), 0, "unknown namespace must return 0");
+        assert_eq!(p.total_accrued(), 350);
     }
 
     #[test]

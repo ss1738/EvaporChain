@@ -4359,7 +4359,25 @@ async fn main() -> Result<()> {
 
                         match result {
                             Ok(result) => {
-                                block.state_root = result.execution.state_root;
+                                // Don't overwrite block.state_root — it commits
+                                // to the parent's post-exec state at proposal
+                                // time and is part of block_hash. Overwriting
+                                // it with execution.state_root (THIS block's
+                                // post-exec) made block_hash unstable and
+                                // produced 'Commit certificate block_hash does
+                                // not match actual block hash' warnings on
+                                // every commit because the cert was signed
+                                // over the proposal-time hash but the
+                                // persisted block had been mutated.
+                                //
+                                // Write the post-execution state to the
+                                // dedicated `post_state_root` field added in
+                                // Phase 1 of POST_EXEC_STATE_VERIFICATION_PLAN.
+                                // The chain still tracks the running post-exec
+                                // via tendermint's `current_state_root`; this
+                                // just preserves it on the persisted block
+                                // record without breaking block-hash stability.
+                                block.post_state_root = Some(result.execution.state_root);
 
                                 // C3 (audit 2026-05-02): durability ordering.
                                 // Persist the cert-bearing block to chain_store
@@ -4391,6 +4409,10 @@ async fn main() -> Result<()> {
                                 {
                                     let mut tc = safe_lock(tc_ref);
                                     let _ = tc.tick_mortis_on_executor(block.epoch, block.state_root);
+                                    // Drop tombstoned validators from the active
+                                    // set so leader_for_epoch stops electing dead
+                                    // accounts. Idempotent per-block.
+                                    let _ = tc.enforce_validator_tombstones();
                                     let s = tc.four_act_state();
                                     if let Some(api) = api_state_for_loop.as_ref() {
                                         // Tick Decay-Lamport clock by gas spent in this block.
@@ -4425,6 +4447,7 @@ async fn main() -> Result<()> {
                                             ghost_object_count,
                                             evaporation_mmr_size: s.evaporation_mmr_size,
                                             evaporation_mmr_root: s.evaporation_mmr_root.map(hex::encode),
+                                            dead_producer_redirect_total: s.dead_producer_redirect_total,
                                         });
                                     }
                                 }
@@ -5664,6 +5687,10 @@ async fn main() -> Result<()> {
                                     let four_act_snap = {
                                         let mut tc = safe_lock(tc_ref);
                                         let _ = tc.tick_mortis_on_executor(block.epoch, block.state_root);
+                                        // Drop tombstoned validators from the active
+                                        // set so leader_for_epoch stops electing dead
+                                        // accounts. Idempotent per-block.
+                                        let _ = tc.enforce_validator_tombstones();
                                         tc.four_act_state()
                                     };
                                     if let Some(api) = api_state_for_loop.as_ref() {
@@ -5713,6 +5740,7 @@ async fn main() -> Result<()> {
                                             ghost_object_count,
                                             evaporation_mmr_size: four_act_snap.evaporation_mmr_size,
                                             evaporation_mmr_root: four_act_snap.evaporation_mmr_root.map(hex::encode),
+                                            dead_producer_redirect_total: four_act_snap.dead_producer_redirect_total,
                                         });
                                     }
 

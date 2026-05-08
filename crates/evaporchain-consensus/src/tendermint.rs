@@ -649,6 +649,11 @@ pub struct ConsensusFourActState {
     /// object evaporates; mirrors `eulogy_trie_root`'s empty-state
     /// convention.
     pub evaporation_mmr_root: Option<[u8; 32]>,
+    /// Total energy redirected into the refresh pool from tombstoned
+    /// producers' would-be rewards. Subset of `refresh_pool_total` —
+    /// surfaces the doctrine "the chain's death is final" as an
+    /// auditable per-namespace counter.
+    pub dead_producer_redirect_total: u64,
 }
 
 /// Window size for TUR Liveness Detector observations. Per
@@ -1434,6 +1439,10 @@ impl TendermintConsensus {
             } else {
                 Some(self.executor.mmr.root())
             },
+            dead_producer_redirect_total: self
+                .executor
+                .refresh_pool
+                .accrued_for(&b"evaporchain-dead-producer-refresh".to_vec()),
         }
     }
 

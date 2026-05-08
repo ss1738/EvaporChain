@@ -13,10 +13,12 @@ use evaporchain_types::{AccountAddress, Epoch};
 use tracing::{debug, info};
 
 /// Refresh-pool namespace for energy redirected away from tombstoned
-/// producers. Mirrors the constant in `lib.rs` to keep `rewards.rs`
-/// crate-internal-clean. If they ever diverge, the storage-rent and
-/// dead-producer accruals would land in separate refresh-pool buckets.
-const DEAD_PRODUCER_REFRESH_NAMESPACE: &[u8] = b"evaporchain-system-refresh";
+/// producers. Distinct from the rent-exhaustion bucket
+/// (`SYSTEM_REFRESH_NAMESPACE` = `b"evaporchain-system-refresh"`) so
+/// `/api/four_act` can surface the dead-producer accrual independently
+/// — that makes the doctrine "the chain's death is final" empirically
+/// auditable instead of commingled with rent-driven accruals.
+const DEAD_PRODUCER_REFRESH_NAMESPACE: &[u8] = b"evaporchain-dead-producer-refresh";
 
 /// Tracks cumulative staker reward pool for proportional distribution.
 #[derive(Debug, Clone)]
@@ -491,6 +493,97 @@ mod tests {
         assert_eq!(credit, 100);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
         assert_eq!(acc.total_minted, 100);
+    }
+
+    /// Doctrine: `EulogyTrie` says "the chain's death is final." When
+    /// a producer is tombstoned, `process_block_rewards` must NOT
+    /// credit the dead account — the energy redirects into the
+    /// supplied refresh pool, preserving §1.2 conservation.
+    #[test]
+    fn test_block_reward_redirects_to_refresh_pool_when_producer_dead() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+        let mut pool = RefreshPool::new();
+
+        // Producer is tombstoned (alive=false). Block reward should
+        // redirect; producer balance must stay zero.
+        let credit = acc.process_block_rewards(
+            &mut db,
+            &addr(1),
+            0,
+            0,
+            /* producer_alive = */ false,
+            Some(&mut pool),
+        );
+        assert_eq!(credit, 0, "dead producer must receive nothing");
+        assert_eq!(
+            db.get_account(&addr(1)).unwrap().balance,
+            0,
+            "tombstoned account balance must not change"
+        );
+        // total_minted still increments — the reward was notionally
+        // minted, just routed to refresh pool. Conservation invariant
+        // is the system-level total, not the producer total.
+        assert_eq!(acc.total_minted, 100);
+        // The pool should have accrued the 100 EVP.
+        assert_eq!(
+            pool.total_accrued(),
+            100,
+            "refresh pool must absorb the redirected block reward"
+        );
+    }
+
+    /// Same doctrine, fee-distribution path. A tombstoned producer's
+    /// fee share must redirect; staker share must still flow to
+    /// pending_staker_rewards (it's not account-bound).
+    #[test]
+    fn test_fee_share_redirects_to_refresh_pool_when_producer_dead() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+        let mut pool = RefreshPool::new();
+
+        // 1000 fees: 500 burned, 250 to producer (redirected), 250 to stakers.
+        let credit = acc.process_block_rewards(
+            &mut db,
+            &addr(1),
+            0,
+            1000,
+            /* producer_alive = */ false,
+            Some(&mut pool),
+        );
+        assert_eq!(credit, 0, "dead producer credit must be zero");
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 0);
+        // block reward (100) + producer fee share (250) = 350 EVP redirected.
+        assert_eq!(pool.total_accrued(), 350);
+        // Staker share is independent of producer life-state.
+        assert_eq!(acc.pending_staker_rewards, 250);
+        assert_eq!(acc.total_burned, 500);
+    }
+
+    /// Priority bonus must follow the same doctrine: redirect when
+    /// the producer is tombstoned.
+    #[test]
+    fn test_priority_bonus_redirects_when_producer_dead() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+        let mut pool = RefreshPool::new();
+
+        let bonus = acc.apply_priority_bonus(
+            &mut db,
+            &addr(1),
+            5,
+            10_000,
+            1_000,
+            /* producer_alive = */ false,
+            Some(&mut pool),
+        );
+        assert_eq!(bonus, 0, "dead producer's priority bonus must be zero");
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 0);
+        assert_eq!(pool.total_accrued(), 10);
+        assert_eq!(acc.total_minted, 10);
     }
 
     #[test]
