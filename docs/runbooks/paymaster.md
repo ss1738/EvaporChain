@@ -94,6 +94,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--per-sender-rps RATE` | no | `5.0` | Per-`UserOp.sender` token-bucket replenish rate. `0` disables the rate limiter |
 | `--per-sender-burst N` | no | `10` | Per-sender burst capacity |
 | `--audit-log PATH` | no | (off) | Append-only JSON-lines audit log path. One line per successful sponsorship — see §Audit log |
+| `--allow-inner LIST` | no | (trust chain) | Operator-side inner-tx whitelist. Comma-separated values from `transfer`, `call_script`, `call_contract`. Omitted = sponsor any chain-accepted variant. Example: `--allow-inner=transfer` for a transfer-only paymaster. See §Inner-tx whitelist |
 
 ### Endpoints
 
@@ -186,6 +187,27 @@ If you need to reset (e.g. fresh paymaster account), delete both `paymaster_nonc
 - `GET /healthz` for liveness probes.
 - `GET /info` exposes `next_paymaster_nonce`. The on-chain `account.nonce` for the paymaster address should always be `next_paymaster_nonce - <in-flight sponsored UserOps not yet finalized>`. A persistent gap > a few blocks signals dropped UserOps or a chain reorg.
 - Tail the paymaster log for `sponsor failed` lines — every entry is a wallet bug or a wallet-side abuse attempt (e.g. resubmitting an `AlreadySigned` UserOp).
+
+### Inner-tx whitelist
+
+By default the paymaster sponsors any inner Transaction variant the chain accepts (currently `Transfer`, `CallScript`, `CallContract` — see `crates/evaporchain-execution/src/lib.rs:execute_user_op`). Operators can narrow this with `--allow-inner=<comma-separated>`:
+
+```bash
+# Transfer-only paymaster — won't subsidize contract calls
+evaporchain-paymaster ... --allow-inner=transfer
+
+# Allow Transfer + CallScript but not CallContract
+evaporchain-paymaster ... --allow-inner=transfer,call_script
+```
+
+Why an operator would narrow:
+- **Specialization.** A "stablecoin micro-tip paymaster" only needs Transfer; rejecting CallScript / CallContract limits the blast radius if a key wallet compromise tries to redirect sponsorship into expensive contract loops.
+- **Billing simplicity.** Transfer call_data is fixed-shape; contract calls vary in gas. An operator pricing per-sponsorship in fiat may want to reject the variable cases until they have variable pricing wired.
+- **Compliance.** A regulated paymaster might be cleared to subsidize value transfers but not arbitrary contract calls.
+
+Empty `call_data` (gas-only sponsorship — bumping a sender's nonce without doing anything else) is **always** allowed regardless of this setting; there's no inner intent to classify.
+
+Rejection surfaces as `400 Bad Request` with `inner variant 'X' is not allowed by this paymaster`. The wallet should respect the policy or pick a different paymaster — wallets enumerate paymaster policies via `GET /info` (future V1.5 hardening will add `allowed_inner_variants` to `/info`).
 
 ### Metrics
 

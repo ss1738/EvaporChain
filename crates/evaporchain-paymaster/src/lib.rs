@@ -77,6 +77,73 @@ pub enum PaymasterError {
     /// the failure rather than silently sponsoring without the line.
     #[error("audit log write failed: {0}")]
     AuditIo(String),
+    /// The inbound UserOp's inner Transaction variant isn't in this
+    /// paymaster's `allowed_inner_variants` set. Operator-side
+    /// defense-in-depth above the chain's global whitelist.
+    #[error("inner variant '{variant}' is not allowed by this paymaster")]
+    InnerVariantNotAllowed { variant: String },
+    /// `call_data` failed to decode as a `Transaction`. Reaches the
+    /// paymaster only when `allowed_inner_variants` is enforced —
+    /// otherwise the chain's `execute_user_op` would surface the
+    /// same failure at execute time.
+    #[error("call_data decode failed: {0}")]
+    CallDataDecode(String),
+}
+
+/// Inner-`Transaction` variant — the operator-facing identity used
+/// by `PaymasterConfig::allowed_inner_variants` and the
+/// `--allow-inner` CLI flag. The paymaster decodes inbound
+/// `UserOp.call_data` as a `Transaction`, projects to this enum,
+/// and checks set membership BEFORE allocating a nonce or signing.
+///
+/// Naming follows the chain's existing `Transaction` variants
+/// lower-cased + snake-cased; `--allow-inner=transfer,call_script`
+/// maps cleanly. The set is intentionally narrower than the full
+/// `Transaction` enum: only the variants the chain's V1 whitelist
+/// permits as inner intents under a sponsored UserOp (per
+/// `crates/evaporchain-execution/src/lib.rs:execute_user_op`
+/// dispatch arm).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InnerVariant {
+    Transfer,
+    CallScript,
+    CallContract,
+}
+
+impl InnerVariant {
+    /// Tag a runtime `Transaction` enum value with this restricted
+    /// variant tag. Returns `None` for variants the chain doesn't
+    /// accept as a UserOp inner intent — paymaster rejects with
+    /// `InnerVariantNotAllowed` either way (the inbound `call_data`
+    /// would already fail at the chain level, but we surface the
+    /// rejection earlier).
+    pub fn from_transaction(tx: &Transaction) -> Option<Self> {
+        match tx {
+            Transaction::Transfer(_) => Some(Self::Transfer),
+            Transaction::CallScript(_) => Some(Self::CallScript),
+            Transaction::CallContract(_) => Some(Self::CallContract),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Transfer => "transfer",
+            Self::CallScript => "call_script",
+            Self::CallContract => "call_contract",
+        }
+    }
+
+    /// Parse the operator-facing CLI form (lowercase + snake_case).
+    pub fn parse_cli(s: &str) -> Option<Self> {
+        match s {
+            "transfer" => Some(Self::Transfer),
+            "call_script" => Some(Self::CallScript),
+            "call_contract" => Some(Self::CallContract),
+            _ => None,
+        }
+    }
 }
 
 /// JSON request body POSTed to `/sponsor`. The wallet builds the body
@@ -149,6 +216,22 @@ pub struct PaymasterConfig {
     ///
     /// `None` (default) disables audit logging.
     pub audit_log: Option<PathBuf>,
+    /// Operator-side narrowing of which inner-tx variants this
+    /// paymaster will sponsor.
+    ///
+    /// - `None` (default): trust the chain — sponsor any inner
+    ///   variant the chain accepts as a UserOp intent. Forwards-
+    ///   compatible with chain whitelist expansion.
+    /// - `Some(set)`: only sponsor inner variants in the set.
+    ///   Reject everything else with `InnerVariantNotAllowed`
+    ///   BEFORE allocating a sponsorship nonce. Useful for
+    ///   specialized paymasters: e.g., a "Transfer-only" paymaster
+    ///   that won't subsidize complex contract calls.
+    ///
+    /// Empty `call_data` (gas-only sponsorship) is always allowed
+    /// regardless of this setting — there's no inner intent to
+    /// classify.
+    pub allowed_inner_variants: Option<Vec<InnerVariant>>,
 }
 
 impl Default for PaymasterConfig {
@@ -158,6 +241,7 @@ impl Default for PaymasterConfig {
             per_sender_rps: 5.0,
             per_sender_burst: 10,
             audit_log: None,
+            allowed_inner_variants: None,
         }
     }
 }
@@ -171,6 +255,7 @@ impl PaymasterConfig {
             per_sender_rps: 0.0,
             per_sender_burst: 0,
             audit_log: None,
+            allowed_inner_variants: None,
         }
     }
 }
@@ -503,6 +588,35 @@ impl Paymaster {
             let canonical = Transaction::UserOp(user_op.clone()).signing_message(&self.chain_id);
             if !HybridVerifier::verify(&canonical, sig, pk) {
                 return Err(PaymasterError::InvalidUserSignature);
+            }
+        }
+
+        // Day 10 — per-paymaster inner-tx whitelist. Operator narrows
+        // which inner variants this paymaster will sponsor; default
+        // (None) trusts the chain. Empty call_data is always allowed
+        // — gas-only sponsorship has no inner intent to classify.
+        if let Some(ref allowed) = self.config.allowed_inner_variants {
+            if !user_op.call_data.is_empty() {
+                let inner: Transaction = serde_json::from_slice(&user_op.call_data)
+                    .map_err(|e| {
+                        PaymasterError::CallDataDecode(format!("decode: {e}"))
+                    })?;
+                let variant = InnerVariant::from_transaction(&inner).ok_or_else(|| {
+                    // Variant the chain doesn't accept as inner — the
+                    // chain would reject this anyway, but surface
+                    // earlier with a clearer message.
+                    PaymasterError::InnerVariantNotAllowed {
+                        variant: format!(
+                            "{:?}",
+                            std::mem::discriminant(&inner)
+                        ),
+                    }
+                })?;
+                if !allowed.contains(&variant) {
+                    return Err(PaymasterError::InnerVariantNotAllowed {
+                        variant: variant.as_str().to_string(),
+                    });
+                }
             }
         }
 
@@ -1046,6 +1160,7 @@ mod tests {
                 per_sender_rps: 0.000_001, // effectively zero refill in test window
                 per_sender_burst: 3,
                 audit_log: None,
+                allowed_inner_variants: None,
             },
         )
         .unwrap();
@@ -1077,6 +1192,7 @@ mod tests {
                 per_sender_rps: 0.000_001,
                 per_sender_burst: 1,
                 audit_log: None,
+                allowed_inner_variants: None,
             },
         )
         .unwrap();
@@ -1113,6 +1229,7 @@ mod tests {
                 per_sender_rps: 0.0,
                 per_sender_burst: 0,
                 audit_log: Some(audit_file.clone()),
+                allowed_inner_variants: None,
             },
         )
         .unwrap();
@@ -1148,6 +1265,7 @@ mod tests {
             per_sender_rps: 0.0,
             per_sender_burst: 0,
             audit_log: Some(audit_file.clone()),
+            allowed_inner_variants: None,
         };
 
         {
@@ -1198,6 +1316,7 @@ mod tests {
                 per_sender_rps: 0.0,
                 per_sender_burst: 0,
                 audit_log: Some(audit_file.clone()),
+                allowed_inner_variants: None,
             },
         )
         .unwrap();
@@ -1214,6 +1333,202 @@ mod tests {
         let entry: serde_json::Value =
             serde_json::from_str(contents.lines().next().unwrap()).unwrap();
         assert_eq!(entry["call_data_hash"], expected);
+    }
+
+    // ─── Day 10: per-paymaster inner-tx whitelist tests ──────────────
+
+    fn permissive_with_inner_whitelist(
+        tmp: &TempDir,
+        chain_id: &str,
+        allowed: Option<Vec<InnerVariant>>,
+    ) -> Paymaster {
+        let kp = HybridKeypair::generate();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        Paymaster::new_with_config(
+            kp,
+            chain_id,
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: None,
+                allowed_inner_variants: allowed,
+            },
+        )
+        .unwrap()
+    }
+
+    fn user_op_wrapping(
+        inner: Transaction,
+    ) -> UserOpTx {
+        UserOpTx {
+            sender: [1u8; 32],
+            nonce: 0,
+            call_data: serde_json::to_vec(&inner).unwrap(),
+            call_gas_limit: 50_000,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        }
+    }
+
+    #[test]
+    fn inner_whitelist_default_none_accepts_any_inner_variant() {
+        let tmp = TempDir::new().unwrap();
+        let pm = permissive_with_inner_whitelist(&tmp, "test", None);
+        for inner in [
+            Transaction::Transfer(evaporchain_types::TransferTx {
+                from: [1u8; 32],
+                to: [2u8; 32],
+                amount: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            }),
+            Transaction::CallScript(evaporchain_types::CallScriptTx {
+                caller: [1u8; 32],
+                contract_id: 1,
+                method: "noop".into(),
+                args: "[]".into(),
+                epoch: 0,
+                signature: None,
+                public_key: None,
+            }),
+            Transaction::CallContract(evaporchain_types::CallContractTx {
+                caller: [1u8; 32],
+                contract_id: 1,
+                method: "noop".into(),
+                args: "{}".into(),
+                epoch: 0,
+                signature: None,
+                public_key: None,
+            }),
+        ] {
+            let mut uo = user_op_wrapping(inner);
+            pm.sponsor(&mut uo).expect("None whitelist allows everything");
+        }
+    }
+
+    #[test]
+    fn inner_whitelist_transfer_only_rejects_call_script() {
+        let tmp = TempDir::new().unwrap();
+        let pm = permissive_with_inner_whitelist(
+            &tmp,
+            "test",
+            Some(vec![InnerVariant::Transfer]),
+        );
+        // Transfer accepted.
+        let mut transfer_uo = user_op_wrapping(Transaction::Transfer(
+            evaporchain_types::TransferTx {
+                from: [1u8; 32],
+                to: [2u8; 32],
+                amount: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            },
+        ));
+        pm.sponsor(&mut transfer_uo).expect("Transfer in whitelist");
+
+        // CallScript rejected even though it's in the chain's V1 set.
+        let mut script_uo = user_op_wrapping(Transaction::CallScript(
+            evaporchain_types::CallScriptTx {
+                caller: [1u8; 32],
+                contract_id: 1,
+                method: "noop".into(),
+                args: "[]".into(),
+                epoch: 0,
+                signature: None,
+                public_key: None,
+            },
+        ));
+        let r = pm.sponsor(&mut script_uo);
+        assert!(
+            matches!(
+                r,
+                Err(PaymasterError::InnerVariantNotAllowed { ref variant })
+                    if variant == "call_script"
+            ),
+            "got: {r:?}"
+        );
+        // Counter NOT advanced for the rejected request.
+        assert_eq!(pm.next_paymaster_nonce(), 1);
+    }
+
+    #[test]
+    fn inner_whitelist_empty_call_data_always_allowed() {
+        // Even an empty (i.e., maximally restrictive) whitelist
+        // accepts gas-only sponsorships — no inner intent to classify.
+        let tmp = TempDir::new().unwrap();
+        let pm = permissive_with_inner_whitelist(&tmp, "test", Some(vec![]));
+        let mut uo = blank_user_op();
+        // call_data is `vec![]` from blank_user_op.
+        pm.sponsor(&mut uo).expect("empty call_data bypasses whitelist");
+    }
+
+    #[test]
+    fn inner_whitelist_rejects_non_chain_whitelisted_variant() {
+        // Chain rejects MultiSig as inner; paymaster surfaces this
+        // earlier via from_transaction returning None.
+        let tmp = TempDir::new().unwrap();
+        let pm = permissive_with_inner_whitelist(
+            &tmp,
+            "test",
+            Some(vec![InnerVariant::Transfer]),
+        );
+        let inner = Transaction::MultiSig(evaporchain_types::MultiSigTx {
+            multisig_address: [1u8; 32],
+            threshold: 1,
+            signers: vec![],
+            inner_tx_bytes: vec![],
+            signatures: vec![],
+            public_keys: vec![],
+            nonce: 0,
+        });
+        let mut uo = user_op_wrapping(inner);
+        let r = pm.sponsor(&mut uo);
+        assert!(matches!(
+            r,
+            Err(PaymasterError::InnerVariantNotAllowed { .. })
+        ));
+    }
+
+    #[test]
+    fn inner_whitelist_surfaces_decode_error() {
+        // call_data that's not a JSON Transaction → CallDataDecode.
+        // Without `allowed_inner_variants` set, the paymaster doesn't
+        // decode and the chain handles it later. With the whitelist
+        // active, we decode here and reject early.
+        let tmp = TempDir::new().unwrap();
+        let pm = permissive_with_inner_whitelist(
+            &tmp,
+            "test",
+            Some(vec![InnerVariant::Transfer]),
+        );
+        let mut uo = blank_user_op();
+        uo.call_data = b"not-json".to_vec();
+        let r = pm.sponsor(&mut uo);
+        assert!(matches!(r, Err(PaymasterError::CallDataDecode(_))));
+    }
+
+    #[test]
+    fn inner_variant_parse_cli_round_trips() {
+        for v in [
+            InnerVariant::Transfer,
+            InnerVariant::CallScript,
+            InnerVariant::CallContract,
+        ] {
+            assert_eq!(InnerVariant::parse_cli(v.as_str()), Some(v));
+        }
+        assert_eq!(InnerVariant::parse_cli("Transfer"), None); // case-sensitive
+        assert_eq!(InnerVariant::parse_cli("create_object"), None);
     }
 
     // ─── Day 9: metrics tests ─────────────────────────────────────────
@@ -1245,6 +1560,7 @@ mod tests {
                 per_sender_rps: 0.000_001,
                 per_sender_burst: 1,
                 audit_log: None,
+                allowed_inner_variants: None,
             },
         )
         .unwrap();
@@ -1341,6 +1657,7 @@ mod tests {
                 per_sender_rps: 0.0,
                 per_sender_burst: 0,
                 audit_log: None,
+                allowed_inner_variants: None,
             },
         )
         .unwrap();
@@ -1363,6 +1680,7 @@ mod tests {
                 per_sender_rps: 0.0,
                 per_sender_burst: 1,
                 audit_log: None,
+                allowed_inner_variants: None,
             },
         )
         .unwrap();

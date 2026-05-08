@@ -15,8 +15,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use evaporchain_paymaster::{
-    generate_keypair_to_file, load_keypair_from_file, Paymaster, PaymasterConfig,
-    PaymasterInfo, SponsorshipRequest, SponsorshipResponse,
+    generate_keypair_to_file, load_keypair_from_file, InnerVariant, Paymaster,
+    PaymasterConfig, PaymasterInfo, SponsorshipRequest, SponsorshipResponse,
 };
 use tracing::{error, info};
 
@@ -73,6 +73,17 @@ struct Args {
     /// is disabled.
     #[arg(long)]
     audit_log: Option<PathBuf>,
+
+    /// Operator-side inner-tx whitelist (Day 10). Comma-separated
+    /// list of inner variants this paymaster will sponsor. Valid
+    /// values: `transfer`, `call_script`, `call_contract`. Omitted
+    /// means trust the chain (sponsor any chain-accepted variant).
+    /// Example: `--allow-inner=transfer` for a transfer-only
+    /// paymaster; `--allow-inner=transfer,call_script` to allow
+    /// both. Empty `call_data` (gas-only sponsorship) is always
+    /// allowed.
+    #[arg(long, value_delimiter = ',')]
+    allow_inner: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -104,11 +115,27 @@ async fn main() -> anyhow::Result<()> {
         );
     };
 
+    let allowed_inner_variants = if args.allow_inner.is_empty() {
+        None
+    } else {
+        let mut parsed = Vec::with_capacity(args.allow_inner.len());
+        for raw in &args.allow_inner {
+            let v = InnerVariant::parse_cli(raw.trim()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--allow-inner: unknown inner variant '{raw}' \
+                     (valid: transfer, call_script, call_contract)"
+                )
+            })?;
+            parsed.push(v);
+        }
+        Some(parsed)
+    };
     let config = PaymasterConfig {
         require_user_sig: !args.disable_user_sig_check,
         per_sender_rps: args.per_sender_rps,
         per_sender_burst: args.per_sender_burst,
         audit_log: args.audit_log.clone(),
+        allowed_inner_variants,
     };
     let paymaster = Paymaster::new_with_config(
         keypair,
