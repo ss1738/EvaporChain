@@ -329,3 +329,103 @@ This doc is purely: how do we mechanically verify the chain accepts multi-token-
 - ⚪ Mainnet ceremony approaches — verify all 6 layers green before genesis
 
 Until then, this doc sits next to `MULTI_TOKEN_GAS_OPTIONS.md` as the verification half of the multi-token-gas decision package.
+
+---
+
+## 9. What tokens do we use? (mock vs real — concrete cost answer)
+
+This question comes up every time someone reads the plan: *"to verify multi-token gas, do we need to buy actual ETH or USDC?"* The answer is **no — every layer of verification uses synthetic tokens. Zero real money required until mainnet launch with actual users.**
+
+### Three categories of tokens you'll see in verification
+
+| Category | What it is | Where it lives | Cost |
+|---|---|---|---|
+| **Synthetic on EvaporChain** | Tokens deployed via `DecayingToken` contract template, given symbol names like "USDC", "ETH" | EvaporChain token store (`/api/tokens`) | $0 |
+| **Testnet on other chains** | Sepolia ETH, Solana devnet SOL, etc. | External chain testnets | $0 (faucets free) |
+| **Real mainnet tokens** | Actual ETH, USDC, etc. | External chain mainnets | only used at production launch |
+
+**For every layer of verification (1-6), the synthetic-on-EvaporChain category is sufficient.** The chain's accounting code doesn't care whether "USDC" represents real US-dollar reserves or a number in a hashmap. It only cares about its own internal arithmetic.
+
+### Why synthetic is sufficient
+
+EvaporChain's gas-routing and paymaster code touches:
+
+```
+- a Transaction's `gas_token` field (just a u64 or symbol string)
+- a paymaster account's EVP balance (deducted)
+- a token-store balance for the user's payment-token (deducted)
+- a paymaster's token-store balance (credited)
+```
+
+None of these reach outside EvaporChain. The chain doesn't query Ethereum's mainnet for "is this real USDC?" It just trusts its own internal token-store accounting. So testing this logic with a synthetic "USDC" token (symbol set to "USDC", deployer arbitrary, supply arbitrary) exercises exactly the same code paths as real USDC would.
+
+The current cluster ALREADY has 3 synthetic tokens deployed: **EVAP** (the chain's native), **FLUX** (5,000-half-life test token), **HEAT** (100-half-life dying token). These are the proof-by-example: synthetic tokens on EvaporChain work just like real tokens for verification purposes.
+
+### Per-layer token recipe
+
+| Layer | Tokens used | How sourced |
+|---|---|---|
+| **1 — Unit tests** | None (just balance numbers in mocks) | Mock structs, no chain |
+| **2 — Integration tests** | In-process token-store entries | Constructed in test fixtures |
+| **3 — Single-node smoke** | Synthetic "mock-USDC" deployed via `POST /api/tx/deploy-contract` template=`DecayingToken` | One curl call before the smoke test |
+| **4 — Multi-node BFT smoke** | Same synthetic tokens, replicated across cluster | Deploy once, all 5 nodes see it |
+| **5 — Adversarial scenarios** | Same synthetic tokens; price oracles mocked via existing `MockOracleFeed` | Mock |
+| **6 — Production observability** | Same synthetic tokens + real metrics | Same |
+
+### When (if ever) real tokens are needed
+
+| Use case | What's actually required |
+|---|---|
+| Verify our cross-chain bridge to Ethereum | **Sepolia testnet ETH** (Ethereum's testnet). Free from `sepoliafaucet.com`. Real testnet, no real money. |
+| Verify our oracle integration with Pyth | Pyth's testnet feeds. Free, public. |
+| Verify our oracle integration with Chainlink | Chainlink's testnet feeds. Free, public. |
+| Mainnet launch | Real ETH / USDC at the moment users start interacting. By then the chain has already passed every verification layer. The "real money" enters via real users, not the dev team's wallet. |
+
+**At no point in development or verification do we need to buy real ETH or USDC with our own money.** Every external-chain integration has a free testnet equivalent. Sepolia ETH has been around since 2022 and is the standard test path for any Ethereum-connected feature.
+
+### Concrete recipe — deploy a "mock-USDC" on EvaporChain in 30 seconds
+
+```bash
+# Deploy a synthetic USDC-like token (this works TODAY on the running cluster):
+curl -s -X POST http://100.113.253.72:8081/api/token/deploy \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "name": "Mock USDC",
+    "symbol": "USDC",
+    "total_supply": 1000000,
+    "decay_half_life": 1000000,
+    "deployer": "0x0100000000000000000000000000000000000000000000000000000000000000"
+  }'
+
+# Confirm it's there:
+curl -s http://100.113.253.72:8081/api/tokens | python3 -m json.tool
+
+# Deploy the same way for "ETH":
+curl -s -X POST http://100.113.253.72:8081/api/token/deploy \
+  -d '{"name": "Mock ETH", "symbol": "ETH", "total_supply": 100000, "decay_half_life": 1000000, "deployer": "..."}'
+```
+
+The chain has no way to distinguish this synthetic USDC from a future bridged-real-USDC. Its logic is identical. **The cost is `$0` and the verification is complete.**
+
+### The exception that proves the rule
+
+If you ever DO want to test against real Ethereum mainnet (rare — only for end-stage pre-launch sanity checks), the standard approach is:
+
+1. Move ~$50 worth of ETH onto Sepolia testnet first via a bridge (still free; you bridge testnet ETH from another chain's testnet).
+2. Run the same verification recipe against Sepolia.
+3. Only after Sepolia passes do you consider mainnet — and even then, you typically use a small test allocation ($10-20 worth) just to confirm the bridge mainnet-side accepts your traffic.
+
+That ~$10-20 pre-launch sanity check is the **only** real-token expense in the entire multi-token gas lifecycle. Not a monthly cost. Not even a per-feature cost. A one-time pre-mainnet validation.
+
+### Summary
+
+| Question | Answer |
+|---|---|
+| Do we buy real ETH for verification? | **No.** Synthetic tokens on EvaporChain handle layers 1-6. |
+| Do we buy real USDC? | **No.** Same. |
+| Do we use testnet ETH (Sepolia)? | **Only for cross-chain bridge tests.** Free from faucets. |
+| What about the mainnet launch itself? | **Real users bring real tokens.** Not us. |
+| Total real-token cost for full multi-token gas verification? | **$0 during verification.** Maybe $10-20 one-time pre-mainnet sanity check, optional. |
+
+The mechanism + concept verification IS the verification. Real tokens prove nothing about your code that synthetic tokens don't already prove. Buying tokens for verification is a category error — the chain doesn't see "real" vs "synthetic" tokens; it sees its own internal accounting.
