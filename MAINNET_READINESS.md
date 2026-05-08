@@ -125,7 +125,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T1.13 | Promote conservation audit gating → mandatory | 🔴 BLOCKED on T0.1 | CONSENSUS |
 | T1.14 | Phase 2 round-trip test (proposer-stamp == validator-apply) | ✅ DONE (9191e87) — 3 tests appended end-of-file; build verification deferred | CONSENSUS |
 | T1.15 | Paymaster Finding 1 — per-key in-flight locking | 🟡 OPEN | PAYMASTER |
-| T1.16 | Internal audit findings reconciliation sweep | 🟡 OPEN | AUDIT-SWEEP |
+| T1.16 | Internal audit findings reconciliation sweep | 🟢 CLAIMED by Opus 4.7 @ 2026-05-09T23:10Z · base: 83d6705 | AUDIT-SWEEP |
 | T1.17 | BLS key rotation under live cluster conditions | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.18 | Validator-key passphrase migration on live nodes | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.19 | EVPL plaintext key migration on live nodes | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
@@ -644,4 +644,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-09T22:48Z] Opus 4.7  · MAINNET_READINESS.md created · base: 179f18b
 [2026-05-09T22:55Z] Opus 4.7  · T1.14 claimed · base: fb49762
 [2026-05-09T23:05Z] Opus 4.7  · T1.14 ✅ DONE · ship: 9191e87
+[2026-05-09T23:10Z] Opus 4.7  · T1.16 claimed · base: 83d6705
 ```
