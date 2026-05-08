@@ -59,6 +59,10 @@ StandardError=journal
 # triggered downstream doesn't fail with `cargo: command not found`.
 Environment="PATH={{HOME}}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="LAUNCHED_BY_SUPERVISOR=1"
+# Admin endpoints (/api/admin/*) gated by this key. Cluster-soak shared
+# secret — same value on every validator so the operator can reach the
+# admin surface from a single curl. Rotate before any mainnet exposure.
+Environment="EVAPORCHAIN_ADMIN_KEY=cluster-soak-2026-05-admin-recovery-key"
 
 [Install]
 WantedBy=multi-user.target

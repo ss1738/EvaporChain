@@ -72,6 +72,15 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>LAUNCHED_BY_SUPERVISOR</key>
         <string>1</string>
+        <!--
+            Admin endpoints (`/api/admin/*`) gated by this key. Cluster-soak
+            shared secret — same value on every validator so the operator can
+            reach the admin surface from a single curl. Rotate before any
+            mainnet exposure. The fail-closed behaviour at api.rs:1214 means
+            unsetting this disables the admin endpoints entirely.
+        -->
+        <key>EVAPORCHAIN_ADMIN_KEY</key>
+        <string>cluster-soak-2026-05-admin-recovery-key</string>
     </dict>
 </dict>
 </plist>
