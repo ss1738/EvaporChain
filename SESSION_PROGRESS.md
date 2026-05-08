@@ -48,6 +48,39 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 — Phase 2 post_state_root proposer fill wired
+
+**Focus:** Wire Phase 2 of POST_EXEC_STATE_VERIFICATION_PLAN.md — speculative execute in `create_proposal` to stamp `block.post_state_root` before broadcast.
+
+**Commits shipped:** 1 (`af6876d`).
+
+**Deliverables:**
+- `create_proposal` in `tendermint.rs` now does clone-based simulate_execute: snapshot executor → `begin_batch` → `execute_block` → `rollback_batch` → `restore_from_simulation` → stamp field. On exec error field stays `None`.
+- `POST_EXEC_STATE_VERIFICATION_PLAN.md` status updated: Phases 1–3 DONE, Phase 4 pending governance soak.
+- `cargo test -p evaporchain-consensus` on Mini 1: 10 passed / 0 failed.
+
+**Empirical results:**
+- Clean compile + test pass on Mini 1 (commit `af6876d` pulled and built in 0.11s from cache).
+
+**Decisions made:**
+- Used option (b) clone-based simulate_execute (ParallelExecutorSnapshot) as designed in `42a318e`. No protocol change needed for Phase 2.
+- Phase 4 (enforce-mode NIL prevote) remains gated on governance soak window — no change to default behaviour.
+
+**What's next:**
+1. Live cluster smoke: run 3-Mini cluster with `--block-interval-ms 2000`, observe Phase 3 `WARN` logs absent (clean soak means Phase 4 can be considered).
+2. Wallet chain-ID signing (uncommitted changes in `wallet/src/pipeline.rs` + `signer.rs` need a compile + test pass).
+3. `DOCTRINE_PUNCH_LIST.md` Layer 2 items — governance ladder / flag flip.
+
+**Blockers / open questions:**
+- Mini 1 had uncommitted wallet changes (`cli.rs`, `paymaster.rs`) that were stashed for this pull; need to reconcile with MacBook's `pipeline.rs`/`signer.rs` wallet changes before committing wallet work.
+
+**Cross-references:**
+- `af6876d` — Phase 2 wiring
+- `42a318e` — ParallelExecutorSnapshot scaffold (prior commit)
+- `POST_EXEC_STATE_VERIFICATION_PLAN.md`
+
+---
+
 ## 2026-05-09 (late) — §2.2 doc-drift audit + punch-list closure
 
 **Focus:** verify actual codebase state vs session-summary claims; close doc-drift in punch list and relayer.

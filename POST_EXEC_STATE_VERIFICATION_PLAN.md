@@ -1,7 +1,7 @@
 # Post-Execution State Root Verification — Design Plan
 
-**Status:** Draft, awaiting review.
-**Date:** 2026-05-07.
+**Status:** Phases 1–3 DONE. Phase 4 (enforce-mode) pending governance soak window.
+**Date:** 2026-05-07. **Last updated:** 2026-05-08 (Phase 2 wired, `af6876d`).
 **Trigger:** Today's M1 incident (cluster soak h≈15872) revealed that EvaporChain's consensus does not commit to the post-execution state root. A node with corrupt local state silently forks while only its votes are rejected by quorum. That's a doctrine-level safety gap — the chain claims BFT safety but cannot detect or punish state divergence between honest-protocol nodes.
 
 ## What's actually wrong today
@@ -59,11 +59,11 @@ Keep the current proposal flow as-is. After a block commits via the existing pat
 
 ## Implementation phases
 
-1. **Phase 1 — wire field.** Add `post_state_root: Option<[u8; 32]>` to `Block`, `#[serde(default, skip_serializing_if = "Option::is_none")]`. Bit-compat regression test. Existing blocks without the field deserialize with `None`.
-2. **Phase 2 — proposer fill.** Local execution before proposal broadcast. The proposer already runs `executor.execute_block` once on its own block before sending — wire that result's `state_root` into `post_state_root`. Don't change `block.state_root` semantics yet (still parent-state). Test: proposer-built blocks have `Some(...)`, sync-bootstrapped blocks reaching old paths have `None`.
-3. **Phase 3 — warn-mode validator check.** In `apply_block` and `execute_block`, after local executor returns Ok, if `block.post_state_root` is `Some` and != `execution.state_root`, log a structured `WARN` with both roots, the height, and the proposer id. Do NOT reject. Behind `post_state_verify_mode != "off"`.
-4. **Phase 4 — enforce-mode prevote rejection.** When mode is `enforce`, mismatch causes the validator to prevote NIL for this round. Round timeout advances; next proposer's block gets the same check. Behind a fork-epoch governance lever.
-5. **Phase 5 — block-hash inclusion.** Roll `post_state_root` into the bytes hashed for `block_hash`. Behind the same fork-epoch gate as Phase 4 — once flipped, the field is consensus-load-bearing. Pre-fork blocks keep computing `block_hash` with the legacy formula (fold them into the formula via `if block.post_state_root.is_some() { include } else { skip }`).
+1. **Phase 1 — wire field.** ✅ DONE. `post_state_root: Option<[u8; 32]>` in `Block`.
+2. **Phase 2 — proposer fill.** ✅ DONE (`af6876d` 2026-05-08). Clone-based simulate_execute in `create_proposal`: snapshot executor → `begin_batch` → `execute_block` → `rollback_batch` → `restore_from_simulation` → stamp field. Failures leave field `None`.
+3. **Phase 3 — warn-mode validator check.** ✅ DONE. `apply_block` line 6089: logs `WARN` on mismatch; no-op when field is `None`. Bit-compatible.
+4. **Phase 4 — enforce-mode prevote rejection.** Pending governance soak. Validators prevote NIL on mismatch. Behind fork-epoch lever — flip only after Phase 3 soak window is clean.
+5. **Phase 5 — block-hash inclusion.** Pending Phase 4. Roll `post_state_root` into `block_hash` bytes. Same fork-epoch gate. Pre-fork blocks use legacy formula.
 
 ## Backwards-compatibility / fork-epoch coordination
 
