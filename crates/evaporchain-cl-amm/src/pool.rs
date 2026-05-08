@@ -246,7 +246,7 @@ impl SinghPool {
             return Err(PoolError::Empty);
         }
         let amount_in_after_fee = amount_in
-            .checked_mul((10_000u128 - self.fee_bp as u128))
+            .checked_mul(10_000u128 - self.fee_bp as u128)
             .ok_or(PoolError::Overflow)?
             / 10_000;
         if amount_in_after_fee == 0 {
@@ -284,7 +284,7 @@ impl SinghPool {
             return Err(PoolError::Empty);
         }
         let amount_in_after_fee = amount_in
-            .checked_mul((10_000u128 - self.fee_bp as u128))
+            .checked_mul(10_000u128 - self.fee_bp as u128)
             .ok_or(PoolError::Overflow)?
             / 10_000;
         if amount_in_after_fee == 0 {

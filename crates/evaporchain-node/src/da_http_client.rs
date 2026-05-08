@@ -1,8 +1,17 @@
 //! HTTP-backed implementation of `evaporchain_da::CellSource`.
 //!
+//! Currently DORMANT — the module ships as recovered "stashed work"
+//! from commit `5aab187` but has no production wire-up yet. No call
+//! site in main.rs constructs `HttpCellSource`; the
+//! `LightClientSampler<S: CellSource>` consumer hasn't been integrated
+//! into the node binary's request-handling path. The
+//! `#[allow(dead_code)]` below silences the resulting warnings without
+//! deleting the work — re-activate when the sampler integration lands.
+//!
 //! Closes the second half of punch-list item #2 — the
 //! `LightClientSampler<S: CellSource>` abstraction in `evaporchain-da`
 //! takes a transport-free trait; this module is the production transport.
+#![allow(dead_code)]
 //!
 //! Talks to any node serving the `/api/da/cell/:block/:row/:col` endpoint
 //! (exposed at `evaporchain-node/src/api.rs:get_da_cell_sample`). A pool

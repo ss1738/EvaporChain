@@ -1852,7 +1852,13 @@ async fn cmd_testnet_up(dir: &str, split_logs: bool) -> Result<()> {
     Ok(())
 }
 
+// `epoch` and `peer_count` are deserialised from the chain API but
+// not currently read by the CLI's health output; `#[allow(dead_code)]`
+// preserves the wire-format compatibility (so a JSON response carrying
+// these fields keeps deserialising cleanly) while silencing the
+// unread-field lint.
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct HealthSnap {
     block_height: u64,
     epoch: u64,

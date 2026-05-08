@@ -247,6 +247,11 @@ fn nibble_hex(n: u8) -> char {
     }
 }
 
+// Used by `fetch_vk_bytes` (gated on `feature = "nova"`) and by the
+// test module. When `nova` is off and we're not building tests, both
+// functions appear dead; the gate below covers both consumers without
+// muting genuinely-dead-code regressions on the rest of the file.
+#[cfg(any(feature = "nova", test))]
 fn hex_to_bytes(s: &str) -> Result<Vec<u8>, &'static str> {
     let bytes = s.as_bytes();
     if bytes.len() % 2 != 0 {
@@ -261,6 +266,7 @@ fn hex_to_bytes(s: &str) -> Result<Vec<u8>, &'static str> {
     Ok(out)
 }
 
+#[cfg(any(feature = "nova", test))]
 fn hex_nibble(c: u8) -> Result<u8, &'static str> {
     match c {
         b'0'..=b'9' => Ok(c - b'0'),
