@@ -10295,6 +10295,215 @@ mod tests {
         assert!(due_b.is_empty(), "disputed observation must not settle");
     }
 
+    /// Cross-layer integration test — closes the gap between the
+    /// existing consensus-only Crooks-MEV test (above) and the
+    /// existing execution-only `test_refund_moves_balance_attacker_to_victim`
+    /// in evaporchain-execution. Drives a real sandwich attack
+    /// through the FULL pipeline:
+    ///
+    ///   1. Pre-fund attacker, victim, target accounts in StateDB.
+    ///   2. `apply_block(sandwich)` — executes balance changes (transfer
+    ///      semantics) AND records observations (consensus on_block_committed).
+    ///   3. Verify the consensus layer detected the sandwich and the
+    ///      executor moved balances per the transfer txs.
+    ///   4. Past grace, `due_refund_txs` returns the Refund tx.
+    ///   5. `apply_block(settlement)` — executes the Refund (attacker
+    ///      debited, victim credited).
+    ///   6. Assert: attacker balance dropped FURTHER than the sandwich
+    ///      cost, victim balance recovered. End-to-end economic punishment.
+    ///
+    /// This is the canonical "Crooks-MEV refund punishes the attacker"
+    /// demo. Previously the consensus layer's pipeline test handcrafted
+    /// a Refund tx and checked validation; the execution layer's test
+    /// handcrafted a Refund and checked balance movement. Neither
+    /// connected the actual MEV detection to actual balance change. This
+    /// commit ties them.
+    #[test]
+    fn test_crooks_mev_end_to_end_attacker_economically_punished() {
+        use evaporchain_state::db::InMemoryStateDB;
+        use evaporchain_types::{Block, TransferTx};
+
+        // Local helpers — mirror the per-test helpers used elsewhere
+        // in this file so the harness stays self-contained.
+        fn addr_local(seed: u8) -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[0] = seed;
+            a
+        }
+        fn fund(db: &mut InMemoryStateDB, byte: u8, balance: u64) {
+            db.put_account(evaporchain_types::Account {
+                address: addr_local(byte),
+                balance,
+                nonce: 0,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 0,
+                vesting: None,
+            });
+        }
+        fn transfer_local(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+            Transaction::Transfer(TransferTx {
+                from: addr_local(from),
+                to: addr_local(to),
+                amount,
+                nonce,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })
+        }
+        fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: txs,
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+                post_state_root: None,
+            }
+        }
+
+        // ─── Setup ──────────────────────────────────────────────────
+        // Attacker (0xAA) sandwiches the victim (0xBB)'s transfer to
+        // target (0x99). Sandwich semantics: attacker pre-trade,
+        // victim trade, attacker post-trade — same target each time.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 0xAA, 10_000); // attacker
+        fund(&mut db, 0xBB, 1_000);  // victim
+        fund(&mut db, 0x99, 0);      // target
+
+        // ─── Phase 1: sandwich block ────────────────────────────────
+        // Three transfers all targeting 0x99:
+        //   - tx0: 0xAA → 0x99 (50)   — attacker front-run
+        //   - tx1: 0xBB → 0x99 (100)  — victim's real trade
+        //   - tx2: 0xAA → 0x99 (50)   — attacker back-run
+        let sandwich = make_block_local(
+            1,
+            vec![
+                transfer_local(0xAA, 0x99, 50, 0),
+                transfer_local(0xBB, 0x99, 100, 0),
+                transfer_local(0xAA, 0x99, 50, 1),
+            ],
+        );
+
+        // apply_block runs execute_block (balance changes) AND
+        // on_block_committed (observation recording) — production wrapper.
+        tc.apply_block(&mut db, &sandwich)
+            .expect("sandwich block must apply cleanly");
+
+        // Post-sandwich balances reflect the 3 transfers (no refund yet).
+        let attacker_after_sandwich = db.get_account(&addr_local(0xAA)).unwrap().balance;
+        let victim_after_sandwich = db.get_account(&addr_local(0xBB)).unwrap().balance;
+        let target_after_sandwich = db.get_account(&addr_local(0x99)).unwrap().balance;
+        // Each transfer also burns gas; assert direction, not exact values.
+        assert!(
+            attacker_after_sandwich < 10_000,
+            "attacker balance must have dropped by the 2 front+back transfers + gas"
+        );
+        assert!(
+            victim_after_sandwich < 1_000,
+            "victim balance must have dropped by the 1 victim transfer + gas"
+        );
+        assert!(
+            target_after_sandwich >= 200,
+            "target balance must have received the 3 transfers (50 + 100 + 50 = 200)"
+        );
+
+        // Consensus detected the sandwich.
+        assert_eq!(
+            tc.mev_observations().len(),
+            1,
+            "scan_block must detect exactly one sandwich pattern"
+        );
+        let obs = &tc.mev_observations()[0];
+        assert_eq!(obs.attacker, addr_local(0xAA));
+        assert_eq!(obs.victim, addr_local(0xBB));
+        assert!(
+            obs.refund_amount.unwrap_or(0) > 0,
+            "refund_amount must be positive after Phase 2 computation"
+        );
+
+        // ─── Phase 2: enforce mode + due_refund_txs past grace ──────
+        tc.governance_set_param("crooks_mev_settlement_mode", "enforce")
+            .expect("enforce is allowlisted");
+        // Default crooks_mev_grace_period_blocks = 5.  Query past grace.
+        let due = tc.due_refund_txs(10);
+        assert_eq!(due.len(), 1, "exactly one refund tx due past grace");
+        let refund_tx = due.into_iter().next().unwrap();
+        let refund_amount = match &refund_tx {
+            Transaction::Refund(r) => {
+                assert_eq!(r.attacker, addr_local(0xAA));
+                assert_eq!(r.victim, addr_local(0xBB));
+                r.amount
+            }
+            _ => unreachable!("due_refund_txs must emit Refund variants"),
+        };
+        assert!(
+            refund_amount > 0,
+            "refund amount must be positive — Crooks-MEV is supposed to punish"
+        );
+
+        // ─── Phase 3: settlement block applies the refund ───────────
+        let settlement = make_block_local(10, vec![refund_tx]);
+        tc.apply_block(&mut db, &settlement)
+            .expect("settlement block with valid refund must apply under enforce mode");
+
+        // ─── Assertions: attacker debited, victim credited ──────────
+        let attacker_final = db.get_account(&addr_local(0xAA)).unwrap().balance;
+        let victim_final = db.get_account(&addr_local(0xBB)).unwrap().balance;
+        assert_eq!(
+            attacker_final,
+            attacker_after_sandwich.saturating_sub(refund_amount),
+            "attacker balance must have dropped by exactly the refund amount"
+        );
+        assert_eq!(
+            victim_final,
+            victim_after_sandwich.saturating_add(refund_amount),
+            "victim balance must have been credited by exactly the refund amount"
+        );
+        // The economic story: attacker is now strictly worse off than
+        // before the sandwich (their gain from the sandwich didn't
+        // recover via price impact in this synthetic harness, AND
+        // they paid the refund). This is the load-bearing claim:
+        // **MEV extraction has been turned from +EV to -EV by the
+        // chain's design.**
+        assert!(
+            attacker_final < attacker_after_sandwich,
+            "attacker must end up strictly worse off after the refund (start={}, after_sandwich={}, final={})",
+            10_000,
+            attacker_after_sandwich,
+            attacker_final,
+        );
+
+        // Replay protection: same observation cannot be settled again.
+        let due_after = tc.due_refund_txs(20);
+        assert!(
+            due_after.is_empty(),
+            "settled refund must not re-emit on subsequent due_refund_txs calls"
+        );
+    }
+
     /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — operator
     /// dispute flow: drive a sandwich, dispute the observation
     /// within grace, confirm `due_refund_txs` no longer emits the
