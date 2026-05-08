@@ -92,6 +92,21 @@ The wallet now catches this and reports `REJECTED at block #N (failed at executi
 
 **Wallet UX impact:** the wallet's two-phase await_confirmation (commit `72f7b49`) catches this correctly — first poll sees the executor's `tx.status = "rejected"` and reports `REJECTED at block #N (failed at execution)` immediately. No more silent timeouts.
 
+**Closure status (2026-05-08): FIXED across all user-facing write endpoints with a sender:**
+
+| Endpoint | Pre-check | Commit |
+|---|---|---|
+| `/api/tx/transfer` | gas-aware | `8c59b8f` |
+| `/api/tx/delegate` | gas-aware | `8c59b8f` |
+| `/api/tx/create-object` | gas + storage_deposit | `b54ef9a` |
+| `/api/tx/deploy_contract` | gas + storage_deposit | `6c830a4` |
+| `/api/tx/deploy_script` | gas + storage_deposit | `6c830a4` |
+| `/api/tx/refresh` | N/A — `Transaction::sender()` returns `None` for refresh; no balance debit, no bug | — |
+
+Other endpoints exist (`/api/tx/validator_stake`, `/api/tx/shield`, `/api/tx/undelegate`, governance, multisig, etc) but are lower-priority (less common user-facing paths) — same pre-check pattern applies if/when needed.
+
+The originally-mis-framed "reorg-rejection finality instability" of finding #1 — diagnosed via code audit at `9474891` to be the missing-gas pre-check in `api.rs:10038` — is now closed at every endpoint where the bug can occur. Sister-session can deploy the new chain binary at any cadence; the wallet's runtime UX (commit `72f7b49`) correctly reports the post-execution rejection until the binary catches up, then becomes mostly cosmetic for these paths.
+
 ---
 
 ## 2. Tx-state index retention window
