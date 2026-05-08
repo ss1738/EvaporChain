@@ -163,6 +163,48 @@ pub fn build_unsigned_user_op(
     })
 }
 
+/// Stamp the user's (sender's) signature on a `UserOpTx`. This is the
+/// authorisation half of a sponsored UserOp — the chain's
+/// `verify_tx_signature` checks this signature against
+/// `Transaction::UserOp(user_op).signing_message(chain_id)` (which
+/// prefixes the tx body with the chain_id length + chain_id bytes for
+/// EIP-155-style cross-chain replay protection).
+///
+/// Order matters: stamp the user signature **before** sending to the
+/// paymaster, OR after — both work. The user's signature covers
+/// `signable_bytes`, which includes `paymaster` (when set) but not
+/// `paymaster_nonce` / `paymaster_signature` / `paymaster_public_key`,
+/// so the paymaster can fill those in without invalidating the user
+/// sig. The paymaster signature, conversely, binds
+/// `blake3(call_data)` and is stamped by the paymaster service —
+/// neither side can tamper with the other's commitments.
+///
+/// Why this lives in `wallet::paymaster` rather than `wallet::signer`:
+/// the existing `WalletSigner::sign_transaction` signs over
+/// `signable_bytes` only (no chain_id prefix) — a pre-existing
+/// wallet bug that's harmless when the chain runs with
+/// `verify_signatures = false`. Sponsored UserOps go to a
+/// `verify_signatures = true` path on V1 mainnet, so we need a
+/// chain-id-aware signer specifically here. The wallet's general
+/// chain-id awareness is its own follow-up.
+pub fn sign_user_op_as_sender(
+    user_op: &mut UserOpTx,
+    chain_id: &str,
+    signer_keypair: &evaporchain_crypto::signatures::HybridKeypair,
+) {
+    use evaporchain_crypto::signatures::Signer as _;
+    // Build the canonical message the chain will verify against. We
+    // construct a `Transaction::UserOp(user_op.clone())` so the
+    // existing `signing_message` routes through the right enum arm
+    // and produces the canonical `0x12` type-tagged signable bytes.
+    let canonical_tx = Transaction::UserOp(user_op.clone());
+    let msg = canonical_tx.signing_message(chain_id);
+    let sig = signer_keypair.sign(&msg);
+    let pk = signer_keypair.public_key_bytes();
+    user_op.signature = Some(sig);
+    user_op.public_key = Some(pk);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +410,98 @@ mod tests {
             }
             _ => panic!("expected Transfer"),
         }
+    }
+
+    #[tokio::test]
+    async fn double_signed_user_op_satisfies_both_chain_checks() {
+        // Lock the doubly-signed flow:
+        //   1. Wallet picks the paymaster, builds half-formed UserOp
+        //      with paymaster + paymaster_nonce stamped (read from
+        //      /info), and the user's signature on the UserOp body.
+        //   2. POSTs to /sponsor; paymaster stamps its sponsorship sig
+        //      over the canonical sponsorship payload (paymaster_*
+        //      fields).
+        //   3. Returned UserOp has BOTH signatures. Each verifies
+        //      against its own canonical message:
+        //        - user sig verifies against
+        //          Transaction::UserOp.signing_message(chain_id)
+        //        - paymaster sig verifies against
+        //          UserOpTx::paymaster_sponsorship_payload(chain_id)
+        let chain_id = "evaporchain-mainnet";
+        let (client, pm_addr, _shutdown) = spawn_paymaster_for_test(chain_id).await;
+
+        // Wallet-side keypair (the user).
+        let user_kp = HybridKeypair::generate();
+        let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+
+        // Wallet reads paymaster info.
+        let info = client.info().await.unwrap();
+        assert_eq!(info.next_paymaster_nonce, 0);
+
+        // Wallet builds the UserOp with paymaster + paymaster_nonce
+        // pre-stamped (so the user-side signature commits to the
+        // chosen paymaster).
+        let inner = Transaction::Transfer(TransferTx {
+            from: sender,
+            to: [9u8; 32],
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let mut user_op = build_unsigned_user_op(sender, 0, &inner, 50_000).unwrap();
+        user_op.paymaster = Some(pm_addr);
+        user_op.paymaster_nonce = Some(info.next_paymaster_nonce);
+
+        // 1. User signs the UserOp body.
+        sign_user_op_as_sender(&mut user_op, chain_id, &user_kp);
+        assert!(user_op.signature.is_some());
+        assert!(user_op.public_key.is_some());
+
+        // 2. POST to /sponsor — paymaster stamps its sig over the
+        // sponsorship payload. The user-side fields are preserved.
+        let resp = client.sponsor(user_op).await.unwrap();
+        let returned = resp.user_op;
+        // User's signature still present — paymaster did not touch it.
+        assert!(returned.signature.is_some());
+        assert!(returned.public_key.is_some());
+        // Paymaster's sponsorship sig is now also present.
+        assert!(returned.paymaster_signature.is_some());
+        assert!(returned.paymaster_public_key.is_some());
+
+        // 3a. User sig verifies against Transaction::UserOp.signing_message.
+        let canonical_tx = Transaction::UserOp(returned.clone());
+        let user_msg = canonical_tx.signing_message(chain_id);
+        let user_sig = returned.signature.as_deref().unwrap();
+        let user_pk = returned.public_key.as_deref().unwrap();
+        assert!(
+            HybridVerifier::verify(&user_msg, user_sig, user_pk),
+            "user signature must verify under chain rules"
+        );
+        // Sender address must derive from user_pk (chain wires this in
+        // verify_tx_signature via the Transaction's `from` field; for
+        // UserOp the sender is committed in signable_bytes).
+        let derived_sender: AccountAddress = *blake3::hash(user_pk).as_bytes();
+        assert_eq!(derived_sender, sender);
+
+        // 3b. Paymaster sig verifies against the sponsorship payload.
+        let pm_payload = returned
+            .paymaster_sponsorship_payload(chain_id)
+            .expect("payload");
+        let pm_sig = returned.paymaster_signature.as_deref().unwrap();
+        let pm_pk = returned.paymaster_public_key.as_deref().unwrap();
+        assert!(
+            HybridVerifier::verify(&pm_payload, pm_sig, pm_pk),
+            "paymaster signature must verify under chain rules"
+        );
+        let derived_pm: AccountAddress = *blake3::hash(pm_pk).as_bytes();
+        assert_eq!(derived_pm, pm_addr);
+
+        // Paymaster-stamped paymaster commitment matches what the user
+        // signed over. Otherwise a malicious paymaster could redirect
+        // the user's intent.
+        assert_eq!(returned.paymaster, Some(pm_addr));
     }
 
     #[test]
