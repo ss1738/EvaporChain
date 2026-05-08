@@ -1,0 +1,23 @@
+[package]
+name = "evaporchain-eth-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "EvaporChain → Ethereum bridge: proof-builder, ABI encoders, and Solidity-mirror types. Pairs with the Foundry project at ethereum-bridge/contracts/. See ETHEREUM_BRIDGE_PLAN.md."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-crypto = { path = "../evaporchain-crypto" }
+evaporchain-consensus-types = { path = "../evaporchain-consensus-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+sha3 = "0.10"
+hex = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+bls12_381 = { version = "0.8", default-features = false, features = ["pairings", "alloc", "groups", "experimental"] }
+group = { version = "0.13", default-features = false, features = ["alloc"] }
+sha2_old_for_bls = { package = "sha2", version = "=0.9.9" }
+serde_json = { workspace = true }
