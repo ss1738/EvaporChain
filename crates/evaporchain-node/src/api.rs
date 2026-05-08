@@ -5495,15 +5495,11 @@ async fn get_pnt_is_spent(
     State(state): State<Arc<ApiState>>,
     Path(hex_str): Path<String>,
 ) -> Json<serde_json::Value> {
-    let n = match hex::decode(&hex_str) {
-        Ok(b) if b.len() == 32 => {
-            let mut a = [0u8; 32];
-            a.copy_from_slice(&b);
-            a
-        }
-        _ => {
+    let n = match parse_hex_address(&hex_str) {
+        Ok(a) => a,
+        Err(_) => {
             return Json(
-                serde_json::json!({"status":"error","detail":"path must be 64 hex chars (32 bytes)"}),
+                serde_json::json!({"status":"error","detail":"path must be 64 hex chars (32 bytes), with optional 0x prefix"}),
             )
         }
     };
