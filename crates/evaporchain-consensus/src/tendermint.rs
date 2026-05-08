@@ -636,14 +636,27 @@ pub struct ConsensusFourActState {
     /// `ParallelExecutor::last_conservation_audit`. None until first
     /// block; Some(true) = audit passed, Some(false) = violation.
     pub last_conservation_audit_ok: Option<bool>,
-    /// Number of blocks recorded in the parallel Light-Cone DAG.
-    /// Equal to committed-height count modulo genesis edges. Per
-    /// INVENTION_STACK.md §4.1 #1.
+    /// **Number of blocks currently retained in the Light-Cone DAG**, NOT
+    /// the chain's block height or committed-finality count. The DAG is
+    /// pruned via `LightCone::prune_before_epoch` (sliding-window
+    /// retention, see `evaporchain-light-cone/src/dag.rs:175`) to bound
+    /// memory, so this counter goes down when pruning fires at epoch
+    /// boundaries — it is **not monotonic**. Use the canonical
+    /// block-height endpoint for liveness probes; this field is
+    /// diagnostic of DAG retention only. Per INVENTION_STACK.md §4.1 #1.
     pub light_cone_block_count: usize,
     /// Number of energy-stamped nullifiers accumulated in the
     /// evaporation MMR (one per object that has transitioned
     /// Active → Grace → Ghost). Object-side counterpart to
     /// `eulogy_count` for the doctrine's "small deaths" act.
+    ///
+    /// **Append-only by design** — has no remove method (removing
+    /// would invalidate root hashes / nullifier proofs). After a
+    /// chain reorg that crosses an evaporation boundary, this
+    /// counter stays put while the corresponding `ghost_object_count`
+    /// (in `FourActSnapshot`, populated from `db.ghost_count()`)
+    /// drops. The drift is intentional: MMR is the cryptographic
+    /// commitment line; ghost set is the live-state mirror.
     pub evaporation_mmr_size: usize,
     /// Root of the evaporation nullifier MMR. None until the first
     /// object evaporates; mirrors `eulogy_trie_root`'s empty-state

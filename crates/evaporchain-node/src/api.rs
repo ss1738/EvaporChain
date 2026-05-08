@@ -209,17 +209,26 @@ pub struct FourActSnapshot {
     /// Genesis amendment hash that the chain's constitution proof
     /// bound to. Empty until genesis ceremony runs.
     pub genesis_amendment_hash: Option<String>,
-    /// Number of blocks recorded in the parallel Light-Cone DAG that
-    /// runs alongside Tendermint per INVENTION_STACK.md §4.1 #1.
+    /// **Number of blocks currently retained in the Light-Cone DAG** —
+    /// NOT chain block height. The DAG is sliding-window-pruned via
+    /// `LightCone::prune_before_epoch`, so this counter is non-monotonic;
+    /// it can decrease when pruning fires. Use the canonical block-height
+    /// endpoint for liveness probes. See `INVENTION_STACK.md §4.1 #1`.
     pub light_cone_block_count: usize,
     /// Number of objects that have evaporated (Active → Grace → Ghost).
     /// Object-side counterpart to `eulogy_count` (which is account-level)
     /// for the doctrine's "small deaths" act. Read live from
-    /// `StateDB::ghost_count()` at snapshot publish time.
+    /// `StateDB::ghost_count()` at snapshot publish time — reflects the
+    /// **current** ghost set; can drop on reorgs that cross an
+    /// evaporation boundary (the underlying ghost record is rolled back
+    /// from the live state).
     pub ghost_object_count: usize,
     /// Number of energy-stamped nullifiers in the evaporation MMR.
-    /// Equals `ghost_object_count` for a non-pruned chain; can diverge
-    /// once historical pruning is enabled.
+    /// **Append-only** (the MMR has no remove method — would break root
+    /// hashes / nullifier proofs). Equals `ghost_object_count` between
+    /// reorgs; diverges (`mmr_size > ghost_object_count`) after a reorg
+    /// that crosses an evaporation. Both behaviors are by design — MMR
+    /// is the cryptographic commitment, ghost set is live-state mirror.
     pub evaporation_mmr_size: usize,
     /// Hex-encoded root of the evaporation nullifier MMR. None until
     /// the first object evaporates.
