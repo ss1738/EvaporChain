@@ -48,6 +48,135 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-08 (evening) — paymaster sponsorship (Option B) shipped end-to-end across 5 days
+
+**Focus:** pull Option B forward from V1.5 deferral into the V1 sprint per `docs/MULTI_TOKEN_GAS_OPTIONS.md`. Built chain-side enforcement, off-chain service, wallet client, full E2E test, and operator runbook in one session arc. Closed a live drain bug on the way (forged-paymaster debit was previously allowed; chain now requires a hybrid sponsorship signature unconditionally).
+
+**Commits shipped:** 6 (`dc89531` → `21fd448`).
+
+| # | Commit | Layer |
+|---|---|---|
+| 1 | `dc89531` | Day 1A+1B chain-side: `paymaster_signature` + `paymaster_public_key` on `UserOpTx` + canonical sponsorship payload + verification in `execute_user_op` (closes drain) |
+| 2 | `3ccf4f7` | Day 1C chain-side: `call_data` → inner `Transfer` dispatch via `execute_inner_transfer` (skips outer-already-done nonce/sig); JSON encoding (bincode broke on `skip_serializing_if`) |
+| 3 | `cd64a3b` | Day 2 service crate `evaporchain-paymaster`: `Paymaster::sponsor` + axum `/healthz`/`/info`/`/sponsor` + atomic nonce persistence + keypair load/generate helpers |
+| 4 | `2337d63` | Day 3 wallet client `wallet::paymaster::PaymasterClient` (reqwest-backed) + `build_unsigned_user_op` helper; integration tests via real axum task |
+| 5 | `85effec` | Day 4 E2E in `tests/integration/src/paymaster_e2e.rs`: HTTP `/sponsor` → `SimpleExecutor::execute_block` happy path + tampered-call_data rejection through full block dispatch |
+| 6 | `21fd448` | Day 5 docs: `docs/runbooks/paymaster.md` (~280 lines, service-style runbook), `crates/evaporchain-paymaster/README.md`, `docs/README.md` index pointer |
+
+**Deliverables:**
+
+- New crate `evaporchain-paymaster` (632 LOC across lib + bin) — workspace member, axum HTTP, `Paymaster` struct with mutex-guarded monotonic nonce + fsync'd persistence, `Signer`-trait-based hybrid signing.
+- New module `wallet::paymaster` (396 LOC) — async `PaymasterClient` + `build_unsigned_user_op`. Re-exports `SponsorshipRequest`/`Response`/`PaymasterInfo` from `evaporchain-paymaster` so wire format stays in lock-step.
+- Chain-side: `UserOpTx` gained two fields (`paymaster_signature`, `paymaster_public_key`, both `Option<Vec<u8>>` with `serde(default, skip_serializing_if)` for backwards-compat) and one method (`paymaster_sponsorship_payload(chain_id)`); `execute_user_op` gained the consent-to-sponsor verification block (~60 lines) before gas debit and the `call_data` dispatch block (~30 lines) after.
+- Operator runbook covering build, first-run keypair gen + funding, CLI flags, endpoints, wallet curl examples, live-cluster smoke procedure (deferred from Day 4 — operator-driven), restart semantics, monitoring, three closed threats, two remaining threats with V1.5 hardening, competing-paymaster federation note, pricing-policy guidance, failure-modes matrix.
+
+**Test surface — 25 paymaster tests across 5 crates, all green on Mini 1:**
+
+| Crate | Tests | What they pin |
+|---|---|---|
+| `evaporchain-execution` | 12 (8 sig + 4 dispatch) | Drain-by-forged-paymaster rejection; pk-must-derive-to-paymaster; tampered-call-data invalidates sig; sender-no-impersonation; non-whitelisted inner variants reject; undecodable call_data rejects |
+| `evaporchain-paymaster` | 5 | `sponsor` stamps all 4 paymaster fields; monotonic nonce; persists across restart; sig verifies under chain rules; refuses to overwrite existing sig |
+| `evaporchain-wallet` | 6 | `PaymasterClient` info + sponsor wire shapes round-trip; chain-rule binding holds across HTTP; monotonic nonces over multiple `/sponsor`; 400 on already-signed; `build_unsigned_user_op` round-trip; keypair file format round-trip |
+| `evaporchain-integration-tests` | 2 | Sponsored Transfer through full `execute_block` (sender debited once, paymaster gas debited, recipient credited); tampered call_data rejected at block layer with paymaster + sender state untouched |
+
+Pre-existing 3 failures (`test_sequential_nonces_work`, `test_claim_delegation_after_unbonding_period`, `demurrage_fires_in_parallel_execute_block`) reproduce on clean main `94f5c9f` without paymaster work — unrelated, pre-existing.
+
+**Decisions made:**
+
+- **Envelope route over per-variant paymaster fields.** Doc literally said "add `paymaster: Option<AccountAddress>` to Transaction types" (per-variant). Chose ERC-4337-shaped envelope: extend the existing `UserOpTx` (which already had `paymaster: Option<AccountAddress>` from earlier audit work) with the two missing fields, and dispatch `call_data` as inner `Transaction`. One file changed, ERC-4337-idiomatic, doctrine-consistent. Per-variant rejected as 15-variant invasive change with no closed-form benefit.
+- **Pull V1.5 forward.** Doc recommended deferring Option B to V1.5 (~Jan 2027); user explicitly chose to ship it with V1 (Oct 2026 mainnet) while context was sharp. Build now, ship with V1.
+- **Drain fix bundled in same commit as Day 1.** The unverified `paymaster_data` field meant any user could forge `paymaster: <victim>` and drain a victim. Treated as CRITICAL security closure, shipped in `dc89531` alongside the new fields. No separate hotfix commit because nobody is using UserOp in prod yet.
+- **JSON for `call_data`, not bincode.** `TransferTx`'s `#[serde(skip_serializing_if = "Option::is_none")]` on `signature`/`public_key` clashes with bincode's positional encoding (omitted bytes → "unexpected end of file" on decode). JSON is self-describing; per-tx size overhead acceptable.
+- **Verify paymaster sig unconditionally** (not gated by `verify_signatures`). Paymaster debit is always real state; consent-to-sponsor must always be enforced. Tests confirmed no existing fixture uses `paymaster: Some(_)`, so this didn't break anything.
+- **Day 1 inner-tx whitelist: Transfer only.** Other variants either protocol-issued (`Refund`), ZK-authenticated with their own gas paths (`Unshield`, `PrivateTransfer`, `Shield`), or themselves an envelope (`UserOp`, `MultiSig`, `Blob`, `Deferred`). All hard-rejected. CallScript / CallContract land in subsequent days as the paymaster service requires them.
+- **Day 4 live cluster smoke deferred to operator-driven.** Touching the running 5-node WAN cluster (binary deploy + paymaster funding from a real wallet) crosses from local-reversible to shared-state-affecting. Documented as a procedure in the Day 5 runbook; in-process E2E covers the wire path.
+- **Day 5 competing-paymaster doc + pricing-policy folded into the runbook** rather than published as separate files — keeps the operator-facing surface in one place.
+
+**What's next:**
+
+1. Push the 6 commits to `origin/main` — currently local-only.
+2. Ops decision: which V1 paymaster operator? Foundation runs the only paymaster initially, or open the federation immediately? (See `docs/runbooks/paymaster.md` §Competing paymasters.)
+3. Live cluster smoke per the runbook (operator-driven; needs a funded paymaster address).
+
+**Blockers / open questions:**
+
+- The wallet's `signer.rs` already handles `Transaction::UserOp`; a one-line convenience helper that bundles `build_unsigned_user_op` + sign + sponsor + submit would close the wallet UX loop. Tracked as a Day 3 follow-up; not blocking.
+- Spam-signing protection (per-sender rate limits, mandatory user-sig verification on the paymaster side) is V1.5 hardening. The V1 paymaster signs unconditionally; the foundation paymaster operator will need to monitor for abuse manually until V1.5 lands. Documented in the runbook §Threat: spam-signing.
+
+**Cross-references:**
+
+- `docs/MULTI_TOKEN_GAS_OPTIONS.md` — decision artifact (Option A vs B vs C; this session shipped Option B).
+- `docs/runbooks/paymaster.md` — operator runbook (new).
+- `crates/evaporchain-paymaster/README.md` — crate-level README (new).
+- `tests/integration/src/paymaster_e2e.rs` — E2E reference flow (new; useful as a wallet integration template).
+- All 6 commits `dc89531 → 21fd448`.
+
+---
+
+## 2026-05-08 (sister-session, evening) — Ethereum bridge: §17.4 cross-chain primitive shipped end-to-end on Anvil
+
+**Focus:** turn the whitepaper §17.4 line ("an evaporation event on EvaporChain could trigger an Ethereum action via an MMR inclusion proof") into a runnable cryptographic primitive. Plowed Phases 0 through 5 of `ETHEREUM_BRIDGE_PLAN.md` in one session.
+
+**Commits shipped:** 0 (uncommitted — all green on Mac + Mini1, ready for review). Files live under `ethereum-bridge/`, `crates/evaporchain-eth-bridge/`, plus `ETHEREUM_BRIDGE_PLAN.md`.
+
+**Deliverables:**
+
+| Phase | What landed |
+|---|---|
+| 0 | Foundry v1.7.1 install (Mac + Mini1), `ethereum-bridge/contracts/` Foundry project (Prague EVM for EIP-2537), `crates/evaporchain-eth-bridge/` workspace member |
+| 1 | `ValidatorSetRegistry.sol` + `BridgeTypes.Validator` + Rust mirror `valset::compute_root`. **Cross-side hash agreement byte-for-byte** (Solidity & Rust both produce `0xd9772b11…` for the same valset pre-image). |
+| 2 | `lib/BLS381.sol` (EIP-2537 wrapper, no-revert variants), `lib/HashToCurve.sol` (RFC 9380 expand_message_xmd_sha256 + double SSWU), `CommitCertVerifier.sol`. **Real BLS aggregate signature from `bls12_381 0.8` verifies on EVM.** Cross-side hash-to-G2 byte-for-byte under DST `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_`. |
+| 3a | `EvaporHeaderInbox.sol` accepts BLS-signed `(height, blockHash, stateRoot, mmrRoot, epoch)` tuples. New `DOMAIN_TAG_HEADER`. |
+| 3b | Standalone relayer crate `ethereum-bridge/relayer/` with full alloy 0.8 ABI binding. **Headline E2E:** `anvil_e2e_relays_50_headers` — Anvil cold-start + deploys + 50 BLS-signed headers verified in **12.81 s** (plan budget was 30 min). |
+| 5 | `lib/MmrInclusion.sol`, `EvaporationDispatcher.sol` (one-shot replay-immune hooks), `evaporchain-eth-bridge::mmr` Rust module. **Headline E2E:** `anvil_full_pipeline_e2e_evaporation_to_ghost_mint` — deploys ALL 5 contracts cold, registers a hook, dispatches with the inclusion proof, watches `GhostTokenMinter.minted()` go 0 → 1. |
+
+**Empirical results:**
+
+- 61 tests green:
+  - **39** forge tests across 8 suites (BridgeConstants, ValidatorSetRegistry, ValsetAgreement, BLS381, HashToCurve, CommitCertVerifier, EvaporHeaderInbox, EvaporationDispatcher).
+  - **19** Rust eth-bridge tests across 6 binaries (lib + 4 cross-side fixture tests + 1 ghost-leaf hash test).
+  - **3** relayer tests including both Anvil headlines.
+- Anvil 50-header soak: 50/50 in 12.81 s. ~250 ms per submission round-trip.
+- Full-pipeline E2E (`GhostTokenMinter.minted()` 0 → 1) runs in seconds on a single Anvil node, no mocks.
+- Gas measurements (locked):
+  - `updateValset(5 signers)` = **841 k**
+  - `submitHeader(5 signers)` = **980 k**
+  - `dispatch(8-leaf MMR, depth-3 path)` = **672 k**
+  - Hash-to-G2 (one call) = ~280 k; pairing(2) = ~104 k; G1MSM(5) = ~50 k.
+
+**Decisions made:**
+
+- **Phase 4 architecture pivot.** Discovered our Verkle uses **Pallas curve** (`pasta_curves`), not Bandersnatch — no EVM precompile. Pure-Solidity Pallas IPA verification = millions of gas, infeasible. Plan locked: route Pallas-IPA proofs through a Halo2 → Groth16 wrap on BN254. Documented fallback (BLS-multisig validator attestation) = the next chunk to ship if Halo2 work slips.
+- **Bitmap convention** for signed-set: LSB-first per byte (matches what Rust producers naturally pack).
+- **G1 pubkey storage** = compressed 48 bytes; verification path takes uncompressed 128 bytes from calldata + checks x-coordinate consistency. Y-coordinate consistency is enforced indirectly by the pairing equation (`-P` would flip the pairing result).
+- **Bridge MMR uses keccak256, not BLAKE3.** Solidity has no cheap BLAKE3 path; the bridge-layer MMR is a parallel construction to whatever EvaporChain's native MMR uses, and validators are expected to sign over both roots.
+- **Relayer is a separate Cargo workspace** (`ethereum-bridge/relayer/`), deliberately outside the EvaporChain root workspace — the alloy/ethers stack is heavy and the parent already has 147+ crates.
+- **Foundry installed on Mini1** to enable Anvil-driven integration tests under the no-local-builds doctrine. Both Mac and Mini1 now have `~/.foundry/bin/{forge,cast,anvil,chisel}`.
+
+**What's next:**
+
+- **Phase 4 MVP** — `StateMembershipAttestation.sol` using BLS-multisig over `(height, key, valueHash)` claims. Reuses `CommitCertVerifier` infrastructure; ships in a few hours.
+- **Phase 4 full** — Halo2 circuit for Pallas-IPA verification + Groth16 wrap. Multi-day cryptographic build; lives in `ethereum-bridge/circuits/`.
+- **Phase 6** — Sepolia deploy + 24/7 relayer + public dashboard. Operational lift; needs Sepolia ETH + ops decisions.
+- **Phase 5 polish** — `ConeIntersection.sol` (replay-immunity port from `evaporchain-cone-bridge::bridge_valid`).
+- **EvaporChain node-side endpoints** — relayer expects `/api/headers/finalized`, `/api/headers/<h>/commit_cert`, `/api/validators?epoch=N`. They don't exist yet on `evaporchain-node`. Adding them is a chain-side patch.
+
+**Blockers / open questions:**
+
+- Phase 6 needs the user's call on (a) Sepolia ETH source, (b) where to host the public dashboard, (c) whether to also do Holesky as a backup.
+- Phase 4 architecture: full Halo2 → Groth16 wrap is multi-day. MVP path (BLS-multisig) is hours. User to choose which.
+- The headline gas numbers are healthy for a research-grade bridge but well above the original plan's ≤350 k target for `verifyCommit`. Real production deploy will want either gas optimisation pass or layered submission.
+
+**Cross-references:**
+
+- `ETHEREUM_BRIDGE_PLAN.md` — canonical plan + per-phase status log
+- `research/whitepaper.md` §17.4 — the line this build operationalises
+- `research/papers/paper_2_state_economics.md` — the doctrinal context (why state-decay is the only viable long-run path)
+- `crates/evaporchain-cone-bridge/` — the existing Tier-2 cone-merged bridge primitive that the §5 polish will port
+- `crates/evaporchain-crypto/src/signatures.rs` line 403 — `BLS_DST` constant the Solidity HashToCurve binds to
+
+---
+
 ## 2026-05-08 (late-evening + night) — multi-token gas decision package + smart-contract empirical proof + cluster-health finding + faucet config bug
 
 **Focus:** convert the "should I buy crypto / does the chain take ETH for gas" conversation into a structured decision artifact + empirically verify smart contracts are actually wired through the chain + ship a multi-token testnet faucet + empirically test the existing faucet end-to-end (which surfaced a real config bug).
