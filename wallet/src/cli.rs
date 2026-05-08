@@ -4532,13 +4532,12 @@ async fn cmd_blocks(rpc: RpcClient, limit: usize) -> Result<(), Box<dyn std::err
 }
 
 async fn cmd_tx(rpc: RpcClient, hash: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // /api/tx/:hash now returns TxStatus (lifecycle state only) — see
-    // commit d0394b1. Body fields (type/from/to/amount) live on the
-    // historical /api/transactions list now.
-    //
-    // TODO: if a user needs the tx body for a known hash, scan
-    // `rpc.get_transactions(...)` for a matching `hash` and render that
-    // record. Not wired here yet — keep this command focused on status.
+    // /api/tx/:hash returns TxStatus (lifecycle state only) — body fields
+    // (type / from / to / amount / gas) live on the /api/transactions list.
+    // Show both: query status first (cheap), then if the tx is in a known
+    // block, scan recent transactions for a matching hash to surface the
+    // body. Bounded scan: limit=200, ~most-recent blocks. Wider lookups
+    // require explicit pagination.
     let tx = rpc.get_tx(hash).await?;
     let state = match tx.state {
         crate::rpc::TxState::Pending => "pending",
@@ -4558,6 +4557,53 @@ async fn cmd_tx(rpc: RpcClient, hash: &str) -> Result<(), Box<dyn std::error::Er
     }
     if let Some(err) = tx.error.as_deref() {
         println!("  Error:  {}", err);
+    }
+
+    // Body lookup — only meaningful once the tx has a block_height.
+    // Strip the optional 0x prefix to match the canonical hash format
+    // returned by the chain.
+    let canonical_hash = hash.strip_prefix("0x").unwrap_or(hash).to_lowercase();
+    if tx.block_height.is_some() {
+        match rpc.get_transactions(Some(200), None, None, None).await {
+            Ok(resp) => {
+                if let Some(record) = resp
+                    .transactions
+                    .iter()
+                    .find(|t| t.hash.to_lowercase() == canonical_hash)
+                {
+                    println!();
+                    println!("{}", "Body".bold().cyan());
+                    println!("  Type:    {}", record.tx_type);
+                    println!("  From:    {}", record.from);
+                    println!("  To:      {}", record.to);
+                    if let Some(a) = record.amount {
+                        println!("  Amount:  {} EVAP", a);
+                    }
+                    if let Some(o) = &record.object_id {
+                        println!("  Object:  {}", o);
+                    }
+                    if let Some(e) = record.energy {
+                        println!("  Energy:  {}", e);
+                    }
+                    println!("  Gas:     {}", record.gas);
+                    println!("  Status:  {}", record.status);
+                } else {
+                    println!();
+                    println!(
+                        "  {} body not found in last 200 transactions — try increasing scan window",
+                        "note:".yellow()
+                    );
+                }
+            }
+            Err(e) => {
+                println!();
+                println!(
+                    "  {} body lookup failed ({}); status above is authoritative",
+                    "warn:".yellow(),
+                    e
+                );
+            }
+        }
     }
     Ok(())
 }
