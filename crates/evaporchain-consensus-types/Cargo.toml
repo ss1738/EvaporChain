@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-consensus-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Protocol types for EvaporChain BFT consensus — extracted from evaporchain-consensus 2026-05-08 to break the SDK's transitive dep on evaporchain-state (which pulls RocksDB and breaks wasm32). Hosts LightBlockHeader, TrustedState, VerificationResult, LightClientError, ValidatorInfo, ValidatorSet, LightClientVerifier. evaporchain-consensus continues to host the runtime (Tendermint loop, mempool, fork-choice, slashing, epoch-transition); this crate is the types-and-verifier-only slice that downstream light clients can depend on without pulling the full chain machinery."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-crypto = { path = "../evaporchain-crypto" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hex = "0.4"

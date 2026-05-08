@@ -141,6 +141,7 @@ members = [
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
+    "crates/evaporchain-consensus-types",
     "crates/evaporchain-contracts",
     "crates/evaporchain-execution",
     "crates/evaporchain-proving",
