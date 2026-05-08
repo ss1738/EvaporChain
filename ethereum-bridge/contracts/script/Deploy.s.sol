@@ -73,7 +73,7 @@ contract Deploy is Script {
             bytes memory cd = vm.parseBytes(calldata_);
             vm.broadcast(deployerKey);
             (bool ok,) = address(registry).call(cd);
-            require(ok, "genesisInit failed — check GENESIS_CALLDATA");
+            require(ok, "genesisInit failed - check GENESIS_CALLDATA");
             console2.log("genesis validator set committed");
         } else {
             console2.log("(genesis init skipped — set GENESIS_CALLDATA to seed valset)");
