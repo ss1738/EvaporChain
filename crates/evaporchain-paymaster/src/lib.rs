@@ -940,6 +940,58 @@ impl Paymaster {
         &self.metrics
     }
 
+    /// Day 13 — re-open the audit log file. Operator workflow:
+    ///
+    /// ```bash
+    /// mv audit.jsonl audit-$(date +%F).jsonl
+    /// kill -HUP <pid>
+    /// ```
+    ///
+    /// After the rename, the paymaster's existing file handle still
+    /// points at the OLD inode (now under the dated path). New
+    /// sponsorships would silently keep landing in the dated file
+    /// instead of the fresh `audit.jsonl` — invisible to the
+    /// operator's monitoring. SIGHUP closes the old handle and
+    /// re-opens the configured path with `O_APPEND + create`, so
+    /// fresh writes go to the (now empty) `audit.jsonl`.
+    ///
+    /// Returns:
+    /// - `Ok(true)` — audit logging is enabled and the file was
+    ///   reopened successfully.
+    /// - `Ok(false)` — audit logging is disabled
+    ///   (`config.audit_log = None`); SIGHUP is a no-op.
+    /// - `Err(AuditIo)` — open or fsync failed; the OLD handle is
+    ///   already dropped, so the paymaster is now without an audit
+    ///   log. Subsequent sponsorships will fail with `AuditIo` until
+    ///   the operator fixes the underlying IO problem and re-rotates.
+    pub fn reopen_audit_log(&self) -> Result<bool, PaymasterError> {
+        let Some(ref logger) = self.audit_log else {
+            return Ok(false);
+        };
+        let path = self
+            .config
+            .audit_log
+            .as_ref()
+            .expect("audit_log Some implies config.audit_log Some");
+        let new_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| {
+                PaymasterError::AuditIo(format!(
+                    "reopen audit log {}: {e}",
+                    path.display()
+                ))
+            })?;
+        let mut g = logger.lock().expect("audit log mutex");
+        // Replace the file handle. The old handle drops here, closing
+        // its fd. If the operator already renamed the underlying
+        // file, the OS keeps the old inode alive until the last fd
+        // closes — which happens RIGHT here.
+        g.file = new_file;
+        Ok(true)
+    }
+
     /// Render Prometheus exposition format. Hand-written rather than
     /// pulled in via the `prometheus` crate — we have a small, stable
     /// metrics surface and the format is simple. Operators scrape
@@ -1785,6 +1837,108 @@ mod tests {
         uo.call_data = b"not-json".to_vec();
         let r = pm.sponsor(&mut uo);
         assert!(matches!(r, Err(PaymasterError::CallDataDecode(_))));
+    }
+
+    // ─── Day 13: SIGHUP rotation tests ───────────────────────────────
+
+    #[test]
+    fn reopen_audit_log_is_noop_when_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let pm = fresh_paymaster(&tmp, "test");
+        // permissive() leaves audit_log = None.
+        let r = pm.reopen_audit_log().unwrap();
+        assert!(!r, "audit logging disabled — SIGHUP must no-op");
+    }
+
+    #[test]
+    fn reopen_audit_log_after_rename_writes_to_fresh_file() {
+        // Lock the rotation contract: after the operator renames the
+        // existing audit file and calls SIGHUP (i.e., reopen_audit_log),
+        // subsequent sponsorships land in a FRESH file at the
+        // configured path, NOT in the renamed one.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file.clone()),
+                allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
+            },
+        )
+        .unwrap();
+
+        // Sponsor 2 → 2 lines in audit_file.
+        pm.sponsor(&mut blank_user_op()).unwrap();
+        pm.sponsor(&mut blank_user_op()).unwrap();
+        let lines_before = std::fs::read_to_string(&audit_file)
+            .unwrap()
+            .lines()
+            .count();
+        assert_eq!(lines_before, 2);
+
+        // Operator rotates: mv audit.jsonl audit-old.jsonl
+        let dated = tmp.path().join("audit-old.jsonl");
+        std::fs::rename(&audit_file, &dated).unwrap();
+        assert!(!audit_file.exists());
+        // Without SIGHUP, a sponsor would silently write to `dated`.
+        // Trigger SIGHUP equivalent.
+        assert!(pm.reopen_audit_log().unwrap());
+
+        // Sponsor again — should land in the FRESH audit_file.
+        pm.sponsor(&mut blank_user_op()).unwrap();
+        let fresh_lines = std::fs::read_to_string(&audit_file)
+            .unwrap()
+            .lines()
+            .count();
+        assert_eq!(fresh_lines, 1, "post-SIGHUP write goes to fresh file");
+        // The dated file still has the original 2 lines (untouched).
+        let dated_lines = std::fs::read_to_string(&dated).unwrap().lines().count();
+        assert_eq!(dated_lines, 2);
+    }
+
+    #[test]
+    fn reopen_audit_log_errors_when_path_unwritable() {
+        // After the operator renames, if the configured path is
+        // unwritable (parent doesn't exist, no permission, etc.),
+        // reopen surfaces AuditIo. Subsequent sponsorships fail
+        // until the operator fixes the underlying IO problem.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        // Audit path under a child dir that exists at construction
+        // but we'll remove before the reopen call.
+        let child = tmp.path().join("child");
+        std::fs::create_dir(&child).unwrap();
+        let audit_file = child.join("audit.jsonl");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file.clone()),
+                allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
+            },
+        )
+        .unwrap();
+        pm.sponsor(&mut blank_user_op()).unwrap();
+        // Now nuke the parent dir — reopen will fail to open the path.
+        std::fs::remove_dir_all(&child).unwrap();
+        let r = pm.reopen_audit_log();
+        assert!(matches!(r, Err(PaymasterError::AuditIo(_))));
     }
 
     // ─── Day 12: idempotency tests ───────────────────────────────────

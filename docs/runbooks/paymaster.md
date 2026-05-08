@@ -299,7 +299,14 @@ Operational notes:
 - Each line is followed by an explicit `fsync(2)` so a crash never loses a sponsored entry. Disk-write latency adds ~1 ms to `/sponsor` p99 on standard SSDs.
 - **Fail-closed:** an audit-log IO error (full disk, no permission) returns `503 paymaster IO`. The paymaster does NOT silently sponsor without writing the line — that would be a billing-reconciliation hole. Operators who need to keep sponsoring through audit-log outages should rotate the log path with `--audit-log` before unblocking.
 - The file is opened with `O_APPEND` so concurrent writers (across worker threads in this process) are kernel-serialised at line boundaries. Multiple paymaster processes pointing at the same audit file work too — the per-line atomicity is OS-enforced for sub-PIPE_BUF writes.
-- Rotate via `mv audit.jsonl audit.jsonl.$(date +%F)` then `kill -HUP` (currently no-op — daemon would re-open on SIGHUP in a future v1.5 hardening). For now: stop the service, rotate, restart.
+- Rotate via:
+
+  ```bash
+  mv audit.jsonl audit-$(date +%F).jsonl
+  kill -HUP <pid>
+  ```
+
+  The paymaster receives SIGHUP, closes the old fd (the renamed file's inode stays alive on the kernel side until the last reference drops), and re-opens the configured path with `O_APPEND + create`. Subsequent sponsorships land in the fresh `audit.jsonl`. If the reopen fails (path unwritable, permissions, etc.) the service logs `SIGHUP — audit log reopen failed` and subsequent sponsorships fail with `503 audit IO` until the operator fixes the underlying problem.
 
 ### Concurrency
 

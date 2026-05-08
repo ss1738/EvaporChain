@@ -175,12 +175,48 @@ async fn main() -> anyhow::Result<()> {
         .route("/info", get(get_info))
         .route("/metrics", get(get_metrics))
         .route("/sponsor", post(sponsor))
-        .with_state(state);
+        .with_state(state.clone());
+
+    // Day 13 — SIGHUP triggers audit-log reopen. Operator workflow:
+    //   mv audit.jsonl audit-$(date +%F).jsonl
+    //   kill -HUP <pid>
+    // Without this, sponsorships keep landing in the renamed file
+    // (kernel keeps the old inode alive while we hold the fd) and
+    // the fresh `audit.jsonl` stays empty until restart.
+    #[cfg(unix)]
+    spawn_sighup_listener(state.paymaster.clone());
 
     let listener = tokio::net::TcpListener::bind(&args.listen).await?;
     info!(addr = %args.listen, "paymaster listening");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn spawn_sighup_listener(paymaster: Arc<Paymaster>) {
+    tokio::spawn(async move {
+        let mut sighup = match tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::hangup(),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                error!(error = %e, "failed to register SIGHUP handler — audit log rotation will require restart");
+                return;
+            }
+        };
+        loop {
+            sighup.recv().await;
+            match paymaster.reopen_audit_log() {
+                Ok(true) => info!("SIGHUP — audit log reopened"),
+                Ok(false) => {
+                    info!("SIGHUP received but audit logging is disabled — no-op")
+                }
+                Err(e) => {
+                    error!(error = %e, "SIGHUP — audit log reopen failed; subsequent sponsorships will fail with audit IO until fixed")
+                }
+            }
+        }
+    });
 }
 
 async fn healthz() -> &'static str {
