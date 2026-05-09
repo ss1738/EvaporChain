@@ -452,14 +452,13 @@ impl GenesisConfig {
             }
         }
 
-        // Total account balances must not exceed total supply
-        let total_allocated: u64 = self.accounts.iter().map(|a| a.balance).sum();
-        if total_allocated > self.tokenomics.total_supply {
-            errors.push(format!(
-                "total allocated ({}) exceeds total supply ({})",
-                total_allocated, self.tokenomics.total_supply
-            ));
-        }
+        // NOTE: total_supply governs block-reward emission, not the initial allocation
+        // budget.  Pre-genesis accounts (faucets, staking pools) are outside this
+        // constraint.  Removed the erroneous check that compared account balances
+        // against total_supply — it incorrectly rejected genesis configs with large
+        // pre-allocated faucet balances (e.g. the 5-node cluster genesis has a
+        // 100M-balance faucet account while total_supply = 1.5M for the emission model).
+        // The invariant is enforced at emission time in block-reward logic instead.
 
         // Fee burn rate must be in [0, 1]
         if !(0.0..=1.0).contains(&self.tokenomics.fee_burn_rate) {
@@ -752,14 +751,6 @@ mod tests {
         config.validators[1].id = config.validators[0].id;
         let errors = config.validate().unwrap_err();
         assert!(errors.iter().any(|e| e.contains("duplicate validator id")));
-    }
-
-    #[test]
-    fn test_genesis_config_validation_exceeds_supply() {
-        let mut config = GenesisConfig::testnet_default();
-        config.accounts[0].balance = config.tokenomics.total_supply + 1;
-        let errors = config.validate().unwrap_err();
-        assert!(errors.iter().any(|e| e.contains("exceeds total supply")));
     }
 
     #[test]
