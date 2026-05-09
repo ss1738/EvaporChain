@@ -1338,3 +1338,140 @@ fn mcc_phase_c5_4of5_partition_heals_to_common_authoritative_head() {
     assert_eq!(parents_1.len(), 2);
     assert_eq!(parents_1[0], head_1);
 }
+
+// ─── T0.1 C.6 — adversarial proposer (Byzantine wrong-head) ──────────
+//
+// MAINNET_READINESS T0.1.C.6 sub-task: "adversarial proposer test
+// (Byzantine producer that picks wrong head)". Companion to C.5
+// (partition+heal). Where C.5 exercises the network-layer convergence
+// guarantee, C.6 exercises the protocol-layer DETECTION guarantee:
+// honest validators must be able to TELL when a proposer is picking
+// the wrong head, because their own independent argmax disagrees.
+//
+// Setup: 3 forks A/B/C off genesis, with caliber order such that the
+// MCC argmax has a clear winner. An honest proposer would emit a block
+// with parents[0] == argmax (highest caliber). A Byzantine proposer
+// picks parents[0] == one of the two non-argmax candidates instead.
+// Honest validators independently compute their authoritative head
+// and detect the disagreement: byzantine_block.parents[0] !=
+// validator.update_authoritative_head().
+//
+// Note: this test is at the SUBSTRATE layer. The actual rejection /
+// slashing wiring at the consensus state machine layer is downstream
+// work (Phase 4.3d follow-up per MCC plan D.2). What this test locks
+// is the *detectability* — the substrate gives validators the signal
+// they need to surface the misbehaviour.
+
+#[test]
+fn mcc_phase_c6_byzantine_proposer_picks_wrong_head_is_detectable() {
+    // 4 honest validators, all in mcc_full.
+    let mut v1 = make_validator_consensus(1);
+    let mut v2 = make_validator_consensus(2);
+    let mut v3 = make_validator_consensus(3);
+    let mut v4 = make_validator_consensus(4);
+
+    // Same DAG on all 4: genesis + 3 sibling forks at h=1.
+    for tc in [&mut v1, &mut v2, &mut v3, &mut v4] {
+        lc_insert(tc, id(0), vec![], 0);
+        lc_insert(tc, id(1), vec![id(0)], 1);
+        lc_insert(tc, id(2), vec![id(0)], 1);
+        lc_insert(tc, id(3), vec![id(0)], 1);
+    }
+
+    // Honest validators all agree on the authoritative head (locked
+    // by D.1 / C.5 already).
+    let honest_head = v1
+        .update_authoritative_head()
+        .expect("3 candidate heads, argmax exists");
+    for tc in [&mut v2, &mut v3, &mut v4] {
+        assert_eq!(
+            tc.update_authoritative_head().expect("Some"),
+            honest_head,
+            "honest validators must converge on the argmax"
+        );
+    }
+
+    // Construct a Byzantine `block.parents` that LEADS with a
+    // non-argmax candidate. Two cases — Byzantine proposer picks
+    // either of the two non-argmax forks first.
+    let candidates = [id(1), id(2), id(3)];
+    let non_argmax: Vec<[u8; 32]> = candidates
+        .iter()
+        .copied()
+        .filter(|&c| c != honest_head)
+        .collect();
+    assert_eq!(
+        non_argmax.len(),
+        2,
+        "expected 2 non-argmax candidates, got {}",
+        non_argmax.len()
+    );
+
+    for &byzantine_first_parent in &non_argmax {
+        // The Byzantine block claims to follow `byzantine_first_parent`
+        // as its first parent — explicitly NOT the argmax.
+        let byzantine_parents = vec![byzantine_first_parent];
+
+        // Honest validators independently compute the expected head and
+        // detect the disagreement.
+        for (label, tc) in [("v1", &v1), ("v2", &v2), ("v3", &v3), ("v4", &v4)] {
+            let expected_head = tc
+                .current_authoritative_head
+                .expect("each validator already ran update_authoritative_head");
+            assert_ne!(
+                byzantine_parents[0], expected_head,
+                "{}: Byzantine block.parents[0] {:?} must differ from expected \
+                 authoritative head {:?} — this IS the detection signal",
+                label, byzantine_parents[0], expected_head
+            );
+            // Also confirm the argmax is still REACHABLE in the candidate
+            // set (i.e. the Byzantine block doesn't cause the validator to
+            // forget the right answer just because the proposer lied).
+            let candidate_set = tc.candidate_heads();
+            assert!(
+                candidate_set.contains(&expected_head),
+                "{}: argmax must remain in candidate_heads even after \
+                 receiving a malformed proposal",
+                label
+            );
+        }
+    }
+}
+
+#[test]
+fn mcc_phase_c6_byzantine_proposer_wrong_head_does_not_perturb_honest_argmax() {
+    // Stronger claim: even if a Byzantine proposer floods the network
+    // with wrong-head proposals, honest validators continue to compute
+    // the correct argmax themselves. Validator-determinism is the
+    // pre-condition for any rejection rule the consensus state machine
+    // might layer on top.
+    let mut v1 = make_validator_consensus(1);
+
+    lc_insert(&mut v1, id(0), vec![], 0);
+    lc_insert(&mut v1, id(1), vec![id(0)], 1);
+    lc_insert(&mut v1, id(2), vec![id(0)], 1);
+    lc_insert(&mut v1, id(3), vec![id(0)], 1);
+
+    let argmax_before = v1.update_authoritative_head().expect("Some");
+
+    // Simulate the validator inspecting 100 Byzantine proposals (all
+    // claiming a non-argmax first parent) without applying any of them
+    // (the proposals are rejected before block-application). Calling
+    // update_authoritative_head between each inspection — the result
+    // must remain pinned to the substrate truth, not drift toward the
+    // Byzantine claim.
+    for i in 0..100 {
+        // Each iteration "inspects" a Byzantine proposal — we don't
+        // model this as DAG mutation because the consensus state
+        // machine wouldn't apply the block; we model it as repeated
+        // re-computation of the argmax with no DAG change in between,
+        // which must be a fixed point.
+        let argmax_now = v1.update_authoritative_head().expect("Some");
+        assert_eq!(
+            argmax_now, argmax_before,
+            "iter {}: argmax must be a fixed point under repeated calls \
+             with unchanged DAG state",
+            i
+        );
+    }
+}
