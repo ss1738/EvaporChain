@@ -59,6 +59,7 @@
 #![cfg(feature = "v2-ecc")]
 
 use ff::PrimeField;
+use halo2_proofs::arithmetic::CurveAffine;
 use halo2_proofs::circuit::Value;
 
 /// Witness for one EccVerkleStepCircuit level. Same shape as
