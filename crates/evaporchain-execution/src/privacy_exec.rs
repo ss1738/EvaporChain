@@ -311,10 +311,37 @@ impl PrivacyExecutor {
                 restored,
             )));
         }
+
+        // T0.5 follow-up: rebuild `engine.nullifier_set` from the
+        // persisted db nullifier set. Without this, a node restart
+        // erases the canonical in-memory unbounded set, and under
+        // PNT v1+ a nullifier evicted from PNT before the restart
+        // would be unrejected by both the fast-path
+        // (`pnt.is_spent_in_window` — already evicted) AND the
+        // canonical step-7 check (`engine.nullifier_set.spend` —
+        // empty post-restart). `db.spend_nullifier` was always
+        // called originally, so `db.all_nullifiers()` is the
+        // authoritative source for restoration.
+        //
+        // Closes the cross-restart soundness concern documented in
+        // PR #6 (T0.5 sub-task 5 test). Pinned by the new
+        // `pnt_v1_respend_after_restart_rejected_via_restored_set`
+        // test below.
+        let persisted_nullifiers = db.all_nullifiers();
+        let mut restored_nullifiers = 0usize;
+        for nf in &persisted_nullifiers {
+            if self.engine.nullifier_set.spend(&Nullifier(*nf)) {
+                restored_nullifiers += 1;
+            }
+        }
+
         tracing::info!(
             commitments = restored,
-            "PrivacyExecutor: restored {} note commitments from disk; root verified",
+            nullifiers = restored_nullifiers,
+            "PrivacyExecutor: restored {} note commitments + {} nullifiers from disk; \
+             root verified",
             restored,
+            restored_nullifiers,
         );
         Ok(restored)
     }
@@ -1598,6 +1625,112 @@ mod tests {
 
         let err = executor.execute_unshield(&mut db, &tx).unwrap_err();
         assert!(matches!(err, PrivacyExecError::DoubleSpend(_)));
+    }
+
+    /// T0.5 follow-up — cross-restart soundness for PNT v1+. Builds
+    /// on the spend-evict-respend test above. Without
+    /// `restore_from_db` rebuilding the engine.nullifier_set,
+    /// the canonical step-7 defense is gone after a restart and the
+    /// PNT-evicted-nullifier becomes spendable again. With the
+    /// restore, the unbounded set is rebuilt from db and the
+    /// step-7 check fires as expected.
+    #[test]
+    fn pnt_v1_respend_after_restart_rejected_via_restored_set() {
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 100_000);
+
+        // Lifecycle 1 — original executor: shield + spend.
+        let (n1_commitment, n1_value_commitment, nf1, n1_blinding, n1_secret, original_root) = {
+            let mut executor = PrivacyExecutor::with_depth(8);
+            executor.set_epoch(1);
+            executor.set_protocol_version(1);
+
+            let n1 = do_shield(
+                &mut executor,
+                &mut db,
+                &sender,
+                5_000,
+                0,
+                test_blinding(10),
+                test_blinding(20),
+                test_blinding(99),
+            );
+            let unshield = build_real_unshield(&executor, &n1, receiver, 5_000);
+            let nf = unshield.input_nullifiers[0];
+            executor
+                .execute_unshield(&mut db, &unshield)
+                .expect("first spend must succeed");
+            assert!(
+                executor.engine.nullifier_set.is_spent(&Nullifier(nf)),
+                "post-spend: in-memory set has NF1"
+            );
+            (
+                n1.note_commitment,
+                n1.value_commitment,
+                nf,
+                n1.blinding,
+                n1.spending_secret,
+                executor.merkle_root(),
+            )
+        }; // executor dropped — simulates a node restart.
+
+        // Lifecycle 2 — fresh executor, must restore from db. Without
+        // the restore, engine.nullifier_set is empty and a respend
+        // would slip through under PNT v1+ (PNT in this fresh process
+        // also has nothing).
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+        executor.set_protocol_version(1);
+
+        let restored_count = executor
+            .restore_from_db(&db)
+            .expect("restore must succeed");
+        assert_eq!(restored_count, 1, "one note commitment restored");
+        assert!(
+            executor.engine.nullifier_set.is_spent(&Nullifier(nf1)),
+            "post-restore: NF1 must be back in the canonical set"
+        );
+
+        // Confirm the rebuilt note tree's root matches the original
+        // (this is the existing restore_from_db assertion — pinning
+        // it covers both the commitment-tree restore AND now the
+        // nullifier-set restore in a single test).
+        assert_eq!(executor.merkle_root(), original_root);
+
+        // Build a respend tx using the restored state. tx is
+        // structurally valid: anchor matches, proof rebuilds against
+        // the current root, balance binding correct. The ONLY
+        // blocker is engine.nullifier_set's retained NF1.
+        let respend = UnshieldTx {
+            to: receiver,
+            amount: 5_000,
+            input_nullifiers: vec![nf1],
+            anchor: executor.merkle_root(),
+            balance_binding: compute_balance_binding(
+                5_000, 0, 5_000, &[n1_blinding], &[],
+            ),
+            input_amounts: vec![5_000],
+            input_blindings: vec![n1_blinding],
+            input_value_commitments: vec![n1_value_commitment],
+            input_note_commitments: vec![n1_commitment],
+            input_merkle_proofs: vec![executor.get_merkle_proof(0).unwrap()],
+            output_blindings: vec![],
+            change_commitments: vec![],
+            energy_proofs: vec![],
+        };
+        let _ = n1_secret; // already consumed when computing nf1; kept for clarity
+
+        match executor.execute_unshield(&mut db, &respend) {
+            Err(PrivacyExecError::DoubleSpend(_)) => {
+                // ✓ The restored canonical set caught the post-restart
+                // respend that would have slipped through pre-fix.
+            }
+            other => panic!(
+                "expected DoubleSpend from restored canonical set; got {:?}",
+                other
+            ),
+        }
     }
 
     // ── Private Transfer Tests (100% real) ──
