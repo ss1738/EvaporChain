@@ -109,7 +109,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.2 | Layer 4 D-track adversarial + perf + 72hr soak | 🔴 BLOCKED on T0.1 + T3.1 | CONSENSUS |
 | T0.3 | POST_EXEC Phase 4 enforce-mode (refuse-to-apply, not prevote-NIL — see spec note) | ✅ DONE (c191498) — flag + 4 tests; needs T0.4 fork-epoch + soak before flipping to enforce | CONSENSUS |
 | T0.4 | POST_EXEC Phase 5 block-hash inclusion | ✅ DONE (695c49c) — bit-compat fold (Some→include, None→skip); 3 hash tests | CONSENSUS |
-| T0.5 | PNT v1+ activation (privacy authoritative) | 🟢 CLAIMED by Opus 4.7 @ 2026-05-10T02:15Z · base: cd964a5 — sub-task 3 (fork-epoch gate) starter | PRIVACY |
+| T0.5 | PNT v1+ activation (privacy authoritative) | 🟡 OPEN (re-scoped 2026-05-10 audit) — sub-tasks 1, 3, 4-infra ✅ already shipped; remaining: sub-task 5 adversarial test (Mini-needed) + operator steps 2/6 (cluster-needed). See spec section §5 for breakdown. | PRIVACY |
 | T0.6 | Slashing-at-scale empirical tests | 🟡 OPEN | EXECUTION + STATE-DB |
 | T0.7 | Mempool + signature DoS hardening | 🟡 OPEN | NETWORK + EXECUTION |
 | T0.8 | Light-client / fast-sync against malicious snapshots | 🟡 OPEN | NETWORK |
@@ -288,26 +288,33 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.5 — PNT v1+ activation (privacy authoritative)
 
-**Status:** 🟡 OPEN
+**Status:** 🟡 OPEN — code mostly shipped; remaining work is operational + 1 adversarial test
 **Surface:** PRIVACY
 **Depends on:** none
-**Effort:** 2-3 weeks
+**Effort:** 2-3 weeks (revised: ~3-5 days code + operational soak)
 
-**Goal:** Move `evaporchain-pnt::PhasedNullifierTree` from shadow-tracking to authoritative double-spend gate. Today the chain uses unbounded `db.is_nullifier_spent`; PNT mirrors it. v1+ flips the gate.
+**Audit 2026-05-10 — actual state vs original spec:**
 
-**Sub-tasks:**
+| Sub-task | Status | Where |
+|---|---|---|
+| 1 — `current_protocol_version` reads `block.protocol_version` | ✅ DONE | `privacy_exec.rs:240` (`set_protocol_version`); called from `execute_block` per-block |
+| 2 — Genesis-amendment to bump 0 → 1 | ⏳ OPERATIONAL | needs T3.1 cluster + governance ride |
+| 3 — Fork-epoch gate (legacy db ↔ PNT bounded window) | ✅ DONE | `privacy_exec.rs:261` (`is_double_spend`); wired in both `execute_unshield` (line ~503) and `execute_private_transfer` (line ~722) |
+| 4 — PNT phase auto-advance cadence | ✅ INFRA DONE | `tick_pnt_phase` at `privacy_exec.rs:196`; default `PNT_DEFAULT_PHASE_INTERVAL_EPOCHS = 100`; cadence tuning is operational |
+| 5 — Adversarial spend-evict-respend test | ⏳ OPEN | needs Mini cargo verification; must include anchor-mechanism interaction |
+| 6 — Storage size benchmark | ⏳ OPEN | needs live cluster (T3.1) |
 
-1. `current_protocol_version` reads `block.protocol_version` (already wired)
-2. Genesis-amendment to bump protocol_version 0 → 1 across cluster
-3. Fork-epoch gate: pre-fork `is_spent_in_window`, post-fork `pnt.is_spent_in_window`
-4. PNT phase auto-advance cadence tuning (`pnt_phase_interval_epochs` default 100)
-5. Adversarial test: spend in old window, then again in new window — must still reject
-6. Storage size benchmark: PNT growth curve vs unbounded set under realistic tx mix
+**Security-model audit (paired with this lane):** the bounded-window PNT *requires* an anchor mechanism for soundness — otherwise nullifiers that age out of the window become re-spendable. Confirmed at `privacy_exec.rs:493,712`: every shield/transfer tx must reference `tx.anchor == self.engine.merkle_root()`. Notes whose source root is older than the chain's current root cannot be spent regardless of nullifier window. **PNT bounded window + anchor enforcement are jointly secure**; either alone would be unsound.
 
-**Files touched:**
+**Files touched:** (per the original spec)
 - `crates/evaporchain-pnt/`
 - `crates/evaporchain-execution/src/privacy_exec.rs`
 - `crates/evaporchain-consensus/src/tendermint.rs` (fork-epoch dispatch)
+
+**Remaining concrete work after this audit:**
+1. **Sub-task 5** — write the adversarial test in `privacy_exec.rs` test module (`#[test] fn pnt_v1_respend_after_window_eviction_rejected_via_anchor`). Verifies anchor enforcement closes the window-bypass. Mini-only verification.
+2. **Operator step 2** — once Phase C cluster runs, ride `governance-flip.sh` to bump `block.protocol_version` 0 → 1 at a fork epoch.
+3. **Operator step 6** — collect storage-growth telemetry post-flip.
 
 **Acceptance:** flag-flip on testnet, 7-day double-spend soak with adversarial nullifier replay attempts, all rejected.
 
@@ -663,4 +670,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T01:50Z] Opus 4.7  · T0.9 sub-task A ✅ DONE · ship: 8809064 · 11/11 on-host · sub-lane → 🟡 PARTIAL
 [2026-05-10T02:10Z] Opus 4.7  · T0.9 sub-task C native half ✅ DONE · ship: 70be2b8 · 16/16 on-host (5 native Pedersen tests added)
 [2026-05-10T02:15Z] Opus 4.7  · T0.5 claimed (sub-task 3 starter) · base: cd964a5
+[2026-05-10T02:30Z] Opus 4.7  · T0.5 audited + re-scoped → 🟡 OPEN — code work largely shipped (sub-1/3 ✅, sub-4 infra ✅); remaining = sub-5 test (Mini) + operator steps. Anchor-enforcement at privacy_exec.rs:493,712 confirms PNT bounded-window is jointly secure with merkle-anchor rule.
 ```
