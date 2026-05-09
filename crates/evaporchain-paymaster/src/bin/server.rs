@@ -118,6 +118,14 @@ struct Args {
     /// crashed mid-write). Operator must investigate either way.
     #[arg(long, requires = "chain_rpc_url")]
     strict_reconcile: bool,
+
+    /// Audit fix #3b: runtime reconciliation poll interval (seconds).
+    /// `0` disables the runtime poller (startup reconciliation still
+    /// runs once when `--chain-rpc-url` is set). Default `60` —
+    /// catches drift within a minute of a reorg landing on chain.
+    /// Requires `--chain-rpc-url`.
+    #[arg(long, default_value = "60", requires = "chain_rpc_url")]
+    reconcile_interval_secs: u64,
 }
 
 #[derive(Clone)]
@@ -239,6 +247,19 @@ async fn main() -> anyhow::Result<()> {
         paymaster: Arc::new(paymaster),
     };
 
+    // Audit fix #3b — runtime reconciliation poller. Periodic chain
+    // query; updates metrics; logs on drift. Doesn't refuse /sponsor
+    // (operator response is external — page on metrics, take action).
+    if let Some(ref chain_rpc) = args.chain_rpc_url {
+        if args.reconcile_interval_secs > 0 {
+            spawn_reconcile_poller(
+                state.paymaster.clone(),
+                chain_rpc.clone(),
+                args.reconcile_interval_secs,
+            );
+        }
+    }
+
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/info", get(get_info))
@@ -259,6 +280,60 @@ async fn main() -> anyhow::Result<()> {
     info!(addr = %args.listen, "paymaster listening");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Audit fix #3b: tokio task that periodically calls
+/// `reconcile::run_one_cycle` to detect runtime nonce drift. On
+/// drift, logs at `error!` so the operator's log alerting can fire.
+/// Metrics (`drift_detections_total`, `last_chain_nonce`,
+/// `last_reconcile_unix_ms`) are updated inside `run_one_cycle`.
+fn spawn_reconcile_poller(
+    paymaster: Arc<Paymaster>,
+    chain_rpc_url: String,
+    interval_secs: u64,
+) {
+    use evaporchain_paymaster::reconcile::{run_one_cycle, NonceAlignment};
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        // Skip the immediate-fire of the first tick — startup
+        // reconciliation already ran once.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            let local = paymaster.next_paymaster_nonce();
+            match run_one_cycle(
+                &chain_rpc_url,
+                paymaster.address(),
+                local,
+                paymaster.metrics(),
+            )
+            .await
+            {
+                Ok(NonceAlignment::Aligned { .. }) => {
+                    // Aligned is the steady state; quiet.
+                }
+                Ok(NonceAlignment::LocalAhead { local, chain }) => {
+                    error!(
+                        local,
+                        chain,
+                        "runtime drift: LOCAL AHEAD by {} — sponsorships in flight or chain reorged out",
+                        local - chain
+                    );
+                }
+                Ok(NonceAlignment::ChainAhead { local, chain }) => {
+                    error!(
+                        local,
+                        chain,
+                        "runtime drift: CHAIN AHEAD by {} — paymaster account used externally OR local file lost state",
+                        chain - local
+                    );
+                }
+                Err(e) => {
+                    error!(error = %e, "runtime reconcile cycle failed — chain RPC unreachable");
+                }
+            }
+        }
+    });
 }
 
 #[cfg(unix)]

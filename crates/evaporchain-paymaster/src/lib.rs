@@ -430,6 +430,22 @@ pub struct PaymasterMetrics {
     /// either flaky wallet → paymaster networking or a wallet bug
     /// retrying without backoff.
     pub sponsorships_idempotent_replay: AtomicU64,
+    /// Audit fix #3b — count of runtime reconciliation cycles where
+    /// the chain's `account.nonce` differed from the paymaster's
+    /// `next_paymaster_nonce`. A non-zero value signals chain drift
+    /// (typically a reorg or paymaster-account misuse); the operator
+    /// should investigate. Steady state is 0.
+    pub drift_detections_total: AtomicU64,
+    /// Audit fix #3b — last chain `account.nonce` observed by the
+    /// runtime reconciliation poller. `0` means the poller hasn't
+    /// run yet (or the paymaster's address has never been seen on
+    /// chain). Useful for external alert: drift from
+    /// `next_paymaster_nonce` indicates desync.
+    pub last_chain_nonce: AtomicU64,
+    /// Unix-ms timestamp of the last successful reconciliation.
+    /// `0` means never. Stale value (vs `now`) signals the chain
+    /// RPC is unreachable.
+    pub last_reconcile_unix_ms: AtomicU64,
     pub started_at: Instant,
 }
 
@@ -444,6 +460,9 @@ impl Default for PaymasterMetrics {
             sponsorships_audit_io: AtomicU64::new(0),
             sponsorships_other: AtomicU64::new(0),
             sponsorships_idempotent_replay: AtomicU64::new(0),
+            drift_detections_total: AtomicU64::new(0),
+            last_chain_nonce: AtomicU64::new(0),
+            last_reconcile_unix_ms: AtomicU64::new(0),
             started_at: Instant::now(),
         }
     }
@@ -1066,6 +1085,40 @@ impl Paymaster {
         out.push_str(&format!(
             "evaporchain_paymaster_idempotent_replays_total {}\n",
             load(&m.sponsorships_idempotent_replay)
+        ));
+        out.push_str(
+            "# HELP evaporchain_paymaster_drift_detections_total \
+             Audit fix #3b: number of runtime reconciliation cycles \
+             where the chain's account.nonce differed from the local \
+             paymaster_nonce. Steady state is 0; sustained increases \
+             signal a reorg or paymaster account misuse.\n\
+             # TYPE evaporchain_paymaster_drift_detections_total counter\n",
+        );
+        out.push_str(&format!(
+            "evaporchain_paymaster_drift_detections_total {}\n",
+            load(&m.drift_detections_total)
+        ));
+        out.push_str(
+            "# HELP evaporchain_paymaster_last_chain_nonce \
+             Last chain account.nonce observed by the runtime \
+             reconciliation poller. Compare against \
+             evaporchain_paymaster_next_nonce — equal means aligned.\n\
+             # TYPE evaporchain_paymaster_last_chain_nonce gauge\n",
+        );
+        out.push_str(&format!(
+            "evaporchain_paymaster_last_chain_nonce {}\n",
+            load(&m.last_chain_nonce)
+        ));
+        out.push_str(
+            "# HELP evaporchain_paymaster_last_reconcile_unix_ms \
+             Unix-ms timestamp of the last successful reconciliation. \
+             Stale value (vs `now`) means the chain RPC is \
+             unreachable; alert on `time() * 1000 - this_value > N`.\n\
+             # TYPE evaporchain_paymaster_last_reconcile_unix_ms gauge\n",
+        );
+        out.push_str(&format!(
+            "evaporchain_paymaster_last_reconcile_unix_ms {}\n",
+            load(&m.last_reconcile_unix_ms)
         ));
         out
     }

@@ -99,6 +99,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--idempotency-ttl-secs N` | no | `3600` | Day 12: idempotency cache TTL in seconds |
 | `--chain-rpc-url URL` | no | (off) | Audit fix #3a: chain RPC URL for startup nonce reconciliation. Hits `GET /api/address/<paymaster_addr>` and compares the chain's `account.nonce` against the local `paymaster_nonce` file. Mismatch is logged loudly. See §Startup nonce reconciliation |
 | `--strict-reconcile` | no | off | Refuse to start when reconciliation surfaces drift OR fails (RPC error). Production paymasters should set this — sponsoring under drift either creates forever-gaps in the nonce sequence or duplicates already-consumed nonces. Requires `--chain-rpc-url` |
+| `--reconcile-interval-secs N` | no | `60` | Audit fix #3b: runtime reconciliation poll interval. `0` disables. Periodic background task hits the same RPC as startup reconciliation; updates `drift_detections_total` / `last_chain_nonce` / `last_reconcile_unix_ms` in `/metrics`. Requires `--chain-rpc-url` |
 
 ### Endpoints
 
@@ -214,7 +215,18 @@ Three outcomes (logged at `info!` for aligned, `error!` for the others):
 
 `--strict-reconcile` (off by default) refuses startup on anything but `Aligned`. Production paymasters should set it — silent drift compounds.
 
-The reconciliation is **startup only**. Runtime reorgs (chain reorgs while the service is running) aren't covered yet — that's a separate audit follow-up. The runbook's mitigation for now: monitor `evaporchain_paymaster_next_nonce` (gauge in `/metrics`) against the chain's account.nonce externally; an alert on `delta > N for M minutes` catches mid-flight drift.
+**Runtime reconciliation** (audit fix #3b) is also wired: `--reconcile-interval-secs N` (default `60`) spawns a background tokio task that re-runs the alignment check every N seconds. Outcomes:
+
+- Aligned: silent (steady-state).
+- Drift (LocalAhead / ChainAhead): `error!` log + `drift_detections_total` counter increments + `last_chain_nonce` gauge updates.
+- RPC unreachable: `error!` log; gauges NOT updated, so `last_reconcile_unix_ms` going stale becomes the alert signal.
+
+**Suggested Prometheus alerts** (drift / staleness):
+- `increase(evaporchain_paymaster_drift_detections_total[5m]) > 0` — page; reorg or paymaster-account misuse.
+- `evaporchain_paymaster_last_chain_nonce != evaporchain_paymaster_next_nonce` — drift visible directly.
+- `time() * 1000 - evaporchain_paymaster_last_reconcile_unix_ms > 180000` — chain RPC unreachable for >3 min.
+
+The runtime poller does NOT auto-pause `/sponsor` on drift — operator response is external. Auto-pause-on-drift is V1.5 (the wallet would need a clear retry-after message; the binary can't decide that policy alone).
 
 ### Idempotency (wallet retries)
 

@@ -116,6 +116,51 @@ pub async fn check_alignment(
     })
 }
 
+/// One reconciliation cycle: query the chain, update the metrics,
+/// log on drift. Returns the alignment outcome so the caller (e.g.,
+/// a runtime poller) can react further.
+///
+/// Touches three metrics:
+/// - `last_chain_nonce` (gauge) — set to the chain's value.
+/// - `last_reconcile_unix_ms` (gauge) — set to current wall-clock.
+/// - `drift_detections_total` (counter) — incremented on
+///   non-Aligned outcomes.
+///
+/// Returns `Ok(NonceAlignment)` on a successful chain query (even
+/// if the alignment shows drift). `Err(ReconcileError)` only on RPC
+/// failure; in that case last_chain_nonce / last_reconcile are NOT
+/// updated, and the operator can detect "RPC unreachable" by a
+/// stale `last_reconcile_unix_ms` gauge.
+pub async fn run_one_cycle(
+    chain_rpc_url: &str,
+    paymaster_address: AccountAddress,
+    local_next_nonce: u64,
+    metrics: &crate::PaymasterMetrics,
+) -> Result<NonceAlignment, ReconcileError> {
+    let outcome = check_alignment(chain_rpc_url, paymaster_address, local_next_nonce).await?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    metrics
+        .last_reconcile_unix_ms
+        .store(now_ms, std::sync::atomic::Ordering::Relaxed);
+    let chain_nonce = match &outcome {
+        NonceAlignment::Aligned { nonce } => *nonce,
+        NonceAlignment::LocalAhead { chain, .. } => *chain,
+        NonceAlignment::ChainAhead { chain, .. } => *chain,
+    };
+    metrics
+        .last_chain_nonce
+        .store(chain_nonce, std::sync::atomic::Ordering::Relaxed);
+    if !matches!(outcome, NonceAlignment::Aligned { .. }) {
+        metrics
+            .drift_detections_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(outcome)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +262,46 @@ mod tests {
         let pm_addr = [1u8; 32];
         let r = check_alignment(&url, pm_addr, 0).await;
         assert!(r.is_err(), "expected a connection error, got {r:?}");
+    }
+
+    // ─── Audit fix #3b: run_one_cycle metric updates ─────────────────
+
+    #[tokio::test]
+    async fn run_one_cycle_aligned_updates_gauges_no_drift_increment() {
+        let (url, _shutdown) = spawn_mock_chain(7).await;
+        let m = crate::PaymasterMetrics::default();
+        let r = run_one_cycle(&url, [1u8; 32], 7, &m).await.unwrap();
+        assert!(matches!(r, NonceAlignment::Aligned { nonce: 7 }));
+        assert_eq!(m.last_chain_nonce.load(std::sync::atomic::Ordering::Relaxed), 7);
+        assert!(m.last_reconcile_unix_ms.load(std::sync::atomic::Ordering::Relaxed) > 0);
+        assert_eq!(m.drift_detections_total.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn run_one_cycle_drift_increments_counter() {
+        let (url, _shutdown) = spawn_mock_chain(5).await;
+        let m = crate::PaymasterMetrics::default();
+        // Local at 12, chain at 5 → LocalAhead.
+        let r = run_one_cycle(&url, [1u8; 32], 12, &m).await.unwrap();
+        assert!(matches!(r, NonceAlignment::LocalAhead { local: 12, chain: 5 }));
+        assert_eq!(m.drift_detections_total.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(m.last_chain_nonce.load(std::sync::atomic::Ordering::Relaxed), 5);
+    }
+
+    #[tokio::test]
+    async fn run_one_cycle_rpc_failure_doesnt_update_gauges() {
+        // Bind+drop = closed port → connection refused.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let url = format!("http://{addr}");
+        let m = crate::PaymasterMetrics::default();
+        let r = run_one_cycle(&url, [1u8; 32], 7, &m).await;
+        assert!(r.is_err());
+        // Gauges stayed at default (0); operator detects unreachable
+        // chain by `last_reconcile_unix_ms` not advancing.
+        assert_eq!(m.last_chain_nonce.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(m.last_reconcile_unix_ms.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(m.drift_detections_total.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 }
