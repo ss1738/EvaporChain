@@ -1,22 +1,24 @@
 # Multi-Token Gas — Research + Decision Document
 
-**Status:** research / decision artifact (NOT a build commitment).
-**Last updated:** 2026-05-08.
-**Author:** parent session, EvaporChain afternoon arc.
+**Status:** research / decision artifact + **post-build addendum** (Option B shipped for V1, not V1.5 as originally recommended).
+**Last updated:** 2026-05-09 (audit-arc completion).
+**Author:** parent session, EvaporChain afternoon arc; post-build addendum after the audit-fix arc.
 
-This document exists to convert the question *"should EvaporChain accept ETH/USDC/other tokens for gas, and if yes, how"* from informal conversation into a structured comparison the team can act on. Companion to the 1-month roadmap in `SESSION_PROGRESS.md`. Reference, not commitment.
+This document exists to convert the question *"should EvaporChain accept ETH/USDC/other tokens for gas, and if yes, how"* from informal conversation into a structured comparison the team can act on. Companion to the 1-month roadmap in `SESSION_PROGRESS.md`. **The original recommendation was Option B for V1.5; the actual outcome was Option B shipped for V1 — see §10.**
 
 ---
 
 ## 0. TL;DR
 
-| Approach | Effort | UX gain | Strength gain | Risk | Recommended for V1? |
-|---|---|---|---|---|---|
-| **A. Status quo** (EVP-only gas) | 0 | 0 | baseline | none | **YES** |
-| **B. Wallet paymaster** (app-layer) | 1 week | high | medium | low | post-mainnet (V1.5) |
-| **C. Protocol-level multi-token gas** | 2–3 weeks | high | low net (loses native-token demand anchor) | high (consensus complexity) | **NO**, ever |
+| Approach | Effort | UX gain | Strength gain | Risk | Recommended for V1 (original) | Actual (2026-05-09) |
+|---|---|---|---|---|---|---|
+| **A. Status quo** (EVP-only gas) | 0 | 0 | baseline | none | **YES** | available as default |
+| **B. Wallet paymaster** (app-layer) | 1 week | high | medium | low | post-mainnet (V1.5) | **shipped for V1** |
+| **C. Protocol-level multi-token gas** | 2–3 weeks | high | low net (loses native-token demand anchor) | high (consensus complexity) | **NO**, ever | **NO** (not built) |
 
-**Recommendation: ship V1 mainnet with EVP-only gas (Option A). Plan Option B for V1.5 (~3 months post-mainnet). Do not build Option C.**
+**Original recommendation:** ship V1 mainnet with EVP-only gas (Option A); plan Option B for V1.5 (~3 months post-mainnet); do not build Option C.
+
+**Actual outcome (2026-05-09):** EVP-only gas remains the default (Option A), AND Option B has been shipped end-to-end on V1 (chain enforcement + off-chain service crate + wallet client + CLI + ~70 tests + ~400-line operator runbook + 7 audit-fix closures). The pull-forward decision was made mid-build to not lose context between V1 and V1.5; see §10 for the implementation summary and §11 for what remains for V1.5+.
 
 ---
 
@@ -318,9 +320,43 @@ NEVER:                                    Option C (protocol-level multi-token g
 
 Re-read this document if any of these become true:
 
-- ⚪ Mainnet has launched and is stable for ≥3 months. (Reopen Option B.)
-- ⚪ A wallet partner (e.g., MetaMask, Phantom) explicitly requests multi-token gas integration. (Reopen Option B.)
+- ⚪ Mainnet has launched and is stable for ≥3 months. (Reopen Option B.) ← **N/A: shipped for V1, see §10.**
+- ⚪ A wallet partner (e.g., MetaMask, Phantom) explicitly requests multi-token gas integration. (Reopen Option B.) ← **N/A: shipped for V1.**
 - ⚪ A novel cryptoeconomic primitive solves the per-block oracle agreement problem at zero liveness cost. (Reopen Option C.)
 - ⚪ The chain's narrative pivots away from decay-thesis to UX-flexibility. (Reopen Option C — but check INVENTION_STACK first.)
 
 Until then, the recommended path stands.
+
+---
+
+## 10. Implementation status (post-build addendum, 2026-05-09)
+
+Option B was **pulled forward into V1** mid-build rather than waiting for V1.5. The work spanned three arcs across ~30 commits and ~7,500 LOC:
+
+- **Days 1–5** (`dc89531..21fd448`, SESSION_PROGRESS `7242e59`) — chain enforcement (sponsorship sig + drain-bug closure + call_data dispatch), `evaporchain-paymaster` service crate, wallet client + CLI subcommand, in-process E2E test, operator runbook v1.
+- **Days 6–12B** (`14fed62..9b8f65d`, SESSION_PROGRESS `0231e75`) — production hardening (inner-tx whitelist expansion, spam-signing protection, append-only audit log, /metrics Prometheus endpoint, per-paymaster policy + /info exposure, idempotency cache chain-side AND wallet-side).
+- **Audit arc** (`e2fddec..1e48720`, SESSION_PROGRESS `1e48720`, CHANGELOG entry) — end-to-end audit + 7 V1-blocker fixes (wallet signer chain-id binding, UserOp validate-then-mutate, startup + runtime nonce reconciliation, strict-mode E2E test, persistent idempotency cache, audit-log fsync mode knob).
+
+Final V1 surface:
+
+| Layer | What's wired |
+|---|---|
+| Chain | `UserOpTx` with `paymaster_signature` + `paymaster_public_key` fields; `paymaster_sponsorship_payload(chain_id)` canonical; `execute_user_op` validate-then-mutate + chain-id-bound sig verification + drain-bug closed; call_data → inner Transfer/CallScript/CallContract dispatch with no-impersonation rule; `POST /api/tx/user_op` endpoint |
+| Off-chain service | axum server (`/healthz`, `/info`, `/metrics`, `/sponsor`); `Paymaster::sponsor_idempotent`; per-sender token-bucket rate limit; user-sig pre-check; append-only audit log (configurable fsync); idempotency cache (LRU + TTL + persistent); per-paymaster inner-tx whitelist; startup + runtime nonce reconciliation; SIGHUP audit-log rotation |
+| Wallet | `wallet::paymaster::PaymasterClient` (auto-Idempotency-Key); `sign_user_op_as_sender` (chain-id-bound); `paymaster {info, send, call-script, call-contract}` CLI; pre-checks `/info` policy locally + chain-id consistency before keystore unlock |
+| Tests | ~70 paymaster tests across 5 crates, all green on Mini 1 |
+| Docs | `docs/runbooks/paymaster.md` (~400 lines, walks operator through every config knob), `crates/evaporchain-paymaster/README.md`, this doc, three SESSION_PROGRESS entries, CHANGELOG audit-arc entry |
+
+The pull-forward decision was made mid-build because the cost/risk model that originally argued for V1.5 deferral (paymaster as "polish, not core") flipped during construction: the audit found two CRITICAL chain-wide bugs (wallet signer chain-id omission, UserOp partial-state-revert) that the paymaster work surfaced and that are V1 mainnet blockers regardless of the paymaster. Shipping the paymaster surfaced + fixed those, which would have been hidden under "feature complete in V1.5" anyway.
+
+## 11. What remains for V1.5+
+
+Items the audit deferred:
+
+- **#5 — MEV pipeline integration for sponsored intents** (~3-4 days). The Crooks-MEV detector currently looks at outer `Transaction::Transfer(_)` only; sponsored Transfers (inside `UserOp.call_data`) are blind. Out of V1 scope.
+- **#6b — Cross-process / DB-backed idempotency cache.** Single-process persistence (#6a, shipped) covers the most common case (every restart). Cross-process via shared DB is V1.5+.
+- **#8b — Group-commit fsync.** The audit-log throughput knob (#8a, shipped) gives operators per-line vs no-fsync. Group-commit (the safer middle option, async-coordinated) is V1.5+.
+- **#9 — Paymaster account type on chain** (~1 week). Doctrine work — `Account` enum gains a paymaster variant that refuses non-sponsored outflows. Defense if paymaster keypair leaks; not V1-blocking.
+- **#4 — Live cluster smoke** — operator-driven, can't automate silently. Procedure in `docs/runbooks/paymaster.md` §Live-cluster smoke.
+
+For V1.5 reopen triggers, see §9 above (most are now N/A — Option B is in V1).
