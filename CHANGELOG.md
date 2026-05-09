@@ -1,5 +1,64 @@
 # EvaporChain Changelog
 
+## 2026-05-09 (audit-arc) — paymaster end-to-end audit + 7 V1-blocker fixes (8 commits)
+
+End-to-end audit of the V1 paymaster build (Days 1-13B, ~7,500 LOC across `dc89531..d7a37a0`), then shipping the actual V1-mainnet-blocker fixes the audit surfaced. Closes the realistic gap between "feature-complete + production-hardened in isolation" and "actually safe for mainnet." The two original V1 mainnet blockers (#1, #2) and reorg handling (#3) are all on `origin/main`. Spans 8 commits (`e2fddec` → `1e48720`).
+
+### CRITICAL findings (V1 mainnet blockers)
+
+- **#1 — Wallet signer chain-id omission (`e2fddec`, parallel session).** `WalletSigner::sign_transaction` signed over `tx.signable_bytes()` only. The chain's `verify_tx_signature` (lib.rs:1146) verifies against `tx.signing_message(&self.chain_id)` which prefixes signable_bytes with `LE32(chain_id.len()) || chain_id_bytes` for cross-chain replay protection. Currently harmless because mainnet runs `verify_signatures: false` per cluster soak config. The instant `verify_signatures: true` flips on, every user-signed Transfer / Delegate / etc. would be rejected at execute time. The paymaster build's `sign_user_op_as_sender` was a localised workaround; the broader bug remained. **Closed via `sign_for_chain` / `sign_transaction_for_chain` (chain-id-bound) + `#[deprecated]` on the old methods + `TxPipeline::chain_id_cached()` (OnceCell-fed from `GET /api/chain`) + offline CLI gains `--chain-id` flag. ~14 sign-call sites migrated; tests pass `""` for the legacy testnet profile.**
+
+- **#2 — UserOp validate-then-mutate (`6673d4d`).** `execute_user_op` bumped `sender.nonce` BEFORE the paymaster preconditions (signature presence, paymaster_nonce match, gas budget). Any post-sender-bump precondition failure returned Err while leaving sender.nonce already incremented. The block-level revert at lib.rs:3211 snapshots only `tx.sender()`, which for sponsored UserOps returns the PAYMASTER, not the user. Paymaster's pre-execution state was restored on Err but the user's nonce stayed bumped. Under `verify_signatures: false` a third party could submit unsigned UserOps with `sender = victim` and DoS-bump the victim's nonce. **Closed by restructuring `execute_user_op` as 4 sections: (1) read sender precondition, (2) read+verify paymaster preconditions, (3) apply ALL mutations, (4) dispatch inner intent. Pre-check failure leaves both accounts untouched.** 2 regression tests pin the no-leak behavior.
+
+### HIGH findings (paymaster-specific hardening)
+
+- **#3a — Startup nonce reconciliation (`dcdbb13`).** Local `paymaster_nonce` file vs chain's `account.nonce` could drift after restart (graceful or post-crash). New `evaporchain-paymaster::reconcile` module: `check_alignment(rpc_url, addr, local_next_nonce) -> Result<NonceAlignment, ReconcileError>` hits `GET /api/address/<addr>` and classifies as `Aligned`/`LocalAhead`/`ChainAhead`. Binary CLI: `--chain-rpc-url URL` + `--strict-reconcile`. Strict mode refuses startup on anything but Aligned. Production paymasters should set strict. 4 tests with axum mock chain.
+
+- **#3b — Runtime nonce reconciliation poller (`18a9220`).** Background tokio task runs `check_alignment` every N seconds (default 60). `PaymasterMetrics` gains 3 fields (atomic): `drift_detections_total` counter, `last_chain_nonce` gauge, `last_reconcile_unix_ms` gauge. RPC unreachable does NOT update gauges so stale `last_reconcile_unix_ms` becomes the alert signal. Doesn't auto-pause `/sponsor` — operator response is external. 3 new tests for the metric-update contract. CLI: `--reconcile-interval-secs N` (0 disables).
+
+### MEDIUM / coverage findings
+
+- **#7 — Strict-mode E2E test (`4dcd2ec`).** Pre-fix `paymaster_e2e.rs` ran exclusively under `PaymasterConfig::permissive()`. The full chain-id-bound user-sig + sponsorship-sig + `execute_block`-with-`verify_signatures: true` triangle worked by construction (both ends use the same canonical messages) but no test exercised it together — a future regression that broke the joint would slip past every existing check. **Closed by extracting `spawn_paymaster_with_config` and adding 2 new tests:** `paymaster_e2e_strict_mode_full_pipeline` (positive: user signs canonical, paymaster verifies + signs sponsorship, chain re-verifies BOTH at `execute_block`, inner Transfer dispatched) + `paymaster_e2e_strict_mode_rejects_unsigned_userop` (negative: 400 with "user signature missing or invalid").
+
+- **#6a — Persistent idempotency cache (`918ce94`).** Wallet retries that landed after a paymaster restart got `Fresh` + new nonce (in-memory cache lost on restart). New `PaymasterConfig::idempotency_persist_path: Option<PathBuf>`. `IdempotencyCache::with_persist` constructor loads JSON file at startup with TTL-expired entries dropped; `save()` after each insert (atomic temp+rename + fsync). Unix-ms ↔ Instant translation lets the on-disk format survive clock changes. Single-process semantics — multiple paymaster processes pointing at the same path would race the rename; cross-process via shared DB tracked as #6b for V1.5+. 3 new tests including a hand-edited `inserted_unix_ms` to verify TTL-expiry on load.
+
+- **#8a — `--audit-log-fsync` mode knob (`d888977`).** Pre-fix the audit log called `sync_all` after every line — fail-closed durability but ~1k sponsorships/sec ceiling on standard SSDs. New `AuditFsyncMode::{PerLine, None}` enum. `None` skips the explicit fsync (line still hits OS page cache via `write_all`); ~10× throughput, but crash loss is bounded only by the OS dirty-page writeback schedule (~30 s on Linux). Operators choosing `None` accept some recent audit lines may not survive a kernel crash. Group-commit (the safer middle option) is V1.5+ tracked as #8b. 1 new test pins `None`-mode write semantics.
+
+### Audit findings deferred to V1.5+
+
+- **#4 — Live cluster smoke** — operator-driven, can't automate silently. Documented in `docs/runbooks/paymaster.md` §Live-cluster smoke procedure.
+- **#5 — MEV pipeline integration for sponsored intents (~3-4 days)** — Crooks-MEV detector currently looks at outer `Transaction::Transfer(_)` only; sponsored Transfers (inside `UserOp.call_data`) are blind. Out of V1 scope.
+- **#6b — Cross-process / DB-backed idempotency cache** — single-process persistence (#6a) covers the most common case (every restart). Cross-process via shared DB is V1.5+.
+- **#8b — Group-commit fsync** — async-coordination work (mpsc + oneshot per writer + background flusher); requires careful crash-recovery testing.
+- **#9 — Paymaster account type on chain (~1 week)** — doctrine work; `Account` enum gains a paymaster variant that refuses non-sponsored outflows. V1.5+.
+
+### Test surface added in this arc
+
+| Crate | New tests | Purpose |
+|---|---|---|
+| `evaporchain-execution` | 2 | sender-nonce-bump regression (`#2`); sender-nonce-mismatch symmetry |
+| `evaporchain-paymaster` | 14 | reconcile module (4 unit + 3 metric-update); audit-log-fsync no-fsync mode (1); persistent idempotency cache (3); strict-mode helpers (3) |
+| `evaporchain-integration-tests` | 2 | strict-mode E2E happy-path + unsigned-UserOp rejection |
+| `evaporchain-wallet` | (parallel) | #1 covered in `e2fddec`; ~14 sign-call sites migrated to `sign_for_chain` |
+
+Cumulative paymaster tests: ~70 across 5 crates, all green on Mini 1.
+
+### Decisions made
+
+- **Validate-then-mutate over fee-snapshot expansion.** Block-level revert at lib.rs:3211 only snapshots `tx.sender()`; widening to capture both sender+paymaster for UserOps would require chain-side changes that ripple through fee accounting. Restructuring `execute_user_op` to read all preconditions before any mutation is a localised fix with the same end-state correctness.
+- **Startup + runtime reconciliation, not block-event subscription.** Real reorg-listening would require hooking into the consensus layer's block-finalised events. Polling is simpler, has well-bounded latency (60 s default), and works against any chain HTTP endpoint. Auto-pause-on-drift was punted to V1.5 because the wallet would need a clear retry-after policy.
+- **`audit_log_fsync: none` mode but no group commit.** Group commit requires async coordination (oneshot channels, batch flusher, backpressure) and a careful crash-recovery story. Shipping `none` mode alone gives operators the throughput knob; `per-line` stays the safe default.
+- **Persistent idempotency single-process only.** Cross-process via shared DB is a real V1.5 piece. The single-process persistence solves the most common case (every restart) without taking on a database dep.
+- **Audit work followed strict scope discipline.** Each fix shipped with: code change + test change + runbook entry. The paymaster runbook is now ~400 lines and walks the operator through every config knob the audit added.
+
+### Cross-references
+
+- Earlier paymaster arcs: SESSION_PROGRESS entries `7242e59` (Days 1-5) + `0231e75` (Days 6-12B) + `1e48720` (this audit arc).
+- Operator runbook: `docs/runbooks/paymaster.md` (~400 lines, all post-audit knobs documented).
+- Decision artifact: `docs/MULTI_TOKEN_GAS_OPTIONS.md` (Option B).
+
+---
+
 ## 2026-05-08 → 2026-05-09 (evening through morning-latest) — chain becomes deploy-ready: 8-item bundle + 2 audit closures + production false-signal fix + MCC formal closure + Crooks-MEV cross-layer empirical proof + operator readiness toolkit + 6/7 chronic test failures fixed (26 commits)
 
 The arc that took the chain from "shipping individual fixes" to **"every major plan is `[ ]`-free and every governance flag in the activation ladder has a quantitative readiness script"**. Spans 26 commits (`a6bc9df` → `c63297c`) across 16 hours of one operator session arc. End state: code-side is exhausted; the cluster deploy + 3-flag governance ladder is the only remaining work, blocked on Hetzner SSH credentials.
