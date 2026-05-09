@@ -2,6 +2,7 @@
 mod audit_tests;
 pub mod compiler;
 pub mod parser;
+pub mod totality;
 pub mod vm;
 
 use evaporchain_types::{energy_at_epoch, AccountAddress, Energy, Epoch, HalfLife};
