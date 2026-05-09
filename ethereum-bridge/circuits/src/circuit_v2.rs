@@ -169,7 +169,98 @@ pub fn pedersen_commit_native(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Sub-task B placeholder — `impl Circuit<F>` block goes here.
+// Sub-task B starter — Halo2 column allocation for EccChip.
+//
+// `EccChip::configure` requires:
+//   - 10 advice columns (the chip equality-enables all of them)
+//   - 8 fixed columns for Lagrange coefficients (fixed-base mul windows)
+//   - 1 fixed column for shared constants (enabled via `enable_constant`)
+//   - 1 lookup-table column + a LookupRangeCheckConfig over advice[9]
+//
+// We wrap that allocation in `allocate_ecc_columns` so the
+// `Circuit::configure` body (sub-task B finish) reduces to:
+//
+//     let cols = EccVerkleStepCircuit::<pallas::Base>::allocate_ecc_columns(meta);
+//     let range_check = LookupRangeCheckConfig::configure(
+//         meta, cols.advices[9], cols.lookup_table);
+//     EccChip::<VerkleFixedBases>::configure(
+//         meta, cols.advices, cols.lagrange_coeffs, range_check)
+//
+// — pending the `VerkleFixedBases: FixedPoints<pallas::Affine>` impl
+// (sub-task C circuit half). Until that lands, this allocation
+// function is callable but the `EccChip::configure` line is not yet
+// in `synthesize`.
+// ─────────────────────────────────────────────────────────────────────
+
+use halo2_proofs::pasta::pallas as halo2_pallas;
+use halo2_proofs::plonk::{Advice, Column, ConstraintSystem, Fixed, TableColumn};
+
+/// The columns EccChip::configure consumes. Held together so the
+/// `Circuit::configure` body can pass them as one block to the
+/// chip's configure call once the FixedPoints impl lands.
+#[derive(Debug, Clone)]
+pub struct EccColumns {
+    /// 10 advice columns. `EccChip::configure` equality-enables all
+    /// of them. `advices[9]` is reserved for the LookupRangeCheckConfig.
+    pub advices: [Column<Advice>; 10],
+    /// 8 fixed columns for Lagrange coefficients used by
+    /// `mul_fixed::Config::configure`.
+    pub lagrange_coeffs: [Column<Fixed>; 8],
+    /// Shared fixed column for constants; must be `enable_constant`-d.
+    pub constants: Column<Fixed>,
+    /// Lookup-table column for the 10-bit range-check used by
+    /// variable-base scalar mul.
+    pub lookup_table: TableColumn,
+}
+
+impl EccVerkleStepCircuit<halo2_pallas::Base> {
+    /// Allocate every column EccChip needs. Sub-task B starter.
+    /// Called from `Circuit::configure` once that's wired (sub-task B
+    /// finish, after sub-task C ships the FixedPoints impl).
+    ///
+    /// **Side effect:** `enable_constant(constants)` is called on the
+    /// returned `constants` column — the EccChip's mul_fixed config
+    /// requires this. The caller does NOT need to enable it again.
+    pub fn allocate_ecc_columns(
+        meta: &mut ConstraintSystem<halo2_pallas::Base>,
+    ) -> EccColumns {
+        let advices = [
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+        ];
+        let lagrange_coeffs = [
+            meta.fixed_column(),
+            meta.fixed_column(),
+            meta.fixed_column(),
+            meta.fixed_column(),
+            meta.fixed_column(),
+            meta.fixed_column(),
+            meta.fixed_column(),
+            meta.fixed_column(),
+        ];
+        let constants = meta.fixed_column();
+        meta.enable_constant(constants);
+        let lookup_table = meta.lookup_table_column();
+
+        EccColumns {
+            advices,
+            lagrange_coeffs,
+            constants,
+            lookup_table,
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Sub-task B finish — `impl Circuit<F>` block.
 //
 // Shape (commented to keep this commit gate-clean):
 //
@@ -298,5 +389,29 @@ mod tests {
         let c2 = pedersen_commit_native(&[g, h], &[s2, s1]);
         // Swapping scalars across distinct bases changes the commit.
         assert_ne!(c1, c2);
+    }
+
+    // ─── Sub-task B starter — column allocation ─────────────────────
+
+    /// `allocate_ecc_columns` returns the right shape: 10 advice + 8
+    /// lagrange_coeffs + 1 constants + 1 lookup_table. Sub-task B
+    /// finish (the EccChip::configure call) consumes these unchanged.
+    #[test]
+    fn allocate_ecc_columns_returns_expected_arity() {
+        use halo2_proofs::pasta::pallas as halo2_pallas;
+        use halo2_proofs::plonk::ConstraintSystem;
+
+        let mut meta: ConstraintSystem<halo2_pallas::Base> = ConstraintSystem::default();
+        let cols = EccVerkleStepCircuit::<halo2_pallas::Base>::allocate_ecc_columns(&mut meta);
+
+        // Each Column<Advice> / Column<Fixed> / TableColumn is opaque
+        // (no public constructor outside the proofs crate), so we
+        // can't compare raw values — but the type system enforces the
+        // arity. The fact that these 4 lines compile + run is the
+        // structural guarantee EccChip::configure needs.
+        let _: [_; 10] = cols.advices;
+        let _: [_; 8] = cols.lagrange_coeffs;
+        let _ = cols.constants;
+        let _ = cols.lookup_table;
     }
 }
