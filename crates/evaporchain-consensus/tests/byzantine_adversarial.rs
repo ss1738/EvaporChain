@@ -23,6 +23,14 @@ fn make_validator_set_3() -> ValidatorSet {
     vs
 }
 
+fn make_validator_set_5() -> ValidatorSet {
+    let mut vs = ValidatorSet::new();
+    for id in 1..=5 {
+        vs.add_validator(make_validator(id, 1000));
+    }
+    vs
+}
+
 fn make_test_block(height: u64, producer_id: u64) -> Block {
     Block {
         number: height,
@@ -630,5 +638,208 @@ fn test_byzantine_conflicting_precommits_no_commit() {
     assert!(
         !committed,
         "Conflicting precommits (different hashes) should not reach quorum"
+    );
+}
+
+// ─── Lane T0.1 sub-task C.5 — 5-validator partition scenarios ───────────────
+//
+// MAINNET_READINESS.md T0.1: Layer 4 hot-path consensus surgery.
+// Sub-task C.5 calls for "propagation tests with 4-of-5 / 3-of-5
+// partition scenarios". The existing `make_validator_set_3` covers
+// 3-validator scale; these add the 5-validator equivalents:
+//
+// Quorum threshold for 5 validators × 1000 stake = strict >2/3 of
+// 5000 = 3333.33 → ≥ 3334. So 4 validators (4000 stake) reach
+// quorum; 3 validators (3000 stake) do NOT.
+//
+// These pair with C.6 (adversarial proposer wrong-head) — together
+// they pin the safety + liveness properties of the multi-parent
+// consensus path under partition.
+
+#[test]
+fn test_byzantine_partition_4_of_5_validators_reach_prevote_quorum() {
+    // 5 validators, each with 1000 stake. The minority (validator 5)
+    // is partitioned off; the majority (1, 2, 3, 4) prevote for the
+    // same block. Per BFT 2/3+, 4 of 5 = 4000 stake > 3333 quorum
+    // threshold → the local validator (id 1) precommits.
+    let vs = make_validator_set_5();
+    let mut tc = TendermintConsensus::new_for_test(1, 10, vs);
+
+    let _block = make_test_block(1, 1);
+    let block_hash = [0xAAu8; 32];
+
+    let mut last_actions = Vec::new();
+    // Self-prevote (validator 1) and the other 3 majority members.
+    for v_id in [1u64, 2, 3, 4] {
+        let msg = ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some(block_hash),
+            validator_id: v_id,
+            bls_signature: None,
+        };
+        last_actions = tc.on_message(msg);
+    }
+
+    // After 4-of-5 prevote, the local validator must respond with a
+    // precommit broadcast (round-state crossed the prevote-quorum
+    // threshold).
+    let precommitted = last_actions.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Precommit { .. })
+        )
+    });
+    assert!(
+        precommitted,
+        "4-of-5 prevote (4000/5000 = 80% > 2/3) must trigger a precommit broadcast"
+    );
+}
+
+#[test]
+fn test_byzantine_partition_3_of_5_validators_fail_prevote_quorum() {
+    // Symmetric to the 4-of-5 case: only 3 validators prevote
+    // (3000/5000 = 60% < 2/3). The local validator does NOT broadcast
+    // a precommit — round timeouts will eventually fire, but no
+    // commit is produced in this round.
+    let vs = make_validator_set_5();
+    let mut tc = TendermintConsensus::new_for_test(1, 10, vs);
+
+    let _block = make_test_block(1, 1);
+    let block_hash = [0xAAu8; 32];
+
+    let mut last_actions = Vec::new();
+    for v_id in [1u64, 2, 3] {
+        let msg = ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some(block_hash),
+            validator_id: v_id,
+            bls_signature: None,
+        };
+        last_actions = tc.on_message(msg);
+    }
+
+    let precommitted = last_actions.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Precommit { .. })
+        )
+    });
+    assert!(
+        !precommitted,
+        "3-of-5 prevote (3000/5000 = 60% < 2/3) must NOT trigger a precommit"
+    );
+}
+
+#[test]
+fn test_byzantine_partition_4_of_5_precommits_commit_block() {
+    // Continuation of the 4-of-5 prevote scenario: now 4 validators
+    // also precommit. With a precommit quorum, the block commits.
+    // Pins the full happy-path under one partitioned validator.
+    let vs = make_validator_set_5();
+    let mut tc = TendermintConsensus::new_for_test(1, 10, vs);
+
+    let block = make_test_block(1, 1);
+    let block_hash = [0xAAu8; 32];
+
+    // Inject a proposal so the consensus has a block to commit.
+    let proposal = ConsensusMessage::Proposal {
+        height: 1,
+        round: 0,
+        block,
+        proposer_id: 1,
+    };
+    tc.on_message(proposal);
+
+    // 4-of-5 prevote.
+    for v_id in [1u64, 2, 3, 4] {
+        tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some(block_hash),
+            validator_id: v_id,
+            bls_signature: None,
+        });
+    }
+
+    // 4-of-5 precommit.
+    let mut last_actions = Vec::new();
+    for v_id in [1u64, 2, 3, 4] {
+        last_actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(block_hash),
+            validator_id: v_id,
+            bls_signature: None,
+        });
+    }
+
+    // Block commit observable as either a CommitBlock action OR via
+    // height advance. Check both signals to be robust against
+    // refactors — the precommit-quorum path may surface differently
+    // depending on whether the proposed block was set first.
+    let committed = last_actions
+        .iter()
+        .any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
+    let advanced = tc.height() > 1;
+    assert!(
+        committed || advanced,
+        "4-of-5 precommit (>2/3) must commit OR advance height; \
+         actions = {:?}, height = {}",
+        last_actions,
+        tc.height()
+    );
+}
+
+#[test]
+fn test_byzantine_partition_3_of_5_precommits_do_not_commit() {
+    // 3-of-5 precommit: 60% < 2/3. No commit.
+    let vs = make_validator_set_5();
+    let mut tc = TendermintConsensus::new_for_test(1, 10, vs);
+
+    let block = make_test_block(1, 1);
+    let block_hash = [0xAAu8; 32];
+
+    let proposal = ConsensusMessage::Proposal {
+        height: 1,
+        round: 0,
+        block,
+        proposer_id: 1,
+    };
+    tc.on_message(proposal);
+
+    // 3-of-5 prevote (sub-quorum).
+    for v_id in [1u64, 2, 3] {
+        tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some(block_hash),
+            validator_id: v_id,
+            bls_signature: None,
+        });
+    }
+
+    // 3-of-5 precommit.
+    let mut last_actions = Vec::new();
+    for v_id in [1u64, 2, 3] {
+        last_actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(block_hash),
+            validator_id: v_id,
+            bls_signature: None,
+        });
+    }
+
+    let committed = last_actions
+        .iter()
+        .any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
+    let advanced = tc.height() > 1;
+    assert!(
+        !committed && !advanced,
+        "3-of-5 precommit (<2/3) must NOT commit; actions = {:?}, height = {}",
+        last_actions,
+        tc.height()
     );
 }
