@@ -617,12 +617,56 @@ impl PaymasterMetrics {
 /// up holding two distinct UserOps for what was logically one
 /// sponsorship.
 ///
+/// Idempotency backend trait — the seam at which alternate cache
+/// implementations plug in. Audit fix #6b first slice (2026-05-09):
+/// extracted to make space for cross-process backends without changing
+/// the Paymaster's caller surface.
+///
+/// Current implementations:
+///   - [`IdempotencyCache`] — single-process in-memory + optional
+///     atomic-rename file persistence. Cross-process unsafe (rename
+///     races between concurrent paymaster instances).
+///
+/// Planned implementations (future sessions):
+///   - `SqliteIdempotencyBackend` — file-backed SQLite DB with WAL
+///     mode for cross-process readers + writer locking. Trades a
+///     dependency for proper cross-process semantics.
+///   - `RedisIdempotencyBackend` — networked cache for ≥2-node
+///     paymaster deployments. Adds a network round-trip per
+///     /sponsor but enables truly distributed retry-safety.
+///
+/// The trait surfaces just the four methods Paymaster actually calls.
+/// `enabled()` distinguishes "configured but no-op" (max_keys = 0) from
+/// "no backend at all" (None). `backend_name()` lets `/info` reflect
+/// which backend is active for operator verification.
+pub trait IdempotencyBackend: Send + Sync + std::fmt::Debug {
+    /// Look up an entry; returns None if missing or TTL-expired.
+    /// TTL filtering is the backend's responsibility — implementations
+    /// MUST drop entries older than their configured TTL even if the
+    /// row still exists in the underlying store.
+    fn get(&mut self, key: &str) -> Option<SponsorshipResponse>;
+
+    /// Insert (or refresh) an entry; LRU eviction if at capacity.
+    fn insert(&mut self, key: String, response: SponsorshipResponse);
+
+    /// Whether the backend is actively caching. `false` for
+    /// max_keys = 0 (operator-disabled) and for placeholder
+    /// implementations.
+    fn enabled(&self) -> bool;
+
+    /// Stable identifier for `/info` reflection. Kept lowercase +
+    /// underscored for jq-friendliness: `"in_memory"`, `"sqlite"`,
+    /// `"redis"`, `"noop"`.
+    fn backend_name(&self) -> &'static str;
+}
+
 /// Audit fix #6a (2026-05-09): when `persist_path` is set, the cache
 /// is reloaded from disk at startup and re-written on each insert
 /// (atomic temp-file + rename). Wallet retries spanning a paymaster
 /// restart still get `Replay`. Cross-process semantics still NOT
 /// supported — multiple paymaster processes pointing at the same
-/// file would race the rename.
+/// file would race the rename. Audit fix #6b (planned) addresses this
+/// via the [`IdempotencyBackend`] trait + alternate backends.
 #[derive(Debug)]
 struct IdempotencyCache {
     entries: HashMap<String, (SponsorshipResponse, Instant)>,
@@ -827,6 +871,36 @@ impl IdempotencyCache {
         // file write is small (~100 B per entry) + one fsync per
         // insert. Negligible vs the paymaster's ML-DSA sign cost.
         self.save();
+    }
+}
+
+/// Audit fix #6b first slice (2026-05-09) — IdempotencyCache implements
+/// the IdempotencyBackend trait. Method bodies delegate to the
+/// existing inherent-impl methods; the trait wrapper exists to make
+/// space for alternate backends without disrupting the Paymaster's
+/// concrete-type usage.
+impl IdempotencyBackend for IdempotencyCache {
+    fn get(&mut self, key: &str) -> Option<SponsorshipResponse> {
+        IdempotencyCache::get(self, key)
+    }
+
+    fn insert(&mut self, key: String, response: SponsorshipResponse) {
+        IdempotencyCache::insert(self, key, response);
+    }
+
+    fn enabled(&self) -> bool {
+        IdempotencyCache::enabled(self)
+    }
+
+    fn backend_name(&self) -> &'static str {
+        // V1 in-memory backend (with optional file-rename persistence
+        // when persist_path is set). Cross-process unsafe; future #6b
+        // proper-fix replaces with `sqlite` or `redis`.
+        if self.persist_path.is_some() {
+            "in_memory_persistent"
+        } else {
+            "in_memory"
+        }
     }
 }
 
@@ -3094,6 +3168,61 @@ mod tests {
             let v: serde_json::Value = serde_json::from_str(line).unwrap();
             assert_eq!(v["paymaster_nonce"].as_u64().unwrap(), i as u64);
         }
+    }
+
+    #[test]
+    fn idempotency_backend_trait_dispatches_through_in_memory_impl() {
+        // Audit fix #6b first slice: verify the trait abstraction
+        // works — IdempotencyCache implements IdempotencyBackend, and
+        // calls through the trait reach the inherent-impl methods.
+        // Regression for the abstraction layer; replaces nothing
+        // currently.
+        let mut cache = IdempotencyCache::with_persist(8, Duration::from_secs(60), None);
+        // Type-erase to dyn trait — the actual coercion happens here.
+        let backend: &mut dyn IdempotencyBackend = &mut cache;
+        assert!(backend.enabled(), "8-key cache must be enabled");
+        assert_eq!(
+            backend.backend_name(),
+            "in_memory",
+            "no persist_path → backend reports in_memory"
+        );
+
+        // Insert + get round-trip through the trait.
+        let resp = SponsorshipResponse {
+            paymaster_address: [0u8; 32],
+            paymaster_nonce: 42,
+            paymaster_gas_limit: 100_000,
+            paymaster_signature: vec![0xAB, 0xCD],
+        };
+        backend.insert("idem-key-1".into(), resp.clone());
+        let got = backend
+            .get("idem-key-1")
+            .expect("trait get must return inserted entry");
+        assert_eq!(got.paymaster_nonce, 42);
+
+        // Disabled-cache backend reports correctly.
+        let disabled = IdempotencyCache::with_persist(0, Duration::from_secs(60), None);
+        let dis_back: &dyn IdempotencyBackend = &disabled;
+        assert!(!dis_back.enabled(), "max_keys=0 → backend reports disabled");
+    }
+
+    #[test]
+    fn idempotency_backend_name_reflects_persist_path() {
+        // Audit fix #6b first slice: persist_path makes the in-memory
+        // backend file-backed (still cross-process unsafe but
+        // observably different in /info).
+        let tmp = TempDir::new().unwrap();
+        let cache = IdempotencyCache::with_persist(
+            4,
+            Duration::from_secs(60),
+            Some(tmp.path().join("idem.json")),
+        );
+        let backend: &dyn IdempotencyBackend = &cache;
+        assert_eq!(
+            backend.backend_name(),
+            "in_memory_persistent",
+            "persist_path set → backend reports persistent variant"
+        );
     }
 
     #[test]
