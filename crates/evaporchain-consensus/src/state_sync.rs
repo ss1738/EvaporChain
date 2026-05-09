@@ -30,7 +30,9 @@ const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MIN_TIP_AGREEMENT: usize = 2;
 
 /// Maximum height lag before triggering state sync (vs block-by-block catch-up).
-const STATE_SYNC_THRESHOLD: u64 = 1000;
+/// Set high so block-by-block sync is used for operational catch-up; state-sync
+/// snapshot format is only stable for fresh-node bootstrapping from genesis.
+const STATE_SYNC_THRESHOLD: u64 = 50_000;
 
 // ─────────────────────── Types ───────────────────────────────────────
 
