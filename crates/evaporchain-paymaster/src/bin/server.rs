@@ -109,6 +109,14 @@ struct Args {
     #[arg(long, default_value = "3600")]
     idempotency_ttl_secs: u64,
 
+    /// Audit fix #6a: on-disk path for the idempotency cache.
+    /// Loaded at startup; re-written on every successful insert
+    /// (atomic temp+rename). Wallet retries spanning a paymaster
+    /// restart still get cache-replay. Omit to keep the legacy
+    /// in-memory-only behavior.
+    #[arg(long)]
+    idempotency_persist_path: Option<PathBuf>,
+
     /// Audit fix #3a (2026-05-09): chain RPC URL for startup nonce
     /// reconciliation. When set, the paymaster fetches its own
     /// `account.nonce` from `/api/address/<addr>` and compares
@@ -201,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
         allowed_inner_variants,
         idempotency_max_keys: args.idempotency_max_keys,
         idempotency_ttl_secs: args.idempotency_ttl_secs,
+        idempotency_persist_path: args.idempotency_persist_path.clone(),
     };
     let paymaster = Paymaster::new_with_config(
         keypair,

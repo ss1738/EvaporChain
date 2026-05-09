@@ -98,6 +98,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--allow-inner LIST` | no | (trust chain) | Operator-side inner-tx whitelist. Comma-separated values from `transfer`, `call_script`, `call_contract`. Omitted = sponsor any chain-accepted variant. Example: `--allow-inner=transfer` for a transfer-only paymaster. See §Inner-tx whitelist |
 | `--idempotency-max-keys N` | no | `1024` | Day 12: idempotency cache size. `0` disables. Wallets sending `Idempotency-Key` retry-safely against this cache |
 | `--idempotency-ttl-secs N` | no | `3600` | Day 12: idempotency cache TTL in seconds |
+| `--idempotency-persist-path PATH` | no | (off) | Audit fix #6a: persist the idempotency cache to disk. Loaded at startup; re-written atomically on every successful insert. Wallet retries that span a paymaster restart still get cache-replay. Single-process only — multiple paymasters pointing at the same file would race the rename |
 | `--chain-rpc-url URL` | no | (off) | Audit fix #3a: chain RPC URL for startup nonce reconciliation. Hits `GET /api/address/<paymaster_addr>` and compares the chain's `account.nonce` against the local `paymaster_nonce` file. Mismatch is logged loudly. See §Startup nonce reconciliation |
 | `--strict-reconcile` | no | off | Refuse to start when reconciliation surfaces drift OR fails (RPC error). Production paymasters should set this — sponsoring under drift either creates forever-gaps in the nonce sequence or duplicates already-consumed nonces. Requires `--chain-rpc-url` |
 | `--reconcile-interval-secs N` | no | `60` | Audit fix #3b: runtime reconciliation poll interval. `0` disables. Periodic background task hits the same RPC as startup reconciliation; updates `drift_detections_total` / `last_chain_nonce` / `last_reconcile_unix_ms` in `/metrics`. Requires `--chain-rpc-url` |
@@ -249,6 +250,7 @@ Operationally:
 - **`0` disables.** Set `--idempotency-max-keys=0` to opt out entirely; clients sending `Idempotency-Key` simply don't see the cache.
 - **/info exposes `idempotency_max_keys` + `idempotency_ttl_secs`** so wallets can decide whether to bother computing and sending keys.
 - **`evaporchain_paymaster_idempotent_replays_total` counter** — see §Metrics. Sustained high replay rate signals either flaky wallet → paymaster networking or a wallet bug retrying without backoff.
+- **Persistence** (audit fix #6a): set `--idempotency-persist-path PATH` to keep the cache across paymaster restarts. The file is JSON-encoded `PersistedCache { entries, insertion_order }`; loaded at startup with TTL-expired entries dropped; re-written atomically (temp file + rename) on every successful insert. Single-process semantics — running multiple paymaster processes against the same path would race the rename and lose entries; cross-process via shared DB is V1.5+.
 
 #### Limitations the cache does NOT cover
 

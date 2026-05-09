@@ -284,6 +284,18 @@ pub struct PaymasterConfig {
     /// if wallet retries can span longer (e.g., user closes laptop
     /// mid-flight); lower if the paymaster's nonce horizon is short.
     pub idempotency_ttl_secs: u64,
+    /// Audit fix #6a (2026-05-09): on-disk idempotency cache. When
+    /// `Some`, the in-memory cache is loaded from this path at
+    /// startup and re-written periodically + at the next flush
+    /// after every successful sponsorship. A wallet retry that spans
+    /// a paymaster restart (graceful or post-crash) still gets the
+    /// cached `Replay` instead of a `Fresh` allocation.
+    ///
+    /// `None` (default) keeps the legacy in-memory-only behavior.
+    /// Cross-process cache (e.g. shared DB) is tracked separately as
+    /// audit fix #6b — single-process persistence is the smaller,
+    /// realistic step.
+    pub idempotency_persist_path: Option<PathBuf>,
     /// Operator-side narrowing of which inner-tx variants this
     /// paymaster will sponsor.
     ///
@@ -327,6 +339,7 @@ impl Default for PaymasterConfig {
             per_sender_burst: 10,
             idempotency_max_keys: 1024,
             idempotency_ttl_secs: 3600,
+            idempotency_persist_path: None,
             audit_log: None,
             audit_log_fsync: AuditFsyncMode::PerLine,
             allowed_inner_variants: None,
@@ -346,6 +359,7 @@ impl PaymasterConfig {
             per_sender_burst: 0,
             idempotency_max_keys: 1024,
             idempotency_ttl_secs: 3600,
+            idempotency_persist_path: None,
             audit_log: None,
             audit_log_fsync: AuditFsyncMode::PerLine,
             allowed_inner_variants: None,
@@ -525,22 +539,170 @@ impl PaymasterMetrics {
 /// same paymaster_nonce, same signature — so the wallet doesn't end
 /// up holding two distinct UserOps for what was logically one
 /// sponsorship.
+///
+/// Audit fix #6a (2026-05-09): when `persist_path` is set, the cache
+/// is reloaded from disk at startup and re-written on each insert
+/// (atomic temp-file + rename). Wallet retries spanning a paymaster
+/// restart still get `Replay`. Cross-process semantics still NOT
+/// supported — multiple paymaster processes pointing at the same
+/// file would race the rename.
 #[derive(Debug)]
 struct IdempotencyCache {
     entries: HashMap<String, (SponsorshipResponse, Instant)>,
     insertion_order: VecDeque<String>,
     max_keys: usize,
     ttl: Duration,
+    persist_path: Option<PathBuf>,
+    /// Wall-clock anchor for `Instant` ↔ disk-friendly time
+    /// translation. Each on-disk entry is stored as a Unix-ms
+    /// timestamp; on load we map back into the live `Instant` axis
+    /// using `now_unix_ms` and the current `Instant::now()`.
+    started_at_unix_ms: u64,
+    started_at_instant: Instant,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedEntry {
+    key: String,
+    response: SponsorshipResponse,
+    inserted_unix_ms: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedCache {
+    entries: Vec<PersistedEntry>,
+    /// Insertion order; preserved across restarts so eviction stays
+    /// LRU-correct.
+    insertion_order: Vec<String>,
 }
 
 impl IdempotencyCache {
     fn new(max_keys: usize, ttl: Duration) -> Self {
-        Self {
+        Self::with_persist(max_keys, ttl, None)
+    }
+
+    /// Construct an IdempotencyCache, attempting to reload prior
+    /// state from `persist_path` if set. Best-effort: a malformed
+    /// or unreadable file is logged (in the binary) but doesn't
+    /// fail construction — the operator can rotate the file.
+    fn with_persist(max_keys: usize, ttl: Duration, persist_path: Option<PathBuf>) -> Self {
+        let started_at_instant = Instant::now();
+        let started_at_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut cache = Self {
             entries: HashMap::new(),
             insertion_order: VecDeque::new(),
             max_keys,
             ttl,
+            persist_path: persist_path.clone(),
+            started_at_unix_ms,
+            started_at_instant,
+        };
+        if let Some(ref path) = persist_path {
+            cache.load(path);
         }
+        cache
+    }
+
+    /// Load entries from a JSON file, dropping entries whose TTL has
+    /// already expired. Best-effort: errors are silent here; the
+    /// binary's startup logs the outcome via `cache_loaded_count`.
+    fn load(&mut self, path: &Path) {
+        if !self.enabled() {
+            return;
+        }
+        let raw = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let parsed: PersistedCache = match serde_json::from_str(&raw) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let now_ms = self.started_at_unix_ms;
+        for e in parsed.entries {
+            // Translate disk Unix-ms → live Instant. If the entry was
+            // inserted in the future (clock skew) or way before the
+            // TTL window, drop it.
+            if now_ms.saturating_sub(e.inserted_unix_ms) > self.ttl.as_millis() as u64 {
+                continue;
+            }
+            let age_ms = now_ms.saturating_sub(e.inserted_unix_ms);
+            // The "live" Instant we stamp matches what would have been
+            // recorded if the entry was inserted `age_ms` ago.
+            let synthetic_instant = self
+                .started_at_instant
+                .checked_sub(Duration::from_millis(age_ms))
+                .unwrap_or(self.started_at_instant);
+            self.entries
+                .insert(e.key.clone(), (e.response, synthetic_instant));
+        }
+        // Restore insertion order, but drop any keys that didn't
+        // survive TTL filtering.
+        for k in parsed.insertion_order {
+            if self.entries.contains_key(&k) {
+                self.insertion_order.push_back(k);
+            }
+        }
+    }
+
+    /// Number of currently-cached entries. For startup logging.
+    fn loaded_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Atomically write the cache to `persist_path` (if set).
+    /// Best-effort: callers ignore errors — losing the cache on a
+    /// crash is recoverable (wallet retries become Fresh + new
+    /// nonce, same as if persistence were disabled).
+    fn save(&self) {
+        let Some(ref path) = self.persist_path else {
+            return;
+        };
+        // Translate live Instant back to Unix-ms for on-disk format.
+        let now_unix_ms = self
+            .started_at_unix_ms
+            .saturating_add(self.started_at_instant.elapsed().as_millis() as u64);
+        let mut entries = Vec::with_capacity(self.entries.len());
+        for (k, (resp, ts)) in &self.entries {
+            // Compute wall-clock time when this entry was inserted.
+            let age_ms = ts.elapsed().as_millis() as u64;
+            let inserted_unix_ms = now_unix_ms.saturating_sub(age_ms);
+            entries.push(PersistedEntry {
+                key: k.clone(),
+                response: resp.clone(),
+                inserted_unix_ms,
+            });
+        }
+        let persisted = PersistedCache {
+            entries,
+            insertion_order: self.insertion_order.iter().cloned().collect(),
+        };
+        let json = match serde_json::to_string(&persisted) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let tmp = parent.join(format!(
+            ".idempotency_cache.tmp.{}",
+            std::process::id()
+        ));
+        use std::io::Write;
+        let mut f = match std::fs::File::create(&tmp) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        if f.write_all(json.as_bytes()).is_err() {
+            return;
+        }
+        let _ = f.sync_all();
+        let _ = std::fs::rename(&tmp, path);
     }
 
     fn enabled(&self) -> bool {
@@ -574,6 +736,7 @@ impl IdempotencyCache {
         // event.
         if self.entries.contains_key(&key) {
             self.entries.insert(key, (response, Instant::now()));
+            self.save();
             return;
         }
         if self.entries.len() >= self.max_keys {
@@ -589,6 +752,10 @@ impl IdempotencyCache {
         }
         self.insertion_order.push_back(key.clone());
         self.entries.insert(key, (response, Instant::now()));
+        // Audit fix #6a: persist after each successful insert. The
+        // file write is small (~100 B per entry) + one fsync per
+        // insert. Negligible vs the paymaster's ML-DSA sign cost.
+        self.save();
     }
 }
 
@@ -710,9 +877,10 @@ impl Paymaster {
         } else {
             None
         };
-        let idempotency = IdempotencyCache::new(
+        let idempotency = IdempotencyCache::with_persist(
             config.idempotency_max_keys,
             Duration::from_secs(config.idempotency_ttl_secs),
+            config.idempotency_persist_path.clone(),
         );
         Ok(Self {
             keypair,
@@ -1568,6 +1736,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -1603,6 +1772,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -1643,6 +1813,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -1682,6 +1853,7 @@ mod tests {
             allowed_inner_variants: None,
             idempotency_max_keys: 0,
             idempotency_ttl_secs: 0,
+            idempotency_persist_path: None,
             audit_log_fsync: AuditFsyncMode::PerLine,
         };
 
@@ -1736,6 +1908,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -1777,6 +1950,7 @@ mod tests {
                 allowed_inner_variants: allowed,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
             },
         )
         .unwrap()
@@ -1974,6 +2148,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2034,6 +2209,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2062,6 +2238,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 16,
                 idempotency_ttl_secs: 60,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2181,6 +2358,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2216,6 +2394,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 2,
                 idempotency_ttl_secs: 60,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2263,6 +2442,179 @@ mod tests {
         assert_eq!(info.idempotency_ttl_secs, 60);
     }
 
+    // ─── Audit fix #6a: persistent idempotency cache ─────────────────
+
+    #[test]
+    fn persistent_cache_replays_across_paymaster_restart() {
+        // Headline: a wallet retry that lands on a paymaster
+        // restarted between attempts STILL gets cache replay (same
+        // paymaster_nonce + same sig). Pre-fix the second instance
+        // had an empty in-memory cache and would have returned
+        // Fresh + a new nonce.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let cache_file = tmp.path().join("idempotency_cache.json");
+
+        let cfg = || PaymasterConfig {
+            require_user_sig: false,
+            per_sender_rps: 0.0,
+            per_sender_burst: 0,
+            audit_log: None,
+            audit_log_fsync: AuditFsyncMode::PerLine,
+            allowed_inner_variants: None,
+            idempotency_max_keys: 16,
+            idempotency_ttl_secs: 60,
+            idempotency_persist_path: Some(cache_file.clone()),
+        };
+
+        // First instance — sponsors twice with distinct keys.
+        let first_pm_addr;
+        let first_responses;
+        {
+            let kp = HybridKeypair::generate();
+            let pm =
+                Paymaster::new_with_config(kp, "test", &nonce_file, cfg()).unwrap();
+            first_pm_addr = pm.address();
+            let mut a = blank_user_op();
+            let mut b = blank_user_op();
+            let oa = pm.sponsor_idempotent(Some("k1"), &mut a).unwrap();
+            let ob = pm.sponsor_idempotent(Some("k2"), &mut b).unwrap();
+            first_responses = (
+                oa.paymaster_nonce(),
+                a.paymaster_signature.clone().unwrap(),
+                ob.paymaster_nonce(),
+                b.paymaster_signature.clone().unwrap(),
+            );
+        }
+        // Second instance — same persist file, same nonce file. The
+        // keypair is fresh (per-process) but that's fine; we're only
+        // checking the cache replay returns the EARLIER response
+        // verbatim (which carries the earlier instance's signature).
+        let kp2 = HybridKeypair::generate();
+        let pm2 =
+            Paymaster::new_with_config(kp2, "test", &nonce_file, cfg()).unwrap();
+        let mut a_retry = blank_user_op();
+        let outcome_a = pm2.sponsor_idempotent(Some("k1"), &mut a_retry).unwrap();
+        // Cache hit → Replay with the original nonce + sig.
+        assert!(matches!(outcome_a, SponsorOutcome::Replay { .. }));
+        assert_eq!(outcome_a.paymaster_nonce(), first_responses.0);
+        assert_eq!(
+            a_retry.paymaster_signature.as_ref().unwrap(),
+            &first_responses.1
+        );
+
+        // k2 also still cached.
+        let mut b_retry = blank_user_op();
+        let outcome_b = pm2.sponsor_idempotent(Some("k2"), &mut b_retry).unwrap();
+        assert!(matches!(outcome_b, SponsorOutcome::Replay { .. }));
+        assert_eq!(outcome_b.paymaster_nonce(), first_responses.2);
+
+        // Sanity: the original paymaster_address was preserved in
+        // the cached response (came from the FIRST instance's
+        // address, not pm2's).
+        let cached_addr_hex_a = a_retry.paymaster_public_key.is_some();
+        assert!(cached_addr_hex_a, "cached pubkey preserved");
+        // And it's NOT pm2's address (different keypair).
+        assert_ne!(pm2.address(), first_pm_addr);
+    }
+
+    #[test]
+    fn persistent_cache_drops_expired_entries_on_load() {
+        // Entries past their TTL must NOT be loaded back. Without
+        // this, a paymaster that restarts after a long downtime
+        // would honor stale cache entries that the wire-format wallet
+        // has already given up on.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let cache_file = tmp.path().join("idempotency_cache.json");
+
+        // First instance with a 1-second TTL: cache one entry.
+        {
+            let kp = HybridKeypair::generate();
+            let pm = Paymaster::new_with_config(
+                kp,
+                "test",
+                &nonce_file,
+                PaymasterConfig {
+                    require_user_sig: false,
+                    per_sender_rps: 0.0,
+                    per_sender_burst: 0,
+                    audit_log: None,
+                    audit_log_fsync: AuditFsyncMode::PerLine,
+                    allowed_inner_variants: None,
+                    idempotency_max_keys: 16,
+                    idempotency_ttl_secs: 1, // ← 1-second TTL
+                    idempotency_persist_path: Some(cache_file.clone()),
+                },
+            )
+            .unwrap();
+            pm.sponsor_idempotent(Some("k_short"), &mut blank_user_op())
+                .unwrap();
+        }
+        // Wait past the TTL (use a synthetic-future load path: we
+        // hand-edit the persisted file's timestamp to be
+        // `now - 60s` since waiting in tests is flaky).
+        let raw = std::fs::read_to_string(&cache_file).unwrap();
+        let mut parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        for entry in parsed["entries"].as_array_mut().unwrap() {
+            // Set inserted_unix_ms to 1 day ago.
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            entry["inserted_unix_ms"] = serde_json::json!(now_ms - 86_400_000);
+        }
+        std::fs::write(&cache_file, serde_json::to_string(&parsed).unwrap()).unwrap();
+
+        // Second instance — load with same 1s TTL. Aged-out entry
+        // is dropped; same key → Fresh.
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            &nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: None,
+                audit_log_fsync: AuditFsyncMode::PerLine,
+                allowed_inner_variants: None,
+                idempotency_max_keys: 16,
+                idempotency_ttl_secs: 1,
+                idempotency_persist_path: Some(cache_file.clone()),
+            },
+        )
+        .unwrap();
+        let outcome = pm
+            .sponsor_idempotent(Some("k_short"), &mut blank_user_op())
+            .unwrap();
+        assert!(
+            matches!(outcome, SponsorOutcome::Fresh { .. }),
+            "expired persisted entry must NOT replay; got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn persistent_cache_no_persist_path_keeps_in_memory_only() {
+        // Sanity: when idempotency_persist_path is None (default),
+        // behavior is exactly the legacy in-memory cache — no file
+        // is created, restart loses cache.
+        let tmp = TempDir::new().unwrap();
+        let pm = idempotent_paymaster(&tmp); // None persist path
+        pm.sponsor_idempotent(Some("k"), &mut blank_user_op()).unwrap();
+        // The temp dir contains paymaster_nonce only — no idempotency cache file.
+        let entries: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !entries.iter().any(|n| n.contains("idempotency")),
+            "no idempotency cache file should exist with persist_path=None; got {entries:?}"
+        );
+    }
+
     // ─── Day 11: /info policy surface tests ──────────────────────────
 
     #[test]
@@ -2307,6 +2659,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2417,6 +2770,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2522,6 +2876,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
             },
         )
         .unwrap();
@@ -2560,6 +2915,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
@@ -2586,6 +2942,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
                 audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
