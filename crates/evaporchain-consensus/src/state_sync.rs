@@ -905,10 +905,18 @@ mod tests {
 
     #[test]
     fn test_needs_state_sync() {
-        assert!(!StateSyncManager::needs_state_sync(100, 200));
-        assert!(!StateSyncManager::needs_state_sync(100, 1100));
-        assert!(StateSyncManager::needs_state_sync(100, 1102));
-        assert!(StateSyncManager::needs_state_sync(0, 5000));
+        // Reference STATE_SYNC_THRESHOLD directly so this test self-updates
+        // when the threshold is tuned (was hard-coded to 1000 originally,
+        // bumped to 50_000 in `b063b0b`, breaking these assertions silently).
+        let t = STATE_SYNC_THRESHOLD;
+        // Well under threshold → no sync.
+        assert!(!StateSyncManager::needs_state_sync(100, 100 + 10));
+        // Exactly at threshold → no sync (strict `>`).
+        assert!(!StateSyncManager::needs_state_sync(100, 100 + t));
+        // Just over threshold → sync.
+        assert!(StateSyncManager::needs_state_sync(100, 100 + t + 2));
+        // Well over → sync.
+        assert!(StateSyncManager::needs_state_sync(0, t * 2));
     }
 
     #[test]

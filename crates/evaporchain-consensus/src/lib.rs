@@ -180,6 +180,7 @@ pub enum ConsensusError {
 }
 
 /// Result of producing one block.
+#[derive(Debug)]
 pub struct BlockProductionResult {
     pub block: Block,
     pub execution: BlockExecutionResult,
