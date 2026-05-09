@@ -585,10 +585,6 @@ struct PersistedCache {
 }
 
 impl IdempotencyCache {
-    fn new(max_keys: usize, ttl: Duration) -> Self {
-        Self::with_persist(max_keys, ttl, None)
-    }
-
     /// Construct an IdempotencyCache, attempting to reload prior
     /// state from `persist_path` if set. Best-effort: a malformed
     /// or unreadable file is logged (in the binary) but doesn't
@@ -654,11 +650,6 @@ impl IdempotencyCache {
                 self.insertion_order.push_back(k);
             }
         }
-    }
-
-    /// Number of currently-cached entries. For startup logging.
-    fn loaded_count(&self) -> usize {
-        self.entries.len()
     }
 
     /// Atomically write the cache to `persist_path` (if set).
