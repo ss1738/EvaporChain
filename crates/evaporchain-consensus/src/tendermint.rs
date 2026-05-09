@@ -3856,6 +3856,13 @@ impl TendermintConsensus {
         added
     }
 
+    /// Operator-hatch: clear the jailed flag for an already-present
+    /// validator.  Returns `true` if unjailed; `false` if not found
+    /// or already active.  Stake-floor enforced by `ValidatorSet::unjail`.
+    pub fn unjail_validator(&mut self, validator_id: u64) -> bool {
+        self.validator_set.unjail(validator_id)
+    }
+
     /// Recent per-validator block-production timing samples, oldest
     /// first. Each entry is `(producer_id, exec_time_seconds)` and
     /// gets appended after every successful block commit; bounded by
@@ -17603,6 +17610,99 @@ mod phase2_round_trip_tests {
             result.is_ok(),
             "enforce-mode must accept matching root; got Err: {:?}",
             result.err()
+        );
+    }
+
+    // ── Lane T0.6 — sanov_slash_downtime unit coverage ────────────────
+    //
+    // T0.6 from MAINNET_READINESS.md ("Slashing-at-scale empirical
+    // tests"). Most of the listed slashing rules need a live cluster,
+    // but `sanov_slash_downtime` (tendermint.rs:2095) is a pure
+    // function on TendermintConsensus. Closing its unit-coverage gap.
+    //
+    // The companion `sanov_slash_equivocation` is already exercised by
+    // the prevote/precommit equivocation tests (search:
+    // test_prevote_equivocation_slashes_validator).
+
+    #[test]
+    fn sanov_slash_downtime_zero_missed_returns_zero() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let slashed = tc.sanov_slash_downtime(1, 0, 100);
+        assert_eq!(slashed, 0);
+        assert_eq!(
+            tc.validator_set.get(1).map(|v| v.stake),
+            Some(1000),
+            "stake must be untouched on zero-missed"
+        );
+    }
+
+    #[test]
+    fn sanov_slash_downtime_unknown_validator_returns_zero() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let slashed = tc.sanov_slash_downtime(999, 50, 100);
+        assert_eq!(slashed, 0);
+    }
+
+    #[test]
+    fn sanov_slash_downtime_within_tolerance_yields_low_slash() {
+        // 1-of-100 missed = honest tolerance baseline. KL ≈ 0 →
+        // slash should be < 1% of stake.
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let pre_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap();
+        let slashed = tc.sanov_slash_downtime(1, 1, 100);
+        assert!(
+            slashed < pre_stake / 100,
+            "1-of-100 missed must produce < 1% slash; got {} / {}",
+            slashed,
+            pre_stake
+        );
+    }
+
+    #[test]
+    fn sanov_slash_downtime_well_beyond_tolerance_yields_real_slash() {
+        // 50-of-100 missed = well beyond tolerance. KL is large; the
+        // slash must be non-zero AND deducted from validator stake.
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let pre_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap();
+        let slashed = tc.sanov_slash_downtime(1, 50, 100);
+        assert!(
+            slashed > 0,
+            "50-of-100 missed must produce non-zero slash; got 0"
+        );
+        let post_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap();
+        assert_eq!(
+            post_stake,
+            pre_stake - slashed,
+            "post-slash stake must reflect the deduction exactly"
+        );
+    }
+
+    #[test]
+    fn sanov_slash_downtime_three_or_more_jails() {
+        // Per the impl: `let jail = missed_blocks >= 3`. Validators
+        // with ≥3 missed blocks in the window are jailed alongside
+        // the slash.
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        assert!(
+            !tc.validator_set.get(1).map(|v| v.jailed).unwrap(),
+            "validator must start unjailed"
+        );
+        let slashed = tc.sanov_slash_downtime(1, 5, 100);
+        assert!(slashed > 0, "5-of-100 must slash");
+        assert!(
+            tc.validator_set.get(1).map(|v| v.jailed).unwrap(),
+            "missed_blocks ≥ 3 must jail the validator"
+        );
+    }
+
+    #[test]
+    fn sanov_slash_downtime_under_three_does_not_jail() {
+        // Boundary check: missed_blocks = 2 (< 3) must NOT jail.
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let _slashed = tc.sanov_slash_downtime(1, 2, 100);
+        assert!(
+            !tc.validator_set.get(1).map(|v| v.jailed).unwrap(),
+            "missed_blocks = 2 must NOT jail (< 3 threshold)"
         );
     }
 }
