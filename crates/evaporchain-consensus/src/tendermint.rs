@@ -3856,6 +3856,14 @@ impl TendermintConsensus {
         added
     }
 
+    /// Operator-hatch: clear the jailed flag for a validator that is
+    /// already in the set.  Returns `true` if the validator was jailed
+    /// and is now unjailed; `false` if it was not found or was already
+    /// active.  Stake-floor check is enforced by `ValidatorSet::unjail`.
+    pub fn unjail_validator(&mut self, validator_id: u64) -> bool {
+        self.validator_set.unjail(validator_id)
+    }
+
     /// Recent per-validator block-production timing samples, oldest
     /// first. Each entry is `(producer_id, exec_time_seconds)` and
     /// gets appended after every successful block commit; bounded by

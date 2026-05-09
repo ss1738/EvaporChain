@@ -15467,6 +15467,70 @@ async fn post_admin_validator_reinstate(
     }))
 }
 
+/// Body for `POST /api/admin/validator/unjail` — clear the jailed flag
+/// for a validator that is already in the set but was auto-jailed for
+/// liveness or equivocation.
+///
+/// Gated by `EVAPORCHAIN_ADMIN_KEY`.  Useful for testnet/devnet recovery
+/// without a node restart; production chains should drive unjailing
+/// through governance.
+#[derive(Debug, serde::Deserialize)]
+pub struct UnjailValidatorRequest {
+    pub validator_id: u64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct UnjailValidatorResponse {
+    pub status: &'static str,
+    pub validator_id: u64,
+    pub active_validators_after: usize,
+}
+
+/// `POST /api/admin/validator/unjail` — operator-side undo of an
+/// auto-jail.  Idempotent: returns `already_active` if the validator
+/// is not jailed.  Per-node call required.
+async fn post_admin_validator_unjail(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(body): Json<UnjailValidatorRequest>,
+) -> Result<Json<UnjailValidatorResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let Some(tc_arc) = state.tendermint.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "validator unjail unsupported in mock-consensus mode"
+            })),
+        ));
+    };
+
+    let unjailed = {
+        let mut tc = safe_lock(tc_arc);
+        tc.unjail_validator(body.validator_id)
+    };
+    let active_validators_after = {
+        let tc = safe_lock(tc_arc);
+        tc.validator_set()
+            .validators()
+            .iter()
+            .filter(|v| !v.jailed)
+            .count()
+    };
+
+    tracing::warn!(
+        validator_id = body.validator_id,
+        unjailed,
+        active_validators_after,
+        "Admin unjailed validator"
+    );
+
+    Ok(Json(UnjailValidatorResponse {
+        status: if unjailed { "unjailed" } else { "already_active" },
+        validator_id: body.validator_id,
+        active_validators_after,
+    }))
+}
+
 /// GET /metrics — Prometheus text exposition format for scraping.
 async fn get_prometheus_metrics(
     State(state): State<Arc<ApiState>>,
@@ -17534,6 +17598,91 @@ fn latest_snapshot_height(state: &ApiState) -> Option<u64> {
     best
 }
 
+/// `POST /api/admin/snapshot/create` — force a state snapshot right now
+/// at the current height, bypassing the every-100-blocks auto-trigger.
+/// Gated by `EVAPORCHAIN_ADMIN_KEY`.  Useful when the cluster is stuck
+/// and the automatic trigger will never fire.
+async fn post_admin_snapshot_create(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_admin_auth(&headers) {
+        return e.into_response();
+    }
+    let (height, epoch, state_root_bytes) = {
+        match state.tendermint.as_ref() {
+            Some(tc) => {
+                let tc = safe_lock(tc);
+                (tc.height(), tc.epoch(), tc.current_state_root())
+            }
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({"error": "tendermint not running"})),
+                )
+                    .into_response();
+            }
+        }
+    };
+    let snap_dir = match state.data_dir.as_ref() {
+        Some(d) => d.join("snapshots"),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "data_dir not configured"})),
+            )
+                .into_response();
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(&snap_dir) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("mkdir snapshots: {e}")})),
+        )
+            .into_response();
+    }
+
+    let snap_result = {
+        let mut db = safe_lock(&state.db);
+        evaporchain_state::snapshot::SnapshotBuilder::create(&mut *db, height, epoch)
+            .and_then(|snap| evaporchain_state::snapshot::serialize_snapshot(&snap).map(|b| (snap, b)))
+    };
+
+    match snap_result {
+        Ok((_snap, bytes)) => {
+            let path = snap_dir.join(format!("{}.zst", height));
+            if let Err(e) = std::fs::write(&path, &bytes) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("write snapshot: {e}")})),
+                )
+                    .into_response();
+            }
+            if let Some(cs) = state.chain_store.as_ref() {
+                let _ = cs.save_snapshot(height, &bytes, state_root_bytes);
+            }
+            {
+                let mut info = state.snapshot_info.lock().unwrap();
+                *info = Some((height, state_root_bytes, bytes.len()));
+            }
+            tracing::warn!(height, size = bytes.len(), "Admin-forced snapshot created");
+            Json(serde_json::json!({
+                "status": "created",
+                "height": height,
+                "state_root": hex::encode(state_root_bytes),
+                "size_bytes": bytes.len(),
+                "path": path.display().to_string(),
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("snapshot failed: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
 /// `GET /api/snapshot/latest` — returns the most recent snapshot's
 /// metadata (or 404 if none).
 async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
@@ -18176,6 +18325,14 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route(
             "/api/admin/validator/reinstate",
             post(post_admin_validator_reinstate),
+        )
+        .route(
+            "/api/admin/validator/unjail",
+            post(post_admin_validator_unjail),
+        )
+        .route(
+            "/api/admin/snapshot/create",
+            post(post_admin_snapshot_create),
         )
         // Nova Proofs / Light Client
         .route("/api/proof/latest", get(get_proof_latest))
