@@ -671,4 +671,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T02:10Z] Opus 4.7  · T0.9 sub-task C native half ✅ DONE · ship: 70be2b8 · 16/16 on-host (5 native Pedersen tests added)
 [2026-05-10T02:15Z] Opus 4.7  · T0.5 claimed (sub-task 3 starter) · base: cd964a5
 [2026-05-10T02:30Z] Opus 4.7  · T0.5 audited + re-scoped → 🟡 OPEN — code work largely shipped (sub-1/3 ✅, sub-4 infra ✅); remaining = sub-5 test (Mini) + operator steps. Anchor-enforcement at privacy_exec.rs:493,712 confirms PNT bounded-window is jointly secure with merkle-anchor rule.
+[2026-05-10T02:50Z] Opus 4.7  · T0.9 sub-task B starter ✅ DONE · ship: dee01d9 · 17/17 on-host (EccChip column allocation + EccColumns struct)
 ```
