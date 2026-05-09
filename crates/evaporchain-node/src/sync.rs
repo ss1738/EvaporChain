@@ -472,7 +472,12 @@ mod tests {
 
     #[test]
     fn test_sync_client_needs_sync() {
-        assert!(SyncClient::needs_sync(0, 2000));
+        // SyncClient::needs_sync delegates to StateSyncManager::needs_state_sync,
+        // whose threshold was raised from 1000 → 50_000 in `b063b0b`. Pre-bump
+        // these assertions used 2000 / 1500 / 1000 to straddle the boundary.
+        // Post-bump we use 100_000 / 1500 / 1000 to preserve the same shape:
+        // way-behind / close / equal.
+        assert!(SyncClient::needs_sync(0, 100_000));
         assert!(!SyncClient::needs_sync(1000, 1500));
         assert!(!SyncClient::needs_sync(1000, 1000));
     }
