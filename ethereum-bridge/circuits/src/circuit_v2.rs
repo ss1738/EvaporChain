@@ -703,7 +703,6 @@ impl Circuit<halo2_pallas::Base> for EccVerkleStepCircuit<halo2_pallas::Base> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::Field;
     use pasta_curves::Fp;
 
     #[test]
