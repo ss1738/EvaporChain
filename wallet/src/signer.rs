@@ -278,10 +278,6 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         }
         // Refund is protocol-issued — no caller signature to set.
         Transaction::Refund(_) => {}
-        Transaction::DeployTemplate(d) => {
-            d.signature = Some(sig);
-            d.public_key = Some(pk);
-        }
     }
 }
 
