@@ -904,7 +904,13 @@ mod tests {
             true,
             None,
             &[addr(2)],
-            100_000, // total_staked (large enough APY cap doesn't bite)
+            // total_staked=0 → APY cap bypassed (matches the
+            // test_zero_commission_v2_matches_no_commission convention
+            // below). 100_000 was too small: 100_000 * 0.05 / 15_768_000
+            // blocks/year ≈ 0 budget/block, capping block_reward to 1
+            // and zeroing the 60% proposer share — which made the
+            // expected 335 producer credit drop to 275.
+            0,
         );
         // Block reward (100) with 60/40 split (attester present): 60 to producer.
         // + producer fee share: 250.
