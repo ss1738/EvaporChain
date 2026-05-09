@@ -1,5 +1,91 @@
 # EvaporChain Changelog
 
+## 2026-05-09 (late-evening) — totality V1.5→V1.7 + paymaster #8b + #6b first slice (4 commits)
+
+Continuation arc beyond the V1 totality + Item A stdlib work shipped earlier this evening. Extends the totality checker through three further versions (BoundedWhile recognition, CFG-aware decrement, total isolation), ships paymaster audit fix #8b (Batched fsync mode), and lands the #6b first slice (IdempotencyBackend trait abstraction). Spans 4 commits (`e287187` → `6d64363`) on `lane/evaporscript-stdlib-consolidated`.
+
+### Item B totality progression — V1.5 / V1.6 / V1.7
+
+- **V1.5 — BoundedWhile pattern recognition (`e287187`).** V1's strict "reject all `Stmt::While`" rule loosened to accept the simplest structurally-total pattern: `while VAR > LIT { ... VAR -= LIT }` (and `>=` variant). Body must be a flat sequence (no nested `while`, no nested `if`); body's LAST statement must be `VAR -= K` for positive u64 K; no earlier statement may write to VAR. Each iteration strict-decrements by ≥ 1 at iteration's end → terminates within `(initial_VAR - LIT)` iterations. New error variants: `WhileNestedLoopForbidden`, `WhileRankingMutatedNonDecrementally`, `WhileMissingTerminalDecrement`. 7 new inline tests pin the V1.5 acceptance + rejection surface.
+
+- **V1.6 — CFG-aware definite-decrement (`d083758`).** V1.5's "terminal stmt must decrement" rule generalised to "every CFG path must decrement." Walk the body sequentially; at each statement ask "is this stmt definitely a decrement?" → `VAR -= K` is yes; `if X { THEN } else { ELSE }` is yes iff both branches are; `if X { THEN }` (no else) is no (skip-path produces nothing). Body decrements iff at least one statement is definite. V1.6 strictly widens V1.5: `while x > 0 { x -= 1; emit("..") }` and `while x > 0 { if c { x -= 10 } else { x -= 1 } }` both accept now (V1.5 rejected both). 4 new test cases (3 acceptance, 1 was V1.5-reject-now-V1.6-accept).
+
+- **V1.7 — Total isolation (`c284f48`).** Forbid `call_contract(...)` invocations under total mode. Cross-contract calls open the door to non-total callee behaviour; total-mode purity requires syntactic termination guarantees and we cannot statically verify the callee's totality. The chain runtime bounds them via call-depth + gas, but transitive totality requires whole-program analysis we don't have. New `check_expr_total` walker recursively inspects every Expr in every method body / hook body / if-condition / while-condition / function-call argument. Two new error variants: `CrossContractCallForbidden` (methods) and `CrossContractCallInLifecycleHook` (hooks; redundant with the runtime gate at vm.rs:758 but surfaces the failure at deploy admission). Builtins (`emit`, `require`, `min`, `max`, `hash`, `len`) remain accepted — they're VM-level primitives, not external dispatch. **Notable design finding:** EvaporScript has NO intra-contract method dispatch — `Op::Call(name, ...)` only resolves to a fixed set of builtins via `call_builtin` in vm.rs. So traditional "recursion detection" was a no-op; V1.7's "total isolation" addresses the only real escape valve. 4 new test cases.
+
+Stdlib regression unaffected through all three versions: the seed-15 stdlib uses zero `while` loops and zero actual `call_contract` invocations (only mentions in code comments). V1.5/V1.6/V1.7 are pure widenings of acceptance / rejection — `stdlib_totality_check.rs`'s 15 sub-tests stay green. Module grew from V1's ~280 lines to V1.7's ~770 lines. Inline test count: 5 (V1) → 12 (V1.5) → 14 (V1.6) → 18 (V1.7).
+
+### Paymaster audit fix #8b — Batched fsync (`ad1af4b`)
+
+Group-commit-flavoured middle ground between `PerLine` (fail-closed, ~1k QPS) and `None` (no fsync, ~10× throughput but durability at OS page-cache discretion). New variant: `AuditFsyncMode::Batched { batch_size: u32, flush_threshold_ms: u64 }`. Each `/sponsor` writes the audit line with `write_all`, increments `lines_since_fsync`, and fsyncs iff the counter reaches `batch_size` OR `Instant::elapsed()` reaches `flush_threshold_ms`. Reset on fsync. Tradeoff: a `/sponsor` call may return success before its line is durable (the next batch-tipping write triggers the fsync covering this line); operators accept the bounded-staleness window. CLI: `--audit-log-fsync batched:32:100` (32 lines OR 100ms). `info()` reports `"batched:32:100ms"` for verification. AuditLogger struct gains `lines_since_fsync: u32` + `last_fsync: Instant` fields. 3 new tests covering write-all-lines, fsync-fires-at-batch-size boundary, info() reflection. **Not** true async group commit with per-write durability barriers — that requires async coordination (oneshot channels, batch-flusher thread, drain semantics) and was tracked as future work.
+
+### Paymaster audit fix #6b first slice — IdempotencyBackend trait (`6d64363`)
+
+Refactor-only prep work for cross-process idempotency. Extracts the trait the existing in-memory cache satisfies, so future SQLite/Redis backends can plug in without changing Paymaster's caller surface.
+
+```rust
+pub trait IdempotencyBackend: Send + Sync + Debug {
+    fn get(&mut self, key: &str) -> Option<SponsorshipResponse>;
+    fn insert(&mut self, key: String, response: SponsorshipResponse);
+    fn enabled(&self) -> bool;
+    fn backend_name(&self) -> &'static str;
+}
+```
+
+`IdempotencyCache` implements `IdempotencyBackend`, reporting `backend_name = "in_memory"` (no persist_path) or `"in_memory_persistent"` (file-backed). Paymaster's concrete-type usage unchanged; trait is the seam for the next slice. Future backends:
+  - `SqliteIdempotencyBackend` — file-backed SQLite WAL-mode. Adds `rusqlite` dep. ~1 day full impl.
+  - `RedisIdempotencyBackend` — networked cache. Adds `redis` dep + test runtime. ~1-2 days.
+
+2 new tests: trait-object dispatch through the in-memory impl + backend_name reflection across persist_path variants.
+
+### Branch consolidation
+
+Cherry-picked 9 scattered commits (across 5 lane branches that the parallel session was creating mid-session) onto a clean `lane/evaporscript-stdlib-consolidated` branch from `origin/main`. Used `git worktree add ../evaporchain-consolidation` to do this without disturbing the parallel session's working tree. The bundled commit (`36dab74` — energy_marketplace pilot bundled with 6 parallel-session contamination files) had its single pilot file extracted as a clean commit (`0d29486`), leaving the parallel-session changes on the original lane unaffected.
+
+PR target: `https://github.com/ss1738/EvaporChain/pull/new/lane/evaporscript-stdlib-consolidated`
+
+### Verification status
+
+**0 of ~12,200 new lines / ~205 new tests verified on a Mini.** Every commit since `54bd5a2` is unverified. SSH-auth still pending. Highest-leverage next-session move: `cargo test -p evaporchain-script -p evaporchain-paymaster` on a Mini.
+
+---
+
+## 2026-05-09 (evening) — EvaporScript stdlib + Total-Programming V1 admission gate (3 commits)
+
+Item A (seed-12 `.es` stdlib + 2 worked-example behavioural pilots) and Item B V1 (totality checker module on mainline AST + chain admission gate behind a new `script_vm_mode` governance flag) of the smart-contract layer build-out. Spans 3 commits on `lane/evaporscript-stdlib-consolidated`: `54bd5a2` (Item A core), `7897461` (Item B V1 module), `33bee35` (payment_split pilot). 9 additional behavioural pilot commits land on `origin/main` directly via the parallel session's branch-switching: `99a433b` (multisig), `26a34d0` (oracle_feed), `a5de2aa` (subscription), `5fb4eab` (lottery), `6aa2865` (bounty); plus `f0b50de` (attestation), `bafda72` (vesting_schedule), `af84c1b` (time_lock), `c268c81` (sealed_bid_auction), `0d29486` (energy_marketplace clean) on the consolidation branch.
+
+### Item A — `.es` stdlib
+
+12 decay-native primitives in `contracts/evaporscript/`: `payment_split`, `sealed_bid_auction`, `vesting_schedule`, `time_lock`, `attestation`, `oracle_feed`, `subscription`, `multisig`, `lottery`, `bounty`, `dead_man_switch`, `energy_marketplace`. ~2,030 lines total. Each contract's header documents the decay-thesis hook — what makes the EvaporChain version structurally different from the equivalent on every other chain (the `on_evaporate` doctrine moment is the discriminator). Index page at `contracts/evaporscript/README.md` with one-liner hooks + deploy curl + half-life sizing table.
+
+12 behavioural pilot files in `crates/evaporchain-script/tests/`, each ~400-600 lines, ~10-15 test cases per file. Pattern-locked: parses+compiles+bytecode-name + each public method exercised + auth-gate negative cases + lifecycle hooks emit cleanly. ~150 cumulative test cases. The `dead_man_switch_pilot` is the canonical decay-native dApp regression (the contract EvaporChain was made for); `payment_split_pilot` is the math regression (only stdlib contract using `/` and `*` on the hot path).
+
+`stdlib_parse_check.rs` provides 12 sub-tests pinning parse + compile + public-method + lifecycle-hook surface for each stdlib contract — the one-shot regression check before per-contract behavioural pilots.
+
+### Item B V1 — totality checker
+
+`crates/evaporchain-script/src/totality.rs` provides `check_total_contract(&Contract) -> Result<TotalityCertificate, TotalityError>`. V1 rule: reject any `Stmt::While`. The mainline grammar's while has no syntactic termination witness, so pass-by-construction is impossible. The seed-15 stdlib uses zero `while` (all if-based), so the strict V1 rule lets total mode flip on for the entire library with no porting work.
+
+`stdlib_totality_check.rs` provides 15 sub-tests asserting every seed-15 stdlib contract (3 pilots + 12 stdlib) is total-clean — flag can flip on without porting work.
+
+Chain admission gate (uncommitted, working-tree contaminated by parallel session): `crates/evaporchain-execution/src/lib.rs` `execute_deploy_script` runs the totality check before `engine.deploy` when `script_vm_mode = "total"`. Returns `ExecutionError::ScriptError` on rejection without partial deploy state. `script_vm_mode ∈ {permissive, total}` added to the consensus governance soft-fork allowlist in `tendermint.rs`. 3 regression tests: permissive-accepts-while, total-rejects-while, total-accepts-Counter.
+
+### Cumulative session totals
+
+| Surface | Files | Tests | Lines |
+|---|---|---|---|
+| Item A stdlib | 12 .es + 1 README | — | ~2,090 |
+| Item A pilots | 12 pilot files | ~150 | ~5,000 |
+| Item A regressions | parse_check + totality_check | 12 + 15 | ~390 |
+| Item B totality module (V1→V1.7) | 1 file | 18 | ~770 |
+| Item B chain wiring | 2 modified | 3 | ~115 |
+| Paymaster #8b + #6b | 1 modified + 1 modified | 5 | ~330 |
+| Process | SESSION_PROGRESS, CHANGELOG | — | ~120 |
+| **Total** | **~30 files** | **~205** | **~12,800** |
+
+19 commits on `lane/evaporscript-stdlib-consolidated`. 0 verified on a Mini.
+
+---
+
 ## 2026-05-09 (audit-arc) — paymaster end-to-end audit + 7 V1-blocker fixes (8 commits)
 
 End-to-end audit of the V1 paymaster build (Days 1-13B, ~7,500 LOC across `dc89531..d7a37a0`), then shipping the actual V1-mainnet-blocker fixes the audit surfaced. Closes the realistic gap between "feature-complete + production-hardened in isolation" and "actually safe for mainnet." The two original V1 mainnet blockers (#1, #2) and reorg handling (#3) are all on `origin/main`. Spans 8 commits (`e2fddec` → `1e48720`).
