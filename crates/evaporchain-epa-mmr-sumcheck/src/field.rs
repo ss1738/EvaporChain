@@ -35,7 +35,7 @@ pub fn pow_p(mut a: FieldElem, mut e: u64) -> FieldElem {
 }
 
 pub fn inverse_p(a: FieldElem) -> Option<FieldElem> {
-    if a % MOD_P == 0 {
+    if a.is_multiple_of(MOD_P) {
         None
     } else {
         Some(pow_p(a, MOD_P - 2))

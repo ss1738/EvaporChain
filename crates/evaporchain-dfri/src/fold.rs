@@ -43,7 +43,7 @@ pub fn fold_codeword(input: &EnergyCodeword) -> Result<EnergyCodeword, FoldError
     if input.is_empty() {
         return Err(FoldError::EmptyInput);
     }
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return Err(FoldError::OddDomainSize(input.len()));
     }
     // Build a lookup for x → position.
@@ -82,7 +82,7 @@ pub fn fold_codeword(input: &EnergyCodeword) -> Result<EnergyCodeword, FoldError
 /// when P is odd. MOD_P = 2³¹ − 1 is odd, so this returns
 /// (2³¹ − 1 + 1) / 2 = 2³⁰.
 pub fn inverse_of_two() -> Option<FieldElem> {
-    if MOD_P % 2 == 0 {
+    if MOD_P.is_multiple_of(2) {
         None
     } else {
         // `(P + 1) / 2` is the canonical algebraic form of `2⁻¹ mod P`
