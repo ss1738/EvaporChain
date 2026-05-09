@@ -732,9 +732,12 @@ impl IdempotencyCache {
         // If the key already exists (shouldn't, but defend), refresh
         // it without touching the LRU order — caller already saw a
         // miss path so we record this as a fresh-but-overwriting
-        // event.
-        if self.entries.contains_key(&key) {
-            self.entries.insert(key, (response, Instant::now()));
+        // event. `Entry::Occupied` is the clippy-preferred form
+        // (avoids the contains_key + insert double-lookup).
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            self.entries.entry(key.clone())
+        {
+            e.insert((response, Instant::now()));
             self.save();
             return;
         }
