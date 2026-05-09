@@ -20,7 +20,7 @@
 //! the body is a flat sequence and the LAST statement is the strict-
 //! decrement. This was the V1.5 rule; V1.6 generalises it.
 //!
-//! ## V1.6 rule (current — CFG-aware definite-decrement)
+//! ## V1.6 rule (CFG-aware definite-decrement)
 //!
 //! Accept `while VAR > N { body }` (and `>= N` variant) where:
 //!   1. Condition is `VAR > N` or `VAR >= N`, with `N` a positive `u64`
@@ -48,6 +48,27 @@
 //!
 //! V1.6 strictly widens V1.5 — every V1.5-accepted pattern is still
 //! accepted, plus branched bodies whose every CFG path decrements.
+//!
+//! ## V1.7 rule (current — total isolation)
+//!
+//! Forbid `call_contract(...)` invocations in any expression context
+//! under total mode. Cross-contract calls open the door to non-total
+//! callee behaviour: the chain runtime bounds them via call-depth and
+//! gas, but total-mode purity requires every reachable program to
+//! terminate by syntactic argument. A total contract that calls into
+//! a permissive contract loses its totality guarantee transitively.
+//!
+//! The seed-15 stdlib uses zero `call_contract` invocations (only
+//! mentions in code comments), so V1.7 is a pure widening of the
+//! rejection surface — no regression on the existing stdlib totality
+//! check. Operators wanting cross-contract calls keep `script_vm_mode
+//! = "permissive"`.
+//!
+//! Note: EvaporScript has no intra-contract method dispatch (no
+//! recursion possible at the language level — `Op::Call(name, ...)`
+//! only resolves to a fixed set of builtins like `emit`, `require`,
+//! `min`, `max`, `hash`, `len`). Total isolation only needs to cover
+//! the cross-contract `call_contract` form.
 //!
 //! ## Lifecycle-hook restriction
 //!
@@ -126,6 +147,26 @@ pub enum TotalityError {
          decrement"
     )]
     WhileMissingTerminalDecrement { method: String, var: String },
+    /// V1.7 — `call_contract(...)` invocation is forbidden in total
+    /// mode. Total mode requires syntactic termination guarantees;
+    /// cross-contract calls compose with the callee's totality, which
+    /// we cannot verify here.
+    #[error(
+        "totality: method `{method}` invokes `call_contract(...)` — cross-contract calls \
+         are forbidden under total mode (callee's totality cannot be verified statically; \
+         use `script_vm_mode = \"permissive\"` if cross-contract calls are required)"
+    )]
+    CrossContractCallForbidden { method: String },
+    /// V1.7 — `call_contract(...)` in a lifecycle hook. Already a
+    /// runtime error (vm.rs rejects CallExternal in hooks), but the
+    /// totality checker surfaces it statically with a precise error
+    /// at deploy admission rather than a runtime revert.
+    #[error(
+        "totality: lifecycle hook `{hook}` invokes `call_contract(...)` — cross-contract \
+         calls are forbidden in hooks (runtime would reject anyway; total mode catches \
+         this at admission)"
+    )]
+    CrossContractCallInLifecycleHook { hook: String },
 }
 
 /// Witness that a contract passed the totality check. Holding a
@@ -174,14 +215,24 @@ fn check_stmt(s: &Stmt, ctx_name: &str, is_hook: bool) -> Result<(), TotalityErr
                     hook: ctx_name.to_string(),
                 })
             } else {
-                check_bounded_while(condition, body, ctx_name)
+                check_expr_total(condition, ctx_name, is_hook)?;
+                check_bounded_while(condition, body, ctx_name)?;
+                // Walk the body once more for V1.7 expression-level
+                // checks (the V1.6 walk above only inspected stmt
+                // shapes). check_stmt's recursion handles each body
+                // statement uniformly.
+                for body_stmt in body {
+                    check_stmt(body_stmt, ctx_name, is_hook)?;
+                }
+                Ok(())
             }
         }
         Stmt::If {
+            condition,
             then_body,
             else_body,
-            ..
         } => {
+            check_expr_total(condition, ctx_name, is_hook)?;
             for s in then_body {
                 check_stmt(s, ctx_name, is_hook)?;
             }
@@ -194,18 +245,18 @@ fn check_stmt(s: &Stmt, ctx_name: &str, is_hook: bool) -> Result<(), TotalityErr
         }
         Stmt::Let { value, .. }
         | Stmt::Assign { value, .. }
-        | Stmt::CompoundAssign { value, .. } => check_expr_loop_free(value),
+        | Stmt::CompoundAssign { value, .. } => check_expr_total(value, ctx_name, is_hook),
         Stmt::Return(maybe) => {
             if let Some(e) = maybe {
-                check_expr_loop_free(e)?;
+                check_expr_total(e, ctx_name, is_hook)?;
             }
             Ok(())
         }
         Stmt::Require { condition, message } => {
-            check_expr_loop_free(condition)?;
-            check_expr_loop_free(message)
+            check_expr_total(condition, ctx_name, is_hook)?;
+            check_expr_total(message, ctx_name, is_hook)
         }
-        Stmt::Emit(e) | Stmt::ExprStmt(e) => check_expr_loop_free(e),
+        Stmt::Emit(e) | Stmt::ExprStmt(e) => check_expr_total(e, ctx_name, is_hook),
     }
 }
 
@@ -418,13 +469,52 @@ fn check_no_nested_while(stmt: &Stmt, method: &str) -> Result<(), TotalityError>
     }
 }
 
-/// Expressions are loop-free in the mainline grammar — no while-
-/// expression form, no comprehensions. This walker exists so we can
-/// extend with future expression-level termination concerns (e.g.
-/// recursion-via-method-call detection in V1.6) without adding a
-/// second AST walker.
-fn check_expr_loop_free(_e: &Expr) -> Result<(), TotalityError> {
-    Ok(())
+/// V1.7 — recursive expression walker. Rejects `call_contract(...)`
+/// invocations under total mode, because the callee's totality is
+/// not statically verifiable.
+///
+/// Mainline grammar has no while-expression / comprehension forms, so
+/// expressions cannot themselves loop. The only expression-level
+/// concern for total mode is the cross-contract call surface.
+fn check_expr_total(expr: &Expr, ctx_name: &str, is_hook: bool) -> Result<(), TotalityError> {
+    match expr {
+        Expr::FunctionCall { name, args } => {
+            if name == "call_contract" {
+                return if is_hook {
+                    Err(TotalityError::CrossContractCallInLifecycleHook {
+                        hook: ctx_name.to_string(),
+                    })
+                } else {
+                    Err(TotalityError::CrossContractCallForbidden {
+                        method: ctx_name.to_string(),
+                    })
+                };
+            }
+            for arg in args {
+                check_expr_total(arg, ctx_name, is_hook)?;
+            }
+            Ok(())
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            check_expr_total(left, ctx_name, is_hook)?;
+            check_expr_total(right, ctx_name, is_hook)
+        }
+        Expr::UnaryOp { expr, .. } => check_expr_total(expr, ctx_name, is_hook),
+        Expr::ArrayLiteral(elems) => {
+            for e in elems {
+                check_expr_total(e, ctx_name, is_hook)?;
+            }
+            Ok(())
+        }
+        Expr::ArrayAccess(arr, idx) => {
+            check_expr_total(arr, ctx_name, is_hook)?;
+            check_expr_total(idx, ctx_name, is_hook)
+        }
+        Expr::MapAccess(_, key) => check_expr_total(key, ctx_name, is_hook),
+        // Leaf forms: literals, variable refs, state-field reads.
+        // None can carry sub-expressions; all are total.
+        Expr::Literal(_) | Expr::Variable(_) | Expr::StateAccess(_) => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -858,5 +948,105 @@ mod tests {
             TotalityError::WhileNotPermitted { .. } => {}
             other => panic!("wrong error variant: {other:?}"),
         }
+    }
+
+    // ── V1.7 total-isolation cases ──────────────────────────────────
+
+    #[test]
+    fn v17_rejects_call_contract_in_method_body() {
+        let src = r#"
+            contract Caller {
+                state {}
+                fn invoke() {
+                    call_contract(42, "method", 1)
+                }
+                on_grace() { }
+                on_refresh() { }
+                on_evaporate() { }
+            }
+        "#;
+        let c = parse_or_panic(src);
+        let err = check_total_contract(&c)
+            .expect_err("V1.7 must reject call_contract in method body");
+        match err {
+            TotalityError::CrossContractCallForbidden { method } => {
+                assert_eq!(method, "invoke");
+            }
+            other => panic!("wrong error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v17_rejects_call_contract_inside_if() {
+        let src = r#"
+            contract NestedCall {
+                state {
+                    n: u64 = 0
+                }
+                fn maybe_call() {
+                    if self.n > 0 {
+                        call_contract(99, "ping", 1)
+                    }
+                }
+                on_grace() { }
+                on_refresh() { }
+                on_evaporate() { }
+            }
+        "#;
+        let c = parse_or_panic(src);
+        let err = check_total_contract(&c)
+            .expect_err("V1.7 must reject call_contract inside if branch");
+        match err {
+            TotalityError::CrossContractCallForbidden { method } => {
+                assert_eq!(method, "maybe_call");
+            }
+            other => panic!("wrong error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v17_rejects_call_contract_in_lifecycle_hook() {
+        let src = r#"
+            contract HookCall {
+                state {}
+                on_grace() {
+                    call_contract(7, "ping", 1)
+                }
+                on_refresh() { }
+                on_evaporate() { }
+            }
+        "#;
+        let c = parse_or_panic(src);
+        let err = check_total_contract(&c)
+            .expect_err("V1.7 must reject call_contract in hook");
+        match err {
+            TotalityError::CrossContractCallInLifecycleHook { hook } => {
+                assert_eq!(hook, "on_grace");
+            }
+            other => panic!("wrong error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v17_accepts_builtin_function_calls() {
+        // emit + require are intra-VM builtins — not cross-contract.
+        // They stay accepted under V1.7.
+        let src = r#"
+            contract Builtins {
+                state {
+                    s: string = ""
+                }
+                fn use_builtins() {
+                    emit("hello")
+                    require(true, "always passes")
+                }
+                on_grace() { }
+                on_refresh() { }
+                on_evaporate() { }
+            }
+        "#;
+        let c = parse_or_panic(src);
+        check_total_contract(&c)
+            .expect("V1.7 must still accept builtin function calls (emit, require)");
     }
 }
