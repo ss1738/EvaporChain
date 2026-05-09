@@ -35,6 +35,53 @@
 //!   it right (a malformed user-signed UserOp simply gets rejected at
 //!   `verify_tx_signature`, costing the paymaster the gas it just
 //!   sponsored — which is paymaster-side risk, not consensus risk).
+//!
+//! ## Library example
+//!
+//! Construct a paymaster, hand it a half-built `UserOpTx` from a wallet,
+//! and have it stamp the four sponsorship fields. The chain then
+//! enforces `blake3(paymaster_public_key) == paymaster` and
+//! `HybridVerifier::verify(canonical_payload, paymaster_signature, paymaster_public_key)`
+//! at execution time.
+//!
+//! ```
+//! use evaporchain_crypto::signatures::HybridKeypair;
+//! use evaporchain_paymaster::{Paymaster, PaymasterConfig};
+//! use evaporchain_types::UserOpTx;
+//!
+//! let tmp = tempfile::TempDir::new().unwrap();
+//! let paymaster = Paymaster::new_with_config(
+//!     HybridKeypair::generate(),
+//!     "evaporchain-mainnet",
+//!     tmp.path().join("paymaster_nonce"),
+//!     // permissive() skips the strict-mode user-sig pre-check so the
+//!     // example doesn't have to wire the wallet-side signing flow.
+//!     // Production deployments use PaymasterConfig::default().
+//!     PaymasterConfig::permissive(),
+//! ).unwrap();
+//!
+//! let mut user_op = UserOpTx {
+//!     sender: [1u8; 32],
+//!     nonce: 0,
+//!     call_data: vec![], // gas-only sponsorship for example brevity
+//!     call_gas_limit: 50_000,
+//!     paymaster: None,
+//!     paymaster_nonce: None,
+//!     paymaster_data: None,
+//!     paymaster_signature: None,
+//!     paymaster_public_key: None,
+//!     signature: None,
+//!     public_key: None,
+//! };
+//! let pm_nonce = paymaster.sponsor(&mut user_op).unwrap();
+//!
+//! // After sponsor() returns, the four paymaster fields are populated
+//! // and the canonical sponsorship payload verifies under chain rules.
+//! assert_eq!(user_op.paymaster, Some(paymaster.address()));
+//! assert_eq!(user_op.paymaster_nonce, Some(pm_nonce));
+//! assert!(user_op.paymaster_signature.is_some());
+//! assert!(user_op.paymaster_public_key.is_some());
+//! ```
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
