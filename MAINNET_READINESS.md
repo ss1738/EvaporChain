@@ -661,4 +661,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T01:25Z] Opus 4.7  · disk reclaim — 99% → 23% (40 GiB free) via cargo target + uv cache wipe
 [2026-05-10T01:30Z] Opus 4.7  · T0.9 claimed (sub-task A scoped) · base: 2e9e2c5
 [2026-05-10T01:50Z] Opus 4.7  · T0.9 sub-task A ✅ DONE · ship: 8809064 · 11/11 on-host · sub-lane → 🟡 PARTIAL
+[2026-05-10T02:10Z] Opus 4.7  · T0.9 sub-task C native half ✅ DONE · ship: 70be2b8 · 16/16 on-host (5 native Pedersen tests added)
 ```
