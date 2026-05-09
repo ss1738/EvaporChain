@@ -48,6 +48,89 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (audit-arc) — paymaster end-to-end audit + 7 fixes shipped
+
+**Focus:** end-to-end audit of the V1 paymaster build (Days 1–13B from prior arcs), then ship the actual V1-mainnet-blocker fixes the audit surfaced. Closes the realistic gap between "feature-complete + production-hardened in isolation" and "actually safe for mainnet."
+
+**Commits shipped this arc:** 7 + 1 user-side wallet fix (parallel session). All on `origin/main`.
+
+| # | Commit | Audit fix | Severity |
+|---|---|---|---|
+| — | `e2fddec` (parallel) | #1 wallet signer chain-id binding | V1 mainnet blocker |
+| 1 | `6673d4d` | #2 UserOp validate-then-mutate (no sender-nonce-bump leak) | V1 mainnet blocker |
+| 2 | `4dcd2ec` | #7 strict-mode paymaster E2E test | coverage gap |
+| 3 | `dcdbb13` | #3a startup nonce reconciliation | mainnet hardening |
+| 4 | `18a9220` | #3b runtime nonce reconciliation poller | mainnet hardening |
+| 5 | `d888977` | #8a `--audit-log-fsync` mode knob | throughput knob |
+| 6 | `918ce94` | #6a persistent idempotency cache | UX hardening |
+
+**Audit findings (from end-to-end audit text):**
+
+CRITICAL — pre-existing chain-wide:
+- #1 (wallet signer chain-id omission) — the instant `verify_signatures: true` flips on mainnet, every wallet-signed Transfer / Delegate / etc. would be rejected. The paymaster build's `sign_user_op_as_sender` was a localised workaround; the broader wallet bug remained. **Closed by `e2fddec`.**
+- #2 (sender-nonce-bump leak across UserOp failure) — `tx.sender()` for sponsored UserOps returns the paymaster address, so block-level revert restored paymaster but left sender's nonce bumped. Under `verify_signatures: false` (current testnet) a third party could DoS-bump victim sender nonces. **Closed by `6673d4d` via validate-then-mutate restructure.**
+
+HIGH — paymaster-specific:
+- #3 (reorg / drift handling) — `paymaster_nonce` file vs chain's `account.nonce` could drift silently. **Closed by `dcdbb13` (startup) + `18a9220` (runtime poller every 60s).**
+
+MEDIUM — design quirks:
+- #6 (idempotency cache loss on restart) — wallet retry that lands after paymaster restart got Fresh + new nonce. **Closed by `918ce94` for the single-process case** (cross-process is V1.5+, tracked as #6b).
+- #7 (no strict-mode E2E test) — the chain-id-bound user sig + sponsorship-sig + verify_signatures=true execute_block triangle worked by construction but had no joint test. **Closed by `4dcd2ec`.**
+- #8 (audit-log fsync ceiling at ~1k QPS) — `d888977` adds the operator-controlled `per-line` (default fail-closed) vs `none` (~10× throughput, OS handles writeback) knob. Group-commit (the safer middle option) is V1.5+, tracked as #8b.
+
+LOW / V1.5+:
+- #4 (live cluster smoke) — operator-driven, can't automate silently.
+- #5 (MEV pipeline integration for sponsored intents) — ~3-4 days; the Crooks-MEV detector still doesn't peek inside `UserOp.call_data`.
+- #9 (paymaster account type on chain) — ~1 week, V1.5+ doctrine work.
+
+**Test surface added in this arc:**
+
+| Crate | New tests this arc | Purpose |
+|---|---|---|
+| `evaporchain-execution` | 2 | sender-nonce-bump regression, sender-nonce-mismatch symmetry |
+| `evaporchain-paymaster` | 14 | reconcile module (4 unit + 3 metric-update), audit-log-fsync no-fsync mode (1), persistent idempotency cache (3), strict-mode helpers exposed for tests |
+| `evaporchain-integration-tests` | 2 | strict-mode E2E happy-path + unsigned-UserOp rejection |
+| `evaporchain-wallet` | 4 | (#1 covered in `e2fddec`; arc-touch: ~14 sign-call sites migrated to `sign_for_chain`) |
+
+Cumulative paymaster tests: ~70 across 5 crates, all green on Mini 1.
+
+**Decisions made:**
+
+- **Validate-then-mutate over fee-snapshot expansion.** Block-level revert at lib.rs:3211 only snapshots `tx.sender()`; widening to capture both sender+paymaster for UserOps would require chain-side changes that ripple through fee accounting. Restructuring `execute_user_op` to read all preconditions before any mutation is a localised fix with the same end-state correctness.
+- **Startup + runtime reconciliation, not block-event subscription.** Real reorg-listening would require hooking into the consensus layer's block-finalised events. Polling is simpler, has well-bounded latency (60s default), and works against any chain HTTP endpoint. Auto-pause-on-drift was punted to V1.5 because the wallet would need a clear retry-after policy.
+- **`audit_log_fsync: none` mode but no group commit yet.** Group commit requires async coordination (oneshot channels, batch flusher, backpressure) and a careful crash-recovery story. Shipping `none` mode alone gives operators the throughput knob; `per-line` stays the safe default. Group commit is #8b.
+- **Persistent idempotency single-process only.** Cross-process via shared DB (RocksDB / SQLite / Redis) is a real V1.5 piece. The single-process persistence solves the most common case (every restart) without taking on a database dep.
+- **Audit work followed strict scope discipline.** Each fix shipped with: code change + test change + runbook entry. No shortcut "I'll come back to docs". The paymaster runbook is now ~400 lines and walks the operator through every config knob the audit added.
+
+**Empirical observations:**
+
+- Mini disk hit 100% twice during the arc (recurring per session memory). Cleared `target/debug/incremental` (1.6 GB) + `target/release` (2.1 GB) to recover both times. **Operationally: external SSD before the next big arc.**
+- The user shipped audit fix #1 in parallel (commit `e2fddec`) with the same approach my own work converged on (sign_for_chain / sign_transaction_for_chain + deprecation of old methods + chain_id_cached on TxPipeline). Confidence-builder for the design.
+- Build times stayed fast (~1m for full execute test compile) because incremental was preserved between cleans.
+
+**What's next (real, narrow):**
+
+1. SESSION_PROGRESS entry (this commit) + `CHANGELOG.md` entry for the formal commit-by-commit log.
+2. #5 MEV pipeline integration for sponsored intents (~3-4 days).
+3. #6b cross-process idempotency cache (~2 days).
+4. #8b group-commit fsync (~1 day, careful async).
+5. #9 paymaster account type on chain (~1 week, V1.5 doctrine).
+6. #4 live cluster smoke per the runbook (operator-driven, half-day).
+
+**Blockers / open questions:**
+
+- The chain currently runs `verify_signatures: false` per cluster soak config. The wallet's #1 fix anticipates `true` for mainnet but the chain-side flip is its own decision (probably bundled with mainnet ceremony).
+- Mini disk pressure (228 GiB at 100%) — needs external SSD before another big arc.
+- Group-commit fsync (#8b) is the highest-leverage remaining throughput improvement but requires architectural async-coordination work; not a half-day.
+
+**Cross-references:**
+
+- Earlier arc: `7242e59` (Days 1–5) + `0231e75` (Days 6–12B).
+- Audit text: in the working transcript / 2026-05-09 working notes.
+- All 7 audit-fix commits `e2fddec → 918ce94` plus `6673d4d` for fix #2 (chain-side).
+
+---
+
 ## 2026-05-09 (latest+2) — cluster wedge diagnosis (HTTP-only probe)
 
 **Focus:** diagnose why all 4 reachable cluster nodes are at h=0, without SSH.
