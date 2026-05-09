@@ -5264,6 +5264,19 @@ fn pre_check_paymaster_policy(
             .into());
         }
     }
+    // Warn (not block) on audit_log_fsync: "none" — operators paying
+    // real money care about audit durability, but testnet operators
+    // intentionally pick None for throughput. Print to stderr so
+    // automation pipelines see it; don't fail.
+    if info.audit_log_fsync.as_deref() == Some("none") {
+        eprintln!(
+            "{} this paymaster runs `audit_log_fsync: none` — recent \
+             audit lines may be lost on a kernel crash. If you need \
+             stronger billing-reconciliation guarantees, pick a \
+             paymaster with `per_line` durability.",
+            "WARN".yellow().bold(),
+        );
+    }
     Ok(())
 }
 
@@ -21108,6 +21121,30 @@ mod tests {
             msg.contains("call_script") && msg.contains("transfer"),
             "error must name both the rejected variant and the allowed set: got {msg:?}"
         );
+    }
+
+    #[test]
+    fn pre_check_does_not_block_on_audit_log_fsync_none() {
+        // Audit fix follow-up: the wallet WARNS (stderr) but does not
+        // BLOCK on `audit_log_fsync: "none"` paymasters — testnet
+        // operators legitimately pick that mode for throughput. The
+        // warning is informational; pre_check returns Ok.
+        let mut info = make_info(None);
+        info.audit_log_enabled = true;
+        info.audit_log_fsync = Some("none".to_string());
+        // Function should succeed (warning is side-effect to stderr).
+        assert!(pre_check_paymaster_policy(&info, &transfer()).is_ok());
+    }
+
+    #[test]
+    fn pre_check_silent_on_audit_log_fsync_per_line() {
+        // The default fsync mode is silent — no warning emitted, no
+        // block. (We can't easily test stderr emptiness in a unit
+        // test; we test the non-erroring contract.)
+        let mut info = make_info(None);
+        info.audit_log_enabled = true;
+        info.audit_log_fsync = Some("per_line".to_string());
+        assert!(pre_check_paymaster_policy(&info, &transfer()).is_ok());
     }
 
     #[test]
