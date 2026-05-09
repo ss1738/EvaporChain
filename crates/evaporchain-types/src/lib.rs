@@ -495,11 +495,17 @@ pub struct Account {
     /// Optional time-locked portion of `balance` (TOKENOMICS §2.6 / Q14).
     /// `None` (default) ⇒ the entire balance is freely transferable.
     /// `Some(_)` ⇒ the locked portion is unspendable until cliff /
-    /// linear-release expires. Backwards-compatible: bincode'd Account
-    /// records persisted before this field existed are loaded via the
-    /// legacy migration path
+    /// linear-release expires.
+    ///
+    /// Bincode encoding: always emits 1 byte for the Option discriminator
+    /// (None = 0u8). `skip_serializing_if` was dropped here because
+    /// bincode 1.3.3 silently writes 0 bytes when the field is skipped
+    /// — but its deserializer still tries to read 1 byte for `Option`,
+    /// breaking round-trip for `vesting: None` (e.g. snapshot path).
+    /// Already-persisted pre-vesting records (from before this field
+    /// existed at all) are loaded via the legacy migration path
     /// (`evaporchain-state::legacy::deserialize_account_with_legacy_fallback`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub vesting: Option<VestingLock>,
 }
 

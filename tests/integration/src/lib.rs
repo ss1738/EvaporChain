@@ -522,7 +522,10 @@ mod tests {
 
         // Syncing node starts
         let mut sync = StateSyncManager::new(0);
-        assert!(StateSyncManager::needs_state_sync(0, 1002));
+        // STATE_SYNC_THRESHOLD was 1000 → 50_000 in `b063b0b`. Use 100_000
+        // to ensure we're well over the threshold (the rest of the test
+        // doesn't depend on the exact gap).
+        assert!(StateSyncManager::needs_state_sync(0, 100_000));
 
         let _actions = sync.start();
 
@@ -541,44 +544,20 @@ mod tests {
                 block_hash: [1u8; 32],
             },
         );
-        assert!(matches!(sync.phase(), SyncPhase::VerifyingHeader));
-
-        // Bootstrap with a header
-        let (vs, bls_kps) = make_validator_set_with_bls(4, 1000);
-        let msg = {
-            let mut m = Vec::with_capacity(48);
-            m.extend_from_slice(b"precommit");
-            m.extend_from_slice(&1000u64.to_le_bytes());
-            m.extend_from_slice(&0u32.to_le_bytes());
-            m.extend_from_slice(&[100u8; 32]);
-            m
-        };
-        let sigs: Vec<BlsSignature> = (0..3).map(|i| bls_kps[i].sign(&msg)).collect();
-        let agg = BlsVerifier::aggregate_signatures(&sigs).unwrap();
-
-        let header = LightBlockHeader {
-            height: 1000,
-            epoch: 10,
-            block_hash: [100u8; 32],
-            parent_hash: [99u8; 32],
-            state_root,
-            timestamp: 10000,
-            validator_set: vs,
-            commit_certificate: CommitCertificate {
-                height: 1000,
-                round: 0,
-                block_hash: [100u8; 32],
-                aggregate_signature: agg.0,
-                signer_ids: vec![0, 1, 2],
-            },
-        };
-        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
-
-        // Should now be downloading
-        assert!(matches!(
+        // PROTOCOL SHORTCUT (per `0e07b8c`, 2026-05-08): with no
+        // server-side `HeaderRequest` impl across the cluster, the
+        // state machine now skips `VerifyingHeader` and goes straight
+        // from `DiscoveringTip` → `DownloadingSnapshot` once
+        // MIN_TIP_AGREEMENT peers have voted. Pre-shortcut this test
+        // first asserted `VerifyingHeader`, then injected a
+        // `HeaderResponse`, then asserted `DownloadingSnapshot`. Now
+        // we just check the post-shortcut state directly. Test is no
+        // longer exercising the (dead) header-verification path.
+        assert!(
+            matches!(sync.phase(), SyncPhase::DownloadingSnapshot { .. }),
+            "post-shortcut: 2 TipResponses must transition to DownloadingSnapshot, got {:?}",
             sync.phase(),
-            SyncPhase::DownloadingSnapshot { .. }
-        ));
+        );
 
         // Serve metadata and all chunks through the provider.
         // 3rd arg `local_block_hash` (added in 3923ba6 for the
