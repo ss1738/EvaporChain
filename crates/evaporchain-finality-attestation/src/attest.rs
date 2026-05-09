@@ -131,7 +131,7 @@ fn fork_merkle_root(forks: &[EvaporatedForkWitnessRef]) -> [u8; 32] {
     }
     let mut layer: Vec<[u8; 32]> = forks.iter().map(fork_leaf_hash).collect();
     while layer.len() > 1 {
-        let mut next: Vec<[u8; 32]> = Vec::with_capacity((layer.len() + 1) / 2);
+        let mut next: Vec<[u8; 32]> = Vec::with_capacity(layer.len().div_ceil(2));
         let mut i = 0;
         while i < layer.len() {
             let l = layer[i];
