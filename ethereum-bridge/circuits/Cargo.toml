@@ -36,6 +36,9 @@ serde_json    = "1"
 halo2_proofs   = { version = "0.3", optional = true }
 halo2_gadgets  = { version = "0.3", optional = true }
 pasta_curves   = { version = "0.5", optional = true }
+# Sub-task D-finish — VerkleProverV2 needs rand for Halo2's
+# create_proof OsRng. Optional + propagated through v2-ecc.
+rand           = { version = "0.8", optional = true }
 
 [features]
 default = []
@@ -43,7 +46,7 @@ default = []
 # alongside the existing V1 Poseidon binding. Off by default so
 # CI / `cargo test` stays at the existing 8 V1 tests until the V2
 # path is wired all the way through to the prover.
-v2-ecc = ["halo2_proofs", "halo2_gadgets", "pasta_curves"]
+v2-ecc = ["halo2_proofs", "halo2_gadgets", "pasta_curves", "rand"]
 
 [dev-dependencies]
 rand = "0.8"

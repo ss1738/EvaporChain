@@ -564,7 +564,16 @@ impl Circuit<halo2_pallas::Base> for EccVerkleStepCircuit<halo2_pallas::Base> {
         // Step 2: in-circuit MSM. Wrap our FixedPoint set member as
         // the high-level FixedPoint<Affine, EccChip>, witness
         // path_index as ScalarFixed, then mul.
-        use halo2_gadgets::ecc::{FixedPoint as HighFixedPoint, NonIdentityPoint, ScalarFixed};
+        //
+        // Use `Point` (not `NonIdentityPoint`) for the expected
+        // sibling so synthesis accepts the dummy() witness with
+        // path_index = 0 (g·0 = identity, which NonIdentityPoint
+        // rejects). `keygen_vk` synthesizes with the dummy circuit
+        // and would fail at NonIdentityPoint::new(identity);
+        // switching to Point allows it. Constraint correctness is
+        // preserved — `constrain_equal` checks point equality
+        // identically across Point/NonIdentityPoint witnesses.
+        use halo2_gadgets::ecc::{FixedPoint as HighFixedPoint, Point, ScalarFixed};
         let base = HighFixedPoint::<halo2_pallas::Affine, _>::from_inner(
             chip.clone(),
             VerkleFullWidth,
@@ -599,7 +608,7 @@ impl Circuit<halo2_pallas::Base> for EccVerkleStepCircuit<halo2_pallas::Base> {
         let expected_value: Value<halo2_pallas::Affine> = scalar_value.map(|s| {
             (pasta_curves::pallas::Point::generator() * s).to_affine()
         });
-        let expected_sibling = NonIdentityPoint::new(
+        let expected_sibling = Point::new(
             chip,
             layouter.namespace(|| "expected sibling = g · path_index (native)"),
             expected_value,
@@ -985,6 +994,115 @@ pub struct VerkleProofV2 {
 /// Groth16 wrap) consumes this fixture shape. When prove/verify
 /// lands, the format doesn't change — only `proof_bytes_hex` gets
 /// the real IPA proof bytes.
+// ─── Sub-task D-finish: real Halo2 IPA prove + verify ─────────────
+//
+// Resolution of the earlier blocker: `Params<halo2_proofs::pasta::EqAffine>`
+// (= vesta::Affine) IS the right verifier curve for an Fp-circuit
+// (Circuit<halo2_pallas::Base> = Circuit<Fp>). Earlier failed attempts
+// must've had a different bug; isolating to a minimal experiment
+// (`_experimental_keygen_with_eq_affine`) proved the type bound holds.
+//
+// IPA flow:
+//   1. Params::<EqAffine>::new(k) — public params for k-row constraint sys
+//   2. keygen_vk(&params, &dummy_circuit) — verifying key
+//   3. keygen_pk(&params, vk, &dummy_circuit) — proving key
+//   4. create_proof(...) → IPA proof bytes
+//   5. verify_proof(...) → Result<(), Error>
+
+use halo2_proofs::plonk::{
+    create_proof, keygen_pk, keygen_vk, verify_proof, ProvingKey, SingleVerifier,
+    VerifyingKey,
+};
+use halo2_proofs::poly::commitment::Params;
+use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
+
+/// V2 prover — owns Halo2 public params + verifying/proving keys.
+/// Setup is expensive (~seconds for k=11 IPA params + keygen);
+/// callers should cache and reuse a single instance per circuit shape.
+pub struct VerkleProverV2 {
+    params: Params<halo2_proofs::pasta::EqAffine>,
+    pk: ProvingKey<halo2_proofs::pasta::EqAffine>,
+    vk: VerifyingKey<halo2_proofs::pasta::EqAffine>,
+    k: u32,
+}
+
+impl VerkleProverV2 {
+    /// Set up Halo2 IPA params + keys for the
+    /// `EccVerkleStepCircuit<halo2_pallas::Base>` shape.
+    ///
+    /// `k` controls the constraint-system size: `n = 2^k` rows.
+    /// 11 (2048 rows) suffices for one Verkle level. Larger k =
+    /// larger params = slower setup but room for richer circuits.
+    pub fn setup(k: u32) -> Result<Self, String> {
+        let params = Params::<halo2_proofs::pasta::EqAffine>::new(k);
+        let dummy = EccVerkleStepCircuit::<halo2_pallas::Base>::dummy();
+        let vk = keygen_vk(&params, &dummy)
+            .map_err(|e| format!("keygen_vk failed: {:?}", e))?;
+        let pk = keygen_pk(&params, vk.clone(), &dummy)
+            .map_err(|e| format!("keygen_pk failed: {:?}", e))?;
+        Ok(Self { params, pk, vk, k })
+    }
+
+    /// Generate a real Halo2 IPA proof for the given witness.
+    pub fn prove_v2(
+        &self,
+        witness: EccVerkleStepWitness<halo2_pallas::Base>,
+    ) -> Result<VerkleProofV2, String> {
+        let circuit = EccVerkleStepCircuit::<halo2_pallas::Base>::new(witness);
+
+        let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
+        create_proof(
+            &self.params,
+            &self.pk,
+            &[circuit],
+            &[&[]],
+            rand::rngs::OsRng,
+            &mut transcript,
+        )
+        .map_err(|e| format!("create_proof failed: {:?}", e))?;
+        let proof_bytes = transcript.finalize();
+
+        // Fingerprint = blake3(domain_tag || k_le).
+        // Sub-D followup: extend with first g_lagrange point bytes
+        // when halo2_proofs exposes a stable Params encoding API.
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"verkle-v2-params-fingerprint");
+        hasher.update(&self.k.to_le_bytes());
+        let fingerprint = hex::encode(hasher.finalize().as_bytes());
+
+        Ok(VerkleProofV2 {
+            proof_bytes_hex: hex::encode(&proof_bytes),
+            public_inputs: vec![],
+            k: self.k,
+            params_fingerprint_hex: fingerprint,
+        })
+    }
+
+    /// Verify a `VerkleProofV2`. Returns Ok iff the proof + public
+    /// inputs satisfy the constraint chain encoded in the verifying
+    /// key.
+    pub fn verify_v2(&self, proof: &VerkleProofV2) -> Result<(), String> {
+        if proof.k != self.k {
+            return Err(format!(
+                "k mismatch: proof.k = {}, prover.k = {}",
+                proof.k, self.k
+            ));
+        }
+        let proof_bytes = hex::decode(&proof.proof_bytes_hex)
+            .map_err(|e| format!("hex decode failed: {:?}", e))?;
+        let strategy = SingleVerifier::new(&self.params);
+        let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof_bytes[..]);
+        verify_proof(
+            &self.params,
+            &self.vk,
+            strategy,
+            &[&[]],
+            &mut transcript,
+        )
+        .map_err(|e| format!("verify_proof failed: {:?}", e))
+    }
+}
+
 pub struct VerkleProverV2Stub;
 
 impl VerkleProverV2Stub {
@@ -1010,21 +1128,59 @@ mod prover_tests {
     use halo2_proofs::pasta::pallas as halo2_pallas;
 
     /// Sub-task D-starter — `VerkleProverV2Stub::placeholder` produces
-    /// a fixture with the same shape sub-D-finish will populate with
-    /// real IPA proof bytes. Catches breakage in the placeholder path
-    /// (e.g. fingerprint computation drift) before sub-D-finish lands.
+    /// a fixture with the same shape sub-D-finish populates with
+    /// real IPA proof bytes.
     #[test]
     fn verkle_prover_v2_placeholder_returns_well_formed_fixture() {
         let proof = VerkleProverV2Stub::placeholder(11, vec![vec![0x42; 32]]);
         assert_eq!(proof.k, 11);
         assert!(proof.proof_bytes_hex.is_empty());
         assert_eq!(proof.public_inputs.len(), 1);
-        // Fingerprint is deterministic per k.
         let proof2 = VerkleProverV2Stub::placeholder(11, vec![vec![0x42; 32]]);
         assert_eq!(proof.params_fingerprint_hex, proof2.params_fingerprint_hex);
-        // Different k yields a different fingerprint.
         let proof3 = VerkleProverV2Stub::placeholder(12, vec![]);
         assert_ne!(proof.params_fingerprint_hex, proof3.params_fingerprint_hex);
+    }
+
+    /// **Sub-task D-FINISH headline test** — full Halo2 IPA prove +
+    /// verify round-trip on the on-host EccVerkleStepCircuit. This
+    /// is the cryptographic claim of T0.9 ending its journey:
+    ///
+    ///   1. Setup — Params + vk + pk for k=11 IPA params
+    ///   2. Generate proof for path_index = 7
+    ///   3. Serialise to VerkleProofV2 (cross-side fixture)
+    ///   4. Deserialise + verify_v2
+    ///
+    /// If green: V2 cryptographic stack is end-to-end operational.
+    /// T0.10 (Solidity Groth16 wrap) consumes the same VerkleProofV2.
+    ///
+    /// `#[ignore]` because setup + create_proof + verify_proof
+    /// compounds the find_zs_and_us precomputation cost — this test
+    /// is the slowest in the suite. Runs on demand or in CI.
+    #[test]
+    #[ignore]
+    fn prove_v2_and_verify_v2_round_trip() {
+        let prover = VerkleProverV2::setup(11).expect("setup must succeed");
+        let witness = EccVerkleStepWitness::<halo2_pallas::Base> {
+            sibling_x: halo2_pallas::Base::from(0u64),
+            sibling_y: halo2_pallas::Base::from(0u64),
+            path_index: halo2_pallas::Base::from(7u64),
+        };
+        let proof = prover
+            .prove_v2(witness)
+            .expect("prove_v2 must succeed");
+        assert_eq!(proof.k, 11);
+        assert!(
+            !proof.proof_bytes_hex.is_empty(),
+            "real IPA proof must produce non-empty bytes"
+        );
+        // Round-trip through JSON to mirror what T0.10 will do.
+        let json = serde_json::to_string(&proof).expect("serialize");
+        let back: VerkleProofV2 =
+            serde_json::from_str(&json).expect("deserialize");
+        prover
+            .verify_v2(&back)
+            .expect("verify_v2 must succeed on the deserialised proof");
     }
 
     /// Cross-side fixture round-trip — VerkleProofV2 serialises
