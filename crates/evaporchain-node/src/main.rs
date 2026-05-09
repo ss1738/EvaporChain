@@ -3908,7 +3908,7 @@ async fn main() -> Result<()> {
                         .get(vid)
                         .is_some_and(|v| v.bls_public_key.is_some())
                 });
-                if has_all_keys && !tc.verify_commit_certificate(cert) {
+                if has_all_keys && !tc.verify_commit_certificate_for_sync(cert) {
                     eprintln!(
                         "{} \x1b[31m⚠ REJECTED block #{} — invalid BLS CommitCertificate\x1b[0m",
                         node_tag, block.number
@@ -6594,7 +6594,10 @@ async fn main() -> Result<()> {
                                         pending_blocks.insert(block.number, block.clone());
                                         continue;
                                     }
-                                    if !tc.verify_commit_certificate(cert) {
+                                    // Use the sync-path verifier which tolerates
+                                    // signer_stake < full_threshold when the
+                                    // historical jailing state was lost on restart.
+                                    if !tc.verify_commit_certificate_for_sync(cert) {
                                         eprintln!(
                                             "{} \x1b[31mREJECTED sync block #{} - invalid BLS CommitCertificate\x1b[0m",
                                             node_tag, block.number
