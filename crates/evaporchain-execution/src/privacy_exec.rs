@@ -1634,6 +1634,14 @@ mod tests {
     /// PNT-evicted-nullifier becomes spendable again. With the
     /// restore, the unbounded set is rebuilt from db and the
     /// step-7 check fires as expected.
+    ///
+    /// The merkle-tree side of the restore is exercised by manually
+    /// calling `append_note_commitment` post-shield. The current
+    /// `execute_shield` doesn't persist commitments to db (separate
+    /// gap — note-tree restoration relies on a higher layer calling
+    /// `append_note_commitment`); this test simulates a chain that
+    /// has that wired correctly so the restart path can be exercised
+    /// end-to-end.
     #[test]
     fn pnt_v1_respend_after_restart_rejected_via_restored_set() {
         let sender = test_addr(1);
@@ -1641,7 +1649,7 @@ mod tests {
         let mut db = setup_db_with_balance(&sender, 100_000);
 
         // Lifecycle 1 — original executor: shield + spend.
-        let (n1_commitment, n1_value_commitment, nf1, n1_blinding, n1_secret, original_root) = {
+        let (n1_commitment, n1_value_commitment, nf1, n1_blinding, n1_tree_index, original_root) = {
             let mut executor = PrivacyExecutor::with_depth(8);
             executor.set_epoch(1);
             executor.set_protocol_version(1);
@@ -1656,6 +1664,10 @@ mod tests {
                 test_blinding(20),
                 test_blinding(99),
             );
+            // Persist the commitment to db so restore_from_db can
+            // rebuild the note tree. (See test docstring.)
+            db.append_note_commitment(n1.tree_index as u64, n1.note_commitment);
+
             let unshield = build_real_unshield(&executor, &n1, receiver, 5_000);
             let nf = unshield.input_nullifiers[0];
             executor
@@ -1670,15 +1682,16 @@ mod tests {
                 n1.value_commitment,
                 nf,
                 n1.blinding,
-                n1.spending_secret,
+                n1.tree_index,
                 executor.merkle_root(),
             )
         }; // executor dropped — simulates a node restart.
 
         // Lifecycle 2 — fresh executor, must restore from db. Without
-        // the restore, engine.nullifier_set is empty and a respend
-        // would slip through under PNT v1+ (PNT in this fresh process
-        // also has nothing).
+        // the nullifier-side restore added in this commit,
+        // engine.nullifier_set would be empty in the fresh process
+        // and a respend would slip through under PNT v1+ (PNT in
+        // this fresh process also has nothing).
         let mut executor = PrivacyExecutor::with_depth(8);
         executor.set_epoch(1);
         executor.set_protocol_version(1);
@@ -1693,15 +1706,16 @@ mod tests {
         );
 
         // Confirm the rebuilt note tree's root matches the original
-        // (this is the existing restore_from_db assertion — pinning
-        // it covers both the commitment-tree restore AND now the
-        // nullifier-set restore in a single test).
+        // (pre-existing restore_from_db property — pinning it
+        // ensures the commitment AND nullifier restoration paths
+        // both fire correctly in a single test).
         assert_eq!(executor.merkle_root(), original_root);
 
-        // Build a respend tx using the restored state. tx is
-        // structurally valid: anchor matches, proof rebuilds against
-        // the current root, balance binding correct. The ONLY
-        // blocker is engine.nullifier_set's retained NF1.
+        // Build a respend tx using the restored state. The respend
+        // is structurally valid: anchor matches, proof rebuilds
+        // against the current root, balance binding correct. The
+        // ONLY blocker is engine.nullifier_set's retained NF1 (the
+        // restore path's contribution).
         let respend = UnshieldTx {
             to: receiver,
             amount: 5_000,
@@ -1714,12 +1728,11 @@ mod tests {
             input_blindings: vec![n1_blinding],
             input_value_commitments: vec![n1_value_commitment],
             input_note_commitments: vec![n1_commitment],
-            input_merkle_proofs: vec![executor.get_merkle_proof(0).unwrap()],
+            input_merkle_proofs: vec![executor.get_merkle_proof(n1_tree_index).unwrap()],
             output_blindings: vec![],
             change_commitments: vec![],
             energy_proofs: vec![],
         };
-        let _ = n1_secret; // already consumed when computing nf1; kept for clarity
 
         match executor.execute_unshield(&mut db, &respend) {
             Err(PrivacyExecError::DoubleSpend(_)) => {
