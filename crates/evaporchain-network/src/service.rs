@@ -1632,9 +1632,11 @@ impl P2pNetworkService {
                                 // (`MAX_CACHE_SIZE = 2000` blocks) has rolled
                                 // past — the bug we hit on M1 wipe-and-rejoin
                                 // 2026-05-07.
-                                let mut blocks: Vec<Block> = Vec::with_capacity((to - from + 1) as usize);
+                                // `to` is exclusive: request covers [from, to).
+                                // MAX_SYNC_BATCH enforces the cap on serving side.
+                                let mut blocks: Vec<Block> = Vec::with_capacity((to - from) as usize);
                                 let mut disk_misses = 0u64;
-                                for n in from..=to {
+                                for n in from..to {
                                     if let Some(b) = cache.get(&n).cloned() {
                                         blocks.push(b);
                                     } else if let Some(ref fetcher) = disk_block_fetcher {
@@ -1691,6 +1693,10 @@ impl P2pNetworkService {
                                          {rej:?}; recording violation"
                                     );
                                     ban_list.record_violation(peer);
+                                    // Notify main task so sync_in_flight is cleared
+                                    // and the node can retry with another peer.
+                                    let _ = sync_blocks_sender.send(vec![]).await;
+                                    let _ = tip_sender.send(response.tip_height).await;
                                     continue;
                                 }
 
