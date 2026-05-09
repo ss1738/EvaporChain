@@ -312,25 +312,37 @@ impl PoHAStore {
         };
         self.certificates.insert(block_number, cert);
 
-        // Evict oldest if over capacity
+        // Evict oldest if over capacity.  Skip eviction if the oldest key
+        // IS the cert we just inserted — this happens when an old block's
+        // DA cert arrives during sync backfill while the table is already
+        // full of newer certs.  Temporarily exceeding max_active by 1 is
+        // harmless; the next register() call will evict it.
         while self.certificates.len() > self.max_active {
-            if let Some(&oldest) = self.certificates.keys().next() {
-                if let Some(cert) = self.certificates.remove(&oldest) {
-                    self.ghosts.insert(
-                        oldest,
-                        CertGhost {
-                            cert_hash: cert.hash(),
-                            block_number: oldest,
-                            data_root: cert.data_root,
-                            evaporated_epoch: epoch,
-                            total_re_attestations: cert.re_attestation_count,
-                        },
-                    );
+            match self.certificates.keys().next().copied() {
+                Some(oldest) if oldest == block_number => break,
+                Some(oldest) => {
+                    if let Some(cert) = self.certificates.remove(&oldest) {
+                        self.ghosts.insert(
+                            oldest,
+                            CertGhost {
+                                cert_hash: cert.hash(),
+                                block_number: oldest,
+                                data_root: cert.data_root,
+                                evaporated_epoch: epoch,
+                                total_re_attestations: cert.re_attestation_count,
+                            },
+                        );
+                    }
                 }
+                None => break,
             }
         }
 
-        self.certificates.get(&block_number).unwrap()
+        // The cert must be present: the guard above ensures we never evict
+        // the block we just inserted.
+        self.certificates
+            .get(&block_number)
+            .expect("PoHA cert vanished immediately after insert — logic error")
     }
 
     /// Apply decay to all certificates at the given epoch.
