@@ -7890,7 +7890,7 @@ mod tests {
         assert_eq!(tc.quorum_size(), 1);
 
         // 3 validators: quorum = 3 (strict >2/3 majority)
-        let tc = make_tc_with_validators();
+        let tc = make_consensus(1, &[1, 2, 3]);
         assert_eq!(tc.quorum_size(), 3);
 
         // 4 validators: quorum = 3
@@ -8429,7 +8429,7 @@ mod tests {
     #[test]
     fn test_stale_message_ignored() {
         // Old-height messages should be silently ignored
-        let mut tc = make_tc_with_validators();
+        let mut tc = make_consensus(1, &[1, 2, 3]);
         // Advance to height 5
         tc.restore_state(4, 4, [0u8; 32]);
         assert_eq!(tc.height(), 5);
