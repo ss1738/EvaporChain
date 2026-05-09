@@ -191,12 +191,44 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(parsed)
     };
-    let audit_log_fsync = match args.audit_log_fsync.as_str() {
-        "per-line" | "per_line" => evaporchain_paymaster::AuditFsyncMode::PerLine,
-        "none" => evaporchain_paymaster::AuditFsyncMode::None,
-        other => {
+    // Audit fix #8a/#8b — fsync mode parser. Accepts:
+    //   per-line | per_line              → fail-closed PerLine
+    //   none                              → no explicit fsync
+    //   batched:<size>:<threshold_ms>     → group-commit (e.g. batched:32:100)
+    let audit_log_fsync = {
+        let raw = args.audit_log_fsync.as_str();
+        if raw == "per-line" || raw == "per_line" {
+            evaporchain_paymaster::AuditFsyncMode::PerLine
+        } else if raw == "none" {
+            evaporchain_paymaster::AuditFsyncMode::None
+        } else if let Some(rest) = raw.strip_prefix("batched:") {
+            let parts: Vec<&str> = rest.split(':').collect();
+            if parts.len() != 2 {
+                anyhow::bail!(
+                    "--audit-log-fsync: batched mode needs `batched:<batch_size>:<flush_threshold_ms>` \
+                     (e.g. `batched:32:100`); got '{raw}'"
+                );
+            }
+            let batch_size: u32 = parts[0]
+                .parse()
+                .map_err(|e| anyhow::anyhow!("--audit-log-fsync batch_size: {e}"))?;
+            let flush_threshold_ms: u64 = parts[1]
+                .trim_end_matches("ms")
+                .parse()
+                .map_err(|e| anyhow::anyhow!("--audit-log-fsync flush_threshold_ms: {e}"))?;
+            if batch_size == 0 {
+                anyhow::bail!("--audit-log-fsync batch_size must be > 0");
+            }
+            if flush_threshold_ms == 0 {
+                anyhow::bail!("--audit-log-fsync flush_threshold_ms must be > 0");
+            }
+            evaporchain_paymaster::AuditFsyncMode::Batched {
+                batch_size,
+                flush_threshold_ms,
+            }
+        } else {
             anyhow::bail!(
-                "--audit-log-fsync: unknown mode '{other}' (valid: per-line, none)"
+                "--audit-log-fsync: unknown mode '{raw}' (valid: per-line, none, batched:<size>:<ms>)"
             );
         }
     };
