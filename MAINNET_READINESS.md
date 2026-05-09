@@ -113,7 +113,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.6 | Slashing-at-scale empirical tests | 🟡 OPEN | EXECUTION + STATE-DB |
 | T0.7 | Mempool + signature DoS hardening | 🟡 OPEN | NETWORK + EXECUTION |
 | T0.8 | Light-client / fast-sync against malicious snapshots | 🟡 OPEN | NETWORK |
-| T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | 🟡 **PARTIAL** — A ✅ (8809064), B-starter ✅ (dee01d9), C-native ✅ (70be2b8), **B-finish ✅ (76659af)** — `Circuit::configure` body + `VerkleFixedBases: FixedPoints<pallas::Affine>` + 3 FixedPoint impls + 20/20 tests on-host. C-circuit-half + D remain. **Note:** commit `39e7c60` carries this lane's commit message but its diff is parallel-session WIP — labeling drift, not content drift; 76659af is the actual sub-B-finish. | BRIDGE-RUST |
+| T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | 🟡 **PARTIAL** — A ✅ (8809064), B-starter ✅ (dee01d9), C-native ✅ (70be2b8), B-finish ✅ (76659af), **C-circuit-starter ✅ (438ad1e)**: synthesize body now runs Real Halo2 (Point::new of the sibling commitment) + MockProver passes end-to-end. 21/21 tests on-host. C-circuit-finish (full MSM constraint + parity test) + D remain. **Labeling note:** commit `39e7c60` carries B-finish's message but its diff is parallel-session WIP. | BRIDGE-RUST |
 | T0.10 | `VerkleProofVerifier.sol` Groth16 wrap | 🔴 BLOCKED on T0.9 | BRIDGE-SOL |
 | T0.11 | Cross-chain replay protection hardening (dispatcher) | ✅ DONE (ee2ebba) — L1 finalization-depth gate (12 blocks); 46/46 forge tests pass on-host | BRIDGE-SOL |
 | T0.11b | Extend finalization-depth gate to StateMembershipAttester | ✅ DONE (b74e72d) — symmetric defense w/ T0.11; 48/48 forge tests pass on-host | BRIDGE-SOL |
@@ -674,4 +674,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T02:50Z] Opus 4.7  · T0.9 sub-task B starter ✅ DONE · ship: dee01d9 · 17/17 on-host (EccChip column allocation + EccColumns struct)
 [2026-05-10T09:30Z] Opus 4.7  · T0.9 sub-task B FINISH ✅ DONE · ship: 76659af · 20/20 on-host (full FixedPoints impl + Circuit::configure body w/ EccChip wired)
 [2026-05-10T09:30Z] ⚠ note: commit 39e7c60 carries B-finish commit message but its diff is unrelated parallel-session WIP — labeling drift caused by index-race during git commit. Actual B-finish content is in 76659af (used `git commit --only <file>` to bypass the race).
+[2026-05-10T09:48Z] Opus 4.7  · T0.9 sub-task C circuit-half STARTER ✅ DONE · ship: 438ad1e · 21/21 on-host (incl. MockProver synthesize check). C-circuit-FINISH (full MSM + constrain_equal + parity test) + D remain.
 ```
