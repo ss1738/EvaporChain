@@ -48,6 +48,38 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (cleanup) — clippy::map_entry close-out on paymaster
+
+**Focus:** post-audit-arc clippy hygiene on `evaporchain-paymaster`.
+
+**Commits shipped:** 1 (`1ffcbac`).
+
+**Deliverables:**
+- `IdempotencyCache::insert` early-return branch refactored from `contains_key` + `insert` to `Entry::Occupied` (single hash lookup, clippy-preferred form).
+- `cargo clippy -p evaporchain-paymaster --no-deps` and `--bins --no-deps` are now both warning-free.
+
+**Empirical results:**
+- 54/54 paymaster tests still green on Mini 1 post-fix.
+- Pre-existing test failure surfaced during a dependent-crates sweep: `evaporchain-execution::rewards::tests::test_commission_splits_staker_pool_v2` (`producer credit with 10% commission left: 275 right: 335` at `rewards.rs:913`). Test was added in commit `a6bc9df` (TOKENOMICS / rewards-math bundle) — **NOT a regression from the paymaster arc**. Flagged for the rewards-math owner.
+
+**Decisions made:**
+- None doctrine-level. Cleanup commit only.
+
+**What's next (V1.5+ deferred from audit arc):**
+1. Live cluster smoke (#4 — operator-driven, multi-node end-to-end paymaster sponsor → execute_block round-trip).
+2. MEV pipeline integration (#5 — paymaster-sponsored bundles into Crooks-MEV settlement, ~3-4 days).
+3. Cross-process idempotency (#6b — Redis-backed or shared-DB cache, ~2 days).
+4. Triage `test_commission_splits_staker_pool_v2` failure with rewards-math owner.
+
+**Blockers / open questions:**
+- Wallet has 1 pre-existing unrelated `clippy::clone_on_copy` warning on `TxState`. Out of scope here.
+
+**Cross-references:**
+- `CHANGELOG.md` audit-arc entry `d2b9d39` (still authoritative — no formal CHANGELOG entry needed for this clippy fix).
+- Prior session entry: 2026-05-09 (audit-arc) — paymaster end-to-end audit + 7 fixes shipped.
+
+---
+
 ## 2026-05-09 (audit-arc) — paymaster end-to-end audit + 7 fixes shipped
 
 **Focus:** end-to-end audit of the V1 paymaster build (Days 1–13B from prior arcs), then ship the actual V1-mainnet-blocker fixes the audit surfaced. Closes the realistic gap between "feature-complete + production-hardened in isolation" and "actually safe for mainnet."
