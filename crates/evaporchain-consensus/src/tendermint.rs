@@ -7890,7 +7890,7 @@ mod tests {
         assert_eq!(tc.quorum_size(), 1);
 
         // 3 validators: quorum = 3 (strict >2/3 majority)
-        let tc = make_consensus(1, &[1, 2, 3]);
+        let tc = make_tc_with_validators();
         assert_eq!(tc.quorum_size(), 3);
 
         // 4 validators: quorum = 3
@@ -8429,7 +8429,7 @@ mod tests {
     #[test]
     fn test_stale_message_ignored() {
         // Old-height messages should be silently ignored
-        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let mut tc = make_tc_with_validators();
         // Advance to height 5
         tc.restore_state(4, 4, [0u8; 32]);
         assert_eq!(tc.height(), 5);
@@ -17626,7 +17626,7 @@ mod phase2_round_trip_tests {
 
     #[test]
     fn sanov_slash_downtime_zero_missed_returns_zero() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let mut tc = make_tc_with_validators();
         let slashed = tc.sanov_slash_downtime(1, 0, 100);
         assert_eq!(slashed, 0);
         assert_eq!(
@@ -17638,7 +17638,7 @@ mod phase2_round_trip_tests {
 
     #[test]
     fn sanov_slash_downtime_unknown_validator_returns_zero() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let mut tc = make_tc_with_validators();
         let slashed = tc.sanov_slash_downtime(999, 50, 100);
         assert_eq!(slashed, 0);
     }
@@ -17647,7 +17647,7 @@ mod phase2_round_trip_tests {
     fn sanov_slash_downtime_within_tolerance_yields_low_slash() {
         // 1-of-100 missed = honest tolerance baseline. KL ≈ 0 →
         // slash should be < 1% of stake.
-        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let mut tc = make_tc_with_validators();
         let pre_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap();
         let slashed = tc.sanov_slash_downtime(1, 1, 100);
         assert!(
@@ -17662,7 +17662,7 @@ mod phase2_round_trip_tests {
     fn sanov_slash_downtime_well_beyond_tolerance_yields_real_slash() {
         // 50-of-100 missed = well beyond tolerance. KL is large; the
         // slash must be non-zero AND deducted from validator stake.
-        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let mut tc = make_tc_with_validators();
         let pre_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap();
         let slashed = tc.sanov_slash_downtime(1, 50, 100);
         assert!(
@@ -17682,7 +17682,7 @@ mod phase2_round_trip_tests {
         // Per the impl: `let jail = missed_blocks >= 3`. Validators
         // with ≥3 missed blocks in the window are jailed alongside
         // the slash.
-        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let mut tc = make_tc_with_validators();
         assert!(
             !tc.validator_set.get(1).map(|v| v.jailed).unwrap(),
             "validator must start unjailed"
@@ -17698,7 +17698,7 @@ mod phase2_round_trip_tests {
     #[test]
     fn sanov_slash_downtime_under_three_does_not_jail() {
         // Boundary check: missed_blocks = 2 (< 3) must NOT jail.
-        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let mut tc = make_tc_with_validators();
         let _slashed = tc.sanov_slash_downtime(1, 2, 100);
         assert!(
             !tc.validator_set.get(1).map(|v| v.jailed).unwrap(),
