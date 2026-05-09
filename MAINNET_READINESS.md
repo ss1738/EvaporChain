@@ -116,7 +116,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | 🟡 OPEN | BRIDGE-RUST |
 | T0.10 | `VerkleProofVerifier.sol` Groth16 wrap | 🔴 BLOCKED on T0.9 | BRIDGE-SOL |
 | T0.11 | Cross-chain replay protection hardening (dispatcher) | ✅ DONE (ee2ebba) — L1 finalization-depth gate (12 blocks); 46/46 forge tests pass on-host | BRIDGE-SOL |
-| T0.11b | Extend finalization-depth gate to StateMembershipAttester | 🟢 CLAIMED by Opus 4.7 @ 2026-05-10T00:35Z · base: 93aa83d | BRIDGE-SOL |
+| T0.11b | Extend finalization-depth gate to StateMembershipAttester | ✅ DONE (b74e72d) — symmetric defense w/ T0.11; 48/48 forge tests pass on-host | BRIDGE-SOL |
 | T0.12 | External security audit kickoff + remediation | 🔴 BLOCKED on operator (auditor selection) | wide |
 
 ### Tier 1 — Smaller items (mainnet-blocking)
@@ -654,4 +654,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T00:10Z] Opus 4.7  · T0.11 claimed · base: 7e65ede
 [2026-05-10T00:30Z] Opus 4.7  · T0.11 ✅ DONE · ship: ee2ebba · 46/46 forge VERIFIED on-host
 [2026-05-10T00:35Z] Opus 4.7  · T0.11b claimed · base: 93aa83d
+[2026-05-10T00:50Z] Opus 4.7  · T0.11b ✅ DONE · ship: b74e72d · 48/48 forge VERIFIED on-host
 ```
