@@ -131,7 +131,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T1.18 | Validator-key passphrase migration on live nodes | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.19 | EVPL plaintext key migration on live nodes | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.20 | Coverage push to ≥90% (currently ~73%) | 🟡 OPEN | STATE-DB |
-| T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | 🟢 CLAIMED by Opus 4.7 @ 2026-05-10T00:55Z · base: 8dca75c | docs |
+| T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | ✅ DONE — false-positive from audit reconciliation; both EVR docs already carry detailed implementation-status tables ahead of the spec body | docs |
 | T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.22 | Network upgrade rehearsal (live flag-flip + rollback) | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.23 | Mainnet genesis-amendment dry-run | 🔴 BLOCKED on T0.1 + T3.1 | OPS-RUNBOOK |
@@ -657,4 +657,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T00:35Z] Opus 4.7  · T0.11b claimed · base: 93aa83d
 [2026-05-10T00:50Z] Opus 4.7  · T0.11b ✅ DONE · ship: b74e72d · 48/48 forge VERIFIED on-host
 [2026-05-10T00:55Z] Opus 4.7  · T1.X1 added + claimed · base: 8dca75c
+[2026-05-10T01:00Z] Opus 4.7  · T1.X1 ✅ DONE — false-positive (badges already shipped)
 ```
