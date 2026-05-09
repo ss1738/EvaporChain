@@ -97,6 +97,27 @@ struct Args {
     /// periods (e.g. user laptop sleeping mid-flight).
     #[arg(long, default_value = "3600")]
     idempotency_ttl_secs: u64,
+
+    /// Audit fix #3a (2026-05-09): chain RPC URL for startup nonce
+    /// reconciliation. When set, the paymaster fetches its own
+    /// `account.nonce` from `/api/address/<addr>` and compares
+    /// against the local `paymaster_nonce` file. Loud warning on
+    /// drift (LocalAhead = unfinalised sponsorships,
+    /// ChainAhead = someone else used the account or stale local
+    /// file). Reconciliation outcome is logged but doesn't fail
+    /// startup unless `--strict-reconcile` is also set.
+    #[arg(long)]
+    chain_rpc_url: Option<String>,
+
+    /// If set with `--chain-rpc-url`, refuse to start when local
+    /// `paymaster_nonce` file is ahead of chain. Production
+    /// deployments should set this — sponsoring while local-ahead
+    /// either creates a forever-gap of unusable nonces (if local was
+    /// right and chain just hasn't seen the in-flight UserOps yet)
+    /// or duplicates already-consumed nonces (if a prior process
+    /// crashed mid-write). Operator must investigate either way.
+    #[arg(long, requires = "chain_rpc_url")]
+    strict_reconcile: bool,
 }
 
 #[derive(Clone)]
@@ -165,6 +186,54 @@ async fn main() -> anyhow::Result<()> {
         next_nonce = info.next_paymaster_nonce,
         "paymaster ready"
     );
+
+    // Audit fix #3a — startup nonce reconciliation against the chain.
+    if let Some(ref chain_rpc) = args.chain_rpc_url {
+        use evaporchain_paymaster::reconcile::{check_alignment, NonceAlignment};
+        match check_alignment(chain_rpc, paymaster.address(), info.next_paymaster_nonce).await {
+            Ok(NonceAlignment::Aligned { nonce }) => {
+                info!(nonce, "nonce reconciliation: local matches chain");
+            }
+            Ok(NonceAlignment::LocalAhead { local, chain }) => {
+                error!(
+                    local,
+                    chain,
+                    "nonce reconciliation: LOCAL AHEAD by {} — unfinalised sponsorships in mempool, dropped, or reorged out. Investigate before continuing.",
+                    local - chain
+                );
+                if args.strict_reconcile {
+                    anyhow::bail!(
+                        "refusing to start: --strict-reconcile is set and local nonce file is ahead of chain (local={local}, chain={chain})"
+                    );
+                }
+            }
+            Ok(NonceAlignment::ChainAhead { local, chain }) => {
+                error!(
+                    local,
+                    chain,
+                    "nonce reconciliation: CHAIN AHEAD by {} — someone else used the paymaster account or local file is stale. Manual fix: stop the service, write {} into the nonce file, restart.",
+                    chain - local,
+                    chain
+                );
+                if args.strict_reconcile {
+                    anyhow::bail!(
+                        "refusing to start: --strict-reconcile is set and chain nonce is ahead of local (local={local}, chain={chain})"
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    "nonce reconciliation failed — could not query chain. Continuing without reconciliation; consider checking chain RPC connectivity"
+                );
+                if args.strict_reconcile {
+                    anyhow::bail!(
+                        "refusing to start: --strict-reconcile is set and reconciliation RPC failed: {e}"
+                    );
+                }
+            }
+        }
+    }
 
     let state = AppState {
         paymaster: Arc::new(paymaster),

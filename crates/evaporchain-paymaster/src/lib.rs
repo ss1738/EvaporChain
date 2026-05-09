@@ -42,6 +42,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+pub mod reconcile;
+
 use evaporchain_crypto::signatures::{HybridKeypair, HybridVerifier, Signer, Verifier};
 use evaporchain_types::{AccountAddress, Transaction, UserOpTx};
 use serde::{Deserialize, Serialize};

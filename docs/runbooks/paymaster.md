@@ -97,6 +97,8 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--allow-inner LIST` | no | (trust chain) | Operator-side inner-tx whitelist. Comma-separated values from `transfer`, `call_script`, `call_contract`. Omitted = sponsor any chain-accepted variant. Example: `--allow-inner=transfer` for a transfer-only paymaster. See §Inner-tx whitelist |
 | `--idempotency-max-keys N` | no | `1024` | Day 12: idempotency cache size. `0` disables. Wallets sending `Idempotency-Key` retry-safely against this cache |
 | `--idempotency-ttl-secs N` | no | `3600` | Day 12: idempotency cache TTL in seconds |
+| `--chain-rpc-url URL` | no | (off) | Audit fix #3a: chain RPC URL for startup nonce reconciliation. Hits `GET /api/address/<paymaster_addr>` and compares the chain's `account.nonce` against the local `paymaster_nonce` file. Mismatch is logged loudly. See §Startup nonce reconciliation |
+| `--strict-reconcile` | no | off | Refuse to start when reconciliation surfaces drift OR fails (RPC error). Production paymasters should set this — sponsoring under drift either creates forever-gaps in the nonce sequence or duplicates already-consumed nonces. Requires `--chain-rpc-url` |
 
 ### Endpoints
 
@@ -189,6 +191,30 @@ If you need to reset (e.g. fresh paymaster account), delete both `paymaster_nonc
 - `GET /healthz` for liveness probes.
 - `GET /info` exposes `next_paymaster_nonce`. The on-chain `account.nonce` for the paymaster address should always be `next_paymaster_nonce - <in-flight sponsored UserOps not yet finalized>`. A persistent gap > a few blocks signals dropped UserOps or a chain reorg.
 - Tail the paymaster log for `sponsor failed` lines — every entry is a wallet bug or a wallet-side abuse attempt (e.g. resubmitting an `AlreadySigned` UserOp).
+
+### Startup nonce reconciliation
+
+After a service restart (graceful or post-crash) or a chain reorg, the local `paymaster_nonce` file can drift from the chain's view of the paymaster's `account.nonce`. Sponsoring while drifted either creates forever-gaps of unusable nonces (if local was right) or duplicates already-consumed nonces (if a prior process crashed mid-write).
+
+`--chain-rpc-url` triggers a startup-time reconciliation:
+
+```bash
+evaporchain-paymaster --chain-id evaporchain-mainnet \
+  --chain-rpc-url http://node-1:8081 \
+  --strict-reconcile
+```
+
+Three outcomes (logged at `info!` for aligned, `error!` for the others):
+
+| Outcome | Meaning | Operator action |
+|---|---|---|
+| `Aligned { nonce: N }` | Local file matches chain. | None — start sponsoring. |
+| `LocalAhead { local, chain }` | Paymaster signed sponsorships not yet on-chain. Mempool, dropped network, or reorg. | Investigate which UserOps are unfinalised. Either re-submit them, or accept the gap (truncate local file to `chain` and lose `local - chain` already-allocated-but-unused nonces). |
+| `ChainAhead { local, chain }` | Chain has consumed nonces local doesn't know about. Paymaster account misuse OR earlier process state lost. | Stop the service, write `chain` into the nonce file, restart. |
+
+`--strict-reconcile` (off by default) refuses startup on anything but `Aligned`. Production paymasters should set it — silent drift compounds.
+
+The reconciliation is **startup only**. Runtime reorgs (chain reorgs while the service is running) aren't covered yet — that's a separate audit follow-up. The runbook's mitigation for now: monitor `evaporchain_paymaster_next_nonce` (gauge in `/metrics`) against the chain's account.nonce externally; an alert on `delta > N for M minutes` catches mid-flight drift.
 
 ### Idempotency (wallet retries)
 
