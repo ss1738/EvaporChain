@@ -2012,4 +2012,112 @@ mod tests {
             "expected mismatch error, got: {msg}"
         );
     }
+
+    /// T0.5 sub-task 5 — adversarial spend-evict-respend test.
+    ///
+    /// Verifies that under PNT v1 (bounded sliding-window nullifier
+    /// store), the joint defense of `tx.anchor == merkle_root()` plus
+    /// the bounded nullifier window rejects a respend attempt where:
+    ///   1. The original spend's nullifier has aged out of the PNT
+    ///      window (window says "not spent").
+    ///   2. The chain has experienced subsequent shields that advanced
+    ///      the merkle root past the attacker's original anchor.
+    ///
+    /// The audit text in MAINNET_READINESS.md T0.5 states:
+    ///   "PNT bounded window + anchor enforcement are jointly secure;
+    ///    either alone would be unsound."
+    ///
+    /// This test locks the JOINT contract under the realistic
+    /// chain-progress assumption (intermediate shields advance the
+    /// root). The orthogonal question of "what if no shields happen
+    /// between original spend and the eviction window" is a known
+    /// gap that requires either (a) anchor-history bound, (b)
+    /// persistent v1 nullifier set, or (c) phase-advance gated on
+    /// root-change. NOT covered here — see security review note
+    /// added alongside this commit.
+    #[test]
+    fn pnt_v1_respend_after_window_eviction_rejected_via_anchor() {
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 50_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        // Activate PNT v1 — double-spend check now uses bounded window.
+        executor.set_protocol_version(1);
+
+        // Original spend at root R0. Capture the anchor for the
+        // respend attempt later.
+        let note_a = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            10_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+        let unshield_a = build_real_unshield(&executor, &note_a, receiver, 10_000);
+        let attacker_original_anchor = unshield_a.anchor;
+        executor.execute_unshield(&mut db, &unshield_a).unwrap();
+
+        // Sanity: nullifier_A is in the PNT window now.
+        let nullifier_a = unshield_a.input_nullifiers[0];
+        assert!(
+            executor.pnt.is_spent_in_window(&nullifier_a),
+            "nullifier_a must be in the PNT window immediately after spend"
+        );
+
+        // Intermediate shield — advances the merkle root past R0.
+        let _note_b = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            1,
+            test_blinding(11),
+            test_blinding(21),
+            test_blinding(98),
+        );
+        assert_ne!(
+            executor.merkle_root(),
+            attacker_original_anchor,
+            "intermediate shield must advance the merkle root — \
+             without this the test isn't exercising the anchor defense"
+        );
+
+        // Advance PNT phase enough times to evict nullifier_a from
+        // the bounded window. The default window_depth is 5
+        // (PNT_WINDOW_DEPTH at privacy_exec.rs:108); 6 explicit
+        // advances guarantees the original phase has been popped.
+        for _ in 0..6 {
+            executor.pnt_advance_phase();
+        }
+
+        // Sanity: nullifier_A is no longer in the PNT window. Under
+        // PNT v1 alone, the double-spend gate now returns false.
+        // Anchor enforcement is the second line of defense.
+        assert!(
+            !executor.pnt.is_spent_in_window(&nullifier_a),
+            "nullifier_a must have aged out of the PNT window after \
+             3 phase advances; bounded window depth is small"
+        );
+
+        // Attacker re-attempts the original unshield with the original
+        // anchor. The PNT window says the nullifier is not spent, but
+        // the chain's current merkle_root has moved past R0. The
+        // anchor check at privacy_exec.rs line 506 fires first and
+        // rejects with StaleAnchor.
+        let respend_attempt = unshield_a.clone();
+        let err = executor
+            .execute_unshield(&mut db, &respend_attempt)
+            .unwrap_err();
+        assert!(
+            matches!(err, PrivacyExecError::StaleAnchor),
+            "respend with original (now-stale) anchor MUST be rejected via \
+             anchor enforcement; got {:?}",
+            err
+        );
+    }
 }
