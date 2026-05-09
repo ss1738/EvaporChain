@@ -58,7 +58,7 @@
 
 #![cfg(feature = "v2-ecc")]
 
-use ff::{Field, PrimeField};
+use ff::PrimeField;
 
 /// Witness for one EccVerkleStepCircuit level. Same shape as
 /// `VerkleStepWitness` but the validation path is EC-MSM-bound, not
@@ -114,6 +114,58 @@ impl<F: PrimeField + Clone> EccVerkleStepCircuit<F> {
             },
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Native Pedersen commitment — sub-task C cross-side counterpart.
+//
+// What this is: the off-circuit reference implementation of the
+// Verkle-level Pedersen commit. Sub-task B's `synthesize` will
+// constrain the same arithmetic in-circuit using halo2_gadgets's
+// EccChip; sub-task C's parity test will assert
+//   pedersen_commit_native(bases, scalars) == sibling_witness
+// and constrain the same equation in-circuit, so the prover cannot
+// satisfy one without satisfying the other.
+//
+// Lives in this module (not a separate `parity.rs`) so the V2
+// crypto contract is one read away from the circuit it pairs
+// with. Same gating: `#![cfg(feature = "v2-ecc")]` at module top.
+//
+// Performance note: this is a reference implementation, NOT the
+// in-circuit MSM. We use straightforward Σ s_i · G_i with
+// `pallas::Affine` doubling-and-adding. Production prover should
+// use a windowed-MSM library (e.g. group's `multiscalar_mul`)
+// once the constraint version is locked.
+// ─────────────────────────────────────────────────────────────────────
+
+use pasta_curves::group::{Curve, Group};
+use pasta_curves::pallas;
+
+/// Native Pedersen commitment: `C = Σ scalars[i] · bases[i]`.
+///
+/// Returns the affine point. Length mismatch returns the identity
+/// point (caller should validate inputs before calling — this is
+/// the cryptographic primitive, not the gateway).
+///
+/// **Lane T0.9 sub-task C** — paired with the sub-task B in-circuit
+/// EccChip MSM constraint. The parity test `pedersen_commit_in_and_out_of_circuit_agree`
+/// (sub-task C deliverable) will assert this native output equals
+/// what the circuit's witness-and-constrain path produces for the
+/// same bases + scalars.
+pub fn pedersen_commit_native(
+    bases: &[pallas::Affine],
+    scalars: &[pallas::Scalar],
+) -> pallas::Affine {
+    if bases.len() != scalars.len() || bases.is_empty() {
+        return pallas::Point::identity().to_affine();
+    }
+    // Σ s_i · G_i — straightforward variable-base scalar mul + sum
+    // in projective coords, then back to affine for the result.
+    let mut acc = pallas::Point::identity();
+    for (b, s) in bases.iter().zip(scalars.iter()) {
+        acc += pallas::Point::from(*b) * *s;
+    }
+    acc.to_affine()
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -183,5 +235,68 @@ mod tests {
         assert_eq!(c.witness.sibling_x, w.sibling_x);
         assert_eq!(c.witness.sibling_y, w.sibling_y);
         assert_eq!(c.witness.path_index, w.path_index);
+    }
+
+    // ─── Sub-task C — native Pedersen commit reference ──────────────
+
+    use pasta_curves::group::{Curve, Group};
+    use pasta_curves::pallas;
+
+    /// Length mismatch → identity point. Defends against caller bugs
+    /// without panicking inside cryptographic core.
+    #[test]
+    fn pedersen_commit_native_length_mismatch_returns_identity() {
+        let bases = vec![pallas::Point::generator().to_affine()];
+        let scalars = vec![pallas::Scalar::from(2u64), pallas::Scalar::from(3u64)];
+        let c = pedersen_commit_native(&bases, &scalars);
+        assert_eq!(c, pallas::Point::identity().to_affine());
+    }
+
+    /// Empty inputs → identity point.
+    #[test]
+    fn pedersen_commit_native_empty_returns_identity() {
+        let c = pedersen_commit_native(&[], &[]);
+        assert_eq!(c, pallas::Point::identity().to_affine());
+    }
+
+    /// Single-base sanity: 1·G == G (where G is the curve generator).
+    #[test]
+    fn pedersen_commit_native_one_times_generator_is_generator() {
+        let g = pallas::Point::generator().to_affine();
+        let s = pallas::Scalar::from(1u64);
+        let c = pedersen_commit_native(&[g], &[s]);
+        assert_eq!(c, g);
+    }
+
+    /// Linearity: commit(a·G, b·G) = (a+b)·G when bases are equal
+    /// (degenerate case but proves the sum is computed correctly).
+    #[test]
+    fn pedersen_commit_native_is_linear_in_scalars() {
+        let g = pallas::Point::generator().to_affine();
+        let a = pallas::Scalar::from(7u64);
+        let b = pallas::Scalar::from(11u64);
+        let c_split = pedersen_commit_native(&[g, g], &[a, b]);
+        let c_combined = pedersen_commit_native(&[g], &[a + b]);
+        assert_eq!(c_split, c_combined);
+    }
+
+    /// Distinct bases produce distinct commits when scalars differ.
+    /// Catches the degenerate "always returns identity" or "always
+    /// returns the first base" failure modes.
+    #[test]
+    fn pedersen_commit_native_distinct_inputs_distinct_outputs() {
+        let g = pallas::Point::generator().to_affine();
+        // Use the identity-doubled point as a second basis (quick way
+        // to get a distinct curve point without a custom generator).
+        let h = (pallas::Point::generator() * pallas::Scalar::from(7u64)).to_affine();
+        assert_ne!(g, h);
+
+        let s1 = pallas::Scalar::from(2u64);
+        let s2 = pallas::Scalar::from(5u64);
+
+        let c1 = pedersen_commit_native(&[g, h], &[s1, s2]);
+        let c2 = pedersen_commit_native(&[g, h], &[s2, s1]);
+        // Swapping scalars across distinct bases changes the commit.
+        assert_ne!(c1, c2);
     }
 }
