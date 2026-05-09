@@ -9,6 +9,7 @@ description = "Singh-Shamir Cells (HLTS). Half-life threshold shares — secret 
 [dependencies]
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-types = { path = "../evaporchain-types" }
+blake3 = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
