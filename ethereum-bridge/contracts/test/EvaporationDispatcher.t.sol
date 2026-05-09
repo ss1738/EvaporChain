@@ -355,4 +355,148 @@ contract EvaporationDispatcherTest is Test {
 
         assertTrue(freshDispatcher.isFired(objectId));
     }
+
+    // ─── T0.11 — Cross-chain replay protection regression ──────────────
+    //
+    // The dispatcher already ships defensive code for replay (one-shot
+    // `fired` flag) and reorgs (`MIN_FINALIZATION_DEPTH = 12` gate via
+    // `l1AcceptedAt`). These tests cover the lifecycle edges:
+    // cancel-before-fire, cancel-after-fire, registrar-only cancel,
+    // and the re-register-after-fire replay attempt.
+
+    /// T0.11 — cancelHook by registrar pre-fire deletes the hook.
+    /// After delete the same objectId can be re-registered by anyone.
+    function test_t0_11_cancel_before_fire_allows_reregister() public {
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        bytes memory data = abi.encodeWithSelector(
+            GhostTokenMinter.mintBecauseEvaporated.selector,
+            bytes("v1")
+        );
+        // Registrar is address(this) (the test contract).
+        dispatcher.registerHook(objectId, address(target), data, 100_000);
+        assertFalse(dispatcher.isFired(objectId));
+
+        dispatcher.cancelHook(objectId);
+        // After cancel the hook entry is deleted — re-registration must
+        // succeed because the registrar field is back to zero.
+        bytes memory data2 = abi.encodeWithSelector(
+            GhostTokenMinter.mintBecauseEvaporated.selector,
+            bytes("v2")
+        );
+        dispatcher.registerHook(objectId, address(target), data2, 200_000);
+        assertFalse(dispatcher.isFired(objectId));
+    }
+
+    /// T0.11 — cancelHook by non-registrar reverts. A third party
+    /// cannot dump someone else's hook.
+    function test_t0_11_only_registrar_can_cancel() public {
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        bytes memory data = abi.encodeWithSelector(
+            GhostTokenMinter.mintBecauseEvaporated.selector,
+            bytes("v1")
+        );
+        dispatcher.registerHook(objectId, address(target), data, 100_000);
+
+        // Pretend a different account tries to cancel.
+        address attacker = address(0xDEAD);
+        vm.prank(attacker);
+        vm.expectRevert("only registrar can cancel");
+        dispatcher.cancelHook(objectId);
+
+        // Hook still alive.
+        assertFalse(dispatcher.isFired(objectId));
+    }
+
+    /// T0.11 — cancelHook after fire reverts. The fired flag pins the
+    /// hook entry forever — no way to clear and re-use the slot for
+    /// the same objectId after it has triggered an Ethereum action.
+    function test_t0_11_cancel_after_fire_reverts() public {
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        uint64 evaporatedAtHeight =
+            uint64(vm.parseJsonUint(fixture, ".target_evaporated_at_height"));
+        uint128 finalEnergy =
+            uint128(vm.parseJsonUint(fixture, ".target_final_energy"));
+        uint64 leafIndex = uint64(vm.parseJsonUint(fixture, ".leaf_index"));
+        uint64 treeSize = uint64(vm.parseJsonUint(fixture, ".tree_size"));
+        bytes memory mmrPath = vm.parseJsonBytes(fixture, ".mmr_path");
+        bytes memory peaksLeft = vm.parseJsonBytes(fixture, ".peaks_left");
+        bytes memory peaksRight = vm.parseJsonBytes(fixture, ".peaks_right");
+        uint64 height = uint64(vm.parseJsonUint(fixture, ".height"));
+
+        bytes memory data = abi.encodeWithSelector(
+            GhostTokenMinter.mintBecauseEvaporated.selector,
+            bytes("evaporated")
+        );
+        dispatcher.registerHook(objectId, address(target), data, 200_000);
+
+        // Fire it.
+        dispatcher.dispatch(
+            objectId,
+            height,
+            evaporatedAtHeight,
+            finalEnergy,
+            leafIndex,
+            treeSize,
+            mmrPath,
+            peaksLeft,
+            peaksRight
+        );
+        assertTrue(dispatcher.isFired(objectId));
+
+        // Cancel-after-fire must revert.
+        vm.expectRevert(
+            abi.encodeWithSelector(EvaporationDispatcher.HookAlreadyFired.selector, objectId)
+        );
+        dispatcher.cancelHook(objectId);
+    }
+
+    /// T0.11 — replay via re-register attempt after fire is blocked
+    /// by HookAlreadyRegistered. Once fired, the hook entry persists
+    /// with `fired = true`; any attempt to re-register the SAME
+    /// objectId hits the `registrar != address(0)` gate first.
+    /// Closes the attack vector: "fire hook → re-register → fire
+    /// again at a later height with a different MMR proof."
+    function test_t0_11_replay_via_reregister_after_fire_blocked() public {
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        uint64 evaporatedAtHeight =
+            uint64(vm.parseJsonUint(fixture, ".target_evaporated_at_height"));
+        uint128 finalEnergy =
+            uint128(vm.parseJsonUint(fixture, ".target_final_energy"));
+        uint64 leafIndex = uint64(vm.parseJsonUint(fixture, ".leaf_index"));
+        uint64 treeSize = uint64(vm.parseJsonUint(fixture, ".tree_size"));
+        bytes memory mmrPath = vm.parseJsonBytes(fixture, ".mmr_path");
+        bytes memory peaksLeft = vm.parseJsonBytes(fixture, ".peaks_left");
+        bytes memory peaksRight = vm.parseJsonBytes(fixture, ".peaks_right");
+        uint64 height = uint64(vm.parseJsonUint(fixture, ".height"));
+
+        bytes memory data = abi.encodeWithSelector(
+            GhostTokenMinter.mintBecauseEvaporated.selector,
+            bytes("v1")
+        );
+        dispatcher.registerHook(objectId, address(target), data, 200_000);
+        dispatcher.dispatch(
+            objectId,
+            height,
+            evaporatedAtHeight,
+            finalEnergy,
+            leafIndex,
+            treeSize,
+            mmrPath,
+            peaksLeft,
+            peaksRight
+        );
+        assertTrue(dispatcher.isFired(objectId));
+
+        // Attacker tries to re-register the same objectId after fire,
+        // hoping to swap target / data and re-fire under a future
+        // header. The HookAlreadyRegistered gate (registrar != 0)
+        // blocks this regardless of the fired flag.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EvaporationDispatcher.HookAlreadyRegistered.selector,
+                objectId
+            )
+        );
+        dispatcher.registerHook(objectId, address(target), data, 200_000);
+    }
 }
