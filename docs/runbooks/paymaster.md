@@ -274,11 +274,14 @@ curl http://localhost:8088/info
   "per_sender_rps": 5.0,
   "per_sender_burst": 10,
   "audit_log_enabled": true,
-  "allowed_inner_variants": ["transfer", "call_script"]
+  "audit_log_fsync": "per_line",
+  "allowed_inner_variants": ["transfer", "call_script"],
+  "idempotency_max_keys": 1024,
+  "idempotency_ttl_secs": 3600
 }
 ```
 
-`allowed_inner_variants` is omitted entirely when the paymaster trusts the chain's whitelist (no operator narrowing). The audit-log PATH is intentionally NOT exposed — operational hygiene; only whether logging is on.
+`allowed_inner_variants` is omitted entirely when the paymaster trusts the chain's whitelist (no operator narrowing). `audit_log_fsync` is omitted when `audit_log_enabled` is `false` (no log → no fsync mode to report). The audit-log PATH and idempotency-cache PATH are intentionally NOT exposed — operational hygiene; only whether each is on.
 
 Wire backwards-compat: every policy field has `serde(default)`. A wallet built post-Day-11 hitting an old paymaster sees the policy fields filled with permissive-baseline defaults (`require_user_sig: false`, `per_sender_rps: 0.0`, etc.) — the wallet should treat that as "unknown policy; submit and see".
 
