@@ -48,34 +48,35 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
-## 2026-05-09 (cleanup) — clippy::map_entry close-out on paymaster
+## 2026-05-09 (cleanup) — clippy + doctest + binary smoke + rewards-math test fix
 
-**Focus:** post-audit-arc clippy hygiene on `evaporchain-paymaster`.
+**Focus:** post-audit-arc hygiene + flush of every known broken test surfaced during verification.
 
-**Commits shipped:** 1 (`1ffcbac`).
+**Commits shipped:** 4 (`1ffcbac` → `a717f06` → `b6b741d` → `ee1e852`).
 
 **Deliverables:**
-- `IdempotencyCache::insert` early-return branch refactored from `contains_key` + `insert` to `Entry::Occupied` (single hash lookup, clippy-preferred form).
-- `cargo clippy -p evaporchain-paymaster --no-deps` and `--bins --no-deps` are now both warning-free.
+- `IdempotencyCache::insert` early-return refactored from `contains_key` + `insert` to `Entry::Occupied` (clippy-preferred single-lookup form). Both `--no-deps` and `--bins --no-deps` clippy now warning-free for `evaporchain-paymaster`.
+- Crate-level doctest demonstrating the full sponsor flow (`HybridKeypair::generate` → `Paymaster::new_with_config` → `sponsor(&mut user_op)` → assert four paymaster fields stamped). `cargo test -p evaporchain-paymaster --doc` went from 0 → 1 test.
+- Smoke-verified the live `evaporchain-paymaster` binary on Mini 1: `/healthz` ok, `/info` correctly conditionally surfaces `audit_log_fsync` only when audit is on, `/metrics` returns Prometheus exposition. Closes the wire-format gap that in-process tests miss.
+- `test_commission_splits_staker_pool_v2`: traced the 275-vs-335 mismatch to a `total_staked: 100_000` typo (hits APY cap → block_reward shrinks 100→1 → proposer's 60% share zeroes). Same author's sibling test uses `total_staked: 0` to bypass. Fix: 1-line change with a comment explaining the math. `evaporchain-execution` is now 369/369 green (was 368/369).
 
 **Empirical results:**
-- 54/54 paymaster tests still green on Mini 1 post-fix.
-- Pre-existing test failure surfaced during a dependent-crates sweep: `evaporchain-execution::rewards::tests::test_commission_splits_staker_pool_v2` (`producer credit with 10% commission left: 275 right: 335` at `rewards.rs:913`). Test was added in commit `a6bc9df` (TOKENOMICS / rewards-math bundle) — **NOT a regression from the paymaster arc**. Flagged for the rewards-math owner.
+- All paymaster green: 54/54 unit + 4/4 integration + 1/1 doctest on Mini 1.
+- `evaporchain-execution`: 369/369. Workspace has no known broken tests in scope.
 
 **Decisions made:**
-- None doctrine-level. Cleanup commit only.
+- None doctrine-level. Pure hygiene + bug-fix arc.
 
 **What's next (V1.5+ deferred from audit arc):**
 1. Live cluster smoke (#4 — operator-driven, multi-node end-to-end paymaster sponsor → execute_block round-trip).
 2. MEV pipeline integration (#5 — paymaster-sponsored bundles into Crooks-MEV settlement, ~3-4 days).
 3. Cross-process idempotency (#6b — Redis-backed or shared-DB cache, ~2 days).
-4. Triage `test_commission_splits_staker_pool_v2` failure with rewards-math owner.
 
 **Blockers / open questions:**
 - Wallet has 1 pre-existing unrelated `clippy::clone_on_copy` warning on `TxState`. Out of scope here.
 
 **Cross-references:**
-- `CHANGELOG.md` audit-arc entry `d2b9d39` (still authoritative — no formal CHANGELOG entry needed for this clippy fix).
+- `CHANGELOG.md` audit-arc entry `d2b9d39` (still authoritative).
 - Prior session entry: 2026-05-09 (audit-arc) — paymaster end-to-end audit + 7 fixes shipped.
 
 ---
