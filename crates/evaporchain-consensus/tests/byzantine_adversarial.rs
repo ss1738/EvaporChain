@@ -667,6 +667,100 @@ fn test_byzantine_conflicting_precommits_no_commit() {
 //
 // Pairs with C.6 (adversarial proposer wrong-head, separate PR).
 
+// ─── Lane T0.1 sub-task C.6 — adversarial proposer (wrong-head) ─────────────
+//
+// MAINNET_READINESS.md T0.1: "adversarial proposer test (Byzantine
+// producer that picks wrong head)". The in-tree test
+// `test_parent_acceptance_mode_mcc_diverges_from_linear_on_diverging_parent`
+// (tendermint.rs ~line 8559) covers the 4-validator scale:
+// linear-mode rejection + MCC-mode lex-tie-break acceptance.
+//
+// This adds the 5-validator equivalent for the linear-mode rejection,
+// showing the mainnet-default behaviour scales: a Byzantine proposer
+// whose `parent_hash` diverges from every honest validator's
+// committed-tip view is rejected with `RequestSync`, NOT silently
+// accepted. Critical for the multi-parent rollout's bit-compat
+// guarantee — under default `parent_acceptance_mode = "linear"`,
+// the chain MUST refuse a divergent parent and request sync.
+//
+// MCC-full mode (multi-parent block divergence) is a richer test
+// surface that needs DAG-state setup; deferred.
+
+/// Byzantine proposer emits a block whose parent_hash diverges from
+/// every honest validator's local view (default linear mode). The
+/// honest local node must NOT prevote for it; instead, it must emit
+/// a `RequestSync` action to fetch the missing intermediate state.
+#[test]
+fn test_byzantine_proposer_diverging_parent_hash_rejected_5_validators() {
+    let vs = make_validator_set_5();
+    // Iterate my_id to find a non-proposer for height=1, round=0 — we
+    // want the local node to be receiving (not producing) the bad
+    // proposal so the wrong-head rejection path fires. Try id 5 first
+    // (likely non-proposer with the deterministic mapping); fall back
+    // through 4..=1 until a non-proposer is found.
+    let (mut tc, proposer_id) = (1u64..=5)
+        .find_map(|candidate| {
+            let mut tc = TendermintConsensus::new_for_test(candidate, 10, vs.clone());
+            if !tc.am_i_proposer() {
+                // Find SOME id we can use as the wrong-head proposer.
+                // Loop again to identify the actual proposer id.
+                for proposer_candidate in 1u64..=5 {
+                    let mut probe =
+                        TendermintConsensus::new_for_test(proposer_candidate, 10, vs.clone());
+                    if probe.am_i_proposer() {
+                        return Some((tc, proposer_candidate));
+                    }
+                    let _ = probe;
+                }
+                None
+            } else {
+                None
+            }
+        })
+        .expect("at least one non-proposer + one proposer must exist in a 5-validator set");
+
+    // Build a Byzantine proposal: parent_hash = [0xFF; 32] but our
+    // local committed tip is [0; 32] (default). Under linear mode
+    // this divergence triggers RequestSync.
+    let mut block = make_test_block(1, proposer_id);
+    block.parent_hash = [0xFFu8; 32];
+    let proposal = ConsensusMessage::Proposal {
+        height: 1,
+        round: 0,
+        block,
+        proposer_id,
+    };
+    let actions = tc.on_message(proposal);
+
+    // The local node MUST emit RequestSync (existing wrong-head
+    // detection) and MUST NOT prevote with a non-NIL block_hash for
+    // the diverging tip.
+    let request_sync = actions
+        .iter()
+        .any(|a| matches!(a, ConsensusAction::RequestSync(_, _)));
+    let voted_for_byzantine = actions.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
+                block_hash: Some(_),
+                ..
+            })
+        )
+    });
+    assert!(
+        request_sync,
+        "linear-mode 5-validator: diverging parent must trigger RequestSync; \
+         actions = {:?}",
+        actions
+    );
+    assert!(
+        !voted_for_byzantine,
+        "linear-mode 5-validator: must NOT prevote for a diverging-parent block; \
+         actions = {:?}",
+        actions
+    );
+}
+
 #[test]
 fn test_byzantine_partition_3_of_5_validators_fail_prevote_quorum() {
     // Symmetric to the 4-of-5 case: only 3 validators prevote
