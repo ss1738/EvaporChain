@@ -113,7 +113,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.6 | Slashing-at-scale empirical tests | 🟡 OPEN | EXECUTION + STATE-DB |
 | T0.7 | Mempool + signature DoS hardening | 🟡 OPEN | NETWORK + EXECUTION |
 | T0.8 | Light-client / fast-sync against malicious snapshots | 🟡 OPEN | NETWORK |
-| T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | 🟡 OPEN | BRIDGE-RUST |
+| T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | 🟢 CLAIMED by Opus 4.7 @ 2026-05-10T01:30Z · base: 2e9e2c5 — full lane is 2-3 weeks; this turn = baseline + sub-task A (deps + skeleton) | BRIDGE-RUST |
 | T0.10 | `VerkleProofVerifier.sol` Groth16 wrap | 🔴 BLOCKED on T0.9 | BRIDGE-SOL |
 | T0.11 | Cross-chain replay protection hardening (dispatcher) | ✅ DONE (ee2ebba) — L1 finalization-depth gate (12 blocks); 46/46 forge tests pass on-host | BRIDGE-SOL |
 | T0.11b | Extend finalization-depth gate to StateMembershipAttester | ✅ DONE (b74e72d) — symmetric defense w/ T0.11; 48/48 forge tests pass on-host | BRIDGE-SOL |
@@ -658,4 +658,6 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T00:50Z] Opus 4.7  · T0.11b ✅ DONE · ship: b74e72d · 48/48 forge VERIFIED on-host
 [2026-05-10T00:55Z] Opus 4.7  · T1.X1 added + claimed · base: 8dca75c
 [2026-05-10T01:00Z] Opus 4.7  · T1.X1 ✅ DONE — false-positive (badges already shipped)
+[2026-05-10T01:25Z] Opus 4.7  · disk reclaim — 99% → 23% (40 GiB free) via cargo target + uv cache wipe
+[2026-05-10T01:30Z] Opus 4.7  · T0.9 claimed (sub-task A scoped) · base: 2e9e2c5
 ```
