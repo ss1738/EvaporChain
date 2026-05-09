@@ -108,7 +108,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/healthz` | — | `"ok"` |
-| GET | `/info` | — | `{paymaster_address_hex, next_paymaster_nonce, chain_id, require_user_sig, per_sender_rps, per_sender_burst, audit_log_enabled, allowed_inner_variants?}` |
+| GET | `/info` | — | `{paymaster_address_hex, next_paymaster_nonce, chain_id, require_user_sig, per_sender_rps, per_sender_burst, audit_log_enabled, audit_log_fsync?, allowed_inner_variants?, idempotency_max_keys, idempotency_ttl_secs}` |
 | GET | `/metrics` | — | Prometheus exposition format (see §Metrics) |
 | POST | `/sponsor` | `{user_op}` | `{user_op, paymaster_address_hex, paymaster_nonce}` |
 

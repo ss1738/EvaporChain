@@ -205,6 +205,14 @@ pub struct PaymasterInfo {
     /// (operational hygiene); only whether the log exists.
     #[serde(default)]
     pub audit_log_enabled: bool,
+    /// Audit fix #8a — operator's audit-log fsync policy as the
+    /// snake_case CLI form (`per_line` or `none`). `None` (in JSON:
+    /// field omitted) means audit logging is disabled entirely
+    /// (`audit_log_enabled: false`). Wallets paying users in
+    /// another token can use this to filter out paymasters that
+    /// chose throughput over durability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_log_fsync: Option<String>,
     /// Day 10 — operator's inner-tx whitelist. `None` means the
     /// paymaster trusts the chain's global whitelist; `Some(set)`
     /// is a strict subset. Strings are the snake_case CLI form
@@ -1156,6 +1164,17 @@ impl Paymaster {
             per_sender_rps: self.config.per_sender_rps,
             per_sender_burst: self.config.per_sender_burst,
             audit_log_enabled: self.config.audit_log.is_some(),
+            audit_log_fsync: if self.config.audit_log.is_some() {
+                Some(
+                    match self.config.audit_log_fsync {
+                        AuditFsyncMode::PerLine => "per_line",
+                        AuditFsyncMode::None => "none",
+                    }
+                    .to_string(),
+                )
+            } else {
+                None
+            },
             allowed_inner_variants: self.config.allowed_inner_variants.as_ref().map(|set| {
                 set.iter().map(|v| v.as_str().to_string()).collect()
             }),
@@ -2639,6 +2658,90 @@ mod tests {
         assert!(!info.require_user_sig);
         assert_eq!(info.per_sender_rps, 0.0);
         assert_eq!(info.per_sender_burst, 0);
+    }
+
+    #[test]
+    fn info_exposes_audit_log_fsync_mode_when_log_set() {
+        // Audit fix #8a follow-up: when audit_log is Some, /info
+        // surfaces the fsync mode so wallets can filter by
+        // durability guarantee. When audit_log is None, the field
+        // is omitted (skip_serializing_if).
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+
+        // Audit on, fsync per-line.
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            &nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file.clone()),
+                audit_log_fsync: AuditFsyncMode::PerLine,
+                allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
+            },
+        )
+        .unwrap();
+        let info = pm.info();
+        assert_eq!(info.audit_log_fsync.as_deref(), Some("per_line"));
+
+        // Audit on, fsync none.
+        let nonce_file2 = tmp.path().join("paymaster_nonce_2");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            &nonce_file2,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file.clone()),
+                audit_log_fsync: AuditFsyncMode::None,
+                allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
+            },
+        )
+        .unwrap();
+        let info = pm.info();
+        assert_eq!(info.audit_log_fsync.as_deref(), Some("none"));
+
+        // Audit off — fsync field omitted (None).
+        let nonce_file3 = tmp.path().join("paymaster_nonce_3");
+        let pm = fresh_paymaster(&{ let t = TempDir::new().unwrap(); std::fs::write(t.path().join("paymaster_nonce"), "0").ok(); t }, "test");
+        let _ = (nonce_file3, pm); // shadowing — use the helper-built one below
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            &tmp.path().join("paymaster_nonce_4"),
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: None, // ← off
+                audit_log_fsync: AuditFsyncMode::PerLine, // ignored
+                allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
+                idempotency_persist_path: None,
+            },
+        )
+        .unwrap();
+        let info = pm.info();
+        assert!(info.audit_log_fsync.is_none(), "fsync field omitted when audit_log is None");
+        // And the JSON omits it entirely (skip_serializing_if).
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("audit_log_fsync"), "field must be omitted in JSON when None");
     }
 
     #[test]

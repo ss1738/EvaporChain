@@ -21051,6 +21051,7 @@ mod tests {
             per_sender_rps: 5.0,
             per_sender_burst: 10,
             audit_log_enabled: false,
+            audit_log_fsync: None,
             allowed_inner_variants: allowed.map(|v| v.into_iter().map(String::from).collect()),
             idempotency_max_keys: 1024,
             idempotency_ttl_secs: 3600,
