@@ -109,7 +109,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.2 | Layer 4 D-track adversarial + perf + 72hr soak | 🔴 BLOCKED on T0.1 + T3.1 | CONSENSUS |
 | T0.3 | POST_EXEC Phase 4 enforce-mode (refuse-to-apply, not prevote-NIL — see spec note) | ✅ DONE (c191498) — flag + 4 tests; needs T0.4 fork-epoch + soak before flipping to enforce | CONSENSUS |
 | T0.4 | POST_EXEC Phase 5 block-hash inclusion | ✅ DONE (695c49c) — bit-compat fold (Some→include, None→skip); 3 hash tests | CONSENSUS |
-| T0.5 | PNT v1+ activation (privacy authoritative) | 🟡 OPEN | PRIVACY |
+| T0.5 | PNT v1+ activation (privacy authoritative) | 🟢 CLAIMED by Opus 4.7 @ 2026-05-10T02:15Z · base: cd964a5 — sub-task 3 (fork-epoch gate) starter | PRIVACY |
 | T0.6 | Slashing-at-scale empirical tests | 🟡 OPEN | EXECUTION + STATE-DB |
 | T0.7 | Mempool + signature DoS hardening | 🟡 OPEN | NETWORK + EXECUTION |
 | T0.8 | Light-client / fast-sync against malicious snapshots | 🟡 OPEN | NETWORK |
@@ -662,4 +662,5 @@ Append a one-line entry every time a lane status changes. Do NOT delete old entr
 [2026-05-10T01:30Z] Opus 4.7  · T0.9 claimed (sub-task A scoped) · base: 2e9e2c5
 [2026-05-10T01:50Z] Opus 4.7  · T0.9 sub-task A ✅ DONE · ship: 8809064 · 11/11 on-host · sub-lane → 🟡 PARTIAL
 [2026-05-10T02:10Z] Opus 4.7  · T0.9 sub-task C native half ✅ DONE · ship: 70be2b8 · 16/16 on-host (5 native Pedersen tests added)
+[2026-05-10T02:15Z] Opus 4.7  · T0.5 claimed (sub-task 3 starter) · base: cd964a5
 ```
