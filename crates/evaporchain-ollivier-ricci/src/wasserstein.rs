@@ -93,11 +93,7 @@ fn bound_via_test_function(
     // We work in u128 to avoid overflow on large meshes.
     let e_mu = expectation(g, mu, pivot)?;
     let e_nu = expectation(g, nu, pivot)?;
-    let diff = if e_mu >= e_nu {
-        e_mu - e_nu
-    } else {
-        e_nu - e_mu
-    };
+    let diff = e_mu.abs_diff(e_nu);
     // diff is in (micros · hops). Total mass is 10⁶; we want the
     // result in (hops · micros) so dividing by 10⁶ would give hops.
     // Keep in micros·hops space to compose with κ formula.

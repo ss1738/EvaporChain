@@ -121,11 +121,7 @@ fn linf_dist(a: (u64, u64), b: (u64, u64)) -> u64 {
 }
 
 fn absdiff(a: u64, b: u64) -> u64 {
-    if a >= b {
-        a - b
-    } else {
-        b - a
-    }
+    a.abs_diff(b)
 }
 
 fn midpoint(b: u64, d: u64) -> u64 {

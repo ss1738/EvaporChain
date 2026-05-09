@@ -92,7 +92,7 @@ pub fn embd_max_for_block_size(n: usize) -> u64 {
     let mut sum: u128 = 0;
     for i in 0..n {
         let target = (n - 1) - i;
-        let d = if i >= target { i - target } else { target - i };
+        let d = i.abs_diff(target);
         sum += d as u128;
     }
     let scaled = sum.saturating_mul(MICROS) / (n as u128);
