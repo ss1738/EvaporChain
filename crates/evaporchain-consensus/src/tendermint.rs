@@ -3856,6 +3856,14 @@ impl TendermintConsensus {
         added
     }
 
+    /// Operator-hatch: clear the jailed flag for a validator that is
+    /// already in the set.  Returns `true` if the validator was jailed
+    /// and is now unjailed; `false` if it was not found or was already
+    /// active.  Stake-floor check is enforced by `ValidatorSet::unjail`.
+    pub fn unjail_validator(&mut self, validator_id: u64) -> bool {
+        self.validator_set.unjail(validator_id)
+    }
+
     /// Recent per-validator block-production timing samples, oldest
     /// first. Each entry is `(producer_id, exec_time_seconds)` and
     /// gets appended after every successful block commit; bounded by
@@ -17603,6 +17611,95 @@ mod phase2_round_trip_tests {
             result.is_ok(),
             "enforce-mode must accept matching root; got Err: {:?}",
             result.err()
+        );
+    }
+
+    /// T0.1.T0.3 acceptance test — after a divergent block is rejected
+    /// by an enforce-mode validator, the chain MUST NOT advance locally.
+    /// This is the cluster-stall behaviour the spec calls for: under
+    /// 2f+1 validators in enforce-mode, a divergent proposal halts
+    /// progress until a clean proposal is produced. The single-validator
+    /// proxy for "cluster stalls" is "block_number() unchanged after
+    /// apply_block returns Err".
+    ///
+    /// Companion to phase4_enforce_mode_rejects_mismatch which proves
+    /// apply_block returns Err; this proves the chain-state contract:
+    /// rejected blocks do NOT bump the local height counter.
+    #[test]
+    fn phase4_enforce_mode_rejected_block_does_not_advance_chain() {
+        let mut tc = make_tc_with_validators();
+        tc.governance_set_param("post_state_verify_mode", "enforce")
+            .expect("flag set must succeed");
+        let mut db = InMemoryStateDB::new();
+        tc.mempool.submit(dummy_transfer(100));
+
+        let height_before = tc.block_number();
+
+        let mut block = tc
+            .create_proposal(&mut db)
+            .expect("proposer produces block");
+        assert!(block.post_state_root.is_some());
+        // Forge a mismatch.
+        block.post_state_root = Some([0xCD; 32]);
+
+        let result = tc.apply_block(&mut db, &block);
+        assert!(
+            result.is_err(),
+            "pre-condition: enforce-mode apply_block must reject divergent block"
+        );
+
+        // The load-bearing post-condition: the chain has NOT advanced.
+        // A validator that rejects a divergent block must keep its
+        // local height pinned to where it was, so the next round can
+        // re-propose at the same height with a clean state_root.
+        let height_after = tc.block_number();
+        assert_eq!(
+            height_before, height_after,
+            "enforce-mode rejected block must NOT advance the local chain; \
+             before={}, after={}",
+            height_before, height_after
+        );
+    }
+
+    /// T0.3 follow-up — under enforce-mode, after a divergent rejection
+    /// the validator can apply a SUBSEQUENT clean proposal at the same
+    /// height. This is the "cluster recovers when a clean proposer
+    /// emerges" half of the cluster-stall behaviour.
+    #[test]
+    fn phase4_enforce_mode_recovers_with_clean_proposal_after_rejection() {
+        let mut tc = make_tc_with_validators();
+        tc.governance_set_param("post_state_verify_mode", "enforce")
+            .expect("flag set must succeed");
+        let mut db = InMemoryStateDB::new();
+        tc.mempool.submit(dummy_transfer(100));
+
+        let height_before = tc.block_number();
+        let mut block = tc
+            .create_proposal(&mut db)
+            .expect("proposer produces block");
+        let clean_post_root = block.post_state_root.expect("enforce fills the field");
+
+        // First attempt: forge a mismatch → reject.
+        let mut divergent = block.clone();
+        divergent.post_state_root = Some([0xCD; 32]);
+        assert!(tc.apply_block(&mut db, &divergent).is_err());
+        assert_eq!(tc.block_number(), height_before, "rejected block didn't advance");
+
+        // Second attempt: re-apply the SAME block with the clean
+        // post_state_root → must succeed. (In a real cluster this is
+        // a different proposer in the next round; the test models
+        // recovery by re-applying with the original clean root.)
+        block.post_state_root = Some(clean_post_root);
+        let result = tc.apply_block(&mut db, &block);
+        assert!(
+            result.is_ok(),
+            "clean post_state_root must apply cleanly post-rejection; \
+             err: {:?}",
+            result.err()
+        );
+        assert!(
+            tc.block_number() > height_before,
+            "clean block must advance the chain"
         );
     }
 }
