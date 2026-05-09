@@ -48,6 +48,73 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-09 (late-evening) — totality V1.5/V1.6/V1.7 + paymaster #8b + branch consolidation
+
+**Focus:** continuation arc beyond the V1 totality + Item A stdlib work shipped earlier this evening — extends the totality checker through three further versions (BoundedWhile recognition, CFG-aware decrement, total isolation), ships paymaster audit fix #8b (Batched fsync mode), and consolidates the session's scattered commits onto a single clean branch.
+
+**Commits shipped this arc:** 11 on `lane/evaporscript-stdlib-consolidated`.
+
+| # | Commit | What |
+|---|---|---|
+| 1 | `54bd5a2` | Item A core (cherry-picked — was `cdc33b7`) |
+| 2 | `7897461` | Item B V1 module (cherry-picked — was `d38bf17`) |
+| 3 | `33bee35` | payment_split pilot (cherry-picked) |
+| 4 | `f0b50de` | attestation pilot (cherry-picked) |
+| 5 | `bafda72` | vesting_schedule pilot (cherry-picked) |
+| 6 | `af84c1b` | time_lock pilot (cherry-picked) |
+| 7 | `c268c81` | sealed_bid_auction pilot (cherry-picked) |
+| 8 | `0d29486` | energy_marketplace pilot (clean — extracted from bundled `36dab74`) |
+| 9 | `ef1ca93` | SESSION_PROGRESS update (cherry-picked — was `140c463`) |
+| 10 | `e287187` | Item B V1.5 — BoundedWhile pattern recognition |
+| 11 | `d083758` | Item B V1.6 — CFG-aware definite-decrement |
+| 12 | `c284f48` | Item B V1.7 — total isolation (no `call_contract`) |
+| 13 | `ad1af4b` | paymaster audit fix #8b — Batched fsync mode |
+
+**Total session commits across all branches:** 19 (the 5 stdlib-pilot commits already on `origin/main` from the V1 arc + the 13 above + the V1 module commit + Item A core commit on the original lane).
+
+**Deliverables (incremental over the V1 arc entry below):**
+
+| Surface | File | What |
+|---|---|---|
+| Item B V1.5 | `crates/evaporchain-script/src/totality.rs` | Recognise `while VAR > LIT { ... VAR -= LIT }` patterns where body is flat sequence + last stmt is the strict-decrement. Adds 4 new error variants for actionable diagnostics; 7 new inline tests. |
+| Item B V1.6 | same file | CFG-aware: walk body sequentially asking "is this stmt definitely a decrement?" (`if X { THEN } else { ELSE }` is definite iff both branches are; `if X { THEN }` no-else is not definite — skip-path produces nothing). Strictly widens V1.5. 4 new test cases (3 acceptance, 1 was V1.5-reject now V1.6-accept). |
+| Item B V1.7 | same file | Total isolation: forbid `call_contract(...)` invocations under total mode. Walks every Expr in every method body / hook body / if-condition / while-condition / function-call argument. Discovered EvaporScript has NO intra-contract recursion at the language level (`Op::Call(name, ...)` only resolves to a fixed set of builtins), so cross-contract is the only escape. 4 new test cases. |
+| Paymaster #8b | `crates/evaporchain-paymaster/src/lib.rs` + `bin/server.rs` | New `AuditFsyncMode::Batched { batch_size, flush_threshold_ms }` variant. Per /sponsor: write_all, increment counter, fsync iff counter >= batch_size OR elapsed >= threshold. CLI: `--audit-log-fsync batched:32:100`. info() reports `"batched:32:100ms"`. 3 new tests. |
+| Branch consolidation | `lane/evaporscript-stdlib-consolidated` (new) | Worktree-based cherry-pick of 9 scattered commits onto a clean branch from `origin/main`. Original branches untouched. The bundled `36dab74` had its single pilot file extracted; the parallel session's 6 contaminating files left on the original branch. |
+
+**Empirical results:** none yet — all 200+ session-cumulative tests pending Mini SSH verification.
+
+**Decisions made (incremental over the V1 arc):**
+
+- **Totality progression versioning** locked: V1 (reject all while) → V1.5 (terminal-decrement) → V1.6 (CFG-aware) → V1.7 (no cross-contract). Each strictly widens or strengthens. V1.5 widened acceptance; V1.6 widened acceptance further; V1.7 strengthened rejection (closes external-call escape valve).
+- **EvaporScript has no user-recursion**, only builtin function calls (`Op::Call(name, ...)` → `call_builtin`). So traditional "recursion detection" was a no-op; V1.7's "total isolation" addresses the only real escape: `call_contract(...)`.
+- **Lifecycle-hook restriction stays strict**: hooks reject ALL `while`, including V1.5/V1.6-bounded ones. Hooks run in tight runtime contexts; loop-free invariant preserved.
+- **#8b Batched is single-writer ordering, not async group-commit.** True async coordination (oneshot channels, batch flusher, per-write durability barrier) was tracked as future scope. The shipped V1 trades `sponsor() may return before fsync` for implementation simplicity. Operators picking Batched mode accept the bounded-staleness window per `flush_threshold_ms`.
+- **Branch consolidation preserves originals** — non-destructive cherry-pick onto a fresh branch. Operators can merge the consolidation branch via PR; the original lane PRs land their work via patch-id matching when GitHub recognizes shared changes.
+
+**What's next:**
+
+1. **SSH-verify ~200 tests on a Mini** — `cargo test -p evaporchain-script -p evaporchain-paymaster -p evaporchain-execution`. Single round-trip catches every latent issue.
+2. **Land Item B V1 chain admission gate** — `tendermint.rs` + `execution/lib.rs` hunks live in the original tree, contaminated by parallel session. `git add -p` to separate, then commit + push.
+3. **Paymaster #6b** — cross-process idempotency cache. ~2 days for SQLite/Redis backend; first slice (trait abstraction over the existing in-memory cache) ~2 hr.
+4. **Paymaster #5** — MEV pipeline integration for sponsored intents. ~3-4 days, doctrine-significant.
+5. **Item D research** — HLTS / ETLP / DSN crates, 1-2 weeks each. Outside session scope.
+
+**Blockers / open questions:**
+
+- Branch chaos this session: commits split across `lane/t0-9-d-finish-prover-v2`, `pr/t0-9-sub-d-followup`, `pr/session-progress-bridge-v2`, `pr/t0-11-reorg-replay-tests`, `pr/t0-8-adversarial-snapshot-tests`, `pr/t0-5-pnt-respend-test`, plus 5 commits already on `main`. Consolidation branch fixes this, but the original lane PRs may still bundle stdlib work unless cherry-picked away.
+- SSH still pending — ~200 tests unverified.
+- Cluster wedge (per `latest+2` entry) still unresolved.
+
+**Cross-references:**
+
+- Prior `(evening)` entry below — V1 totality + Item A stdlib + first 5 pilots.
+- Consolidation PR: `https://github.com/ss1738/EvaporChain/pull/new/lane/evaporscript-stdlib-consolidated`
+- Item B totality module: `crates/evaporchain-script/src/totality.rs` (~770 lines, 18 inline tests, V1→V1.7).
+- `CHANGELOG.md` 2026-05-09 (late-evening) for formal log.
+
+---
+
 ## 2026-05-09 (evening) — EvaporScript stdlib + Total-Programming V1 admission gate
 
 **Focus:** Item A (seed-12 `.es` stdlib + 2 worked-example behavioural pilots) and Item B V1 (totality checker module on mainline AST + chain admission gate behind a new `script_vm_mode` governance flag) of the smart-contract layer build-out.
