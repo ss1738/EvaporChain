@@ -146,6 +146,29 @@ impl ChainStore {
         ))
     }
 
+    // ─── Validator jailing/stake state ───
+    //
+    // Persists per-validator (id, stake, delegated_stake, jailed) so that
+    // quorum thresholds computed after a restart match those that were active
+    // when historical commit certificates were built. Without this, a restarted
+    // node sees all validators unjailed (genesis state) and rejects certs that
+    // were valid under the live jailing state.
+
+    pub fn save_validator_state(&self, state: &[(u64, u64, u64, bool)]) -> Result<(), String> {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        let bytes = serde_json::to_vec(state).map_err(|e| e.to_string())?;
+        self.db
+            .put_cf(cf, b"validator_state_v1", bytes)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Returns `(id, stake, delegated_stake, jailed)` per validator.
+    pub fn load_validator_state(&self) -> Option<Vec<(u64, u64, u64, bool)>> {
+        let cf = self.db.cf_handle(CF_META)?;
+        let bytes = self.db.get_cf(cf, b"validator_state_v1").ok()??;
+        serde_json::from_slice(&bytes).ok()
+    }
+
     // ─── Block history ───
 
     pub fn save_block(&self, record: &BlockRecord) -> Result<(), String> {

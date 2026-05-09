@@ -3635,6 +3635,29 @@ impl TendermintConsensus {
         self.valid_round = None;
     }
 
+    /// Snapshot the mutable validator state (stake, delegated_stake, jailed)
+    /// for persistence across restarts. Returns `(id, stake, delegated_stake, jailed)`.
+    pub fn snapshot_validator_state(&self) -> Vec<(u64, u64, u64, bool)> {
+        self.validator_set
+            .validators()
+            .iter()
+            .map(|v| (v.id, v.stake, v.delegated_stake, v.jailed))
+            .collect()
+    }
+
+    /// Restore mutable validator state from a previously snapshotted vector.
+    /// Only updates (stake, delegated_stake, jailed) — genesis-seeded fields
+    /// (bls_public_key, address, pop_verified) are left as-is.
+    pub fn restore_validator_state(&mut self, state: &[(u64, u64, u64, bool)]) {
+        for &(id, stake, delegated_stake, jailed) in state {
+            if let Some(v) = self.validator_set.get_mut(id) {
+                v.stake = stake;
+                v.delegated_stake = delegated_stake;
+                v.jailed = jailed;
+            }
+        }
+    }
+
     /// Restore state after a restart, including the latest committed state root.
     pub fn restore_state_with_root(
         &mut self,
@@ -7038,31 +7061,23 @@ impl TendermintConsensus {
                             validator_id = vid,
                             "Rejecting cert: signer has no verified proof-of-possession"
                         );
-                        eprintln!("[cert-dbg] h={} FAIL: vid={} pop_verified=false", cert.height, vid);
                         return false;
                     }
                     pks.push(BlsPublicKey(bls_pk_bytes.clone()));
-                    eprintln!("[cert-dbg] h={} vid={} pk_prefix={} stake={} pop_ok=true",
-                        cert.height, vid, hex::encode(&bls_pk_bytes[..8.min(bls_pk_bytes.len())]),
-                        validator.effective_stake());
                     if let Some(expiry) = validator.bls_prev_key_expiry_epoch {
                         if self.epoch <= expiry && validator.bls_public_key_prev.is_some() {
                             any_in_grace = true;
                         }
                     }
                 } else {
-                    eprintln!("[cert-dbg] h={} FAIL: vid={} no bls_public_key", cert.height, vid);
                     return false;
                 }
             } else {
-                eprintln!("[cert-dbg] h={} FAIL: vid={} not in validator_set", cert.height, vid);
                 return false;
             }
         }
 
         if signer_stake < threshold {
-            eprintln!("[cert-dbg] h={} FAIL: stake {}<{} (threshold) total_stake={}",
-                cert.height, signer_stake, threshold, self.validator_set.total_stake());
             return false;
         }
 
@@ -7070,17 +7085,10 @@ impl TendermintConsensus {
             Self::bls_vote_message(cert.height, cert.round, &Some(cert.block_hash), "precommit");
         let agg_sig = BlsSignature(cert.aggregate_signature.clone());
 
-        eprintln!("[cert-dbg] h={} round={} n_signers={} stake={}/{} msg_hex={} agg_sig_prefix={}",
-            cert.height, cert.round, cert.signer_ids.len(), signer_stake, threshold,
-            hex::encode(&msg),
-            hex::encode(&cert.aggregate_signature[..8.min(cert.aggregate_signature.len())]));
-
         // Pass 1: current keys.
         if BlsVerifier::aggregate_verify(&msg, &agg_sig, &pks) {
             return true;
         }
-        eprintln!("[cert-dbg] h={} FAIL: aggregate_verify pass-1 returned false (any_in_grace={})",
-            cert.height, any_in_grace);
         if !any_in_grace {
             return false;
         }

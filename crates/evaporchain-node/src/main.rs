@@ -3240,6 +3240,19 @@ async fn main() -> Result<()> {
             if let Some(ref tc) = tendermint {
                 let mut c = safe_lock(tc);
                 c.restore_state(block_number, epoch, parent_hash);
+                // Restore validator jailing/stake state persisted from the last committed block.
+                // Without this, all validators appear unjailed on restart, causing sync cert
+                // verification to use a higher quorum threshold than was active when certs
+                // were built (e.g. a 2-of-2 cert valid under jailed-out validators fails
+                // against the full 5-validator genesis threshold).
+                if let Some(vs) = chain_store.load_validator_state() {
+                    c.restore_validator_state(&vs);
+                    let jailed: Vec<u64> = vs.iter().filter(|e| e.3).map(|e| e.0).collect();
+                    println!(
+                        "{} \x1b[1;32mValidator state restored:\x1b[0m {} validators, {} jailed: {:?}",
+                        node_tag, vs.len(), jailed.len(), jailed
+                    );
+                }
                 if let Some((s, h, e, cert)) = bell {
                     let reading = evaporchain_consensus::persistence::CheckpointedBellReading {
                         s_value_milli: s,
@@ -3973,6 +3986,10 @@ async fn main() -> Result<()> {
                         result.block.parent_hash,
                     ),
                 );
+                if let Some(ref tc_ref) = tendermint {
+                    let vs = safe_lock(tc_ref).snapshot_validator_state();
+                    log_persist_err("validator_state", chain_store.save_validator_state(&vs));
+                }
                 fatal_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err(
                     "tx_index",
@@ -4861,6 +4878,10 @@ async fn main() -> Result<()> {
 
                                 // Persist
                                 fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                if let Some(ref tc_ref2) = tendermint {
+                                    let vs = safe_lock(tc_ref2).snapshot_validator_state();
+                                    log_persist_err("validator_state", chain_store.save_validator_state(&vs));
+                                }
                                 if let Some(ref r) = consensus_bell_reading {
                                     log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
                                 }
@@ -5870,6 +5891,10 @@ async fn main() -> Result<()> {
                                         tc.record_block_production_timing(pid, exec_elapsed_us);
                                     }
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                    {
+                                        let vs = safe_lock(tc_ref).snapshot_validator_state();
+                                        log_persist_err("validator_state", chain_store.save_validator_state(&vs));
+                                    }
                                     // 2026-05-02: keep `consensus_bell_reading` alive past
                                     // this save so the follower-path snapshot block below
                                     // can hand it to SnapshotFile::create. The proposer
@@ -6296,6 +6321,10 @@ async fn main() -> Result<()> {
                         result.block.epoch,
                         result.block.parent_hash,
                     ));
+                    if let Some(ref tc_ref) = tendermint {
+                        let vs = safe_lock(tc_ref).snapshot_validator_state();
+                        log_persist_err("validator_state", chain_store.save_validator_state(&vs));
+                    }
                     fatal_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
                 index_block_deploys_via_consensus(&chain_store, &result.block, tendermint.as_ref(), &consensus);
@@ -6630,6 +6659,10 @@ async fn main() -> Result<()> {
                                         cache_block(cache, block);
                                     }
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                    {
+                                        let vs = safe_lock(tc_ref).snapshot_validator_state();
+                                        log_persist_err("validator_state", chain_store.save_validator_state(&vs));
+                                    }
                                     if let Some(r) = consensus_bell_reading {
                                         log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
                                     }
@@ -6849,6 +6882,10 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(queued.number, queued.epoch, consensus_parent_hash));
+                                    if let Some(ref tc_ref) = tendermint {
+                                        let vs = safe_lock(tc_ref).snapshot_validator_state();
+                                        log_persist_err("validator_state", chain_store.save_validator_state(&vs));
+                                    }
                                     if let Some(r) = consensus_bell_reading {
                                         log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
                                     }
