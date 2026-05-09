@@ -1161,6 +1161,76 @@ mod tests {
 
     // ── Unshield Tests (100% real) ──
 
+    /// Regression test for PR #10 (T0.5 unshield change-note persist).
+    /// Confirms `execute_unshield`'s change-output path calls
+    /// `db.append_note_commitment` for each change commitment, so
+    /// `restore_from_db` can rebuild the tree on node restart.
+    #[test]
+    fn unshield_change_commitment_persists_to_db_via_append_note_commitment() {
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let n1 = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        // Build a partial unshield: 3000 out, 2000 change.
+        let merkle_proof = executor.get_merkle_proof(n1.tree_index).unwrap();
+        let nullifier =
+            Nullifier::derive(&n1.spending_secret, &Commitment(n1.note_commitment));
+        let change_blinding = test_blinding(50);
+        let change_commitment = Commitment::commit(2_000, &change_blinding).0;
+        let binding = compute_balance_binding(
+            n1.amount,
+            2_000,
+            3_000,
+            &[n1.blinding],
+            &[change_blinding],
+        );
+
+        let tx = UnshieldTx {
+            to: receiver,
+            amount: 3_000,
+            input_nullifiers: vec![nullifier.0],
+            anchor: executor.merkle_root(),
+            balance_binding: binding,
+            input_amounts: vec![n1.amount],
+            input_blindings: vec![n1.blinding],
+            input_value_commitments: vec![n1.value_commitment],
+            input_note_commitments: vec![n1.note_commitment],
+            input_merkle_proofs: vec![merkle_proof],
+            output_blindings: vec![change_blinding],
+            change_commitments: vec![change_commitment],
+            energy_proofs: vec![],
+        };
+
+        let pre_count = db.get_all_note_commitments().len();
+        executor
+            .execute_unshield(&mut db, &tx)
+            .expect("partial unshield with change must succeed");
+
+        let post = db.get_all_note_commitments();
+        assert_eq!(
+            post.len() - pre_count,
+            1,
+            "unshield-with-change must persist the change commitment to db"
+        );
+        assert!(
+            post.contains(&change_commitment),
+            "the persisted commitment must equal the constructed change commitment"
+        );
+    }
+
     #[test]
     fn test_unshield_real_full_amount() {
         let sender = test_addr(1);
