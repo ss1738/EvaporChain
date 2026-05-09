@@ -1700,9 +1700,20 @@ impl P2pNetworkService {
                                     continue;
                                 }
 
-                                if !response.blocks.is_empty() {
-                                    let _ = sync_blocks_sender.send(response.blocks).await;
+                                // Always notify main task so sync_in_flight is cleared,
+                                // even on empty responses.  Without this, a 0-block
+                                // response from a stale peer leaves sync_in_flight=true
+                                // permanently and all subsequent sync requests are silently
+                                // dropped (cluster-soak bug 2026-05-09).
+                                if response.blocks.is_empty() {
+                                    // Peer couldn't serve what we asked — cool it out so
+                                    // the next request picks a healthier peer.
+                                    if recently_failed.len() >= REQ_FAIL_MAP_CAP {
+                                        recently_failed.clear();
+                                    }
+                                    recently_failed.insert(peer, Instant::now());
                                 }
+                                let _ = sync_blocks_sender.send(response.blocks).await;
                                 let _ = tip_sender.send(response.tip_height).await;
                             }
                             // ── Block sync failures ──
