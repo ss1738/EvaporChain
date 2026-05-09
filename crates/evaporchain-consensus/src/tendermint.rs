@@ -17661,7 +17661,8 @@ mod phase2_round_trip_tests {
     #[test]
     fn sanov_slash_downtime_well_beyond_tolerance_yields_real_slash() {
         // 50-of-100 missed = well beyond tolerance. KL is large; the
-        // slash must be non-zero AND deducted from validator stake.
+        // slash must be non-zero AND deducted from the validator's
+        // remaining stake (which may be 0 if the slash drained it).
         let mut tc = make_tc_with_validators();
         let pre_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap();
         let slashed = tc.sanov_slash_downtime(1, 50, 100);
@@ -17669,11 +17670,14 @@ mod phase2_round_trip_tests {
             slashed > 0,
             "50-of-100 missed must produce non-zero slash; got 0"
         );
-        let post_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap();
+        // After a heavy slash the validator may be removed from the
+        // active set entirely; treat absence as "stake = 0" for the
+        // accounting check.
+        let post_stake = tc.validator_set.get(1).map(|v| v.stake).unwrap_or(0);
         assert_eq!(
             post_stake,
-            pre_stake - slashed,
-            "post-slash stake must reflect the deduction exactly"
+            pre_stake.saturating_sub(slashed),
+            "post-slash stake must reflect the deduction (saturating to 0)"
         );
     }
 
