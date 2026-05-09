@@ -1253,6 +1253,140 @@ mod tests {
         })
     }
 
+    // ─── Lane T0.7 vector 3 — mempool overflow + eviction policy ─────
+    //
+    // T0.7 from MAINNET_READINESS.md ("Mempool + signature DoS
+    // hardening"). Vector 3 specifically: "Mempool overflow (full
+    // mempool, eviction policy)". The contract-side guards are in
+    // place; this bundle pins each one's behaviour against the
+    // adversarial inputs they were designed to repel.
+    //
+    // Existing tests already cover the global pool-size cap and the
+    // global byte cap (test_max_size_rejection,
+    // test_global_byte_cap_rejects_when_pool_would_overflow). Below
+    // closes the gaps: per-account fairness under spam, TTL eviction,
+    // per-tx oversize rejection, and the audit-K-13 NMT namespace-0
+    // admission rejection.
+
+    /// Adversary spams from a single account, hitting MAX_TXS_PER_ACCOUNT.
+    /// Subsequent submits from that SAME account are rejected, but
+    /// submits from a DIFFERENT account still go through. Pins the
+    /// per-account fairness property — one spammy sender cannot starve
+    /// the rest of the network.
+    #[test]
+    fn dos_per_account_cap_doesnt_starve_other_accounts() {
+        let mut pool = Mempool::new();
+
+        // Sender A floods up to the per-account cap.
+        for nonce in 0..MAX_TXS_PER_ACCOUNT as u64 {
+            let ok = pool.submit(dummy_tx_with_nonce_and_sender(1, nonce));
+            assert!(ok, "first {} txs from sender A must accept", nonce + 1);
+        }
+        assert_eq!(pool.len(), MAX_TXS_PER_ACCOUNT);
+
+        // The (cap+1)-th tx from sender A is rejected.
+        let over = pool.submit(dummy_tx_with_nonce_and_sender(1, MAX_TXS_PER_ACCOUNT as u64));
+        assert!(!over, "sender A past cap must be rejected");
+
+        // Sender B is unaffected — anti-DoS fairness.
+        let other_ok = pool.submit(dummy_tx_with_nonce_and_sender(2, 0));
+        assert!(
+            other_ok,
+            "sender B must accept while sender A is at cap — \
+             per-account cap must not starve other accounts"
+        );
+        assert_eq!(pool.len(), MAX_TXS_PER_ACCOUNT + 1);
+    }
+
+    /// Set epoch advances past MAX_TX_AGE_EPOCHS — every tx submitted
+    /// at epoch 0 is evicted. Prevents stale tx accumulation across
+    /// long uptime.
+    #[test]
+    fn dos_ttl_eviction_clears_aged_txs() {
+        let mut pool = Mempool::new();
+        for nonce in 0..5u64 {
+            assert!(pool.submit(dummy_tx_with_nonce_and_sender(1, nonce)));
+        }
+        assert_eq!(pool.len(), 5);
+
+        // Just before TTL — nothing evicted yet.
+        pool.set_epoch(MAX_TX_AGE_EPOCHS - 1);
+        assert_eq!(pool.len(), 5, "below TTL: no eviction");
+
+        // Cross the TTL boundary.
+        pool.set_epoch(MAX_TX_AGE_EPOCHS + 1);
+        assert_eq!(
+            pool.len(), 0,
+            "all txs older than MAX_TX_AGE_EPOCHS must evict"
+        );
+        assert_eq!(pool.total_bytes(), 0, "byte counter resets after eviction");
+    }
+
+    /// A single tx larger than MAX_TX_SIZE_BYTES (128 KiB) is rejected
+    /// at admission — prevents one huge tx from chewing up the global
+    /// memory budget. BlobTx is the realistic vector since
+    /// `data: Vec<u8>` can be large.
+    #[test]
+    fn dos_per_tx_oversize_rejected() {
+        let mut pool = Mempool::new();
+
+        // 256 KiB payload — well above the 128 KiB per-tx cap.
+        let oversized = Transaction::Blob(BlobTx {
+            submitter: [1u8; 32],
+            data: vec![0xAB; 256 * 1024],
+            nonce: 0,
+            namespace_id: 42,
+            signature: None,
+            public_key: None,
+        });
+        let accepted = pool.submit(oversized);
+        assert!(
+            !accepted,
+            "tx larger than MAX_TX_SIZE_BYTES must be rejected"
+        );
+        assert_eq!(pool.len(), 0);
+        assert_eq!(pool.rejected_count(), 1);
+    }
+
+    /// User-submitted BlobTx with `namespace_id = 0` is rejected at
+    /// admission (audit K-13). Namespace 0 is reserved for the
+    /// proposer's "core transaction" framing; an attacker getting
+    /// such a tx into the pool / proposed block would forge a system-
+    /// namespace blob.
+    #[test]
+    fn dos_blob_namespace_zero_rejected_at_admission() {
+        let mut pool = Mempool::new();
+
+        let forge_attempt = Transaction::Blob(BlobTx {
+            submitter: [7u8; 32],
+            data: vec![0xCD; 1024],
+            nonce: 0,
+            namespace_id: 0, // reserved system namespace
+            signature: None,
+            public_key: None,
+        });
+        let accepted = pool.submit(forge_attempt);
+        assert!(
+            !accepted,
+            "BlobTx with namespace_id=0 must be rejected at admission \
+             (audit K-13: prevents system-blob forgery)"
+        );
+        assert_eq!(pool.len(), 0);
+        assert_eq!(pool.rejected_count(), 1);
+
+        // A BlobTx with namespace_id != 0 still accepts — guard is
+        // narrowly scoped to ns=0.
+        let legit = Transaction::Blob(BlobTx {
+            submitter: [7u8; 32],
+            data: vec![0xCD; 1024],
+            nonce: 0,
+            namespace_id: 1,
+            signature: None,
+            public_key: None,
+        });
+        assert!(pool.submit(legit), "non-zero namespace must accept");
+    }
+
     #[test]
     fn block_source_trait_delegates_to_mempool() {
         // Lane G.1: the BlockSource trait must dispatch to the same
