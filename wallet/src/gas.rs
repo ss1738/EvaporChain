@@ -125,6 +125,15 @@ impl GasEstimator {
             // gas estimator's match was never updated. Refund txs
             // are protocol-issued and cost the same as Transfer.
             Transaction::Refund(_) => GAS_TRANSFER,
+            // DeployTemplate is a template-based dApp deploy with the
+            // same shape as DeployContract. The fee oracle in
+            // evaporchain-app-templates-fees applies per-template
+            // surcharges server-side; here we ballpark the wallet
+            // estimate at DeployContract gas plus 10 gas / params byte
+            // (mirrors the byte-cost component of CreateObject).
+            Transaction::DeployTemplate(tx) => {
+                GAS_DEPLOY_CONTRACT + 10 * tx.params.len() as u64
+            }
         }
     }
 
