@@ -7,7 +7,9 @@
 //! LP (Hungarian-style assignment). V1 ships a sound LOWER bound:
 //! for any 1-Lipschitz function `h`,
 //!
-//!     W₁(μ, ν) ≥ |E_μ[h] − E_ν[h]|
+//! ```text
+//! W₁(μ, ν) ≥ |E_μ[h] − E_ν[h]|
+//! ```
 //!
 //! Specifically, evaluated on `h_u(z) = d(u, z)` and
 //! `h_v(z) = d(v, z)`, taking the max, gives a fast pure-integer

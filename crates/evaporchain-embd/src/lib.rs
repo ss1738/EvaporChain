@@ -13,7 +13,9 @@
 //! the rank metric `d(i, j) = |i − j|`. For 1D rank-permutation
 //! comparisons, this has a closed form:
 //!
-//!     EMBD = Σ_t |arrival_rank(t) − final_rank(t)|
+//! ```text
+//! EMBD = Σ_t |arrival_rank(t) − final_rank(t)|
+//! ```
 //!
 //! divided by the count of transactions to give a per-tx average
 //! displacement. The chain compares this against a configurable

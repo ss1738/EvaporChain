@@ -4,11 +4,15 @@
 //! `f'` is over the squared domain `D' = { x² : x ∈ D }` of size
 //! `N`. With folding randomness `α`, the consistency relation is:
 //!
-//!     f'(x²) = (f(x) + f(-x)) / 2 + α · (f(x) - f(-x)) / (2x)
+//! ```text
+//! f'(x²) = (f(x) + f(-x)) / 2 + α · (f(x) - f(-x)) / (2x)
+//! ```
 //!
 //! In V1 we ship the simpler (additive-only) folding:
 //!
-//!     f'(x²) = (f(x) + f(-x)) / 2
+//! ```text
+//! f'(x²) = (f(x) + f(-x)) / 2
+//! ```
 //!
 //! plus an `alpha`-component the prover commits to but the V1
 //! verifier doesn't blend in. Production dFRI plugs in the full

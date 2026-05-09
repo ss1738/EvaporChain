@@ -15,7 +15,9 @@
 //! For independent random variables `X_i` with `X_i ∈ [a_i, b_i]`,
 //! the sum `S = Σ X_i` satisfies:
 //!
-//!     P(|S − E[S]| ≥ ε) ≤ 2 exp(−2ε² / Σ (b_i − a_i)²)
+//! ```text
+//! P(|S − E[S]| ≥ ε) ≤ 2 exp(−2ε² / Σ (b_i − a_i)²)
+//! ```
 //!
 //! The denominator `Σ (b_i − a_i)²` is the **sum of squared raw
 //! ranges** — every contributor's full range counts equally.
@@ -28,11 +30,15 @@
 //! Inequality replaces the raw range `(b_i − a_i)` with an
 //! energy-weighted range:
 //!
-//!     ω_i = (b_i − a_i) · e_i / E_max
+//! ```text
+//! ω_i = (b_i − a_i) · e_i / E_max
+//! ```
 //!
 //! where `E_max = max_i e_i`. The Singh-Hoeffding bound is:
 //!
-//!     P(|S − E[S]| ≥ ε) ≤ 2 exp(−2ε² / Σ ω_i²)
+//! ```text
+//! P(|S − E[S]| ≥ ε) ≤ 2 exp(−2ε² / Σ ω_i²)
+//! ```
 //!
 //! Properties:
 //! - Each `ω_i ≤ (b_i − a_i)` so the Singh denominator is
