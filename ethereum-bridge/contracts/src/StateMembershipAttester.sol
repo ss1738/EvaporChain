@@ -39,6 +39,16 @@ contract StateMembershipAttester {
     error PubkeyArityMismatch();
     error InsufficientStake();
     error VerifierRejected();
+    /// Lane T0.11b — header was accepted by inbox but not yet far
+    /// enough behind L1 head to be safe against reorgs that revert
+    /// the inbox's storage write between acceptance and consumption.
+    /// Same gate the EvaporationDispatcher uses (lane T0.11).
+    error HeaderTooRecent(
+        uint64 height,
+        uint64 l1AcceptedAt,
+        uint64 currentL1Block,
+        uint256 minDepth
+    );
 
     event StateMembershipVerified(
         uint64 indexed height,
@@ -67,6 +77,25 @@ contract StateMembershipAttester {
         // 1. Header at this height must exist (so the chain finalised the state).
         EvaporHeaderInbox.Header memory h = inbox.headerAt(height);
         if (h.height != height) revert HeaderMissingForHeight(height);
+
+        // 1b. Lane T0.11b — finalization-depth gate. The inbox records
+        //     the L1 block.number at which `submitHeader` accepted each
+        //     EvaporChain header. Refuse to attest until enough L1
+        //     blocks have passed that an L1 reorg reverting the
+        //     inbox's storage write becomes economically infeasible
+        //     (BridgeConstants.MIN_FINALIZATION_DEPTH = 12 blocks ≈
+        //     2.5 min post-merge). Same gate as the dispatcher (T0.11).
+        //     Header existence is checked above; here we check depth.
+        uint64 acceptedAt = inbox.l1AcceptedAt(height);
+        uint256 depth = block.number - uint256(acceptedAt);
+        if (depth < BridgeConstants.MIN_FINALIZATION_DEPTH) {
+            revert HeaderTooRecent(
+                height,
+                acceptedAt,
+                uint64(block.number),
+                BridgeConstants.MIN_FINALIZATION_DEPTH
+            );
+        }
 
         // 2. Witness check: prevValidators must hash to the registry's
         //    valsetRoot at the header's epoch. (Re-uses the registry's

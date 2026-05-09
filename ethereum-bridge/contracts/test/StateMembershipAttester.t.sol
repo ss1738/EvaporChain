@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 
+import {BridgeConstants} from "../src/BridgeConstants.sol";
 import {BridgeTypes} from "../src/BridgeTypes.sol";
 import {CommitCertVerifier} from "../src/CommitCertVerifier.sol";
 import {EvaporHeaderInbox} from "../src/EvaporHeaderInbox.sol";
@@ -45,6 +46,12 @@ contract StateMembershipAttesterTest is Test {
         bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
         bytes memory headerSig = vm.parseJsonBytes(fixture, ".header_agg_signature");
         inbox.submitHeader(header, vs, pks, bitmap, headerSig);
+
+        // Lane T0.11b — advance L1 block.number past the finalization
+        // depth so subsequent `verifyStateMembership` calls in tests
+        // don't trip the HeaderTooRecent gate. Real callers wait for
+        // confirmations on the live chain; in forge we fast-forward.
+        vm.roll(block.number + BridgeConstants.MIN_FINALIZATION_DEPTH);
     }
 
     function _readValidator(uint256 i) internal view returns (BridgeTypes.Validator memory) {
@@ -139,5 +146,72 @@ contract StateMembershipAttesterTest is Test {
         attester.verifyStateMembership(
             99_999, key, value, vs, pks, bitmap, attestSig
         );
+    }
+
+    // ─── Lane T0.11b — finalization-depth gate tests ─────────────────
+
+    /// Calling `verifyStateMembership` BEFORE the L1 finalization
+    /// depth has elapsed must revert with HeaderTooRecent. Sibling of
+    /// the EvaporationDispatcher gate (lane T0.11). Attester reads
+    /// the same `inbox.l1AcceptedAt(height)` mapping that the
+    /// dispatcher does.
+    function test_verifyStateMembership_revertsBeforeFinalizationDepth() public {
+        // Re-deploy a fresh inbox/attester pair so we control the
+        // L1 block.number relationship from scratch.
+        EvaporHeaderInbox freshInbox = new EvaporHeaderInbox(registry);
+        StateMembershipAttester freshAttester =
+            new StateMembershipAttester(freshInbox);
+
+        EvaporHeaderInbox.Header memory header = _readHeader();
+        BridgeTypes.Validator[] memory vs = _readValidators();
+        bytes memory pks = vm.parseJsonBytes(fixture, ".prev_pubkeys_uncompressed");
+        bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
+        bytes memory headerSig = vm.parseJsonBytes(fixture, ".header_agg_signature");
+        freshInbox.submitHeader(header, vs, pks, bitmap, headerSig);
+
+        // Depth = 0 < MIN_FINALIZATION_DEPTH = 12. attest must revert.
+        bytes memory attestSig = vm.parseJsonBytes(fixture, ".attestation_agg_signature");
+        bytes32 key = vm.parseJsonBytes32(fixture, ".key");
+        bytes memory value = vm.parseJsonBytes(fixture, ".value");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                StateMembershipAttester.HeaderTooRecent.selector,
+                header.height,
+                uint64(block.number),                    // l1AcceptedAt
+                uint64(block.number),                    // currentL1Block
+                BridgeConstants.MIN_FINALIZATION_DEPTH
+            )
+        );
+        freshAttester.verifyStateMembership(
+            header.height, key, value, vs, pks, bitmap, attestSig
+        );
+    }
+
+    /// At depth = MIN_FINALIZATION_DEPTH the gate clears (`<` not
+    /// `<=`). Real attestation verifies — happy path with the gate
+    /// in the loop.
+    function test_verifyStateMembership_succeedsAtExactFinalizationDepth() public {
+        EvaporHeaderInbox freshInbox = new EvaporHeaderInbox(registry);
+        StateMembershipAttester freshAttester =
+            new StateMembershipAttester(freshInbox);
+
+        EvaporHeaderInbox.Header memory header = _readHeader();
+        BridgeTypes.Validator[] memory vs = _readValidators();
+        bytes memory pks = vm.parseJsonBytes(fixture, ".prev_pubkeys_uncompressed");
+        bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
+        bytes memory headerSig = vm.parseJsonBytes(fixture, ".header_agg_signature");
+        freshInbox.submitHeader(header, vs, pks, bitmap, headerSig);
+
+        vm.roll(block.number + BridgeConstants.MIN_FINALIZATION_DEPTH);
+
+        bytes memory attestSig = vm.parseJsonBytes(fixture, ".attestation_agg_signature");
+        bytes32 key = vm.parseJsonBytes32(fixture, ".key");
+        bytes memory value = vm.parseJsonBytes(fixture, ".value");
+
+        bool ok = freshAttester.verifyStateMembership(
+            header.height, key, value, vs, pks, bitmap, attestSig
+        );
+        assertTrue(ok, "attestation must verify at exact finalization depth");
     }
 }
