@@ -305,6 +305,258 @@ contract EvaporationDispatcherTest is Test {
         );
     }
 
+    // ─── Lane T0.11 sub-A — helpers (avoid stack-too-deep) ───────────
+
+    struct DispatchArgs {
+        bytes32 objectId;
+        uint64 height;
+        uint64 evaporatedAtHeight;
+        uint128 finalEnergy;
+        uint64 leafIndex;
+        uint64 treeSize;
+        bytes mmrPath;
+        bytes peaksLeft;
+        bytes peaksRight;
+    }
+
+    function _readDispatchArgs() internal view returns (DispatchArgs memory) {
+        return DispatchArgs({
+            objectId: vm.parseJsonBytes32(fixture, ".object_id"),
+            height: uint64(vm.parseJsonUint(fixture, ".height")),
+            evaporatedAtHeight:
+                uint64(vm.parseJsonUint(fixture, ".target_evaporated_at_height")),
+            finalEnergy:
+                uint128(vm.parseJsonUint(fixture, ".target_final_energy")),
+            leafIndex: uint64(vm.parseJsonUint(fixture, ".leaf_index")),
+            treeSize: uint64(vm.parseJsonUint(fixture, ".tree_size")),
+            mmrPath: vm.parseJsonBytes(fixture, ".mmr_path"),
+            peaksLeft: vm.parseJsonBytes(fixture, ".peaks_left"),
+            peaksRight: vm.parseJsonBytes(fixture, ".peaks_right")
+        });
+    }
+
+    function _doDispatch(
+        EvaporationDispatcher d,
+        DispatchArgs memory a
+    ) internal {
+        d.dispatch(
+            a.objectId, a.height, a.evaporatedAtHeight, a.finalEnergy,
+            a.leafIndex, a.treeSize, a.mmrPath, a.peaksLeft, a.peaksRight
+        );
+    }
+
+    // ─── Lane T0.11 sub-A — reorg + replay scenario coverage ─────────
+    //
+    // Acceptance from MAINNET_READINESS.md T0.11:
+    //   "forge tests exercise reorg scenarios; dispatcher rejects
+    //    replay."
+    //
+    // The contract-side T0.11 work (l1AcceptedAt, MIN_FINALIZATION_DEPTH
+    // gate, HeaderTooRecent + HeaderNotAccepted reverts) has been in
+    // place since the depth-gate tests above. This sub-A bundle pins
+    // five additional scenarios:
+    //
+    //   1. Leaf-binding integrity — mutating any of objectId,
+    //      evaporatedAtHeight, finalEnergy in the dispatch args
+    //      changes leafHash and the MMR walk fails closed.
+    //   2. Cancel-then-rebind succeeds — cancelling an unfired hook
+    //      frees its slot for fresh registration with new params.
+    //   3. Fired slot is sticky — a fired hook CANNOT be re-registered
+    //      via cancel, because cancel reverts HookAlreadyFired.
+    //   4. Multi-deployment isolation — two independent inbox+
+    //      dispatcher deployments don't share fired state for the
+    //      same objectId.
+    //   5. L1 reorg wipes acceptance — vm.snapshotState before
+    //      submitHeader, then revertToState simulates the reorg that
+    //      removes the storage write; dispatch correctly reverts
+    //      HeaderNotAccepted.
+
+    /// Mutating `evaporatedAtHeight` while keeping every other dispatch
+    /// arg identical changes `leafHash`, so the MMR walk produces a
+    /// root that doesn't match `mmrRoot`. Replay-with-mutation is
+    /// rejected by the cryptographic binding, not just by the per-hook
+    /// fired flag.
+    function test_dispatch_rejectsLeafFieldMutation_evaporatedAtHeight() public {
+        DispatchArgs memory a = _readDispatchArgs();
+        dispatcher.registerHook(a.objectId, address(target), abi.encode(), 50_000);
+
+        // Off by one — different leafHash, MMR walk fails.
+        a.evaporatedAtHeight = a.evaporatedAtHeight + 1;
+        vm.expectRevert(EvaporationDispatcher.MmrInclusionFailed.selector);
+        _doDispatch(dispatcher, a);
+    }
+
+    /// Same shape as the previous test, but mutating `finalEnergy`.
+    /// Pins that the cryptographic binding covers all three fields
+    /// keccak256'd into `leafHash`.
+    function test_dispatch_rejectsLeafFieldMutation_finalEnergy() public {
+        DispatchArgs memory a = _readDispatchArgs();
+        dispatcher.registerHook(a.objectId, address(target), abi.encode(), 50_000);
+
+        // ^1 flips a single bit — guaranteed != trueEnergy.
+        a.finalEnergy = a.finalEnergy ^ 1;
+        vm.expectRevert(EvaporationDispatcher.MmrInclusionFailed.selector);
+        _doDispatch(dispatcher, a);
+    }
+
+    /// Cancelling an unfired hook frees the slot. A fresh
+    /// `registerHook` for the same objectId then succeeds and (when
+    /// dispatched) fires the NEW hook, not the cancelled one. Pins the
+    /// happy-path slot recycling that the cancel flow promises.
+    function test_cancelThenRegister_firesNewHook() public {
+        DispatchArgs memory a = _readDispatchArgs();
+
+        // First registration carries an old marker; cancel frees slot.
+        {
+            bytes memory firstData = abi.encodeWithSelector(
+                GhostTokenMinter.mintBecauseEvaporated.selector,
+                bytes("first-marker")
+            );
+            dispatcher.registerHook(a.objectId, address(target), firstData, 200_000);
+            dispatcher.cancelHook(a.objectId);
+        }
+
+        // Second registration with a NEW marker — pins that the
+        // dispatcher reads from the post-cancel slot, not the wiped one.
+        bytes memory secondData = abi.encodeWithSelector(
+            GhostTokenMinter.mintBecauseEvaporated.selector,
+            bytes("second-marker")
+        );
+        dispatcher.registerHook(a.objectId, address(target), secondData, 200_000);
+
+        _doDispatch(dispatcher, a);
+        assertTrue(dispatcher.isFired(a.objectId));
+        assertEq(target.minted(), 1);
+        assertEq(
+            target.lastData(), bytes("second-marker"),
+            "second registration's payload must be the one delivered"
+        );
+    }
+
+    /// Once a hook has fired, its slot is sticky: cancel reverts
+    /// HookAlreadyFired, and (transitively) registerHook reverts
+    /// HookAlreadyRegistered. Replay attempts via "cancel + re-register"
+    /// are blocked at the cancel step.
+    function test_firedHook_cannotBeRebound() public {
+        DispatchArgs memory a = _readDispatchArgs();
+
+        dispatcher.registerHook(a.objectId, address(target), abi.encode(), 50_000);
+        _doDispatch(dispatcher, a);
+        assertTrue(dispatcher.isFired(a.objectId));
+
+        // Cancel after fire is forbidden — slot stays sticky.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EvaporationDispatcher.HookAlreadyFired.selector, a.objectId
+            )
+        );
+        dispatcher.cancelHook(a.objectId);
+
+        // Direct re-register also fails — registrar slot is non-zero.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EvaporationDispatcher.HookAlreadyRegistered.selector, a.objectId
+            )
+        );
+        dispatcher.registerHook(a.objectId, address(target), abi.encode(), 50_000);
+    }
+
+    /// Two independently-deployed (inbox, dispatcher) pairs share NO
+    /// per-objectId fired state. Firing the hook on dispatcher A leaves
+    /// dispatcher B's hook (registered for the same objectId, against
+    /// dispatcher B's fresh inbox) ready to fire on its own. Pins that
+    /// the bridge's replay protection is per-deployment, not global.
+    function test_dispatcherIsolation_acrossInboxes() public {
+        DispatchArgs memory a = _readDispatchArgs();
+
+        // Stand up a parallel inbox/dispatcher/target on the same
+        // registry (so the BLS valset signs both alike).
+        EvaporHeaderInbox inboxB = new EvaporHeaderInbox(registry);
+        EvaporationDispatcher dispatcherB = new EvaporationDispatcher(inboxB);
+        GhostTokenMinter targetB = new GhostTokenMinter();
+
+        {
+            EvaporHeaderInbox.Header memory header = _readHeader();
+            BridgeTypes.Validator[] memory vs = _readValidators();
+            bytes memory pks = vm.parseJsonBytes(fixture, ".prev_pubkeys_uncompressed");
+            bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
+            bytes memory aggSig = vm.parseJsonBytes(fixture, ".agg_signature_uncompressed");
+            inboxB.submitHeader(header, vs, pks, bitmap, aggSig);
+        }
+        vm.roll(block.number + BridgeConstants.MIN_FINALIZATION_DEPTH);
+
+        // Register on BOTH dispatchers for the same objectId.
+        dispatcher.registerHook(a.objectId, address(target), abi.encode(), 50_000);
+        dispatcherB.registerHook(a.objectId, address(targetB), abi.encode(), 50_000);
+
+        // Fire on dispatcher A.
+        _doDispatch(dispatcher, a);
+        assertTrue(dispatcher.isFired(a.objectId));
+        assertFalse(dispatcherB.isFired(a.objectId), "dispatcher B must be unaffected");
+
+        // dispatcher B fires independently with the same proof.
+        _doDispatch(dispatcherB, a);
+        assertTrue(dispatcherB.isFired(a.objectId));
+    }
+
+    /// L1 reorg simulation: take a state snapshot BEFORE submitHeader,
+    /// submit, observe l1AcceptedAt is set; revert state (reorg wipes
+    /// the storage write); observe l1AcceptedAt is zero again. A
+    /// dispatch attempted after the reorg correctly reverts
+    /// HeaderNotAccepted — the dispatcher does NOT fire on a header
+    /// whose acceptance was rolled back.
+    ///
+    /// This is the contract-level analogue of the MIN_FINALIZATION_DEPTH
+    /// gate: depth waits long enough for reorgs to become economically
+    /// infeasible; this test pins what happens if a reorg DOES land
+    /// before depth elapses.
+    function test_l1Reorg_wipesAcceptance_dispatcherRefuses() public {
+        EvaporHeaderInbox freshInbox = new EvaporHeaderInbox(registry);
+        EvaporationDispatcher freshDispatcher =
+            new EvaporationDispatcher(freshInbox);
+
+        EvaporHeaderInbox.Header memory header = _readHeader();
+        BridgeTypes.Validator[] memory vs = _readValidators();
+        bytes memory pks = vm.parseJsonBytes(fixture, ".prev_pubkeys_uncompressed");
+        bytes memory bitmap = vm.parseJsonBytes(fixture, ".signed_bitmap");
+        bytes memory aggSig = vm.parseJsonBytes(fixture, ".agg_signature_uncompressed");
+
+        // Snapshot state BEFORE the submit; the reorg in this scenario
+        // unwinds the chain segment that contains the submitHeader tx.
+        uint256 sid = vm.snapshotState();
+
+        freshInbox.submitHeader(header, vs, pks, bitmap, aggSig);
+        assertTrue(
+            freshInbox.l1AcceptedAt(header.height) != 0,
+            "post-submit l1AcceptedAt must be set"
+        );
+
+        // Reorg fires — every storage write inside the reorged segment
+        // is gone. revertToState reverts the inbox's mapping write.
+        vm.revertToState(sid);
+        assertEq(
+            freshInbox.l1AcceptedAt(header.height),
+            uint64(0),
+            "post-reorg l1AcceptedAt must be cleared"
+        );
+
+        // Roll forward as if the post-reorg chain is mining new blocks.
+        vm.roll(block.number + BridgeConstants.MIN_FINALIZATION_DEPTH);
+
+        // Dispatch attempt against the orphaned header — must refuse.
+        bytes32 objectId = vm.parseJsonBytes32(fixture, ".object_id");
+        freshDispatcher.registerHook(objectId, address(target), abi.encode(), 50_000);
+        bytes memory empty = new bytes(0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EvaporationDispatcher.HeaderNotAccepted.selector, header.height
+            )
+        );
+        freshDispatcher.dispatch(
+            objectId, header.height, 0, 0, 0, 1, empty, empty, empty
+        );
+    }
+
     /// Crossing the boundary: at depth = MIN_FINALIZATION_DEPTH the
     /// check passes (uses `<`, not `<=`). Use the real fixture so the
     /// MMR proof verifies and we observe the hook actually fires.
