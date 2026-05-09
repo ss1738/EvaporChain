@@ -1496,6 +1496,260 @@ mod tests {
         assert!(SnapshotFile::from_bytes(&framed).is_err());
     }
 
+    // ─── Lane T0.8 sub-A — adversarial fast-sync snapshots ─────────
+    //
+    // Acceptance from MAINNET_READINESS.md T0.8:
+    //   "all 5 adversarial fixtures rejected; clean fast-sync still works."
+    //
+    // This bundle pins five attack vectors against the single-peer
+    // snapshot-verification path (`from_bytes` + `apply_to`). Some
+    // attacks are caught by existing crypto; one is documented as a
+    // KNOWN GAP that requires sub-task 2 (snapshot quorum-cert
+    // verification, ≥2f+1 attestations across peers) to close.
+    //
+    // Reading order (each test is self-explanatory in isolation):
+    //   1. truncated_blob       — bytes shorter than the magic header
+    //   2. wrong_magic          — magic header replaced with junk
+    //   3. state_root_tamper    — integrity_hash recomputed but the
+    //                             accounts haven't been changed; apply
+    //                             catches the divergence.
+    //   4. bell_reading_tamper  — integrity_hash check covers all
+    //                             snapshot fields, including consensus
+    //                             metadata like the Bell beacon reading.
+    //   5. partial_state_with_full_recompute — DOCUMENTED GAP. A
+    //      malicious peer that recomputes BOTH the integrity_hash AND
+    //      the state_root over a partial account set passes every
+    //      internal check. Closing this gap requires sub-task 2.
+
+    #[test]
+    fn adversarial_truncated_blob_rejected() {
+        // Less than the 5-byte header (magic + version) → from_bytes
+        // refuses without even attempting decompression.
+        let too_short = vec![0u8; 3];
+        let result = SnapshotFile::from_bytes(&too_short);
+        assert!(matches!(result, Err(SnapshotError::Invalid(_))));
+    }
+
+    #[test]
+    fn adversarial_wrong_magic_rejected() {
+        // Build a real snapshot, then overwrite the magic prefix with
+        // 4 bytes of junk. from_bytes refuses at the magic check (no
+        // decompression attempted, no further work done).
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+        let mut bytes = file.to_bytes().unwrap();
+        bytes[0] = 0xDE;
+        bytes[1] = 0xAD;
+        bytes[2] = 0xBE;
+        bytes[3] = 0xEF;
+        let result = SnapshotFile::from_bytes(&bytes);
+        assert!(matches!(result, Err(SnapshotError::Invalid(_))));
+    }
+
+    #[test]
+    fn adversarial_state_root_tamper_caught_by_apply() {
+        // Attack: peer rewrites `state_root` to a value of their
+        // choice, then recomputes `integrity_hash` so from_bytes
+        // accepts. The trap: `apply_to` recomputes the state root
+        // from the (untouched) accounts/objects/ghosts and compares
+        // against `self.state_root`. The two diverge → reject.
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let mut file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+
+        // Tamper: replace state_root with a fake value AND recompute
+        // integrity_hash so the on-disk crypto check passes.
+        file.state_root = [0xAB; 32];
+        file.integrity_hash = file.compute_integrity_hash();
+
+        // Round-trip — from_bytes accepts the tampered file (the
+        // hash check is internally consistent).
+        let bytes = file.to_bytes().unwrap();
+        let parsed = SnapshotFile::from_bytes(&bytes)
+            .expect("internal hash is consistent post-tamper");
+
+        // But apply_to recomputes the state root from the actual
+        // restored data and rejects.
+        let mut target = InMemoryStateDB::new();
+        let result = parsed.apply_to(&mut target);
+        match result {
+            Err(SnapshotError::StateRootMismatch { expected, actual }) => {
+                assert_ne!(expected, actual, "apply must surface the mismatch");
+            }
+            other => panic!(
+                "expected StateRootMismatch from apply_to, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn adversarial_bell_reading_tamper_via_integrity_hash() {
+        // Attack: peer alters a consensus-metadata field (`bell_reading`)
+        // while leaving the integrity_hash untouched. The hash covers
+        // every snapshot field except the hash itself + created_at, so
+        // recomputing it on load yields a different value → reject.
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let original_bell = Some(SnapshotBellReading {
+            s_value_milli: 2828,
+            block_height: 100,
+            epoch: 5,
+            certified: true,
+        });
+        let file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            original_bell,
+            make_validator_set(),
+        )
+        .unwrap();
+
+        // Re-serialise with a swapped bell_reading and the original
+        // integrity_hash (mimics a peer who altered metadata but
+        // didn't regenerate the hash).
+        let bytes = file.to_bytes().unwrap();
+        let mut tampered = SnapshotFile::from_bytes(&bytes).unwrap();
+        tampered.bell_reading = Some(SnapshotBellReading {
+            s_value_milli: 1414, // different reading!
+            block_height: 100,
+            epoch: 5,
+            certified: true,
+        });
+        // Re-frame without recomputing the integrity_hash.
+        let blob_after_tamper = bincode::serialize(&tampered).unwrap();
+        let mut framed = Vec::new();
+        framed.extend_from_slice(SNAPSHOT_MAGIC);
+        framed.push(SNAPSHOT_FILE_VERSION);
+        let compressed = zstd::encode_all(&blob_after_tamper[..], 1).unwrap();
+        framed.extend_from_slice(&compressed);
+
+        let result = SnapshotFile::from_bytes(&framed);
+        assert!(
+            matches!(result, Err(SnapshotError::StateRootMismatch { .. })),
+            "tampered bell_reading must invalidate the integrity hash; got {:?}",
+            result
+        );
+    }
+
+    /// **DOCUMENTED GAP** — partial-state withholding with full
+    /// recomputation. A malicious peer drops several accounts AND
+    /// recomputes both the integrity_hash AND the state_root over the
+    /// reduced set. Internal checks pass — the on-disk snapshot is
+    /// internally consistent. Detection requires comparison against
+    /// an EXTERNAL truth source (≥2f+1 peers reporting the same
+    /// integrity_hash for that block_height) — this is sub-task 2
+    /// of T0.8 (snapshot quorum-cert verification).
+    ///
+    /// This test pins the gap so reviewers can't accidentally close
+    /// T0.8 sub-A without acknowledging that the single-peer trust
+    /// model is incomplete on its own. When sub-task 2 lands, this
+    /// test should be inverted: the same attack should THEN be
+    /// rejected by the quorum-cert check.
+    #[test]
+    fn adversarial_partial_state_with_full_recompute_passes_single_peer_checks() {
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db); // 3 accounts in the canonical snapshot
+
+        // Honest snapshot — 3 accounts.
+        let honest = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+
+        // Attacker constructs a partial snapshot: 1 account dropped.
+        let mut attacker_db = InMemoryStateDB::new();
+        attacker_db.put_account(make_account(1, 1_000_000));
+        attacker_db.put_account(make_account(2, 500_000));
+        // Skip account #3 — the canonical chain has 3 accounts; this
+        // peer is serving 2.
+        for obj in &honest.objects {
+            attacker_db.put_object(obj.clone());
+        }
+        for ghost in &honest.ghosts {
+            attacker_db.put_ghost(ghost.clone());
+        }
+        attacker_db.put_note_tree_root(honest.note_tree_root);
+        attacker_db.put_shielded_pool_balance(honest.shielded_pool_balance);
+        attacker_db.put_note_count(honest.note_count);
+        for nullifier in &honest.spent_nullifiers {
+            attacker_db.spend_nullifier(nullifier);
+        }
+
+        let attacker_snapshot = SnapshotFile::create(
+            &mut attacker_db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+
+        // The attacker's snapshot has a DIFFERENT integrity_hash
+        // and a DIFFERENT state_root from the honest one — but each
+        // is internally consistent.
+        assert_ne!(
+            attacker_snapshot.integrity_hash, honest.integrity_hash,
+            "partial-state attack must be detectable by hash compare"
+        );
+        assert_ne!(attacker_snapshot.state_root, honest.state_root);
+        assert_eq!(attacker_snapshot.accounts.len(), 2);
+        assert_eq!(honest.accounts.len(), 3);
+
+        // Single-peer fast-sync: the attacker's blob round-trips +
+        // applies cleanly. NOTHING in `from_bytes` or `apply_to`
+        // detects the divergence — they ONLY check internal
+        // consistency.
+        let bytes = attacker_snapshot.to_bytes().unwrap();
+        let parsed = SnapshotFile::from_bytes(&bytes).expect(
+            "attacker's snapshot is internally consistent — single-peer \
+             fast-sync has no way to reject it without a quorum cross-check",
+        );
+
+        let mut victim_db = InMemoryStateDB::new();
+        let result = parsed.apply_to(&mut victim_db).expect(
+            "apply succeeds because state_root matches the partial accounts",
+        );
+        // The victim is now on a divergent state — a chain that diverges
+        // from canonical truth at every height ≥100.
+        assert_eq!(result.accounts_restored, 2);
+
+        // Acceptance criterion for sub-task 2 (NOT THIS TEST): the
+        // joiner queries N peers, sees ≥2f+1 reporting `honest.integrity_hash`
+        // for height=100, and refuses to accept any snapshot whose
+        // integrity_hash doesn't match the quorum.
+    }
+
     #[test]
     fn snapshot_file_path_round_trip() {
         let dir =
