@@ -1133,3 +1133,208 @@ fn mcc_phase_d5_antichain_digest_convergence_across_4_validators() {
         "D.5: zero antichain-digest divergence across 4 validators under identical insertion order"
     );
 }
+
+// ─── T0.1 C.5 — partition + heal (5-validator, mcc_full) ─────────────
+//
+// The MAINNET_READINESS T0.1.C.5 sub-task calls for propagation tests
+// ─── T0.1 C.5 — partition + heal (5-validator, mcc_full) ─────────────
+//
+// The MAINNET_READINESS T0.1.C.5 sub-task calls for "propagation tests
+// with 4-of-5 / 3-of-5 partition scenarios" under mcc_full. The MCC
+// Phase D.5 4-validator antichain-digest convergence test
+// (mcc_phase_d5_antichain_digest_convergence_across_4_validators)
+// already locks identical-insertion-order convergence; this test adds
+// the harder claim: validators that initially saw DIFFERENT subsets of
+// the DAG (a partition) must converge on the same authoritative head
+// once the partition heals (each side replays the missing inserts).
+
+fn make_validator_set_5() -> ValidatorSet {
+    let mut vs = ValidatorSet::new();
+    vs.add_validator(make_validator(1, 1000));
+    vs.add_validator(make_validator(2, 1000));
+    vs.add_validator(make_validator(3, 1000));
+    vs.add_validator(make_validator(4, 1000));
+    vs.add_validator(make_validator(5, 1000));
+    vs
+}
+
+fn make_validator_consensus_5(my_id: u64) -> TendermintConsensus {
+    let mut tc = TendermintConsensus::new_for_test(my_id, 10, make_validator_set_5());
+    tc.governance_set_param("parent_acceptance_mode", "mcc_full")
+        .expect("mcc_full is allowlisted");
+    tc
+}
+
+#[test]
+fn mcc_phase_c5_3of5_partition_heals_to_common_authoritative_head() {
+    let mut v1 = make_validator_consensus_5(1);
+    let mut v2 = make_validator_consensus_5(2);
+    let mut v3 = make_validator_consensus_5(3);
+    let mut v4 = make_validator_consensus_5(4);
+    let mut v5 = make_validator_consensus_5(5);
+
+    // Genesis on all 5.
+    for tc in [&mut v1, &mut v2, &mut v3, &mut v4, &mut v5] {
+        lc_insert(tc, id(0), vec![], 0);
+    }
+
+    // ── Partition ──
+    // 3-of-5 majority side (v1, v2, v3) sees fork-A only.
+    // 2-of-5 minority side (v4, v5) sees fork-B only.
+    for tc in [&mut v1, &mut v2, &mut v3] {
+        lc_insert(tc, id(1), vec![id(0)], 1); // fork A
+    }
+    for tc in [&mut v4, &mut v5] {
+        lc_insert(tc, id(2), vec![id(0)], 1); // fork B
+    }
+
+    // Pre-heal: each side picks its own authoritative head.
+    let pre_heal_head_majority = v1
+        .update_authoritative_head()
+        .expect("majority side has at least one candidate head");
+    let pre_heal_head_minority = v4
+        .update_authoritative_head()
+        .expect("minority side has at least one candidate head");
+    assert_eq!(pre_heal_head_majority, id(1), "majority sees fork A");
+    assert_eq!(pre_heal_head_minority, id(2), "minority sees fork B");
+    assert_ne!(
+        pre_heal_head_majority, pre_heal_head_minority,
+        "during partition the two sides MUST disagree on the head — \
+         this is what the heal step has to reconcile"
+    );
+
+    // ── Heal ──
+    // Each side replays the block it was missing. Order doesn't matter
+    // here — the substrate is path-independent (locked by D.1's
+    // late-joining-validator test).
+    for tc in [&mut v1, &mut v2, &mut v3] {
+        lc_insert(tc, id(2), vec![id(0)], 1); // append fork B
+    }
+    for tc in [&mut v4, &mut v5] {
+        lc_insert(tc, id(1), vec![id(0)], 1); // append fork A
+    }
+
+    // ── Convergence claim ──
+    // After heal, all 5 must agree on the substrate state.
+    let heads_1 = v1.candidate_heads();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4), ("v5", &v5)] {
+        assert_eq!(
+            tc.candidate_heads(),
+            heads_1,
+            "{} candidate_heads must converge with v1 after partition heal",
+            label
+        );
+    }
+    assert_eq!(heads_1.len(), 2, "two forks → two candidate heads");
+
+    let enum_1 = v1.enumerate_candidate_heads();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4), ("v5", &v5)] {
+        assert_eq!(
+            tc.enumerate_candidate_heads(),
+            enum_1,
+            "{} enumerate_candidate_heads must converge (caliber order + values)",
+            label
+        );
+    }
+
+    let head_1 = v1
+        .update_authoritative_head()
+        .expect("post-heal candidate heads non-empty");
+    let head_2 = v2.update_authoritative_head().expect("Some");
+    let head_3 = v3.update_authoritative_head().expect("Some");
+    let head_4 = v4.update_authoritative_head().expect("Some");
+    let head_5 = v5.update_authoritative_head().expect("Some");
+    assert_eq!(head_1, head_2);
+    assert_eq!(head_2, head_3);
+    assert_eq!(head_3, head_4);
+    assert_eq!(head_4, head_5);
+    assert!(
+        head_1 == id(1) || head_1 == id(2),
+        "post-heal authoritative head must be one of the two forks, got {:?}",
+        head_1
+    );
+
+    for (label, tc) in [
+        ("v1", &v1),
+        ("v2", &v2),
+        ("v3", &v3),
+        ("v4", &v4),
+        ("v5", &v5),
+    ] {
+        assert_eq!(
+            tc.vote_target_head(),
+            head_1,
+            "{} vote_target_head must converge to the post-heal argmax",
+            label
+        );
+    }
+
+    let parents_1 = v1.propose_parents();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4), ("v5", &v5)] {
+        assert_eq!(
+            tc.propose_parents(),
+            parents_1,
+            "{} propose_parents must converge after heal",
+            label
+        );
+    }
+    assert_eq!(
+        parents_1.len(),
+        2,
+        "post-heal antichain spans both reconciled forks"
+    );
+    assert_eq!(
+        parents_1[0], head_1,
+        "propose_parents must lead with the authoritative head"
+    );
+}
+
+#[test]
+fn mcc_phase_c5_4of5_partition_heals_to_common_authoritative_head() {
+    // Variation: 4-of-5 / 1-of-5 partition. Same convergence claim;
+    // tests that minority size == 1 doesn't break the substrate.
+    let mut v1 = make_validator_consensus_5(1);
+    let mut v2 = make_validator_consensus_5(2);
+    let mut v3 = make_validator_consensus_5(3);
+    let mut v4 = make_validator_consensus_5(4);
+    let mut v5 = make_validator_consensus_5(5);
+
+    for tc in [&mut v1, &mut v2, &mut v3, &mut v4, &mut v5] {
+        lc_insert(tc, id(0), vec![], 0);
+    }
+
+    // 4-of-5 majority sees fork A; 1-of-5 minority (v5) sees fork B.
+    for tc in [&mut v1, &mut v2, &mut v3, &mut v4] {
+        lc_insert(tc, id(1), vec![id(0)], 1);
+    }
+    lc_insert(&mut v5, id(2), vec![id(0)], 1);
+
+    // Heal — each side replays the missing fork.
+    for tc in [&mut v1, &mut v2, &mut v3, &mut v4] {
+        lc_insert(tc, id(2), vec![id(0)], 1);
+    }
+    lc_insert(&mut v5, id(1), vec![id(0)], 1);
+
+    // Post-heal: all 5 converge on the same authoritative head.
+    let head_1 = v1.update_authoritative_head().expect("Some");
+    let head_2 = v2.update_authoritative_head().expect("Some");
+    let head_3 = v3.update_authoritative_head().expect("Some");
+    let head_4 = v4.update_authoritative_head().expect("Some");
+    let head_5 = v5.update_authoritative_head().expect("Some");
+    assert_eq!(head_1, head_2);
+    assert_eq!(head_2, head_3);
+    assert_eq!(head_3, head_4);
+    assert_eq!(head_4, head_5);
+
+    let parents_1 = v1.propose_parents();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4), ("v5", &v5)] {
+        assert_eq!(
+            tc.propose_parents(),
+            parents_1,
+            "{} parents must converge",
+            label
+        );
+    }
+    assert_eq!(parents_1.len(), 2);
+    assert_eq!(parents_1[0], head_1);
+}
