@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 
 import {IVerkleProofVerifier} from "../src/interfaces/IVerkleProofVerifier.sol";
 import {VerkleProofVerifier} from "../src/VerkleProofVerifier.sol";
@@ -16,6 +17,8 @@ import {VerkleProofVerifier} from "../src/VerkleProofVerifier.sol";
 ///         `assertTrue(ok)` against a fixture (`fixtures/verkle_proof_v2_*.json`)
 ///         emitted by the Rust prover (`VerkleProverV2`).
 contract VerkleProofVerifierTest is Test {
+    using stdJson for string;
+
     VerkleProofVerifier verifier;
 
     /// @dev BN254 scalar-field modulus r — duplicated from the contract
@@ -128,5 +131,37 @@ contract VerkleProofVerifierTest is Test {
         // Just touching the interface ref forces the compiler to check
         // the inheritance graph at compile time.
         assertTrue(address(_iface) == address(verifier));
+    }
+
+    // ─── T0.10 sub-A — JSON fixture round-trip ────────────────────────
+    //
+    // Pins the on-chain fixture format. T0.10-finish replaces
+    // `expectRevert(Groth16VKNotWired)` here with `assertTrue(ok)` once
+    // the wrapper circuit + trusted-setup ceremony land. The fixture
+    // schema (state_root, key, value_commitment, params_fingerprint,
+    // groth16_proof) IS the contract — Rust prover emission and
+    // Solidity consumption agree on it before either side is wired.
+
+    function test_loadsSampleFixture_andRevertsOnPlaceholderProof() public {
+        string memory fixture = vm.readFile("./fixtures/verkle_proof_v2_sample.json");
+
+        bytes32 stateRoot = vm.parseJsonBytes32(fixture, ".state_root");
+        bytes32 key = vm.parseJsonBytes32(fixture, ".key");
+        bytes32 valueCommitment = vm.parseJsonBytes32(fixture, ".value_commitment");
+        bytes32 paramsFingerprint = vm.parseJsonBytes32(fixture, ".params_fingerprint");
+        bytes memory groth16Proof = vm.parseJsonBytes(fixture, ".groth16_proof");
+
+        // Sanity: schema fields decode to the expected sizes. If a
+        // future fixture has a 257-byte proof or a non-bytes32 key,
+        // these assertions catch the schema drift before the verifier
+        // call even runs.
+        assertEq(groth16Proof.length, 256, "groth16_proof must be 256 bytes");
+        assertTrue(uint256(stateRoot) != 0, "state_root must not be zero in the sample");
+
+        // Starter state: the verifier reverts. T0.10-finish flips this.
+        vm.expectRevert(VerkleProofVerifier.Groth16VKNotWired.selector);
+        verifier.verifyVerkleMembership(
+            stateRoot, key, valueCommitment, paramsFingerprint, groth16Proof
+        );
     }
 }
