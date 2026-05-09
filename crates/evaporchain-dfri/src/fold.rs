@@ -85,6 +85,10 @@ pub fn inverse_of_two() -> Option<FieldElem> {
     if MOD_P % 2 == 0 {
         None
     } else {
+        // `(P + 1) / 2` is the canonical algebraic form of `2⁻¹ mod P`
+        // when P is odd — NOT ceiling-division, even though clippy
+        // sees it that way (the numerical results coincide).
+        #[allow(clippy::manual_div_ceil)]
         Some((MOD_P + 1) / 2)
     }
 }
