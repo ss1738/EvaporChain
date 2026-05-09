@@ -262,6 +262,17 @@ pub struct PaymasterConfig {
     ///
     /// `None` (default) disables audit logging.
     pub audit_log: Option<PathBuf>,
+    /// Audit fix #8a (2026-05-09): per-line fsync vs none. `PerLine`
+    /// is the fail-closed default — every audit line is durable
+    /// before `/sponsor` returns success, but throughput is bounded
+    /// by disk fsync IOPS (~1k/s on standard SSDs). `None` skips the
+    /// explicit `sync_all` and lets the OS schedule writeback —
+    /// ~10× throughput on slow disks, but crash loss is bounded only
+    /// by the OS dirty-page flush schedule (typically ~30 s on
+    /// Linux). Operators choosing `None` accept that some recent
+    /// audit lines may not survive a kernel crash even if the
+    /// `/sponsor` call already returned success.
+    pub audit_log_fsync: AuditFsyncMode,
     /// Idempotency cache size. `0` disables idempotency entirely.
     /// Default: `1024`. Wallets that retry a sponsorship under the
     /// same `Idempotency-Key` get the cached response — same
@@ -291,6 +302,23 @@ pub struct PaymasterConfig {
     pub allowed_inner_variants: Option<Vec<InnerVariant>>,
 }
 
+/// Audit-log fsync policy. See `PaymasterConfig::audit_log_fsync`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditFsyncMode {
+    /// Fail-closed durability: every audit line is `sync_all`'d
+    /// before `/sponsor` returns success. Recommended default for
+    /// production — operators billing in another token can fully
+    /// trust the audit log even after a sudden power loss.
+    PerLine,
+    /// No explicit fsync. `write_all` returns when the data is in
+    /// the OS page cache; durability is at the OS's dirty-page
+    /// writeback discretion (typically 30 s on Linux). Trades
+    /// durability for throughput. Operators using this mode should
+    /// have a redundancy story (mirrored audit log, downstream
+    /// fanout to a remote sink, etc.).
+    None,
+}
+
 impl Default for PaymasterConfig {
     fn default() -> Self {
         Self {
@@ -300,6 +328,7 @@ impl Default for PaymasterConfig {
             idempotency_max_keys: 1024,
             idempotency_ttl_secs: 3600,
             audit_log: None,
+            audit_log_fsync: AuditFsyncMode::PerLine,
             allowed_inner_variants: None,
         }
     }
@@ -318,6 +347,7 @@ impl PaymasterConfig {
             idempotency_max_keys: 1024,
             idempotency_ttl_secs: 3600,
             audit_log: None,
+            audit_log_fsync: AuditFsyncMode::PerLine,
             allowed_inner_variants: None,
         }
     }
@@ -929,9 +959,20 @@ impl Paymaster {
             g.file
                 .write_all(line.as_bytes())
                 .map_err(|e| PaymasterError::AuditIo(format!("write: {e}")))?;
-            g.file
-                .sync_all()
-                .map_err(|e| PaymasterError::AuditIo(format!("fsync: {e}")))?;
+            // Audit fix #8a: fsync only when configured. PerLine is
+            // the fail-closed default; None trades durability for
+            // throughput.
+            match self.config.audit_log_fsync {
+                AuditFsyncMode::PerLine => {
+                    g.file
+                        .sync_all()
+                        .map_err(|e| PaymasterError::AuditIo(format!("fsync: {e}")))?;
+                }
+                AuditFsyncMode::None => {
+                    // Skip explicit sync_all; OS dirty-page writeback
+                    // will flush on its own schedule.
+                }
+            }
         }
 
         Ok(assigned)
@@ -1527,6 +1568,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -1561,6 +1603,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -1600,6 +1643,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -1638,6 +1682,7 @@ mod tests {
             allowed_inner_variants: None,
             idempotency_max_keys: 0,
             idempotency_ttl_secs: 0,
+            audit_log_fsync: AuditFsyncMode::PerLine,
         };
 
         {
@@ -1691,6 +1736,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -1727,6 +1773,7 @@ mod tests {
                 per_sender_rps: 0.0,
                 per_sender_burst: 0,
                 audit_log: None,
+                audit_log_fsync: AuditFsyncMode::PerLine,
                 allowed_inner_variants: allowed,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
@@ -1927,6 +1974,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -1986,6 +2034,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -2013,6 +2062,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 16,
                 idempotency_ttl_secs: 60,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap()
@@ -2131,6 +2181,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -2165,6 +2216,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 2,
                 idempotency_ttl_secs: 60,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -2255,6 +2307,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -2364,6 +2417,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -2446,6 +2500,48 @@ mod tests {
     }
 
     #[test]
+    fn audit_log_no_fsync_mode_still_writes_lines() {
+        // Audit fix #8a: AuditFsyncMode::None skips the explicit
+        // sync_all but the line content is still written. Operators
+        // who pick this mode trade durability for throughput; we
+        // verify the content lands at all.
+        let tmp = TempDir::new().unwrap();
+        let nonce_file = tmp.path().join("paymaster_nonce");
+        let audit_file = tmp.path().join("audit.jsonl");
+        let kp = HybridKeypair::generate();
+        let pm = Paymaster::new_with_config(
+            kp,
+            "test",
+            nonce_file,
+            PaymasterConfig {
+                require_user_sig: false,
+                per_sender_rps: 0.0,
+                per_sender_burst: 0,
+                audit_log: Some(audit_file.clone()),
+                audit_log_fsync: AuditFsyncMode::None, // ← no fsync
+                allowed_inner_variants: None,
+                idempotency_max_keys: 0,
+                idempotency_ttl_secs: 0,
+            },
+        )
+        .unwrap();
+        for _ in 0..3 {
+            pm.sponsor(&mut blank_user_op()).unwrap();
+        }
+        // Drop the paymaster — closes the file handle, OS finalises
+        // the dirty buffer to disk on close (close → flush
+        // semantically). Then we read.
+        drop(pm);
+        let contents = std::fs::read_to_string(&audit_file).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 3, "lines still written under no-fsync mode");
+        for (i, line) in lines.iter().enumerate() {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(v["paymaster_nonce"].as_u64().unwrap(), i as u64);
+        }
+    }
+
+    #[test]
     fn audit_log_disabled_writes_nothing() {
         // No audit_log set → no file is created and sponsorships proceed.
         let tmp = TempDir::new().unwrap();
@@ -2464,6 +2560,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();
@@ -2489,6 +2586,7 @@ mod tests {
                 allowed_inner_variants: None,
                 idempotency_max_keys: 0,
                 idempotency_ttl_secs: 0,
+                audit_log_fsync: AuditFsyncMode::PerLine,
             },
         )
         .unwrap();

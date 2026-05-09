@@ -94,6 +94,7 @@ Cross-check `paymaster_address_hex` against `GET /api/account/<addr>` on the cha
 | `--per-sender-rps RATE` | no | `5.0` | Per-`UserOp.sender` token-bucket replenish rate. `0` disables the rate limiter |
 | `--per-sender-burst N` | no | `10` | Per-sender burst capacity |
 | `--audit-log PATH` | no | (off) | Append-only JSON-lines audit log path. One line per successful sponsorship — see §Audit log |
+| `--audit-log-fsync MODE` | no | `per-line` | Audit fix #8a: fsync policy. `per-line` = fail-closed durability (~1k QPS ceiling). `none` = skip fsync, ~10× throughput, OS handles writeback (crash-loss bounded by OS dirty-page schedule, typically 30 s on Linux) |
 | `--allow-inner LIST` | no | (trust chain) | Operator-side inner-tx whitelist. Comma-separated values from `transfer`, `call_script`, `call_contract`. Omitted = sponsor any chain-accepted variant. Example: `--allow-inner=transfer` for a transfer-only paymaster. See §Inner-tx whitelist |
 | `--idempotency-max-keys N` | no | `1024` | Day 12: idempotency cache size. `0` disables. Wallets sending `Idempotency-Key` retry-safely against this cache |
 | `--idempotency-ttl-secs N` | no | `3600` | Day 12: idempotency cache TTL in seconds |
@@ -334,7 +335,9 @@ Use cases:
 - **Stuck-tx triage.** Cross-reference `paymaster_nonce` in the audit line against the chain's account.nonce for the paymaster address — gaps signal sponsored UserOps that the chain rejected (would otherwise have advanced the nonce).
 
 Operational notes:
-- Each line is followed by an explicit `fsync(2)` so a crash never loses a sponsored entry. Disk-write latency adds ~1 ms to `/sponsor` p99 on standard SSDs.
+- Each line is followed by an explicit `fsync(2)` (under the default `--audit-log-fsync per-line` mode) so a crash never loses a sponsored entry. Disk-write latency adds ~1 ms to `/sponsor` p99 on standard SSDs. Throughput ceiling: ~1k sponsorships/sec.
+- `--audit-log-fsync none` skips the explicit `sync_all`. The line still hits the OS page cache via `write_all`; durability is at the kernel's writeback discretion (typically ~30 s of dirty-page lag). Crash-loss bound is undefined in absolute terms but bounded by that lag. Throughput ceiling: ~10k sponsorships/sec on the same hardware. Operators using this mode SHOULD have a redundancy story — mirrored audit log on a second disk, downstream fanout to a remote sink (e.g. Kafka), etc. — so the local file isn't the only audit copy.
+- Group-commit (the safer middle option — every N ms or N pending writes, fsync once for the batch, all writers durable on return) is not yet implemented. Tracked as audit fix #8b for V1.5+.
 - **Fail-closed:** an audit-log IO error (full disk, no permission) returns `503 paymaster IO`. The paymaster does NOT silently sponsor without writing the line — that would be a billing-reconciliation hole. Operators who need to keep sponsoring through audit-log outages should rotate the log path with `--audit-log` before unblocking.
 - The file is opened with `O_APPEND` so concurrent writers (across worker threads in this process) are kernel-serialised at line boundaries. Multiple paymaster processes pointing at the same audit file work too — the per-line atomicity is OS-enforced for sub-PIPE_BUF writes.
 - Rotate via:

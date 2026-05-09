@@ -74,6 +74,17 @@ struct Args {
     #[arg(long)]
     audit_log: Option<PathBuf>,
 
+    /// Audit fix #8a: fsync policy for the audit log. `per-line`
+    /// (default) calls `sync_all` after every line — fail-closed
+    /// durability, ~1k sponsorships/sec ceiling on standard SSDs.
+    /// `none` skips the explicit fsync — ~10× throughput, but crash
+    /// loss is bounded only by the OS dirty-page writeback schedule
+    /// (typically ~30 s on Linux). Operators choosing `none` accept
+    /// some recent audit lines may not survive a kernel crash.
+    /// Group-commit (the safer middle option) is V1.5+.
+    #[arg(long, default_value = "per-line")]
+    audit_log_fsync: String,
+
     /// Operator-side inner-tx whitelist (Day 10). Comma-separated
     /// list of inner variants this paymaster will sponsor. Valid
     /// values: `transfer`, `call_script`, `call_contract`. Omitted
@@ -172,11 +183,21 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(parsed)
     };
+    let audit_log_fsync = match args.audit_log_fsync.as_str() {
+        "per-line" | "per_line" => evaporchain_paymaster::AuditFsyncMode::PerLine,
+        "none" => evaporchain_paymaster::AuditFsyncMode::None,
+        other => {
+            anyhow::bail!(
+                "--audit-log-fsync: unknown mode '{other}' (valid: per-line, none)"
+            );
+        }
+    };
     let config = PaymasterConfig {
         require_user_sig: !args.disable_user_sig_check,
         per_sender_rps: args.per_sender_rps,
         per_sender_burst: args.per_sender_burst,
         audit_log: args.audit_log.clone(),
+        audit_log_fsync,
         allowed_inner_variants,
         idempotency_max_keys: args.idempotency_max_keys,
         idempotency_ttl_secs: args.idempotency_ttl_secs,
