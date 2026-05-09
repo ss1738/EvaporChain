@@ -5324,6 +5324,27 @@ async fn submit_sponsored_user_op(
     // Saves the user typing their password for a doomed sponsor request.
     pre_check_paymaster_policy(&pm_info, &inner)?;
 
+    // Audit fix follow-up: verify the paymaster's claimed chain_id
+    // matches what the chain reports. Operator misconfiguration
+    // (paymaster started with `--chain-id mainnet` but the wallet's
+    // `--node` URL points at testnet) makes every sponsored UserOp
+    // fail at execute_user_op (sponsorship sig verification fails
+    // because chain_id is part of the canonical payload). Catch
+    // locally with a clear error.
+    let chain_info = mgr.rpc().get_chain_info().await?;
+    if chain_info.chain_id != pm_info.chain_id {
+        return Err(format!(
+            "chain_id mismatch: paymaster claims '{}' but the chain at \
+             {} reports '{}'. Sponsored UserOps would fail at \
+             execute time. Either point the wallet at a node on the \
+             paymaster's chain, or use a paymaster on this chain.",
+            pm_info.chain_id,
+            mgr.rpc().base_url(),
+            chain_info.chain_id,
+        )
+        .into());
+    }
+
     let (_balance, sender_nonce) = mgr.refresh_balance(account_name).await?;
 
     let password = prompt_password("Enter password")?;
