@@ -13,11 +13,11 @@
 //!
 //!   1. `Constant`     — flat block reward forever.
 //!   2. `Halving`      — Bitcoin-style halving every N epochs.
-//!                       `initial_reward >> (epoch / hl)`, saturating
-//!                       to 0 at 64 halvings.
+//!      `initial_reward >> (epoch / hl)`, saturating
+//!      to 0 at 64 halvings.
 //!   3. `LinearDecay`  — linear interpolation from `initial_reward`
-//!                       at epoch 0 to 0 at `decay_epochs`. Floors
-//!                       at 0 thereafter.
+//!      at epoch 0 to 0 at `decay_epochs`. Floors
+//!      at 0 thereafter.
 //!
 //! Plus an optional `max_supply: Option<u128>` cap that overrides
 //! the per-block reward to 0 once cumulative emissions reach the

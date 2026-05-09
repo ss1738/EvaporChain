@@ -12,15 +12,15 @@
 //! This module ships the schedule TYPE plus pure-function reward
 //! computation. Three families are supported:
 //!
-//!   1. `Constant`         — flat block reward forever (today's
-//!                            behaviour, made explicit).
-//!   2. `Halving`          — Bitcoin-style halving every N epochs.
-//!                            `initial_reward >> (epoch / hl)`,
-//!                            saturating to 0 at 64 halvings.
-//!   3. `LinearDecay`      — linear interpolation from
-//!                            `initial_reward` at epoch 0 to 0 at
-//!                            `decay_epochs`. Floors at 0
-//!                            thereafter.
+//!   1. `Constant`     — flat block reward forever (today's
+//!      behaviour, made explicit).
+//!   2. `Halving`      — Bitcoin-style halving every N epochs.
+//!      `initial_reward >> (epoch / hl)`,
+//!      saturating to 0 at 64 halvings.
+//!   3. `LinearDecay`  — linear interpolation from
+//!      `initial_reward` at epoch 0 to 0 at
+//!      `decay_epochs`. Floors at 0
+//!      thereafter.
 //!
 //! Plus an optional `max_supply: Option<u128>` cap that overrides
 //! the per-block reward to 0 once cumulative emissions reach the
