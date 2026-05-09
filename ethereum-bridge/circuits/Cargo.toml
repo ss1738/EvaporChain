@@ -28,6 +28,23 @@ flate2        = "1"
 bincode       = { version = "2", features = ["serde"] }
 serde_json    = "1"
 
+# T0.9 (Bridge V2) — Halo2 EccChip in-circuit Pallas MSM. Optional
+# feature so the default build (V1 Poseidon binding) stays unchanged
+# until the V2 path is wired through to the prover. halo2_proofs +
+# halo2_gadgets pull in pasta_curves which is already transitively
+# present via nova-snark, so no curve/ff version split.
+halo2_proofs   = { version = "0.3", optional = true }
+halo2_gadgets  = { version = "0.3", optional = true }
+pasta_curves   = { version = "0.5", optional = true }
+
+[features]
+default = []
+# T0.9 sub-task A — compiles the EccVerkleStepCircuit V2 scaffold
+# alongside the existing V1 Poseidon binding. Off by default so
+# CI / `cargo test` stays at the existing 8 V1 tests until the V2
+# path is wired all the way through to the prover.
+v2-ecc = ["halo2_proofs", "halo2_gadgets", "pasta_curves"]
+
 [dev-dependencies]
 rand = "0.8"
 

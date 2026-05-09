@@ -30,3 +30,12 @@ pub mod types;
 pub use circuit::VerkleStepCircuit;
 pub use prover::{VerkleProof, VerkleProver};
 pub use types::{EngineE1, EngineE2, VerklePublicParams};
+
+// Lane T0.9 sub-task A — V2 EccChip-based binding scaffold.
+// Compiled only when `--features v2-ecc`. The V1 path above remains
+// the default + the prover's authoritative path until sub-task D
+// wires V2 through. See `circuit_v2.rs` for the lane spec.
+#[cfg(feature = "v2-ecc")]
+pub mod circuit_v2;
+#[cfg(feature = "v2-ecc")]
+pub use circuit_v2::{EccVerkleStepCircuit, EccVerkleStepWitness};
