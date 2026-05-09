@@ -403,6 +403,18 @@ impl PrivacyExecutor {
         );
         db.put_note_tree_root(self.engine.merkle_root());
         db.put_note_count(self.engine.note_count() as u64);
+        // T0.5 follow-up — persist the new note commitment so
+        // `restore_from_db` (this file, line ~284) can rebuild the
+        // in-memory note tree on node restart. Pre-fix this was only
+        // called from tests and the rocksdb backend stub; the
+        // production shield path didn't wire it through, so any
+        // chain that included shields would fail
+        // `restore_from_db`'s state-root verification on startup.
+        // Closes the second gap documented in PR #8.
+        db.append_note_commitment(
+            shield_result.tree_index as u64,
+            shield_result.commitment.0,
+        );
 
         debug!(
             from = hex::encode(tx.from),
@@ -808,13 +820,18 @@ impl PrivacyExecutor {
             let _ = self.pnt.insert_nullifier(*nf);
         }
 
-        // 10. Add output notes to tree
+        // 10. Add output notes to tree + persist their commitments to
+        // db so `restore_from_db` can rebuild the tree on restart
+        // (T0.5 follow-up — symmetric to the shield-side persistence
+        // wiring; see execute_shield step 3).
         for commitment_bytes in &tx.output_commitments {
             let commitment = Commitment(*commitment_bytes);
-            self.engine
+            let leaf_index = self
+                .engine
                 .note_tree
                 .insert(&commitment)
                 .ok_or(PrivacyExecError::TreeFull)?;
+            db.append_note_commitment(leaf_index as u64, *commitment_bytes);
         }
 
         // 11. Fee extracted from shielded pool
