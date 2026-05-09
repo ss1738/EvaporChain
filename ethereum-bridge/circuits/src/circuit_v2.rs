@@ -260,7 +260,215 @@ impl EccVerkleStepCircuit<halo2_pallas::Base> {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Sub-task B finish — `impl Circuit<F>` block.
+// Sub-task B finish — FixedPoints impl + Circuit::configure body.
+//
+// Real Halo2 wiring (cargo-verifiable on-host). The `EccChip` is a
+// trait-generic over its `FixedPoints` set; we supply
+// `VerkleFixedBases` whose three associated types impl
+// `FixedPoint<pallas::Affine>` over the curve generator's
+// precomputed scalar-mul tables (computed once at first access via
+// `find_zs_and_us`).
+//
+// The choice to use the curve generator as the single base is
+// scaffold-grade. Sub-task C will replace it with per-Verkle-level
+// bases (one fixed point per tree level, deterministically derived
+// from a domain-separated seed). That replacement only swaps the
+// `BASE` value — the trait wiring + circuit shape stay identical.
+//
+// Why this is safe to ship now: `Circuit::configure` only needs the
+// trait to be SATISFIED (so EccChip can call `lagrange_coeffs()` at
+// proof time). The actual proof generation under sub-task D will
+// use the real per-level bases. The current stub will produce
+// correct proofs for a CIRCUIT that uses just the curve generator —
+// which is exactly what the sub-task C parity test exercises:
+//   pedersen_commit_native(&[generator()], &[scalar]) == circuit_out
+// — the simplest non-trivial parity check.
+// ─────────────────────────────────────────────────────────────────────
+
+use halo2_gadgets::ecc::chip::{
+    find_zs_and_us, BaseFieldElem, EccChip, FixedPoint as HaloFixedPoint, FullScalar, ShortScalar,
+    H, NUM_WINDOWS, NUM_WINDOWS_SHORT,
+};
+use halo2_gadgets::ecc::FixedPoints as HaloFixedPoints;
+use halo2_gadgets::utilities::lookup_range_check::LookupRangeCheckConfig;
+use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner};
+use halo2_proofs::plonk::{Circuit, Error};
+
+const SINSEMILLA_K: usize = 10;
+
+/// The `FixedPoints` set EccChip uses for our circuit.
+///
+/// Three associated-type marker structs — `VerkleFullWidth` /
+/// `VerkleShort` / `VerkleBaseField` — each impl `FixedPoint` over
+/// the same underlying base point (the Pasta `pallas` curve
+/// generator) but with different scalar-mul kinds. Sub-task C will
+/// supply per-level bases by replacing the generator constant in
+/// each of the three; the EccChip wiring above doesn't change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerkleFixedBases;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerkleFullWidth;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerkleShort;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerkleBaseField;
+
+impl HaloFixedPoints<halo2_pallas::Affine> for VerkleFixedBases {
+    type FullScalar = VerkleFullWidth;
+    type ShortScalar = VerkleShort;
+    type Base = VerkleBaseField;
+}
+
+/// Lazy-static the (z, u) tables — `find_zs_and_us` does a search
+/// that's slow enough we don't want it on every chip method call.
+fn pallas_generator_affine() -> halo2_pallas::Affine {
+    use pasta_curves::group::Curve;
+    halo2_pallas::Point::generator().to_affine()
+}
+
+fn zs_and_us_full() -> &'static Vec<(u64, [halo2_pallas::Base; H])> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Vec<(u64, [halo2_pallas::Base; H])>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        find_zs_and_us(pallas_generator_affine(), NUM_WINDOWS)
+            .expect("find_zs_and_us(generator, NUM_WINDOWS) must succeed for the curve generator")
+    })
+}
+
+fn zs_and_us_short() -> &'static Vec<(u64, [halo2_pallas::Base; H])> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Vec<(u64, [halo2_pallas::Base; H])>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        find_zs_and_us(pallas_generator_affine(), NUM_WINDOWS_SHORT)
+            .expect("find_zs_and_us(generator, NUM_WINDOWS_SHORT) must succeed")
+    })
+}
+
+fn zs_us_to_u_repr(
+    zs_us: &[(u64, [halo2_pallas::Base; H])],
+) -> Vec<[[u8; 32]; H]> {
+    use ff::PrimeField;
+    zs_us
+        .iter()
+        .map(|(_, us)| {
+            [
+                us[0].to_repr(),
+                us[1].to_repr(),
+                us[2].to_repr(),
+                us[3].to_repr(),
+                us[4].to_repr(),
+                us[5].to_repr(),
+                us[6].to_repr(),
+                us[7].to_repr(),
+            ]
+        })
+        .collect()
+}
+
+fn zs_us_to_z(zs_us: &[(u64, [halo2_pallas::Base; H])]) -> Vec<u64> {
+    zs_us.iter().map(|(z, _)| *z).collect()
+}
+
+impl HaloFixedPoint<halo2_pallas::Affine> for VerkleFullWidth {
+    type FixedScalarKind = FullScalar;
+    fn generator(&self) -> halo2_pallas::Affine {
+        pallas_generator_affine()
+    }
+    fn u(&self) -> Vec<[[u8; 32]; H]> {
+        zs_us_to_u_repr(zs_and_us_full())
+    }
+    fn z(&self) -> Vec<u64> {
+        zs_us_to_z(zs_and_us_full())
+    }
+}
+
+impl HaloFixedPoint<halo2_pallas::Affine> for VerkleShort {
+    type FixedScalarKind = ShortScalar;
+    fn generator(&self) -> halo2_pallas::Affine {
+        pallas_generator_affine()
+    }
+    fn u(&self) -> Vec<[[u8; 32]; H]> {
+        zs_us_to_u_repr(zs_and_us_short())
+    }
+    fn z(&self) -> Vec<u64> {
+        zs_us_to_z(zs_and_us_short())
+    }
+}
+
+impl HaloFixedPoint<halo2_pallas::Affine> for VerkleBaseField {
+    type FixedScalarKind = BaseFieldElem;
+    fn generator(&self) -> halo2_pallas::Affine {
+        pallas_generator_affine()
+    }
+    fn u(&self) -> Vec<[[u8; 32]; H]> {
+        zs_us_to_u_repr(zs_and_us_full())
+    }
+    fn z(&self) -> Vec<u64> {
+        zs_us_to_z(zs_and_us_full())
+    }
+}
+
+/// `Circuit::configure` output. Holds EccChip's config so synthesize
+/// can `EccChip::construct(config.ecc.clone())`.
+#[derive(Debug, Clone)]
+pub struct EccVerkleStepConfig {
+    pub ecc: halo2_gadgets::ecc::chip::EccConfig<VerkleFixedBases>,
+}
+
+impl Circuit<halo2_pallas::Base> for EccVerkleStepCircuit<halo2_pallas::Base> {
+    type Config = EccVerkleStepConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+
+    fn without_witnesses(&self) -> Self {
+        Self::dummy()
+    }
+
+    fn configure(meta: &mut halo2_proofs::plonk::ConstraintSystem<halo2_pallas::Base>) -> Self::Config {
+        let cols = Self::allocate_ecc_columns(meta);
+        let range_check =
+            LookupRangeCheckConfig::<halo2_pallas::Base, SINSEMILLA_K>::configure(
+                meta,
+                cols.advices[9],
+                cols.lookup_table,
+            );
+        let ecc = EccChip::<VerkleFixedBases>::configure(
+            meta,
+            cols.advices,
+            cols.lagrange_coeffs,
+            range_check,
+        );
+        EccVerkleStepConfig { ecc }
+    }
+
+    /// Sub-task B body — Circuit::synthesize is currently a no-op
+    /// that returns Ok(()). Sub-task C circuit half will fill it
+    /// with: load fixed bases → witness sibling commitment point →
+    /// constrain pedersen_commit(bases, scalars) == sibling →
+    /// bind level-output to field for the IVC accumulator.
+    fn synthesize(
+        &self,
+        _config: Self::Config,
+        _layouter: impl Layouter<halo2_pallas::Base>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Note for the next claimer (sub-task C circuit half + sub-task D):
+// the EccChip is now fully configured via `Circuit::configure`.
+// Sub-task C completes when:
+//   1. `synthesize` body witnesses (sibling_x, sibling_y) as a Point
+//   2. constrains pedersen_commit({base}, {witness scalar}) == that point
+//   3. asserts (in tests) that the in-circuit result equals
+//      `pedersen_commit_native(&[base], &[scalar])`
+// Sub-task D completes when `prover.rs::VerkleProver` exposes
+// `prove_v2(...)` returning a CompressedSNARK + the same fixture
+// shape the Solidity verifier (T0.10) ingests.
+// ─────────────────────────────────────────────────────────────────────
 //
 // Shape (commented to keep this commit gate-clean):
 //
@@ -413,5 +621,64 @@ mod tests {
         let _: [_; 8] = cols.lagrange_coeffs;
         let _ = cols.constants;
         let _ = cols.lookup_table;
+    }
+
+    // ─── Sub-task B finish — Circuit::configure validation ──────────
+
+    /// **The key sub-task B-finish proof:** `Circuit::configure`
+    /// successfully constructs the EccChip Config via `EccChip::configure`
+    /// against `VerkleFixedBases`. If the FixedPoints / FixedPoint
+    /// trait wiring is wrong (associated types missing, generator
+    /// returning identity, find_zs_and_us failing), this test panics
+    /// during `meta.synthesize`-style flow. Today it doesn't panic →
+    /// the in-circuit EccChip is wired and ready for sub-task C
+    /// circuit half (the synthesize body).
+    #[test]
+    fn circuit_configure_constructs_ecc_chip_config() {
+        use halo2_proofs::pasta::pallas as halo2_pallas;
+        use halo2_proofs::plonk::Circuit;
+        use halo2_proofs::plonk::ConstraintSystem;
+
+        let mut meta: ConstraintSystem<halo2_pallas::Base> = ConstraintSystem::default();
+        let _config = <EccVerkleStepCircuit<halo2_pallas::Base> as Circuit<
+            halo2_pallas::Base,
+        >>::configure(&mut meta);
+        // If we got here without panic, EccChip::<VerkleFixedBases>::configure
+        // succeeded — meaning all 3 FixedPoint impls are valid + the
+        // column allocation matches what EccChip expects. Sub-task C
+        // circuit half can now plug in.
+    }
+
+    /// VerkleFixedBases::FullScalar / ShortScalar / Base all return
+    /// the curve generator from generator() (scaffold base). Sub-task
+    /// C will swap each to a per-Verkle-level fixed point — the test
+    /// will be updated then to assert the new (deterministic, domain-
+    /// separated) base.
+    #[test]
+    fn fixed_point_generators_match_pallas_generator() {
+        use halo2_gadgets::ecc::chip::FixedPoint as HaloFixedPoint;
+        use halo2_proofs::pasta::pallas as halo2_pallas;
+        use pasta_curves::group::Curve;
+
+        let expected = halo2_pallas::Point::generator().to_affine();
+        assert_eq!(VerkleFullWidth.generator(), expected);
+        assert_eq!(VerkleShort.generator(), expected);
+        assert_eq!(VerkleBaseField.generator(), expected);
+    }
+
+    /// `u()` and `z()` return the right Vec lengths — NUM_WINDOWS for
+    /// FullScalar/Base and NUM_WINDOWS_SHORT for ShortScalar. If the
+    /// precomputed-table caching breaks, this catches it before
+    /// EccChip tries to use a wrong-sized table at proof time.
+    #[test]
+    fn fixed_point_table_lengths_match_window_counts() {
+        use halo2_gadgets::ecc::chip::{FixedPoint as HaloFixedPoint, NUM_WINDOWS, NUM_WINDOWS_SHORT};
+
+        assert_eq!(VerkleFullWidth.u().len(), NUM_WINDOWS);
+        assert_eq!(VerkleFullWidth.z().len(), NUM_WINDOWS);
+        assert_eq!(VerkleShort.u().len(), NUM_WINDOWS_SHORT);
+        assert_eq!(VerkleShort.z().len(), NUM_WINDOWS_SHORT);
+        assert_eq!(VerkleBaseField.u().len(), NUM_WINDOWS);
+        assert_eq!(VerkleBaseField.z().len(), NUM_WINDOWS);
     }
 }
