@@ -193,4 +193,46 @@ mod tests {
         // Zero energy → zero entropy → λ_eff = avg_λ = 100.
         assert_eq!(ep.lambda_eff, 100);
     }
+
+    /// T1.20 — exercise block_to_summary wrapper (previously 0%-covered).
+    #[test]
+    fn t1_20_block_to_summary_shape() {
+        let s = block_to_summary(42, 1000, 50, 0);
+        assert_eq!(s.height, 42);
+        assert_eq!(s.total_energy, 1000); // tx_count proxy
+        assert_eq!(s.active_accounts, 50);
+        assert!(s.lambda_half_life >= 1);
+    }
+
+    /// T1.20 — exercise on_committed_block convenience wrapper
+    /// (previously 0%-covered). Composes block_to_summary +
+    /// push_and_step.
+    #[test]
+    fn t1_20_on_committed_block_pushes_and_returns_params_when_full() {
+        let params = default_rg_params();
+        let mut window = VecDeque::new();
+        let mut last = None;
+        for i in 0..params.coarse_grain * 2 {
+            last = on_committed_block(
+                &mut window,
+                i as u64,
+                100, // tx_count
+                10,  // active_accounts
+                0,   // epoch
+                &params,
+            );
+        }
+        // After 2× coarse_grain blocks, at least one RG step should
+        // have produced effective params.
+        assert!(last.is_some());
+    }
+
+    #[test]
+    fn t1_20_on_committed_block_returns_none_before_window_full() {
+        let params = default_rg_params();
+        let mut window = VecDeque::new();
+        let res = on_committed_block(&mut window, 0, 100, 10, 0, &params);
+        // Only one push; window not yet at coarse_grain → None.
+        assert!(res.is_none());
+    }
 }
