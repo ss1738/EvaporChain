@@ -12419,7 +12419,16 @@ async fn post_faucet(
         mev_refund_eligible: None,
     });
     sign_transaction(&mut tx, &state, None);
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(FaucetResponse {
+                success: false,
+                balance: 0,
+                message: Some("faucet rejected: mempool full; retry shortly".into()),
+            }),
+        );
+    }
 
     // Return expected balance (may not be applied yet until next block)
     let balance = {
@@ -12595,7 +12604,18 @@ async fn post_faucet_bundle(
         mev_refund_eligible: None,
     });
     sign_transaction(&mut tx, &state, None);
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(FaucetBundleResponse {
+                success: false,
+                recipient: holder_key,
+                evp_credited: 0,
+                tokens_credited: vec![],
+                message: Some("faucet bundle rejected: EVP mempool at capacity".into()),
+            }),
+        );
+    }
 
     // Per-token: credit every non-EVAP deployed token's balance map.
     let tokens_credited: Vec<(String, u64)> = {
@@ -12711,7 +12731,13 @@ async fn post_oracle_ingest(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Oracle data rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
 
     Json(TxResultResponse {
         success: true,
