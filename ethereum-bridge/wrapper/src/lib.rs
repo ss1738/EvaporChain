@@ -47,11 +47,14 @@
 //!   Until ceremony output is in, [`setup`] uses an unsafe in-process
 //!   keygen with `rand::thread_rng()` — fine for testing the pipeline,
 //!   NEVER for production.
-//! - **EIP-197 calldata conversion.** [`prove`] returns 128 bytes
-//!   (arkworks `serialize_compressed`); the L1 verifier expects 256
-//!   bytes uncompressed with big-endian field elements. See `prove`
-//!   docstring for the conversion steps. Sub-B-finish adds a
-//!   `proof_bytes_to_eip197` helper.
+//! What this commit does **NOT YET** land but is structurally complete:
+//!
+//! - **EIP-197 calldata conversion shipped.** [`prove`] still returns
+//!   128 bytes (arkworks compressed); [`proof_bytes_to_eip197`]
+//!   converts to the 256-byte L1 calldata format (big-endian Fq,
+//!   G2-coefficient order c1-then-c0 per EIP-197 §G_2 encoding). The
+//!   CLI emits both. Sub-B-finish adds the in-circuit Halo2 IPA
+//!   verifier; the EIP-197 layer is already ready for it.
 //!
 //! # Fixture contract
 //!
@@ -63,11 +66,16 @@
 #![deny(unsafe_code)]
 
 pub mod circuit;
+pub mod eip197;
 pub mod fixture;
 pub mod inputs;
 pub mod prover;
 
 pub use circuit::WrapperCircuit;
+pub use eip197::{
+    eip197_split, proof_bytes_to_eip197, proof_to_eip197, ConversionError, Eip197Parts,
+    EIP197_PROOF_LEN,
+};
 pub use fixture::{FixtureLoadError, VerkleFixture};
 pub use inputs::{decode_anchor, AnchorDecodeError, WrapperPublicInputs};
 pub use prover::{prove, setup, verify, ProveError, SetupError, VerifyError};
