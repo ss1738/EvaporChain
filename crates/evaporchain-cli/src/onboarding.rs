@@ -1101,4 +1101,41 @@ mod tests {
         .unwrap();
         assert!(node_dir.join("data/bls_key.bin").is_file());
     }
+
+    /// T1.20 — cmd_generate_coordinator creates the expected files
+    /// (coordinator-pk.hex + coordinator-sk.hex) with valid ML-DSA-65
+    /// keypair. Previously 0%-covered.
+    #[test]
+    fn t1_20_cmd_generate_coordinator_writes_keypair_files() {
+        let tmp = tempdir();
+        cmd_generate_coordinator(tmp.path()).expect("generate coordinator");
+        let pk_path = tmp.path().join("coordinator-pk.hex");
+        let sk_path = tmp.path().join("coordinator-sk.hex");
+        assert!(pk_path.exists());
+        assert!(sk_path.exists());
+        // pk + sk are valid hex.
+        let pk_hex = std::fs::read_to_string(&pk_path).unwrap();
+        let pk_bytes = hex::decode(pk_hex.trim()).expect("pk is hex");
+        let sk_hex = std::fs::read_to_string(&sk_path).unwrap();
+        let _sk_bytes = hex::decode(sk_hex.trim()).expect("sk is hex");
+        // Re-running into same dir is idempotent (no-op on dir create).
+        cmd_generate_coordinator(tmp.path()).expect("regenerate ok");
+        // pk + sk files now hold the NEW values — but file existence
+        // is preserved.
+        assert!(pk_path.exists());
+        // pk has the expected ML-DSA-65 byte length.
+        assert_eq!(pk_bytes.len(), 1952);
+    }
+
+    /// T1.20 — cmd_generate_network_key writes network_key.bin to
+    /// the given dir + prints listening multiaddr.
+    #[test]
+    fn t1_20_cmd_generate_network_key_writes_file() {
+        let tmp = tempdir();
+        cmd_generate_network_key(tmp.path(), "127.0.0.1", 30333).expect("generate net key");
+        let path = tmp.path().join("network_key.bin");
+        assert!(path.exists());
+        let raw = std::fs::read(&path).unwrap();
+        assert!(!raw.is_empty(), "network key bytes should be non-empty");
+    }
 }
