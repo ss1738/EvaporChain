@@ -76,4 +76,17 @@ mod tests {
         assert_eq!(p.base_fee_floor, 1_000);
         assert!(!p.chain_lambda.lambda().is_degenerate());
     }
+
+    /// T1.20 — FeeControllerParams::default() goes through
+    /// default_genesis (lines 61-63). Previously the impl Default
+    /// arm was uncovered.
+    #[test]
+    fn t1_20_fee_params_default_equals_genesis() {
+        let d: FeeControllerParams = Default::default();
+        let g = FeeControllerParams::default_genesis();
+        assert_eq!(d.target_energy, g.target_energy);
+        assert_eq!(d.target_gas, g.target_gas);
+        assert_eq!(d.fee_response_ppm, g.fee_response_ppm);
+        assert_eq!(d.base_fee_floor, g.base_fee_floor);
+    }
 }
