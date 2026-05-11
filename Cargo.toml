@@ -114,6 +114,7 @@ members = [
     "crates/evaporchain-thermal-stm",
     "crates/evaporchain-plc",
     "crates/evaporchain-ew-twap",
+    "crates/evaporchain-memento",
     "crates/evaporchain-cl-amm",
     "crates/evaporchain-conviction-vote",
     "crates/evaporchain-ra-did",
