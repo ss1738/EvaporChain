@@ -216,6 +216,11 @@ mod tests {
     /// the constraint system is satisfiable.
     #[test]
     fn g1_add_satisfied_for_valid_triple() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let layer = ark_relations::r1cs::ConstraintLayer::default();
+        let subscriber = tracing_subscriber::Registry::default().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
         let mut rng = seeded_rng();
         let (p1, p2, p3) = random_distinct_pallas_triple(&mut rng);
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
