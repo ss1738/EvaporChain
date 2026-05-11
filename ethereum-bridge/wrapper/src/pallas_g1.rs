@@ -107,24 +107,31 @@ pub fn enforce_g1_add(
     // it off-circuit and allocate, then the slope-definition constraint
     // pins it.
     let lambda_val = compute_lambda(p1, p2)?;
-    let lambda = alloc_nonnative_fq_witness(cs, lambda_val)?;
+    let lambda = alloc_nonnative_fq_witness(cs.clone(), lambda_val)?;
 
-    // (1) Slope definition: λ · (x₂ − x₁) = (y₂ − y₁)
-    let dx = &p2.x - &p1.x;
-    let dy = &p2.y - &p1.y;
-    let lambda_dx = &lambda * &dx;
-    lambda_dx.enforce_equal(&dy)?;
+    // Rewrite the affine-add constraints into purely additive forms so
+    // every equality compares two "post-mult-plus-adds" representations
+    // with matching `num_of_additions` counters. This avoids the
+    // arkworks 0.4 NonNativeFieldVar issue where chained sub→mult
+    // leaves the limb representation in a state that `enforce_equal`
+    // can't reduce-and-compare against a post-mult LHS.
+    //
+    // (1) λ·(x₂ − x₁) = (y₂ − y₁)  →  λ·x₂ + y₁ = λ·x₁ + y₂
+    let lambda_x2 = &lambda * &p2.x;
+    let lambda_x1 = &lambda * &p1.x;
+    let lhs1 = &lambda_x2 + &p1.y;
+    let rhs1 = &lambda_x1 + &p2.y;
+    lhs1.enforce_equal(&rhs1)?;
 
-    // (2) x-coord: λ² = x₃ + x₁ + x₂
+    // (2) λ² = x₃ + x₁ + x₂  →  already additive on the RHS
     let lambda_sq = &lambda * &lambda;
     let x_sum = &p3.x + &p1.x + &p2.x;
     lambda_sq.enforce_equal(&x_sum)?;
 
-    // (3) y-coord: λ · (x₁ − x₃) = y₃ + y₁
-    let x_diff = &p1.x - &p3.x;
-    let lambda_xdiff = &lambda * &x_diff;
-    let y_sum = &p3.y + &p1.y;
-    lambda_xdiff.enforce_equal(&y_sum)?;
+    // (3) λ·(x₁ − x₃) = y₃ + y₁  →  λ·x₁ = λ·x₃ + y₃ + y₁
+    let lambda_x3 = &lambda * &p3.x;
+    let rhs3 = &lambda_x3 + &p3.y + &p1.y;
+    lambda_x1.enforce_equal(&rhs3)?;
 
     Ok(())
 }
