@@ -1253,6 +1253,140 @@ mod tests {
         })
     }
 
+    // ─── Lane T0.7 vector 3 — mempool overflow + eviction policy ─────
+    //
+    // T0.7 from MAINNET_READINESS.md ("Mempool + signature DoS
+    // hardening"). Vector 3 specifically: "Mempool overflow (full
+    // mempool, eviction policy)". The contract-side guards are in
+    // place; this bundle pins each one's behaviour against the
+    // adversarial inputs they were designed to repel.
+    //
+    // Existing tests already cover the global pool-size cap and the
+    // global byte cap (test_max_size_rejection,
+    // test_global_byte_cap_rejects_when_pool_would_overflow). Below
+    // closes the gaps: per-account fairness under spam, TTL eviction,
+    // per-tx oversize rejection, and the audit-K-13 NMT namespace-0
+    // admission rejection.
+
+    /// Adversary spams from a single account, hitting MAX_TXS_PER_ACCOUNT.
+    /// Subsequent submits from that SAME account are rejected, but
+    /// submits from a DIFFERENT account still go through. Pins the
+    /// per-account fairness property — one spammy sender cannot starve
+    /// the rest of the network.
+    #[test]
+    fn dos_per_account_cap_doesnt_starve_other_accounts() {
+        let mut pool = Mempool::new();
+
+        // Sender A floods up to the per-account cap.
+        for nonce in 0..MAX_TXS_PER_ACCOUNT as u64 {
+            let ok = pool.submit(dummy_tx_with_nonce_and_sender(1, nonce));
+            assert!(ok, "first {} txs from sender A must accept", nonce + 1);
+        }
+        assert_eq!(pool.len(), MAX_TXS_PER_ACCOUNT);
+
+        // The (cap+1)-th tx from sender A is rejected.
+        let over = pool.submit(dummy_tx_with_nonce_and_sender(1, MAX_TXS_PER_ACCOUNT as u64));
+        assert!(!over, "sender A past cap must be rejected");
+
+        // Sender B is unaffected — anti-DoS fairness.
+        let other_ok = pool.submit(dummy_tx_with_nonce_and_sender(2, 0));
+        assert!(
+            other_ok,
+            "sender B must accept while sender A is at cap — \
+             per-account cap must not starve other accounts"
+        );
+        assert_eq!(pool.len(), MAX_TXS_PER_ACCOUNT + 1);
+    }
+
+    /// Set epoch advances past MAX_TX_AGE_EPOCHS — every tx submitted
+    /// at epoch 0 is evicted. Prevents stale tx accumulation across
+    /// long uptime.
+    #[test]
+    fn dos_ttl_eviction_clears_aged_txs() {
+        let mut pool = Mempool::new();
+        for nonce in 0..5u64 {
+            assert!(pool.submit(dummy_tx_with_nonce_and_sender(1, nonce)));
+        }
+        assert_eq!(pool.len(), 5);
+
+        // Just before TTL — nothing evicted yet.
+        pool.set_epoch(MAX_TX_AGE_EPOCHS - 1);
+        assert_eq!(pool.len(), 5, "below TTL: no eviction");
+
+        // Cross the TTL boundary.
+        pool.set_epoch(MAX_TX_AGE_EPOCHS + 1);
+        assert_eq!(
+            pool.len(), 0,
+            "all txs older than MAX_TX_AGE_EPOCHS must evict"
+        );
+        assert_eq!(pool.total_bytes(), 0, "byte counter resets after eviction");
+    }
+
+    /// A single tx larger than MAX_TX_SIZE_BYTES (128 KiB) is rejected
+    /// at admission — prevents one huge tx from chewing up the global
+    /// memory budget. BlobTx is the realistic vector since
+    /// `data: Vec<u8>` can be large.
+    #[test]
+    fn dos_per_tx_oversize_rejected() {
+        let mut pool = Mempool::new();
+
+        // 256 KiB payload — well above the 128 KiB per-tx cap.
+        let oversized = Transaction::Blob(BlobTx {
+            submitter: [1u8; 32],
+            data: vec![0xAB; 256 * 1024],
+            nonce: 0,
+            namespace_id: 42,
+            signature: None,
+            public_key: None,
+        });
+        let accepted = pool.submit(oversized);
+        assert!(
+            !accepted,
+            "tx larger than MAX_TX_SIZE_BYTES must be rejected"
+        );
+        assert_eq!(pool.len(), 0);
+        assert_eq!(pool.rejected_count(), 1);
+    }
+
+    /// User-submitted BlobTx with `namespace_id = 0` is rejected at
+    /// admission (audit K-13). Namespace 0 is reserved for the
+    /// proposer's "core transaction" framing; an attacker getting
+    /// such a tx into the pool / proposed block would forge a system-
+    /// namespace blob.
+    #[test]
+    fn dos_blob_namespace_zero_rejected_at_admission() {
+        let mut pool = Mempool::new();
+
+        let forge_attempt = Transaction::Blob(BlobTx {
+            submitter: [7u8; 32],
+            data: vec![0xCD; 1024],
+            nonce: 0,
+            namespace_id: 0, // reserved system namespace
+            signature: None,
+            public_key: None,
+        });
+        let accepted = pool.submit(forge_attempt);
+        assert!(
+            !accepted,
+            "BlobTx with namespace_id=0 must be rejected at admission \
+             (audit K-13: prevents system-blob forgery)"
+        );
+        assert_eq!(pool.len(), 0);
+        assert_eq!(pool.rejected_count(), 1);
+
+        // A BlobTx with namespace_id != 0 still accepts — guard is
+        // narrowly scoped to ns=0.
+        let legit = Transaction::Blob(BlobTx {
+            submitter: [7u8; 32],
+            data: vec![0xCD; 1024],
+            nonce: 0,
+            namespace_id: 1,
+            signature: None,
+            public_key: None,
+        });
+        assert!(pool.submit(legit), "non-zero namespace must accept");
+    }
+
     #[test]
     fn block_source_trait_delegates_to_mempool() {
         // Lane G.1: the BlockSource trait must dispatch to the same
@@ -1286,5 +1420,73 @@ mod tests {
         assert!(sum >= 1);
         // Hint is the recorded submit epoch (5).
         assert_eq!(hints[0], 5);
+    }
+
+    /// T1.20 — exercise take_with_hashes (previously 0%-covered).
+    /// Returns (tx_hash, Transaction) pairs in nonce-aware order;
+    /// removes them from pending + seen + tx_submit_epoch.
+    #[test]
+    fn t1_20_take_with_hashes_returns_paired_hash() {
+        let mut pool = Mempool::new();
+        let tx0 = dummy_tx_with_nonce(0);
+        let tx1 = dummy_tx_with_nonce(1);
+        let hash0 = tx0.tx_hash();
+        let hash1 = tx1.tx_hash();
+        assert!(pool.submit(tx0));
+        assert!(pool.submit(tx1));
+        let taken = pool.take_with_hashes(2);
+        assert_eq!(taken.len(), 2);
+        let returned_hashes: std::collections::HashSet<[u8; 32]> =
+            taken.iter().map(|(h, _)| *h).collect();
+        assert!(returned_hashes.contains(&hash0));
+        assert!(returned_hashes.contains(&hash1));
+        // After take, pending is drained.
+        assert_eq!(pool.len(), 0);
+    }
+
+    #[test]
+    fn t1_20_take_with_hashes_partial_leaves_rest() {
+        let mut pool = Mempool::new();
+        assert!(pool.submit(dummy_tx_with_nonce(0)));
+        assert!(pool.submit(dummy_tx_with_nonce(1)));
+        assert!(pool.submit(dummy_tx_with_nonce(2)));
+        let taken = pool.take_with_hashes(2);
+        assert_eq!(taken.len(), 2);
+        assert_eq!(pool.len(), 1, "1 tx remains after partial take");
+    }
+
+    /// T1.20 — exercise take_with_gas_limit (previously 0%-covered).
+    /// Takes txs in nonce-aware order until gas budget exhausted.
+    #[test]
+    fn t1_20_take_with_gas_limit_respects_budget() {
+        let mut pool = Mempool::new();
+        // GAS_TRANSFER = 21_000 per tx; budget 50_000 → fits 2 txs.
+        assert!(pool.submit(dummy_tx_with_nonce(0)));
+        assert!(pool.submit(dummy_tx_with_nonce(1)));
+        assert!(pool.submit(dummy_tx_with_nonce(2)));
+        let taken = pool.take_with_gas_limit(10, 50_000);
+        assert_eq!(taken.len(), 2, "budget 50k / 21k = 2 txs");
+        assert_eq!(pool.len(), 1, "1 tx survives gas-limit ejection");
+    }
+
+    #[test]
+    fn t1_20_take_with_gas_limit_respects_max_txs() {
+        let mut pool = Mempool::new();
+        for nonce in 0..5 {
+            assert!(pool.submit(dummy_tx_with_nonce(nonce)));
+        }
+        // Plenty of gas, but cap at 3 txs.
+        let taken = pool.take_with_gas_limit(3, u64::MAX);
+        assert_eq!(taken.len(), 3);
+        assert_eq!(pool.len(), 2);
+    }
+
+    #[test]
+    fn t1_20_take_with_gas_limit_zero_budget_takes_nothing() {
+        let mut pool = Mempool::new();
+        assert!(pool.submit(dummy_tx_with_nonce(0)));
+        let taken = pool.take_with_gas_limit(10, 0);
+        assert_eq!(taken.len(), 0);
+        assert_eq!(pool.len(), 1);
     }
 }
