@@ -315,19 +315,35 @@ impl ApiState {
     }
 
     /// Submit a transaction to the correct mempool and broadcast over P2P.
-    /// API transactions use priority insertion (front of queue) to avoid being
-    /// buried behind demo transactions.
-    pub fn submit_tx(&self, tx: Transaction) {
+    /// API transactions use priority insertion (front of queue) to
+    /// avoid being buried behind demo transactions.
+    ///
+    /// Returns `true` if the local mempool admitted the tx, `false`
+    /// if rejected (mempool full at `MAX_MEMPOOL_SIZE` = 10K,
+    /// per-account cap at `MAX_TXS_PER_ACCOUNT` = 64, duplicate,
+    /// oversized, etc. — per `Mempool::submit_priority`).
+    ///
+    /// API endpoints SHOULD honour the bool and surface a 503 to the
+    /// client when rejected; silent-accept defeats client-side
+    /// back-pressure (T0.7 vector 3 / vector 4 doctrine). Existing
+    /// callers that ignore the return continue to work — Rust drops
+    /// it at the semicolon (non-breaking signature change).
+    ///
+    /// Note: P2P broadcast is unconditional. If the local mempool
+    /// rejects (e.g., per-account cap saturated), peers may still
+    /// accept (their pools may have headroom) and the tx still
+    /// reaches inclusion via them.
+    pub fn submit_tx(&self, tx: Transaction) -> bool {
         // Broadcast to other validators via P2P
         if let Some(ref sender) = self.tx_broadcast {
             let _ = sender.try_send(tx.clone());
         }
         if let Some(ref tc) = self.tendermint {
             let mut c = safe_lock(tc);
-            c.mempool.submit_priority(tx);
+            c.mempool.submit_priority(tx)
         } else {
             let mut c = safe_lock(&self.consensus);
-            c.mempool.submit_priority(tx);
+            c.mempool.submit_priority(tx)
         }
     }
 
@@ -10410,7 +10426,23 @@ async fn post_transfer(
         // is the same canonical input used by
         // tx_records_from_block_with_outcomes in this file.
         hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-        state.submit_tx(tx);
+        // Honour the mempool's admission outcome — surface a 503 to
+        // the client when rejected so flooding clients back off.
+        // T0.7 vector-3/4 doctrine: silent-accept defeats client-side
+        // back-pressure.
+        if !state.submit_tx(tx) {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!(
+                    "Transfer rejected: mempool full or per-account cap reached. \
+                     {} -> {} amount={}",
+                    account_name(&from),
+                    account_name(&to),
+                    req.amount
+                ),
+                tx_hash: None,
+            });
+        }
     }
     Json(TxResultResponse {
         success: true,
