@@ -78,20 +78,18 @@ Pass criteria:
 
 ### Vector 6 — ShardSample request flood
 
-Drive a malicious light-client peer that sends shard-sample requests at the per-peer rate limit (gossipsub/sync budget) AND with `queries.len() > 256` payloads.
-
-> ⚠ **Implementation note (2026-05-11):** the ShardSample protocol is libp2p request-response binary, not HTTP. A bash flood script cannot drive it the way `dos-flood.sh` drives HTTP tx submissions. A Rust harness binary (`crates/evaporchain-network/src/bin/shard-sample-flood.rs` or similar) that connects as a libp2p peer and sends crafted `ShardSampleRequest` payloads is the right shape. Tracked as a follow-up; the regression test `shard_query_cap_is_capped_at_256` already pins the unit-level defense.
-
-Once the Rust harness lands, invoke it as:
+Drive a malicious light-client peer that sends shard-sample requests at the per-peer rate limit (gossipsub/sync budget) AND with `queries.len() > 256` payloads:
 
 ```bash
 cargo run --release --bin shard-sample-flood -- \
-  --target-peer-id <peer-id> \
-  --target-addr /ip4/100.119.53.101/tcp/9000 \
+  --target-addr /ip4/100.119.53.101/tcp/9000/p2p/<peer-id> \
+  --chain-id evaporchain-tailscale-5node-1 \
   --rate 1000 \
   --queries-per-request 1024 \
   --duration 1h
 ```
+
+The harness lives at `crates/evaporchain-network/src/bin/shard-sample-flood.rs` and reuses the production `P2pNetworkService` codec so there's no risk of wire-format drift between flood-side and validator-side.
 
 Pass criteria per target node:
 - `rate_limiter` rejects log lines fire at the configured per-peer ceiling (warn: `Rate-limited peer … dropping shard-sample request`).
