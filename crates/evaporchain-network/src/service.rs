@@ -113,6 +113,15 @@ pub struct ShardSampleResponse {
 /// Maximum number of blocks to serve in a single sync response.
 const MAX_SYNC_BATCH: u64 = 100;
 
+/// Maximum number of shard queries we accept in a single
+/// `ShardSampleRequest`. Each query forces a Merkle proof
+/// construction on the serving side, so an attacker without a cap
+/// could pin a CPU per request. Cap chosen well above legitimate
+/// light-client sampling load (DA spec samples ~16 shards per block;
+/// 256 lets a client batch many blocks per round-trip).
+/// Audit AUDIT-2026-05-11-2.
+const MAX_SHARD_QUERIES_PER_REQUEST: usize = 256;
+
 /// Reason a `BlockSyncResponse` was rejected at the network layer.
 /// Pure-function output of [`validate_sync_response_structure`].
 /// Audit 2026-05-06 H-21 — these are cheap structural checks the
@@ -1742,6 +1751,30 @@ impl P2pNetworkService {
                                     message: request_response::Message::Request { request, channel, .. },
                                 },
                             )) => {
+                                // Audit AUDIT-2026-05-11-1: rate-limit the
+                                // shard-sample inbound symmetric to gossipsub
+                                // and block-sync. Without this gate, a peer
+                                // that has saturated its gossipsub / sync
+                                // budget can still flood Merkle-proof work
+                                // through this protocol.
+                                if !rate_limiter.check_and_increment(&peer) {
+                                    warn!("Rate-limited peer {peer} — dropping shard-sample request");
+                                    continue;
+                                }
+                                // Audit AUDIT-2026-05-11-2: cap inbound
+                                // queries.len() before allocating. Each
+                                // query drives a Merkle proof; without a
+                                // cap a single ~1MB JSON request can pin
+                                // a CPU on the serving node.
+                                if request.queries.len() > MAX_SHARD_QUERIES_PER_REQUEST {
+                                    warn!(
+                                        "Peer {peer} sent {} shard queries, cap is {} — recording violation",
+                                        request.queries.len(),
+                                        MAX_SHARD_QUERIES_PER_REQUEST,
+                                    );
+                                    ban_list.record_violation(peer);
+                                    continue;
+                                }
                                 debug!("Peer {peer} requested {} shard samples", request.queries.len());
                                 let cache = shard_cache_inner.read().unwrap_or_else(|p| {
                                     warn!("Recovered poisoned shard cache read lock");
@@ -2419,6 +2452,28 @@ mod tests {
         assert_eq!(decoded.blocks[0].number, 1);
         assert_eq!(decoded.blocks[1].number, 2);
         assert_eq!(decoded.tip_height, 99);
+    }
+
+    // Audit AUDIT-2026-05-11-2: pin the inbound-queries cap so a
+    // future refactor that bumps it (e.g. to accommodate a bulk
+    // sampler) has to consciously change this constant — and the
+    // commit that bumps it should re-evaluate the per-query CPU cost.
+    #[test]
+    fn shard_query_cap_is_capped_at_256() {
+        assert_eq!(MAX_SHARD_QUERIES_PER_REQUEST, 256);
+        // Sanity bound: a request at the cap should be well under the
+        // 1 MB libp2p JSON ceiling. A `SampleQuery` is ~24 bytes
+        // serialized; 256 × 24 ≈ 6 KB. Plenty of headroom.
+        let req = ShardSampleRequest {
+            queries: (0..MAX_SHARD_QUERIES_PER_REQUEST)
+                .map(|i| evaporchain_da::sampling::SampleQuery {
+                    block_number: i as u64,
+                    shard_index: 0,
+                })
+                .collect(),
+        };
+        let bytes = serde_json::to_vec(&req).expect("serialize");
+        assert!(bytes.len() < 64 * 1024, "request at cap should be < 64KB, was {}", bytes.len());
     }
 
     #[test]
