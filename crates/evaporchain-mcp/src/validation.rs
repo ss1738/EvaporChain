@@ -373,4 +373,120 @@ mod tests {
             Err(ValidationError::OutOfRange { .. })
         ));
     }
+
+    /// T1.20 — ValidationError::Display exercises each variant.
+    /// Covers lines 70-86.
+    #[test]
+    fn t1_20_validation_error_display_all_variants() {
+        let m = ValidationError::Missing("x");
+        assert!(format!("{}", m).contains("Missing required field"));
+
+        let wt = ValidationError::WrongType {
+            field: "x",
+            expected: "u64",
+        };
+        assert!(format!("{}", wt).contains("wrong type"));
+
+        let oor = ValidationError::OutOfRange {
+            field: "x",
+            min: 0,
+            max: 100,
+            got: 200,
+        };
+        assert!(format!("{}", oor).contains("out of range"));
+
+        let mal = ValidationError::MalformedAddress {
+            field: "x",
+            reason: "bad hex",
+        };
+        assert!(format!("{}", mal).contains("malformed"));
+    }
+
+    /// T1.20 — validate_half_life_field is just a wrapper around
+    /// validate_amount_field with MAX_HALF_LIFE_EPOCHS. Quick test
+    /// that valid + out-of-range both flow through (lines 163-165).
+    #[test]
+    fn t1_20_validate_half_life_field() {
+        let args = serde_json::json!({"hl": 100});
+        assert_eq!(validate_half_life_field(&args, "hl").unwrap(), 100);
+
+        let huge = serde_json::json!({"hl": u64::MAX});
+        assert!(validate_half_life_field(&huge, "hl").is_err());
+    }
+
+    /// T1.20 — validate_block_height_field accepts non-negative
+    /// integers and rejects missing + non-integer. Covers lines
+    /// 167-176.
+    #[test]
+    fn t1_20_validate_block_height_field() {
+        let args = serde_json::json!({"h": 0});
+        assert_eq!(validate_block_height_field(&args, "h").unwrap(), 0);
+
+        let args2 = serde_json::json!({"h": 12345});
+        assert_eq!(validate_block_height_field(&args2, "h").unwrap(), 12345);
+
+        // Missing.
+        let none = serde_json::json!({});
+        assert!(matches!(
+            validate_block_height_field(&none, "h"),
+            Err(ValidationError::Missing(_))
+        ));
+
+        // Wrong type.
+        let bad = serde_json::json!({"h": "abc"});
+        assert!(matches!(
+            validate_block_height_field(&bad, "h"),
+            Err(ValidationError::WrongType { .. })
+        ));
+    }
+
+    /// T1.20 — validate_hex_id_field rejects empty, too long,
+    /// non-hex chars; accepts with/without 0x prefix. Covers
+    /// lines 181-208.
+    #[test]
+    fn t1_20_validate_hex_id_field() {
+        // Valid bare hex.
+        let args = serde_json::json!({"id": "deadbeef"});
+        assert_eq!(validate_hex_id_field(&args, "id").unwrap(), "deadbeef");
+
+        // Valid with 0x prefix — stripped.
+        let args0x = serde_json::json!({"id": "0xCAFE"});
+        assert_eq!(validate_hex_id_field(&args0x, "id").unwrap(), "CAFE");
+
+        // Missing field.
+        let none = serde_json::json!({});
+        assert!(matches!(
+            validate_hex_id_field(&none, "id"),
+            Err(ValidationError::Missing(_))
+        ));
+
+        // Non-string.
+        let badt = serde_json::json!({"id": 42});
+        assert!(matches!(
+            validate_hex_id_field(&badt, "id"),
+            Err(ValidationError::WrongType { .. })
+        ));
+
+        // Empty after strip.
+        let empty = serde_json::json!({"id": "0x"});
+        assert!(matches!(
+            validate_hex_id_field(&empty, "id"),
+            Err(ValidationError::MalformedAddress { .. })
+        ));
+
+        // Too long.
+        let long = "a".repeat(129);
+        let long_args = serde_json::json!({"id": long});
+        assert!(matches!(
+            validate_hex_id_field(&long_args, "id"),
+            Err(ValidationError::MalformedAddress { .. })
+        ));
+
+        // Non-hex char.
+        let bad_hex = serde_json::json!({"id": "deadbZZZ"});
+        assert!(matches!(
+            validate_hex_id_field(&bad_hex, "id"),
+            Err(ValidationError::MalformedAddress { .. })
+        ));
+    }
 }
