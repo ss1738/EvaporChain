@@ -39,9 +39,9 @@ T0.7 acceptance criterion: harness runs ≥1hr at each load level without admiss
 Drive 1k → 10k → 100k tx/s sustained from 4 client nodes:
 
 ```bash
-scripts/dos-flood.sh --rate 1000 --duration 1h
-scripts/dos-flood.sh --rate 10000 --duration 1h
-scripts/dos-flood.sh --rate 100000 --duration 1h
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 1000   --duration 1h
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 10000  --duration 1h
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 100000 --duration 1h
 ```
 
 Pass criteria per load level:
@@ -55,7 +55,7 @@ Pass criteria per load level:
 Drive 1k malformed-sig tx/s for 1hr:
 
 ```bash
-scripts/dos-flood.sh --rate 1000 --duration 1h --garbage-sigs
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 1000 --duration 1h --garbage-sigs
 ```
 
 Pass criteria:
@@ -68,7 +68,7 @@ Pass criteria:
 Drive 1k tx/s from a single sender (Sybil isolation):
 
 ```bash
-scripts/dos-flood.sh --rate 1000 --duration 1h --single-sender
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 1000 --duration 1h --single-sender
 ```
 
 Pass criteria:
@@ -78,11 +78,16 @@ Pass criteria:
 
 ### Vector 6 — ShardSample request flood
 
-Drive a malicious light-client peer that sends shard-sample requests at the per-peer rate limit (gossipsub/sync budget) AND with `queries.len() > 256` payloads:
+Drive a malicious light-client peer that sends shard-sample requests at the per-peer rate limit (gossipsub/sync budget) AND with `queries.len() > 256` payloads.
+
+> ⚠ **Implementation note (2026-05-11):** the ShardSample protocol is libp2p request-response binary, not HTTP. A bash flood script cannot drive it the way `dos-flood.sh` drives HTTP tx submissions. A Rust harness binary (`crates/evaporchain-network/src/bin/shard-sample-flood.rs` or similar) that connects as a libp2p peer and sends crafted `ShardSampleRequest` payloads is the right shape. Tracked as a follow-up; the regression test `shard_query_cap_is_capped_at_256` already pins the unit-level defense.
+
+Once the Rust harness lands, invoke it as:
 
 ```bash
-scripts/dos-shard-sample-flood.sh \
-  --target-node 100.119.53.101 \
+cargo run --release --bin shard-sample-flood -- \
+  --target-peer-id <peer-id> \
+  --target-addr /ip4/100.119.53.101/tcp/9000 \
   --rate 1000 \
   --queries-per-request 1024 \
   --duration 1h
