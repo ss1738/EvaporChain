@@ -1803,4 +1803,314 @@ mod tests {
         id100[0] = 100;
         assert!(db.get_ghost(&id100).is_some());
     }
+
+    // ── T1.20 gap-closure ────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_flush_accounts_persists_to_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            let acc = make_account(7, 42_000);
+            db.put_account(acc.clone());
+            db.flush_accounts();
+        }
+        let db = RocksDBStateDB::open(dir.path()).unwrap();
+        assert_eq!(db.get_account(&make_account(7, 0).address).unwrap().balance, 42_000);
+    }
+
+    #[test]
+    fn t1_20_flush_objects_persists_to_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            let obj = make_obj(3, 777);
+            db.put_object(obj.clone());
+            db.flush_objects();
+        }
+        let db = RocksDBStateDB::open(dir.path()).unwrap();
+        assert_eq!(db.get_object(&make_obj(3, 0).id).unwrap().energy, 777);
+    }
+
+    #[test]
+    fn t1_20_sentinel_param_roundtrip() {
+        use evaporchain_sentinel::BoundedParameter;
+        let mut db = tmp_db();
+        let param = BoundedParameter::new(1, 500, 100, 1000).unwrap();
+        db.put_sentinel_param(param);
+        let loaded = db.get_sentinel_param(1).unwrap();
+        assert_eq!(loaded.current, 500);
+        assert_eq!(loaded.min, 100);
+        assert_eq!(loaded.max, 1000);
+    }
+
+    #[test]
+    fn t1_20_sentinel_param_missing_returns_none() {
+        let db = tmp_db();
+        assert!(db.get_sentinel_param(99).is_none());
+    }
+
+    #[test]
+    fn t1_20_all_sentinel_params_returns_all() {
+        use evaporchain_sentinel::BoundedParameter;
+        let mut db = tmp_db();
+        db.put_sentinel_param(BoundedParameter::new(1, 10, 0, 100).unwrap());
+        db.put_sentinel_param(BoundedParameter::new(2, 20, 0, 100).unwrap());
+        let all = db.all_sentinel_params();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn t1_20_sentinel_votes_roundtrip() {
+        use evaporchain_sentinel::{BoundedParameter, Vote};
+        let mut db = tmp_db();
+        // Must register the param first so the votes slot exists.
+        db.put_sentinel_param(BoundedParameter::new(5, 50, 0, 200).unwrap());
+        let votes = vec![
+            Vote::new(1, 60, 100),
+            Vote::new(2, 70, 101),
+        ];
+        db.put_sentinel_votes(5, votes.clone());
+        let loaded = db.get_sentinel_votes(5);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].validator_id, 1);
+        assert_eq!(loaded[1].target, 70);
+    }
+
+    #[test]
+    fn t1_20_sentinel_votes_missing_param_returns_empty() {
+        let db = tmp_db();
+        assert!(db.get_sentinel_votes(42).is_empty());
+    }
+
+    #[test]
+    fn t1_20_last_rent_epoch_put_get() {
+        let mut db = tmp_db();
+        assert_eq!(db.get_last_rent_epoch(), 0);
+        db.put_last_rent_epoch(7);
+        assert_eq!(db.get_last_rent_epoch(), 7);
+    }
+
+    #[test]
+    fn t1_20_last_rent_epoch_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.put_last_rent_epoch(42);
+        }
+        let db = RocksDBStateDB::open(dir.path()).unwrap();
+        assert_eq!(db.get_last_rent_epoch(), 42);
+    }
+
+    #[test]
+    fn t1_20_last_rent_epoch_rollback_in_batch() {
+        let mut db = tmp_db();
+        db.put_last_rent_epoch(5);
+        db.begin_batch();
+        db.put_last_rent_epoch(99);
+        assert_eq!(db.get_last_rent_epoch(), 99);
+        db.rollback_batch();
+        // After rollback the epoch must revert to 5, not 99.
+        assert_eq!(db.get_last_rent_epoch(), 5);
+    }
+
+    #[test]
+    fn t1_20_append_note_commitment_and_get_all() {
+        let mut db = tmp_db();
+        let c1 = [0x11u8; 32];
+        let c2 = [0x22u8; 32];
+        db.append_note_commitment(0, c1);
+        db.append_note_commitment(1, c2);
+        let all = db.get_all_note_commitments();
+        assert_eq!(all.len(), 2);
+        assert!(all.contains(&c1));
+        assert!(all.contains(&c2));
+    }
+
+    #[test]
+    fn t1_20_note_commitment_idempotent() {
+        let mut db = tmp_db();
+        let c = [0xAAu8; 32];
+        db.append_note_commitment(0, c);
+        db.append_note_commitment(0, c); // duplicate — must not double-count
+        assert_eq!(db.get_all_note_commitments().len(), 1);
+    }
+
+    #[test]
+    fn t1_20_shielded_pool_balance_roundtrip() {
+        let mut db = tmp_db();
+        assert_eq!(db.get_shielded_pool_balance(), 0);
+        db.put_shielded_pool_balance(12_000);
+        assert_eq!(db.get_shielded_pool_balance(), 12_000);
+    }
+
+    #[test]
+    fn t1_20_note_count_roundtrip() {
+        let mut db = tmp_db();
+        assert_eq!(db.get_note_count(), 0);
+        db.put_note_count(7);
+        assert_eq!(db.get_note_count(), 7);
+    }
+
+    #[test]
+    fn t1_20_has_data_true_after_writes() {
+        let mut db = tmp_db();
+        assert!(!db.has_data());
+        db.put_account(make_account(1, 100)); // has_data checks accounts
+        assert!(db.has_data());
+    }
+
+    #[test]
+    fn t1_20_rollback_restores_ghost() {
+        let mut db = tmp_db();
+        let ghost = GhostRecord {
+            object_id: [0xBBu8; 32],
+            owner: [0u8; 32],
+            evaporated_at: 10,
+            data_hash: [0u8; 32],
+            original_data: None,
+            mmr_position: None,
+            original_half_life: None,
+        };
+        db.begin_batch();
+        db.put_ghost(ghost.clone());
+        assert_eq!(db.ghost_count(), 1);
+        db.rollback_batch();
+        assert_eq!(db.ghost_count(), 0);
+    }
+
+    #[test]
+    fn t1_20_rollback_restores_deleted_object() {
+        let mut db = tmp_db();
+        let obj = make_obj(9, 300);
+        db.put_object(obj.clone());
+        assert_eq!(db.object_count(), 1);
+
+        db.begin_batch();
+        db.delete_object(&obj.id);
+        assert_eq!(db.object_count(), 0);
+        db.rollback_batch();
+        // Object must be restored after rollback.
+        assert_eq!(db.object_count(), 1);
+        assert_eq!(db.get_object(&obj.id).unwrap().energy, 300);
+    }
+
+    #[test]
+    fn t1_20_get_object_mut_records_undo_log() {
+        let mut db = tmp_db();
+        let obj = make_obj(4, 100);
+        db.put_object(obj.clone());
+
+        db.begin_batch();
+        {
+            let o = db.get_object_mut(&obj.id).unwrap();
+            o.energy = 999;
+        }
+        db.rollback_batch();
+        // Energy must revert to 100, not 999.
+        assert_eq!(db.get_object(&obj.id).unwrap().energy, 100);
+    }
+
+    #[test]
+    fn t1_20_remove_ghost_with_batch_undo() {
+        let mut db = tmp_db();
+        let ghost = GhostRecord {
+            object_id: [0xCCu8; 32],
+            owner: [0u8; 32],
+            evaporated_at: 5,
+            data_hash: [0u8; 32],
+            original_data: None,
+            mmr_position: None,
+            original_half_life: None,
+        };
+        db.put_ghost(ghost.clone());
+        assert_eq!(db.ghost_count(), 1);
+
+        db.begin_batch();
+        db.remove_ghost(&ghost.object_id);
+        assert_eq!(db.ghost_count(), 0);
+        db.rollback_batch();
+        // Ghost must come back after rollback.
+        assert_eq!(db.ghost_count(), 1);
+    }
+
+    #[test]
+    fn t1_20_nullifier_not_double_spent() {
+        let mut db = tmp_db();
+        let n = [0x55u8; 32];
+        assert!(!db.is_nullifier_spent(&n));
+        let first = db.spend_nullifier(&n);
+        assert!(first);
+        let second = db.spend_nullifier(&n);
+        assert!(!second);
+        assert_eq!(db.nullifier_count(), 1);
+    }
+
+    #[test]
+    fn t1_20_all_nullifiers_returns_all() {
+        let mut db = tmp_db();
+        db.spend_nullifier(&[0x01u8; 32]);
+        db.spend_nullifier(&[0x02u8; 32]);
+        let all = db.all_nullifiers();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn t1_20_all_stakes_returns_all() {
+        let mut db = tmp_db();
+        db.put_stake(StakeRecord {
+            validator_id: 1,
+            validator_address: [1u8; 32],
+            staked_amount: 1000,
+            staked_at_epoch: 0,
+            slashed_amount: 0,
+            unbonding_epoch: None,
+        });
+        db.put_stake(StakeRecord {
+            validator_id: 2,
+            validator_address: [2u8; 32],
+            staked_amount: 2000,
+            staked_at_epoch: 0,
+            slashed_amount: 0,
+            unbonding_epoch: None,
+        });
+        let all = db.all_stakes();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn t1_20_all_object_ids_matches_count() {
+        let mut db = tmp_db();
+        db.put_object(make_obj(1, 10));
+        db.put_object(make_obj(2, 20));
+        let ids = db.all_object_ids();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(db.object_count(), 2);
+    }
+
+    #[test]
+    fn t1_20_all_ghost_ids_matches_count() {
+        let mut db = tmp_db();
+        for b in [10u8, 20, 30] {
+            db.put_ghost(GhostRecord {
+                object_id: [b; 32],
+                owner: [0u8; 32],
+                evaporated_at: b as u64,
+                data_hash: [0u8; 32],
+                original_data: None,
+                mmr_position: None,
+                original_half_life: None,
+            });
+        }
+        assert_eq!(db.all_ghost_ids().len(), 3);
+        assert_eq!(db.ghost_count(), 3);
+    }
+
+    #[test]
+    fn t1_20_governance_param_stub_returns_none() {
+        let mut db = tmp_db();
+        db.put_governance_param("fee_base".to_string(), "100".to_string());
+        // Stub impl always returns None — verify it does not panic.
+        assert!(db.get_governance_param("fee_base").is_none());
+    }
 }
