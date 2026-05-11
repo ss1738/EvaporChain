@@ -250,10 +250,11 @@ fn dos_v3_single_sender_capped_below_global_max() {
 // global byte cap.
 //
 // What this file ships for V4:
-//   - dos_v4_encrypted_mempool_has_no_admission_cap_GAP: documents
-//     the unbounded growth surface. 10K encrypted txs submitted; all
-//     accepted; pool length == 10K. When admission caps land this
-//     test FLIPS (assertion would expect rejection partway).
+//   - dos_v4_encrypted_mempool_admission_cap_fires_on_flood: locks
+//     the MAX_ENCRYPTED_PENDING = 10_000 admission cap. 15K
+//     submissions; first 10K accepted, last 5K rejected, pool stays
+//     at exactly cap. (Flipped from earlier GAP-marker test once the
+//     substrate fix landed.)
 //   - dos_v4_reveal_too_early_rejected: positive test for the
 //     temporal gate on reveals — submitting at epoch E and trying
 //     to reveal before E + reveal_delay returns RevealTooEarly.
@@ -272,34 +273,51 @@ fn make_encrypted(nonce_byte: u8, submitted_epoch: u64) -> evaporchain_consensus
     encrypt_transaction(&tx, &nonce, submitted_epoch)
 }
 
-/// Document the unbounded-growth gap. The encrypted mempool today
-/// has NO admission cap — submit_encrypted is a Vec.push. An
-/// attacker can fill the pool to arbitrary size.
+/// Positive test — the encrypted mempool admission cap fires under
+/// flood. MAX_ENCRYPTED_PENDING = 10_000 matches the plaintext
+/// pool's MAX_MEMPOOL_SIZE; submit_encrypted returns false when
+/// the pool is full, the over-flood submissions are rejected,
+/// and the pool size stays at exactly the cap.
 ///
-/// When admission caps land (analogous to MAX_MEMPOOL_SIZE for the
-/// plaintext pool), this test FLIPS: the assertion becomes
-/// "accepted <= MAX_ENCRYPTED_MEMPOOL_SIZE". Today it documents
-/// what the system actually permits.
+/// This test was originally `dos_v4_encrypted_mempool_has_no_admission_cap_GAP`,
+/// a documented-gap fixture that asserted unbounded growth. The
+/// substrate fix landed (parallel session) and the test was flipped
+/// to lock the defensive behaviour. The assertion direction is now
+/// "cap enforced", not "no cap".
 #[test]
-fn dos_v4_encrypted_mempool_has_no_admission_cap_GAP() {
+fn dos_v4_encrypted_mempool_admission_cap_fires_on_flood() {
     let mut pool = EncryptedMempool::new(2);
-    let flood_count: usize = 10_000;
+    let cap_target: usize = 10_000; // matches MAX_ENCRYPTED_PENDING
+    let flood_count: usize = cap_target + 5_000;
 
+    let mut accepted = 0usize;
+    let mut rejected = 0usize;
     for i in 0..flood_count {
         let nonce_byte = (i % 256) as u8;
         let enc = make_encrypted(nonce_byte, 0);
-        pool.submit_encrypted(enc);
+        if pool.submit_encrypted(enc) {
+            accepted += 1;
+        } else {
+            rejected += 1;
+        }
     }
 
-    let (encrypted_len, plaintext_len) = pool.pending_count();
     assert_eq!(
-        encrypted_len, flood_count,
-        "DOCUMENTED GAP: encrypted mempool accepted ALL {} submissions \
-         without any admission cap. When caps land this assertion \
-         flips to expect partial rejection.",
-        flood_count
+        accepted, cap_target,
+        "encrypted mempool MUST accept exactly MAX_ENCRYPTED_PENDING ({}), got {}",
+        cap_target, accepted
     );
-    assert_eq!(plaintext_len, 0);
+    assert_eq!(
+        rejected,
+        flood_count - cap_target,
+        "every over-cap submission MUST be rejected by submit_encrypted",
+    );
+    let (encrypted_len, _) = pool.pending_count();
+    assert_eq!(
+        encrypted_len, cap_target,
+        "pool size MUST stay at exactly the cap, got {}",
+        encrypted_len
+    );
 }
 
 /// Positive test — reveal before `submitted_epoch + reveal_delay`
