@@ -4,15 +4,16 @@
 
 ## In-CI regression suite
 
-`crates/evaporchain-consensus/tests/dos_resistance.rs` — 3 tests covering 3 of the 7 vectors enumerated in `MAINNET_READINESS.md` T0.7:
+`crates/evaporchain-consensus/tests/dos_resistance.rs` — 6 tests covering 4 of the 7 vectors enumerated in `MAINNET_READINESS.md` T0.7:
 
 | Vector | Test | What it locks |
 |---|---|---|
 | **1. Tx flooding** | `dos_v1_tx_flood_caps_at_max_size` | Pool stops accepting at exactly `MAX_MEMPOOL_SIZE = 10_000`; overflow rejections == flood − cap. No duplicates leaked from the test fixture. |
 | **2. Signature storm** | `dos_v2_signature_storm_pool_stays_empty_under_garbage_sigs` | Under `verify_signatures = true`, every malformed-sig tx is rejected by `HybridVerifier::verify`. Pool remains at len 0 after a 200-tx flood. `rejected_count == flood`. |
 | **3. Per-account fairness** | `dos_v3_single_sender_capped_below_global_max` | A single sender flooding 200 unique-nonce txs is capped at `MAX_TXS_PER_ACCOUNT = 64`, well below the 10K global. Sybil-resistance: one identity cannot monopolise the slot budget. |
+| **4. Encrypted-mempool reveal flood** | `dos_v4_reveal_too_early_rejected` · `dos_v4_unrevealed_commitments_expire_at_reveal_epoch` · `dos_v4_encrypted_mempool_has_no_admission_cap_GAP` | Reveal-too-early temporal gate fires (RevealTooEarly). Unrevealed commitments expire at their reveal_epoch via process_reveals — stale commitments cannot be kept alive. **DOCUMENTED GAP**: `submit_encrypted` has no admission cap (Vec::push). Attacker can fill the encrypted-mempool to arbitrary size. Tracked for substrate hardening before mainnet flip. |
 
-Vectors 4 (encrypted-mempool reveal flood) and 5 (DAG fork-spam) are not yet covered in this file — they need the encrypted-mempool DoS harness and a multi-validator DAG harness respectively. Tracked as future work.
+Vector 5 (DAG fork-spam) is not yet covered — needs a multi-validator DAG harness. Tracked as future work.
 
 Vectors 6 (gas exhaustion) and 7 (memory blow-up via large blobs) are covered elsewhere — `block_stm` tests + `test_global_byte_cap_rejects_when_pool_would_overflow` in `mempool.rs` respectively.
 

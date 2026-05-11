@@ -240,3 +240,136 @@ fn dos_v3_single_sender_capped_below_global_max() {
         "rejected_count must reflect the cap-driven rejections"
     );
 }
+
+// ─── Vector 4 — Encrypted mempool reveal flood ───────────────────────
+//
+// The EncryptedMempool implements commit-reveal MEV protection
+// (see `evaporchain-consensus::encrypted_mempool`). Submission is
+// `submit_encrypted(EncryptedTransaction)` which pushes onto a Vec
+// with NO admission cap today — no max size, no per-sender cap, no
+// global byte cap.
+//
+// What this file ships for V4:
+//   - dos_v4_encrypted_mempool_has_no_admission_cap_GAP: documents
+//     the unbounded growth surface. 10K encrypted txs submitted; all
+//     accepted; pool length == 10K. When admission caps land this
+//     test FLIPS (assertion would expect rejection partway).
+//   - dos_v4_reveal_too_early_rejected: positive test for the
+//     temporal gate on reveals — submitting at epoch E and trying
+//     to reveal before E + reveal_delay returns RevealTooEarly.
+//   - dos_v4_unrevealed_commitments_expire_at_reveal_epoch:
+//     process_reveals drops encrypted txs whose reveal epoch has
+//     passed without a nonce supplied. Confirms attackers cannot
+//     keep stale commitments alive forever in the pool.
+
+use evaporchain_consensus::encrypted_mempool::{
+    encrypt_transaction, EncryptedMempool, MevError,
+};
+
+fn make_encrypted(nonce_byte: u8, submitted_epoch: u64) -> evaporchain_consensus::encrypted_mempool::EncryptedTransaction {
+    let tx = make_transfer(1, nonce_byte as u64);
+    let nonce = [nonce_byte; 32];
+    encrypt_transaction(&tx, &nonce, submitted_epoch)
+}
+
+/// Document the unbounded-growth gap. The encrypted mempool today
+/// has NO admission cap — submit_encrypted is a Vec.push. An
+/// attacker can fill the pool to arbitrary size.
+///
+/// When admission caps land (analogous to MAX_MEMPOOL_SIZE for the
+/// plaintext pool), this test FLIPS: the assertion becomes
+/// "accepted <= MAX_ENCRYPTED_MEMPOOL_SIZE". Today it documents
+/// what the system actually permits.
+#[test]
+fn dos_v4_encrypted_mempool_has_no_admission_cap_GAP() {
+    let mut pool = EncryptedMempool::new(2);
+    let flood_count: usize = 10_000;
+
+    for i in 0..flood_count {
+        let nonce_byte = (i % 256) as u8;
+        let enc = make_encrypted(nonce_byte, 0);
+        pool.submit_encrypted(enc);
+    }
+
+    let (encrypted_len, plaintext_len) = pool.pending_count();
+    assert_eq!(
+        encrypted_len, flood_count,
+        "DOCUMENTED GAP: encrypted mempool accepted ALL {} submissions \
+         without any admission cap. When caps land this assertion \
+         flips to expect partial rejection.",
+        flood_count
+    );
+    assert_eq!(plaintext_len, 0);
+}
+
+/// Positive test — reveal before `submitted_epoch + reveal_delay`
+/// returns RevealTooEarly. Locks the temporal commit-reveal gate
+/// that makes the MEV-protection scheme honest.
+#[test]
+fn dos_v4_reveal_too_early_rejected() {
+    let reveal_delay = 5;
+    let pool = EncryptedMempool::new(reveal_delay);
+
+    let submit_epoch = 10;
+    let nonce_byte = 7;
+    let enc = make_encrypted(nonce_byte, submit_epoch);
+    let nonce = [nonce_byte; 32];
+
+    // Same epoch — definitely too early.
+    let result = pool.reveal(&enc, &nonce, submit_epoch);
+    assert!(matches!(result, Err(MevError::RevealTooEarly { .. })));
+
+    // Mid-delay — still too early.
+    let result = pool.reveal(&enc, &nonce, submit_epoch + reveal_delay - 1);
+    assert!(matches!(result, Err(MevError::RevealTooEarly { .. })));
+
+    // Exactly at the boundary — must succeed.
+    let result = pool.reveal(&enc, &nonce, submit_epoch + reveal_delay);
+    assert!(
+        result.is_ok(),
+        "reveal at reveal_at MUST succeed: got {:?}",
+        result.err()
+    );
+
+    // Past the boundary — also succeeds.
+    let result = pool.reveal(&enc, &nonce, submit_epoch + reveal_delay + 100);
+    assert!(result.is_ok());
+}
+
+/// Positive test — unrevealed encrypted txs are dropped at their
+/// reveal epoch via process_reveals (no nonce supplied → dropped).
+/// Prevents attackers from keeping stale commitments alive
+/// indefinitely after their reveal window passes.
+#[test]
+fn dos_v4_unrevealed_commitments_expire_at_reveal_epoch() {
+    let reveal_delay = 3;
+    let mut pool = EncryptedMempool::new(reveal_delay);
+
+    // Submit 5 encrypted txs at epoch 0.
+    for i in 0..5 {
+        let nonce_byte = (i + 1) as u8;
+        pool.submit_encrypted(make_encrypted(nonce_byte, 0));
+    }
+    let (encrypted_len, _) = pool.pending_count();
+    assert_eq!(encrypted_len, 5, "5 encrypted txs in flight");
+
+    // Advance to reveal_delay - 1; nothing should be processed yet.
+    let revealed = pool.process_reveals(reveal_delay - 1, &[]);
+    assert!(revealed.is_empty(), "pre-reveal: nothing revealed");
+    let (encrypted_len, _) = pool.pending_count();
+    assert_eq!(encrypted_len, 5, "all 5 still pending pre-reveal-delay");
+
+    // Advance to reveal_delay (boundary). With NO nonces supplied,
+    // all 5 expire (dropped without being revealed).
+    let revealed = pool.process_reveals(reveal_delay, &[]);
+    assert!(
+        revealed.is_empty(),
+        "no nonces supplied → no reveals; got {} revealed",
+        revealed.len()
+    );
+    let (encrypted_len, _) = pool.pending_count();
+    assert_eq!(
+        encrypted_len, 0,
+        "all 5 stale encrypted txs MUST be expired at the reveal epoch"
+    );
+}
