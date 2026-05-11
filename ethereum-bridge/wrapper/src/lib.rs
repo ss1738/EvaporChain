@@ -69,6 +69,7 @@ pub mod circuit;
 pub mod eip197;
 pub mod fixture;
 pub mod inputs;
+pub mod nonnative_fq;
 pub mod prover;
 
 pub use circuit::WrapperCircuit;
@@ -78,4 +79,8 @@ pub use eip197::{
 };
 pub use fixture::{FixtureLoadError, VerkleFixture};
 pub use inputs::{decode_anchor, AnchorDecodeError, WrapperPublicInputs};
+pub use nonnative_fq::{
+    alloc_nonnative_fq_input, alloc_nonnative_fq_witness, enforce_nonnative_fq_add,
+    NonNativeFqVar,
+};
 pub use prover::{prove, setup, verify, ProveError, SetupError, VerifyError};
