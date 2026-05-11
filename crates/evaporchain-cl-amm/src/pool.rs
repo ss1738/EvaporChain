@@ -596,4 +596,68 @@ mod tests {
             proptest::prop_assert!(k_after >= k_before);
         }
     }
+
+    /// T1.20 — SinghPool::new rejects fee_bp > 10_000 (line 52).
+    #[test]
+    fn t1_20_pool_new_rejects_bad_fee() {
+        let r = SinghPool::new(10_001, 0);
+        assert!(matches!(r, Err(PoolError::InvalidFee)));
+
+        let ok = SinghPool::new(0, 0);
+        assert!(ok.is_ok());
+        let ok_max = SinghPool::new(10_000, 0);
+        assert!(ok_max.is_ok());
+    }
+
+    /// T1.20 — accessors: reserve_x, reserve_y, total_shares, k,
+    /// shares_of, share_record. Previously the trivial getters
+    /// weren't called from tests.
+    #[test]
+    fn t1_20_pool_accessors() {
+        let mut pool = SinghPool::new(30, 0).unwrap();
+        // Fresh pool — all zeros.
+        assert_eq!(pool.reserve_x(), 0);
+        assert_eq!(pool.reserve_y(), 0);
+        assert_eq!(pool.total_shares(), 0);
+        assert_eq!(pool.k(), 0);
+        let holder = HolderId([1u8; 32]);
+        assert_eq!(pool.shares_of(holder), 0);
+        assert!(pool.share_record(holder).is_none());
+
+        // After initial mint.
+        let _ = pool.mint_initial(holder, 1_000, 1_000, 100, 1).unwrap();
+        assert_eq!(pool.reserve_x(), 1_000);
+        assert_eq!(pool.reserve_y(), 1_000);
+        assert_eq!(pool.k(), 1_000_000);
+        assert!(pool.shares_of(holder) > 0);
+        assert!(pool.share_record(holder).is_some());
+    }
+
+    /// T1.20 — mint_initial rejects zero amounts (line 97).
+    #[test]
+    fn t1_20_mint_initial_rejects_zero() {
+        let mut pool = SinghPool::new(30, 0).unwrap();
+        let h = HolderId([2u8; 32]);
+        assert!(matches!(
+            pool.mint_initial(h, 0, 100, 100, 1),
+            Err(PoolError::ZeroAmount)
+        ));
+        assert!(matches!(
+            pool.mint_initial(h, 100, 0, 100, 1),
+            Err(PoolError::ZeroAmount)
+        ));
+    }
+
+    /// T1.20 — mint_initial called twice routes the second call
+    /// through mint_proportional (line 101).
+    #[test]
+    fn t1_20_mint_initial_second_call_routes_to_proportional() {
+        let mut pool = SinghPool::new(30, 0).unwrap();
+        let h = HolderId([3u8; 32]);
+        pool.mint_initial(h, 1_000, 1_000, 100, 1).unwrap();
+        // Second mint_initial: pool is non-empty so it delegates.
+        let r = pool.mint_initial(h, 100, 100, 100, 2);
+        // Should succeed via proportional formula.
+        assert!(r.is_ok(), "expected delegation to mint_proportional");
+    }
 }
