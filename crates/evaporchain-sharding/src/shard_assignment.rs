@@ -188,4 +188,29 @@ mod tests {
         };
         assert_eq!(range.len(), 8);
     }
+
+    /// T1.20 — ShardId::Display format (lines 14-16). Previously
+    /// unreached.
+    #[test]
+    fn t1_20_shard_id_display() {
+        let s = ShardId(42);
+        assert_eq!(format!("{}", s), "shard-42");
+    }
+
+    /// T1.20 — ShardRange::len and is_empty (lines 67-69, 63-65).
+    #[test]
+    fn t1_20_shard_range_len_and_empty() {
+        let r = ShardRange {
+            start: ShardId(2),
+            end: ShardId(5),
+        };
+        assert_eq!(r.len(), 4);
+        assert!(!r.is_empty());
+
+        let empty = ShardRange {
+            start: ShardId(5),
+            end: ShardId(2),
+        };
+        assert!(empty.is_empty());
+    }
 }
