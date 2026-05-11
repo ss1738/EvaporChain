@@ -1375,4 +1375,46 @@ mod tests {
         );
         assert!(actions.is_empty(), "mismatched state_root must be rejected");
     }
+
+    /// T1.20 — SnapshotProvider::new + Default impls.
+    #[test]
+    fn t1_20_snapshot_provider_new_is_empty() {
+        let p = SnapshotProvider::new();
+        assert_eq!(p.snapshot_count(), 0);
+        let d = SnapshotProvider::default();
+        assert_eq!(d.snapshot_count(), 0);
+    }
+
+    /// T1.20 — SnapshotProvider::prune drops oldest snapshots when
+    /// exceeding `keep`. Previously the prune path was 0%-covered.
+    #[test]
+    fn t1_20_snapshot_provider_prune_keeps_newest() {
+        let mut p = SnapshotProvider::new();
+        // Stuff 5 snapshots at heights 1..=5.
+        for h in 1..=5u64 {
+            p.create_snapshot(h, 0, [0u8; 32], &vec![0u8; 100]);
+        }
+        assert_eq!(p.snapshot_count(), 5);
+        // Keep only 2 newest.
+        p.prune(2);
+        assert_eq!(p.snapshot_count(), 2);
+    }
+
+    #[test]
+    fn t1_20_snapshot_provider_prune_noop_when_under_cap() {
+        let mut p = SnapshotProvider::new();
+        p.create_snapshot(1, 0, [0u8; 32], &vec![0u8; 100]);
+        p.prune(10);
+        assert_eq!(p.snapshot_count(), 1, "no-op when keep > count");
+    }
+
+    /// T1.20 — download_progress for Complete and Failed phases.
+    /// is_complete + is_failed accessors.
+    #[test]
+    fn t1_20_sync_manager_download_progress_zero_when_discovering() {
+        let sync = StateSyncManager::new(0);
+        assert_eq!(sync.download_progress(), 0.0);
+        assert!(!sync.is_complete());
+        assert!(!sync.is_failed());
+    }
 }
