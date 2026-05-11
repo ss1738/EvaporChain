@@ -995,4 +995,106 @@ mod tests {
         assert_eq!(pool.total_accrued(), 375, "all producer-bound amounts redirected");
         assert_eq!(acc.pending_staker_rewards, 225, "net delegator share preserved");
     }
+
+    // ─── T1.20 rewards.rs coverage push ──────────────────────────────
+
+    /// distribute_staker_rewards with rounding remainder — exercises
+    /// the dust-distribution loop (lines 410-422 previously uncovered).
+    /// pool=100 split across 3 equal-stake stakers: each gets 33,
+    /// distributed=99, remainder=1. The dust loop must hand the 1
+    /// unit to the first sorted staker.
+    #[test]
+    fn t1_20_distribute_staker_rewards_dust_remainder() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 10, 0);
+        fund(&mut db, 20, 0);
+        fund(&mut db, 30, 0);
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+        acc.pending_staker_rewards = 100;
+
+        let stakers = vec![(addr(10), 1u64), (addr(20), 1u64), (addr(30), 1u64)];
+        let distributed = acc.distribute_staker_rewards(&mut db, &stakers, 0);
+        // 100 split 1:1:1 → 33 each = 99, remainder = 1, dust → 100.
+        assert_eq!(distributed, 100, "dust-loop must reclaim the rounding remainder");
+        // pending_staker_rewards is reset.
+        assert_eq!(acc.pending_staker_rewards, 0);
+        // Sum of balances equals the pool.
+        let sum = db.get_account(&addr(10)).unwrap().balance
+            + db.get_account(&addr(20)).unwrap().balance
+            + db.get_account(&addr(30)).unwrap().balance;
+        assert_eq!(sum, 100);
+    }
+
+    /// apply_priority_bonus with dead producer + refresh_pool —
+    /// previously uncovered redirect path (lines 97-109).
+    #[test]
+    fn t1_20_apply_priority_bonus_redirects_when_producer_dead() {
+        let mut db = InMemoryStateDB::new();
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+        let mut pool = RefreshPool::new();
+        let producer = addr(99);
+
+        let credit = acc.apply_priority_bonus(
+            &mut db,
+            &producer,
+            100,
+            1_000_000,   // priority_sum
+            1_000,       // scale_per_unit → bonus = 1000
+            false,       // producer_alive
+            Some(&mut pool),
+        );
+        // Dead producer: caller-visible credit = 0.
+        assert_eq!(credit, 0);
+        // Producer account was NOT created.
+        assert!(db.get_account(&producer).is_none());
+        // total_minted bumped (notional emission).
+        assert_eq!(acc.total_minted, 1000);
+    }
+
+    /// apply_priority_bonus with dead producer + no pool — bonus is
+    /// minted to total_minted but lands nowhere. Distinct from the
+    /// pool-redirect path (line 108 → 110).
+    #[test]
+    fn t1_20_apply_priority_bonus_dead_no_pool_returns_zero() {
+        let mut db = InMemoryStateDB::new();
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+        let producer = addr(99);
+        let credit = acc.apply_priority_bonus(
+            &mut db,
+            &producer,
+            100,
+            1_000_000,
+            1_000,
+            false,
+            None,
+        );
+        assert_eq!(credit, 0);
+        assert!(db.get_account(&producer).is_none());
+        assert_eq!(acc.total_minted, 1000);
+    }
+
+    /// process_block_rewards with dead producer + refresh_pool —
+    /// previously uncovered (lines 165-182).
+    #[test]
+    fn t1_20_process_block_rewards_redirects_when_producer_dead() {
+        let mut db = InMemoryStateDB::new();
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+        let mut pool = RefreshPool::new();
+        let producer = addr(99);
+
+        let credit = acc.process_block_rewards(
+            &mut db,
+            &producer,
+            0,        // epoch
+            0,        // total_fees
+            false,    // producer_alive
+            Some(&mut pool),
+        );
+        // Dead producer: caller-visible credit = 0.
+        assert_eq!(credit, 0);
+        // Producer account not created.
+        assert!(db.get_account(&producer).is_none());
+        // total_minted bumped by the block reward.
+        assert_eq!(acc.total_minted, test_tokenomics().block_reward);
+    }
 }
