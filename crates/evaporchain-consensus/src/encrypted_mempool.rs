@@ -154,6 +154,22 @@ fn derive_aes_key(nonce: &[u8; 32]) -> [u8; 32] {
 
 // ─────────────────────── EncryptedMempool ─────────────────────────────────
 
+/// Maximum number of pending encrypted transactions. Anti-DoS cap —
+/// without this, an attacker could flood the pool with arbitrary
+/// commit submissions (the plaintext is opaque to validators at
+/// admission, so per-tx content validation isn't possible until
+/// reveal). T0.7 vector 4 (encrypted-mempool reveal flood).
+///
+/// Matched to the regular mempool's `MAX_MEMPOOL_SIZE = 10_000`
+/// for consistency — both pools have the same per-validator memory
+/// budget under load.
+const MAX_ENCRYPTED_PENDING: usize = 10_000;
+
+/// Maximum number of pending plaintext transactions in the
+/// encrypted-mempool's plaintext side-pool. Same anti-DoS rationale;
+/// same cap as MAX_ENCRYPTED_PENDING.
+const MAX_PLAINTEXT_PENDING: usize = 10_000;
+
 /// MEV-protected mempool with commit-reveal scheme.
 pub struct EncryptedMempool {
     /// Encrypted transactions waiting for reveal.
@@ -174,14 +190,27 @@ impl EncryptedMempool {
         }
     }
 
-    /// Submit an encrypted transaction (commit phase).
-    pub fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) {
+    /// Submit an encrypted transaction (commit phase). Returns `true`
+    /// if accepted, `false` if rejected because the encrypted pool is
+    /// at `MAX_ENCRYPTED_PENDING` (T0.7 vector 4 — reveal flood
+    /// admission cap).
+    pub fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) -> bool {
+        if self.pending_encrypted.len() >= MAX_ENCRYPTED_PENDING {
+            return false;
+        }
         self.pending_encrypted.push(encrypted_tx);
+        true
     }
 
-    /// Submit a standard plaintext transaction.
-    pub fn submit_plaintext(&mut self, tx: Transaction) {
+    /// Submit a standard plaintext transaction. Returns `true` if
+    /// accepted, `false` if rejected because the plaintext pool is at
+    /// `MAX_PLAINTEXT_PENDING`.
+    pub fn submit_plaintext(&mut self, tx: Transaction) -> bool {
+        if self.pending_plaintext.len() >= MAX_PLAINTEXT_PENDING {
+            return false;
+        }
         self.pending_plaintext.push(tx);
+        true
     }
 
     /// Get the committed ordering for block production at the given epoch.
@@ -333,7 +362,9 @@ pub trait MevPool: Send + Sync {
     /// Admit an encrypted transaction into the commit phase. The
     /// validator orders this tx without seeing its contents — ordering
     /// is by commitment hash, deterministic and unmanipulable.
-    fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction);
+    /// Returns `true` if accepted, `false` if rejected due to pool
+    /// capacity (T0.7 vector 4 — encrypted-mempool reveal-flood DoS).
+    fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) -> bool;
 
     /// Process all reveals for the given epoch. Returns plaintext
     /// transactions for all encrypted txs whose reveal delay has passed,
@@ -363,7 +394,7 @@ pub trait MevPool: Send + Sync {
 /// Lane G.4 blanket impl. Pure delegation to `EncryptedMempool`'s
 /// inherent methods — no behaviour change.
 impl MevPool for EncryptedMempool {
-    fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) {
+    fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) -> bool {
         EncryptedMempool::submit_encrypted(self, encrypted_tx)
     }
 
@@ -748,5 +779,59 @@ mod tests {
         assert_eq!(orig, got);
         // Pool is now drained.
         assert!(mp.is_empty());
+    }
+
+    // ── Lane T0.7 vector 4 — encrypted-mempool reveal-flood cap ─────
+    //
+    // The parallel-session `dos_resistance.rs` file ships vectors 1-3
+    // and explicitly TODOs vector 4 ("Encrypted mempool reveal flood
+    // — separate test file"). The underlying gap was that
+    // `EncryptedMempool::submit_encrypted` had NO capacity bound, so
+    // an attacker could flood arbitrary opaque commitments and exhaust
+    // the validator's memory. Cap added here + tested below.
+
+    /// Hitting MAX_ENCRYPTED_PENDING rejects further commits.
+    #[test]
+    fn encrypted_pool_rejects_when_at_capacity() {
+        let mut pool = EncryptedMempool::new(1);
+        let tx = dummy_tx(0);
+        let nonce = [0u8; 32];
+
+        // Fill to capacity — every submit accepts.
+        for _ in 0..MAX_ENCRYPTED_PENDING {
+            let enc = encrypt_transaction(&tx, &nonce, 1);
+            assert!(pool.submit_encrypted(enc), "below cap must accept");
+        }
+        assert_eq!(pool.pending_count().0, MAX_ENCRYPTED_PENDING);
+
+        // The (cap+1)-th is rejected.
+        let over = encrypt_transaction(&tx, &nonce, 1);
+        assert!(
+            !pool.submit_encrypted(over),
+            "at-cap commit must be rejected (T0.7 vector 4 — reveal-flood DoS)"
+        );
+        // Pool size unchanged.
+        assert_eq!(pool.pending_count().0, MAX_ENCRYPTED_PENDING);
+    }
+
+    /// Symmetric for the plaintext side-pool.
+    #[test]
+    fn plaintext_pool_rejects_when_at_capacity() {
+        let mut pool = EncryptedMempool::new(1);
+
+        for nonce in 0..MAX_PLAINTEXT_PENDING as u64 {
+            assert!(
+                pool.submit_plaintext(dummy_tx(nonce)),
+                "below cap must accept"
+            );
+        }
+        assert_eq!(pool.pending_count().1, MAX_PLAINTEXT_PENDING);
+
+        let over = pool.submit_plaintext(dummy_tx(MAX_PLAINTEXT_PENDING as u64));
+        assert!(
+            !over,
+            "at-cap plaintext submit must be rejected"
+        );
+        assert_eq!(pool.pending_count().1, MAX_PLAINTEXT_PENDING);
     }
 }
