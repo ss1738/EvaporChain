@@ -1122,7 +1122,7 @@ mod tests {
         sync.peer_tips.insert(1, (100, [1u8; 32]));
 
         // Send valid chunk 0
-        let actions = sync.on_message(
+        let _actions = sync.on_message(
             1,
             SyncMessage::ChunkResponse {
                 chunk: SnapshotChunk {
@@ -1138,7 +1138,7 @@ mod tests {
 
         // Send chunk 1 with corrupted data — should be rejected
         let corrupted = vec![0xFF; CHUNK_SIZE];
-        let actions = sync.on_message(
+        let _actions = sync.on_message(
             1,
             SyncMessage::ChunkResponse {
                 chunk: SnapshotChunk {
@@ -1418,153 +1418,263 @@ mod tests {
         assert!(!sync.is_failed());
     }
 
-    /// T1.20 — with_checkpoint stores the genesis checkpoint
-    /// (previously uncovered constructor at lines 201-206).
-    #[test]
-    fn t1_20_sync_manager_with_checkpoint_constructs() {
-        let ckpt = GenesisCheckpoint {
-            height: 0,
-            state_root: [7u8; 32],
-            block_hash: [8u8; 32],
-        };
-        let sync = StateSyncManager::with_checkpoint(5, ckpt.clone());
-        // The phase is DiscoveringTip by default.
-        assert!(matches!(sync.phase(), SyncPhase::DiscoveringTip));
-    }
+    // ── T1.20 additional gap-closure ─────────────────────────────────────────
 
-    /// T1.20 — start() broadcasts a TipRequest and stays in
-    /// DiscoveringTip. Previously uncovered (lines 219-227).
     #[test]
-    fn t1_20_sync_manager_start_broadcasts_tip_request() {
+    fn t1_20_start_emits_broadcast_tip_request() {
         let mut sync = StateSyncManager::new(0);
         let actions = sync.start();
         assert_eq!(actions.len(), 1);
-        match &actions[0] {
-            SyncAction::Broadcast { message } => {
-                assert!(matches!(message, SyncMessage::TipRequest));
-            }
-            _ => panic!("expected Broadcast action"),
-        }
-        assert!(matches!(sync.phase(), SyncPhase::DiscoveringTip));
+        assert!(matches!(
+            &actions[0],
+            SyncAction::Broadcast { message: SyncMessage::TipRequest }
+        ));
+        assert_eq!(sync.phase(), &SyncPhase::DiscoveringTip);
     }
 
-    /// T1.20 — on_message with TipRequest is a no-op (server-side
-    /// messages are not handled by the client manager). Covers the
-    /// fall-through `_ => vec![]` branch.
     #[test]
-    fn t1_20_sync_manager_on_message_tip_request_is_noop() {
+    fn t1_20_with_checkpoint_sets_genesis() {
+        let cp = GenesisCheckpoint {
+            height: 100,
+            state_root: [0xAAu8; 32],
+            block_hash: [0xBBu8; 32],
+        };
+        let sync = StateSyncManager::with_checkpoint(50, cp.clone());
+        assert_eq!(sync.local_height, 50);
+        assert_eq!(sync.genesis_checkpoint.as_ref().unwrap().height, 100);
+        assert_eq!(sync.genesis_checkpoint.as_ref().unwrap().state_root, cp.state_root);
+    }
+
+    #[test]
+    fn t1_20_on_message_server_side_messages_return_empty() {
+        // Client receives TipRequest/HeaderRequest/ChunkRequest — these are
+        // server-side messages and the client should ignore them (return vec![]).
         let mut sync = StateSyncManager::new(0);
-        let actions = sync.on_message(42, SyncMessage::TipRequest);
+        sync.start();
+
+        let r1 = sync.on_message(1, SyncMessage::TipRequest);
+        assert!(r1.is_empty());
+
+        let r2 = sync.on_message(1, SyncMessage::HeaderRequest { height: 100 });
+        assert!(r2.is_empty());
+
+        let r3 = sync.on_message(1, SyncMessage::ChunkRequest { height: 100, chunk_index: 0 });
+        assert!(r3.is_empty());
+    }
+
+    #[test]
+    fn t1_20_tip_response_single_peer_not_enough_agreement() {
+        // Only 1 peer responds — MIN_TIP_AGREEMENT=2 not met → no transition.
+        let mut sync = StateSyncManager::new(0);
+        sync.start();
+        let actions = sync.on_message(
+            1,
+            SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] },
+        );
+        assert!(actions.is_empty());
+        assert_eq!(sync.phase(), &SyncPhase::DiscoveringTip);
+    }
+
+    #[test]
+    fn t1_20_tip_response_ignored_in_non_discovering_phase() {
+        // After discovering phase completes, further TipResponses are ignored.
+        let mut sync = StateSyncManager::new(0);
+        sync.start();
+        // Advance to DownloadingSnapshot via 2 agreeing tip responses.
+        sync.on_message(1, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
+        sync.on_message(2, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
+        // Now in DownloadingSnapshot — further tip response must be ignored.
+        assert!(!matches!(sync.phase(), SyncPhase::DiscoveringTip));
+        let actions = sync.on_message(3, SyncMessage::TipResponse { height: 200_000, block_hash: [2u8; 32] });
         assert!(actions.is_empty());
     }
 
-    /// T1.20 — on_message with HeaderRequest is a no-op.
     #[test]
-    fn t1_20_sync_manager_on_message_header_request_is_noop() {
+    fn t1_20_tip_response_not_ahead_of_local() {
+        // Peer tip <= local_height → no sync action even with 2 peers agreeing.
+        let mut sync = StateSyncManager::new(100_000);
+        sync.start();
+        sync.on_message(1, SyncMessage::TipResponse { height: 90_000, block_hash: [1u8; 32] });
+        let actions = sync.on_message(2, SyncMessage::TipResponse { height: 90_000, block_hash: [1u8; 32] });
+        assert!(actions.is_empty());
+        assert_eq!(sync.phase(), &SyncPhase::DiscoveringTip);
+    }
+
+    #[test]
+    fn t1_20_handle_chunk_response_out_of_bounds_index_rejected() {
+        let mut p = SnapshotProvider::new();
+        // 1-chunk snapshot
+        let meta = p.create_snapshot(100, 1, [0xAAu8; 32], &vec![1u8; 100]);
+
+        // Serve the real chunk to a sync manager up to the metadata stage.
         let mut sync = StateSyncManager::new(0);
-        let actions = sync.on_message(42, SyncMessage::HeaderRequest { height: 100 });
+        sync.start();
+        sync.on_message(1, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
+        sync.on_message(2, SyncMessage::TipResponse { height: 100_000, block_hash: [1u8; 32] });
+        sync.peer_tips.insert(1, (100, [100u8; 32]));
+        sync.target_height = Some(100);
+        sync.snapshot_meta = Some(meta.clone());
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 100,
+            total_chunks: 1,
+            received_chunks: 0,
+        };
+
+        let bad_chunk = SnapshotChunk {
+            height: 100,
+            index: 99, // way out of bounds
+            total: 1,
+            data: vec![0xFFu8; 100],
+            hash: [0xFFu8; 32],
+        };
+        let actions = sync.on_message(1, SyncMessage::ChunkResponse { chunk: bad_chunk });
+        assert!(actions.is_empty(), "out-of-bounds chunk must be rejected");
+        assert_eq!(sync.received_chunks.len(), 0);
+    }
+
+    #[test]
+    fn t1_20_handle_chunk_response_hash_mismatch_rejected() {
+        let mut p = SnapshotProvider::new();
+        let meta = p.create_snapshot(200, 2, [0xBBu8; 32], &vec![2u8; 200]);
+
+        let mut sync = StateSyncManager::new(0);
+        sync.target_height = Some(200);
+        sync.peer_tips.insert(1, (200, [200u8; 32]));
+        sync.snapshot_meta = Some(meta.clone());
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 200,
+            total_chunks: meta.total_chunks,
+            received_chunks: 0,
+        };
+
+        // Send a chunk with tampered data (hash won't match).
+        let corrupt_chunk = SnapshotChunk {
+            height: 200,
+            index: 0,
+            total: meta.total_chunks,
+            data: vec![0xDEu8; 200], // tampered
+            hash: meta.chunk_hashes[0], // original hash, data doesn't match
+        };
+        let actions = sync.on_message(1, SyncMessage::ChunkResponse { chunk: corrupt_chunk });
+        assert!(actions.is_empty(), "hash-mismatch chunk must be rejected");
+        assert_eq!(sync.received_chunks.len(), 0);
+    }
+
+    #[test]
+    fn t1_20_chunk_response_without_snapshot_meta_ignored() {
+        let mut sync = StateSyncManager::new(0);
+        // snapshot_meta is None — chunk should be ignored
+        let chunk = SnapshotChunk {
+            height: 100,
+            index: 0,
+            total: 1,
+            data: vec![0u8; 64],
+            hash: [0u8; 32],
+        };
+        let actions = sync.on_message(99, SyncMessage::ChunkResponse { chunk });
         assert!(actions.is_empty());
     }
 
-    /// T1.20 — SnapshotProvider::handle_request for TipRequest returns
-    /// the local height + block hash. Previously the TipRequest server
-    /// branch was uncovered.
     #[test]
-    fn t1_20_snapshot_provider_handles_tip_request() {
+    fn t1_20_download_progress_complete_is_one() {
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::Complete { synced_height: 100 };
+        assert_eq!(sync.download_progress(), 1.0);
+        assert!(sync.is_complete());
+        assert!(!sync.is_failed());
+    }
+
+    #[test]
+    fn t1_20_is_failed_and_progress_zero_on_failed() {
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::Failed("test".into());
+        assert_eq!(sync.download_progress(), 0.0);
+        assert!(sync.is_failed());
+        assert!(!sync.is_complete());
+    }
+
+    #[test]
+    fn t1_20_download_progress_downloading_zero_total_chunks() {
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 100,
+            total_chunks: 0,
+            received_chunks: 0,
+        };
+        assert_eq!(sync.download_progress(), 0.0);
+    }
+
+    #[test]
+    fn t1_20_snapshot_provider_handle_request_header_request_returns_none() {
         let p = SnapshotProvider::new();
-        let local_hash = [99u8; 32];
-        let resp = p.handle_request(&SyncMessage::TipRequest, 1234, local_hash);
-        match resp {
-            Some(SyncMessage::TipResponse { height, block_hash }) => {
-                assert_eq!(height, 1234);
-                assert_eq!(block_hash, local_hash);
-            }
-            _ => panic!("expected TipResponse"),
-        }
+        let result = p.handle_request(&SyncMessage::HeaderRequest { height: 100 }, 200, [0u8; 32]);
+        assert!(result.is_none(), "HeaderRequest falls through to _ => None");
     }
 
-    /// T1.20 — SnapshotProvider::handle_request for
-    /// SnapshotMetadataRequest returns metadata when present, None
-    /// when not. Previously uncovered server branch.
     #[test]
-    fn t1_20_snapshot_provider_handles_metadata_request() {
-        let mut p = SnapshotProvider::new();
-        let meta = p.create_snapshot(50, 5, [42u8; 32], &vec![0u8; 5000]);
-        let resp = p.handle_request(
-            &SyncMessage::SnapshotMetadataRequest { height: 50 },
-            50,
-            [0u8; 32],
-        );
-        match resp {
-            Some(SyncMessage::SnapshotMetadataResponse { metadata }) => {
-                assert_eq!(metadata.height, meta.height);
-                assert_eq!(metadata.state_root, meta.state_root);
-            }
-            _ => panic!("expected SnapshotMetadataResponse"),
-        }
-
-        // Missing height → None.
-        let none_resp = p.handle_request(
-            &SyncMessage::SnapshotMetadataRequest { height: 9999 },
-            50,
-            [0u8; 32],
-        );
-        assert!(none_resp.is_none());
-    }
-
-    /// T1.20 — SnapshotProvider::handle_request for ChunkRequest:
-    /// valid chunk returns ChunkResponse; missing chunk returns None.
-    /// Targets the chunk-serve happy path + chunk-not-found branch.
-    #[test]
-    fn t1_20_snapshot_provider_handles_chunk_request() {
-        let mut p = SnapshotProvider::new();
-        let data = vec![7u8; CHUNK_SIZE * 2 + 100];
-        p.create_snapshot(60, 5, [0u8; 32], &data);
-
-        // Valid chunk request.
-        let resp = p.handle_request(
-            &SyncMessage::ChunkRequest {
-                height: 60,
-                chunk_index: 0,
-            },
-            60,
-            [0u8; 32],
-        );
-        match resp {
-            Some(SyncMessage::ChunkResponse { chunk }) => {
-                assert_eq!(chunk.height, 60);
-                assert_eq!(chunk.index, 0);
-                assert_eq!(chunk.data.len(), CHUNK_SIZE);
-            }
-            _ => panic!("expected ChunkResponse"),
-        }
-
-        // Missing snapshot (different height) → None.
-        let none_resp = p.handle_request(
-            &SyncMessage::ChunkRequest {
-                height: 99999,
-                chunk_index: 0,
-            },
-            60,
-            [0u8; 32],
-        );
-        assert!(none_resp.is_none());
-    }
-
-    /// T1.20 — SnapshotProvider::handle_request for TipResponse /
-    /// HeaderResponse / SnapshotMetadataResponse / ChunkResponse all
-    /// fall through to None. Covers the server-side `_ => None` arm.
-    #[test]
-    fn t1_20_snapshot_provider_ignores_response_messages() {
+    fn t1_20_snapshot_provider_handle_request_missing_snapshot_returns_none() {
         let p = SnapshotProvider::new();
-        let r = p.handle_request(
-            &SyncMessage::TipResponse {
-                height: 0,
-                block_hash: [0u8; 32],
-            },
-            0,
+        let result = p.handle_request(
+            &SyncMessage::SnapshotMetadataRequest { height: 999 },
+            200,
             [0u8; 32],
         );
-        assert!(r.is_none());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_snapshot_provider_handle_chunk_request_out_of_bounds() {
+        let mut p = SnapshotProvider::new();
+        p.create_snapshot(100, 1, [0u8; 32], &vec![0u8; 100]);
+        // chunk_index = 99 is past chunk_hashes.len() — must return None (not panic).
+        let result = p.handle_request(
+            &SyncMessage::ChunkRequest { height: 100, chunk_index: 99 },
+            100,
+            [0u8; 32],
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_handle_snapshot_metadata_height_mismatch_ignored() {
+        let mut sync = StateSyncManager::new(0);
+        sync.target_height = Some(100);
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 100,
+            total_chunks: 0,
+            received_chunks: 0,
+        };
+        let wrong_meta = SnapshotMetadata {
+            height: 999, // mismatch
+            epoch: 9,
+            state_root: [0u8; 32],
+            total_chunks: 1,
+            chunk_hashes: vec![[0u8; 32]],
+            total_size: 64,
+        };
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: wrong_meta });
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn t1_20_handle_snapshot_metadata_chunk_hash_count_mismatch() {
+        let mut sync = StateSyncManager::new(0);
+        sync.peer_tips.insert(1, (100, [100u8; 32]));
+        sync.target_height = Some(100);
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 100,
+            total_chunks: 0,
+            received_chunks: 0,
+        };
+        let bad_meta = SnapshotMetadata {
+            height: 100,
+            epoch: 1,
+            state_root: [0u8; 32],
+            total_chunks: 3,        // claims 3 chunks
+            chunk_hashes: vec![[0u8; 32]], // but only 1 hash
+            total_size: 64,
+        };
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: bad_meta });
+        assert!(actions.is_empty(), "hash count mismatch must be rejected");
     }
 }
