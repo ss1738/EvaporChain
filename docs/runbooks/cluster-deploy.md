@@ -202,6 +202,31 @@ the divergence trap that bit us 2026-05-08.
 Run these IN ORDER. If any fails, halt the deploy validation and
 investigate before declaring success.
 
+### (0) Bundle-aware automated check — preferred
+
+For deploys of multi-item bundles (the 8-item 100x bundle, etc.), use
+the automated validation script — it runs the 7 bundle-specific
+checks (governance flags, liveness, eulogy progression, conservation
+audits, APY cap, tx-hash persistence) in one invocation with
+exit-code-per-check-failure:
+
+```bash
+bash scripts/phase-c-validation.sh \
+  --nodes "100.119.53.101,100.113.253.72,100.103.216.125,100.66.208.20,100.91.235.22" \
+  --port 8081
+
+# Fast mode (~3 min — skip the 20-min tx-persistence test):
+bash scripts/phase-c-validation.sh --nodes "..." --skip-tx
+```
+
+Exit codes: `1` = pre-flight failed, `2` = governance flags wrong,
+`3` = liveness, `4` = eulogy regression, `5` = conservation violation,
+`6` = APY cap not gating, `7` = tx-hash persistence broken.
+
+If the bundle being deployed is **NOT** the 100x bundle (different
+items, different flags), use checks (a)/(b)/(c) below as the
+falls-back-to-basics path.
+
 ### (a) All 5 respond + advancing
 
 ```bash
