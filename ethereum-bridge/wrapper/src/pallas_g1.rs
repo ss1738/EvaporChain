@@ -103,11 +103,12 @@ impl NonNativePallasPoint {
         cs: ConstraintSystemRef<Bn254Fr>,
         point: PallasAffine,
     ) -> Result<Self, SynthesisError> {
+        // arkworks 0.5: `xy()` returns owned `(Fq, Fq)` not refs.
         let (x_val, y_val) = point
             .xy()
             .expect("identity point not supported by NonNativePallasPoint scaffold");
-        let x = alloc_nonnative_fq_witness(cs.clone(), *x_val)?;
-        let y = alloc_nonnative_fq_witness(cs, *y_val)?;
+        let x = alloc_nonnative_fq_witness(cs.clone(), x_val)?;
+        let y = alloc_nonnative_fq_witness(cs, y_val)?;
         Ok(Self { x, y })
     }
 }
@@ -266,13 +267,14 @@ mod tests {
 
         // Off-circuit verification — pin that the math IS correct;
         // the failure is in arkworks's constraint layer, not our formula.
+        // arkworks 0.5: `xy()` returns owned tuples — no derefs needed.
         let (x1, y1) = p1.xy().expect("p1 xy");
         let (x2, y2) = p2.xy().expect("p2 xy");
         let (x3, y3) = p3.xy().expect("p3 xy");
-        let lambda = (*y2 - *y1) * (*x2 - *x1).inverse().expect("dx inv");
-        assert_eq!(lambda * (*x2 - *x1), *y2 - *y1, "off-circuit slope OK");
-        assert_eq!(lambda * lambda, *x3 + *x1 + *x2, "off-circuit x-coord OK");
-        assert_eq!(lambda * (*x1 - *x3), *y3 + *y1, "off-circuit y-coord OK");
+        let lambda = (y2 - y1) * (x2 - x1).inverse().expect("dx inv");
+        assert_eq!(lambda * (x2 - x1), y2 - y1, "off-circuit slope OK");
+        assert_eq!(lambda * lambda, x3 + x1 + x2, "off-circuit x-coord OK");
+        assert_eq!(lambda * (x1 - x3), y3 + y1, "off-circuit y-coord OK");
 
         assert!(
             cs.is_satisfied().expect("is_satisfied"),

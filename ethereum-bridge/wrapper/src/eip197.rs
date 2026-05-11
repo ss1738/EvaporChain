@@ -108,14 +108,17 @@ pub struct Eip197Parts {
 
 fn write_g1_affine(point: &G1Affine, dst: &mut [u8]) -> Result<(), ConversionError> {
     debug_assert_eq!(dst.len(), 64);
+    // arkworks 0.5: `point.xy()` returns `Option<(Fq, Fq)>` (owned),
+    // not `Option<(&Fq, &Fq)>` as in 0.4 — pass references.
     let (x, y) = point.xy().ok_or(ConversionError::PointAtInfinity)?;
-    write_fq_be(x, &mut dst[0..32])?;
-    write_fq_be(y, &mut dst[32..64])?;
+    write_fq_be(&x, &mut dst[0..32])?;
+    write_fq_be(&y, &mut dst[32..64])?;
     Ok(())
 }
 
 fn write_g2_affine(point: &G2Affine, dst: &mut [u8]) -> Result<(), ConversionError> {
     debug_assert_eq!(dst.len(), 128);
+    // arkworks 0.5: owned `(Fq2, Fq2)` tuple — same EIP-197 layout.
     let (x, y) = point.xy().ok_or(ConversionError::PointAtInfinity)?;
     // EIP-197: c1 (imaginary) first, then c0 (real). See module doc.
     write_fq_be(&x.c1, &mut dst[0..32])?;
