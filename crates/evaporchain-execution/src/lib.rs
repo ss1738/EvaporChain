@@ -7888,4 +7888,78 @@ contract Counter {
             "GAS_REFUND must be lower than GAS_TRANSFER to keep proposer settlement economically attractive"
         );
     }
+
+    /// T1.20 — ExecutionCache full surface (previously 0%-covered).
+    /// Pure data structure: new + put + get + len + is_empty + clear +
+    /// eviction-by-oldest-height policy.
+
+    #[test]
+    fn t1_20_execution_cache_new_is_empty() {
+        let c = ExecutionCache::new(10);
+        assert_eq!(c.len(), 0);
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn t1_20_execution_cache_put_and_get() {
+        let mut c = ExecutionCache::new(10);
+        let tx_h = [1u8; 32];
+        let pre = [2u8; 32];
+        c.put(&tx_h, &pre, 21_000, true, 100);
+        assert_eq!(c.len(), 1);
+        assert!(!c.is_empty());
+        assert_eq!(c.get(&tx_h, &pre), Some((21_000, true)));
+    }
+
+    #[test]
+    fn t1_20_execution_cache_miss_returns_none() {
+        let c = ExecutionCache::new(10);
+        assert!(c.get(&[1u8; 32], &[2u8; 32]).is_none());
+    }
+
+    #[test]
+    fn t1_20_execution_cache_key_binds_tx_hash_AND_pre_root() {
+        let mut c = ExecutionCache::new(10);
+        let tx_h = [1u8; 32];
+        c.put(&tx_h, &[2u8; 32], 21_000, true, 100);
+        // Same tx_hash but different pre_state_root → miss.
+        assert!(c.get(&tx_h, &[3u8; 32]).is_none());
+        // Original key still hits.
+        assert_eq!(c.get(&tx_h, &[2u8; 32]), Some((21_000, true)));
+    }
+
+    #[test]
+    fn t1_20_execution_cache_eviction_when_at_cap() {
+        let mut c = ExecutionCache::new(2);
+        // Fill to cap with monotonically increasing height.
+        c.put(&[1u8; 32], &[0u8; 32], 1_000, true, 1);
+        c.put(&[2u8; 32], &[0u8; 32], 2_000, true, 2);
+        assert_eq!(c.len(), 2);
+        // Insert a third → eviction. The min-by-last_used_height
+        // entry (the first one at height 1) gets evicted.
+        c.put(&[3u8; 32], &[0u8; 32], 3_000, true, 3);
+        assert_eq!(c.len(), 2);
+        // The first entry should be gone.
+        assert!(c.get(&[1u8; 32], &[0u8; 32]).is_none());
+        // The two later entries survive.
+        assert!(c.get(&[2u8; 32], &[0u8; 32]).is_some());
+        assert!(c.get(&[3u8; 32], &[0u8; 32]).is_some());
+    }
+
+    #[test]
+    fn t1_20_execution_cache_clear_resets() {
+        let mut c = ExecutionCache::new(10);
+        c.put(&[1u8; 32], &[2u8; 32], 21_000, true, 100);
+        assert_eq!(c.len(), 1);
+        c.clear();
+        assert_eq!(c.len(), 0);
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn t1_20_execution_cache_put_records_failure_too() {
+        let mut c = ExecutionCache::new(10);
+        c.put(&[5u8; 32], &[6u8; 32], 7_000, false, 50);
+        assert_eq!(c.get(&[5u8; 32], &[6u8; 32]), Some((7_000, false)));
+    }
 }
