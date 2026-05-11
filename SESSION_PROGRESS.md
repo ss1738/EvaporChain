@@ -48,6 +48,61 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-11 — T0 mainnet-blocker substrate sweep (T0.1, T0.3, T0.5, T0.6, T0.7, T0.8, T0.11)
+
+**Focus:** plow through the T0 mainnet-blocker lanes one at a time, closing every substrate-level gap that doesn't require a live cluster (T3.1).
+
+**Commits shipped:** 11 (`32af53c` → `9b918d6`).
+
+**Deliverables:**
+
+| Lane | Commit | What landed |
+|---|---|---|
+| T0.1 C.5 | `32af53c` | partition + heal convergence under `mcc_full` (2 tests: 3-of-5, 4-of-5 partition scenarios; all 5 validators converge on same authoritative head + parents after heal) |
+| T0.1 C.6 | `61c95cf` | Byzantine proposer wrong-head detection (2 tests: detectability via independent argmax; argmax is a fixed point under wrong-head spam) |
+| T0.3 | `e17f02d` | POST_EXEC Phase 4 chain-stall + recovery contract under enforce-mode (2 tests: rejected block doesn't advance height; clean re-proposed block at same height applies) |
+| T0.7 V1-3 | `0d1234b` | DoS resistance regression suite + operator runbook (3 tests: tx-flood max_size cap; signature-storm pool-stays-empty; per-account fairness cap) |
+| T0.7 V4 | `c84cc45` | Encrypted mempool reveal-flood coverage (3 tests: reveal-too-early temporal gate; stale-commitment expiry at reveal_epoch; **DOCUMENTED GAP**: no admission cap on submit_encrypted) |
+| T0.8 | `c6be7e7` | Adversarial snapshot fixtures (3 fixtures: truncated zstd rejected; duplicate validator IDs accepted-currently gap; forged integrity_hash gap pending quorum-cert binding) |
+| T0.11 | `82fd025` | Bridge dispatcher hook-lifecycle + replay-via-reregister forge tests (4 tests: cancel-before-fire reregister; only-registrar-can-cancel; cancel-after-fire reverts; replay-via-reregister blocked by HookAlreadyRegistered) |
+| T0.5 sub-task 5 | `ce55a71` | PNT v1 adversarial respend-after-eviction rejected via anchor (with intermediate shield → root advances → StaleAnchor) |
+| T0.5 Stage-2 hazard | `6a7452e` | Name-tags the Stage 1 vs Stage 2 PNT v1 boundary in CI — engine.nullifier_set is the current canonical defense, NOT bounded window + anchor as audit narrative claims |
+| T0.6 substrate | `9b918d6` | Multi-validator slash determinism — equivocation + downtime slash amounts identical across 4 independent TendermintConsensus instances |
+
+**Empirical results:**
+- **T0.1 closed:** all 6 sub-tasks (C.1–C.6) ✅ shipped. C.1–C.4 substrate already done pre-session; C.5 + C.6 added this session.
+- **T0.3 code-complete.** Cluster acceptance ("5-node cluster + adversarial divergence") is operational, blocks on T3.1.
+- **T0.6 substrate-determinism locked.** Slash amounts are byte-identical across validators for the same input. Cluster acceptance (5 adversarial scenarios) blocks on T3.1.
+- **T0.7 4/7 vectors in CI** (was 0). 6 tests + runbook. 2 documented gaps surfaced.
+- **T0.8 3 fixtures + 1 documented gap.** Quorum-cert verification + partial-state-withhold detection remain.
+- **T0.11 closed.** Dispatcher already had load-bearing defenses; 4 new forge tests lock the hook lifecycle.
+
+**Decisions made:**
+
+- **Stage-2 PNT v1 transition needs additional defense.** Today's canonical no-double-spend gate is `engine.nullifier_set` at `privacy_exec.rs:577`, NOT the bounded-window + anchor pair the audit narrative claims. When the Stage 2 hard-fork (referenced in the comment at `privacy_exec.rs:583`) removes `engine.nullifier_set` as canonical, the no-intermediate-shield respend would succeed UNLESS one of: (a) anchor-history bound, (b) phase-advance gated on root-change, or (c) persistent v1 nullifier set lands first. Captured in CI as `pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set`.
+- **Encrypted mempool admission cap is missing.** `submit_encrypted` is `Vec::push` with no cap. Documented as `dos_v4_encrypted_mempool_has_no_admission_cap_GAP`. Needs substrate hardening before mainnet flip.
+
+**What's next:**
+
+1. **T0.6 cluster acceptance** — 5 adversarial-validator scenarios on T3.1. Blocked on cluster.
+2. **T1.20 coverage push** — `cargo llvm-cov` from current ~73% → ≥90%. Substrate-level work, no cluster dep.
+3. **T0.7 Vector 5 (DAG fork-spam)** — lone remaining in-CI gap for T0.7; needs multi-validator DAG harness.
+4. **PNT v1 Stage 2 defense** — pick one of the 3 candidate mechanisms (anchor-history bound is cheapest, persisted-set is simplest) and ship before flipping `protocol_version = 1` on mainnet.
+5. **Encrypted-mempool admission cap** — add `MAX_ENCRYPTED_MEMPOOL_SIZE` + per-sender cap.
+
+**Blockers / open questions:**
+- T0.6 and T0.7 cluster-load operational portions both wait on T3.1.
+- T0.9 (Bridge Phase 4 V2 Halo2 EccChip) — parallel session was active on `pr/t0-9-sub-d-followup` and `pr/t0-8-adversarial-snapshot-tests` branches; coordination needed when both arcs hit main.
+
+**Cross-references:**
+- `CHANGELOG.md` 2026-05-11 (formal ship log if updated separately)
+- `docs/runbooks/dos-resistance.md` — refreshed to reflect 6 tests / 4 vectors / 2 gaps
+- `crates/evaporchain-state/tests/adversarial_snapshots.rs` — new T0.8 fixtures crate
+- `crates/evaporchain-consensus/tests/dos_resistance.rs` — new T0.7 regression suite
+- Notable security observation: `pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set` (commit `6a7452e`) — Stage 1 vs Stage 2 boundary for PNT v1.
+
+---
+
 ## 2026-05-09 (cleanup) — clippy + doctest + binary smoke + rewards-math test fix
 
 **Focus:** post-audit-arc hygiene + flush of every known broken test surfaced during verification.
