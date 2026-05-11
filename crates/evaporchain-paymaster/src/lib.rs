@@ -3097,4 +3097,89 @@ mod tests {
         }
         assert_eq!(pm.next_paymaster_nonce(), 50);
     }
+
+    // ─── T1.20 paymaster coverage push ──────────────────────────────
+
+    /// InnerVariant::from_transaction must recognise CallScript and
+    /// CallContract (line 174 + 175 previously uncovered — only the
+    /// Transfer arm + None arm had tests).
+    #[test]
+    fn t1_20_inner_variant_from_transaction_call_script() {
+        use evaporchain_types::{CallScriptTx, Transaction};
+        let tx = Transaction::CallScript(CallScriptTx {
+            caller: [1u8; 32],
+            contract_id: 7,
+            method: "x".to_string(),
+            args: "{}".to_string(),
+            epoch: 0,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(InnerVariant::from_transaction(&tx), Some(InnerVariant::CallScript));
+    }
+
+    #[test]
+    fn t1_20_inner_variant_from_transaction_call_contract() {
+        use evaporchain_types::{CallContractTx, Transaction};
+        let tx = Transaction::CallContract(CallContractTx {
+            caller: [2u8; 32],
+            contract_id: 9,
+            method: "y".to_string(),
+            args: "{}".to_string(),
+            epoch: 0,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(
+            InnerVariant::from_transaction(&tx),
+            Some(InnerVariant::CallContract)
+        );
+    }
+
+    #[test]
+    fn t1_20_inner_variant_from_transaction_returns_none_for_other_variants() {
+        use evaporchain_types::{RefreshTx, Transaction};
+        let tx = Transaction::Refresh(RefreshTx {
+            object_id: [3u8; 32],
+            energy_deposit: 100,
+            signature: None,
+            public_key: None,
+        });
+        assert!(InnerVariant::from_transaction(&tx).is_none());
+    }
+
+    /// generate_keypair_to_file + load_keypair_from_file round-trip.
+    /// Previously both functions (lines ~1450-1490) were 0%-covered.
+    #[test]
+    fn t1_20_keypair_file_round_trip() {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let path = tmpdir.path().join("kp.json");
+        let kp1 = generate_keypair_to_file(&path).expect("generate");
+        let kp2 = load_keypair_from_file(&path).expect("load");
+        // Roundtrip preserves the address derivation
+        // (blake3 of public key bytes).
+        let addr1: AccountAddress = *blake3::hash(&kp1.public_key_bytes()).as_bytes();
+        let addr2: AccountAddress = *blake3::hash(&kp2.public_key_bytes()).as_bytes();
+        assert_eq!(addr1, addr2);
+    }
+
+    #[test]
+    fn t1_20_load_keypair_missing_file_errors() {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let path = tmpdir.path().join("nonexistent.json");
+        let result = load_keypair_from_file(&path);
+        assert!(
+            result.is_err(),
+            "missing file MUST error, not silently return"
+        );
+    }
+
+    #[test]
+    fn t1_20_load_keypair_bad_json_errors() {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let path = tmpdir.path().join("bad.json");
+        std::fs::write(&path, "this is not json").unwrap();
+        let result = load_keypair_from_file(&path);
+        assert!(result.is_err());
+    }
 }
