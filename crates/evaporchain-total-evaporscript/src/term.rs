@@ -198,4 +198,53 @@ mod tests {
         let back: Term = serde_json::from_str(&s).unwrap();
         assert_eq!(t, back);
     }
+
+    /// T1.20 — Expr::is_positive_literal (lines 122-124).
+    #[test]
+    fn t1_20_expr_is_positive_literal() {
+        assert!(Expr::Lit(1).is_positive_literal());
+        assert!(Expr::Lit(100).is_positive_literal());
+        assert!(!Expr::Lit(0).is_positive_literal());
+        assert!(!Expr::Lit(-1).is_positive_literal());
+        assert!(!Expr::Var("x".into()).is_positive_literal());
+    }
+
+    /// T1.20 — Expr::as_strict_decrement matches `Var - Lit(k>0)`
+    /// (line 140) and rejects all other shapes.
+    #[test]
+    fn t1_20_expr_as_strict_decrement() {
+        let dec = Expr::Bin {
+            op: BinOp::Sub,
+            lhs: Box::new(Expr::Var("r".into())),
+            rhs: Box::new(Expr::Lit(1)),
+        };
+        assert_eq!(dec.as_strict_decrement(), Some(("r", 1)));
+
+        // Lit zero — rejected.
+        let zero = Expr::Bin {
+            op: BinOp::Sub,
+            lhs: Box::new(Expr::Var("r".into())),
+            rhs: Box::new(Expr::Lit(0)),
+        };
+        assert!(zero.as_strict_decrement().is_none());
+
+        // Wrong shape: Var - Var.
+        let wrong = Expr::Bin {
+            op: BinOp::Sub,
+            lhs: Box::new(Expr::Var("r".into())),
+            rhs: Box::new(Expr::Var("s".into())),
+        };
+        assert!(wrong.as_strict_decrement().is_none());
+
+        // Wrong op: Add.
+        let add = Expr::Bin {
+            op: BinOp::Add,
+            lhs: Box::new(Expr::Var("r".into())),
+            rhs: Box::new(Expr::Lit(1)),
+        };
+        assert!(add.as_strict_decrement().is_none());
+
+        // Not a Bin at all.
+        assert!(Expr::Lit(5).as_strict_decrement().is_none());
+    }
 }
