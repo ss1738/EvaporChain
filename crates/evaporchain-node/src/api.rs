@@ -16922,9 +16922,24 @@ async fn post_submit_encrypted_tx(
         submitted_epoch: current_epoch,
     };
 
-    {
+    // Honour the pool's capacity cap (PR #17 — T0.7 vector 4). If the
+    // encrypted mempool is at MAX_ENCRYPTED_PENDING, submit_encrypted
+    // returns false; surface that as a 503 rather than the prior
+    // silent-accept behaviour (which would have responded
+    // "success: true" while dropping the tx on the floor).
+    let accepted = {
         let mut pool = state.encrypted_mempool.lock().unwrap();
-        pool.submit_encrypted(enc_tx);
+        pool.submit_encrypted(enc_tx)
+    };
+    if !accepted {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "success": false,
+                "message": "encrypted mempool at capacity; retry shortly",
+                "commitment": body.commitment,
+            })),
+        );
     }
 
     (

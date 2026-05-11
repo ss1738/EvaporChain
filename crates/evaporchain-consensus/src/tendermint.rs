@@ -3483,13 +3483,17 @@ impl TendermintConsensus {
     }
 
     /// Submit an encrypted transaction to the MEV-protected mempool.
-    pub fn submit_encrypted_tx(&mut self, encrypted_tx: EncryptedTransaction) {
+    /// Returns `true` if accepted; `false` if the underlying pool is
+    /// at capacity (T0.7 vector 4 — encrypted-mempool reveal-flood
+    /// admission cap). Callers in the API layer surface this as a
+    /// 503 to the submitter.
+    pub fn submit_encrypted_tx(&mut self, encrypted_tx: EncryptedTransaction) -> bool {
         debug!(
             commitment = hex::encode(encrypted_tx.commitment),
             submitted_epoch = encrypted_tx.submitted_epoch,
             "Encrypted tx submitted to MEV-protected pool"
         );
-        self.encrypted_mempool.submit_encrypted(encrypted_tx);
+        self.encrypted_mempool.submit_encrypted(encrypted_tx)
     }
 
     /// Submit a reveal nonce for a previously committed encrypted transaction.
