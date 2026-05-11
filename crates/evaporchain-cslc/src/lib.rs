@@ -41,9 +41,20 @@
 //!   Recovers multi-state ε-machines: fair coin → 1 state,
 //!   period-2 → 2 states, golden-mean shift → 2 states with the
 //!   uniform-class pmf within ε=0.02 TV-distance of reference at
-//!   α=0.001. Phase II determinization currently over-splits on
-//!   the canonical even-process (~2× canonical state count); fix
-//!   tracked in `DOCTRINE_PUNCH_LIST.md` Layer 2 follow-up.
+//!   α=0.001. The **canonical even-process** over-splits ~2×
+//!   (4 states vs 2): root cause diagnosed 2026-05-05 — recovered
+//!   pmfs `[67/33, 75/25, 50/50, 100/0]` where the two pure states
+//!   are canonical E + O, and `67/33` + `75/25` are
+//!   *statistical-mixture artifacts* (empty-history marginal at
+//!   π=(2/3,1/3) and `P(X_t|X_{t-1}=0)` posterior mixture). The χ²
+//!   test correctly distinguishes mixtures from pure states; Phase
+//!   III merge correctly does NOT collapse them. Proper fix is
+//!   **multi-week research-grade algorithmic redesign**
+//!   (convex-combination mixture detection, OR Strelioff-Crutchfield
+//!   2014 Bayesian credible intervals, OR strict L-grow-on-split
+//!   Shalizi-Klinkner semantics). Open research thread, not a
+//!   punch-list item. The test `cssr_even_process_recovers_two_states`
+//!   stays `#[ignore]`'d with the diagnostic preserved in-source.
 //! - [`predict`] — `predict_next(machine, current_state)` returns
 //!   the per-symbol output distribution.
 
