@@ -1,5 +1,83 @@
 # EvaporChain Changelog
 
+## 2026-05-11 (sprint-pass) — mainnet audit-pass: 7 lane audit-miss closures + DoS hardening + workspace hygiene (11 commits)
+
+End-to-end mainnet-readiness audit driven by operator request. Spans 11 commits (`b58326a` → `dd85319`) on `pr/t0-substrate-memento-contracts`. The session's dominant finding: the lane spec was lagging the actual code by 1-3 days on **7 separate Tier-0/Tier-1 lanes**. Each was re-verified against Mini 1 evidence and the lane board flipped. Plus 3 audit findings closed in code, plus the workspace shed 21 dead-weight crates and 11 obsolete docs.
+
+### Audit findings closed in code (`8c59fad`)
+
+| ID | Severity | Site | Class |
+|---|---|---|---|
+| AUDIT-2026-05-11-1 | HIGH | `crates/evaporchain-network/src/service.rs:1746` | DoS — `ShardSample` handler missing per-peer rate-limit (gossipsub + BlockSync had it; this protocol didn't) |
+| AUDIT-2026-05-11-2 | HIGH | `crates/evaporchain-network/src/service.rs:1750` | DoS — unbounded `queries.len()` drove Merkle-proof CPU per request. Closed with `MAX_SHARD_QUERIES_PER_REQUEST = 256` + `ban_list.record_violation` on overshoot |
+| AUDIT-2026-05-11-3 | MEDIUM | `crates/evaporchain-execution/src/privacy_exec.rs:879-882` | Arithmetic — raw `*`/`+` on u64 in private-tx gas estimator. Switched to `saturating_*` to match `parallel.rs:1018` discipline |
+
+Tests pinning the cap (`shard_query_cap_is_capped_at_256`) and the saturating arithmetic (`gas_estimator_saturates_on_pathological_input`) green on Mini 1.
+
+### Audit-miss closures (lane board reconciled to code)
+
+These were lanes marked 🟡 OPEN in `MAINNET_READINESS.md` whose acceptance criteria were already met in tree:
+
+- **T0.5 PNT — sub-task 5** (`8b9e10d`). The lane spec asked for `pnt_v1_respend_after_window_eviction_rejected_via_anchor`; the test was already at `crates/evaporchain-execution/src/privacy_exec.rs:2168` with a Stage-1 companion at line 2296. Both green on Mini 1 release. Lane flipped to CODE-COMPLETE — OPS-ONLY (gated on T3.1 cluster for governance flip).
+- **T0.7 V5 DAG fork-spam + ShardSample defenses** (`b10fc4b`). V5 multi-validator convergence shipped earlier in `0e976f4`; ShardSample rate-limit + cap shipped today in `8c59fad`. Lane status now PARTIAL with explicit commit refs; remaining work is the comprehensive end-to-end DoS suite (see Vector 6 harness below).
+- **T0.8 — all 5 adversarial fixtures** (`9cec905`). The lane's acceptance criterion ("all 5 adversarial fixtures rejected; clean fast-sync still works") was already met: `crates/evaporchain-state/tests/adversarial_snapshots.rs` carries exactly five `adversarial_t08_*` tests covering quorum-cert verification, integrity-hash chain validation, structural validation, payload tampering, and partial-state withhold. Re-ran on Mini 1 release: 5/5 ok in 0.04s. Lane flipped ✅ DONE.
+- **T0.9 Bridge V2 D-finish** (`c2e5936`). The lane preserved its pre-resolution blocker note ("Halo2 `Params<EqAffine>` reports `Circuit<Fq>` is required despite `EqAffine::ScalarExt = Fp`") even though the resolution comment was already in tree at `ethereum-bridge/circuits/src/circuit_v2.rs:997-1011` and `VerkleProverV2::{setup, prove_v2, verify_v2}` were fully implemented at lines 1019-1104. Re-verified `prove_v2_and_verify_v2_round_trip` on Mini 1 release: 77.40s end-to-end (k=11 IPA params, real `create_proof` + `verify_proof`). Lane flipped ✅ DONE, T0.10 flipped from 🔴 BLOCKED → 🟡 OPEN.
+- **T1.X1 EVR docs** — false-positive verified (already-flipped on 2026-05-10).
+
+### T0.7 Vector 6 — ShardSample DoS harness (operator-side)
+
+- **Vector 6 added to `docs/runbooks/dos-resistance.md`** (`12b7309`) with the regression-suite row pointing at the new defenses + the `shard_query_cap_is_capped_at_256` unit test.
+- **`crates/evaporchain-network/src/bin/shard-sample-flood.rs`** (`fef61de`) — Rust libp2p harness that connects as a peer to a target multiaddr and floods `ShardSampleRequest` payloads. Default 1024 queries-per-request is above the 256 cap so each request also exercises the cap-violation gate (`Peer ... sent N shard queries, cap is 256 — recording violation`). Reuses `P2pNetworkService::start` so the harness and validator share the production codec. Built clean on Mini 1 in 7.27s. Bash + curl can't drive this protocol; the harness is the runbook's Vector 6 invocation surface.
+- **Runbook touch-up** (`dd85319`) — drop the placeholder note now that the binary ships.
+
+### `scripts/dos-flood.sh` (operator-side)
+
+- **New** (`7a94303`). The runbook referenced this script for Vectors 1/2/3 operational acceptance but it didn't exist. Drives controlled tx-submission flood against an existing node's HTTP API (designed for the post-T3.1 cluster — does NOT spin up devnet). Mode flags: default (Vector 1 unique-sender), `--garbage-sigs` (Vector 2 malformed sigs), `--single-sender` (Vector 3 Sybil isolation). Includes baseline / post-flood snapshots of `block_number` + `mempool_len` for PASS/FAIL gating per vector. Runbook references updated to use `--target` explicitly.
+
+### Workspace hygiene (`b58326a`)
+
+- **11 docs archived** to `docs/archive/{obsolete-audits,completed-plans,deprecated}/`:
+  - obsolete audits: `FULL_AUDIT_2026_04_24.md`, `AUDIT_2026_05_06.md`, `AUDIT_2026_05_08_DECAY_LOOP.md`, `AUDIT_RECONCILIATION_2026-05-09.md`, `CHAIN_FINDINGS_2026_05_08.md`
+  - completed plans (all 100% shipped per their own status tables): `CROOKS_MEV_INTEGRATION_PLAN.md`, `LAMBDA_FOLD_NOVA_PLAN.md`, `LIGHT_CONE_FULL_DAG_PLAN.md`, `MCC_FULL_MULTI_PARENT_PLAN.md`
+  - explicitly DEPRECATED: `REMAINING_WORK.md`, `docs/MAINNET_PUNCHLIST.md`
+  - Root `.md` count: 22 → 13
+- **21 dead-weight crates dropped from workspace** (reverse-dependency scan confirmed zero consumers):
+  - `causal-chsh-{cli,renderer,sweep,realdata}`, `finality-attestation-{cli,renderer}`, `energy-coverage`, `compute-market`, `network-simplex-v2`, `scdi`, `ollivier-ricci`, `sgb`, `fold-debugger`, `scl`, `ssm`, `ra-did`, `sbav`, `epa-mmr-sumcheck`, `total-evaporscript-fuel`, `embd`, `light-client-example-balance-monitor`
+  - Workspace members: 154 → 133. `cargo check --workspace` clean on Mini 1 in 30.87s.
+  - **Kept** (caught by sanity-check): `eth-bridge` (used by `ethereum-bridge/relayer`), `dfri` (used by `dfri-fs`), `light-client-cli` (has its own operator runbook), `mera` (research artefact per CLAUDE.md), 8 doctrine primitives + 9 app-templates crates.
+- **CLAUDE.md preamble updated** — points new sessions at exactly 5 canonical docs (SESSION_PROGRESS, MAINNET_READINESS, DOCTRINE_PUNCH_LIST, AUDIT_2026_05_11, CHANGELOG) and documents the archive subdirectory layout.
+
+### New artifacts
+
+- **`MAINNET_SPRINT_PLAN_2026_05_11.md`** — consolidated sprint plan synthesizing today's audits: useless files inventory, info-clutter analysis, mainnet-blocker gap analysis, week-by-week sprint sequence.
+- **`AUDIT_2026_05_11.md`** — code-only audit (3 findings + 5 closed-on-inspection items). All findings closed in `8c59fad`.
+
+### Decisions made this arc
+
+- **CONSENSUS group lock respected.** Parallel session has active 216-line `+` diff on `byzantine_adversarial.rs` adding C.5/C.6 byzantine tests + 68-line diff on `tendermint.rs`. Did not touch `tendermint.rs`.
+- **T0.10 stack consolidation deferred.** Six unmerged feature branches (`pr/t0-10-subb-*`) plus an open `g1_add` completeness gap — surfaced but not consolidated this session.
+- **ShardSample flood harness is Rust, not bash.** The protocol is libp2p binary; bash + curl can't drive it.
+
+### Empirical results on Mini 1 (this session)
+
+- `cargo check --workspace` after dropping 21 crates: clean, 30.87s, 131 members
+- T0.9 V2 IPA round-trip (release): 77.40s, k=11 params
+- T0.8 5-fixture adversarial run (release): 5/5 ok, 0.04s
+- T0.5 PNT v1 respend tests (release): 2/2 ok, instant
+- `cargo check -p evaporchain-network --bin shard-sample-flood`: clean, 7.27s
+- New tests `shard_query_cap_is_capped_at_256` + `gas_estimator_saturates_on_pathological_input`: both pass
+
+### Cross-references
+
+- `MAINNET_SPRINT_PLAN_2026_05_11.md` — this session's audit + plan synthesis
+- `AUDIT_2026_05_11.md` — current code-side findings (3 closed today)
+- `MAINNET_READINESS.md` — lane board flipped for T0.5, T0.7, T0.8, T0.9
+- `docs/runbooks/dos-resistance.md` — Vector 6 added + Vectors 1/2/3 invocations fixed
+- `docs/archive/{obsolete-audits,completed-plans,deprecated}/` — new archive layout
+- `scripts/dos-flood.sh` + `crates/evaporchain-network/src/bin/shard-sample-flood.rs` — new operator harnesses
+
+---
+
 ## 2026-05-09 (audit-arc) — paymaster end-to-end audit + 7 V1-blocker fixes (8 commits)
 
 End-to-end audit of the V1 paymaster build (Days 1-13B, ~7,500 LOC across `dc89531..d7a37a0`), then shipping the actual V1-mainnet-blocker fixes the audit surfaced. Closes the realistic gap between "feature-complete + production-hardened in isolation" and "actually safe for mainnet." The two original V1 mainnet blockers (#1, #2) and reorg handling (#3) are all on `origin/main`. Spans 8 commits (`e2fddec` → `1e48720`).
