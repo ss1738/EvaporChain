@@ -250,12 +250,12 @@ function SessionCard({ session, onDisconnect }: { session: WcSession; onDisconne
           {chains.map((chain) => (
             <span
               key={chain}
-              className="px-1.5 py-0.5 rounded bg-evap-cyan/10 text-[9px] text-evap-cyan"
+              className="px-1.5 py-0.5 rounded bg-evap-cyan/10 text-[10px] text-evap-cyan"
             >
               {chain}
             </span>
           ))}
-          <span className="text-[9px] text-zinc-600">
+          <span className="text-[10px] text-zinc-600">
             Connected {connectedDate}
           </span>
         </div>

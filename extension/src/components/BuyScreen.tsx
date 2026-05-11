@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ChevronDown } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { Header } from "./Header";
 import { FiatProviderWidget, type FiatProvider } from "./FiatProviderWidget";
@@ -135,7 +135,7 @@ export function BuyScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mb-4">
-            <span className="text-3xl text-emerald-500">&#10003;</span>
+            <Check className="w-8 h-8 text-emerald-500" strokeWidth={2} />
           </div>
           <p className="text-sm font-semibold text-zinc-200">
             Purchase Initiated!
@@ -168,7 +168,7 @@ export function BuyScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
-            <span className="text-3xl text-red-400">&#10007;</span>
+            <X className="w-8 h-8 text-red-400" strokeWidth={2} />
           </div>
           <p className="text-sm font-semibold text-zinc-200">Purchase Failed</p>
           <p className="text-xs text-zinc-500 mt-1 text-center">
@@ -197,9 +197,9 @@ export function BuyScreen() {
       <div className="px-4 pt-4">
         <button
           onClick={() => setView("home")}
-          className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
+          className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-3 transition"
         >
-          &larr; Back
+          <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.5} /> Back
         </button>
         <h2 className="text-lg font-semibold text-zinc-100 mb-1">Buy EVAP</h2>
         <p className="text-xs text-zinc-500 mb-4">
@@ -413,7 +413,7 @@ function Footer({ provider }: { provider: FiatProvider }) {
   const label = provider === "moonpay" ? "MoonPay" : "Transak";
   return (
     <div className="px-4 py-3 mt-auto">
-      <p className="text-[9px] text-zinc-600 text-center">
+      <p className="text-[10px] text-zinc-600 text-center">
         Powered by {label}
       </p>
     </div>

@@ -176,7 +176,7 @@ export function SwapScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-evap-green/20 flex items-center justify-center mb-4">
-            <span className="text-3xl"><Check className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
+            <Check className="w-8 h-8 text-evap-green" strokeWidth={2} />
           </div>
           <p className="text-sm font-semibold text-zinc-200">Swap Successful</p>
           <p className="text-xs text-zinc-500 mt-1">
@@ -201,7 +201,7 @@ export function SwapScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-evap-red/20 flex items-center justify-center mb-4">
-            <span className="text-3xl"><X className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
+            <X className="w-8 h-8 text-evap-red" strokeWidth={2} />
           </div>
           <p className="text-sm font-semibold text-zinc-200">Swap Failed</p>
           <p className="text-xs text-zinc-500 mt-1 text-center">{error ?? "Something went wrong"}</p>
@@ -480,7 +480,7 @@ export function SwapScreen() {
 function Footer() {
   return (
     <div className="px-4 py-3 mt-auto">
-      <p className="text-[9px] text-zinc-600 text-center">
+      <p className="text-[10px] text-zinc-600 text-center">
         Powered by EvaporChain DEX
       </p>
     </div>

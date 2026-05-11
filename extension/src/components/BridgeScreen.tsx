@@ -507,7 +507,7 @@ function StepRow({ step }: { step: BridgeStep }) {
       </span>
 
       {step.timestamp && (
-        <span className="text-[9px] text-zinc-300 ml-auto">
+        <span className="text-[10px] text-zinc-300 ml-auto">
           {new Date(step.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       )}
@@ -547,11 +547,11 @@ function HistoryCard({
         </div>
       </div>
       <div className="flex items-center justify-between mt-1">
-        <span className="text-[9px] text-zinc-400">
+        <span className="text-[10px] text-zinc-400">
           {new Date(transfer.initiatedAt).toLocaleDateString()}
         </span>
         <span
-          className={`text-[9px] font-medium ${
+          className={`text-[10px] font-medium ${
             transfer.status === "completed"
               ? "text-emerald-600"
               : transfer.status === "failed"

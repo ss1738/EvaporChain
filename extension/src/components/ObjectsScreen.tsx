@@ -93,7 +93,7 @@ export function ObjectsScreen() {
                       if (sid == null) return null;
                       return (
                         <span
-                          className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30"
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30"
                           title={`Object lives on shard ${sid} (computed from owner address; api.rs ObjectResponse has no shard_id field)`}
                         >
                           S{sid}
@@ -102,7 +102,7 @@ export function ObjectsScreen() {
                     })()}
                     {obj.is_lad_typed === true && (
                       <span
-                        className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40"
+                        className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40"
                         title={
                           obj.lad_mode
                             ? `LAD-VM substructural mode: ${obj.lad_mode}`

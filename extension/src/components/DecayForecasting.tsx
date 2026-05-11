@@ -206,8 +206,8 @@ export function DecayForecasting() {
                 })}
               </div>
               <div className="flex justify-between">
-                <span className="text-[9px] text-zinc-600">Today</span>
-                <span className="text-[9px] text-zinc-600">+7 days</span>
+                <span className="text-[10px] text-zinc-600">Today</span>
+                <span className="text-[10px] text-zinc-600">+7 days</span>
               </div>
 
               {/* Energy summary */}
@@ -256,7 +256,7 @@ export function DecayForecasting() {
                           {energyPercent.toFixed(0)}%
                         </span>
                       </div>
-                      <span className="text-[9px] text-zinc-500">
+                      <span className="text-[10px] text-zinc-500">
                         Evaporates {evapDate.toLocaleDateString()} {evapDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
                     </div>
@@ -304,8 +304,8 @@ export function DecayForecasting() {
                           </div>
                         </div>
                         <div className="flex justify-between mt-0.5">
-                          <span className="text-[9px] text-zinc-600">Today</span>
-                          <span className="text-[9px] text-zinc-600">+14 days</span>
+                          <span className="text-[10px] text-zinc-600">Today</span>
+                          <span className="text-[10px] text-zinc-600">+14 days</span>
                         </div>
                       </div>
                     )}
@@ -357,7 +357,7 @@ export function DecayForecasting() {
                           <p className="text-xs text-zinc-200 truncate max-w-[120px]">
                             {rec.objectName}
                           </p>
-                          <p className="text-[9px] text-zinc-500">
+                          <p className="text-[10px] text-zinc-500">
                             {rec.daysRemaining.toFixed(1)}d left → {rec.daysSavedAfterRefresh.toFixed(1)}d after
                           </p>
                         </div>
@@ -413,7 +413,7 @@ function BudgetBox({
       <p className={`text-xs font-semibold ${active ? "text-evap-cyan" : "text-zinc-300"}`}>
         {cost > 0 ? cost.toLocaleString() : "0"}
       </p>
-      <p className="text-[9px] text-zinc-500">{label}</p>
+      <p className="text-[10px] text-zinc-500">{label}</p>
     </div>
   );
 }

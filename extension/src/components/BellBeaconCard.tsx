@@ -59,7 +59,7 @@ export function BellBeaconCard() {
     <div className="rounded-lg bg-evap-surface border border-evap-border p-3">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-cyan/15 text-evap-cyan border border-evap-cyan/40">
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-evap-cyan/15 text-evap-cyan border border-evap-cyan/40">
             Bell
           </span>
           <span className="text-xs font-medium text-zinc-300 uppercase tracking-wide">
@@ -68,11 +68,11 @@ export function BellBeaconCard() {
         </div>
         {bellSValue !== null && (
           certified ? (
-            <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-green/15 text-evap-green border border-evap-green/40">
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-evap-green/15 text-evap-green border border-evap-green/40">
               Certified ✓
             </span>
           ) : (
-            <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-amber/15 text-evap-amber border border-evap-amber/40">
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-evap-amber/15 text-evap-amber border border-evap-amber/40">
               Local-realism floor
             </span>
           )
@@ -100,7 +100,7 @@ export function BellBeaconCard() {
           title={`Local-realism threshold: ${thresholdDecimal}`}
         />
       </div>
-      <div className="flex justify-between text-[9px] text-zinc-500 mb-2">
+      <div className="flex justify-between text-[10px] text-zinc-500 mb-2">
         <span>0</span>
         <span className="text-evap-purple">|S|=2 ({thresholdDecimal})</span>
         <span>2.83</span>
@@ -112,14 +112,14 @@ export function BellBeaconCard() {
         certifies quantum-mechanical correlation in the beacon.
       </p>
       {latest && latest.status === "no_data" ? (
-        <div className="mt-1.5 inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full bg-evap-amber/10 text-evap-amber border border-evap-amber/30">
+        <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-evap-amber/10 text-evap-amber border border-evap-amber/30">
           <span>•</span>
           <span>
             No live measurement yet — design target shown (block {latest.block_height})
           </span>
         </div>
       ) : (
-        <p className="text-[9px] text-zinc-600 leading-snug mt-1.5">
+        <p className="text-[10px] text-zinc-600 leading-snug mt-1.5">
           Per-block validator-attested S is reported via{" "}
           <span className="font-mono">/api/bell/latest</span>.
         </p>

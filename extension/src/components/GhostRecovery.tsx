@@ -147,7 +147,7 @@ export function GhostRecovery() {
                 <span className="text-xs text-zinc-500">EVAP</span>
               </div>
 
-              <p className="text-[9px] text-zinc-500 mb-2">
+              <p className="text-[10px] text-zinc-500 mb-2">
                 Minimum cost: {formatBalance(selectedDetail.recovery_cost)} EVAP
               </p>
 
@@ -269,14 +269,14 @@ function GhostCard({
               <p className={`text-xs font-semibold ${isExpired ? "text-zinc-500 italic" : "text-zinc-400 italic"}`}>
                 {ghost.name || "Unknown Object"}
               </p>
-              <p className="text-[9px] text-zinc-600 font-mono">
+              <p className="text-[10px] text-zinc-600 font-mono">
                 {ghost.id.slice(0, 8)}...{ghost.id.slice(-6)}
               </p>
             </div>
           </div>
 
           {/* Proof badge */}
-          <span className={`text-[9px] px-2 py-0.5 rounded-full ${
+          <span className={`text-[10px] px-2 py-0.5 rounded-full ${
             isExpired
               ? "bg-red-500/10 text-red-400"
               : isExpiring
@@ -288,7 +288,7 @@ function GhostCard({
         </div>
 
         {/* Evaporation info */}
-        <div className="flex items-center justify-between text-[9px] text-zinc-500 mb-1.5">
+        <div className="flex items-center justify-between text-[10px] text-zinc-500 mb-1.5">
           <span>Evaporated {ghost.epochs_since_evaporation} epochs ago</span>
           <span>Half-life: {ghost.half_life}e</span>
         </div>
@@ -296,7 +296,7 @@ function GhostCard({
         {/* Recovery window bar */}
         {!isExpired && (
           <div className="mb-1.5">
-            <div className="flex justify-between text-[9px] mb-0.5">
+            <div className="flex justify-between text-[10px] mb-0.5">
               <span className="text-zinc-500">Recovery window</span>
               <span className={isExpiring ? "text-evap-amber" : "text-zinc-400"}>
                 {ghost.recovery_window_remaining} epochs left
@@ -318,7 +318,7 @@ function GhostCard({
       {/* Resurrect button */}
       {!isExpired && (
         <div className="flex items-center justify-between mt-2">
-          <span className="text-[9px] text-zinc-500">
+          <span className="text-[10px] text-zinc-500">
             Cost: <span className="text-evap-cyan font-medium">{formatBalance(ghost.recovery_cost)} EVAP</span>
           </span>
           <button
@@ -333,7 +333,7 @@ function GhostCard({
 
       {isExpired && (
         <div className="mt-1.5">
-          <span className="text-[9px] text-red-400/70 italic">
+          <span className="text-[10px] text-red-400/70 italic">
             Merkle proof expired — this ghost is permanently lost
           </span>
         </div>
@@ -346,7 +346,7 @@ function GhostStat({ label, value, color }: { label: string; value: number; colo
   return (
     <div className="text-center">
       <p className={`text-sm font-semibold ${color}`}>{value}</p>
-      <p className="text-[9px] text-zinc-500">{label}</p>
+      <p className="text-[10px] text-zinc-500">{label}</p>
     </div>
   );
 }

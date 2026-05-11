@@ -49,7 +49,7 @@ export function DemurrageBadge() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className={`inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full border ${
+        className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${
           high
             ? "bg-evap-red/10 text-evap-red border-evap-red/30 hover:border-evap-red/60"
             : "bg-evap-amber/10 text-evap-amber border-evap-amber/30 hover:border-evap-amber/60"
@@ -148,7 +148,7 @@ function DemurrageModal({
         </div>
 
         <div className="px-3 py-2 rounded-lg bg-evap-cyan/5 border border-evap-cyan/20">
-          <p className="text-[9px] text-zinc-400 leading-snug">
+          <p className="text-[10px] text-zinc-400 leading-snug">
             Settling now debits <span className="font-mono">{owed.toLocaleString()}</span> EVAP
             from your balance and credits the protocol-owned refresh pool
             under namespace <span className="font-mono">DEMU</span>. The owed amount
@@ -172,7 +172,7 @@ function DemurrageModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{label}</p>
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
       <p className="text-xs font-semibold mt-0.5">{children}</p>
     </div>
   );

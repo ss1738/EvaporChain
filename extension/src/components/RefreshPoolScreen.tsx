@@ -88,7 +88,7 @@ export function RefreshPoolScreen() {
             />
           </div>
           {chainStatus && (
-            <p className="text-[9px] text-zinc-600 mt-2">
+            <p className="text-[10px] text-zinc-600 mt-2">
               Current epoch: {chainStatus.epoch.toLocaleString()}
             </p>
           )}
@@ -110,13 +110,13 @@ export function RefreshPoolScreen() {
           ) : (
             <div className="rounded-lg border border-evap-border overflow-hidden">
               <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-evap-surface border-b border-evap-border">
-                <span className="col-span-6 text-[9px] uppercase tracking-wider text-zinc-500">
+                <span className="col-span-6 text-[10px] uppercase tracking-wider text-zinc-500">
                   Namespace
                 </span>
-                <span className="col-span-3 text-[9px] uppercase tracking-wider text-zinc-500 text-right">
+                <span className="col-span-3 text-[10px] uppercase tracking-wider text-zinc-500 text-right">
                   Accrued
                 </span>
-                <span className="col-span-3 text-[9px] uppercase tracking-wider text-zinc-500 text-right">
+                <span className="col-span-3 text-[10px] uppercase tracking-wider text-zinc-500 text-right">
                   Last epoch
                 </span>
               </div>
@@ -146,7 +146,7 @@ export function RefreshPoolScreen() {
         </div>
 
         <div className="mx-4 mb-4 px-3 py-2 rounded-lg bg-evap-cyan/5 border border-evap-cyan/20">
-          <p className="text-[9px] text-zinc-400 leading-snug">
+          <p className="text-[10px] text-zinc-400 leading-snug">
             The refresh pool is funded by two flows: (1) demurrage levied on idle balances
             piecewise-log above the threshold, and (2) excess patronage donations that
             outlast their target object's lifetime. Object refreshes draw from this pool
@@ -161,7 +161,7 @@ export function RefreshPoolScreen() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{label}</p>
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
       <p className="text-sm font-semibold text-zinc-200 mt-0.5 tabular-nums">{value}</p>
     </div>
   );

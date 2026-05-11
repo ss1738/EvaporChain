@@ -205,8 +205,8 @@ function PendingTxRow({ tx, onClear }: { tx: PendingTx; onClear: () => void }) {
           <span className={`text-xs px-1.5 py-0.5 rounded-md border shrink-0 ${badge.cls}`}>{badge.label}</span>
         </div>
         <div className="flex items-center justify-between mt-0.5 gap-2">
-          <span className="text-[9px] text-zinc-600 font-mono truncate">{shortAddress(tx.hash)}</span>
-          <span className="text-[9px] text-zinc-600 shrink-0">
+          <span className="text-[10px] text-zinc-600 font-mono truncate">{shortAddress(tx.hash)}</span>
+          <span className="text-[10px] text-zinc-600 shrink-0">
             {tx.status === "mempool" && tx.mempoolPosition != null && tx.mempoolSize != null
               ? `Queue ${tx.mempoolPosition + 1}/${tx.mempoolSize}`
               : tx.blockHeight != null
@@ -217,13 +217,13 @@ function PendingTxRow({ tx, onClear }: { tx: PendingTx; onClear: () => void }) {
           </span>
         </div>
         {tx.error && (
-          <p className="text-[9px] text-evap-red mt-0.5 truncate">{tx.error}</p>
+          <p className="text-[10px] text-evap-red mt-0.5 truncate">{tx.error}</p>
         )}
       </div>
       {(tx.status === "rejected" || tx.status === "finalised") && (
         <button
           onClick={onClear}
-          className="text-[9px] text-zinc-500 hover:text-zinc-300 px-1 shrink-0"
+          className="text-[10px] text-zinc-500 hover:text-zinc-300 px-1 shrink-0"
           title="Dismiss"
         >
           ×

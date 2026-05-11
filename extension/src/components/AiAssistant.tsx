@@ -258,7 +258,7 @@ function MessageBubble({
         )}
 
         {/* Timestamp */}
-        <p className={`text-[9px] mt-1.5 ${isUser ? "text-cyan-200" : "text-zinc-300"}`}>
+        <p className={`text-[10px] mt-1.5 ${isUser ? "text-cyan-200" : "text-zinc-300"}`}>
           {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </p>
       </div>

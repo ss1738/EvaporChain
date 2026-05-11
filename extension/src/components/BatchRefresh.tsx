@@ -235,7 +235,7 @@ export function BatchRefresh() {
                   {/* Checkbox */}
                   <button
                     onClick={() => toggleExclude(obj.id)}
-                    className={`w-4 h-4 rounded border flex items-center justify-center text-[9px] transition ${
+                    className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] transition ${
                       isExcluded
                         ? "border-zinc-700 text-zinc-700"
                         : "border-evap-cyan bg-evap-cyan/10 text-evap-cyan"
@@ -259,10 +259,10 @@ export function BatchRefresh() {
                 {/* Cost info */}
                 {est && !isExcluded && (
                   <div className="flex items-center justify-between mt-1.5 pl-6">
-                    <span className="text-[9px] text-zinc-500">
+                    <span className="text-[10px] text-zinc-500">
                       Needs +{formatBalance(est.energyNeeded)} energy
                     </span>
-                    <span className="text-[9px] text-evap-cyan font-medium">
+                    <span className="text-[10px] text-evap-cyan font-medium">
                       {formatBalance(est.evapCost)} EVAP
                     </span>
                   </div>
@@ -347,7 +347,7 @@ export function BatchRefresh() {
                   <button
                     key={opt.key}
                     onClick={() => setAutoFrequency(opt.key)}
-                    className={`flex-1 py-1.5 text-[9px] rounded-lg border transition ${
+                    className={`flex-1 py-1.5 text-[10px] rounded-lg border transition ${
                       autoFrequency === opt.key
                         ? "bg-evap-cyan/10 border-evap-cyan/40 text-evap-cyan"
                         : "border-evap-border text-zinc-500 hover:text-zinc-300"
@@ -359,7 +359,7 @@ export function BatchRefresh() {
               </div>
             </div>
 
-            <p className="text-[9px] text-zinc-600 italic">
+            <p className="text-[10px] text-zinc-600 italic">
               Auto-refresh will execute when wallet is unlocked
             </p>
           </div>

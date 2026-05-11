@@ -117,7 +117,7 @@ export function HlwaCard() {
             Effective supply decays as attestation freshness ages (λ-decay).
           </p>
         </div>
-        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200">
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200">
           λ {lambdaEpochs} ep
         </span>
       </div>
@@ -142,7 +142,7 @@ export function HlwaCard() {
 
       {/* Ratio bar */}
       <div>
-        <div className="flex justify-between text-[9px] text-zinc-500 uppercase tracking-wider mb-1">
+        <div className="flex justify-between text-[10px] text-zinc-500 uppercase tracking-wider mb-1">
           <span>Effective / current</span>
           <span className="tabular-nums">{(ratio * 100).toFixed(1)}%</span>
         </div>
@@ -187,7 +187,7 @@ export function HlwaCard() {
         </button>
       </div>
 
-      <p className="text-[9px] text-zinc-400 leading-snug">
+      <p className="text-[10px] text-zinc-400 leading-snug">
         Re-attestation is simulated read-only on this endpoint — no
         cross-chain broadcast. The chain endpoint
         <span className="font-mono"> /api/hlwa/re_attest </span>
@@ -210,7 +210,7 @@ function Stat({
 }) {
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{label}</p>
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
       <div className="flex items-baseline gap-1 mt-0.5">
         <span
           className={`text-sm font-semibold tabular-nums ${
@@ -219,7 +219,7 @@ function Stat({
         >
           {value}
         </span>
-        {unit && <span className="text-[9px] text-zinc-500">{unit}</span>}
+        {unit && <span className="text-[10px] text-zinc-500">{unit}</span>}
       </div>
     </div>
   );

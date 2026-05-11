@@ -129,14 +129,14 @@ function NftCard({ nft, onTap }: { nft: NftItem; onTap: () => void }) {
 
       {/* Name + collection */}
       <p className="text-xs font-semibold text-zinc-200 truncate">{nft.name}</p>
-      <p className="text-[9px] text-zinc-500 truncate mb-1.5">{nft.collection}</p>
+      <p className="text-[10px] text-zinc-500 truncate mb-1.5">{nft.collection}</p>
 
       {/* State badge */}
       <div className="flex items-center justify-between mb-1.5">
-        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${stateBadgeClass}`}>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${stateBadgeClass}`}>
           {stateIcon} {nft.state}
         </span>
-        <span className="text-[9px] text-zinc-500">{percent}%</span>
+        <span className="text-[10px] text-zinc-500">{percent}%</span>
       </div>
 
       {/* Mini energy bar */}
@@ -144,7 +144,7 @@ function NftCard({ nft, onTap }: { nft: NftItem; onTap: () => void }) {
 
       {/* Countdown */}
       {nft.epochs_remaining > 0 && (
-        <p className="text-[9px] text-zinc-500 mt-1 text-center">
+        <p className="text-[10px] text-zinc-500 mt-1 text-center">
           ~{nft.epochs_remaining} epochs left
         </p>
       )}

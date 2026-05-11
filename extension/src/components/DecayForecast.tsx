@@ -144,7 +144,7 @@ export function DecayForecast({ data, compact = false }: DecayForecastProps) {
       </div>
 
       {/* Labels */}
-      <div className="flex justify-between text-[9px] text-zinc-500 mb-2">
+      <div className="flex justify-between text-[10px] text-zinc-500 mb-2">
         <span>Now</span>
         <span>Grace</span>
         <span>Ghost</span>

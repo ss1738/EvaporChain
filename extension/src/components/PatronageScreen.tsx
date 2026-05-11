@@ -111,7 +111,7 @@ export function PatronageScreen() {
             <p className="text-xs text-zinc-500">Loading pool status…</p>
           )}
           {patronageStatus?.patronage_ns_hex && (
-            <p className="text-[9px] text-zinc-600 font-mono mt-2 truncate" title={patronageStatus.patronage_ns_hex}>
+            <p className="text-[10px] text-zinc-600 font-mono mt-2 truncate" title={patronageStatus.patronage_ns_hex}>
               ns: {patronageStatus.patronage_ns_hex.slice(0, 32)}…
             </p>
           )}
@@ -174,10 +174,10 @@ export function PatronageScreen() {
 function PoolStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{label}</p>
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
       <div className="flex items-baseline gap-1 mt-0.5">
         <span className="text-sm font-bold text-zinc-200">{value}</span>
-        {sub && <span className="text-[9px] text-zinc-600">{sub}</span>}
+        {sub && <span className="text-[10px] text-zinc-600">{sub}</span>}
       </div>
     </div>
   );
@@ -232,16 +232,16 @@ function PatronageObjectRow({
               {obj.name || obj.id.slice(0, 12)}
             </span>
             {isImmune ? (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-green/10 text-evap-green border border-evap-green/30 shrink-0">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-evap-green/10 text-evap-green border border-evap-green/30 shrink-0">
                 Immune · score {immunity?.patronage_score ?? 0}
               </span>
             ) : (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-700/40 text-zinc-400 border border-zinc-600/40 shrink-0">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-700/40 text-zinc-400 border border-zinc-600/40 shrink-0">
                 No covenant
               </span>
             )}
           </div>
-          <p className="text-[9px] text-zinc-600 font-mono truncate mt-0.5">{obj.id}</p>
+          <p className="text-[10px] text-zinc-600 font-mono truncate mt-0.5">{obj.id}</p>
         </div>
       </div>
       <div className="flex gap-1 px-3 pb-2">
@@ -330,7 +330,7 @@ function PatronageObjectRow({
               {busy ? "…" : "Confirm pledge"}
             </button>
           </div>
-          <p className="text-[9px] text-zinc-600 leading-snug pt-1">
+          <p className="text-[10px] text-zinc-600 leading-snug pt-1">
             Object: <span className="font-mono text-zinc-500">{idHex.slice(0, 24)}…</span>
           </p>
         </div>
@@ -342,7 +342,7 @@ function PatronageObjectRow({
 function FormField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider mb-0.5">{label}</p>
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-0.5">{label}</p>
       {children}
     </div>
   );

@@ -368,7 +368,7 @@ function ObjectHealthRow({ object: obj }: { object: StateObject }) {
               size="sm"
             />
           </div>
-          <span className="text-[9px] text-zinc-600 shrink-0 w-14 text-right">
+          <span className="text-[10px] text-zinc-600 shrink-0 w-14 text-right">
             {isGhost ? "Ghost" : `${epochsRemaining} epochs`}
           </span>
         </div>
@@ -377,7 +377,7 @@ function ObjectHealthRow({ object: obj }: { object: StateObject }) {
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="shrink-0 px-2 py-1 rounded text-[9px] font-medium bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/20 hover:border-evap-cyan/40 transition disabled:opacity-50"
+          className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/20 hover:border-evap-cyan/40 transition disabled:opacity-50"
         >
           {refreshing ? "..." : "Refresh"}
         </button>
