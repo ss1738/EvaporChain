@@ -11,13 +11,14 @@
 //! addition / multiplication / equality are R1CS-checked over the
 //! limbs.
 //!
-//! arkworks ships this emulation as `NonNativeFieldVar<TargetField,
-//! BaseField>`. Each non-native multiplication is ~3,000 R1CS
-//! constraints (CRT decomposition into ~5 Fr-multiplications per
-//! Fq-multiplication). The Halo2 IPA verifier inside the wrapper will
-//! issue ~10 IPA challenge rounds × ~3 Fq operations per round, so
-//! ~150-200k constraints total — feasible inside a Powers-of-Tau
-//! ceremony at 2^18 (260k constraints).
+//! arkworks 0.5 ships this emulation as `EmulatedFpVar<TargetField,
+//! BaseField>` (renamed from 0.4's `NonNativeFieldVar`). Each
+//! non-native multiplication is ~3,000 R1CS constraints (CRT
+//! decomposition into ~5 Fr-multiplications per Fq-multiplication).
+//! The Halo2 IPA verifier inside the wrapper will issue ~10 IPA
+//! challenge rounds × ~3 Fq operations per round, so ~150-200k
+//! constraints total — feasible inside a Powers-of-Tau ceremony at
+//! 2^18 (260k constraints).
 //!
 //! # Why `ark_pallas::Fq`, not `pasta_curves::pallas::Base`?
 //!

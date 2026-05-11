@@ -7,9 +7,15 @@
 //! every constraint), and the gadget correctly **rejects** invalid
 //! `(P1, P2, P3)` triples (soundness: `g1_add_unsatisfied_when_p3_wrong`).
 //! However, the constraint system reports `unsatisfied` for **valid**
-//! `(P1, P2, P3 = P1 + P2)` triples — a completeness failure traced
-//! to arkworks 0.4's `NonNativeFieldVar` limb-decomposition for the
-//! same-bit-size field pair `PallasFq (254-bit)` ↔ `Bn254Fr (254-bit)`.
+//! `(P1, P2, P3 = P1 + P2)` triples — a completeness failure that
+//! reproduces in **both** arkworks 0.4 (`NonNativeFieldVar`) AND
+//! arkworks 0.5 (`EmulatedFpVar`) for the same-bit-size field pair
+//! `PallasFq (254-bit)` ↔ `Bn254Fr (254-bit)`.
+//!
+//! **Resolution path #1 (arkworks 0.5 upgrade) was attempted and did
+//! NOT close the gap.** The dependency bump is still in place
+//! (modern API, future-proofing), but the underlying limb-decomposition
+//! issue is structural — not a 0.4-specific bug.
 //!
 //! Symptoms: in both the canonical sub-form and the rewritten additive
 //! form, an arkworks-internal range/equality constraint deep in the
@@ -17,13 +23,18 @@
 //! BigInt off-circuit. The bug is unrelated to the affine-add formula
 //! itself.
 //!
-//! Sub-B-finish must address this before the in-circuit IPA verifier
-//! can produce a valid Groth16 witness. Options:
+//! Sub-B-finish remaining options:
 //!
-//!   1. Upgrade to arkworks 0.5 (`EmulatedFpVar` replaced
-//!      `NonNativeFieldVar`; reportedly tighter limb-bound handling)
-//!   2. Use `r1cs-bitcoin`'s non-native gadget (different limb strategy)
-//!   3. Custom limb decomposition tuned for the 254↔254 pair
+//!   ~~1. arkworks 0.5 `EmulatedFpVar`~~ — tried, does not fix
+//!   2. **`r1cs-bitcoin`'s non-native gadget** — different limb strategy
+//!      (~6 × 64-bit limbs with explicit reduction barriers)
+//!   3. **Custom limb decomposition** tuned for the 254↔254 same-bit-size
+//!      pair: pick limb_size such that `num_of_additions × num_limbs ×
+//!      2^limb_size < BaseField::MODULUS` with enough headroom for
+//!      chained mult-then-add sequences
+//!   4. **CycleFold / kateholdem-style folding** — instead of emulating
+//!      Pallas Fq inside Bn254 Fr, fold over a curve cycle where one
+//!      side IS native and pair with the other via accumulation
 //!
 //! The two completeness-dependent tests are `#[ignore]`'d below with
 //! the diagnostic preserved in-source. The soundness test stays active.
@@ -254,7 +265,7 @@ mod tests {
     /// flip to PASS once sub-B-finish addresses the completeness gap
     /// (arkworks upgrade or non-native lib swap).
     #[test]
-    #[ignore = "arkworks 0.4 NonNativeFieldVar completeness gap for PallasFq×Bn254Fr — sub-B-finish must address"]
+    #[ignore = "arkworks 0.4 NonNativeFieldVar AND 0.5 EmulatedFpVar both exhibit completeness gap for PallasFq×Bn254Fr — needs r1cs-bitcoin / custom limb-decomp / CycleFold (see module doc)"]
     fn g1_add_satisfied_for_valid_triple() {
         let mut rng = seeded_rng();
         let (p1, p2, p3) = random_distinct_pallas_triple(&mut rng);
@@ -280,10 +291,13 @@ mod tests {
         assert!(
             cs.is_satisfied().expect("is_satisfied"),
             "valid (P1, P2, P3) triple SHOULD satisfy constraints — \
-             currently fails due to arkworks 0.4 NonNativeFieldVar limb \
-             completeness gap for PallasFq×Bn254Fr. Off-circuit math is \
-             correct (asserted above); the failure is internal to \
-             arkworks. Track sub-B-finish for resolution."
+             currently fails due to arkworks limb-completeness gap for \
+             PallasFq×Bn254Fr. Reproduces in both arkworks 0.4 \
+             (NonNativeFieldVar) and 0.5 (EmulatedFpVar). Off-circuit \
+             math is correct (asserted above); the failure is internal \
+             to arkworks's limb-reduction layer. Track sub-B-finish \
+             for resolution via r1cs-bitcoin / custom limb-decomp / \
+             CycleFold (see module doc)."
         );
     }
 
@@ -322,7 +336,7 @@ mod tests {
     /// though satisfaction fails — re-enable this test once sub-B-finish
     /// addresses the gap.
     #[test]
-    #[ignore = "arkworks 0.4 NonNativeFieldVar completeness gap — see module doc"]
+    #[ignore = "arkworks 0.4 + 0.5 completeness gap — see module doc"]
     fn g1_add_constraint_count_in_expected_range() {
         let mut rng = seeded_rng();
         let (p1, p2, p3) = random_distinct_pallas_triple(&mut rng);
