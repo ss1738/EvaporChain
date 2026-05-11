@@ -7985,4 +7985,28 @@ contract Counter {
         assert_eq!(exec.block_gas_limit, 1_000_000);
         assert!(exec.fee_controller.is_some());
     }
+
+    /// T1.20 — exercise SimpleExecutor::new_production. Previously
+    /// 0%-covered constructor. Both verify_signatures = true AND
+    /// fee_controller wired (production combo).
+    #[test]
+    fn t1_20_simple_executor_new_production_constructs() {
+        use crate::fees::PidFeeController;
+        let fc = PidFeeController::new(0.5, 0.1, 0.01, 0.001, 100, 1, 1_000_000);
+        let exec = SimpleExecutor::new_production(10, fc, 5_000_000);
+        assert!(exec.verify_signatures);
+        assert_eq!(exec.block_gas_limit, 5_000_000);
+        assert!(exec.fee_controller.is_some());
+    }
+
+    /// T1.20 — enable_rewards installs a RewardAccumulator (previously
+    /// 0%-covered via reward_accumulator getter only).
+    #[test]
+    fn t1_20_enable_rewards_installs_accumulator() {
+        let mut exec = SimpleExecutor::new(10);
+        assert!(exec.reward_accumulator.is_none());
+        let tok = evaporchain_types::genesis::Tokenomics::default();
+        exec.enable_rewards(tok);
+        assert!(exec.reward_accumulator.is_some());
+    }
 }
