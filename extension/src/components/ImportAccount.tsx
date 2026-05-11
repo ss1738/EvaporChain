@@ -108,12 +108,12 @@ export function ImportAccount() {
       <div className="px-4 pt-6 pb-4">
         <button
           onClick={() => setView("create")}
-          className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
+          className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-4 transition"
         >
-          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
+          <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.5} /> Back
         </button>
-        <h1 className="text-lg font-semibold text-zinc-100 mb-1">Import Wallet</h1>
-        <p className="text-xs text-zinc-500 mb-4">
+        <h1 className="text-xl font-semibold text-zinc-100 mb-1.5">Import Wallet</h1>
+        <p className="text-sm text-zinc-500 mb-4">
           Restore from seed phrase or keystore file
         </p>
 
