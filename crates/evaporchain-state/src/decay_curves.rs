@@ -515,4 +515,173 @@ mod tests {
         };
         assert_eq!(compute_energy(&curve_max, 1000, 100, None), 1000);
     }
+
+    // ─── T1.20 — close remaining decay_curves.rs coverage gaps ─────
+
+    /// Conditional curve with last_access in the past, idle > grace.
+    /// Exercises the `idle > grace_epochs` branch where the full
+    /// elapsed_epochs is used (no decay-credit grace).
+    #[test]
+    fn t1_20_conditional_with_idle_past_grace_uses_full_elapsed() {
+        let curve = DecayCurve::Conditional {
+            base: Box::new(DecayCurve::Exponential { half_life: 100 }),
+            grace_epochs: 5,
+        };
+        // last_access = 10, elapsed = 100, idle = 90 > grace = 5 →
+        // effective_elapsed = 100 (no grace credit).
+        let energy = compute_energy(&curve, 1_000, 100, Some(10));
+        // Compare against direct exponential at elapsed=100, hl=100:
+        // initial energy halves once → ~500.
+        let direct = compute_energy(
+            &DecayCurve::Exponential { half_life: 100 },
+            1_000,
+            100,
+            None,
+        );
+        assert_eq!(energy, direct);
+    }
+
+    // ─── Custom bytecode VM — opcode coverage push ─────────────────
+
+    #[test]
+    fn t1_20_custom_bytecode_op_add() {
+        // [E=10, t=20] → ADD → 30
+        let curve = DecayCurve::Custom { bytecode: vec![0x02] };
+        assert_eq!(compute_energy(&curve, 10, 20, None), 30);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_sub_saturates() {
+        // [E=20, t=30] → SUB → saturating_sub → 0 (not underflow)
+        let curve = DecayCurve::Custom { bytecode: vec![0x03] };
+        assert_eq!(compute_energy(&curve, 20, 30, None), 0);
+        // Normal subtraction works too.
+        assert_eq!(compute_energy(&curve, 30, 10, None), 20);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_mul_saturates() {
+        // [E=100, t=10] → MUL → 1000
+        let curve = DecayCurve::Custom { bytecode: vec![0x04] };
+        assert_eq!(compute_energy(&curve, 100, 10, None), 1_000);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_shr() {
+        // [E=1024, t=2] → SHR → 1024 >> 2 = 256
+        let curve = DecayCurve::Custom { bytecode: vec![0x06] };
+        assert_eq!(compute_energy(&curve, 1024, 2, None), 256);
+        // Shift ≥ 64 → 0.
+        let curve = DecayCurve::Custom { bytecode: vec![0x06] };
+        assert_eq!(compute_energy(&curve, 1024, 64, None), 0);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_dup() {
+        // [E=5, t=3] → DUP → [5, 3, 3] → ADD → [5, 6] → ADD → 11
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x07, 0x02, 0x02], // DUP ADD ADD
+        };
+        assert_eq!(compute_energy(&curve, 5, 3, None), 11);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_swap() {
+        // [E=10, t=2] → SWAP → [2, 10] → DIV → 2/10 = 0
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x08, 0x05], // SWAP DIV
+        };
+        assert_eq!(compute_energy(&curve, 10, 2, None), 0);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_swap_underflow_returns_none() {
+        // SWAP with stack < 2 elements would fail. Pop one first to
+        // leave only 1, then SWAP.
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x02, 0x08], // ADD (collapses to 1), then SWAP fails
+        };
+        // Final stack length is 0 after SWAP→None, so unwrap_or(0).
+        assert_eq!(compute_energy(&curve, 10, 20, None), 0);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_push_truncated_returns_none() {
+        // PUSH opcode without the 8 following bytes → None → 0.
+        let curve = DecayCurve::Custom {
+            bytecode: vec![0x01, 0x05], // PUSH with only 1 byte after, truncated
+        };
+        assert_eq!(compute_energy(&curve, 100, 10, None), 0);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_op_push_full() {
+        // [E=100, t=10] → PUSH(42) → [100, 10, 42] → ADD → [100, 52]
+        // → ADD → 152. PUSH encoding: 0x01 followed by 8 bytes LE.
+        let mut bc = vec![0x01];
+        bc.extend_from_slice(&42u64.to_le_bytes());
+        bc.push(0x02); // ADD
+        bc.push(0x02); // ADD
+        let curve = DecayCurve::Custom { bytecode: bc };
+        assert_eq!(compute_energy(&curve, 100, 10, None), 152);
+    }
+
+    #[test]
+    fn t1_20_custom_bytecode_stack_overflow_returns_none() {
+        // Push 33 values (MAX_STACK = 32). After 32 the next push
+        // breaks invariant; result None → 0.
+        let mut bc = Vec::new();
+        for i in 0..33 {
+            bc.push(0x01);
+            bc.extend_from_slice(&(i as u64).to_le_bytes());
+        }
+        let curve = DecayCurve::Custom { bytecode: bc };
+        assert_eq!(compute_energy(&curve, 100, 10, None), 0);
+    }
+
+    // ─── validate_custom_bytecode ──────────────────────────────────
+
+    #[test]
+    fn t1_20_validate_bytecode_empty_rejected() {
+        assert!(validate_custom_bytecode(&[]).is_err());
+    }
+
+    #[test]
+    fn t1_20_validate_bytecode_too_large_rejected() {
+        let bc = vec![0x02u8; 1025]; // 1025 > 1024 cap
+        assert!(validate_custom_bytecode(&bc).is_err());
+    }
+
+    #[test]
+    fn t1_20_validate_bytecode_push_truncated_rejected() {
+        // PUSH but missing the 8-byte operand.
+        let bc = vec![0x01, 0xFF, 0xFF]; // PUSH + only 2 bytes
+        assert!(validate_custom_bytecode(&bc).is_err());
+    }
+
+    #[test]
+    fn t1_20_validate_bytecode_valid_program() {
+        let mut bc = vec![0x01];
+        bc.extend_from_slice(&100u64.to_le_bytes());
+        bc.push(0x02); // ADD
+        assert!(validate_custom_bytecode(&bc).is_ok());
+    }
+
+    #[test]
+    fn t1_20_validate_bytecode_unknown_opcode_rejected() {
+        let bc = vec![0xFFu8]; // not a defined opcode
+        assert!(validate_custom_bytecode(&bc).is_err());
+    }
+
+    // ─── Asymptotic curve edge cases ───────────────────────────────
+
+    #[test]
+    fn t1_20_asymptotic_at_exactly_floor() {
+        let curve = DecayCurve::Asymptotic {
+            floor: 100,
+            half_life: 50,
+        };
+        // initial_energy == floor → return unchanged.
+        assert_eq!(compute_energy(&curve, 100, 1_000_000, None), 100);
+    }
 }
