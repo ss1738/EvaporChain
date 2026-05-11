@@ -1417,4 +1417,154 @@ mod tests {
         assert!(!sync.is_complete());
         assert!(!sync.is_failed());
     }
+
+    /// T1.20 — with_checkpoint stores the genesis checkpoint
+    /// (previously uncovered constructor at lines 201-206).
+    #[test]
+    fn t1_20_sync_manager_with_checkpoint_constructs() {
+        let ckpt = GenesisCheckpoint {
+            height: 0,
+            state_root: [7u8; 32],
+            block_hash: [8u8; 32],
+        };
+        let sync = StateSyncManager::with_checkpoint(5, ckpt.clone());
+        // The phase is DiscoveringTip by default.
+        assert!(matches!(sync.phase(), SyncPhase::DiscoveringTip));
+    }
+
+    /// T1.20 — start() broadcasts a TipRequest and stays in
+    /// DiscoveringTip. Previously uncovered (lines 219-227).
+    #[test]
+    fn t1_20_sync_manager_start_broadcasts_tip_request() {
+        let mut sync = StateSyncManager::new(0);
+        let actions = sync.start();
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            SyncAction::Broadcast { message } => {
+                assert!(matches!(message, SyncMessage::TipRequest));
+            }
+            _ => panic!("expected Broadcast action"),
+        }
+        assert!(matches!(sync.phase(), SyncPhase::DiscoveringTip));
+    }
+
+    /// T1.20 — on_message with TipRequest is a no-op (server-side
+    /// messages are not handled by the client manager). Covers the
+    /// fall-through `_ => vec![]` branch.
+    #[test]
+    fn t1_20_sync_manager_on_message_tip_request_is_noop() {
+        let mut sync = StateSyncManager::new(0);
+        let actions = sync.on_message(42, SyncMessage::TipRequest);
+        assert!(actions.is_empty());
+    }
+
+    /// T1.20 — on_message with HeaderRequest is a no-op.
+    #[test]
+    fn t1_20_sync_manager_on_message_header_request_is_noop() {
+        let mut sync = StateSyncManager::new(0);
+        let actions = sync.on_message(42, SyncMessage::HeaderRequest { height: 100 });
+        assert!(actions.is_empty());
+    }
+
+    /// T1.20 — SnapshotProvider::handle_request for TipRequest returns
+    /// the local height + block hash. Previously the TipRequest server
+    /// branch was uncovered.
+    #[test]
+    fn t1_20_snapshot_provider_handles_tip_request() {
+        let p = SnapshotProvider::new();
+        let local_hash = [99u8; 32];
+        let resp = p.handle_request(&SyncMessage::TipRequest, 1234, local_hash);
+        match resp {
+            Some(SyncMessage::TipResponse { height, block_hash }) => {
+                assert_eq!(height, 1234);
+                assert_eq!(block_hash, local_hash);
+            }
+            _ => panic!("expected TipResponse"),
+        }
+    }
+
+    /// T1.20 — SnapshotProvider::handle_request for
+    /// SnapshotMetadataRequest returns metadata when present, None
+    /// when not. Previously uncovered server branch.
+    #[test]
+    fn t1_20_snapshot_provider_handles_metadata_request() {
+        let mut p = SnapshotProvider::new();
+        let meta = p.create_snapshot(50, 5, [42u8; 32], &vec![0u8; 5000]);
+        let resp = p.handle_request(
+            &SyncMessage::SnapshotMetadataRequest { height: 50 },
+            50,
+            [0u8; 32],
+        );
+        match resp {
+            Some(SyncMessage::SnapshotMetadataResponse { metadata }) => {
+                assert_eq!(metadata.height, meta.height);
+                assert_eq!(metadata.state_root, meta.state_root);
+            }
+            _ => panic!("expected SnapshotMetadataResponse"),
+        }
+
+        // Missing height → None.
+        let none_resp = p.handle_request(
+            &SyncMessage::SnapshotMetadataRequest { height: 9999 },
+            50,
+            [0u8; 32],
+        );
+        assert!(none_resp.is_none());
+    }
+
+    /// T1.20 — SnapshotProvider::handle_request for ChunkRequest:
+    /// valid chunk returns ChunkResponse; missing chunk returns None.
+    /// Targets the chunk-serve happy path + chunk-not-found branch.
+    #[test]
+    fn t1_20_snapshot_provider_handles_chunk_request() {
+        let mut p = SnapshotProvider::new();
+        let data = vec![7u8; CHUNK_SIZE * 2 + 100];
+        p.create_snapshot(60, 5, [0u8; 32], &data);
+
+        // Valid chunk request.
+        let resp = p.handle_request(
+            &SyncMessage::ChunkRequest {
+                height: 60,
+                chunk_index: 0,
+            },
+            60,
+            [0u8; 32],
+        );
+        match resp {
+            Some(SyncMessage::ChunkResponse { chunk }) => {
+                assert_eq!(chunk.height, 60);
+                assert_eq!(chunk.index, 0);
+                assert_eq!(chunk.data.len(), CHUNK_SIZE);
+            }
+            _ => panic!("expected ChunkResponse"),
+        }
+
+        // Missing snapshot (different height) → None.
+        let none_resp = p.handle_request(
+            &SyncMessage::ChunkRequest {
+                height: 99999,
+                chunk_index: 0,
+            },
+            60,
+            [0u8; 32],
+        );
+        assert!(none_resp.is_none());
+    }
+
+    /// T1.20 — SnapshotProvider::handle_request for TipResponse /
+    /// HeaderResponse / SnapshotMetadataResponse / ChunkResponse all
+    /// fall through to None. Covers the server-side `_ => None` arm.
+    #[test]
+    fn t1_20_snapshot_provider_ignores_response_messages() {
+        let p = SnapshotProvider::new();
+        let r = p.handle_request(
+            &SyncMessage::TipResponse {
+                height: 0,
+                block_hash: [0u8; 32],
+            },
+            0,
+            [0u8; 32],
+        );
+        assert!(r.is_none());
+    }
 }
