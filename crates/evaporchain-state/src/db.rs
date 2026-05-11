@@ -1272,4 +1272,184 @@ mod tests {
         db.rollback_batch();
         assert_eq!(db.get_account(&addr).unwrap().balance, 42);
     }
+
+    /// T1.20 — delegation CRUD on InMemoryStateDB:
+    /// put_delegation, get_delegation, remove_delegation,
+    /// delegations_for_validator, delegations_for_delegator,
+    /// all_delegations. Previously uncovered (lines 675-712).
+    #[test]
+    fn t1_20_in_memory_delegation_crud() {
+        let mut db = InMemoryStateDB::new();
+        let d1: AccountAddress = [10u8; 32];
+        let d2: AccountAddress = [20u8; 32];
+
+        let rec1 = DelegationRecord {
+            delegator: d1,
+            validator_id: 1,
+            amount: 100,
+            delegated_at_epoch: 5,
+            unbonding_amount: 0,
+            unbonding_epoch: None,
+        };
+        let rec2 = DelegationRecord {
+            delegator: d1,
+            validator_id: 2,
+            amount: 50,
+            delegated_at_epoch: 5,
+            unbonding_amount: 0,
+            unbonding_epoch: None,
+        };
+        let rec3 = DelegationRecord {
+            delegator: d2,
+            validator_id: 1,
+            amount: 200,
+            delegated_at_epoch: 5,
+            unbonding_amount: 0,
+            unbonding_epoch: None,
+        };
+
+        db.put_delegation(rec1.clone());
+        db.put_delegation(rec2.clone());
+        db.put_delegation(rec3.clone());
+
+        assert_eq!(db.get_delegation(&d1, 1).unwrap().amount, 100);
+        assert_eq!(db.get_delegation(&d1, 2).unwrap().amount, 50);
+        assert!(db.get_delegation(&d1, 99).is_none());
+
+        let v1 = db.delegations_for_validator(1);
+        assert_eq!(v1.len(), 2);
+        let v2 = db.delegations_for_validator(2);
+        assert_eq!(v2.len(), 1);
+
+        let by_d1 = db.delegations_for_delegator(&d1);
+        assert_eq!(by_d1.len(), 2);
+        let by_d2 = db.delegations_for_delegator(&d2);
+        assert_eq!(by_d2.len(), 1);
+
+        assert_eq!(db.all_delegations().len(), 3);
+
+        let removed = db.remove_delegation(&d1, 1).unwrap();
+        assert_eq!(removed.amount, 100);
+        assert!(db.get_delegation(&d1, 1).is_none());
+        assert_eq!(db.all_delegations().len(), 2);
+    }
+
+    /// T1.20 — historical-snapshot APIs on InMemoryStateDB.
+    /// commit_state_snapshot, get_account_at_height,
+    /// get_object_at_height, earliest/latest_snapshot_height,
+    /// prune_snapshots_before. Previously uncovered (lines 825-859).
+    #[test]
+    fn t1_20_in_memory_historical_snapshots() {
+        let mut db = InMemoryStateDB::new();
+        let addr: AccountAddress = [42u8; 32];
+
+        // No snapshots yet.
+        assert!(db.earliest_snapshot_height().is_none());
+        assert!(db.latest_snapshot_height().is_none());
+
+        // Snapshot at height 10 with balance 100.
+        let mut acc = Account::default();
+        acc.address = addr;
+        acc.balance = 100;
+        db.put_account(acc);
+        db.commit_state_snapshot(10);
+
+        // Snapshot at height 20 after balance bump.
+        let mut acc2 = Account::default();
+        acc2.address = addr;
+        acc2.balance = 200;
+        db.put_account(acc2);
+        db.commit_state_snapshot(20);
+
+        let h10 = db.get_account_at_height(&addr, 10).unwrap();
+        assert_eq!(h10.balance, 100, "height 10 captures the 100 balance");
+        let h20 = db.get_account_at_height(&addr, 20).unwrap();
+        assert_eq!(h20.balance, 200);
+        assert!(db.get_account_at_height(&addr, 99).is_none());
+
+        assert_eq!(db.earliest_snapshot_height(), Some(10));
+        assert_eq!(db.latest_snapshot_height(), Some(20));
+
+        // Prune everything before height 20 → only h20 remains.
+        db.prune_snapshots_before(20);
+        assert!(db.get_account_at_height(&addr, 10).is_none());
+        assert_eq!(db.get_account_at_height(&addr, 20).unwrap().balance, 200);
+        assert_eq!(db.earliest_snapshot_height(), Some(20));
+    }
+
+    /// T1.20 — InMemoryStateDB::get_object_at_height returns None
+    /// for missing-snapshot AND missing-object-in-snapshot paths.
+    #[test]
+    fn t1_20_in_memory_object_at_height_none_paths() {
+        let mut db = InMemoryStateDB::new();
+        let obj_id: ObjectId = [50u8; 32];
+        // No snapshots at all → None.
+        assert!(db.get_object_at_height(&obj_id, 1).is_none());
+
+        // Snapshot exists but object not in it.
+        db.commit_state_snapshot(1);
+        assert!(db.get_object_at_height(&obj_id, 1).is_none());
+    }
+
+    /// T1.20 — governance CRUD on InMemoryStateDB: put_proposal,
+    /// get_proposal, all_proposals, put_governance_param,
+    /// get_governance_param. Previously uncovered (lines 774-792).
+    #[test]
+    fn t1_20_in_memory_governance_proposals_and_params() {
+        let mut db = InMemoryStateDB::new();
+
+        // Missing proposal → None.
+        assert!(db.get_proposal(1).is_none());
+
+        let prop = GovernanceProposal {
+            proposal_id: 1,
+            title: "raise gas limit".into(),
+            param_key: "block_gas_limit".into(),
+            param_value: "30000000".into(),
+            proposer: [99u8; 32],
+            start_epoch: 1,
+            end_epoch: 100,
+            votes_for: 0,
+            votes_against: 0,
+            status: evaporchain_types::ProposalStatus::Active,
+            created_at: 0,
+            voters: Default::default(),
+        };
+        db.put_proposal(prop);
+        let stored = db.get_proposal(1).unwrap();
+        assert_eq!(stored.proposal_id, 1);
+        assert_eq!(db.all_proposals().len(), 1);
+
+        // Governance params kv.
+        assert!(db.get_governance_param("freeze").is_none());
+        db.put_governance_param("freeze".into(), "true".into());
+        assert_eq!(db.get_governance_param("freeze"), Some("true"));
+    }
+
+    /// T1.20 — vesting registry on InMemoryStateDB:
+    /// put_vesting_schedule, get_vesting_schedule,
+    /// remove_vesting_schedule, all_vesting_schedules. Previously
+    /// uncovered (lines 806-820).
+    #[test]
+    fn t1_20_in_memory_vesting_registry() {
+        let mut db = InMemoryStateDB::new();
+        let sched = evaporchain_types::VestingSchedule {
+            id: 1,
+            beneficiary: [33u8; 32],
+            total_amount: 1_000_000,
+            start_epoch: 0,
+            cliff_epochs: 10,
+            vesting_epochs: 100,
+            released_amount: 0,
+        };
+        db.put_vesting_schedule(sched.clone());
+        let got = db.get_vesting_schedule(1).unwrap();
+        assert_eq!(got.total_amount, 1_000_000);
+        assert_eq!(db.all_vesting_schedules().len(), 1);
+
+        let removed = db.remove_vesting_schedule(1).unwrap();
+        assert_eq!(removed.id, 1);
+        assert!(db.get_vesting_schedule(1).is_none());
+        assert_eq!(db.all_vesting_schedules().len(), 0);
+    }
 }
