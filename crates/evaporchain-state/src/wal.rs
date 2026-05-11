@@ -481,4 +481,96 @@ mod tests {
         let wal2 = WriteAheadLog::open(f.path()).unwrap();
         assert_eq!(wal2.last_committed_height(), Some(2));
     }
+
+    // ─── T1.20 coverage push for wal.rs ─────────────────────────────
+
+    /// WAL_MAGIC check: opening a file with wrong magic bytes
+    /// returns an io::Error with InvalidData kind.
+    #[test]
+    fn t1_20_wal_open_rejects_invalid_magic() {
+        let f = NamedTempFile::new().unwrap();
+        // Pre-write wrong magic bytes so open() reads them as
+        // existing-file content.
+        {
+            let mut h = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(f.path())
+                .unwrap();
+            h.write_all(b"NOTAWAL!").unwrap(); // 8 bytes, wrong magic
+        }
+        let result = WriteAheadLog::open(f.path());
+        match result {
+            Err(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+                assert!(format!("{e}").contains("invalid magic"));
+            }
+            Ok(_) => panic!("expected InvalidData error"),
+        }
+    }
+
+    /// Truncated entry — file ends mid-record after a valid commit.
+    /// scan_last_committed must return the last valid height and
+    /// stop at the truncation boundary.
+    #[test]
+    fn t1_20_wal_truncated_mid_entry_stops_scan_gracefully() {
+        let f = NamedTempFile::new().unwrap();
+        {
+            let mut wal = WriteAheadLog::open(f.path()).unwrap();
+            let m = vec![WalMutation::PutAccount {
+                address: [1u8; 20],
+                data: vec![0xAA],
+            }];
+            wal.begin_block(7, [0; 32], &m).unwrap();
+            wal.commit_block(7).unwrap();
+        }
+
+        // Truncate the file mid-way through the next would-be entry
+        // by writing < 77 bytes of garbage.
+        {
+            let mut h = OpenOptions::new()
+                .append(true)
+                .open(f.path())
+                .unwrap();
+            h.write_all(&[0u8; 30]).unwrap(); // < 77 bytes
+        }
+
+        // Re-open and scan: must see commit at 7 and stop cleanly.
+        let wal2 = WriteAheadLog::open(f.path()).unwrap();
+        assert_eq!(wal2.last_committed_height(), Some(7));
+    }
+
+    /// Oversized payload sentinel — entry claiming payload_len >
+    /// 64 MiB is treated as corruption (the sanity cap).
+    #[test]
+    fn t1_20_wal_oversized_payload_sentinel_stops_scan() {
+        let f = NamedTempFile::new().unwrap();
+        {
+            let mut wal = WriteAheadLog::open(f.path()).unwrap();
+            let m = vec![WalMutation::PutAccount {
+                address: [2u8; 20],
+                data: vec![0xBB],
+            }];
+            wal.begin_block(3, [0; 32], &m).unwrap();
+            wal.commit_block(3).unwrap();
+        }
+        // Hand-craft an entry with payload_len = u32::MAX (well over
+        // the 64MB cap). Format: 8 bytes height + 32 bytes root +
+        // 4 bytes len. Pad with enough zeros so file_len - pos >= 77.
+        {
+            let mut h = OpenOptions::new()
+                .append(true)
+                .open(f.path())
+                .unwrap();
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&100u64.to_le_bytes()); // height
+            buf.extend_from_slice(&[0xCC; 32]); // root
+            buf.extend_from_slice(&u32::MAX.to_le_bytes()); // payload_len
+            buf.extend_from_slice(&[0u8; 80]); // padding
+            h.write_all(&buf).unwrap();
+        }
+        let wal2 = WriteAheadLog::open(f.path()).unwrap();
+        // Scan should hit the cap-check break and stop at h=3.
+        assert_eq!(wal2.last_committed_height(), Some(3));
+    }
 }
