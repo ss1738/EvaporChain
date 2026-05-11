@@ -163,3 +163,203 @@ pub fn block_reward_at(params: &EmissionParams, epoch: u64, cumulative_emitted: 
         raw
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── EmissionParams::new validation ────────────────────────────────
+
+    #[test]
+    fn new_constant_schedule_accepts_initial_reward() {
+        let p = EmissionParams::new(1000, EmissionSchedule::Constant, None).unwrap();
+        assert_eq!(p.initial_reward, 1000);
+        assert!(matches!(p.schedule, EmissionSchedule::Constant));
+        assert!(p.max_supply.is_none());
+    }
+
+    #[test]
+    fn new_halving_schedule_accepts_positive_period() {
+        let p = EmissionParams::new(
+            1000,
+            EmissionSchedule::Halving { epochs_per_halving: 100 },
+            Some(1_000_000),
+        )
+        .unwrap();
+        assert_eq!(p.max_supply, Some(1_000_000));
+        assert!(
+            matches!(p.schedule, EmissionSchedule::Halving { epochs_per_halving: 100 })
+        );
+    }
+
+    #[test]
+    fn new_linear_decay_accepts_positive_window() {
+        let p = EmissionParams::new(
+            1000,
+            EmissionSchedule::LinearDecay { decay_epochs: 10_000 },
+            None,
+        )
+        .unwrap();
+        assert!(
+            matches!(p.schedule, EmissionSchedule::LinearDecay { decay_epochs: 10_000 })
+        );
+    }
+
+    #[test]
+    fn new_rejects_zero_initial_reward() {
+        let err = EmissionParams::new(0, EmissionSchedule::Constant, None).unwrap_err();
+        assert_eq!(err, EmissionError::ZeroInitialReward);
+    }
+
+    #[test]
+    fn new_rejects_zero_halving_period() {
+        let err = EmissionParams::new(
+            1000,
+            EmissionSchedule::Halving { epochs_per_halving: 0 },
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, EmissionError::ZeroHalvingPeriod);
+    }
+
+    #[test]
+    fn new_rejects_zero_decay_window() {
+        let err = EmissionParams::new(
+            1000,
+            EmissionSchedule::LinearDecay { decay_epochs: 0 },
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, EmissionError::ZeroDecayWindow);
+    }
+
+    #[test]
+    fn provisional_default_shape() {
+        let p = EmissionParams::provisional_default();
+        assert_eq!(p.initial_reward, 100);
+        assert!(matches!(p.schedule, EmissionSchedule::Constant));
+        assert!(p.max_supply.is_none());
+    }
+
+    // ─── block_reward_at: Constant schedule ────────────────────────────
+
+    #[test]
+    fn block_reward_constant_returns_initial_at_any_epoch() {
+        let p = EmissionParams::new(500, EmissionSchedule::Constant, None).unwrap();
+        assert_eq!(block_reward_at(&p, 0, 0), 500);
+        assert_eq!(block_reward_at(&p, 1_000, 0), 500);
+        assert_eq!(block_reward_at(&p, u64::MAX, 0), 500);
+    }
+
+    // ─── block_reward_at: Halving schedule ─────────────────────────────
+
+    #[test]
+    fn block_reward_halving_halves_at_each_period() {
+        let p = EmissionParams::new(
+            1024,
+            EmissionSchedule::Halving { epochs_per_halving: 100 },
+            None,
+        )
+        .unwrap();
+        assert_eq!(block_reward_at(&p, 0, 0), 1024);
+        assert_eq!(block_reward_at(&p, 99, 0), 1024);
+        assert_eq!(block_reward_at(&p, 100, 0), 512);
+        assert_eq!(block_reward_at(&p, 199, 0), 512);
+        assert_eq!(block_reward_at(&p, 200, 0), 256);
+        assert_eq!(block_reward_at(&p, 300, 0), 128);
+        assert_eq!(block_reward_at(&p, 1_000, 0), 1);
+    }
+
+    #[test]
+    fn block_reward_halving_returns_zero_after_64_halvings() {
+        let p = EmissionParams::new(
+            1_000_000,
+            EmissionSchedule::Halving { epochs_per_halving: 1 },
+            None,
+        )
+        .unwrap();
+        // 64 halvings of any u64 saturates to 0 (right-shift past 63).
+        assert_eq!(block_reward_at(&p, 64, 0), 0);
+        assert_eq!(block_reward_at(&p, 1_000, 0), 0);
+    }
+
+    // ─── block_reward_at: LinearDecay schedule ─────────────────────────
+
+    #[test]
+    fn block_reward_linear_decay_linearly_decreases() {
+        let p = EmissionParams::new(
+            1000,
+            EmissionSchedule::LinearDecay { decay_epochs: 100 },
+            None,
+        )
+        .unwrap();
+        // epoch 0: full reward
+        assert_eq!(block_reward_at(&p, 0, 0), 1000);
+        // epoch 50 (half-way): half reward
+        assert_eq!(block_reward_at(&p, 50, 0), 500);
+        // epoch 99 (one before end): tiny reward
+        assert_eq!(block_reward_at(&p, 99, 0), 10);
+        // epoch 100 (at end): zero
+        assert_eq!(block_reward_at(&p, 100, 0), 0);
+        // far past end: still zero
+        assert_eq!(block_reward_at(&p, 10_000, 0), 0);
+    }
+
+    // ─── block_reward_at: max_supply cap enforcement ──────────────────
+
+    #[test]
+    fn block_reward_max_supply_returns_zero_when_cap_reached() {
+        let p = EmissionParams::new(100, EmissionSchedule::Constant, Some(1_000)).unwrap();
+        // Cumulative == cap → zero.
+        assert_eq!(block_reward_at(&p, 0, 1_000), 0);
+        // Cumulative past cap → still zero.
+        assert_eq!(block_reward_at(&p, 0, 1_500), 0);
+    }
+
+    #[test]
+    fn block_reward_max_supply_clips_to_headroom_at_boundary() {
+        // 1000 cap; 950 already emitted. Schedule wants to emit 100,
+        // but only 50 headroom remains → block_reward_at returns 50.
+        let p = EmissionParams::new(100, EmissionSchedule::Constant, Some(1_000)).unwrap();
+        assert_eq!(block_reward_at(&p, 0, 950), 50);
+    }
+
+    #[test]
+    fn block_reward_max_supply_full_when_room_exceeds_schedule() {
+        // 10_000 cap; 100 emitted. Plenty of room.
+        let p = EmissionParams::new(100, EmissionSchedule::Constant, Some(10_000)).unwrap();
+        assert_eq!(block_reward_at(&p, 0, 100), 100);
+    }
+
+    #[test]
+    fn block_reward_no_cap_returns_schedule_value() {
+        let p = EmissionParams::new(100, EmissionSchedule::Constant, None).unwrap();
+        // Any cumulative_emitted is fine when there's no cap.
+        assert_eq!(block_reward_at(&p, 0, u128::MAX), 100);
+    }
+
+    #[test]
+    fn block_reward_halving_with_cap_clips_correctly() {
+        let p = EmissionParams::new(
+            1000,
+            EmissionSchedule::Halving { epochs_per_halving: 100 },
+            Some(1_500),
+        )
+        .unwrap();
+        // After halving once: schedule wants 500. 1_400 already emitted
+        // → only 100 headroom.
+        assert_eq!(block_reward_at(&p, 100, 1_400), 100);
+    }
+
+    // ─── Error display strings — exercise the thiserror impls ─────────
+
+    #[test]
+    fn emission_error_display_strings() {
+        let e1 = EmissionError::ZeroHalvingPeriod;
+        assert!(e1.to_string().contains("Halving"));
+        let e2 = EmissionError::ZeroDecayWindow;
+        assert!(e2.to_string().contains("LinearDecay"));
+        let e3 = EmissionError::ZeroInitialReward;
+        assert!(e3.to_string().contains("initial_reward"));
+    }
+}
