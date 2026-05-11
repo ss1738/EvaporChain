@@ -81,6 +81,44 @@
         -->
         <key>EVAPORCHAIN_ADMIN_KEY</key>
         <string>cluster-soak-2026-05-admin-recovery-key</string>
+        <!--
+            Oracle ingest (`/api/oracle/ingest`) gated by this key.
+            Uncomment + replace with a strong value for production:
+                openssl rand -hex 32
+        -->
+        <!--
+        <key>EVAPORCHAIN_ORACLE_KEY</key>
+        <string>REPLACE_ME_WITH_openssl_rand_hex_32</string>
+        -->
+        <!--
+            MCP-channel POSTs (`/api/tx/*`, `/api/faucet`,
+            `/api/contracts/*`, `/api/fork_cert/prove`,
+            `/api/mera/commit`) gated by this token when set. Unset =
+            pass-through (unauthenticated) — set this on any host
+            exposed to AI-agent MCP traffic. The SAME value must be
+            set on both the node AND the MCP server process.
+
+            After uncommenting + setting, ALSO remove the
+            allow-missing-mcp flag (two leading dashes) from
+            `scripts/launch-tailscale-5node.sh` so the env-check
+            refuses to start the validator without the token. See
+            `docs/runbooks/production-env-checklist.md` §1.3.
+        -->
+        <!--
+        <key>EVAPORCHAIN_MCP_API_TOKEN</key>
+        <string>REPLACE_ME_WITH_openssl_rand_hex_32</string>
+        -->
+        <!--
+            BLS validator key at-rest encryption passphrase. WITHOUT
+            this, the node re-generates the BLS key on every restart,
+            breaking multi-validator clusters. Path-based to avoid
+            /proc/<pid>/environ exposure. See
+            `docs/runbooks/validator-passphrase-migration.md`.
+        -->
+        <!--
+        <key>EVAPORCHAIN_VALIDATOR_KEY_PASS_FILE</key>
+        <string>/etc/evaporchain/bls.pass</string>
+        -->
     </dict>
 </dict>
 </plist>
