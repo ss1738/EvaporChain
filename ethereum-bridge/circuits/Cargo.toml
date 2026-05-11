@@ -13,6 +13,15 @@ description = "Verkle membership IVC circuit for the EvaporChain → Ethereum br
 name = "verkle-prove"
 path = "src/bin/prove.rs"
 
+# T0.10 sub-A-finish — fixture emitter that produces a
+# `verkle_proof_v2_sample.json` with REAL Halo2 IPA proof bytes (the
+# starter shipped a placeholder). Gated on v2-ecc so the default build
+# stays unchanged and CI doesn't pull halo2/pasta on the V1 path.
+[[bin]]
+name = "verkle-fixture-emit"
+path = "src/bin/fixture_emit.rs"
+required-features = ["v2-ecc"]
+
 [lib]
 name = "evaporchain_verkle_circuits"
 path = "src/lib.rs"

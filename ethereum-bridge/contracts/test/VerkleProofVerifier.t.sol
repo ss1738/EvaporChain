@@ -164,4 +164,47 @@ contract VerkleProofVerifierTest is Test {
             stateRoot, key, valueCommitment, paramsFingerprint, groth16Proof
         );
     }
+
+    // ─── T0.10 sub-A-finish — inner verkle_proof_v2 block round-trip ──
+    //
+    // The fixture-emitter (`ethereum-bridge/circuits/src/bin/fixture_emit.rs`)
+    // writes the inner `verkle_proof_v2` block with real Halo2 IPA proof
+    // bytes from `VerkleProverV2::prove_v2`. The Solidity side doesn't
+    // consume those bytes yet (the wrapper circuit lands them in
+    // `groth16_proof` once sub-B + sub-C ship), but the schema is pinned
+    // here so prover-side regeneration cannot silently drift the JSON
+    // shape away from what the verifier expects.
+
+    function test_loadsSampleFixture_innerProofBlock_schema() public {
+        string memory fixture = vm.readFile("./fixtures/verkle_proof_v2_sample.json");
+
+        // _schema_version pins the JSON contract — bumping it is an
+        // intentional break that must update every consumer.
+        uint256 schemaVersion = vm.parseJsonUint(fixture, ".verkle_proof_v2._schema_version");
+        assertEq(schemaVersion, 1, "verkle_proof_v2._schema_version must be 1");
+
+        // k=11 is the canonical circuit-size parameter for the
+        // EccVerkleStepCircuit. Any change here is a circuit-shape
+        // change that invalidates the trusted-setup ceremony.
+        uint256 k = vm.parseJsonUint(fixture, ".verkle_proof_v2.k");
+        assertEq(k, 11, "verkle_proof_v2.k must be 11");
+
+        // params_fingerprint_hex must be present and exactly 32 bytes
+        // (64 hex chars, no 0x prefix). When the emitter has run, this
+        // matches blake3('verkle-v2-params-fingerprint' || k_le).
+        string memory fp = vm.parseJsonString(fixture, ".verkle_proof_v2.params_fingerprint_hex");
+        assertEq(bytes(fp).length, 64, "params_fingerprint_hex must be 64 hex chars");
+
+        // proof_bytes_hex is present. Length isn't pinned (Halo2 IPA
+        // proof bytes vary with the witness), but the field MUST exist
+        // — its absence breaks the cross-side contract.
+        string memory proofBytes =
+            vm.parseJsonString(fixture, ".verkle_proof_v2.proof_bytes_hex");
+        assertTrue(bytes(proofBytes).length > 0, "proof_bytes_hex must be non-empty");
+
+        // _source is human-readable provenance — checks the emitter
+        // wired its identity through, so future fixtures are traceable.
+        string memory source = vm.parseJsonString(fixture, ".verkle_proof_v2._source");
+        assertTrue(bytes(source).length > 0, "_source must be non-empty");
+    }
 }
