@@ -11,6 +11,9 @@ evaporchain-da = { path = "../evaporchain-da" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
 tokio = { workspace = true }
 tracing = { workspace = true }
+# tracing-subscriber: needed by src/bin/shard-sample-flood.rs (operator
+# harness binary). The crate library itself does not call into it.
+tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
