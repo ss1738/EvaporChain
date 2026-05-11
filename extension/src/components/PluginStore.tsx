@@ -210,7 +210,7 @@ function CategoryPill({ label, active, onClick }: { label: string; active: boole
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition ${
+      className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition ${
         active
           ? "bg-cyan-600 text-white"
           : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
@@ -231,7 +231,7 @@ function StarRating({ rating }: { rating: number }) {
     else stars.push("-");
   }
   return (
-    <span className="text-[10px] text-amber-500 font-mono tracking-tight">
+    <span className="text-xs text-amber-500 font-mono tracking-tight">
       {stars.join("")} <span className="text-zinc-400">{rating.toFixed(1)}</span>
     </span>
   );
@@ -266,15 +266,15 @@ function PluginCard({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-zinc-800 truncate">{plugin.name}</h3>
-          <span className="text-[10px] text-zinc-400">v{plugin.version}</span>
+          <span className="text-xs text-zinc-400">v{plugin.version}</span>
         </div>
-        <p className="text-[11px] text-zinc-500 mt-0.5">by {plugin.author}</p>
-        <p className="text-[11px] text-zinc-500 mt-1 line-clamp-2 leading-relaxed">
+        <p className="text-xs text-zinc-500 mt-0.5">by {plugin.author}</p>
+        <p className="text-xs text-zinc-500 mt-1 line-clamp-2 leading-relaxed">
           {plugin.description.slice(0, 80)}...
         </p>
         <div className="flex items-center gap-3 mt-1.5">
           <StarRating rating={plugin.rating} />
-          <span className="text-[10px] text-zinc-400">
+          <span className="text-xs text-zinc-400">
             {plugin.installCount.toLocaleString()} installs
           </span>
         </div>
@@ -284,7 +284,7 @@ function PluginCard({
       <button
         onClick={e => { e.stopPropagation(); isInstalled ? onUninstall() : onInstall(); }}
         disabled={loading}
-        className={`px-3 py-1.5 rounded-lg text-[11px] font-medium flex-shrink-0 transition ${
+        className={`px-3 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 transition ${
           isInstalled
             ? "bg-zinc-100 text-zinc-600 hover:bg-red-50 hover:text-red-600 border border-zinc-200"
             : "bg-cyan-600 text-white hover:bg-cyan-700"
@@ -337,10 +337,10 @@ function PluginDetail({
             <p className="text-xs text-zinc-500">by {plugin.author}</p>
             <div className="flex items-center gap-3 mt-1">
               <StarRating rating={plugin.rating} />
-              <span className="text-[10px] text-zinc-400">
+              <span className="text-xs text-zinc-400">
                 v{plugin.version}
               </span>
-              <span className="text-[10px] text-zinc-400">
+              <span className="text-xs text-zinc-400">
                 {plugin.installCount.toLocaleString()} installs
               </span>
             </div>
@@ -377,7 +377,7 @@ function PluginDetail({
                 key={i}
                 className="w-32 h-20 rounded-lg bg-zinc-50 border border-zinc-200 flex items-center justify-center flex-shrink-0"
               >
-                <span className="text-[10px] text-zinc-300">Screenshot {i}</span>
+                <span className="text-xs text-zinc-300">Screenshot {i}</span>
               </div>
             ))}
           </div>
@@ -389,7 +389,7 @@ function PluginDetail({
           <div className="flex flex-col gap-1">
             {plugin.permissions.map(perm => (
               <div key={perm} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-100">
-                <span className="text-[10px] text-zinc-400">
+                <span className="text-xs text-zinc-400">
                   {perm.includes("sign") ? "!" : perm.includes("read") ? "R" : "~"}
                 </span>
                 <span className="text-xs text-zinc-600">{PERMISSION_LABELS[perm]}</span>
@@ -407,8 +407,8 @@ function PluginDetail({
             {plugin.reviews.map((review, idx) => (
               <div key={idx} className="p-3 rounded-lg bg-zinc-50 border border-zinc-100">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] font-medium text-zinc-700">{review.author}</span>
-                  <span className="text-[10px] text-zinc-400">{review.date}</span>
+                  <span className="text-xs font-medium text-zinc-700">{review.author}</span>
+                  <span className="text-xs text-zinc-400">{review.date}</span>
                 </div>
                 <StarRating rating={review.rating} />
                 <p className="text-xs text-zinc-600 mt-1 leading-relaxed">{review.comment}</p>

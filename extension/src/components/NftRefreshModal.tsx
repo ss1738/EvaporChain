@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ImageOff } from "lucide-react";
 import { EnergyBar } from "./EnergyBar";
 import type { NftItem } from "@/utils/api";
 
@@ -54,24 +55,24 @@ export function NftRefreshModal({ nft, onConfirm, onClose }: NftRefreshModalProp
             {nft.image_url ? (
               <img src={nft.image_url} alt={nft.name} className="w-full h-full object-cover rounded-lg" />
             ) : (
-              <span className="text-lg">🖼</span>
+              <ImageOff className="w-5 h-5 text-zinc-600" strokeWidth={1.5} />
             )}
           </div>
           <div className="min-w-0">
             <p className="text-xs font-medium text-zinc-200 truncate">{nft.name}</p>
-            <p className="text-[10px] text-zinc-500">{nft.collection}</p>
+            <p className="text-xs text-zinc-500">{nft.collection}</p>
           </div>
         </div>
 
         {/* Current energy */}
         <div className="px-3 py-2.5 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-500 mb-1">Current Energy</p>
+          <p className="text-xs text-zinc-500 mb-1">Current Energy</p>
           <EnergyBar current={nft.current_energy} max={nft.max_energy} size="sm" />
         </div>
 
         {/* Energy input */}
         <div>
-          <label className="text-[10px] text-zinc-500 block mb-1">Energy Amount</label>
+          <label className="text-xs text-zinc-500 block mb-1">Energy Amount</label>
           <input
             type="number"
             value={inputValue}
@@ -87,7 +88,7 @@ export function NftRefreshModal({ nft, onConfirm, onClose }: NftRefreshModalProp
             <button
               key={val}
               onClick={() => handleQuickAmount(val)}
-              className={`flex-1 py-1.5 rounded-lg border text-[10px] font-medium transition ${
+              className={`flex-1 py-1.5 rounded-lg border text-xs font-medium transition ${
                 amount === val
                   ? "bg-evap-cyan/10 border-evap-cyan/40 text-evap-cyan"
                   : "border-evap-border text-zinc-500 hover:text-zinc-300 hover:border-zinc-600"
@@ -101,9 +102,9 @@ export function NftRefreshModal({ nft, onConfirm, onClose }: NftRefreshModalProp
         {/* Preview */}
         {amount > 0 && (
           <div className="px-3 py-2.5 rounded-lg bg-evap-surface border border-evap-border">
-            <p className="text-[10px] text-zinc-500 mb-1">After Refresh</p>
+            <p className="text-xs text-zinc-500 mb-1">After Refresh</p>
             <EnergyBar current={newEnergy} max={nft.max_energy} size="sm" />
-            <p className="text-[10px] text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-400 mt-1">
               {nft.current_energy.toLocaleString()} + {amount.toLocaleString()} = {newEnergy.toLocaleString()} / {nft.max_energy.toLocaleString()}
             </p>
           </div>

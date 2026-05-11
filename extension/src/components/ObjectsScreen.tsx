@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyStatus } from "@/utils/format";
@@ -50,7 +51,7 @@ export function ObjectsScreen() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setView("patronage")}
-            className="text-[10px] px-2 py-1 rounded border border-evap-cyan/30 text-evap-cyan hover:border-evap-cyan/60 transition"
+            className="text-xs px-2 py-1 rounded border border-evap-cyan/30 text-evap-cyan hover:border-evap-cyan/60 transition"
             title="Patronage Covenants — pre-fund eviction immunity"
           >
             Patronage
@@ -59,7 +60,7 @@ export function ObjectsScreen() {
             onClick={() => setView("home")}
             className="text-xs text-zinc-500 hover:text-zinc-300"
           >
-            ← Back
+            <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
           </button>
         </div>
       </div>
@@ -82,7 +83,7 @@ export function ObjectsScreen() {
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <p className="text-xs font-semibold text-zinc-200">{obj.name || "Object"}</p>
-                    <p className="text-[10px] text-zinc-500 font-mono">
+                    <p className="text-xs text-zinc-500 font-mono">
                       {obj.id.slice(0, 8)}...{obj.id.slice(-6)}
                     </p>
                   </div>
@@ -111,7 +112,7 @@ export function ObjectsScreen() {
                         {obj.lad_mode ? `LAD · ${obj.lad_mode}` : "LAD"}
                       </span>
                     )}
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
                       obj.state === "Active" ? "bg-evap-green/10 text-evap-green" :
                       obj.state === "Grace" ? "bg-evap-amber/10 text-evap-amber" :
                       obj.state === "Ghost" ? "bg-evap-ghost/10 text-evap-ghost" :
@@ -125,10 +126,10 @@ export function ObjectsScreen() {
                 <EnergyBar current={obj.current_energy} max={obj.max_energy} />
 
                 <div className="flex items-center justify-between mt-2">
-                  <span className="text-[10px] text-zinc-500">
+                  <span className="text-xs text-zinc-500">
                     Half-life: {obj.half_life} epochs
                   </span>
-                  <span className="text-[10px] text-zinc-500">
+                  <span className="text-xs text-zinc-500">
                     {energyStatus(Math.round((obj.current_energy / obj.max_energy) * 100))}
                   </span>
                 </div>

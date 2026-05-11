@@ -87,7 +87,7 @@ function TxToast({ toast }: { toast: Toast }) {
       <div className="flex items-start gap-2">
         <span className={`text-base leading-none ${iconColor}`}>{icon}</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[11px] font-semibold leading-tight">
+          <p className="text-xs font-semibold leading-tight">
             {label} <span className="text-zinc-400 font-normal">— {toast.summary}</span>
           </p>
           {!isFinalised && toast.error && (

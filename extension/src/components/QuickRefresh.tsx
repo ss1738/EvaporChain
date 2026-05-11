@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Check } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { energyPercent, formatBalance } from "@/utils/format";
 
@@ -51,10 +52,10 @@ export function QuickRefresh() {
       {/* Expanded panel */}
       {expanded && (
         <div className="mb-2 w-56 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border shadow-xl">
-          <p className="text-[11px] font-semibold text-zinc-200 mb-1">
+          <p className="text-xs font-semibold text-zinc-200 mb-1">
             Quick Refresh
           </p>
-          <p className="text-[10px] text-zinc-400 mb-2">
+          <p className="text-xs text-zinc-400 mb-2">
             {urgentObjects.length} object{urgentObjects.length > 1 ? "s" : ""} below {URGENT_THRESHOLD}% energy
           </p>
 
@@ -72,7 +73,7 @@ export function QuickRefresh() {
           <button
             onClick={handleQuickRefresh}
             disabled={loading || !canAfford}
-            className={`w-full py-2 rounded-lg text-[10px] font-semibold transition ${
+            className={`w-full py-2 rounded-lg text-xs font-semibold transition ${
               canAfford
                 ? "bg-evap-cyan text-black hover:bg-evap-cyan/90"
                 : "bg-zinc-700 text-zinc-400 cursor-not-allowed"
@@ -104,7 +105,7 @@ export function QuickRefresh() {
         }`}
       >
         {confirmed ? (
-          <span className="text-black text-lg">✓</span>
+          <span className="text-black text-lg"><Check className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
         ) : (
           <div className="relative">
             <span className="text-black text-lg">🔄</span>

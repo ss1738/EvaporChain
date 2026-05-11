@@ -133,7 +133,7 @@ export function BridgeScreen() {
 
       {/* Warning banner */}
       <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
-        <p className="text-[10px] text-amber-700">
+        <p className="text-xs text-amber-700">
           Bridge transfers are irreversible. Verify the destination chain and address.
         </p>
       </div>
@@ -160,7 +160,7 @@ export function BridgeScreen() {
 
             {/* Source chain */}
             <div>
-              <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide">
+              <label className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
                 From
               </label>
               <div className="flex gap-1.5 mt-1.5">
@@ -184,7 +184,7 @@ export function BridgeScreen() {
 
             {/* Destination chain */}
             <div>
-              <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide">
+              <label className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
                 To
               </label>
               <div className="flex gap-1.5 mt-1.5">
@@ -201,7 +201,7 @@ export function BridgeScreen() {
 
             {/* Asset selector */}
             <div>
-              <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide">
+              <label className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
                 Asset
               </label>
               <div className="flex gap-1.5 mt-1.5">
@@ -224,11 +224,11 @@ export function BridgeScreen() {
             {/* Amount input */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide">
+                <label className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
                   Amount
                 </label>
                 {fromChain === "evaporchain" && (
-                  <span className="text-[10px] text-zinc-400">
+                  <span className="text-xs text-zinc-400">
                     Balance: {balance.toFixed(2)} EVAP
                   </span>
                 )}
@@ -245,7 +245,7 @@ export function BridgeScreen() {
                 {fromChain === "evaporchain" && (
                   <button
                     onClick={handleMax}
-                    className="text-[10px] font-semibold text-cyan-600 hover:text-cyan-700 transition"
+                    className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 transition"
                   >
                     MAX
                   </button>
@@ -262,7 +262,7 @@ export function BridgeScreen() {
 
             {quote && !quoteLoading && (
               <div className="px-3 py-3 rounded-lg bg-zinc-50 border border-zinc-200 space-y-2">
-                <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide">
+                <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
                   Route Preview
                 </h4>
                 <QuoteRow label="Estimated time" value={`~${quote.estimatedTimeMinutes} minutes`} />
@@ -331,7 +331,7 @@ export function BridgeScreen() {
 
       {/* Post-quantum footer */}
       <div className="px-4 py-2 border-t border-zinc-200">
-        <p className="text-[10px] text-zinc-400 text-center">
+        <p className="text-xs text-zinc-400 text-center">
           Cross-chain bridge secured by ML-DSA post-quantum signatures
         </p>
       </div>
@@ -397,9 +397,9 @@ function QuoteRow({
 }) {
   return (
     <div className="flex justify-between items-center">
-      <span className="text-[10px] text-zinc-500">{label}</span>
+      <span className="text-xs text-zinc-500">{label}</span>
       <span
-        className={`text-[10px] font-mono ${
+        className={`text-xs font-mono ${
           highlight ? "text-cyan-700 font-semibold" : "text-zinc-700"
         }`}
       >
@@ -427,15 +427,15 @@ function ActiveBridgeCard({
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: getChainColor(transfer.fromChain) }}
           />
-          <span className="text-[10px] text-zinc-600">{getChainName(transfer.fromChain)}</span>
-          <span className="text-[10px] text-zinc-300 mx-1">&rarr;</span>
+          <span className="text-xs text-zinc-600">{getChainName(transfer.fromChain)}</span>
+          <span className="text-xs text-zinc-300 mx-1">&rarr;</span>
           <span
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: getChainColor(transfer.toChain) }}
           />
-          <span className="text-[10px] text-zinc-600">{getChainName(transfer.toChain)}</span>
+          <span className="text-xs text-zinc-600">{getChainName(transfer.toChain)}</span>
         </div>
-        <span className="text-[10px] font-semibold text-zinc-800">
+        <span className="text-xs font-semibold text-zinc-800">
           {transfer.amount} {transfer.asset}
         </span>
       </div>
@@ -452,7 +452,7 @@ function ActiveBridgeCard({
         {transfer.sourceTxHash && (
           <a
             href="#"
-            className="text-[10px] text-cyan-600 hover:underline"
+            className="text-xs text-cyan-600 hover:underline"
             onClick={(e) => e.preventDefault()}
           >
             View on {getChainName(transfer.fromChain)}
@@ -461,7 +461,7 @@ function ActiveBridgeCard({
         {transfer.destinationTxHash && (
           <a
             href="#"
-            className="text-[10px] text-cyan-600 hover:underline"
+            className="text-xs text-cyan-600 hover:underline"
             onClick={(e) => e.preventDefault()}
           >
             View on {getChainName(transfer.toChain)}
@@ -494,7 +494,7 @@ function StepRow({ step }: { step: BridgeStep }) {
       )}
 
       <span
-        className={`text-[10px] ${
+        className={`text-xs ${
           step.status === "completed"
             ? "text-zinc-700"
             : step.status === "in_progress"
@@ -531,13 +531,13 @@ function HistoryCard({
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: getChainColor(transfer.fromChain) }}
           />
-          <span className="text-[10px] text-zinc-500">{getChainName(transfer.fromChain)}</span>
-          <span className="text-[10px] text-zinc-300 mx-0.5">&rarr;</span>
+          <span className="text-xs text-zinc-500">{getChainName(transfer.fromChain)}</span>
+          <span className="text-xs text-zinc-300 mx-0.5">&rarr;</span>
           <span
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: getChainColor(transfer.toChain) }}
           />
-          <span className="text-[10px] text-zinc-500">{getChainName(transfer.toChain)}</span>
+          <span className="text-xs text-zinc-500">{getChainName(transfer.toChain)}</span>
         </div>
         <div className="text-right">
           <p className="text-xs font-semibold text-zinc-800">

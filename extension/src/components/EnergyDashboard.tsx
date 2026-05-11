@@ -91,7 +91,7 @@ export function EnergyDashboard() {
             Energy Dashboard
           </h1>
           {chainStatus && (
-            <p className="text-[10px] text-zinc-500">
+            <p className="text-xs text-zinc-500">
               Block {chainStatus.block_height.toLocaleString()}
               {shardsHealth?.active && shardsHealth.total_shards > 0 && (
                 <> · {shardsHealth.total_shards} shard
@@ -107,9 +107,9 @@ export function EnergyDashboard() {
         <div className="mx-4 mt-3 flex justify-end">
           <button
             onClick={() => setView("refresh-pool")}
-            className="text-[10px] px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
+            className="text-xs px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
           >
-            Refresh pool ↗
+            Refresh pool<ChevronRight className="inline w-3.5 h-3.5 -mt-0.5" strokeWidth={1.5} />
           </button>
         </div>
 
@@ -126,7 +126,7 @@ export function EnergyDashboard() {
         {/* Urgency banner */}
         {expiringToday.length > 0 && (
           <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-evap-amber/10 border border-evap-amber/30">
-            <p className="text-[11px] text-evap-amber text-center font-medium">
+            <p className="text-xs text-evap-amber text-center font-medium">
               ⚠ {expiringToday.length} object{expiringToday.length > 1 ? "s" : ""} expiring today
             </p>
           </div>
@@ -163,7 +163,7 @@ export function EnergyDashboard() {
 
         {/* Portfolio energy chart */}
         <div className="mx-4 mt-4 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-3 uppercase tracking-wider">
             Portfolio Energy — Last 7 Epochs
           </p>
           <div className="flex items-end justify-between gap-1 h-24">
@@ -197,7 +197,7 @@ export function EnergyDashboard() {
 
         {/* Weekly energy report */}
         <div className="mx-4 mt-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Weekly Energy Report
           </p>
           <div className="grid grid-cols-2 gap-y-2 gap-x-4">
@@ -214,7 +214,7 @@ export function EnergyDashboard() {
 
         {/* Object health list */}
         <div className="mx-4 mt-4 mb-4">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Object Health
           </p>
           {loading && objects.length === 0 ? (
@@ -264,7 +264,7 @@ function SummaryCard({
 
   return (
     <div className={`rounded-lg px-3 py-3 border ${borderColor}`}>
-      <p className="text-[10px] text-zinc-500 mb-1">{label}</p>
+      <p className="text-xs text-zinc-500 mb-1">{label}</p>
       <div className="flex items-baseline gap-1">
         <span className="text-lg font-bold text-zinc-200">{value}</span>
         {icon && (
@@ -273,7 +273,7 @@ function SummaryCard({
           </span>
         )}
       </div>
-      {sub && <p className="text-[10px] text-zinc-600 mt-0.5">{sub}</p>}
+      {sub && <p className="text-xs text-zinc-600 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -289,8 +289,8 @@ function ReportRow({
 }) {
   return (
     <div className="flex justify-between items-center">
-      <span className="text-[10px] text-zinc-500">{label}</span>
-      <span className={`text-[11px] font-semibold ${valueColor ?? "text-zinc-300"}`}>
+      <span className="text-xs text-zinc-500">{label}</span>
+      <span className={`text-xs font-semibold ${valueColor ?? "text-zinc-300"}`}>
         {value}
       </span>
     </div>
@@ -349,11 +349,11 @@ function ObjectHealthRow({ object: obj }: { object: StateObject }) {
       <span className={`text-xs ${statusColor} shrink-0`}>{statusIcon}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] font-medium text-zinc-300 truncate">
+          <span className="text-xs font-medium text-zinc-300 truncate">
             {obj.name || obj.id.slice(0, 12)}
           </span>
           <span
-            className="text-[10px] font-semibold shrink-0 ml-1"
+            className="text-xs font-semibold shrink-0 ml-1"
             style={{ color: energyColor(pct) }}
           >
             {pct}%

@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { RotateCw } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 
 /**
@@ -54,30 +55,28 @@ export function ShardScreen() {
         </button>
         <div className="flex-1">
           <h1 className="text-sm font-semibold text-zinc-200">Shards</h1>
-          <p className="text-[10px] text-zinc-500">
+          <p className="text-xs text-zinc-500">
             Per-shard health and your account's home shard.
           </p>
         </div>
         <button
           onClick={() => refreshShards()}
-          className="text-[10px] px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
-        >
-          ↻
-        </button>
+          className="text-xs px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
+        ><RotateCw className="w-3.5 h-3.5" strokeWidth={1.5} /></button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {/* Summary card */}
         <div className="mx-4 mt-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Sharding Status
           </p>
           {noSharding ? (
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-xs text-zinc-500">
               Sharding is disabled on this node. Single-shard chain.
             </p>
           ) : !shardsHealth ? (
-            <p className="text-[11px] text-zinc-600">Loading shard status…</p>
+            <p className="text-xs text-zinc-600">Loading shard status…</p>
           ) : (
             <>
               <div className="flex items-baseline gap-2">
@@ -117,10 +116,10 @@ export function ShardScreen() {
         {/* Your shard */}
         {activeAccount && shardsHealth?.active && addressShard != null && (
           <div className="mx-4 mt-3 px-3 py-3 rounded-lg bg-evap-cyan/5 border border-evap-cyan/20">
-            <p className="text-[10px] text-zinc-400 font-semibold mb-1 uppercase tracking-wider">
+            <p className="text-xs text-zinc-400 font-semibold mb-1 uppercase tracking-wider">
               Your Account
             </p>
-            <p className="text-[11px] text-zinc-300">
+            <p className="text-xs text-zinc-300">
               Your account is on{" "}
               <span className="font-semibold text-evap-cyan">
                 shard {addressShard}
@@ -135,15 +134,15 @@ export function ShardScreen() {
 
         {/* Per-shard list */}
         <div className="mx-4 mt-4 mb-4">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Per-shard health
           </p>
           {!shardsHealth ? (
-            <p className="text-[11px] text-zinc-600 text-center py-8">
+            <p className="text-xs text-zinc-600 text-center py-8">
               Loading…
             </p>
           ) : sortedShards.length === 0 ? (
-            <p className="text-[11px] text-zinc-600 text-center py-8">
+            <p className="text-xs text-zinc-600 text-center py-8">
               {noSharding
                 ? "Single-shard chain — no per-shard rows."
                 : "No per-shard data reported yet."}
@@ -172,7 +171,7 @@ export function ShardScreen() {
                     <div className="flex items-center justify-between mb-1.5">
                       <div className="flex items-center gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-                        <span className="text-[11px] font-semibold text-zinc-200">
+                        <span className="text-xs font-semibold text-zinc-200">
                           Shard {s.shard_id}
                         </span>
                         {isMine && (
@@ -186,11 +185,11 @@ export function ShardScreen() {
                           </span>
                         )}
                       </div>
-                      <span className="text-[10px] text-zinc-500 tabular-nums">
+                      <span className="text-xs text-zinc-500 tabular-nums">
                         {livenessPct}% live
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <div className="grid grid-cols-3 gap-2 text-xs">
                       <ShardStat
                         label="Objects"
                         value={`${s.live_objects}/${s.total_objects}`}
@@ -259,7 +258,7 @@ function ShardStat({ label, value }: { label: string; value: string }) {
       <p className="text-[9px] text-zinc-500 uppercase tracking-wider">
         {label}
       </p>
-      <p className="text-[11px] font-medium text-zinc-300 tabular-nums mt-0.5 truncate">
+      <p className="text-xs font-medium text-zinc-300 tabular-nums mt-0.5 truncate">
         {value}
       </p>
     </div>

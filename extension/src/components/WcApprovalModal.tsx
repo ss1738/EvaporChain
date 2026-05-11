@@ -3,6 +3,8 @@
  * Shown when a dApp sends a connection proposal.
  */
 
+import type { LucideIcon } from "lucide-react";
+import { User, PenLine, ArrowUpRight, Circle } from "lucide-react";
 import type { WcSessionProposal } from "@/utils/walletconnect";
 
 interface Props {
@@ -47,7 +49,7 @@ export function WcApprovalModal({ proposal, onApprove, onReject }: Props) {
             <p className="text-sm font-medium text-zinc-100 truncate">
               {metadata.name}
             </p>
-            <p className="text-[10px] text-zinc-500 truncate">
+            <p className="text-xs text-zinc-500 truncate">
               {metadata.url}
             </p>
           </div>
@@ -59,7 +61,7 @@ export function WcApprovalModal({ proposal, onApprove, onReject }: Props) {
 
         {/* Requested permissions */}
         <div className="mb-4">
-          <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">
+          <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
             Requested Permissions
           </p>
           <div className="space-y-1">
@@ -76,14 +78,14 @@ export function WcApprovalModal({ proposal, onApprove, onReject }: Props) {
 
         {/* Requested chains */}
         <div className="mb-6">
-          <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">
+          <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
             Chains
           </p>
           <div className="flex flex-wrap gap-1">
             {(evapNs?.chains ?? []).map((chain) => (
               <span
                 key={chain}
-                className="px-2 py-0.5 rounded-full bg-evap-cyan/10 border border-evap-cyan/30 text-[10px] text-evap-cyan"
+                className="px-2 py-0.5 rounded-full bg-evap-cyan/10 border border-evap-cyan/30 text-xs text-evap-cyan"
               >
                 {chain}
               </span>
@@ -114,22 +116,23 @@ export function WcApprovalModal({ proposal, onApprove, onReject }: Props) {
 // ── Helpers ──
 
 function PermissionRow({ method }: { method: string }) {
-  const labels: Record<string, { label: string; icon: string }> = {
-    evap_getAccounts: { label: "View accounts", icon: "👤" },
-    evap_signMessage: { label: "Sign messages", icon: "✍" },
-    evap_signTransaction: { label: "Sign transactions", icon: "✍" },
-    evap_sendTransaction: { label: "Send transactions", icon: "↗" },
+  const labels: Record<string, { label: string; icon: LucideIcon }> = {
+    evap_getAccounts: { label: "View accounts", icon: User },
+    evap_signMessage: { label: "Sign messages", icon: PenLine },
+    evap_signTransaction: { label: "Sign transactions", icon: PenLine },
+    evap_sendTransaction: { label: "Send transactions", icon: ArrowUpRight },
     // legacy / pre-rename method names
-    evaporchain_getAccounts: { label: "View accounts", icon: "👤" },
-    evaporchain_signMessage: { label: "Sign messages", icon: "✍" },
-    evaporchain_sendTransaction: { label: "Send transactions", icon: "↗" },
+    evaporchain_getAccounts: { label: "View accounts", icon: User },
+    evaporchain_signMessage: { label: "Sign messages", icon: PenLine },
+    evaporchain_sendTransaction: { label: "Send transactions", icon: ArrowUpRight },
   };
 
-  const info = labels[method] ?? { label: method, icon: "·" };
+  const info = labels[method] ?? { label: method, icon: Circle };
+  const Icon = info.icon;
 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/50">
-      <span className="text-xs">{info.icon}</span>
+      <Icon className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.5} />
       <span className="text-xs text-zinc-300">{info.label}</span>
     </div>
   );

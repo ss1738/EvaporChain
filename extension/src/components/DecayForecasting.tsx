@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import type { StateObject } from "@/utils/api";
 import {
@@ -157,7 +158,7 @@ export function DecayForecasting() {
           onClick={() => setView("home")}
           className="text-zinc-400 hover:text-zinc-200 transition text-sm"
         >
-          ← Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
         <h1 className="text-sm font-semibold text-zinc-100">Decay Forecast</h1>
       </div>
@@ -178,11 +179,11 @@ export function DecayForecasting() {
                   <span className={`text-xs font-semibold ${isGaining ? "text-emerald-400" : "text-red-400"}`}>
                     {isGaining ? "↑" : "↓"} {weekLossPercent.toFixed(1)}%
                   </span>
-                  <span className="text-[10px] text-zinc-500">this week</span>
+                  <span className="text-xs text-zinc-500">this week</span>
                 </div>
               </div>
 
-              <p className="text-[10px] text-zinc-500 mb-2">
+              <p className="text-xs text-zinc-500 mb-2">
                 At current rate, your portfolio loses{" "}
                 <span className="text-amber-400 font-medium">{weekLossPercent.toFixed(1)}%</span>{" "}
                 energy this week
@@ -213,11 +214,11 @@ export function DecayForecasting() {
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <div className="text-center">
                   <p className="text-xs font-semibold text-zinc-200">{Math.round(currentTotalEnergy)}</p>
-                  <p className="text-[10px] text-zinc-500">Current Energy</p>
+                  <p className="text-xs text-zinc-500">Current Energy</p>
                 </div>
                 <div className="text-center">
                   <p className="text-xs font-semibold text-zinc-200">{Math.round(weekEndEnergy)}</p>
-                  <p className="text-[10px] text-zinc-500">Projected (7d)</p>
+                  <p className="text-xs text-zinc-500">Projected (7d)</p>
                 </div>
               </div>
             </div>
@@ -238,7 +239,7 @@ export function DecayForecasting() {
                       <span className="text-xs font-medium text-zinc-200 truncate max-w-[140px]">
                         {obj.name}
                       </span>
-                      <span className={`text-[10px] font-semibold ${urgencyTextColor(days)}`}>
+                      <span className={`text-xs font-semibold ${urgencyTextColor(days)}`}>
                         {days < 1 ? "<1 day" : `${days.toFixed(1)}d`} left
                       </span>
                     </div>
@@ -251,7 +252,7 @@ export function DecayForecasting() {
                             style={{ width: `${Math.min(100, energyPercent)}%` }}
                           />
                         </div>
-                        <span className="text-[10px] text-zinc-400">
+                        <span className="text-xs text-zinc-400">
                           {energyPercent.toFixed(0)}%
                         </span>
                       </div>
@@ -263,7 +264,7 @@ export function DecayForecasting() {
                     {/* Expanded decay curve */}
                     {selectedObject?.id === obj.id && objectCurve.length > 0 && (
                       <div className="mt-3 pt-2 border-t border-white/5">
-                        <p className="text-[10px] text-zinc-400 mb-1">Decay Curve (14 days)</p>
+                        <p className="text-xs text-zinc-400 mb-1">Decay Curve (14 days)</p>
                         <div className="relative">
                           {/* Threshold lines */}
                           <div
@@ -323,7 +324,7 @@ export function DecayForecasting() {
                   <button
                     key={d}
                     onClick={() => setStrategyDays(d)}
-                    className={`flex-1 py-1.5 rounded text-[10px] font-medium transition ${
+                    className={`flex-1 py-1.5 rounded text-xs font-medium transition ${
                       strategyDays === d
                         ? "bg-evap-cyan/20 text-evap-cyan border border-evap-cyan/30"
                         : "bg-zinc-800 text-zinc-500 border border-transparent hover:border-zinc-600"
@@ -351,9 +352,9 @@ export function DecayForecasting() {
                       className="flex items-center justify-between px-2 py-1.5 rounded bg-zinc-800/50"
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-zinc-500 w-4">{i + 1}.</span>
+                        <span className="text-xs text-zinc-500 w-4">{i + 1}.</span>
                         <div>
-                          <p className="text-[11px] text-zinc-200 truncate max-w-[120px]">
+                          <p className="text-xs text-zinc-200 truncate max-w-[120px]">
                             {rec.objectName}
                           </p>
                           <p className="text-[9px] text-zinc-500">
@@ -361,14 +362,14 @@ export function DecayForecasting() {
                           </p>
                         </div>
                       </div>
-                      <span className="text-[10px] text-evap-cyan font-medium">
+                      <span className="text-xs text-evap-cyan font-medium">
                         +{rec.energyToAdd} E
                       </span>
                     </div>
                   ))}
 
                 {strategy.filter((r) => r.energyToAdd > 0).length === 0 && (
-                  <p className="text-[10px] text-zinc-500 text-center py-2">
+                  <p className="text-xs text-zinc-500 text-center py-2">
                     All objects survive the next {strategyDays} days
                   </p>
                 )}

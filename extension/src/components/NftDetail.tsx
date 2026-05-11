@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ImageOff } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent, shortAddress, energyStatus } from "@/utils/format";
@@ -90,7 +91,7 @@ export function NftDetail() {
         >
           &larr; Gallery
         </button>
-        <span className={`text-[10px] px-2.5 py-1 rounded-full border ${stateBadgeClass}`}>
+        <span className={`text-xs px-2.5 py-1 rounded-full border ${stateBadgeClass}`}>
           {stateIcon} {nft.state}
         </span>
       </div>
@@ -105,7 +106,7 @@ export function NftDetail() {
               className="w-full h-full object-cover rounded-xl"
             />
           ) : (
-            <span className="text-5xl text-zinc-600">🖼</span>
+            <ImageOff className="w-10 h-10 text-zinc-600" strokeWidth={1.5} />
           )}
         </div>
 
@@ -113,7 +114,7 @@ export function NftDetail() {
         <div>
           <h2 className="text-lg font-semibold text-zinc-100">{nft.name}</h2>
           <p className="text-xs text-zinc-400">{nft.collection}</p>
-          <p className="text-[10px] text-zinc-600 font-mono mt-0.5">
+          <p className="text-xs text-zinc-600 font-mono mt-0.5">
             ID: {nft.id.slice(0, 12)}...{nft.id.slice(-6)}
           </p>
         </div>
@@ -139,7 +140,7 @@ export function NftDetail() {
 
         {/* Owner */}
         <div className="px-3 py-2.5 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-500 mb-0.5">Owner</p>
+          <p className="text-xs text-zinc-500 mb-0.5">Owner</p>
           <p className="text-xs text-zinc-300 font-mono break-all">{nft.owner}</p>
         </div>
 
@@ -223,7 +224,7 @@ export function NftDetail() {
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="px-3 py-2.5 rounded-lg bg-evap-surface border border-evap-border">
-      <p className="text-[10px] text-zinc-500 mb-0.5">{label}</p>
+      <p className="text-xs text-zinc-500 mb-0.5">{label}</p>
       <p className="text-xs font-semibold text-zinc-200">{value}</p>
     </div>
   );

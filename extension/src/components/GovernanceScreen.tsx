@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { RotateCw } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { api, type ForkChoiceAttractor } from "@/utils/api";
 
@@ -119,31 +120,29 @@ export function GovernanceScreen() {
         </button>
         <div className="flex-1">
           <h1 className="text-sm font-semibold text-zinc-200">Chain Governance</h1>
-          <p className="text-[10px] text-zinc-500">Fork-choice rule + Singh-Attractor basin set.</p>
+          <p className="text-xs text-zinc-500">Fork-choice rule + Singh-Attractor basin set.</p>
         </div>
         <button
           onClick={() => refreshForkChoiceMode()}
-          className="text-[10px] px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
-        >
-          ↻
-        </button>
+          className="text-xs px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
+        ><RotateCw className="w-3.5 h-3.5" strokeWidth={1.5} /></button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {notification && (
           <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-evap-green/10 border border-evap-green/30">
-            <p className="text-[11px] text-evap-green">{notification}</p>
+            <p className="text-xs text-evap-green">{notification}</p>
           </div>
         )}
         {error && (
           <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-evap-red/10 border border-evap-red/30">
-            <p className="text-[11px] text-evap-red">{error}</p>
+            <p className="text-xs text-evap-red">{error}</p>
           </div>
         )}
 
         {/* Current mode card */}
         <div className="mx-4 mt-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Active fork-choice mode
           </p>
           <div className="flex items-baseline gap-2">
@@ -177,11 +176,11 @@ export function GovernanceScreen() {
         {/* Active attractor set */}
         {currentMode === "singh_attractor" && (
           <div className="mx-4 mt-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border">
-            <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+            <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
               Attractor set ({currentAttractors.length})
             </p>
             {currentAttractors.length === 0 ? (
-              <p className="text-[10px] text-zinc-600">No attractors configured.</p>
+              <p className="text-xs text-zinc-600">No attractors configured.</p>
             ) : (
               <div className="space-y-1">
                 {currentAttractors.map((a, i) => (
@@ -189,8 +188,8 @@ export function GovernanceScreen() {
                     key={i}
                     className="flex justify-between items-center px-2 py-1.5 rounded bg-evap-bg border border-evap-border"
                   >
-                    <span className="text-[10px] text-zinc-400">#{i + 1}</span>
-                    <div className="flex gap-3 text-[10px] tabular-nums">
+                    <span className="text-xs text-zinc-400">#{i + 1}</span>
+                    <div className="flex gap-3 text-xs tabular-nums">
                       <span>
                         <span className="text-zinc-500">centre </span>
                         <span className="text-zinc-200">{a.center.toLocaleString()}</span>
@@ -210,7 +209,7 @@ export function GovernanceScreen() {
         {/* Pro endorse form */}
         <div className="mx-4 mt-4 mb-4 rounded-lg bg-evap-surface border border-evap-border">
           <div className="flex items-center justify-between px-3 py-2 border-b border-evap-border">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
               Endorse amendment
             </p>
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-purple/10 text-evap-purple border border-evap-purple/30">
@@ -220,7 +219,7 @@ export function GovernanceScreen() {
 
           {!proGated ? (
             <div className="px-3 py-4">
-              <p className="text-[11px] text-zinc-500 leading-snug">
+              <p className="text-xs text-zinc-500 leading-snug">
                 Amendment endorsement requires Pro mode. This is a heavy
                 stake-weighted operation; enable a dev build to access it.
               </p>
@@ -231,7 +230,7 @@ export function GovernanceScreen() {
                 <select
                   value={targetMode}
                   onChange={(e) => setTargetMode(e.target.value)}
-                  className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[11px] text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
+                  className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
                 >
                   <option value="mcc">MCC</option>
                   <option value="singh_attractor">Singh-Attractor</option>
@@ -243,7 +242,7 @@ export function GovernanceScreen() {
                   value={attractorJson}
                   onChange={(e) => setAttractorJson(e.target.value)}
                   rows={4}
-                  className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[10px] font-mono text-zinc-200 focus:outline-none focus:border-evap-cyan/60 resize-y"
+                  className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-evap-cyan/60 resize-y"
                 />
               </Field>
 
@@ -254,7 +253,7 @@ export function GovernanceScreen() {
                     min="1"
                     value={stake}
                     onChange={(e) => setStake(e.target.value)}
-                    className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[11px] text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
+                    className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
                   />
                 </Field>
                 <Field label="Required quorum">
@@ -263,7 +262,7 @@ export function GovernanceScreen() {
                     min="1"
                     value={requiredStake}
                     onChange={(e) => setRequiredStake(e.target.value)}
-                    className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[11px] text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
+                    className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
                   />
                 </Field>
               </div>
@@ -271,7 +270,7 @@ export function GovernanceScreen() {
               <button
                 onClick={handleEndorse}
                 disabled={submitting}
-                className="w-full py-2 rounded-lg bg-evap-cyan text-black text-[11px] font-semibold hover:bg-evap-cyan/90 transition disabled:opacity-50"
+                className="w-full py-2 rounded-lg bg-evap-cyan text-black text-xs font-semibold hover:bg-evap-cyan/90 transition disabled:opacity-50"
               >
                 {submitting ? "Broadcasting…" : "Sign & broadcast amendment"}
               </button>
@@ -309,7 +308,7 @@ function ModeCard({
       }`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-zinc-200">{name}</span>
+        <span className="text-xs font-semibold text-zinc-200">{name}</span>
         {active ? (
           <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30">
             Active
@@ -320,7 +319,7 @@ function ModeCard({
           </span>
         )}
       </div>
-      <p className="text-[10px] text-zinc-500 mt-1 leading-snug">{blurb}</p>
+      <p className="text-xs text-zinc-500 mt-1 leading-snug">{blurb}</p>
     </div>
   );
 }
