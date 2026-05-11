@@ -92,11 +92,31 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
-## 2026-05-11 (T1.20 continuation) — temporal / state_sync / mempool / paymaster / db / banlist gap closure
+## 2026-05-11 (T1.20 continuation) — temporal / state_sync / mempool / paymaster / db / banlist + 10 more crates
 
 **Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.
 
-**Commits shipped this arc:** 6 (`47774f25` → `2a1b6a7a`). All on `origin/main`.
+**Commits shipped this arc:** 16 (`47774f25` → `16e2577a`). All on `origin/main`.
+
+**Additional T1.20 file-level closures (post-`2157bce4`):**
+
+| Crate / file | Tests added | Targeted gap |
+|---|---|---|
+| `evaporchain-da::light_client.rs` (89.14% → ↑) | 2 | LyingCoordsCellSource defense (peer marked OutOfRange), `sampler.da()` accessor |
+| `evaporchain-types::lib.rs` (89.87% → ↑) | 4 + 1 BUG fix | Missing `#[test]` on `test_refund_tx_roundtrip_and_sender` (28 lines silently unreached); Deferred::signable_bytes all 6 TemporalGuard variants; UserOp::signable_bytes with paymaster; VestingSchedule cliff_epochs==vesting_epochs edge |
+| `evaporchain-contracts::decaying_dao.rs` (90.61% → ↑) | 9 | 7 unknown-id error paths (vote/finalize/mark_ready/mark_applied/get_proposal), non-Active vote, param_bounds method, tick malformed state |
+| `evaporchain-fee-controller::params.rs` (87.50% → ↑) | 1 | `Default::default()` routes through `default_genesis` |
+| `evaporchain-proving::async_fold.rs` (86.44% → ↑) | 4 | `FoldQueue::spawn` default-interval delegate, `capacity()`/`approx_depth()` getters, `chain_proof_interval=0` disables auto-publish |
+| `evaporchain-sharding::shard_assignment.rs` (95.88% → ↑) | 2 | `ShardId Display` + `ShardRange::len/is_empty` |
+| `evaporchain-mcp::resources.rs` (68.68% → ↑) | 2 | `read_resource` missing-uri + unknown-uri error paths (no HTTP needed) |
+| `evaporchain-mcp::validation.rs` (77.22% → ↑) | 4 | `ValidationError::Display` all 4 variants + 3 field validators |
+| `evaporchain-paymaster::reconcile.rs` (94.95% → ↑) | 1 | mock-chain 500 → `ReconcileError::BadStatus` |
+
+Cumulative T1.20 this session arc: ~33 (first batch) + ~29 (second batch) = ~62 new tests across 12 files.
+
+**Notable bug closure:** `test_refund_tx_roundtrip_and_sender` was defined as a plain `fn()` without the `#[test]` attribute. Discovered via `cargo llvm-cov --show-missing-lines` on `evaporchain-types`. The function existed in the test module since the Refund tx variant was added but never ran. Lines 2383-2410 (28 lines covering Refund roundtrip + sender accessor) were uncovered for this reason. Added the missing attribute; the test now runs and passes — a covert dead-test pinned alive.
+
+
 
 **Deliverables (T1.20 file-level closures):**
 
