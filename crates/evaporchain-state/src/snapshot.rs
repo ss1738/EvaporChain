@@ -16,6 +16,7 @@
 //! recomputed from the contents to detect tampering.
 
 use evaporchain_crypto::hash::blake3_hash;
+use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
 use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -48,6 +49,32 @@ pub enum SnapshotError {
     BelowFinalityDepth { height: u64, required: u64 },
     #[error("snapshot version mismatch: expected {expected}, got {actual}")]
     VersionMismatch { expected: u32, actual: u32 },
+    /// T0.8 sub-task 2: snapshot lacks a quorum certificate but
+    /// strict-mode verification requires one.
+    #[error("missing quorum certificate")]
+    MissingQuorumCert,
+    /// Quorum cert's bound integrity_hash does not match the
+    /// snapshot's actual integrity_hash. Catches an attacker who
+    /// attaches a cert signed against a different snapshot.
+    #[error("quorum cert integrity_hash mismatch: cert claims {cert_hash}, snapshot is {snap_hash}")]
+    QuorumCertIntegrityHashMismatch {
+        cert_hash: String,
+        snap_hash: String,
+    },
+    /// Quorum cert's signer-stake sum is below the 2f+1 threshold of
+    /// the validator-set total stake.
+    #[error("quorum cert below 2f+1 stake: signing={signing}, total={total}")]
+    QuorumCertInsufficientStake { signing: u128, total: u128 },
+    /// One or more validators named in the cert lack a BLS public key
+    /// on file. The cert cannot be cryptographically verified.
+    #[error("quorum cert names {missing} validator(s) without bls_public_key")]
+    QuorumCertMissingValidatorBlsKey { missing: usize },
+    /// Quorum cert names a validator not in the snapshot's validator_set.
+    #[error("quorum cert names unknown validator id: {0}")]
+    QuorumCertUnknownValidator(u64),
+    /// BLS aggregate signature verification on the integrity_hash failed.
+    #[error("quorum cert BLS aggregate verify failed")]
+    QuorumCertBlsFailed,
 }
 
 // ─────────────────────── Types ──────────────────────────────────────────
@@ -648,6 +675,46 @@ pub struct SnapshotFile {
     /// BLAKE3 over all preceding fields canonically serialised. Verifier
     /// recomputes and asserts equal.
     pub integrity_hash: [u8; 32],
+    /// T0.8 sub-task 2 — quorum certificate binding the snapshot to a
+    /// 2f+1-attestation by the validator set named in `validator_set`.
+    /// Optional for backwards compatibility with snapshots built before
+    /// this defense landed; strict-mode verification (`from_bytes_strict`)
+    /// requires it. The cert signs over `integrity_hash`, so the
+    /// `compute_integrity_hash` recipe must EXCLUDE this field to keep
+    /// the integrity_hash stable before/after cert attachment.
+    ///
+    /// NOTE: deliberately NO `skip_serializing_if` — bincode 1.3.3
+    /// does not honor skip-when-None for Option fields (writes 0
+    /// bytes on serialize but reads 1 byte on deserialize → EOF
+    /// error). Account.vesting + paymaster Day-1 hit the same trap.
+    /// Always emit the 1-byte Option tag.
+    #[serde(default)]
+    pub quorum_cert: Option<SnapshotQuorumCert>,
+}
+
+/// T0.8 sub-task 2 — snapshot quorum certificate. Validators sign the
+/// snapshot's `integrity_hash` (NOT a derived re-hash — the canonical
+/// bytes-to-sign are exactly the 32 bytes of `SnapshotFile.integrity_hash`).
+/// The aggregate signature must be from at least 2f+1 stake-weighted
+/// validators of the snapshot's own `validator_set`.
+///
+/// Closes the documented-gap test
+/// `adversarial_t08_forged_integrity_hash_matches_tampered_bytes`:
+/// without this binding, an attacker who controls bytes AND can
+/// re-hash gets through the integrity check. With this binding, the
+/// attacker would ALSO need 2f+1 BLS signatures over their forged
+/// integrity_hash — economically infeasible.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotQuorumCert {
+    /// The integrity_hash that was signed. MUST match
+    /// `SnapshotFile.integrity_hash` at verify time.
+    pub integrity_hash: [u8; 32],
+    /// Aggregated BLS12-381 signature (96 bytes) over `integrity_hash`.
+    pub aggregate_signature: Vec<u8>,
+    /// Validator IDs whose individual signatures were aggregated. Order
+    /// is informational; verification de-duplicates via the validator-set
+    /// lookup.
+    pub signer_ids: Vec<u64>,
 }
 
 /// Lightweight metadata returned by `/api/snapshot/latest`.
@@ -727,6 +794,12 @@ impl SnapshotFile {
             bell_reading,
             validator_set,
             integrity_hash: [0u8; 32],
+            // Cert is attached later via `attach_quorum_cert` once
+            // 2f+1 validators have signed the freshly-computed
+            // integrity_hash. Created-with-None is the canonical
+            // shape; strict-mode loaders will reject until the cert
+            // is sealed.
+            quorum_cert: None,
         };
         file.integrity_hash = file.compute_integrity_hash();
         Ok(file)
@@ -750,10 +823,100 @@ impl SnapshotFile {
         let mut canonical = self.clone();
         canonical.integrity_hash = [0u8; 32];
         canonical.created_at = 0;
+        // T0.8 sub-task 2: exclude `quorum_cert` from the integrity
+        // hash so the cert can be attached AFTER the snapshot is
+        // produced without invalidating the hash. The cert signs over
+        // `integrity_hash`; recursive inclusion would create a
+        // chicken-and-egg cycle.
+        canonical.quorum_cert = None;
         match bincode::serialize(&canonical) {
             Ok(bytes) => blake3_hash(&bytes),
             Err(_) => [0u8; 32],
         }
+    }
+
+    /// T0.8 sub-task 2 — verify the snapshot's quorum certificate.
+    /// Returns `Ok(())` when the cert is present, binds to this
+    /// snapshot's integrity_hash, names enough stake to clear the
+    /// 2f+1 threshold of the snapshot's own validator_set, and the
+    /// BLS aggregate signature verifies. Any failure returns a
+    /// specific `SnapshotError` variant naming the failure mode.
+    ///
+    /// This is the strict-mode verifier. `from_bytes` does not call
+    /// this — backwards-compat retained for snapshots produced before
+    /// this defense landed. Operators wanting strict acceptance use
+    /// `from_bytes_strict` (which composes from_bytes + this method).
+    pub fn verify_quorum_cert(&self) -> Result<(), SnapshotError> {
+        let cert = self
+            .quorum_cert
+            .as_ref()
+            .ok_or(SnapshotError::MissingQuorumCert)?;
+
+        // 1. Binding: cert.integrity_hash must equal snapshot's.
+        if cert.integrity_hash != self.integrity_hash {
+            return Err(SnapshotError::QuorumCertIntegrityHashMismatch {
+                cert_hash: hex::encode(cert.integrity_hash),
+                snap_hash: hex::encode(self.integrity_hash),
+            });
+        }
+
+        // 2. Resolve each signer to a validator with a BLS pubkey.
+        let mut pks: Vec<BlsPublicKey> = Vec::with_capacity(cert.signer_ids.len());
+        let mut signing_stake: u128 = 0;
+        let mut missing_bls = 0usize;
+        for sid in &cert.signer_ids {
+            let v = self
+                .validator_set
+                .validators
+                .iter()
+                .find(|v| v.id == *sid)
+                .ok_or_else(|| SnapshotError::QuorumCertUnknownValidator(*sid))?;
+            match &v.bls_public_key {
+                Some(b) => pks.push(BlsPublicKey(b.clone())),
+                None => {
+                    missing_bls += 1;
+                }
+            }
+            signing_stake = signing_stake.saturating_add(v.stake as u128);
+        }
+        if missing_bls > 0 {
+            return Err(SnapshotError::QuorumCertMissingValidatorBlsKey {
+                missing: missing_bls,
+            });
+        }
+
+        // 3. 2f+1 stake-weighted threshold: signing_stake > 2/3 of
+        //    total (strict). signing * 3 > total * 2.
+        let total_stake: u128 = self
+            .validator_set
+            .validators
+            .iter()
+            .map(|v| v.stake as u128)
+            .sum();
+        if signing_stake.saturating_mul(3) <= total_stake.saturating_mul(2) {
+            return Err(SnapshotError::QuorumCertInsufficientStake {
+                signing: signing_stake,
+                total: total_stake,
+            });
+        }
+
+        // 4. BLS aggregate verify over the integrity_hash.
+        let agg_sig = BlsSignature(cert.aggregate_signature.clone());
+        if !BlsVerifier::aggregate_verify(&cert.integrity_hash, &agg_sig, &pks) {
+            return Err(SnapshotError::QuorumCertBlsFailed);
+        }
+
+        Ok(())
+    }
+
+    /// T0.8 sub-task 2 — strict-mode `from_bytes` that ALSO requires
+    /// a valid quorum certificate. Use this on the fast-sync hot path
+    /// where forged integrity_hash defense matters; the regular
+    /// `from_bytes` is retained for tooling / pre-cert legacy snapshots.
+    pub fn from_bytes_strict(bytes: &[u8]) -> Result<Self, SnapshotError> {
+        let file = Self::from_bytes(bytes)?;
+        file.verify_quorum_cert()?;
+        Ok(file)
     }
 
     /// Serialise + compress + prefix with magic header. Returns the
@@ -1524,5 +1687,185 @@ mod tests {
         assert_eq!(loaded.state_root, file.state_root);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ─── T0.8 sub-task 2 — Quorum-cert binding tests ────────────────
+
+    use evaporchain_crypto::signatures::BlsKeypair;
+
+    /// Helper: build a snapshot with `n` validators, EACH with a real
+    /// BLS keypair returned alongside the validator set. The caller
+    /// can then sign the integrity_hash with the keypairs of any
+    /// subset of signers to produce a cert.
+    fn make_snapshot_with_real_bls_validators(n: u64) -> (SnapshotFile, Vec<BlsKeypair>) {
+        let mut keypairs: Vec<BlsKeypair> = Vec::with_capacity(n as usize);
+        let mut validators: Vec<SnapshotValidator> = Vec::with_capacity(n as usize);
+        for i in 1..=n {
+            let kp = BlsKeypair::generate();
+            let pk_bytes = kp.public_key_bytes().0;
+            validators.push(SnapshotValidator {
+                id: i,
+                stake: 1_000,
+                address: addr(i as u8),
+                bls_public_key: Some(pk_bytes),
+                vrf_public_key: None,
+                jailed: false,
+            });
+            keypairs.push(kp);
+        }
+        let validator_set = ValidatorSetSnapshot { validators };
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0xCC; 32],
+            None,
+            validator_set,
+        )
+        .unwrap();
+        (file, keypairs)
+    }
+
+    /// Helper: sign `msg` with the given keypairs and aggregate into
+    /// a SnapshotQuorumCert.
+    fn build_cert(
+        msg: &[u8; 32],
+        signer_keypairs: &[(&u64, &BlsKeypair)],
+    ) -> SnapshotQuorumCert {
+        let sigs: Vec<BlsSignature> = signer_keypairs.iter().map(|(_, kp)| kp.sign(msg)).collect();
+        let agg = BlsVerifier::aggregate_signatures(&sigs).expect("aggregate non-empty");
+        SnapshotQuorumCert {
+            integrity_hash: *msg,
+            aggregate_signature: agg.0,
+            signer_ids: signer_keypairs.iter().map(|(id, _)| **id).collect(),
+        }
+    }
+
+    #[test]
+    fn t08_quorum_cert_happy_path_verifies() {
+        let (mut file, kps) = make_snapshot_with_real_bls_validators(4);
+        // 3 of 4 sign → 3/4 stake > 2/3 → quorum.
+        let ids: Vec<u64> = vec![1, 2, 3];
+        let signer_kps: Vec<(&u64, &BlsKeypair)> = ids.iter().zip(kps.iter()).collect();
+        file.quorum_cert = Some(build_cert(&file.integrity_hash, &signer_kps));
+        let result = file.verify_quorum_cert();
+        assert!(result.is_ok(), "happy path must verify: {:?}", result.err());
+    }
+
+    #[test]
+    fn t08_quorum_cert_missing_returns_missing_quorum_cert() {
+        let (file, _kps) = make_snapshot_with_real_bls_validators(4);
+        assert!(file.quorum_cert.is_none());
+        let err = file.verify_quorum_cert().unwrap_err();
+        assert!(matches!(err, SnapshotError::MissingQuorumCert));
+    }
+
+    #[test]
+    fn t08_quorum_cert_wrong_integrity_hash_rejected() {
+        let (mut file, kps) = make_snapshot_with_real_bls_validators(4);
+        let wrong_hash = [0xFFu8; 32];
+        let ids: Vec<u64> = vec![1, 2, 3];
+        let signer_kps: Vec<(&u64, &BlsKeypair)> = ids.iter().zip(kps.iter()).collect();
+        file.quorum_cert = Some(build_cert(&wrong_hash, &signer_kps));
+        let err = file.verify_quorum_cert().unwrap_err();
+        assert!(matches!(
+            err,
+            SnapshotError::QuorumCertIntegrityHashMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn t08_quorum_cert_insufficient_stake_rejected() {
+        let (mut file, kps) = make_snapshot_with_real_bls_validators(4);
+        // Only 2 of 4 sign → 2/4 = 50% < 2/3 → fails threshold.
+        let ids: Vec<u64> = vec![1, 2];
+        let signer_kps: Vec<(&u64, &BlsKeypair)> = ids.iter().zip(kps.iter()).collect();
+        file.quorum_cert = Some(build_cert(&file.integrity_hash, &signer_kps));
+        let err = file.verify_quorum_cert().unwrap_err();
+        assert!(matches!(
+            err,
+            SnapshotError::QuorumCertInsufficientStake { .. }
+        ));
+    }
+
+    #[test]
+    fn t08_quorum_cert_unknown_validator_id_rejected() {
+        let (mut file, kps) = make_snapshot_with_real_bls_validators(4);
+        // Build a cert that names a validator (id 99) that doesn't
+        // exist in the snapshot's validator_set.
+        let ids: Vec<u64> = vec![1, 2, 99];
+        // We can only sign with kps for 1 and 2 (99 doesn't exist).
+        // Build cert manually with a placeholder aggregate (won't be
+        // BLS-verified — the unknown-validator check fires first).
+        let sigs: Vec<BlsSignature> = vec![
+            kps[0].sign(&file.integrity_hash),
+            kps[1].sign(&file.integrity_hash),
+        ];
+        let agg = BlsVerifier::aggregate_signatures(&sigs).unwrap();
+        file.quorum_cert = Some(SnapshotQuorumCert {
+            integrity_hash: file.integrity_hash,
+            aggregate_signature: agg.0,
+            signer_ids: ids,
+        });
+        let err = file.verify_quorum_cert().unwrap_err();
+        assert!(matches!(
+            err,
+            SnapshotError::QuorumCertUnknownValidator(99)
+        ));
+    }
+
+    #[test]
+    fn t08_quorum_cert_corrupted_sig_rejected() {
+        let (mut file, kps) = make_snapshot_with_real_bls_validators(4);
+        let ids: Vec<u64> = vec![1, 2, 3];
+        let signer_kps: Vec<(&u64, &BlsKeypair)> = ids.iter().zip(kps.iter()).collect();
+        let mut cert = build_cert(&file.integrity_hash, &signer_kps);
+        // Flip a byte in the aggregate signature.
+        cert.aggregate_signature[0] ^= 0xFF;
+        file.quorum_cert = Some(cert);
+        let err = file.verify_quorum_cert().unwrap_err();
+        assert!(matches!(err, SnapshotError::QuorumCertBlsFailed));
+    }
+
+    #[test]
+    fn t08_quorum_cert_excluded_from_integrity_hash() {
+        // Attaching a cert AFTER snapshot creation must NOT change the
+        // integrity_hash — otherwise the cert would invalidate itself.
+        let (mut file, kps) = make_snapshot_with_real_bls_validators(4);
+        let pre_cert_hash = file.integrity_hash;
+        let ids: Vec<u64> = vec![1, 2, 3];
+        let signer_kps: Vec<(&u64, &BlsKeypair)> = ids.iter().zip(kps.iter()).collect();
+        file.quorum_cert = Some(build_cert(&pre_cert_hash, &signer_kps));
+        let post_cert_recomputed = file.compute_integrity_hash();
+        assert_eq!(
+            pre_cert_hash, post_cert_recomputed,
+            "compute_integrity_hash MUST exclude quorum_cert"
+        );
+    }
+
+    #[test]
+    fn t08_from_bytes_strict_requires_cert() {
+        let (file, _kps) = make_snapshot_with_real_bls_validators(4);
+        let bytes = file.to_bytes().unwrap();
+        // No cert attached → strict load rejects.
+        let err = SnapshotFile::from_bytes_strict(&bytes).unwrap_err();
+        assert!(matches!(err, SnapshotError::MissingQuorumCert));
+        // Non-strict load works (backwards compat path).
+        assert!(SnapshotFile::from_bytes(&bytes).is_ok());
+    }
+
+    #[test]
+    fn t08_from_bytes_strict_accepts_valid_cert() {
+        let (mut file, kps) = make_snapshot_with_real_bls_validators(4);
+        let ids: Vec<u64> = vec![1, 2, 3];
+        let signer_kps: Vec<(&u64, &BlsKeypair)> = ids.iter().zip(kps.iter()).collect();
+        file.quorum_cert = Some(build_cert(&file.integrity_hash, &signer_kps));
+        let bytes = file.to_bytes().unwrap();
+        let loaded = SnapshotFile::from_bytes_strict(&bytes).expect("strict load");
+        assert_eq!(loaded.block_height, 100);
+        assert!(loaded.quorum_cert.is_some());
     }
 }

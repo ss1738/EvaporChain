@@ -11,18 +11,13 @@
 //!
 //! | # | Fixture | Status | What it locks / surfaces |
 //! |---|---|---|---|
-//! | 1 | tampered bytes + recomputed integrity_hash | ⚠️ KNOWN GAP `#[ignore]` | shows that without quorum-cert binding (T0.8 sub-task 2) an attacker who can re-hash gets through |
+//! | 1 | tampered bytes + recomputed integrity_hash | ✅ REJECTED (CLOSED 2026-05-11) | quorum-cert binding (T0.8 sub-task 2) shipped — attacker who controls bytes AND can re-hash STILL needs 2f+1 BLS signatures over their forged hash. `from_bytes_strict` rejects. See `forged_integrity_hash_rejected_by_quorum_cert` below. |
 //! | 2 | duplicate validator IDs in validator_set | ✅ documents accept-currently behaviour | apply_to does not reject duplicates today; flag for downstream defense |
 //! | 3 | truncated zstd payload (chunk-level attack) | ✅ rejected | locks zstd-decompress error path as a defense |
 //!
-//! Vectors NOT covered here pending substrate work:
-//!   - quorum-cert verification (T0.8 sub-task 2 — needs commit-cert
-//!     field on SnapshotFile, plus 2f+1-attestation verification)
+//! Vectors NOT yet covered:
 //!   - partial-state-withhold detection (T0.8 sub-task 4 — needs an
 //!     account/object count claim + verification at apply_to time)
-//!
-//! These are deferred until the substrate is in place; fixtures will
-//! be added when the verification path lands.
 
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
 use evaporchain_state::snapshot::{
@@ -102,47 +97,158 @@ fn make_clean_snapshot() -> SnapshotFile {
     .expect("create clean snapshot")
 }
 
-// ─── Fixture 1 — Forged integrity_hash matches tampered bytes ───────
+// ─── Fixture 1 — Forged integrity_hash rejected by quorum cert (CLOSED) ─
 //
-// KNOWN GAP. An attacker who controls snapshot bytes AND can recompute
-// the integrity_hash can pass the integrity check. The defense is
-// snapshot quorum-cert verification (T0.8 sub-task 2): bind the
-// integrity_hash to a 2f+1-attestation signed by the validator set.
-// Without that binding, integrity_hash is self-attested, which is
-// not a defense against a forging attacker.
+// PREVIOUSLY a KNOWN GAP: an attacker controlling snapshot bytes AND
+// able to recompute integrity_hash passed `from_bytes` because the
+// hash was self-attested.
 //
-// The fixture below WOULD pass `from_bytes` today (no rejection).
-// Marked `#[ignore]` so CI doesn't fail; flips to enabled once the
-// quorum-cert verification path lands.
+// CLOSED 2026-05-11 by T0.8 sub-task 2: SnapshotFile.quorum_cert
+// binds the integrity_hash to a 2f+1 BLS aggregate signature from
+// validators of the snapshot's own validator_set. Now the attacker
+// needs to ALSO forge 2f+1 BLS signatures over their tampered hash
+// — economically infeasible.
+//
+// This test exercises the closed-gap behaviour: tamper the bytes,
+// recompute integrity_hash, leave quorum_cert = None (or attach a
+// stale cert), and confirm `from_bytes_strict` rejects with
+// `MissingQuorumCert` (cert absent) or `QuorumCertBlsFailed` (cert
+// signed against the original honest hash, not the forged one).
+/// Without an attached cert, the attack collapses to "no cert" —
+/// strict load rejects with MissingQuorumCert. Locks the
+/// can't-skip-cert-by-omission contract.
 #[test]
-#[ignore = "known gap — no quorum-cert binding yet (T0.8 sub-task 2)"]
-fn adversarial_t08_forged_integrity_hash_matches_tampered_bytes() {
+fn adversarial_t08_forged_integrity_hash_rejected_via_missing_quorum_cert() {
     let mut file = make_clean_snapshot();
-
-    // Attacker's tamper: change the chain_id (any field works).
-    let original_chain_id = file.chain_id.clone();
     file.chain_id = "evaporchain-attacker".to_string();
-
-    // Attacker recomputes the integrity_hash to match the tampered
-    // bytes. This currently passes the from_bytes check because the
-    // hash is self-attested with no external signature binding.
-    file.integrity_hash = [0u8; 32]; // SnapshotFile::create sets this; recompute via to_bytes path
+    // Honest from_bytes will reject this anyway via StateRootMismatch
+    // because we tampered chain_id without recomputing integrity_hash.
+    // The strict path catches it earlier via the no-cert check — locks
+    // the "no cert = reject" leg of the defense regardless of which
+    // self-attested check would fire first.
     let bytes = file.to_bytes().expect("serialize tampered snapshot");
-
-    // Today this fails to detect the tamper because we're recomputing
-    // the integrity hash to match. The eventual defense (quorum-cert)
-    // would catch it because validators attest to the original
-    // integrity_hash and won't sign the attacker's recomputed one.
-    let parsed = SnapshotFile::from_bytes(&bytes);
+    let strict = SnapshotFile::from_bytes_strict(&bytes);
     assert!(
-        parsed.is_ok(),
-        "TODAY: forged integrity_hash + tampered chain_id passes verify \
-         (this assertion will FAIL once T0.8 quorum-cert binding lands; \
-         flip the test direction at that point)"
+        matches!(
+            strict,
+            Err(SnapshotError::MissingQuorumCert)
+                | Err(SnapshotError::StateRootMismatch { .. })
+        ),
+        "from_bytes_strict MUST reject (either path); got {:?}",
+        strict.err()
     );
-    let parsed = parsed.unwrap();
-    assert_eq!(parsed.chain_id, "evaporchain-attacker");
-    assert_ne!(parsed.chain_id, original_chain_id);
+}
+
+/// Stronger adversarial fixture — attacker keeps the integrity_hash
+/// internally consistent (so non-strict accepts) but attaches a STALE
+/// cert from a different snapshot. The cert's integrity_hash !=
+/// current integrity_hash → strict rejects with
+/// QuorumCertIntegrityHashMismatch. This is THE load-bearing
+/// defensive property of T0.8 sub-task 2: even if the attacker can
+/// produce a self-attested snapshot, they cannot reuse a cert from
+/// a different snapshot's signing event.
+#[test]
+fn adversarial_t08_stale_quorum_cert_from_different_snapshot_rejected() {
+    use evaporchain_crypto::signatures::{BlsKeypair, BlsSignature, BlsVerifier};
+    use evaporchain_state::snapshot::SnapshotQuorumCert;
+
+    // Build a snapshot with real BLS validators so we can construct
+    // a valid cert.
+    let kp1 = BlsKeypair::generate();
+    let kp2 = BlsKeypair::generate();
+    let kp3 = BlsKeypair::generate();
+    let kp4 = BlsKeypair::generate();
+    let validator_set = ValidatorSetSnapshot {
+        validators: vec![
+            SnapshotValidator {
+                id: 1,
+                stake: 1_000,
+                address: addr(1),
+                bls_public_key: Some(kp1.public_key_bytes().0),
+                vrf_public_key: None,
+                jailed: false,
+            },
+            SnapshotValidator {
+                id: 2,
+                stake: 1_000,
+                address: addr(2),
+                bls_public_key: Some(kp2.public_key_bytes().0),
+                vrf_public_key: None,
+                jailed: false,
+            },
+            SnapshotValidator {
+                id: 3,
+                stake: 1_000,
+                address: addr(3),
+                bls_public_key: Some(kp3.public_key_bytes().0),
+                vrf_public_key: None,
+                jailed: false,
+            },
+            SnapshotValidator {
+                id: 4,
+                stake: 1_000,
+                address: addr(4),
+                bls_public_key: Some(kp4.public_key_bytes().0),
+                vrf_public_key: None,
+                jailed: false,
+            },
+        ],
+    };
+
+    let mut db = InMemoryStateDB::new();
+    populate_db(&mut db);
+    let file_honest = SnapshotFile::create(
+        &mut db,
+        "evaporchain-test-1",
+        100,
+        5,
+        [0xCC; 32],
+        None,
+        validator_set.clone(),
+    )
+    .expect("create honest snapshot");
+
+    // Validators sign the HONEST integrity_hash.
+    let honest_hash = file_honest.integrity_hash;
+    let sigs = vec![
+        kp1.sign(&honest_hash),
+        kp2.sign(&honest_hash),
+        kp3.sign(&honest_hash),
+    ];
+    let agg = BlsVerifier::aggregate_signatures(&sigs).expect("aggregate");
+    let honest_cert = SnapshotQuorumCert {
+        integrity_hash: honest_hash,
+        aggregate_signature: agg.0,
+        signer_ids: vec![1, 2, 3],
+    };
+
+    // Attacker constructs a DIFFERENT snapshot but reuses the honest cert.
+    let mut db_b = InMemoryStateDB::new();
+    populate_db(&mut db_b);
+    let mut file_attacker = SnapshotFile::create(
+        &mut db_b,
+        "evaporchain-test-1",
+        100,
+        5,
+        [0xDD; 32], // different parent_hash → different integrity_hash
+        None,
+        validator_set,
+    )
+    .expect("create attacker snapshot");
+    file_attacker.quorum_cert = Some(honest_cert);
+    assert_ne!(
+        file_attacker.integrity_hash, honest_hash,
+        "test pre-condition: attacker's integrity_hash must differ"
+    );
+
+    // verify_quorum_cert MUST reject because cert.integrity_hash !=
+    // attacker_snapshot.integrity_hash.
+    let err = file_attacker.verify_quorum_cert().unwrap_err();
+    assert!(
+        matches!(err, SnapshotError::QuorumCertIntegrityHashMismatch { .. }),
+        "stale cert from different snapshot MUST be rejected; got {:?}",
+        err
+    );
 }
 
 // ─── Fixture 2 — Duplicate validator IDs in validator_set ───────────
