@@ -48,6 +48,51 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-11 (T1.20 continuation) — temporal / state_sync / mempool / paymaster / db / banlist gap closure
+
+**Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.
+
+**Commits shipped this arc:** 6 (`47774f25` → `2a1b6a7a`). All on `origin/main`.
+
+**Deliverables (T1.20 file-level closures):**
+
+| Crate / file | Tests added | Targeted gap |
+|---|---|---|
+| `evaporchain-execution::temporal.rs` (85.51% → ↑) | 9 | DeferredQueue submit error paths (EmptyInnerTx), EnergyAbove guard (missing+present), ContractInPhase missing contract, BeforeEpoch standalone, queue Default/empty/len, DecayWatcherEngine watchers_for_object filter, MAX_WATCHERS cap, DeferredEntry min-heap ordering |
+| `evaporchain-consensus::state_sync.rs` (71.04% → ↑) | 8 | `StateSyncManager::with_checkpoint` ctor, `start()` broadcasts TipRequest, on_message no-op fall-through (TipRequest, HeaderRequest), `SnapshotProvider::handle_request` for TipRequest / SnapshotMetadataRequest (present+missing) / ChunkRequest (valid+missing) / response-message fall-through |
+| `evaporchain-consensus::mempool.rs` (81.89% → ↑) | 1 (24-variant sweep) | Exhaustive `estimate_tx_size` + `estimate_tx_gas` match arms via submit + take_with_gas_limit. Every Transaction variant covered. |
+| `evaporchain-paymaster::lib.rs` (96.38% → ↑) | 5 | RateLimiter disabled-always-allows, RateLimiter burst-then-throttle, IdempotencyCache overwrite (Entry::Occupied), IdempotencyCache LRU eviction, IdempotencyCache::enabled() with max_keys=0 vs positive |
+| `evaporchain-state::db.rs` (73.38% → ↑) | 5 | InMemoryStateDB delegation CRUD + filters, historical-snapshot APIs (commit, get_at_height, earliest/latest, prune), get_object_at_height None paths, governance proposal/param CRUD, vesting registry CRUD |
+| `evaporchain-network::banlist.rs` (90.27% → ↑) | 5 | is_empty/len, default_path, load on missing file (NotFound branch), load on malformed JSON (parse-error branch — self-DoS guard), save→load roundtrip with parent-dir creation |
+
+Aggregate: 33 new tests across 6 files; 0 regressions, 0 existing-test changes.
+
+**Decisions made:**
+- IdempotencyCache (paymaster) was tested via direct struct access from inside `mod tests`. Tests-can-see-private invariant holds.
+- BanList load-on-malformed-JSON returning empty is now load-bearing — pinned by `t1_20_banlist_load_malformed_returns_empty`. Future changes that fail-loud on parse error would self-DoS the node; this test catches the regression.
+- 24-variant exhaustive mempool sweep is one test, not 24 — single submit-then-take loop hits both `estimate_tx_size` (in submit) and `estimate_tx_gas` (in take_with_gas_limit) match arms. Avoids 24x duplication.
+
+**Empirical results:**
+- 21/21 evaporchain-execution::temporal tests green (was 12; +9)
+- 12/12 evaporchain-consensus::state_sync T1.20 tests green (was 4; +8)
+- 11/11 evaporchain-paymaster T1.20 tests green (was 6; +5)
+- 32/32 evaporchain-state T1.20 tests green (was 27; +5)
+- 5/5 banlist T1.20 tests green (net-new file path)
+
+**What's next:**
+1. Continue T1.20 — `execution::parallel.rs` at 63.60% remains the biggest single workspace gap (1052 missed regions, 90 missed fns)
+2. `state::rocksdb_backend.rs` at 41.24% — harder, needs real RocksDB temp dirs, but ~2278 missed regions
+3. `consensus::tendermint.rs` at 87.93% still has 1898 missed regions — high absolute count, low percentage gap
+
+**Blockers / open questions:**
+- T3.1 cluster deploy still blocks T0.6 + T1.21–23 + T3.2 acceptance.
+- Parallel session interference on satyawan: working dir periodically shows untracked files / modified files from other agent runs. Stay disciplined: only `git add` the file the test landed in.
+
+**Cross-references:**
+- Commits `47774f25` (temporal), `fd263b87` (state_sync), `ddd78d15` (mempool 24-variant), `f64fba8e` (paymaster), `5181886b` (db), `2a1b6a7a` (banlist).
+
+---
+
 ## 2026-05-11 (continued) — T0.7-V5 + paymaster/execution/consensus coverage + T0.8 partial-withhold + structural-validation
 
 **Focus:** continue the May-11 substrate sweep into a heavy T1.20 coverage push across multiple crates; close the last T0.7 in-CI gap (Vector 5); close the last two T0.8 documented gaps (partial-state-withhold + duplicate-validator-ids).
