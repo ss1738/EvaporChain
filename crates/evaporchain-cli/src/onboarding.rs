@@ -1138,4 +1138,66 @@ mod tests {
         let raw = std::fs::read(&path).unwrap();
         assert!(!raw.is_empty(), "network key bytes should be non-empty");
     }
+
+    /// T1.20 — parse_hex_strict rejects wrong-length input.
+    #[test]
+    fn t1_20_parse_hex_strict_wrong_length_rejects() {
+        let r = parse_hex_strict("deadbeef", 16, "test");
+        assert!(r.is_err(), "expected length-mismatch error");
+        let e = format!("{}", r.unwrap_err());
+        assert!(e.contains("must be 16 bytes"), "got: {e}");
+    }
+
+    /// T1.20 — parse_hex_strict accepts both bare and 0x-prefixed
+    /// inputs of the right length.
+    #[test]
+    fn t1_20_parse_hex_strict_accepts_0x_prefix() {
+        let bare = parse_hex_strict("deadbeef", 4, "x").unwrap();
+        let prefixed = parse_hex_strict("0xdeadbeef", 4, "x").unwrap();
+        assert_eq!(bare, prefixed);
+        assert_eq!(bare, vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    /// T1.20 — parse_hex_strict rejects non-hex input.
+    #[test]
+    fn t1_20_parse_hex_strict_rejects_non_hex() {
+        let r = parse_hex_strict("not-hex-at-all", 4, "x");
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — address_from_hex parses 32-byte hex; wraps
+    /// parse_hex_strict. Length mismatch errors propagate.
+    #[test]
+    fn t1_20_address_from_hex_round_trip() {
+        let addr_hex = "00".repeat(32);
+        let addr = address_from_hex(&addr_hex).unwrap();
+        assert_eq!(addr, [0u8; 32]);
+
+        let bad = address_from_hex("deadbeef");
+        assert!(bad.is_err());
+    }
+
+    /// T1.20 — cmd_verify on non-existent genesis path returns Err
+    /// (file-read failure, not panic).
+    #[test]
+    fn t1_20_cmd_verify_missing_genesis_errors() {
+        let tmp = tempdir();
+        let pk_path = tmp.path().join("pk.hex");
+        std::fs::write(&pk_path, "ab".repeat(1952)).unwrap();
+        let missing = tmp.path().join("does-not-exist.json");
+        let r = cmd_verify(&missing, &pk_path);
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — cmd_verify on malformed genesis JSON returns Err.
+    #[test]
+    fn t1_20_cmd_verify_malformed_genesis_errors() {
+        let tmp = tempdir();
+        let genesis = tmp.path().join("g.json");
+        std::fs::write(&genesis, "not json").unwrap();
+        let pk_path = tmp.path().join("pk.hex");
+        std::fs::write(&pk_path, "ab".repeat(1952)).unwrap();
+        let r = cmd_verify(&genesis, &pk_path);
+        assert!(r.is_err());
+    }
 }
