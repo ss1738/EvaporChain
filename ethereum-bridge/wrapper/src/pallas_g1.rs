@@ -219,10 +219,29 @@ mod tests {
 
         enforce_g1_add(cs.clone(), &p1_var, &p2_var, &p3_var).expect("enforce");
 
-        assert!(
-            cs.is_satisfied().expect("is_satisfied"),
-            "valid (P1, P2, P3) triple must satisfy constraints"
-        );
+        if !cs.is_satisfied().expect("is_satisfied") {
+            // Debug — figure out which constraint failed by computing
+            // each side off-circuit and comparing.
+            let (x1, y1) = p1.xy().expect("p1 xy");
+            let (x2, y2) = p2.xy().expect("p2 xy");
+            let (x3, y3) = p3.xy().expect("p3 xy");
+            let lambda = (y2 - y1) * (x2 - x1).inverse().expect("dx inv");
+            eprintln!("DEBUG: x1 = {:?}", x1);
+            eprintln!("DEBUG: y1 = {:?}", y1);
+            eprintln!("DEBUG: x2 = {:?}", x2);
+            eprintln!("DEBUG: y2 = {:?}", y2);
+            eprintln!("DEBUG: x3 = {:?}", x3);
+            eprintln!("DEBUG: y3 = {:?}", y3);
+            eprintln!("DEBUG: lambda = {:?}", lambda);
+            eprintln!("DEBUG: lambda*(x2-x1) = {:?}", lambda * (x2 - x1));
+            eprintln!("DEBUG: y2-y1          = {:?}", *y2 - *y1);
+            eprintln!("DEBUG: lambda^2       = {:?}", lambda * lambda);
+            eprintln!("DEBUG: x3+x1+x2       = {:?}", *x3 + *x1 + *x2);
+            eprintln!("DEBUG: lambda*(x1-x3) = {:?}", lambda * (*x1 - *x3));
+            eprintln!("DEBUG: y3+y1          = {:?}", *y3 + *y1);
+            eprintln!("DEBUG: unsatisfied constraint index: {:?}", cs.which_is_unsatisfied().ok());
+            panic!("constraint NOT satisfied — see debug output above");
+        }
     }
 
     /// Unsatisfied path — tampering P3 to be a different valid point
