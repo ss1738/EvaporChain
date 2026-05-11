@@ -504,4 +504,66 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// T1.20 — permissionless mode: add_peer + remove_peer are no-ops,
+    /// peer_count starts at 0. Previously these branches were uncovered.
+    #[test]
+    fn t1_20_permissionless_add_remove_are_noops() {
+        let auth = PeerAuthority::permissionless();
+        let kp = Keypair::generate_ed25519();
+        let peer = kp.public().to_peer_id();
+        // peer_count starts at 0.
+        assert_eq!(auth.peer_count(), 0);
+        // add_peer in permissionless mode is a no-op (no enforcement).
+        auth.add_peer(peer);
+        // The allowlist is still empty.
+        assert_eq!(auth.peer_count(), 0);
+        // remove_peer also no-ops.
+        auth.remove_peer(&peer);
+        assert_eq!(auth.peer_count(), 0);
+        // is_authorized still returns true (permissionless).
+        assert!(auth.is_authorized(&peer));
+    }
+
+    /// T1.20 — with_allowlist + peer_count after construction.
+    #[test]
+    fn t1_20_with_allowlist_peer_count_matches() {
+        let kps: Vec<Keypair> = (0..3).map(|_| Keypair::generate_ed25519()).collect();
+        let peers: Vec<PeerId> = kps.iter().map(|kp| kp.public().to_peer_id()).collect();
+        let auth = PeerAuthority::with_allowlist(peers.clone());
+        assert_eq!(auth.peer_count(), 3);
+        for p in &peers {
+            assert!(auth.is_authorized(p));
+        }
+    }
+
+    /// T1.20 — enforcing-mode add_peer + remove_peer with non-trivial
+    /// counts. Covers lines 238-239 (add log path) and 247-248 (remove
+    /// log path).
+    #[test]
+    fn t1_20_enforcing_add_remove_changes_peer_count() {
+        let auth = PeerAuthority::with_allowlist(vec![]);
+        let kp1 = Keypair::generate_ed25519();
+        let kp2 = Keypair::generate_ed25519();
+        let p1 = kp1.public().to_peer_id();
+        let p2 = kp2.public().to_peer_id();
+
+        assert_eq!(auth.peer_count(), 0);
+        auth.add_peer(p1);
+        assert_eq!(auth.peer_count(), 1);
+        auth.add_peer(p2);
+        assert_eq!(auth.peer_count(), 2);
+        // Re-add same peer → idempotent.
+        auth.add_peer(p1);
+        assert_eq!(auth.peer_count(), 2);
+
+        // Remove p1.
+        auth.remove_peer(&p1);
+        assert_eq!(auth.peer_count(), 1);
+        // Remove non-existent peer → no-op.
+        auth.remove_peer(&p1);
+        assert_eq!(auth.peer_count(), 1);
+        assert!(auth.is_authorized(&p2));
+        assert!(!auth.is_authorized(&p1));
+    }
 }
