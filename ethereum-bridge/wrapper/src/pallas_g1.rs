@@ -203,7 +203,8 @@ impl IsZero for PallasFq {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ec::{CurveGroup, Group};
+    // `Group` moved out of `ark_ec` root in 0.5 — only need `CurveGroup` here.
+    use ark_ec::CurveGroup;
     use ark_pallas::Projective as PallasProjective;
     use ark_relations::r1cs::ConstraintSystem;
     use ark_std::rand::SeedableRng;
