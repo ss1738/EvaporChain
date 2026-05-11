@@ -43,7 +43,7 @@ ark-pallas      = "0.5"
 # `verkle-fixture-emit` in the sister `circuits/` workspace.
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
-hex        = "0.5"
+hex        = "0.4"
 blake3     = "1"
 thiserror  = "1"
 
