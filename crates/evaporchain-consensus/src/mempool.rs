@@ -1489,4 +1489,305 @@ mod tests {
         assert_eq!(taken.len(), 0);
         assert_eq!(pool.len(), 1);
     }
+
+    /// T1.20 — submit one of every Transaction variant to exercise
+    /// every match arm in `estimate_tx_size` (lines 605-756) and then
+    /// drain via take_with_gas_limit to exercise every arm in
+    /// `estimate_tx_gas` (lines 536-577).
+    #[test]
+    fn t1_20_estimate_size_and_gas_all_variants() {
+        use evaporchain_types::*;
+        let mut pool = Mempool::with_max_size(1000);
+
+        // Transfer
+        pool.submit(Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 1,
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+            mev_refund_eligible: None,
+        }));
+
+        // CreateObject
+        pool.submit(Transaction::CreateObject(CreateObjectTx {
+            creator: [3u8; 32],
+            object_id: [4u8; 32],
+            energy: 1000,
+            half_life: 100,
+            data: vec![1, 2, 3],
+            decay_curve: None,
+            lad_mode: None,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Refresh
+        pool.submit(Transaction::Refresh(RefreshTx {
+            object_id: [5u8; 32],
+            energy_deposit: 500,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // DeployContract
+        pool.submit(Transaction::DeployContract(DeployContractTx {
+            deployer: [6u8; 32],
+            template: "DecayingToken".into(),
+            init_args: "{}".into(),
+            energy: 1000,
+            half_life: 100,
+            rules: None,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // CallContract
+        pool.submit(Transaction::CallContract(CallContractTx {
+            caller: [7u8; 32],
+            contract_id: 1,
+            method: "tick".into(),
+            args: "{}".into(),
+            epoch: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // DeployScript
+        pool.submit(Transaction::DeployScript(DeployScriptTx {
+            deployer: [8u8; 32],
+            source_code: "contract C {}".into(),
+            energy: 1000,
+            half_life: 100,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // CallScript
+        pool.submit(Transaction::CallScript(CallScriptTx {
+            caller: [9u8; 32],
+            contract_id: 1,
+            method: "main".into(),
+            args: "{}".into(),
+            epoch: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // ValidatorStake
+        pool.submit(Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: [10u8; 32],
+            stake_amount: 1000,
+            validator_id: 1,
+            nonce: 0,
+            bls_public_key: Some(vec![0; 48]),
+            vrf_public_key: Some(vec![0; 1952]),
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // ValidatorExit
+        pool.submit(Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: [11u8; 32],
+            validator_id: 1,
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // ValidatorClaimStake
+        pool.submit(Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: [12u8; 32],
+            validator_id: 1,
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Shield
+        pool.submit(Transaction::Shield(ShieldTx {
+            from: [13u8; 32],
+            amount: 100,
+            nonce: 0,
+            note_owner_hash: [0; 32],
+            value_blinding: [0; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Unshield
+        pool.submit(Transaction::Unshield(UnshieldTx {
+            to: [14u8; 32],
+            amount: 100,
+            input_nullifiers: vec![[0; 32]],
+            anchor: [0; 32],
+            balance_binding: [0; 32],
+            input_amounts: vec![100],
+            input_blindings: vec![[0; 32]],
+            input_value_commitments: vec![[0; 32]],
+            input_note_commitments: vec![[0; 32]],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![],
+            change_commitments: vec![],
+            energy_proofs: vec![],
+        }));
+
+        // PrivateTransfer
+        pool.submit(Transaction::PrivateTransfer(PrivateTransferTx {
+            input_nullifiers: vec![[1; 32]],
+            output_commitments: vec![[2; 32]],
+            anchor: [0; 32],
+            balance_binding: [0; 32],
+            fee: 10,
+            input_amounts: vec![100],
+            input_blindings: vec![[0; 32]],
+            input_value_commitments: vec![[0; 32]],
+            input_note_commitments: vec![[0; 32]],
+            input_merkle_proofs: vec![],
+            output_amounts: vec![],
+            output_blindings: vec![],
+            energy_proofs: vec![],
+        }));
+
+        // Deferred
+        pool.submit(Transaction::Deferred(DeferredTx {
+            submitter: [15u8; 32],
+            nonce: 0,
+            deposit: 50_000,
+            guards: vec![TemporalGuard::AfterEpoch(5)],
+            inner_tx_bytes: vec![0xAA, 0xBB],
+            gas_limit: 100_000,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Blob
+        pool.submit(Transaction::Blob(BlobTx {
+            submitter: [16u8; 32],
+            data: vec![0; 100],
+            nonce: 0,
+            namespace_id: 1,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Governance
+        pool.submit(Transaction::Governance(GovernanceTx {
+            action: GovernanceAction::CastVote {
+                proposal_id: 1,
+                vote: true,
+            },
+            sender: [17u8; 32],
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // MultiSig
+        pool.submit(Transaction::MultiSig(MultiSigTx {
+            multisig_address: [18u8; 32],
+            threshold: 2,
+            signers: vec![[19u8; 32], [20u8; 32]],
+            inner_tx_bytes: vec![0; 50],
+            signatures: vec![([19u8; 32], vec![0; 64])],
+            public_keys: vec![],
+            nonce: 0,
+        }));
+
+        // UserOp
+        pool.submit(Transaction::UserOp(UserOpTx {
+            sender: [21u8; 32],
+            nonce: 0,
+            call_data: vec![0; 100],
+            call_gas_limit: 100_000,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // UpgradeContract
+        pool.submit(Transaction::UpgradeContract(UpgradeContractTx {
+            owner: [22u8; 32],
+            contract_id: 1,
+            new_bytecode: vec![0; 100],
+            new_bytecode_hash: [0; 32],
+            nonce: 0,
+            admin_signature: None,
+            admin_public_key: None,
+            endorser_stakes: vec![],
+            required_stake: 0,
+            governance_approved: false,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Delegate
+        pool.submit(Transaction::Delegate(DelegateTx {
+            delegator: [23u8; 32],
+            validator_id: 1,
+            amount: 1000,
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Undelegate
+        pool.submit(Transaction::Undelegate(UndelegateTx {
+            delegator: [24u8; 32],
+            validator_id: 1,
+            amount: 1000,
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // RotateValidatorKey
+        pool.submit(Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+            validator_address: [25u8; 32],
+            validator_id: 1,
+            new_bls_public_key: vec![0; 48],
+            bls_pop_old: vec![0; 96],
+            bls_pop_new: vec![0; 96],
+            effective_epoch: 100,
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // ClaimDelegation
+        pool.submit(Transaction::ClaimDelegation(ClaimDelegationTx {
+            delegator: [26u8; 32],
+            validator_id: 1,
+            nonce: 0,
+            signature: Some(vec![0; 64]),
+            public_key: Some(vec![0; 32]),
+        }));
+
+        // Refund
+        pool.submit(Transaction::Refund(RefundTx {
+            source_block_height: 100,
+            source_observation_idx: 0,
+            attacker: [27u8; 32],
+            victim: [28u8; 32],
+            amount: 10,
+            settle_block_height: 110,
+        }));
+
+        // total_bytes should now be a non-trivial sum (every arm hit).
+        assert!(pool.total_bytes() > 0);
+        assert_eq!(pool.len(), 24);
+
+        // Drain via take_with_gas_limit to exercise every arm in
+        // estimate_tx_gas. Use a high budget so all are taken.
+        let taken = pool.take_with_gas_limit(100, u64::MAX);
+        assert_eq!(taken.len(), 24);
+    }
 }
