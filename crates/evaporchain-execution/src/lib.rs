@@ -7962,4 +7962,27 @@ contract Counter {
         c.put(&[5u8; 32], &[6u8; 32], 7_000, false, 50);
         assert_eq!(c.get(&[5u8; 32], &[6u8; 32]), Some((7_000, false)));
     }
+
+    /// T1.20 — exercise SimpleExecutor::new_with_sig_verification
+    /// (production constructor; previously 0%-covered because tests
+    /// use the `_for_test` variant).
+    #[test]
+    fn t1_20_simple_executor_new_with_sig_verification_constructs() {
+        let exec = SimpleExecutor::new_with_sig_verification(10);
+        assert!(exec.verify_signatures);
+        assert_eq!(exec.block_gas_limit, 0);
+        assert!(exec.fee_controller.is_none());
+    }
+
+    /// T1.20 — exercise SimpleExecutor::new_with_fees with a real
+    /// PidFeeController. Previously 0%-covered.
+    #[test]
+    fn t1_20_simple_executor_new_with_fees_constructs() {
+        use crate::fees::PidFeeController;
+        let fc = PidFeeController::new(0.5, 0.1, 0.01, 0.001, 100, 1, 1_000_000);
+        let exec = SimpleExecutor::new_with_fees(10, fc, 1_000_000);
+        assert!(!exec.verify_signatures);
+        assert_eq!(exec.block_gas_limit, 1_000_000);
+        assert!(exec.fee_controller.is_some());
+    }
 }
