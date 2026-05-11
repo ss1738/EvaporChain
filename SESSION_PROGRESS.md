@@ -48,6 +48,74 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-11 (continued) — T0.7-V5 + paymaster/execution/consensus coverage + T0.8 partial-withhold + structural-validation
+
+**Focus:** continue the May-11 substrate sweep into a heavy T1.20 coverage push across multiple crates; close the last T0.7 in-CI gap (Vector 5); close the last two T0.8 documented gaps (partial-state-withhold + duplicate-validator-ids).
+
+**Commits shipped this arc:** ~22 (`32af53c` → `32bc9140`). All on `origin/main`. See `CHANGELOG.md` for full detail.
+
+**Deliverables (substrate-level):**
+
+| Commit | What |
+|---|---|
+| `add343f` | T0.7 V4 — encrypted-mempool admission-cap GAP flipped to defense test (parallel session shipped the cap) |
+| `6fe09fc` | T0.5 — PNT v1 Stage-2 defense: root-gated tick_pnt_phase (closes no-intermediate-shield bypass) |
+| `f06ea1a` | T0.8 sub-task 2 — snapshot quorum-cert binding (`SnapshotQuorumCert`, `verify_quorum_cert`, `from_bytes_strict`; 343 LOC + 9 tests) |
+| `8abd388` | T0.8 sub-task 4 — partial-state-withhold rejected via cert binding (load-bearing fixture) |
+| `dee358b` | T0.8 follow-on — `validate_structure` in `from_bytes` (rejects duplicate validator-IDs, account-addresses, object-IDs) |
+| `0e976f4` | T0.7 Vector 5 — DAG fork-spam multi-validator convergence (50-fork, ordering-independence) |
+
+**Deliverables (T1.20 coverage push):**
+
+| Crate / file | Before | After |
+|---|---|---|
+| `evaporchain-types::emission.rs` | 0.00% | 98.53% |
+| `evaporchain-types::genesis.rs` | 83.91% | 99.85% |
+| `evaporchain-types::lib.rs` | 35.19% | 89.87% |
+| **`evaporchain-types` total** | **44.79%** | **92.83%** (OVER T1.20 90% target) |
+| `evaporchain-state::decay_curves.rs` | 87.46% | 97.30% |
+| `evaporchain-state::ghost_bridge.rs` | 91.99% | 94.44% |
+| `evaporchain-state::wal.rs` | 90.22% | 91.74% |
+| **`evaporchain-state` total** | **81.72%** | **83.08%** |
+| `evaporchain-execution::refresh_market_integration.rs` | 85.07% | 97.21% |
+| `evaporchain-execution::rewards.rs` | 94.37% | 97.08% |
+| `evaporchain-paymaster::lib.rs` | 93.68% | 96.38% |
+| `evaporchain-consensus::wsbf_integration.rs` | 90.83% | 97.96% |
+
+Aggregate: ~140 new tests across 11 files; 0 regressions in existing tests.
+
+**Decisions made:**
+- PNT v1 Stage 2 transition is now safe on the canonical consensus path (`execute_block` → `tick_pnt_phase`). The bounded-window eviction couples to chain progress; the no-intermediate-shield bypass no longer fires on the canonical path. `pnt_advance_phase` is a documented escape hatch for tests/admin.
+- Snapshot quorum-cert is `Option<SnapshotQuorumCert>` (back-compat with pre-cert snapshots); strict-mode loaders use `from_bytes_strict` to enforce cert presence + binding. Production fast-sync hot path should use strict-mode.
+- Cert is excluded from `compute_integrity_hash` so the cert can be attached AFTER integrity_hash is computed (avoids chicken-and-egg).
+- `serde(default)` on `quorum_cert: Option<...>` is intentional — bincode 1.3.3 trap (Account.vesting / paymaster Day-1 hazard pattern): `skip_serializing_if` writes 0 bytes but reads 1 byte → EOF. Always emit Option tag.
+
+**Empirical results:**
+- 5/5 adversarial snapshot fixtures green (was 3 passing + 1 documented gap)
+- 24 mcc_phase_d tests green (was 22 + V5 2 new)
+- 6 dos_resistance tests green (V1-4 + admission-cap defense)
+- `evaporchain-types` 123 tests pass (was 62)
+- `evaporchain-state::snapshot` 30 in-source tests + 5 adversarial green
+
+**What's next:**
+1. Continue T1.20 push — consensus::mempool 72.93% has 416 missed regions
+2. T1.20 — execution::parallel.rs 63.60% is the biggest single workspace gap (1052 missed, 90 fns)
+3. EVR-20 / EVR-721 implementation status badges (1-day docs follow-up)
+4. T0.6 cluster acceptance (blocked on T3.1) + T0.12 external audit kickoff (blocks on operator)
+
+**Blockers / open questions:**
+- T0.6 + T1.21 + T1.22 + T1.23 + T3.2 all wait on T3.1 cluster deploy.
+- paymaster bin/server.rs at 0% coverage — requires integration harness (HTTP server spin-up + curl), not unit tests.
+
+**Cross-references:**
+- `CHANGELOG.md` 2026-05-11
+- `docs/runbooks/dos-resistance.md` — refreshed V5 status; 6 tests / 4 of 7 vectors → ALL 7 vectors covered
+- `crates/evaporchain-state/src/snapshot.rs` — new `SnapshotQuorumCert` + `verify_quorum_cert` + `from_bytes_strict`
+- `crates/evaporchain-state/tests/adversarial_snapshots.rs` — 5 fixtures, all green
+- Notable: PNT v1 Stage-2 transition test `pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set` documents the Stage 1 vs Stage 2 boundary that this arc's `6fe09fc` defense addresses.
+
+---
+
 ## 2026-05-11 — T0 mainnet-blocker substrate sweep (T0.1, T0.3, T0.5, T0.6, T0.7, T0.8, T0.11)
 
 **Focus:** plow through the T0 mainnet-blocker lanes one at a time, closing every substrate-level gap that doesn't require a live cluster (T3.1).
