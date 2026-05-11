@@ -61,10 +61,23 @@ pub fn setup(
 /// Generate a Groth16 proof for the given public inputs + Halo2 IPA
 /// proof bytes (the latter is currently witness-only).
 ///
-/// The returned byte vector is the 256-byte L1 calldata shape:
-/// `A (64B) || B (128B) || C (64B)`. This matches what
-/// `VerkleProofVerifier.sol`'s `verifyVerkleMembership(..., bytes calldata groth16Proof)`
-/// expects.
+/// The returned bytes are arkworks's `serialize_compressed` encoding:
+/// A (32B) || B (64B) || C (32B) = 128 bytes total.
+///
+/// ⚠️ **The L1 calldata format is 256 bytes uncompressed** (EIP-197
+/// pairing convention: A_x, A_y, B_x[2], B_y[2], C_x, C_y = 8 × 32),
+/// with big-endian field-element ordering — not arkworks's native
+/// little-endian Montgomery form. Converting `serialize_compressed`
+/// bytes → EIP-197 calldata requires:
+///
+///   1. Decompress G1/G2 points to (x, y) coordinates.
+///   2. Normalize each field element from Montgomery → canonical form.
+///   3. Reverse byte order to big-endian.
+///
+/// Sub-B-finish adds this conversion in `proof_bytes_to_eip197`.
+/// Today, `prove` returns the arkworks-native compressed form so the
+/// surrounding pipeline (CLI, fixture round-trip, deterministic proof
+/// reproduction) can be exercised before the EIP-197 layer lands.
 pub fn prove(
     pk: &ProvingKey<Bn254>,
     public_inputs: WrapperPublicInputs,

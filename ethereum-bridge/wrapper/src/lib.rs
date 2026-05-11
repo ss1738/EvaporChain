@@ -47,6 +47,11 @@
 //!   Until ceremony output is in, [`setup`] uses an unsafe in-process
 //!   keygen with `rand::thread_rng()` — fine for testing the pipeline,
 //!   NEVER for production.
+//! - **EIP-197 calldata conversion.** [`prove`] returns 128 bytes
+//!   (arkworks `serialize_compressed`); the L1 verifier expects 256
+//!   bytes uncompressed with big-endian field elements. See `prove`
+//!   docstring for the conversion steps. Sub-B-finish adds a
+//!   `proof_bytes_to_eip197` helper.
 //!
 //! # Fixture contract
 //!
