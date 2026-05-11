@@ -960,4 +960,173 @@ mod tests {
             _ => panic!("expected UnknownMethod"),
         }
     }
+
+    /// T1.20 — vote on a non-existent proposal returns StateError
+    /// "proposal not found" (lines 289-292). Previously the
+    /// not-found branch was unreached by the lookup-based tests.
+    #[test]
+    fn t1_20_vote_unknown_proposal_errors() {
+        let mut s = fresh_state();
+        let r = exec(
+            &mut s,
+            "vote",
+            &serde_json::json!({
+                "proposal_id": 999u64,
+                "support": true,
+                "balance": 100u64,
+                "stake": 100u64,
+            }),
+            &[1u8; 32],
+            10,
+        );
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — vote on a non-Active proposal (after finalize moves
+    /// it to Passed) errors with "not in Active state" (lines
+    /// 295-297).
+    #[test]
+    fn t1_20_vote_on_non_active_errors() {
+        let mut s = fresh_state();
+        make_proposal(&mut s, &[1u8; 32], 50_000_000, 5);
+        // Vote then finalize to move it out of Active state.
+        exec(
+            &mut s,
+            "vote",
+            &serde_json::json!({
+                "proposal_id": 0u64,
+                "support": true,
+                "balance": 1_000_000u64,
+                "stake": 1_000_000u64,
+            }),
+            &[2u8; 32],
+            10,
+        )
+        .unwrap();
+        // Finalize after end_epoch (default voting_period_epochs=100).
+        exec(
+            &mut s,
+            "finalize",
+            &serde_json::json!({ "proposal_id": 0u64 }),
+            &[3u8; 32],
+            200,
+        )
+        .unwrap();
+
+        // Now vote on the now-Passed (or Rejected) proposal — should fail.
+        let r = exec(
+            &mut s,
+            "vote",
+            &serde_json::json!({
+                "proposal_id": 0u64,
+                "support": true,
+                "balance": 100u64,
+                "stake": 100u64,
+            }),
+            &[4u8; 32],
+            201,
+        );
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — finalize on unknown proposal_id errors (lines 327-328).
+    #[test]
+    fn t1_20_finalize_unknown_proposal_errors() {
+        let mut s = fresh_state();
+        let r = exec(
+            &mut s,
+            "finalize",
+            &serde_json::json!({ "proposal_id": 999u64 }),
+            &[1u8; 32],
+            100,
+        );
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — mark_ready_to_apply on unknown proposal errors
+    /// (lines 382-383).
+    #[test]
+    fn t1_20_mark_ready_unknown_proposal_errors() {
+        let mut s = fresh_state();
+        let r = exec(
+            &mut s,
+            "mark_ready_to_apply",
+            &serde_json::json!({ "proposal_id": 999u64 }),
+            &[1u8; 32],
+            100,
+        );
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — mark_applied on unknown proposal errors (lines
+    /// 409-410).
+    #[test]
+    fn t1_20_mark_applied_unknown_proposal_errors() {
+        let mut s = fresh_state();
+        let r = exec(
+            &mut s,
+            "mark_applied",
+            &serde_json::json!({ "proposal_id": 999u64 }),
+            &[1u8; 32],
+            100,
+        );
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — mark_applied on non-ReadyToApply proposal errors
+    /// (lines 412-414).
+    #[test]
+    fn t1_20_mark_applied_on_active_proposal_errors() {
+        let mut s = fresh_state();
+        make_proposal(&mut s, &[1u8; 32], 50_000_000, 5);
+        // Proposal is Active, not ReadyToApply.
+        let r = exec(
+            &mut s,
+            "mark_applied",
+            &serde_json::json!({ "proposal_id": 0u64 }),
+            &[1u8; 32],
+            10,
+        );
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — get_proposal on unknown id errors (lines 426-430).
+    #[test]
+    fn t1_20_get_proposal_unknown_errors() {
+        let mut s = fresh_state();
+        let r = exec(
+            &mut s,
+            "get_proposal",
+            &serde_json::json!({ "proposal_id": 999u64 }),
+            &[1u8; 32],
+            10,
+        );
+        assert!(r.is_err());
+    }
+
+    /// T1.20 — param_bounds method returns the registered bounds
+    /// (line 450). Previously unreached.
+    #[test]
+    fn t1_20_param_bounds_method_returns_bounds() {
+        let mut s = fresh_state();
+        let r = exec(
+            &mut s,
+            "param_bounds",
+            &serde_json::json!({}),
+            &[1u8; 32],
+            10,
+        )
+        .expect("param_bounds method ok");
+        assert!(r.is_object());
+        assert!(r.get("block_gas_limit").is_some());
+    }
+
+    /// T1.20 — tick on malformed state returns empty Vec without
+    /// panic (line 468 — the from_value Err branch).
+    #[test]
+    fn t1_20_tick_malformed_state_returns_empty() {
+        let mut bad_state = serde_json::json!({"not": "a dao state"});
+        let result = tick(&mut bad_state, 100);
+        assert!(result.is_empty());
+    }
 }
