@@ -302,6 +302,71 @@ Aggregate: 33 new tests across 6 files; 0 regressions, 0 existing-test changes.
 
 **Cross-references:**
 - Commits `47774f25` (temporal), `fd263b87` (state_sync), `ddd78d15` (mempool 24-variant), `f64fba8e` (paymaster), `5181886b` (db), `2a1b6a7a` (banlist).
+---
+
+## 2026-05-11 (evening) — audit-closure arc + T0.10 wrapper-stack scaffolding
+
+**Focus:** parallel autonomous-mode arc — close the audit's "live security gaps" + internal doc-drift tail in-tree, while stacking the T0.10 sub-B wrapper-circuit substrate from fixture-emitter through Pallas G1 add. 13 stacked PRs opened against `origin/main` + `lane/t0-10-verkle-verifier-starter`.
+
+**Commits shipped this arc:** 13 PRs opened (`#26` → `#38`). Several stacked; not yet merged to `origin/main`.
+
+**Deliverables — audit closure (7 PRs):**
+
+| PR | Subject | Closes |
+|---|---|---|
+| #26 | doctrine doc-drift cleanup (CFM RHS-test + CSLC mixture-state diagnosis) | `INVENTION_STACK.md` §A1.2 T2/T3 + `evaporchain-cslc` mod header |
+| #33 | CRITICAL-1 WASM `Keypair` layout hardening — `_ASSERT_KEYPAIR_SIZE` + `_ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN` + `keypair_layout_invariants_hold_at_runtime` regression test | AUDIT_2026_05_06 CRITICAL-1 |
+| #34 | CRITICAL-2/WASM-SK-exposure gate — `extension-context` Cargo feature gates `mlDsaKeygen`/`mlDsaSign`; verifier-only build for any non-extension consumer + new runbook `docs/runbooks/wasm-crypto-csp.md` | AUDIT_2026_05_06 "WASM secret-key JS exposure" |
+| #35 | CRITICAL-2/MCP-node-auth — new `mcp_channel_auth_middleware` reading `EVAPORCHAIN_MCP_API_TOKEN`, constant-time compare via `subtle`, gates `/api/tx/*`, `/api/faucet`, `/api/contracts/*`, `/api/fork_cert/prove`, `/api/mera/commit`; 4 unit tests | AUDIT_2026_05_06 "MCP no auth, hardcoded URL" (second half) |
+| #36 | CRITICAL-5 opcode-count doc drift — 5 stale "65 opcodes" → "44 opcodes" across CLAUDE.md, IMPOSSIBLE_RESEARCH_STACK.md, TOKENOMICS.md, sui_foundation.md (×2) | AUDIT_2026_05_06 CRITICAL-5 (in-tree completion) |
+| #37 | ARCHITECTURE.md contract-template count "7" → "8" + `DecayingDAO` added + `Temporal` → `TemporalContract` rename | AUDIT_2026_05_06 "Contract templates: 7 (ARCHITECTURE) vs 8 (code)" |
+| #38 | test/crate count sweep — README, SPEC.md, AUDIT_SCOPE.md (×3), twitter_thread.md → canonical 25,435+ tests / 147 crates | AUDIT_2026_05_06 "Test count: 6 different numbers" + "Crate count: 16/85/147" |
+
+**Deliverables — T0.10 sub-B wrapper-circuit substrate (6 PRs, stacked):**
+
+| PR | Stacked on | Subject |
+|---|---|---|
+| #27 | lane/t0-10-verkle-verifier-starter (PR #2) | sub-A-finish — `verkle-fixture-emit` binary + regenerated `verkle_proof_v2_sample.json` with real 3,872-byte Halo2 IPA proof bytes (1.0 KB → 9.4 KB) + Solidity schema-lock test |
+| #28 | #27 | sub-B starter — new standalone workspace `ethereum-bridge/wrapper/` (arkworks 0.4) with `WrapperCircuit`, public-input wiring, Groth16 setup/prove/verify, `wrapper-prove` CLI |
+| #29 | #28 | sub-B EIP-197 — `proof_bytes_to_eip197` (128 B arkworks-compressed → 256 B L1 calldata uncompressed big-endian; c1-first G2 ordering); CLI now emits both formats |
+| #30 | #29 | sub-B non-native Fq scaffold — `NonNativeFqVar` + `enforce_nonnative_fq_add`; 5 tests pin allocation + add + soundness + cost (`~3k constraints / Fq mult`) |
+| #31 | #30 | sub-B Pallas G1 affine add — `NonNativePallasPoint` + `enforce_g1_add` (additive-form rewrite); **diagnosed arkworks 0.4 `NonNativeFieldVar` completeness gap for the PallasFq×Bn254Fr same-bit-size pair**; soundness test PASSES, two completeness tests `#[ignore]`'d with off-circuit math asserted in-place |
+| #32 | #31 | sub-B arkworks 0.4 → 0.5 upgrade attempt — verifies the limb-completeness gap reproduces on `EmulatedFpVar` (NOT a 0.4-specific bug); modern API ported; sub-B-finish needs path #2 (`r1cs-bitcoin`) / #3 (custom limb decomp) / #4 (CycleFold) |
+
+**Empirical results:**
+
+- Mini 1 builds clean on every PR's branch (`evaporchain-crypto-wasm` 12 tests pass under both `--features extension-context` ON and OFF; `evaporchain-node mcp_auth_tests` 4/4 pass; T0.10 wrapper 19 active + 8 ignored tests pass on arkworks 0.5; G1 soundness gate PASSES, completeness gate FAILS structurally on both arkworks versions tested).
+- `wrapper-prove` end-to-end CLI smoke against the regenerated fixture produces both `.proof.bin` (128 B arkworks compressed) and `.eip197.bin` (256 B L1 calldata) deterministically.
+- forge: full `VerkleProofVerifierTest` suite 9/9 pass against the regenerated fixture (was 8/8 — `test_loadsSampleFixture_innerProofBlock_schema` added).
+
+**Decisions made:**
+
+- T0.10 sub-B-finish resolution paths narrowed: arkworks 0.5 upgrade alone is NOT sufficient. Sub-B-finish must additionally choose between `r1cs-bitcoin`, custom limb decomposition, or CycleFold accumulation. Operator decision deferred.
+- CRITICAL-1 audit literal recommendation ("replace unsafe block with public API") not directly achievable on pinned `pqc_dilithium=0.2.0` (no public SK-byte constructor; `crypto_sign_signature` only exposed under `cfg(dilithium_kat)`). Alternative path landed: strengthened layout invariants (size + offset-of) + runtime regression test. Rationale documented in-source for whenever audit H-13 (`pqc_dilithium` pin) is revisited.
+- MCP-channel auth model: env-var-driven optional gate on the node side. When `EVAPORCHAIN_MCP_API_TOKEN` is unset (dev mode), the middleware is pass-through. When set, **only** the MCP-targeted state-mutating endpoints are gated — admin/oracle paths keep their own dedicated env keys; read-only paths bypass. Preserves dev workflows AND gives production deployments a single env-var switch.
+- WASM SK-exposure: gate via Cargo feature `extension-context` rather than runtime check. Non-extension builds get a verifier-only WASM with no SK-touching exports compiled at all. Reproducible-build pipeline (`extension/scripts/build-wasm.sh` + pinned `checksums.json`) catches any future PR that removes the flag.
+
+**What's next:**
+
+1. **Reviewer/merge sweep** of 13 open PRs against `origin/main` (#26, #33–#38) + the T0.10 stack (#27–#32). No further heavy work can land cleanly without merge progress (stacked branches are conflict-risk).
+2. **Sub-B-finish library decision** (operator) — pick `r1cs-bitcoin` vs custom limb decomp vs CycleFold to unblock the in-circuit Halo2 IPA verifier path. The diagnosis from PR #31 + the 0.5 upgrade from PR #32 sharpen this choice; both gadget interface + EIP-197 byte format are now stable, only the constraint body remains.
+3. **T0.10 sub-C ceremony planning** — multi-week operator coordination. Independent of the library decision.
+
+**Blockers / open questions:**
+
+- All 13 PRs are unmerged. Stack #27 → #32 is a 6-deep chain; if early reviews bounce, downstream PRs need rebases.
+- Audit's "🟡 OPEN ENGINEERING GAPS" (Dashboard TLS, Verkle adversarial benchmarks, PID fee gain tuning, Gossip propagation >4 nodes) remain — none autonomous-safe (need cluster, perf data, operator config decisions).
+- Phase C stop-the-world cluster deploy of the 8-item 100x bundle (per the existing plan file) still pending. Phase A + B completed in prior sessions.
+- `pqc_dilithium` version pin (audit H-13) — any upgrade is itself an audit-flagged action. Path-forward documented in PR #33 source comments.
+
+**Cross-references:**
+
+- `CHANGELOG.md` 2026-05-11 (formal ship log if updated separately by reviewer/merge)
+- `docs/runbooks/wasm-crypto-csp.md` — NEW runbook from PR #34
+- `crates/evaporchain-node/src/api.rs` — new `mcp_channel_auth_middleware` + `is_mcp_gated_path` + `mod mcp_auth_tests` (PR #35)
+- `crates/evaporchain-crypto-wasm/src/lib.rs` — new `_ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN` + `keypair_layout_invariants_hold_at_runtime` test (PR #33); `extension-context` feature gates on `ml_dsa_keygen` + `ml_dsa_sign` (PR #34)
+- `ethereum-bridge/wrapper/` — entire new standalone workspace (PRs #28–#32) on arkworks 0.5
+- AUDIT_2026_05_06 closure tally: all 5 "live security gaps" closed (or path-forward documented for the 1 that wasn't literally achievable); 5 of 6 "DOC DRIFT (internal)" rows closed in-tree
 
 ---
 
