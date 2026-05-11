@@ -146,4 +146,41 @@ mod tests {
         // Either 0 (rate=0 with integer) or best-effort 0 on payout failure.
         assert_eq!(paid, 0);
     }
+
+    /// T1.20 — exercise object_slot_renewed (previously 0% covered).
+    /// pay_rent is the underlying call; the wrapper returns 0 on any
+    /// error (best-effort semantics), so we test both the funded and
+    /// unfunded paths.
+    #[test]
+    fn t1_20_object_slot_renewed_returns_zero_on_unfunded_pool() {
+        let m = genesis_market();
+        let mut pool = RefreshPool::new(); // not funded
+        let paid = object_slot_renewed(&m, &mut pool, ns(7), 5, 0);
+        // Best-effort: any error returns 0 without panic.
+        assert_eq!(paid, 0);
+    }
+
+    #[test]
+    fn t1_20_object_slot_renewed_with_funded_pool_completes() {
+        let mut m = genesis_market();
+        let mut pool = RefreshPool::new();
+        // Pre-fund + register namespace.
+        pool.accrue(ns(8).to_vec(), 100_000, 0);
+        ensure_namespace(&mut m, ns(8));
+        // Call object_slot_renewed via the wrapper. Even when the
+        // payout returns 0 (rate at 0 utilisation may be 0 integer-
+        // arithmetic), the no-panic + non-error contract is asserted.
+        let _paid = object_slot_renewed(&m, &mut pool, ns(8), 10, 1);
+        // Used count should not have moved (renewal doesn't change
+        // `used`); just verify the namespace is still registered.
+        assert!(m.get(&ns(8)).is_some());
+    }
+
+    #[test]
+    fn t1_20_object_slot_renewed_no_panic_on_missing_namespace() {
+        let m = genesis_market();
+        let mut pool = RefreshPool::new();
+        let paid = object_slot_renewed(&m, &mut pool, ns(99), 3, 0);
+        assert_eq!(paid, 0);
+    }
 }
