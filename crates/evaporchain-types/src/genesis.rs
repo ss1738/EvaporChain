@@ -762,4 +762,221 @@ mod tests {
         assert_eq!(parsed.validators.len(), config.validators.len());
         assert_eq!(parsed.accounts.len(), config.accounts.len());
     }
+
+    // ─── T1.20 coverage push: split_staker_pool ────────────────────
+
+    #[test]
+    fn split_staker_pool_zero_pool_returns_zero() {
+        let tok = Tokenomics::default();
+        assert_eq!(tok.split_staker_pool(0), (0, 0));
+    }
+
+    #[test]
+    fn split_staker_pool_zero_commission_passes_pool_through() {
+        let mut tok = Tokenomics::default();
+        tok.validator_commission_default = 0.0;
+        // delegator_share = 1000, commission = 0
+        assert_eq!(tok.split_staker_pool(1_000), (1_000, 0));
+    }
+
+    #[test]
+    fn split_staker_pool_full_commission_takes_everything() {
+        let mut tok = Tokenomics::default();
+        tok.validator_commission_default = 1.0;
+        // delegator_share = 0, commission = pool
+        assert_eq!(tok.split_staker_pool(1_000), (0, 1_000));
+    }
+
+    #[test]
+    fn split_staker_pool_ten_percent_commission() {
+        let mut tok = Tokenomics::default();
+        tok.validator_commission_default = 0.10;
+        assert_eq!(tok.split_staker_pool(1_000), (900, 100));
+    }
+
+    #[test]
+    fn split_staker_pool_clamps_overflow_rate() {
+        let mut tok = Tokenomics::default();
+        tok.validator_commission_default = 1.5; // clamped to 1.0
+        // After clamp: commission = pool, delegators = 0
+        assert_eq!(tok.split_staker_pool(500), (0, 500));
+    }
+
+    #[test]
+    fn split_staker_pool_clamps_negative_rate() {
+        let mut tok = Tokenomics::default();
+        tok.validator_commission_default = -0.2; // clamped to 0.0
+        assert_eq!(tok.split_staker_pool(500), (500, 0));
+    }
+
+    // ─── T1.20 coverage push: apy_capped_reward ────────────────────
+
+    #[test]
+    fn apy_capped_reward_zero_total_staked_returns_raw() {
+        let tok = Tokenomics::default(); // target_staking_apy default > 0
+        // total_staked = 0 → no scaling, raw reward returned.
+        assert_eq!(tok.apy_capped_reward(1_000, 0), 1_000);
+    }
+
+    #[test]
+    fn apy_capped_reward_zero_apy_returns_raw() {
+        let mut tok = Tokenomics::default();
+        tok.target_staking_apy = 0.0;
+        assert_eq!(tok.apy_capped_reward(1_000, 1_000_000), 1_000);
+    }
+
+    #[test]
+    fn apy_capped_reward_negative_apy_returns_raw() {
+        let mut tok = Tokenomics::default();
+        tok.target_staking_apy = -0.05;
+        assert_eq!(tok.apy_capped_reward(1_000, 1_000_000), 1_000);
+    }
+
+    #[test]
+    fn apy_capped_reward_cap_kicks_in_when_raw_exceeds_budget() {
+        // target_staking_apy = 0.05, blocks_per_year = default,
+        // total_staked = 100_000. annual budget = 5_000.
+        // budget per block = 5_000 / blocks_per_year (a small number).
+        // raw_reward = 1_000_000 (way more than the per-block budget).
+        // Result: clipped down to budget_per_block.max(1).
+        let mut tok = Tokenomics::default();
+        tok.target_staking_apy = 0.05;
+        let result = tok.apy_capped_reward(1_000_000, 100_000);
+        assert!(
+            result < 1_000_000,
+            "raw reward should be capped down by APY budget"
+        );
+        assert!(result >= 1, "budget_per_block.max(1) floor enforced");
+    }
+
+    #[test]
+    fn apy_capped_reward_large_stake_caps_aggressively() {
+        // Same shape but smaller raw reward — should also clip.
+        let mut tok = Tokenomics::default();
+        tok.target_staking_apy = 0.05;
+        // Raw 100, total_staked 10. Annual budget = 0.5, /blocks_per_year = 0,
+        // budget_per_block.max(1) = 1. Result = min(100, 1) = 1.
+        assert_eq!(tok.apy_capped_reward(100, 10), 1);
+    }
+
+    // ─── T1.20 coverage push: block_reward dispatch ────────────────
+
+    #[test]
+    fn block_reward_dispatches_to_legacy_when_emission_is_none() {
+        let mut tok = Tokenomics::default();
+        tok.emission = None;
+        tok.block_reward = 200;
+        tok.reward_half_life = 0; // constant
+        // None branch: delegates to reward_at_epoch_capped.
+        assert_eq!(tok.block_reward(0, 0), 200);
+        assert_eq!(tok.block_reward(1_000, 0), 200);
+    }
+
+    #[test]
+    fn block_reward_dispatches_to_emission_params_when_set() {
+        let mut tok = Tokenomics::default();
+        tok.emission = Some(
+            crate::emission::EmissionParams::new(
+                500,
+                crate::emission::EmissionSchedule::Constant,
+                None,
+            )
+            .unwrap(),
+        );
+        // Some branch: delegates to emission::block_reward_at.
+        assert_eq!(tok.block_reward(0, 0), 500);
+        assert_eq!(tok.block_reward(1_000_000, 0), 500);
+    }
+
+    // ─── T1.20 coverage push: GenesisConfig::validate error branches ─
+
+    #[test]
+    fn validate_rejects_empty_chain_id() {
+        let mut config = GenesisConfig::testnet_default();
+        config.chain_params.chain_id = String::new();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("chain_id")));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_validator_id() {
+        let mut config = GenesisConfig::testnet_default();
+        let v = config.validators[0].clone();
+        config.validators.push(v); // same id duplicated
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("duplicate validator id")));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_account_address() {
+        let mut config = GenesisConfig::testnet_default();
+        if !config.accounts.is_empty() {
+            let dup = config.accounts[0].clone();
+            config.accounts.push(dup);
+            let errors = config.validate().unwrap_err();
+            assert!(errors.iter().any(|e| e.contains("duplicate account address")));
+        }
+    }
+
+    #[test]
+    fn validate_rejects_bad_fee_burn_rate() {
+        let mut config = GenesisConfig::testnet_default();
+        config.tokenomics.fee_burn_rate = 1.5;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("fee_burn_rate")));
+    }
+
+    #[test]
+    fn validate_rejects_bad_staker_fee_share() {
+        let mut config = GenesisConfig::testnet_default();
+        config.tokenomics.staker_fee_share = -0.1;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("staker_fee_share")));
+    }
+
+    #[test]
+    fn validate_rejects_bad_validator_commission() {
+        let mut config = GenesisConfig::testnet_default();
+        config.tokenomics.validator_commission_default = 2.0;
+        let errors = config.validate().unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.contains("validator_commission_default")));
+    }
+
+    // ─── T1.20 coverage push: canonical_signing_bytes ─────────────
+
+    #[test]
+    fn canonical_signing_bytes_strips_signature_field() {
+        let mut config = GenesisConfig::testnet_default();
+        config.coordinator_signature = Some("deadbeef".into());
+        let bytes_with_sig = config.canonical_signing_bytes();
+
+        config.coordinator_signature = None;
+        let bytes_without_sig = config.canonical_signing_bytes();
+        assert_eq!(
+            bytes_with_sig, bytes_without_sig,
+            "canonical_signing_bytes MUST be invariant under coordinator_signature changes"
+        );
+    }
+
+    #[test]
+    fn canonical_signing_bytes_is_deterministic() {
+        let config = GenesisConfig::testnet_default();
+        let b1 = config.canonical_signing_bytes();
+        let b2 = config.canonical_signing_bytes();
+        assert_eq!(b1, b2);
+    }
+
+    #[test]
+    fn canonical_signing_bytes_changes_when_chain_id_changes() {
+        let mut config = GenesisConfig::testnet_default();
+        let b_original = config.canonical_signing_bytes();
+        config.chain_params.chain_id = "evaporchain-mutated".into();
+        let b_mutated = config.canonical_signing_bytes();
+        assert_ne!(
+            b_original, b_mutated,
+            "canonical bytes MUST reflect the mutated chain_id"
+        );
+    }
 }
