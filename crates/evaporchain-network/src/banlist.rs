@@ -280,4 +280,60 @@ mod tests {
         assert!(bl.remove_ban(&target));
         assert!(!bl.is_banned(&target));
     }
+
+    /// T1.20 — is_empty + len on a fresh banlist (lines 125-131).
+    #[test]
+    fn t1_20_banlist_empty_after_new() {
+        let bl = BanList::new();
+        assert!(bl.is_empty());
+        assert_eq!(bl.len(), 0);
+    }
+
+    /// T1.20 — default_path builds under data_dir/network/bans.json
+    /// (line 134).
+    #[test]
+    fn t1_20_banlist_default_path() {
+        let data_dir = std::path::Path::new("/tmp/evapor-net");
+        let p = BanList::default_path(data_dir);
+        assert_eq!(p, std::path::Path::new("/tmp/evapor-net/network/bans.json"));
+    }
+
+    /// T1.20 — load(nonexistent) returns empty banlist (NotFound
+    /// branch at lines 149-152).
+    #[test]
+    fn t1_20_banlist_load_missing_file_returns_empty() {
+        let p = std::path::Path::new("/tmp/evapor-banlist-nonexistent.json");
+        let bl = BanList::load(p);
+        assert!(bl.is_empty());
+    }
+
+    /// T1.20 — load(malformed_file) returns empty banlist with a
+    /// warning (parse error branch at lines 165-168). The chain
+    /// never self-DoS's because of a bad bans.json.
+    #[test]
+    fn t1_20_banlist_load_malformed_returns_empty() {
+        let path = std::env::temp_dir()
+            .join(format!("evapor-banlist-malformed-{}.json", now_ms()));
+        std::fs::write(&path, b"not valid json").unwrap();
+        let bl = BanList::load(&path);
+        assert!(bl.is_empty(), "malformed file must be silently empty");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// T1.20 — save then load round-trip preserves ban entries
+    /// (line 186 + load body). Also exercises parent-dir creation.
+    #[test]
+    fn t1_20_banlist_save_load_roundtrip() {
+        let dir = std::env::temp_dir()
+            .join(format!("evapor-banlist-rt-{}", now_ms()));
+        let path = dir.join("nested").join("bans.json");
+        let mut bl = BanList::new();
+        let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+        bl.add_ban(ip, now_ms() + 60_000, "test ban");
+        bl.save(&path).expect("save ok");
+
+        let loaded = BanList::load(&path);
+        assert_eq!(loaded.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
