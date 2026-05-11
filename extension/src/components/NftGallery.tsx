@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { ImageOff } from "lucide-react";
+import { ArrowLeft, ImageOff } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent } from "@/utils/format";
@@ -51,9 +51,9 @@ export function NftGallery() {
         </div>
         <button
           onClick={() => setView("home")}
-          className="text-xs text-zinc-500 hover:text-zinc-300"
+          className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition"
         >
-          &larr; Back
+          <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.5} /> Back
         </button>
       </div>
 

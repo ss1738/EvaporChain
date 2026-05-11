@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { CheckCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent, formatBalance } from "@/utils/format";
@@ -139,7 +139,7 @@ export function BatchRefresh() {
           onClick={() => setView("home")}
           className="text-xs text-zinc-500 hover:text-zinc-300"
         >
-          &larr; Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
       </div>
 

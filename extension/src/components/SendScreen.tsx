@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { Header } from "./Header";
@@ -211,7 +212,7 @@ export function SendScreen() {
             onClick={handleCancelPreview}
             className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
           >
-            &larr; Back to form
+            <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</> to form
           </button>
           <h2 className="text-lg font-semibold text-zinc-100 mb-1">Preview Transaction</h2>
           <p className="text-xs text-zinc-500 mb-4">
@@ -265,7 +266,7 @@ export function SendScreen() {
           onClick={() => setView("home")}
           className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
         >
-          &larr; Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
         <h2 className="text-lg font-semibold text-zinc-100 mb-1">Send EVAP</h2>
         <p className="text-xs text-zinc-500 mb-4">

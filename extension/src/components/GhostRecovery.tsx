@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { Ghost, Sparkles } from "lucide-react";
+import { ArrowLeft, Ghost, Sparkles } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { Header } from "./Header";
@@ -76,7 +76,7 @@ export function GhostRecovery() {
             onClick={() => setSelectedDetail(null)}
             className="text-xs text-zinc-500 hover:text-zinc-300"
           >
-            &larr; Back
+            <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
           </button>
         </div>
 
@@ -194,7 +194,7 @@ export function GhostRecovery() {
           onClick={() => setView("home")}
           className="text-xs text-zinc-500 hover:text-zinc-300"
         >
-          &larr; Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
       </div>
 
