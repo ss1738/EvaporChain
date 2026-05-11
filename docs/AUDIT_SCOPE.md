@@ -1,8 +1,8 @@
 # EvaporChain Pre-Mainnet Audit Scope
 
 **Prepared for:** External security auditors
-**Date:** April 2026
-**Codebase:** Rust workspace, 85 crates in `crates/` (18 core + 60 substrate + 7 Tier-2 starts), 6,202 native tests passing, zero `unsafe` blocks. WASM bindings (`evaporchain-crypto-wasm`) ship a separate ~3,491-case test corpus runnable via `wasm-pack test`.
+**Date:** April 2026 (last refresh 2026-05-11)
+**Codebase:** Rust workspace, 147 crates in `crates/` (16 core + 131 substrate / supporting), 25,435+ native tests passing, zero `unsafe` blocks outside the documented WASM bridge (see `crates/evaporchain-crypto-wasm/src/lib.rs` — three compile-time layout guards + runtime regression test). WASM bindings (`evaporchain-crypto-wasm`) ship a separate test corpus runnable via `wasm-pack test`.
 
 ## 1. Engagement Overview
 
@@ -30,7 +30,7 @@ auditor opts to include them.
 
 ```
 EvaporChain/
-├── crates/                            # 85 crates total
+├── crates/                            # 147 crates total
 │   ├── evaporchain-crypto/            # Cryptographic primitives (PRIORITY 1)
 │   ├── evaporchain-proving/           # Nova IVC proofs (PRIORITY 1)
 │   ├── evaporchain-consensus/         # BFT consensus (PRIORITY 1)
@@ -212,8 +212,8 @@ Status reflects pre-mainnet hardening work completed against the threat model.
 ## 7. Test Suite
 
 ```
-Total: 6,202 native tests across 85 workspace crates, all passing.
-       ~3,491 additional WASM-binding tests in evaporchain-crypto-wasm
+Total: 25,435+ native tests across 147 workspace crates, all passing.
+       Additional WASM-binding tests in evaporchain-crypto-wasm
        (run separately via `wasm-pack test`).
        ~162 TypeScript tests for dApps/SDK/website.
 ```

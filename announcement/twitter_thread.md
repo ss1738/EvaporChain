@@ -71,9 +71,9 @@ EvaporChain is already safe. From day one.
 ## Tweet 8 (Built Solo):
 I built this alone.
 
-5,531 tests. 13+ Rust crates. Verkle trie. MMR accumulator.
+25,435+ tests. 147 Rust crates. Verkle trie. MMR accumulator.
 ZK proofs. Encrypted mempool. PID fee controller.
-Custom scripting language. 4-node devnet. Web dashboard.
+Custom scripting language. 5-node WAN cluster. Web dashboard.
 
 Total cost: $51 in domain names.
 
