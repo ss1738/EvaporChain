@@ -139,7 +139,6 @@ fn write_fq_be(fq: &Fq, dst: &mut [u8]) -> Result<(), ConversionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::circuit::WrapperCircuit;
     use crate::inputs::WrapperPublicInputs;
     use crate::prover::{prove, setup};
     use ark_bn254::Fr;
