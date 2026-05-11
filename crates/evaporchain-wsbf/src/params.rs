@@ -54,3 +54,17 @@ pub struct EffectiveParams {
     /// Shannon entropy (in millibits) of the energy distribution in this window.
     pub entropy_mb: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T1.20 — RgFlowParams::default() initializes coarse_grain=100,
+    /// entropy_scale_mb=1_000. Closes the only uncovered region.
+    #[test]
+    fn t1_20_rg_flow_params_default() {
+        let p = RgFlowParams::default();
+        assert_eq!(p.coarse_grain, 100);
+        assert_eq!(p.entropy_scale_mb, 1_000);
+    }
+}
