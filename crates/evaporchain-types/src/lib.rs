@@ -2600,6 +2600,296 @@ mod tests {
         assert!(refund.signature().is_none()); // No signature
         assert!(refund.public_key().is_none()); // No pubkey
     }
+
+    // ─── T1.20 — is_faucet_address ─────────────────────────────────
+
+    #[test]
+    fn t1_20_is_faucet_address_matches_canonical() {
+        assert!(is_faucet_address(&FAUCET_ADDRESS));
+        let mut other = FAUCET_ADDRESS;
+        other[0] ^= 0xFF;
+        assert!(!is_faucet_address(&other));
+        assert!(!is_faucet_address(&[0u8; 32]));
+    }
+
+    // ─── T1.20 — VestingLock::locked_at lifecycle ──────────────────
+
+    #[test]
+    fn t1_20_vesting_lock_before_cliff_returns_full_lock() {
+        let lock = VestingLock {
+            cliff_epoch: 100,
+            linear_release_epochs: 50,
+            total_locked: 1_000,
+        };
+        assert_eq!(lock.locked_at(0), 1_000);
+        assert_eq!(lock.locked_at(50), 1_000);
+        assert_eq!(lock.locked_at(100), 1_000, "AT cliff still fully locked");
+    }
+
+    #[test]
+    fn t1_20_vesting_lock_cliff_only_releases_immediately_after() {
+        let lock = VestingLock {
+            cliff_epoch: 100,
+            linear_release_epochs: 0, // cliff-only schedule
+            total_locked: 1_000,
+        };
+        // At/before cliff: fully locked.
+        assert_eq!(lock.locked_at(100), 1_000);
+        // After cliff: fully unlocked.
+        assert_eq!(lock.locked_at(101), 0);
+        assert_eq!(lock.locked_at(1_000_000), 0);
+    }
+
+    #[test]
+    fn t1_20_vesting_lock_linear_release_midway() {
+        let lock = VestingLock {
+            cliff_epoch: 100,
+            linear_release_epochs: 100,
+            total_locked: 1_000,
+        };
+        // Halfway through linear release: ~half released.
+        // At epoch 150 (cliff + 50), elapsed = 50, released = 500, locked = 500.
+        assert_eq!(lock.locked_at(150), 500);
+        // At epoch 200 (cliff + window): fully unlocked.
+        assert_eq!(lock.locked_at(200), 0);
+        assert_eq!(lock.locked_at(1_000), 0);
+    }
+
+    // ─── T1.20 — Account::transferable_balance ─────────────────────
+
+    #[test]
+    fn t1_20_transferable_balance_no_vesting_equals_balance() {
+        let acc = Account {
+            address: [0u8; 32],
+            balance: 5_000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        };
+        assert_eq!(acc.transferable_balance(0), 5_000);
+        assert_eq!(acc.transferable_balance(1_000_000), 5_000);
+    }
+
+    #[test]
+    fn t1_20_transferable_balance_with_vesting_subtracts_locked() {
+        let acc = Account {
+            address: [0u8; 32],
+            balance: 5_000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: Some(VestingLock {
+                cliff_epoch: 100,
+                linear_release_epochs: 0,
+                total_locked: 3_000,
+            }),
+        };
+        // Before cliff: balance - 3000 locked = 2000 transferable.
+        assert_eq!(acc.transferable_balance(50), 2_000);
+        // After cliff: 0 locked, full balance transferable.
+        assert_eq!(acc.transferable_balance(101), 5_000);
+    }
+
+    #[test]
+    fn t1_20_transferable_balance_saturates_when_locked_exceeds_balance() {
+        let acc = Account {
+            address: [0u8; 32],
+            balance: 1_000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: Some(VestingLock {
+                cliff_epoch: 100,
+                linear_release_epochs: 0,
+                total_locked: 5_000, // > balance
+            }),
+        };
+        // saturating_sub keeps it at 0, not negative.
+        assert_eq!(acc.transferable_balance(50), 0);
+    }
+
+    #[test]
+    fn t1_20_account_default_shape() {
+        let d = Account::default();
+        assert_eq!(d.address, [0u8; 32]);
+        assert_eq!(d.balance, 0);
+        assert_eq!(d.nonce, 0);
+        assert!(d.vesting.is_none());
+    }
+
+    // ─── T1.20 — UserOpTx::paymaster_sponsorship_payload ───────────
+
+    #[test]
+    fn t1_20_paymaster_sponsorship_payload_none_when_paymaster_absent() {
+        let user_op = UserOpTx {
+            sender: [1u8; 32],
+            nonce: 0,
+            call_data: vec![],
+            call_gas_limit: 50_000,
+            paymaster: None, // absent
+            paymaster_nonce: Some(7),
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+        assert!(user_op.paymaster_sponsorship_payload("test").is_none());
+    }
+
+    #[test]
+    fn t1_20_paymaster_sponsorship_payload_none_when_nonce_absent() {
+        let user_op = UserOpTx {
+            sender: [1u8; 32],
+            nonce: 0,
+            call_data: vec![],
+            call_gas_limit: 50_000,
+            paymaster: Some([9u8; 32]),
+            paymaster_nonce: None, // absent
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+        assert!(user_op.paymaster_sponsorship_payload("test").is_none());
+    }
+
+    #[test]
+    fn t1_20_paymaster_sponsorship_payload_chain_id_bound() {
+        let user_op = UserOpTx {
+            sender: [1u8; 32],
+            nonce: 0,
+            call_data: vec![0xAB, 0xCD],
+            call_gas_limit: 50_000,
+            paymaster: Some([9u8; 32]),
+            paymaster_nonce: Some(7),
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+        let p1 = user_op.paymaster_sponsorship_payload("evaporchain-mainnet").unwrap();
+        let p2 = user_op.paymaster_sponsorship_payload("evaporchain-testnet").unwrap();
+        assert_ne!(
+            p1, p2,
+            "different chain_ids MUST produce different sponsorship payloads"
+        );
+        // Same chain id is deterministic.
+        let p1_again = user_op.paymaster_sponsorship_payload("evaporchain-mainnet").unwrap();
+        assert_eq!(p1, p1_again);
+    }
+
+    #[test]
+    fn t1_20_paymaster_sponsorship_payload_call_data_bound() {
+        let mk = |call_data: Vec<u8>| UserOpTx {
+            sender: [1u8; 32],
+            nonce: 0,
+            call_data,
+            call_gas_limit: 50_000,
+            paymaster: Some([9u8; 32]),
+            paymaster_nonce: Some(7),
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+        let p1 = mk(vec![1, 2, 3])
+            .paymaster_sponsorship_payload("c")
+            .unwrap();
+        let p2 = mk(vec![4, 5, 6])
+            .paymaster_sponsorship_payload("c")
+            .unwrap();
+        assert_ne!(p1, p2, "different call_data MUST change the payload");
+    }
+
+    // ─── T1.20 — VestingSchedule::vested_at / pending / fully_vested ─
+
+    #[test]
+    fn t1_20_vesting_schedule_before_cliff_zero_vested() {
+        let v = VestingSchedule {
+            id: 0,
+            beneficiary: [1u8; 32],
+            total_amount: 1_000,
+            released_amount: 0,
+            start_epoch: 100,
+            cliff_epochs: 50,
+            vesting_epochs: 200,
+        };
+        assert_eq!(v.vested_at(100), 0, "exactly start, before cliff end");
+        assert_eq!(v.vested_at(149), 0, "1 short of cliff end");
+    }
+
+    #[test]
+    fn t1_20_vesting_schedule_past_window_returns_total() {
+        let v = VestingSchedule {
+            id: 0,
+            beneficiary: [1u8; 32],
+            total_amount: 1_000,
+            released_amount: 0,
+            start_epoch: 100,
+            cliff_epochs: 50,
+            vesting_epochs: 200,
+        };
+        // start_epoch + vesting_epochs = 300; past that → full vest.
+        assert_eq!(v.vested_at(300), 1_000);
+        assert_eq!(v.vested_at(1_000_000), 1_000);
+    }
+
+    #[test]
+    fn t1_20_vesting_schedule_linear_midway() {
+        let v = VestingSchedule {
+            id: 0,
+            beneficiary: [1u8; 32],
+            total_amount: 1_000,
+            released_amount: 0,
+            start_epoch: 100,
+            cliff_epochs: 50,
+            vesting_epochs: 250, // cliff_end = 150, vest_end = 350, window = 200
+        };
+        // At epoch 250 (cliff_end + 100, halfway through 200-epoch window):
+        // elapsed = 100, vested = 1000 * 100 / 200 = 500.
+        assert_eq!(v.vested_at(250), 500);
+    }
+
+    #[test]
+    fn t1_20_vesting_schedule_pending_release() {
+        let v = VestingSchedule {
+            id: 0,
+            beneficiary: [1u8; 32],
+            total_amount: 1_000,
+            released_amount: 200,
+            start_epoch: 100,
+            cliff_epochs: 50,
+            vesting_epochs: 250,
+        };
+        // Midway vested = 500; already released = 200; pending = 300.
+        assert_eq!(v.pending_release_at(250), 300);
+    }
+
+    #[test]
+    fn t1_20_vesting_schedule_is_fully_vested() {
+        let mut v = VestingSchedule {
+            id: 0,
+            beneficiary: [1u8; 32],
+            total_amount: 1_000,
+            released_amount: 500,
+            start_epoch: 0,
+            cliff_epochs: 0,
+            vesting_epochs: 0,
+        };
+        assert!(!v.is_fully_vested());
+        v.released_amount = 1_000;
+        assert!(v.is_fully_vested());
+        v.released_amount = 1_500; // over-released somehow
+        assert!(v.is_fully_vested());
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
