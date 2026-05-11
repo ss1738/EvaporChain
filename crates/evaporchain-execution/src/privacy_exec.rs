@@ -2120,4 +2120,121 @@ mod tests {
             err
         );
     }
+
+    /// T0.5 follow-up — Locks the current CANONICAL no-double-spend
+    /// defense under PNT v1 (Stage 1 shadow-tracking).
+    ///
+    /// The audit narrative in MAINNET_READINESS.md T0.5 frames the
+    /// defense as "PNT bounded window + anchor enforcement are
+    /// jointly secure". That framing is **incomplete for the
+    /// current Stage 1 wiring**. The actual canonical check today
+    /// is `engine.nullifier_set.spend()` at privacy_exec.rs ~line 577
+    /// — an unbounded in-memory set mirrored to db.spend_nullifier.
+    /// Under v1 the additional `is_double_spend` dispatch at
+    /// privacy_exec.rs:261 consults the bounded window only, but the
+    /// engine.nullifier_set check still fires later in the same
+    /// execute_unshield path and catches the respend regardless of
+    /// protocol version.
+    ///
+    /// This means PNT v1 today is **Stage 1 (shadow tracking)** —
+    /// the bounded window is being populated but the unbounded
+    /// engine.nullifier_set check is what actually defends.
+    ///
+    /// **STAGE 2 HAZARD.** When the Stage 2 hard-fork plan
+    /// (referenced in the comment at privacy_exec.rs ~line 583)
+    /// removes the engine.nullifier_set check and makes
+    /// is_double_spend the sole gate, the joint "window + anchor"
+    /// defense becomes load-bearing. At that point this test would
+    /// fail (respend succeeds without intermediate shields) UNLESS
+    /// one of the following lands first:
+    ///
+    ///   - Anchor-history bound: reject any tx whose anchor is older
+    ///     than the oldest live PNT phase. The chain already persists
+    ///     anchors per-block; this is a comparison, not new storage.
+    ///   - Phase-advance gated on root-change: only call
+    ///     pnt.advance_phase() when merkle_root() differs from the
+    ///     root at the previous tick. Couples eviction to chain
+    ///     progress so anchor staleness and window eviction are
+    ///     co-temporal.
+    ///   - Persistent v1 nullifier set: keep writing to
+    ///     db.spend_nullifier under v1 too, and have is_double_spend
+    ///     consult BOTH the window AND the unbounded set. The window
+    ///     becomes a cache; the set is the soundness gate.
+    ///
+    /// This test verifies the Stage 1 safety AND name-tags the
+    /// Stage 2 risk so the transition is not done blindly.
+    #[test]
+    fn pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set() {
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 50_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+        executor.set_protocol_version(1);
+
+        // Shield → unshield → spend nullifier_a at root R0.
+        let note_a = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            10_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+        let unshield_a = build_real_unshield(&executor, &note_a, receiver, 10_000);
+        let root_at_spend = executor.merkle_root();
+        executor.execute_unshield(&mut db, &unshield_a).unwrap();
+
+        // No intermediate shield — root stays at R0. The anchor
+        // defense will NOT fire on the respend (attacker's anchor
+        // still equals current root).
+        assert_eq!(
+            executor.merkle_root(),
+            root_at_spend,
+            "no intermediate shield → merkle root unchanged"
+        );
+
+        // Evict nullifier_a from the bounded PNT window by advancing
+        // 6 phases (window_depth = 5).
+        for _ in 0..6 {
+            executor.pnt_advance_phase();
+        }
+        let nullifier_a = unshield_a.input_nullifiers[0];
+        assert!(
+            !executor.pnt.is_spent_in_window(&nullifier_a),
+            "post-eviction: PNT v1 window says nullifier is unseen"
+        );
+        // is_double_spend under v1 therefore returns false — the v1
+        // dispatch is the bounded window only.
+        assert!(
+            !executor.is_double_spend(&db, &nullifier_a),
+            "is_double_spend(v1) MUST return false after eviction; \
+             this is the Stage-1-vs-Stage-2 boundary — under Stage 2 \
+             this assertion is the load-bearing gate. Today it isn't, \
+             because engine.nullifier_set fires later in execute_unshield."
+        );
+
+        // Now attempt the respend. UNDER STAGE 1, the engine.nullifier_set
+        // check at privacy_exec.rs ~line 577 catches the double-spend
+        // and returns Err(DoubleSpend). The bounded-window check at
+        // ~line 504 returned false (per the assertion above), so the
+        // FIRST gate misses, but the second gate fires.
+        let respend = unshield_a.clone();
+        let outcome = executor.execute_unshield(&mut db, &respend);
+        assert!(
+            matches!(outcome, Err(PrivacyExecError::DoubleSpend(_))),
+            "Stage 1 contract: engine.nullifier_set rejects the respend \
+             even when PNT v1 window-check misses. Got: {:?}",
+            outcome
+        );
+
+        // Receiver balance was credited exactly once.
+        let final_balance = db.get_account(&receiver).unwrap().balance;
+        assert_eq!(
+            final_balance, 10_000,
+            "Stage 1 invariant: receiver was credited exactly once"
+        );
+    }
 }
