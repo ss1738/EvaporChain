@@ -1611,3 +1611,165 @@ fn t0_6_multi_validator_downtime_slash_is_deterministic() {
         assert_eq!(p3.stake, p4.stake);
     }
 }
+
+// ─── T0.7 Vector 5 — DAG fork-spam multi-validator convergence ──────
+//
+// MAINNET_READINESS T0.7 Vector 5: "Fork-spam (validator producing
+// many sibling proposals)". The runbook lists this as the last
+// in-CI gap for T0.7.
+//
+// Defense properties:
+//   1. The LightCone DAG can hold many sibling forks at the same
+//      height. Each is a candidate head.
+//   2. enumerate_candidate_heads returns them in canonical caliber
+//      order (deterministic tie-break by BlockId).
+//   3. Under fork-spam, ALL honest validators independently produce
+//      the SAME caliber-ordered list, the SAME argmax, the SAME
+//      propose_parents antichain truncated by light_cone_max_concurrent_forks.
+//   4. The antichain-digest is identical across validators.
+//
+// Without these properties, fork-spam would partition consensus —
+// validators voting/proposing on different head subsets cannot
+// reach quorum. Validator-determinism under fork-spam is the
+// load-bearing property for liveness.
+
+#[test]
+fn t0_7_v5_dag_fork_spam_convergence_across_4_validators() {
+    let mut v1 = make_validator_consensus(1);
+    let mut v2 = make_validator_consensus(2);
+    let mut v3 = make_validator_consensus(3);
+    let mut v4 = make_validator_consensus(4);
+
+    // Genesis on all 4.
+    for tc in [&mut v1, &mut v2, &mut v3, &mut v4] {
+        lc_insert(tc, id(0), vec![], 0);
+    }
+
+    // ── Fork spam: 50 sibling forks off genesis at height 1 ──
+    //
+    // This simulates a malicious proposer (or many of them in a
+    // partition recovery scenario) emitting many sibling proposals.
+    // The DAG accepts them all; the substrate's job is to make sure
+    // every validator computes the same head + same antichain.
+    const SPAM_COUNT: u8 = 50;
+    for fork_byte in 1..=SPAM_COUNT {
+        let fork_id = [fork_byte; 32];
+        for tc in [&mut v1, &mut v2, &mut v3, &mut v4] {
+            lc_insert(tc, fork_id, vec![id(0)], 1);
+        }
+    }
+
+    // Convergence claim 1: candidate_heads is the SAME set across all
+    // 4 validators. With 50 sibling forks, all 50 are leaves.
+    let heads_1 = v1.candidate_heads();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4)] {
+        assert_eq!(
+            tc.candidate_heads(),
+            heads_1,
+            "{}: candidate_heads diverged under fork-spam",
+            label
+        );
+    }
+    assert_eq!(
+        heads_1.len(),
+        SPAM_COUNT as usize,
+        "all 50 sibling forks must be candidate heads"
+    );
+
+    // Convergence claim 2: enumerate_candidate_heads is the SAME
+    // ordered list across all 4. This includes caliber values and
+    // the canonical tie-break ordering.
+    let enum_1 = v1.enumerate_candidate_heads();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4)] {
+        assert_eq!(
+            tc.enumerate_candidate_heads(),
+            enum_1,
+            "{}: enumerate_candidate_heads diverged",
+            label
+        );
+    }
+    assert_eq!(enum_1.len(), SPAM_COUNT as usize);
+
+    // Convergence claim 3: argmax is identical. This is THE
+    // load-bearing property — if validators disagree on argmax,
+    // they vote for different blocks and consensus halts.
+    let head_1 = v1.update_authoritative_head().expect("Some");
+    let head_2 = v2.update_authoritative_head().expect("Some");
+    let head_3 = v3.update_authoritative_head().expect("Some");
+    let head_4 = v4.update_authoritative_head().expect("Some");
+    assert_eq!(head_1, head_2);
+    assert_eq!(head_2, head_3);
+    assert_eq!(head_3, head_4);
+
+    // Convergence claim 4: propose_parents is the SAME antichain,
+    // capped at light_cone_max_concurrent_forks (default 4). Under
+    // 50 fork-spam, propose_parents emits 4 of the 50 — the same
+    // 4 across all validators.
+    let parents_1 = v1.propose_parents();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4)] {
+        assert_eq!(
+            tc.propose_parents(),
+            parents_1,
+            "{}: propose_parents diverged under fork-spam",
+            label
+        );
+    }
+    assert!(
+        parents_1.len() <= 4,
+        "propose_parents MUST respect light_cone_max_concurrent_forks=4 cap; \
+         got {} parents",
+        parents_1.len()
+    );
+    // The chosen head leads.
+    assert_eq!(parents_1[0], head_1);
+
+    // Convergence claim 5: antichain digest converges. This is the
+    // single 32-byte commitment over the entire fork structure
+    // that operators can broadcast as a liveness signal.
+    let d1 = v1.light_cone_antichain_digest();
+    for (label, tc) in [("v2", &v2), ("v3", &v3), ("v4", &v4)] {
+        assert_eq!(
+            tc.light_cone_antichain_digest(),
+            d1,
+            "{}: antichain digest diverged under fork-spam",
+            label
+        );
+    }
+}
+
+#[test]
+fn t0_7_v5_fork_spam_ordering_independence() {
+    // Adversarial variant: each validator observes the same 30
+    // sibling forks in a DIFFERENT order (simulating gossip jitter).
+    // Convergence MUST hold regardless of arrival order.
+    let mut v1 = make_validator_consensus(1);
+    let mut v2 = make_validator_consensus(2);
+
+    for tc in [&mut v1, &mut v2] {
+        lc_insert(tc, id(0), vec![], 0);
+    }
+
+    let n: u8 = 30;
+    // v1: insert in forward order 1..=30.
+    for b in 1..=n {
+        lc_insert(&mut v1, [b; 32], vec![id(0)], 1);
+    }
+    // v2: insert in REVERSE order n..=1.
+    for b in (1..=n).rev() {
+        lc_insert(&mut v2, [b; 32], vec![id(0)], 1);
+    }
+
+    // Path-independence: both validators agree on every substrate
+    // state queryable from a single instance.
+    assert_eq!(v1.candidate_heads(), v2.candidate_heads());
+    assert_eq!(v1.enumerate_candidate_heads(), v2.enumerate_candidate_heads());
+    assert_eq!(
+        v1.update_authoritative_head(),
+        v2.update_authoritative_head()
+    );
+    assert_eq!(v1.propose_parents(), v2.propose_parents());
+    assert_eq!(
+        v1.light_cone_antichain_digest(),
+        v2.light_cone_antichain_digest(),
+    );
+}

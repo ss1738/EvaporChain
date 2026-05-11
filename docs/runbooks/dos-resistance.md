@@ -13,7 +13,9 @@
 | **3. Per-account fairness** | `dos_v3_single_sender_capped_below_global_max` | A single sender flooding 200 unique-nonce txs is capped at `MAX_TXS_PER_ACCOUNT = 64`, well below the 10K global. Sybil-resistance: one identity cannot monopolise the slot budget. |
 | **4. Encrypted-mempool reveal flood** | `dos_v4_reveal_too_early_rejected` · `dos_v4_unrevealed_commitments_expire_at_reveal_epoch` · `dos_v4_encrypted_mempool_admission_cap_fires_on_flood` | Reveal-too-early temporal gate fires (RevealTooEarly). Unrevealed commitments expire at their reveal_epoch via process_reveals. **CAP NOW ENFORCED**: `submit_encrypted` rejects when `pending_encrypted == MAX_ENCRYPTED_PENDING` (10_000); 15K-flood test asserts exactly cap accepted, overflow rejected. |
 
-Vector 5 (DAG fork-spam) is not yet covered — needs a multi-validator DAG harness. Tracked as future work.
+Vector 5 (DAG fork-spam) — ✅ CLOSED 2026-05-11. Multi-validator convergence locked in `crates/evaporchain-consensus/tests/mcc_phase_d.rs`:
+- `t0_7_v5_dag_fork_spam_convergence_across_4_validators`: 50 sibling forks injected into 4 validators' DAGs; all 4 agree on candidate_heads, enumerate_candidate_heads (caliber-ordered), authoritative head argmax, propose_parents (capped at `light_cone_max_concurrent_forks=4`), and antichain digest.
+- `t0_7_v5_fork_spam_ordering_independence`: same 30 forks observed in forward vs reverse order by two validators; full substrate state converges. Path-independence under gossip jitter.
 
 Vectors 6 (gas exhaustion) and 7 (memory blow-up via large blobs) are covered elsewhere — `block_stm` tests + `test_global_byte_cap_rejects_when_pool_would_overflow` in `mempool.rs` respectively.
 
