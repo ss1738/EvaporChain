@@ -139,6 +139,16 @@ pub struct PrivacyExecutor {
     /// window. `0` disables auto-advance entirely (caller must drive
     /// it via the original `pnt_advance_phase` direct-call path).
     pnt_phase_interval_epochs: u64,
+    /// Merkle root captured at the last `tick_pnt_phase` rotation.
+    /// PNT v1 Stage-2 defense: `tick_pnt_phase` additionally requires
+    /// the merkle root has changed since the last rotation before
+    /// rotating again. Without this gate, the bounded window can
+    /// rotate purely on epoch count even when no shields moved the
+    /// chain state — opening the no-intermediate-shield respend
+    /// window flagged by `pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set`.
+    /// `None` means "never rotated via tick_pnt_phase". Direct calls
+    /// to `pnt_advance_phase` bypass this gate (test/admin escape).
+    pnt_root_at_last_phase_advance: Option<[u8; 32]>,
     /// Protocol version of the block currently being executed.
     /// Set by the executor BEFORE dispatching privacy txs. Lane B.2
     /// gates the double-spend check on this:
@@ -163,6 +173,7 @@ impl PrivacyExecutor {
                 .expect("PNT_WINDOW_DEPTH must be >= 1"),
             pnt_last_phase_epoch: None,
             pnt_phase_interval_epochs: PNT_DEFAULT_PHASE_INTERVAL_EPOCHS,
+            pnt_root_at_last_phase_advance: None,
             current_protocol_version: 0,
         }
     }
@@ -176,6 +187,7 @@ impl PrivacyExecutor {
                 .expect("PNT_WINDOW_DEPTH must be >= 1"),
             pnt_last_phase_epoch: None,
             pnt_phase_interval_epochs: PNT_DEFAULT_PHASE_INTERVAL_EPOCHS,
+            pnt_root_at_last_phase_advance: None,
             current_protocol_version: 0,
         }
     }
@@ -204,8 +216,25 @@ impl PrivacyExecutor {
         if !due {
             return false;
         }
+        // PNT v1 Stage-2 defense: also gate on root-change. If the
+        // merkle root hasn't moved since the last rotation, no new
+        // notes have entered the tree and no eviction is justified
+        // — rotating purely on epoch count would let an attacker
+        // age nullifiers out of the bounded window without
+        // triggering shield activity. See companion test
+        // `pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set`
+        // for the Stage 2 hazard this closes.
+        let current_root = self.engine.merkle_root();
+        let root_changed = match self.pnt_root_at_last_phase_advance {
+            Some(prev) => prev != current_root,
+            None => true, // first tick fires
+        };
+        if !root_changed {
+            return false;
+        }
         self.pnt.advance_phase();
         self.pnt_last_phase_epoch = Some(epoch);
+        self.pnt_root_at_last_phase_advance = Some(current_root);
         true
     }
 
@@ -1448,16 +1477,81 @@ mod tests {
 
     #[test]
     fn test_tick_pnt_phase_respects_cadence() {
-        // After firing at epoch 0, tick within the interval must NOT
-        // fire; tick at-or-past the interval boundary fires again.
+        // PNT v1 Stage-2 defense: tick_pnt_phase requires BOTH cadence
+        // elapsed AND merkle root changed since the last rotation.
+        // This test exercises the cadence half; root-change is
+        // covered separately. To isolate cadence, we shield between
+        // ticks so the root advances. The first tick at epoch 0 fires
+        // unconditionally (no prior root recorded).
+        let sender = test_addr(1);
+        let mut db = setup_db_with_balance(&sender, 1_000_000);
         let mut executor = PrivacyExecutor::with_depth(8);
         executor.set_pnt_phase_interval_epochs(100);
-        assert!(executor.tick_pnt_phase(0));
+        executor.set_epoch(0);
+
+        assert!(executor.tick_pnt_phase(0), "first tick fires unconditionally");
+        // Shield once so the next tick has a fresh root to compare against.
+        let _n0 = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            1_000,
+            0,
+            test_blinding(1),
+            test_blinding(2),
+            test_blinding(3),
+        );
         assert!(!executor.tick_pnt_phase(50), "50 < 0+100 → no fire");
         assert!(!executor.tick_pnt_phase(99), "99 < 0+100 → no fire");
-        assert!(executor.tick_pnt_phase(100), "100 >= 0+100 → fires");
+        assert!(
+            executor.tick_pnt_phase(100),
+            "100 >= 0+100 AND root changed → fires"
+        );
+        // Another shield so the next at-cadence tick has a fresh root.
+        let _n1 = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            1_000,
+            1,
+            test_blinding(4),
+            test_blinding(5),
+            test_blinding(6),
+        );
         assert!(!executor.tick_pnt_phase(150), "150 < 100+100 → no fire");
         assert!(executor.tick_pnt_phase(200));
+    }
+
+    /// PNT v1 Stage-2 defense: even when cadence has elapsed,
+    /// tick_pnt_phase must NOT rotate if the merkle root has not
+    /// changed since the last rotation. Closes the no-intermediate-
+    /// shield bypass: an attacker cannot evict their own nullifier
+    /// from the bounded window just by waiting epochs to pass.
+    #[test]
+    fn test_tick_pnt_phase_no_fire_when_root_unchanged() {
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_pnt_phase_interval_epochs(100);
+        executor.set_epoch(0);
+
+        // First tick fires (no prior recorded root).
+        assert!(executor.tick_pnt_phase(0));
+        let phase_before = executor.pnt.current_phase;
+
+        // Many epochs pass with NO shields. Root stays at empty-tree
+        // sentinel. tick_pnt_phase MUST refuse to rotate even
+        // though the cadence has long elapsed.
+        for epoch in [100u64, 200, 1_000, 10_000, 100_000] {
+            assert!(
+                !executor.tick_pnt_phase(epoch),
+                "epoch {} cadence elapsed but root unchanged → MUST NOT fire",
+                epoch
+            );
+        }
+        // Phase counter is unchanged.
+        assert_eq!(
+            executor.pnt.current_phase, phase_before,
+            "PNT phase MUST NOT advance without root change"
+        );
     }
 
     #[test]
