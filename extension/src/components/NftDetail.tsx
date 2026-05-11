@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ImageOff } from "lucide-react";
+import { ArrowLeft, ImageOff } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent, shortAddress, energyStatus } from "@/utils/format";
@@ -89,7 +89,7 @@ export function NftDetail() {
           onClick={() => setView("nfts")}
           className="text-xs text-zinc-500 hover:text-zinc-300"
         >
-          &larr; Gallery
+          <ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Gallery
         </button>
         <span className={`text-xs px-2.5 py-1 rounded-full border ${stateBadgeClass}`}>
           {stateIcon} {nft.state}

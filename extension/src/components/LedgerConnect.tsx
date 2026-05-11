@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { KeyRound, ShieldCheck } from "lucide-react";
+import { ArrowLeft, KeyRound, ShieldCheck } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { ledgerManager, type LedgerAccount, type LedgerDeviceInfo, type LedgerConnectionStatus } from "@/utils/ledger";
 
@@ -125,7 +125,7 @@ export function LedgerConnect() {
           onClick={() => setView("settings")}
           className="text-zinc-500 hover:text-zinc-700 transition text-sm"
         >
-          &larr;
+          <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
         </button>
         <h1 className="text-sm font-semibold text-zinc-800">Hardware Wallet</h1>
         {connectionStatus === "connected" && (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Check, X } from "lucide-react";
+import { ArrowLeft, Check, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import {
   bridgeManager,
@@ -127,7 +127,7 @@ export function BridgeScreen() {
           onClick={() => setView("home")}
           className="text-zinc-500 hover:text-zinc-700 transition text-sm"
         >
-          &larr;
+          <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
         </button>
         <h1 className="text-sm font-semibold text-zinc-800">Bridge</h1>
       </div>
