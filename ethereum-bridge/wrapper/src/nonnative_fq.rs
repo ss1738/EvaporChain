@@ -158,7 +158,10 @@ mod tests {
         );
     }
 
-    /// Mult sanity check — `a * b == c` for non-native Fq.
+    /// Mult sanity check — `a * b == c` for non-native Fq. Provides
+    /// baseline confidence that arkworks's `NonNativeFieldVar` mult
+    /// works for `PallasFq`-in-`Bn254Fr` (the next gadget layer up,
+    /// pallas_g1, found cases where chained mults+adds break this).
     #[test]
     fn nonnative_fq_mul_satisfied_when_correct() {
         let mut rng = seeded_rng();
