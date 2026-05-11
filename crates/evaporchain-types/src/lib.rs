@@ -3151,6 +3151,185 @@ mod tests {
         assert_eq!(tx.sender(), Some(&[11u8; 32]));
         assert_eq!(tx.signature().map(|s| s.len()), Some(32));
     }
+
+    // ─── T1.20 — Transaction method coverage (batch 2: remaining 11) ───
+
+    #[test]
+    fn t1_20_tx_method_arms_transfer() {
+        let tx = Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 500,
+            nonce: 7,
+            signature: Some(vec![0xAB; 16]),
+            public_key: Some(vec![0xCD; 32]),
+            mev_refund_eligible: Some(false),
+        });
+        check_tx_common(&tx, Some(7), "Transfer");
+        assert_eq!(tx.sender(), Some(&[1u8; 32]));
+        assert_eq!(tx.signature().map(|s| s.len()), Some(16));
+        assert_eq!(tx.public_key().map(|p| p.len()), Some(32));
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_create_object() {
+        let tx = Transaction::CreateObject(CreateObjectTx {
+            creator: [3u8; 32],
+            object_id: [4u8; 32],
+            energy: 1_000,
+            half_life: 100,
+            data: vec![0xDE, 0xAD],
+            decay_curve: None,
+            lad_mode: None,
+            signature: None,
+            public_key: None,
+        });
+        check_tx_common(&tx, None, "CreateObject"); // no nonce field
+        assert_eq!(tx.sender(), Some(&[3u8; 32]));
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_call_contract() {
+        let tx = Transaction::CallContract(CallContractTx {
+            caller: [5u8; 32],
+            contract_id: 42,
+            method: "transfer".to_string(),
+            args: "{}".to_string(),
+            epoch: 100,
+            signature: None,
+            public_key: None,
+        });
+        check_tx_common(&tx, None, "CallContract"); // no nonce field
+        assert_eq!(tx.sender(), Some(&[5u8; 32]));
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_deploy_script() {
+        let tx = Transaction::DeployScript(DeployScriptTx {
+            deployer: [6u8; 32],
+            source_code: "let x = 1;".to_string(),
+            energy: 5_000,
+            half_life: 200,
+            signature: None,
+            public_key: None,
+        });
+        check_tx_common(&tx, None, "DeployScript");
+        assert_eq!(tx.sender(), Some(&[6u8; 32]));
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_call_script() {
+        let tx = Transaction::CallScript(CallScriptTx {
+            caller: [7u8; 32],
+            contract_id: 99,
+            method: "tick".to_string(),
+            args: "[]".to_string(),
+            epoch: 200,
+            signature: None,
+            public_key: None,
+        });
+        check_tx_common(&tx, None, "CallScript");
+        assert_eq!(tx.sender(), Some(&[7u8; 32]));
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_shield() {
+        let tx = Transaction::Shield(ShieldTx {
+            from: [8u8; 32],
+            amount: 1_000,
+            nonce: 3,
+            note_owner_hash: [0xAA; 32],
+            value_blinding: [0xBB; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        });
+        check_tx_common(&tx, Some(3), "Shield");
+        assert_eq!(tx.sender(), Some(&[8u8; 32]));
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_unshield() {
+        let tx = Transaction::Unshield(UnshieldTx {
+            to: [9u8; 32],
+            amount: 500,
+            input_nullifiers: vec![[0xFF; 32]],
+            anchor: [0xEE; 32],
+            balance_binding: [0xDD; 32],
+            input_amounts: vec![],
+            input_blindings: vec![],
+            input_value_commitments: vec![],
+            input_note_commitments: vec![],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![],
+            change_commitments: vec![],
+            energy_proofs: vec![],
+        });
+        check_tx_common(&tx, None, "Unshield"); // no sender, no nonce
+        // Unshield is ZK-authenticated — no signature / pubkey expected.
+        assert!(tx.signature().is_none());
+        assert!(tx.public_key().is_none());
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_private_transfer() {
+        let tx = Transaction::PrivateTransfer(PrivateTransferTx {
+            input_nullifiers: vec![[0xCC; 32]],
+            output_commitments: vec![[0x11; 32]],
+            anchor: [0xAA; 32],
+            balance_binding: [0xBB; 32],
+            fee: 100,
+            input_amounts: vec![],
+            input_blindings: vec![],
+            input_value_commitments: vec![],
+            input_note_commitments: vec![],
+            input_merkle_proofs: vec![],
+            output_amounts: vec![],
+            output_blindings: vec![],
+            energy_proofs: vec![],
+        });
+        check_tx_common(&tx, None, "PrivateTransfer");
+        assert!(tx.signature().is_none());
+        assert!(tx.public_key().is_none());
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_deferred() {
+        let tx = Transaction::Deferred(DeferredTx {
+            submitter: [0xAB; 32],
+            nonce: 13,
+            deposit: 1_000,
+            guards: vec![],
+            inner_tx_bytes: vec![0x01, 0x02, 0x03],
+            gas_limit: 100_000,
+            signature: None,
+            public_key: None,
+        });
+        check_tx_common(&tx, Some(13), "Deferred");
+        assert_eq!(tx.sender(), Some(&[0xAB; 32]));
+    }
+
+    #[test]
+    fn t1_20_tx_method_arms_upgrade_contract() {
+        let tx = Transaction::UpgradeContract(UpgradeContractTx {
+            owner: [0xCD; 32],
+            contract_id: 7,
+            new_bytecode: vec![0xAA, 0xBB, 0xCC],
+            new_bytecode_hash: [0x00; 32],
+            nonce: 21,
+            admin_signature: None,
+            admin_public_key: None,
+            endorser_stakes: vec![],
+            required_stake: 0,
+            governance_approved: false,
+            signature: None,
+            public_key: None,
+        });
+        check_tx_common(&tx, Some(21), "UpgradeContract");
+        assert_eq!(tx.sender(), Some(&[0xCD; 32]));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
