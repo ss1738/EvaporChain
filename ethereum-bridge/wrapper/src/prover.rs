@@ -51,7 +51,7 @@ pub enum VerifyError {
 ///
 /// **Do not use the returned VK in production.** See module-level safety doc.
 pub fn setup(
-    rng: &mut impl ark_std::rand::RngCore,
+    rng: &mut (impl ark_std::rand::RngCore + ark_std::rand::CryptoRng),
 ) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), SetupError> {
     let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(WrapperCircuit::dummy(), rng)
         .map_err(|e| SetupError::Groth16(format!("{:?}", e)))?;
@@ -69,7 +69,7 @@ pub fn prove(
     pk: &ProvingKey<Bn254>,
     public_inputs: WrapperPublicInputs,
     halo2_ipa_proof_bytes: Vec<u8>,
-    rng: &mut impl ark_std::rand::RngCore,
+    rng: &mut (impl ark_std::rand::RngCore + ark_std::rand::CryptoRng),
 ) -> Result<Vec<u8>, ProveError> {
     let circuit = WrapperCircuit::new(public_inputs, halo2_ipa_proof_bytes);
     let proof = Groth16::<Bn254>::prove(pk, circuit, rng)
