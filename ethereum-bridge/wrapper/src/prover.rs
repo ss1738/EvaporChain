@@ -108,7 +108,13 @@ pub fn verify(
 mod tests {
     use super::*;
     use ark_std::rand::SeedableRng;
-    use ark_std::test_rng;
+
+    /// `test_rng()` from `ark_std` returns an `impl Rng` that's NOT
+    /// `CryptoRng`. Groth16's prove + setup require `CryptoRng`, so
+    /// tests seed `StdRng` (which IS `CryptoRng`) for determinism.
+    fn seeded_rng() -> ark_std::rand::rngs::StdRng {
+        ark_std::rand::rngs::StdRng::seed_from_u64(0xC0FFEE_u64)
+    }
 
     /// Headline test — setup, prove, verify all run end-to-end against
     /// the starter circuit. Slow (~seconds for keygen + proving on a
@@ -116,7 +122,7 @@ mod tests {
     #[test]
     #[ignore]
     fn starter_setup_prove_verify_round_trip() {
-        let mut rng = test_rng();
+        let mut rng = seeded_rng();
         let (pk, vk) = setup(&mut rng).expect("setup must succeed");
 
         let public_inputs = WrapperPublicInputs {
@@ -143,7 +149,7 @@ mod tests {
     #[test]
     #[ignore]
     fn tampered_public_input_fails_verify() {
-        let mut rng = test_rng();
+        let mut rng = seeded_rng();
         let (pk, vk) = setup(&mut rng).expect("setup");
 
         let real_inputs = WrapperPublicInputs {
@@ -173,7 +179,7 @@ mod tests {
     #[test]
     #[ignore]
     fn deterministic_rng_proof_round_trip() {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC0FFEE_u64);
+        let mut rng = seeded_rng();
         let (pk, vk) = setup(&mut rng).expect("setup");
 
         let inputs = WrapperPublicInputs {
