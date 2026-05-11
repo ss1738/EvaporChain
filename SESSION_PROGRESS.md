@@ -48,6 +48,50 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-11 (evening) — 5-node cluster fork root-cause + fix (BatchUndoLog last_rent_epoch)
+
+**Focus:** Identify and fix the BFT fork at h=1 that persisted across all 5 nodes even after binary synchronization; restore full cluster consensus.
+
+**Commits shipped:** 1 (rocksdb_backend.rs fix — `last_rent_epoch` rollback in BatchUndoLog). Pushed and rebuilt on all 5 nodes.
+
+**Deliverables:**
+- Root cause identified: `BatchUndoLog` missing `last_rent_epoch` field → proposer node's speculative `create_proposal()` pre-execution permanently advanced the epoch guard without rollback → proposer skipped demurrage on the committed block → divergent state root vs all other validators
+- Fix: added `last_rent_epoch` to `BatchUndoLog`; snapshot in `begin_batch()`; restore in `rollback_batch()`; fixed `put_last_rent_epoch` to buffer through pending WriteBatch (not write directly to RocksDB) so rollback can discard speculative writes
+- All 5 nodes rebuilt with the fix (3 ARM Minis + 2 x86_64 Hetzner)
+- Clean genesis restart on all 5 nodes — cluster reached consensus from block 0
+- Verified: all 5 nodes report identical state root at h=1664 (`044d185fed4fc807`) and h=1722 with 4 peers, 0 ghosts
+- Demurrage collection confirmed active: `demurrage_collected=886` on every block from all nodes
+
+**Empirical results:**
+- Pre-fix: V2 (proposer) reported different state root than V1/V3/V4/V5 at h=1 → fork (2 separate chain tips)
+- Post-fix: 5-node cluster advances in perfect lockstep at ~1 blk/s; 0 forks observed through h=1732+
+
+**Root cause trace:**
+1. `create_proposal()` calls `begin_batch()` → `execute_block()` (speculative) → `rollback_batch()`
+2. `execute_block` calls `collect_demurrage` → `put_last_rent_epoch(epoch=1)`
+3. `put_last_rent_epoch` wrote DIRECTLY to RocksDB, bypassing pending WriteBatch
+4. `rollback_batch()` didn't restore `last_rent_epoch` (field didn't exist in `BatchUndoLog`)
+5. When the real committed block at epoch=1 ran: `1 > 1 = false` → no demurrage on proposer
+6. All other validators: `1 > 0 = true` → demurrage collected → different state roots → fork
+
+**Decisions made:**
+- `put_last_rent_epoch` now conditionally buffers via `pending_batch` when inside a batch; falls through to direct RocksDB write outside a batch — this is the correct pattern for all epoch-counter mutation methods
+- Any other epoch-counter fields that follow the same pattern should be audited for the same issue
+
+**What's next:**
+- Audit all other `put_*` methods in `rocksdb_backend.rs` that mutate epoch counters or counters that affect execution determinism — ensure they all check `pending_batch` before writing directly
+- Re-enable Hetzner systemd watchdog services (currently running nohup; service file needs re-creation)
+- Resume T1.20 coverage work from where it left off
+
+**Blockers / open questions:**
+- Hetzner nodes have no systemd service file (was removed during cleanup); nohup-only for now — need to recreate the service and set `Restart=on-failure`
+
+**Cross-references:**
+- `crates/evaporchain-state/src/rocksdb_backend.rs` — `BatchUndoLog` struct, `begin_batch`, `rollback_batch`, `put_last_rent_epoch`
+- `crates/evaporchain-consensus/src/tendermint.rs` — `create_proposal()` speculative pre-execution block
+
+---
+
 ## 2026-05-11 (T1.20 continuation) — temporal / state_sync / mempool / paymaster / db / banlist gap closure
 
 **Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.

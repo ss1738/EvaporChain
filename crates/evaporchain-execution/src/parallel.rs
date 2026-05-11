@@ -1862,63 +1862,76 @@ impl ExecutionEngine for ParallelExecutor {
                     } else {
                         sender.nonce += 1;
                         sender.last_touched_epoch = block.epoch;
-                        let mut stake =
-                            db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
-                                ExecutionError::ObjectNotFound(format!(
-                                    "no stake record for validator {}",
-                                    exit.validator_id
-                                ))
-                            })?;
-                        if stake.validator_address != exit.validator_address {
-                            return Err(ExecutionError::InvalidSignature);
-                        }
-                        if stake.unbonding_epoch.is_some() {
-                            Err(ExecutionError::ContractError(
-                                "validator already exiting".to_string(),
-                            ))
-                        } else {
-                            stake.unbonding_epoch =
-                                Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
-                            db.put_stake(stake);
-                            Ok(())
+                        // Use explicit match so errors stay in `result` rather than
+                        // propagating through `?` and aborting the entire block.
+                        match db.get_stake(exit.validator_id).cloned() {
+                            None => Err(ExecutionError::ObjectNotFound(format!(
+                                "no stake record for validator {}",
+                                exit.validator_id
+                            ))),
+                            Some(mut stake) => {
+                                if stake.validator_address != exit.validator_address {
+                                    Err(ExecutionError::InvalidSignature)
+                                } else if stake.unbonding_epoch.is_some() {
+                                    Err(ExecutionError::ContractError(
+                                        "validator already exiting".to_string(),
+                                    ))
+                                } else {
+                                    stake.unbonding_epoch =
+                                        Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
+                                    db.put_stake(stake);
+                                    Ok(())
+                                }
+                            }
                         }
                     }
                 }
                 Transaction::ValidatorClaimStake(claim) => {
-                    let stake = db.get_stake(claim.validator_id).cloned().ok_or_else(|| {
-                        ExecutionError::ObjectNotFound(format!(
+                    // Explicit match avoids `?`/`return Err` accidentally aborting
+                    // the entire block execution on a per-tx validation failure.
+                    match db.get_stake(claim.validator_id).cloned() {
+                        None => Err(ExecutionError::ObjectNotFound(format!(
                             "no stake record for validator {}",
                             claim.validator_id
-                        ))
-                    })?;
-                    if stake.validator_address != claim.validator_address {
-                        return Err(ExecutionError::InvalidSignature);
-                    }
-                    let unbonding = stake.unbonding_epoch.ok_or_else(|| {
-                        ExecutionError::ContractError(
-                            "validator has not exited — cannot claim stake".to_string(),
-                        )
-                    })?;
-                    if block.epoch < unbonding {
-                        Err(ExecutionError::ContractError(format!(
-                            "unbonding period not complete: current epoch {} < unbonding epoch {}",
-                            block.epoch, unbonding
-                        )))
-                    } else {
-                        let sender = db.get_or_create_account(&claim.validator_address);
-                        if sender.nonce != claim.nonce {
-                            return Err(ExecutionError::InvalidNonce {
-                                expected: sender.nonce,
-                                got: claim.nonce,
-                            });
+                        ))),
+                        Some(stake) => {
+                            if stake.validator_address != claim.validator_address {
+                                Err(ExecutionError::InvalidSignature)
+                            } else {
+                                match stake.unbonding_epoch {
+                                    None => Err(ExecutionError::ContractError(
+                                        "validator has not exited — cannot claim stake"
+                                            .to_string(),
+                                    )),
+                                    Some(unbonding) => {
+                                        if block.epoch < unbonding {
+                                            Err(ExecutionError::ContractError(format!(
+                                                "unbonding period not complete: current epoch {} < unbonding epoch {}",
+                                                block.epoch, unbonding
+                                            )))
+                                        } else {
+                                            let sender = db
+                                                .get_or_create_account(&claim.validator_address);
+                                            if sender.nonce != claim.nonce {
+                                                Err(ExecutionError::InvalidNonce {
+                                                    expected: sender.nonce,
+                                                    got: claim.nonce,
+                                                })
+                                            } else {
+                                                let claimable = stake
+                                                    .staked_amount
+                                                    .saturating_sub(stake.slashed_amount);
+                                                sender.balance += claimable;
+                                                sender.nonce += 1;
+                                                sender.last_touched_epoch = block.epoch;
+                                                db.remove_stake(claim.validator_id);
+                                                Ok(())
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        let claimable = stake.staked_amount.saturating_sub(stake.slashed_amount);
-                        sender.balance += claimable;
-                        sender.nonce += 1;
-                        // Balance + nonce mutated — stamp anchor.
-                        sender.last_touched_epoch = block.epoch;
-                        db.remove_stake(claim.validator_id);
-                        Ok(())
                     }
                 }
                 Transaction::RotateValidatorKey(rot) => {
@@ -3476,5 +3489,692 @@ mod tests {
         // the snap was independent of the post-snap mutation.
         executor.restore_from_simulation(snap);
         assert_eq!(executor.consecutive_clean_audits, 5);
+    }
+
+    // ── T1.20 gap-closure: transfer error paths ──────────────────────────────
+
+    #[test]
+    fn t1_20_transfer_self_transfer_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(1),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn t1_20_transfer_zero_amount_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 0,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_transfer_invalid_nonce_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 99,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn t1_20_transfer_mint_bypass_from_zero_address() {
+        // from=[0u8;32] bypasses nonce check (nonce=99 accepted) but balance
+        // is still enforced — pre-fund the zero address so the transfer lands.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 0, 10_000); // addr(0) == [0u8;32]
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: [0u8; 32],
+                to: addr(42),
+                amount: 5000,
+                nonce: 99,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1);
+        assert_eq!(db.get_account(&addr(42)).unwrap().balance, 5000);
+    }
+
+    // ── T1.20 gap-closure: CreateObject error paths ──────────────────────────
+
+    #[test]
+    fn t1_20_create_object_already_exists_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        db.put_object(StateObject {
+            id: obj_id(5),
+            owner: addr(1),
+            energy: 100,
+            half_life: 10,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![],
+            decay_curve: None,
+            lad_mode: None,
+        });
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::CreateObject(CreateObjectTx {
+                creator: addr(1),
+                object_id: obj_id(5),
+                energy: 500,
+                half_life: 10,
+                data: vec![],
+                decay_curve: None,
+                lad_mode: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_create_object_insufficient_balance_for_deposit_fails() {
+        let mut db = InMemoryStateDB::new();
+        // MIN_STORAGE_DEPOSIT = 1000; fund below that
+        fund_account(&mut db, 1, 500);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::CreateObject(CreateObjectTx {
+                creator: addr(1),
+                object_id: obj_id(7),
+                energy: 500,
+                half_life: 10,
+                data: vec![],
+                decay_curve: None,
+                lad_mode: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 500);
+    }
+
+    // ── T1.20 gap-closure: Refresh paths ─────────────────────────────────────
+
+    #[test]
+    fn t1_20_refresh_ghost_resurrection() {
+        let mut db = InMemoryStateDB::new();
+        db.put_ghost(GhostRecord {
+            object_id: obj_id(9),
+            owner: addr(3),
+            evaporated_at: 5,
+            data_hash: [0u8; 32],
+            original_data: Some(vec![0xDE, 0xAD]),
+            mmr_position: None,
+            original_half_life: Some(10),
+        });
+        let block = make_block(
+            1,
+            10,
+            vec![Transaction::Refresh(RefreshTx {
+                object_id: obj_id(9),
+                energy_deposit: 2000,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "ghost resurrection must succeed");
+    }
+
+    #[test]
+    fn t1_20_refresh_object_not_found_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Refresh(RefreshTx {
+                object_id: obj_id(99),
+                energy_deposit: 500,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    // ── T1.20 gap-closure: ValidatorExit serial path ─────────────────────────
+
+    fn make_stake(validator_id: u64, addr_byte: u8, amount: u64) -> evaporchain_types::StakeRecord {
+        evaporchain_types::StakeRecord {
+            validator_id,
+            validator_address: addr(addr_byte),
+            staked_amount: amount,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        }
+    }
+
+    #[test]
+    fn t1_20_validator_exit_serial_success() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 100_000);
+        db.put_stake(make_stake(1, 10, 50_000));
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::ValidatorExit(ValidatorExitTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1);
+        let stake = db.get_stake(1).cloned().unwrap();
+        assert!(stake.unbonding_epoch.is_some());
+        assert_eq!(stake.unbonding_epoch.unwrap(), 5 + 256);
+    }
+
+    #[test]
+    fn t1_20_validator_exit_serial_invalid_nonce_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 100_000);
+        db.put_stake(make_stake(1, 10, 50_000));
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::ValidatorExit(ValidatorExitTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                nonce: 99,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_validator_exit_serial_no_stake_record_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 100_000);
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::ValidatorExit(ValidatorExitTx {
+                validator_address: addr(10),
+                validator_id: 99,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_validator_exit_serial_already_exiting_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 100_000);
+        let mut stake = make_stake(1, 10, 50_000);
+        stake.unbonding_epoch = Some(100);
+        db.put_stake(stake);
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::ValidatorExit(ValidatorExitTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    // ── T1.20 gap-closure: ValidatorClaimStake serial path ──────────────────
+
+    #[test]
+    fn t1_20_validator_claim_stake_success() {
+        use evaporchain_types::ValidatorClaimStakeTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 1000);
+        let mut stake = make_stake(1, 10, 50_000);
+        stake.unbonding_epoch = Some(10);
+        db.put_stake(stake);
+        // epoch 300 > unbonding epoch 10
+        let block = make_block(
+            1,
+            300,
+            vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1);
+        let bal = db.get_account(&addr(10)).unwrap().balance;
+        assert!(bal >= 50_000 + 1000, "stake must be returned: got {bal}");
+        assert!(db.get_stake(1).is_none(), "stake record must be removed");
+    }
+
+    #[test]
+    fn t1_20_validator_claim_stake_not_exited_fails() {
+        use evaporchain_types::ValidatorClaimStakeTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 1000);
+        db.put_stake(make_stake(1, 10, 50_000)); // unbonding_epoch = None
+        let block = make_block(
+            1,
+            300,
+            vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_validator_claim_stake_unbonding_period_not_done_fails() {
+        use evaporchain_types::ValidatorClaimStakeTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 1000);
+        let mut stake = make_stake(1, 10, 50_000);
+        stake.unbonding_epoch = Some(500);
+        db.put_stake(stake);
+        // epoch 10 < unbonding 500
+        let block = make_block(
+            1,
+            10,
+            vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    // ── T1.20 gap-closure: RotateValidatorKey serial path ───────────────────
+
+    #[test]
+    fn t1_20_rotate_validator_key_past_epoch_fails() {
+        use evaporchain_types::RotateValidatorKeyTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 1000);
+        db.put_stake(make_stake(1, 10, 50_000));
+        // effective_epoch 50 < block epoch 100
+        let block = make_block(
+            1,
+            100,
+            vec![Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                new_bls_public_key: vec![0u8; 48],
+                bls_pop_old: vec![0u8; 48],
+                bls_pop_new: vec![0u8; 48],
+                effective_epoch: 50,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_rotate_validator_key_wrong_bls_length_fails() {
+        use evaporchain_types::RotateValidatorKeyTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 1000);
+        db.put_stake(make_stake(1, 10, 50_000));
+        let block = make_block(
+            1,
+            100,
+            vec![Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+                validator_address: addr(10),
+                validator_id: 1,
+                new_bls_public_key: vec![0u8; 16], // wrong: not 48 bytes
+                bls_pop_old: vec![0u8; 48],
+                bls_pop_new: vec![0u8; 48],
+                effective_epoch: 200,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_rotate_validator_key_no_stake_record_fails() {
+        use evaporchain_types::RotateValidatorKeyTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 1000);
+        // No stake record for validator 77
+        let block = make_block(
+            1,
+            100,
+            vec![Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+                validator_address: addr(10),
+                validator_id: 77,
+                new_bls_public_key: vec![0u8; 48],
+                bls_pop_old: vec![0u8; 48],
+                bls_pop_new: vec![0u8; 48],
+                effective_epoch: 200,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    // ── T1.20 gap-closure: Refund serial path ───────────────────────────────
+
+    #[test]
+    fn t1_20_refund_serial_success() {
+        use evaporchain_types::RefundTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 5000);
+        fund_account(&mut db, 2, 0);
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(2),
+                amount: 1000,
+                settle_block_height: 1,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 4000);
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn t1_20_refund_serial_self_transfer_fails() {
+        use evaporchain_types::RefundTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 5000);
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(1),
+                amount: 1000,
+                settle_block_height: 1,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_refund_serial_zero_amount_fails() {
+        use evaporchain_types::RefundTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 5000);
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(2),
+                amount: 0,
+                settle_block_height: 1,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_refund_serial_insufficient_balance_fails() {
+        use evaporchain_types::RefundTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 100);
+        let block = make_block(
+            1,
+            5,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(2),
+                amount: 1000,
+                settle_block_height: 1,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
+    }
+
+    // ── T1.20 gap-closure: DeployContract serial path ───────────────────────
+
+    #[test]
+    fn t1_20_deploy_contract_unknown_template_fails() {
+        use evaporchain_types::DeployContractTx;
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployContract(DeployContractTx {
+                deployer: addr(1),
+                template: "NonExistentTemplate".into(),
+                init_args: "{}".into(),
+                energy: 1000,
+                half_life: 100,
+                rules: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    #[test]
+    fn t1_20_deploy_contract_invalid_init_args_fails() {
+        use evaporchain_types::DeployContractTx;
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployContract(DeployContractTx {
+                deployer: addr(1),
+                template: "DecayingToken".into(),
+                init_args: "not-valid-json{{".into(),
+                energy: 1000,
+                half_life: 100,
+                rules: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+    }
+
+    // ── T1.20 gap-closure: serial gas limit exceeded ─────────────────────────
+
+    #[test]
+    fn t1_20_serial_gas_limit_exceeded() {
+        use evaporchain_types::DeployContractTx;
+        let mut db = InMemoryStateDB::new();
+        // block_gas_limit = 1 unit; DeployContract costs GAS_DEPLOY_CONTRACT (100_000)
+        let mut ex = ParallelExecutor::new_for_test(100);
+        ex.block_gas_limit = 1;
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployContract(DeployContractTx {
+                deployer: addr(1),
+                template: "DecayingToken".into(),
+                init_args: "{}".into(),
+                energy: 1000,
+                half_life: 100,
+                rules: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "serial tx must fail on gas limit = 1");
+    }
+
+    // ── T1.20 gap-closure: tick_mortis ───────────────────────────────────────
+
+    #[test]
+    fn t1_20_tick_mortis_returns_cert_when_triggered() {
+        // Override with a hair-trigger condition: floor = MAX (always below floor),
+        // sustained = 1 → first tick with empty pool triggers JustTriggered.
+        let mut ex = ParallelExecutor::new_for_test(100);
+        ex.mortis_monitor = evaporchain_mortis::MortisMonitor::new(
+            evaporchain_mortis::MortisCondition::new(u64::MAX, 1),
+        );
+        let cert = ex.tick_mortis(1, [0u8; 32]);
+        assert!(cert.is_some(), "mortis must trigger after 1 tick below floor");
+        // AlreadyTriggered: second tick returns None
+        let cert2 = ex.tick_mortis(2, [0u8; 32]);
+        assert!(cert2.is_none(), "already-triggered mortis returns None");
+    }
+
+    // ── T1.20 gap-closure: storage rent tombstone (balance zeroed) ───────────
+
+    #[test]
+    fn t1_20_storage_rent_wipes_account_below_floor() {
+        // Account with storage_bytes=1000, balance=1: STORAGE_RENT_PER_BYTE=1
+        // → rent=1000 > balance=1 → account zeroed and tombstone minted.
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(200),
+            balance: 1,
+            nonce: 0,
+            storage_deposit: 1000,
+            storage_bytes: 1000,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        // Epoch 1 > last_rent_epoch 0 → rent sweep fires
+        let block = make_block(1, 1, vec![]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let _ = ex.execute_block(&mut db, &block).unwrap();
+        let bal = db.get_account(&addr(200)).unwrap().balance;
+        assert_eq!(bal, 0, "rent-exhausted account must be zeroed");
+    }
+
+    // ── T1.20 gap-closure: set_shard_id ──────────────────────────────────────
+
+    #[test]
+    fn t1_20_set_shard_id_updates_field() {
+        use evaporchain_sharding::shard_assignment::ShardId;
+        let mut ex = ParallelExecutor::new_for_test(100);
+        assert_eq!(ex.shard_id, ShardId(0));
+        ex.set_shard_id(ShardId(7));
+        assert_eq!(ex.shard_id, ShardId(7));
     }
 }

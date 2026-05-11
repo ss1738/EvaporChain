@@ -3845,28 +3845,9 @@ impl TendermintConsensus {
     ///
     /// Returns `true` if the validator was newly added; `false` if
     /// already present (idempotent).
-    /// Reinstate a validator: add it to the set if absent, or unjail +
-    /// restore stake if already present but jailed.  Returns `true` if
-    /// the set was mutated (added or recovered from jail), `false` if the
-    /// validator was already active with no intervention needed.
     pub fn reinstate_validator(&mut self, info: ValidatorInfo) -> bool {
         let id = info.id;
-        if let Some(v) = self.validator_set.get_mut(id) {
-            if v.jailed {
-                // Force-unjail and restore stake even if stake is 0 after slashing.
-                v.stake = info.stake;
-                v.jailed = false;
-                v.health_score = 0.0;
-                // Restore BLS key if the caller supplied one.
-                if info.bls_public_key.is_some() {
-                    v.bls_public_key = info.bls_public_key;
-                    v.pop_verified = info.pop_verified;
-                }
-                self.missed_proposals.insert(id, 0);
-                self.missed_votes.insert(id, 0);
-                return true;
-            }
-            // Already present and active — nothing to do.
+        if self.validator_set.get(id).is_some() {
             return false;
         }
         let added = self.validator_set.add_validator(info);

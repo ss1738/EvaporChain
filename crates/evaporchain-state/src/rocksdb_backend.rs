@@ -78,6 +78,10 @@ struct BatchUndoLog {
     dirty_objects: HashSet<ObjectId>,
     dirty_accounts: HashSet<AccountAddress>,
     trie_snapshot: Vec<u8>,
+    // Per-epoch counters — must be rolled back so speculative pre-execution
+    // (create_proposal simulate path) does not permanently advance the epoch
+    // guard and suppress demurrage/rent on the committed block.
+    last_rent_epoch: u64,
     // Privacy state snapshot for rollback
     note_tree_root: [u8; 32],
     nullifiers_snapshot: HashSet<[u8; 32]>,
@@ -652,25 +656,41 @@ impl RocksDBStateDB {
     }
 
     fn persist_privacy_metadata(&self) {
-        let cf = self.cf(CF_TRIE);
-        if let Err(e) = self
-            .db
-            .put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root)
-        {
-            fatal_persistence_error("write_privacy_note_tree_root", e);
-        }
-        if let Err(e) = self.db.put_cf(
-            cf,
-            PRIVACY_POOL_BALANCE_KEY,
-            self.shielded_pool_balance.to_le_bytes(),
-        ) {
-            fatal_persistence_error("write_privacy_pool_balance", e);
-        }
-        if let Err(e) = self
-            .db
-            .put_cf(cf, PRIVACY_NOTE_COUNT_KEY, self.note_count.to_le_bytes())
-        {
-            fatal_persistence_error("write_privacy_note_count", e);
+        let cf_handle = self.db.cf_handle(CF_TRIE).unwrap();
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            // Buffer into pending WriteBatch so rollback_batch discards these
+            // writes if this is a speculative pre-execution path.
+            batch.put_cf(cf_handle, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root);
+            batch.put_cf(
+                cf_handle,
+                PRIVACY_POOL_BALANCE_KEY,
+                self.shielded_pool_balance.to_le_bytes(),
+            );
+            batch.put_cf(
+                cf_handle,
+                PRIVACY_NOTE_COUNT_KEY,
+                self.note_count.to_le_bytes(),
+            );
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_TRIE);
+            if let Err(e) = self.db.put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root) {
+                fatal_persistence_error("write_privacy_note_tree_root", e);
+            }
+            if let Err(e) = self.db.put_cf(
+                cf,
+                PRIVACY_POOL_BALANCE_KEY,
+                self.shielded_pool_balance.to_le_bytes(),
+            ) {
+                fatal_persistence_error("write_privacy_pool_balance", e);
+            }
+            if let Err(e) = self
+                .db
+                .put_cf(cf, PRIVACY_NOTE_COUNT_KEY, self.note_count.to_le_bytes())
+            {
+                fatal_persistence_error("write_privacy_note_count", e);
+            }
         }
     }
 
@@ -825,6 +845,7 @@ impl StateDB for RocksDBStateDB {
             dirty_objects: self.dirty_objects.clone(),
             dirty_accounts: self.dirty_accounts.clone(),
             trie_snapshot: self.trie.to_bytes(),
+            last_rent_epoch: self.last_rent_epoch,
             note_tree_root: self.note_tree_root,
             nullifiers_snapshot: self.spent_nullifiers.clone(),
             shielded_pool_balance: self.shielded_pool_balance,
@@ -887,6 +908,10 @@ impl StateDB for RocksDBStateDB {
             if let Ok(trie) = EnergyVerkleTrie::from_bytes(&undo.trie_snapshot) {
                 self.trie = trie;
             }
+            // Revert per-epoch counters so a failed speculative execution
+            // (e.g. create_proposal simulate path) cannot suppress demurrage
+            // or storage-rent on the real committed block.
+            self.last_rent_epoch = undo.last_rent_epoch;
             // Revert privacy state
             self.note_tree_root = undo.note_tree_root;
             self.spent_nullifiers = undo.nullifiers_snapshot;
@@ -1130,8 +1155,17 @@ impl StateDB for RocksDBStateDB {
     fn put_last_rent_epoch(&mut self, epoch: u64) {
         self.last_rent_epoch = epoch;
         let cf = self.cf(CF_TRIE);
-        if let Err(e) = self.db.put_cf(cf, LAST_RENT_EPOCH_KEY, epoch.to_le_bytes()) {
-            fatal_persistence_error("write_last_rent_epoch", e);
+        // When inside a batch (speculative pre-execution simulate path),
+        // buffer the write so rollback_batch can discard it without
+        // permanently advancing the on-disk epoch counter.
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            batch.put_cf(cf, LAST_RENT_EPOCH_KEY, epoch.to_le_bytes());
+        } else {
+            drop(guard);
+            if let Err(e) = self.db.put_cf(cf, LAST_RENT_EPOCH_KEY, epoch.to_le_bytes()) {
+                fatal_persistence_error("write_last_rent_epoch", e);
+            }
         }
     }
 

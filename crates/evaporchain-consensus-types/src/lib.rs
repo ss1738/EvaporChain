@@ -57,8 +57,8 @@ pub const HEALTH_DECAY_RATE: f64 = 0.01;
 /// Health score increment per evaporation processed.
 pub const HEALTH_PER_EVAPORATION: f64 = 0.05;
 
-/// Minimum stake to remain a validator. Below this, validators are
-/// auto-removed (after slashing or natural attrition).
+/// Minimum stake to remain active. Below this, the validator is force-jailed.
+/// Removal from the set is governance-only (Leave proposal).
 pub const MIN_STAKE: u64 = 100;
 
 /// Slash penalty for equivocation (double-signing): 10% of stake.
@@ -436,7 +436,7 @@ impl ValidatorSet {
     // ─────────────────── Slashing ────────────────────────────────────────
 
     /// Slash a validator for equivocation (double-signing).
-    /// Removes 10% of stake and jails the validator.
+    /// Jails the validator; removal is governance-only, never triggered by slashing.
     pub fn slash_equivocation(&mut self, validator_id: u64) -> u64 {
         if let Some(v) = self.get_mut(validator_id) {
             let penalty = (v.stake as f64 * SLASH_EQUIVOCATION_PCT).round() as u64;
@@ -444,9 +444,6 @@ impl ValidatorSet {
             v.total_slashed += penalty;
             v.jailed = true;
             v.health_score = 0.0;
-            if v.stake < MIN_STAKE {
-                self.remove_validator(validator_id);
-            }
             penalty
         } else {
             0
@@ -454,19 +451,17 @@ impl ValidatorSet {
     }
 
     /// Slash a validator for downtime (missed block production).
+    /// Jails when stake falls below MIN_STAKE; removal is governance-only.
     pub fn slash_downtime(&mut self, validator_id: u64, missed_blocks: u64) -> u64 {
         if let Some(v) = self.get_mut(validator_id) {
             let per_miss = (v.stake as f64 * SLASH_DOWNTIME_PCT).round() as u64;
             let penalty = per_miss.saturating_mul(missed_blocks);
             v.stake = v.stake.saturating_sub(penalty);
             v.total_slashed += penalty;
-            if missed_blocks >= 3 {
+            if missed_blocks >= 3 || v.stake < MIN_STAKE {
                 v.jailed = true;
             }
             v.health_score = (v.health_score - missed_blocks as f64 * 0.1).max(0.0);
-            if v.stake < MIN_STAKE {
-                self.remove_validator(validator_id);
-            }
             penalty
         } else {
             0
@@ -474,27 +469,20 @@ impl ValidatorSet {
     }
 
     /// Apply a precomputed slash amount to a validator.
+    /// Jails the validator if stake falls below MIN_STAKE; removal is governance-only.
     pub fn slash_with_amount(&mut self, validator_id: u64, amount: u64, jail: bool) -> u64 {
-        let actual = if let Some(v) = self.get_mut(validator_id) {
+        if let Some(v) = self.get_mut(validator_id) {
             let deducted = amount.min(v.stake);
             v.stake = v.stake.saturating_sub(deducted);
             v.total_slashed += deducted;
-            if jail {
+            if jail || v.stake < MIN_STAKE {
                 v.jailed = true;
                 v.health_score = 0.0;
             }
             deducted
         } else {
-            return 0;
-        };
-        if actual > 0 {
-            if let Some(v) = self.get(validator_id) {
-                if v.stake < MIN_STAKE {
-                    self.remove_validator(validator_id);
-                }
-            }
+            0
         }
-        actual
     }
 
     /// Jail every active validator whose address appears in
