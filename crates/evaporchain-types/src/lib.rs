@@ -2380,6 +2380,7 @@ mod tests {
         assert_eq!(back.post_state_root, Some(pr));
     }
 
+    #[test]
     fn test_refund_tx_roundtrip_and_sender() {
         let tx = Transaction::Refund(RefundTx {
             source_block_height: 100,
@@ -3403,5 +3404,111 @@ mod proptests {
         fn zero_half_life_gives_zero(initial in any::<u64>(), elapsed in any::<u64>()) {
             prop_assert_eq!(energy_at_epoch(initial, 0, elapsed), 0);
         }
+    }
+
+    /// T1.20 — Deferred tx with all 6 TemporalGuard variants
+    /// exercises the canonical-byte serializer arms at lines
+    /// 769-796 (AfterEpoch / BeforeEpoch / EnergyBelow / EnergyAbove
+    /// / ObjectEvaporated / ContractInPhase). The existing
+    /// `t1_20_tx_method_arms_deferred` uses `guards: vec![]`, so
+    /// every guard arm was previously unreached.
+    #[test]
+    fn t1_20_deferred_signable_bytes_all_guard_variants() {
+        let tx = Transaction::Deferred(DeferredTx {
+            submitter: [0xAB; 32],
+            nonce: 1,
+            deposit: 1_000,
+            guards: vec![
+                TemporalGuard::AfterEpoch(10),
+                TemporalGuard::BeforeEpoch(100),
+                TemporalGuard::EnergyBelow([1u8; 32], 500),
+                TemporalGuard::EnergyAbove([2u8; 32], 100),
+                TemporalGuard::ObjectEvaporated([3u8; 32]),
+                TemporalGuard::ContractInPhase(42, "active".into()),
+            ],
+            inner_tx_bytes: vec![0x01, 0x02, 0x03],
+            gas_limit: 100_000,
+            signature: None,
+            public_key: None,
+        });
+
+        let sb = tx.signable_bytes();
+        assert!(sb.len() > 32 + 8 + 8 + 6 * 3); // submitter+nonce+deposit+6 guard markers minimum
+        // Marker bytes 0x01..=0x06 must all appear.
+        for marker in 1u8..=6 {
+            assert!(
+                sb.iter().any(|&b| b == marker),
+                "guard marker 0x{:02x} missing from signable_bytes",
+                marker
+            );
+        }
+
+        // signing_message is chain-bound.
+        let m_a = tx.signing_message("chain-a");
+        let m_b = tx.signing_message("chain-b");
+        assert_ne!(m_a, m_b);
+
+        // tx_hash deterministic and non-zero.
+        let h = tx.tx_hash();
+        assert_ne!(h, [0u8; 32]);
+    }
+
+    /// T1.20 — UserOp::signable_bytes WITH paymaster set (lines
+    /// 857-859 — the `if let Some(ref pm) = tx.paymaster` arm).
+    #[test]
+    fn t1_20_userop_signable_bytes_with_paymaster() {
+        let tx_no_pm = Transaction::UserOp(UserOpTx {
+            sender: [1u8; 32],
+            nonce: 0,
+            call_data: vec![0; 4],
+            call_gas_limit: 100,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        });
+        let tx_with_pm = Transaction::UserOp(UserOpTx {
+            sender: [1u8; 32],
+            nonce: 0,
+            call_data: vec![0; 4],
+            call_gas_limit: 100,
+            paymaster: Some([99u8; 32]),
+            paymaster_nonce: Some(7),
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        });
+
+        // Paymaster bytes appended in signable_bytes — distinct payloads.
+        assert_ne!(tx_no_pm.signable_bytes(), tx_with_pm.signable_bytes());
+        // Sender accessor returns paymaster address when set, sender otherwise.
+        assert_eq!(tx_no_pm.sender(), Some(&[1u8; 32]));
+        assert_eq!(tx_with_pm.sender(), Some(&[99u8; 32]));
+    }
+
+    /// T1.20 — VestingSchedule::vested_at with linear_window == 0
+    /// (cliff_epochs == vesting_epochs) returns total_amount at
+    /// any epoch past the cliff. Covers line 1377.
+    #[test]
+    fn t1_20_vesting_zero_linear_window_full_release() {
+        let sched = VestingSchedule {
+            id: 1,
+            beneficiary: [0u8; 32],
+            total_amount: 1_000,
+            start_epoch: 0,
+            cliff_epochs: 10,
+            vesting_epochs: 10, // == cliff → linear window = 0
+            released_amount: 0,
+        };
+        // Before cliff: 0.
+        assert_eq!(sched.vested_at(5), 0);
+        // At or past cliff: full amount.
+        assert_eq!(sched.vested_at(10), 1_000);
+        assert_eq!(sched.vested_at(20), 1_000);
     }
 }
