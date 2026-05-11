@@ -251,18 +251,20 @@ fn adversarial_t08_stale_quorum_cert_from_different_snapshot_rejected() {
     );
 }
 
-// ─── Fixture 2 — Duplicate validator IDs in validator_set ───────────
+// ─── Fixture 2 — Duplicate validator IDs in validator_set (CLOSED) ───
 //
-// A snapshot whose validator_set contains two entries with the same
-// `id` is structurally malformed. Today's apply_to does not reject
-// this — it accepts the snapshot and the duplicate IDs flow through
-// to whatever consumes the validator set (consensus, slashing, etc.).
+// PREVIOUSLY a documented accept-currently gap: snapshots whose
+// validator_set contained two entries with the same `id` deserialised
+// successfully and the duplicate flowed through to consensus / slashing
+// downstream.
 //
-// This test documents the accept-currently behaviour. Future
-// hardening (T0.8 follow-on) should add a structural validation at
-// `from_bytes` or `apply_to` time.
+// CLOSED 2026-05-11 by T0.8 follow-on: `SnapshotFile::from_bytes` now
+// calls `validate_structure()` after integrity-hash verification.
+// Duplicate validator id (and account address, and object id) are
+// rejected with specific error variants. The test below flips from
+// "documents accept" to "asserts reject".
 #[test]
-fn adversarial_t08_duplicate_validator_ids_in_set_accepted_today() {
+fn adversarial_t08_duplicate_validator_ids_in_set_rejected() {
     let mut db = InMemoryStateDB::new();
     populate_db(&mut db);
 
@@ -297,15 +299,15 @@ fn adversarial_t08_duplicate_validator_ids_in_set_accepted_today() {
     )
     .expect("create snapshot with duplicate validator IDs");
     let bytes = file.to_bytes().expect("serialize");
-    let parsed = SnapshotFile::from_bytes(&bytes).expect("from_bytes accepts");
+    let result = SnapshotFile::from_bytes(&bytes);
 
-    // ACCEPT-CURRENTLY behaviour: the snapshot deserialises with the
-    // duplicate IDs intact. Documents the gap. Future T0.8 hardening
-    // should add `validators.iter().map(|v| v.id).collect::<HashSet>().len()
-    // == validators.len()` check in from_bytes.
-    assert_eq!(parsed.validator_set.validators.len(), 2);
-    assert_eq!(parsed.validator_set.validators[0].id, 1);
-    assert_eq!(parsed.validator_set.validators[1].id, 1);
+    // Structural validator rejects the duplicate id with the specific
+    // error variant naming which id was the culprit.
+    assert!(
+        matches!(result, Err(SnapshotError::DuplicateValidatorId(1))),
+        "from_bytes MUST reject duplicate validator id 1; got {:?}",
+        result.err()
+    );
 }
 
 // ─── Fixture 3 — Truncated zstd payload (chunk-level attack) ───────

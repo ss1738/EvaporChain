@@ -75,6 +75,21 @@ pub enum SnapshotError {
     /// BLS aggregate signature verification on the integrity_hash failed.
     #[error("quorum cert BLS aggregate verify failed")]
     QuorumCertBlsFailed,
+    /// Snapshot's validator_set contains two or more entries with the
+    /// same validator id. Structurally malformed — `from_bytes`
+    /// rejects to prevent downstream consensus / slashing code from
+    /// observing the duplicate-id ambiguity.
+    #[error("validator_set has duplicate validator id: {0}")]
+    DuplicateValidatorId(u64),
+    /// Snapshot's accounts list contains two or more entries with the
+    /// same address. Structurally malformed. Per-address state is
+    /// supposed to be unique.
+    #[error("accounts list has duplicate address: {0}")]
+    DuplicateAccountAddress(String),
+    /// Snapshot's objects list contains two or more entries with the
+    /// same object id. Same shape as the duplicate-account check.
+    #[error("objects list has duplicate id: {0}")]
+    DuplicateObjectId(String),
 }
 
 // ─────────────────────── Types ──────────────────────────────────────────
@@ -919,6 +934,45 @@ impl SnapshotFile {
         Ok(file)
     }
 
+    /// T0.8 follow-on — structural validation of the snapshot's
+    /// content vectors. Currently checks:
+    ///   - No duplicate validator IDs in validator_set
+    ///   - No duplicate account addresses in accounts
+    ///   - No duplicate object IDs in objects
+    ///
+    /// Called by `from_bytes` (and therefore by `from_bytes_strict`)
+    /// AFTER integrity-hash verification — by the time we get here
+    /// the bytes are self-consistent, so duplicate IDs are a real
+    /// structural malformation, not a transit-time tampering issue.
+    /// Closes the previously documented gap
+    /// `adversarial_t08_duplicate_validator_ids_in_set_accepted_today`.
+    fn validate_structure(&self) -> Result<(), SnapshotError> {
+        use std::collections::HashSet;
+
+        let mut seen_vid: HashSet<u64> = HashSet::with_capacity(self.validator_set.validators.len());
+        for v in &self.validator_set.validators {
+            if !seen_vid.insert(v.id) {
+                return Err(SnapshotError::DuplicateValidatorId(v.id));
+            }
+        }
+
+        let mut seen_addr: HashSet<AccountAddress> = HashSet::with_capacity(self.accounts.len());
+        for a in &self.accounts {
+            if !seen_addr.insert(a.address) {
+                return Err(SnapshotError::DuplicateAccountAddress(hex::encode(a.address)));
+            }
+        }
+
+        let mut seen_oid: HashSet<ObjectId> = HashSet::with_capacity(self.objects.len());
+        for o in &self.objects {
+            if !seen_oid.insert(o.id) {
+                return Err(SnapshotError::DuplicateObjectId(hex::encode(o.id)));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Serialise + compress + prefix with magic header. Returns the
     /// full on-disk bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, SnapshotError> {
@@ -973,6 +1027,13 @@ impl SnapshotFile {
                 actual: hex::encode(recomputed),
             });
         }
+
+        // T0.8 follow-on: structural validation. Catches snapshots
+        // whose validator_set / accounts / objects vectors have
+        // duplicate IDs. Closes
+        // `adversarial_t08_duplicate_validator_ids_in_set_accepted_today`.
+        file.validate_structure()?;
+
         Ok(file)
     }
 
