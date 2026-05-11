@@ -17,6 +17,26 @@ getrandom = { version = "0.2", features = ["js"] }
 sha2 = "0.10"
 zeroize = "1"
 
+[features]
+default = []
+# AUDIT_2026_05_06 "WASM secret-key JS exposure" gate.
+#
+# When ENABLED, compiles the SK-touching `wasm_bindgen` entry points
+# (`mlDsaKeygen`, `mlDsaSign`). Without this feature, those functions
+# are NOT compiled into the WASM binary at all — non-extension callers
+# physically cannot expose secret-key bytes to JS, because the binding
+# doesn't exist.
+#
+# The browser extension's reproducible build
+# (`extension/scripts/build-wasm.sh`) enables this feature explicitly.
+# Any other build path (e.g. accidental `cargo build` in a webapp
+# pipeline) produces a WASM with only the pubkey-only surfaces
+# (`mlDsaVerify`, `deriveAddress`), making wallet-style secret
+# handling structurally impossible.
+#
+# See `docs/runbooks/wasm-crypto-csp.md` for the threat model.
+extension-context = []
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 

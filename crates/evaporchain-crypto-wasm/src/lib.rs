@@ -29,6 +29,22 @@
 //!
 //! **Do NOT use this module in regular web pages** — any same-origin script
 //! could read the WASM linear memory and extract secret keys.
+//!
+//! # Compile-time enforcement — `extension-context` feature flag
+//!
+//! The two SK-touching `wasm_bindgen` entry points (`mlDsaKeygen` and
+//! `mlDsaSign`) are gated behind a Cargo feature `extension-context`
+//! (OFF by default). Building this crate without that feature produces
+//! a WASM binary that exposes ONLY the public-key surfaces
+//! (`mlDsaVerify`, `deriveAddress`) to JS — making wallet-style
+//! secret handling structurally impossible.
+//!
+//! The browser extension's reproducible build script
+//! (`extension/scripts/build-wasm.sh`) enables `extension-context`
+//! explicitly. Any other build path that omits the flag produces a
+//! "verifier-only" WASM that cannot leak secrets through any wired
+//! JS export. See `docs/runbooks/wasm-crypto-csp.md` for the threat
+//! model + opt-in discipline.
 
 use pqc_dilithium::Keypair;
 use sha2::{Digest, Sha256};
@@ -56,6 +72,11 @@ const _ASSERT_KEYPAIR_LAYOUT: () = {
 /// Generate a new ML-DSA keypair.
 ///
 /// Returns a JS object `{ publicKey: Uint8Array, secretKey: Uint8Array }`.
+///
+/// ⚠️ **SK-exposing surface** — only compiled when the
+/// `extension-context` Cargo feature is enabled. See the module
+/// header for the threat model.
+#[cfg(feature = "extension-context")]
 #[wasm_bindgen(js_name = "mlDsaKeygen")]
 pub fn ml_dsa_keygen() -> Result<JsValue, JsValue> {
     let kp = Keypair::generate();
@@ -88,6 +109,14 @@ pub fn ml_dsa_keygen() -> Result<JsValue, JsValue> {
 /// wrapper's `Drop` runs on every exit path — normal return, `?`
 /// short-circuit, or panic unwind — so signature material does not
 /// linger in any code path.
+///
+/// ⚠️ **SK-touching surface** — only compiled when the
+/// `extension-context` Cargo feature is enabled. The SK byte slice
+/// passed from JS lives in WASM linear memory during the call;
+/// gating the function entirely prevents that exposure window from
+/// existing in non-extension builds. See the module header for the
+/// threat model.
+#[cfg(feature = "extension-context")]
 #[wasm_bindgen(js_name = "mlDsaSign")]
 pub fn ml_dsa_sign(secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>, JsValue> {
     let kp = reconstruct_keypair(secret_key).map_err(|e| JsValue::from_str(&e))?;
@@ -155,6 +184,7 @@ pub fn derive_address(public_key: &[u8]) -> String {
 /// [`zeroize_keypair`] on the returned keypair immediately after
 /// `kp.sign` returns, so the secret bytes do not linger in the
 /// stack slot beyond the sign call.
+#[cfg(any(feature = "extension-context", test))]
 fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<ZeroizingKeypair, String> {
     use pqc_dilithium::SECRETKEYBYTES;
     if sk_bytes.len() != SECRETKEYBYTES {
@@ -202,8 +232,10 @@ fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<ZeroizingKeypair, String> {
 /// `size_of::<Keypair>() == PUBLICKEYBYTES + SECRETKEYBYTES`. A
 /// future upstream change that adds padding or non-`u8` fields
 /// would trip the build before reaching this code.
+#[cfg(any(feature = "extension-context", test))]
 struct ZeroizingKeypair(Keypair);
 
+#[cfg(any(feature = "extension-context", test))]
 impl std::ops::Deref for ZeroizingKeypair {
     type Target = Keypair;
     fn deref(&self) -> &Keypair {
@@ -211,12 +243,14 @@ impl std::ops::Deref for ZeroizingKeypair {
     }
 }
 
+#[cfg(any(feature = "extension-context", test))]
 impl std::ops::DerefMut for ZeroizingKeypair {
     fn deref_mut(&mut self) -> &mut Keypair {
         &mut self.0
     }
 }
 
+#[cfg(any(feature = "extension-context", test))]
 impl Drop for ZeroizingKeypair {
     fn drop(&mut self) {
         zeroize_keypair(&mut self.0);
@@ -230,6 +264,7 @@ impl Drop for ZeroizingKeypair {
 /// assertion as the unsafe write in `reconstruct_keypair` —
 /// `Keypair` is exactly `PUBLICKEYBYTES + SECRETKEYBYTES` contiguous
 /// bytes with no `Drop` of its own.
+#[cfg(any(feature = "extension-context", test))]
 fn zeroize_keypair(kp: &mut Keypair) {
     let total = pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES;
     // SAFETY: layout invariant asserted at module top. Byte-wide

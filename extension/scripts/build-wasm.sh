@@ -199,7 +199,13 @@ rm -rf "$PKG_DIR"
 
 (
   cd "$REPO_ROOT"
-  wasm-pack build --target web --release "$CRATE_DIR"
+  # `--features extension-context` enables the SK-touching wasm_bindgen
+  # exports (`mlDsaKeygen`, `mlDsaSign`). Without this flag the build
+  # produces a verifier-only WASM that cannot expose secret keys to JS.
+  # See AUDIT_2026_05_06.md "WASM secret-key JS exposure" and
+  # docs/runbooks/wasm-crypto-csp.md for the threat model.
+  wasm-pack build --target web --release "$CRATE_DIR" \
+    -- --features extension-context
 )
 
 [ -f "$PKG_DIR/$WASM_FILE_NAME" ] || die "wasm-pack did not produce $WASM_FILE_NAME"
