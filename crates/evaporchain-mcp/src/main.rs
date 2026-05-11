@@ -7,16 +7,21 @@
 //!
 //! Start: evaporchain-mcp [--node-url http://NODE:PORT]
 //!
-//! ## Security configuration (CRITICAL-2 partial fix, 2026-05-06)
+//! ## Security configuration (CRITICAL-2 closed, 2026-05-11)
 //!
 //! Per `AUDIT_2026_05_06.md` CRITICAL-2 — this MCP server is the
 //! AI-agent attack surface. Three env vars control authentication:
 //!
 //!   `EVAPORCHAIN_MCP_API_TOKEN` (optional)
 //!     If set, the value is sent as `Authorization: Bearer <token>`
-//!     on every outgoing HTTP request to the node. Backend
-//!     enforcement is currently advisory (the node API does not yet
-//!     verify the header — that work is queued as a follow-up).
+//!     on every outgoing HTTP request to the node. **Node-side
+//!     enforcement is now live** (`api::mcp_channel_auth_middleware`):
+//!     when the node has its own `EVAPORCHAIN_MCP_API_TOKEN` set to
+//!     the same value, every `POST /api/tx/*`, `POST /api/faucet`,
+//!     `POST /api/contracts/*`, `POST /api/fork_cert/prove`, and
+//!     `POST /api/mera/commit` request must carry a matching Bearer
+//!     header or get rejected with `401 Unauthorized`. Set the same
+//!     token on BOTH sides to enable end-to-end MCP-channel auth.
 //!
 //!   `EVAPORCHAIN_MCP_REQUIRE_AUTH` (default: auto — see below)
 //!     When `EVAPORCHAIN_MCP_API_TOKEN` is set, auth is required by

@@ -18328,6 +18328,189 @@ async fn rate_limit_middleware(
     next.run(request).await
 }
 
+/// MCP channel auth gate — closes the second half of AUDIT_2026_05_06
+/// "MCP no auth, hardcoded URL". The first half (replace hardcoded URL
+/// with env var, send Bearer header from MCP) shipped earlier; this
+/// is the **node-side enforcement** the audit asked for ("Add API
+/// auth token requirement (mTLS or bearer token to backend)").
+///
+/// # Behaviour
+///
+/// - If `EVAPORCHAIN_MCP_API_TOKEN` is **unset or empty**: pass-through.
+///   Preserves existing dev/local behaviour where dashboard, faucet
+///   CLI, etc. talk to a plaintext localhost node.
+///
+/// - If the env var is **set**: every POST request to an MCP-gated
+///   path (see [`is_mcp_gated_path`]) must include
+///   `Authorization: Bearer <token>` where `<token>` matches the env
+///   var byte-for-byte. Constant-time comparison via `subtle`.
+///   Mismatch returns `401 Unauthorized` with an `error` + `remedy`
+///   JSON body.
+///
+/// # Gated paths
+///
+/// MCP tools forward state-mutating agent requests to these endpoints
+/// (see `crates/evaporchain-mcp/src/tools.rs`):
+///   - `/api/tx/*` — every tx-submission endpoint
+///   - `/api/faucet` — mints tokens
+///   - `/api/contracts/*` — contract deploy / call mutators
+///   - `/api/fork_cert/prove` — fork-evaporation proofs
+///   - `/api/mera/commit` — MERA commitments
+///
+/// Read-only endpoints (`/api/status`, `/api/stats/*`, `/api/objects/...`)
+/// are NOT gated — prompt-injection on read-only paths cannot mutate
+/// chain state. Admin and oracle paths have their own dedicated
+/// `EVAPORCHAIN_ADMIN_KEY` / `EVAPORCHAIN_ORACLE_KEY` gates and are
+/// out of MCP's reach by design.
+async fn mcp_channel_auth_middleware(
+    axum::extract::Extension(token): axum::extract::Extension<Option<Arc<String>>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let expected = match token {
+        Some(t) => t,
+        None => return next.run(request).await,
+    };
+
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    if !is_mcp_gated_path(&method, &path) {
+        return next.run(request).await;
+    }
+
+    let provided = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    let provided_bytes = provided.as_bytes();
+    let expected_bytes = expected.as_bytes();
+    // Length mismatch short-circuits (length leak is harmless; bound
+    // is the operator-chosen env var). Equal-length goes through
+    // subtle::ConstantTimeEq to avoid timing-side-channel attacks.
+    let ok = provided_bytes.len() == expected_bytes.len()
+        && bool::from(<[u8] as subtle::ConstantTimeEq>::ct_eq(
+            provided_bytes,
+            expected_bytes,
+        ));
+    if !ok {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "MCP channel auth required",
+                "remedy": "Authorization: Bearer <EVAPORCHAIN_MCP_API_TOKEN>",
+                "audit_ref": "AUDIT_2026_05_06.md CRITICAL-2",
+            })),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
+/// Path classifier for [`mcp_channel_auth_middleware`]. Pure function,
+/// unit-testable.
+///
+/// Returns `true` for the MCP-targeted state-mutating endpoints listed
+/// in the middleware doc. Any other path (read-only, admin-keyed,
+/// oracle-keyed, non-POST method) bypasses the MCP gate.
+fn is_mcp_gated_path(method: &axum::http::Method, path: &str) -> bool {
+    if *method != axum::http::Method::POST {
+        return false;
+    }
+    // Exact-match endpoints.
+    if matches!(
+        path,
+        "/api/faucet" | "/api/fork_cert/prove" | "/api/mera/commit"
+    ) {
+        return true;
+    }
+    // Prefix-match families. `/api/tx/...` covers every tx-submission
+    // endpoint (transfer, refresh, resurrect, create_object, mint, burn,
+    // etc.); `/api/contracts/...` covers contract deploy + call.
+    path.starts_with("/api/tx/") || path.starts_with("/api/contracts/")
+}
+
+#[cfg(test)]
+mod mcp_auth_tests {
+    use super::is_mcp_gated_path;
+    use axum::http::Method;
+
+    #[test]
+    fn gated_post_paths_match_audit_inventory() {
+        for p in [
+            "/api/tx/transfer",
+            "/api/tx/refresh",
+            "/api/tx/resurrect",
+            "/api/tx/create_object",
+            "/api/tx/mint",
+            "/api/tx/burn",
+            "/api/faucet",
+            "/api/fork_cert/prove",
+            "/api/mera/commit",
+            "/api/contracts/deploy",
+            "/api/contracts/call",
+        ] {
+            assert!(
+                is_mcp_gated_path(&Method::POST, p),
+                "expected `POST {p}` to be MCP-gated"
+            );
+        }
+    }
+
+    #[test]
+    fn read_only_paths_are_not_gated() {
+        for p in [
+            "/api/status",
+            "/api/stats/summary",
+            "/api/objects",
+            "/api/ghosts",
+            "/api/four_act",
+            "/api/governance/flags",
+        ] {
+            assert!(
+                !is_mcp_gated_path(&Method::POST, p),
+                "expected `POST {p}` to be public (read-only)"
+            );
+            assert!(
+                !is_mcp_gated_path(&Method::GET, p),
+                "expected `GET {p}` to be public (read-only)"
+            );
+        }
+    }
+
+    #[test]
+    fn admin_and_oracle_paths_have_their_own_gates_not_mcp() {
+        // These have EVAPORCHAIN_ADMIN_KEY / EVAPORCHAIN_ORACLE_KEY
+        // gates inside the handlers — out of MCP's reach by design.
+        // The middleware therefore should NOT also gate them.
+        for p in [
+            "/api/admin/drain",
+            "/api/admin/undrain",
+            "/api/oracle/ingest",
+            "/api/network/ban",
+        ] {
+            assert!(
+                !is_mcp_gated_path(&Method::POST, p),
+                "expected `POST {p}` to be excluded from MCP gating (has its own key)"
+            );
+        }
+    }
+
+    #[test]
+    fn non_post_methods_bypass_the_gate() {
+        // GET, PUT, DELETE all bypass even on otherwise-gated paths.
+        // Reasoning: GET is read-only by HTTP convention, and PUT/DELETE
+        // aren't used by the MCP tool surface today.
+        for m in [Method::GET, Method::PUT, Method::DELETE, Method::HEAD] {
+            assert!(
+                !is_mcp_gated_path(&m, "/api/tx/transfer"),
+                "expected `{m} /api/tx/transfer` to bypass MCP gating"
+            );
+        }
+    }
+}
+
 /// Start the API server on the given port.
 ///
 /// TLS: Set `EVAPORCHAIN_TLS_CERT` and `EVAPORCHAIN_TLS_KEY` environment
@@ -18340,7 +18523,23 @@ pub async fn start_api_server(
     port: u16,
 ) -> anyhow::Result<()> {
     let limiter = Arc::new(RateLimiter::new(200, 10));
+    // EVAPORCHAIN_MCP_API_TOKEN env var, captured ONCE at startup so
+    // mid-flight env tampering can't relax the gate. None = no gate.
+    let mcp_token: Option<Arc<String>> = std::env::var("EVAPORCHAIN_MCP_API_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .map(Arc::new);
+    if mcp_token.is_some() {
+        eprintln!(
+            "evaporchain-node: MCP channel auth ENFORCED — \
+             POST /api/tx/*, /api/faucet, /api/contracts/*, \
+             /api/fork_cert/prove, /api/mera/commit require \
+             Authorization: Bearer EVAPORCHAIN_MCP_API_TOKEN."
+        );
+    }
     let app = create_router(state, auth_state)
+        .layer(axum::middleware::from_fn(mcp_channel_auth_middleware))
+        .layer(axum::Extension(mcp_token))
         .layer(axum::middleware::from_fn(rate_limit_middleware))
         .layer(axum::Extension(limiter))
         .into_make_service_with_connect_info::<std::net::SocketAddr>();
