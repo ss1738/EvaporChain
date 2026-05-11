@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { ChevronDown } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { Header } from "./Header";
 import { FiatProviderWidget, type FiatProvider } from "./FiatProviderWidget";
@@ -213,9 +214,10 @@ export function BuyScreen() {
             <span className="text-xs text-zinc-500">You pay</span>
             <button
               onClick={() => setShowCurrencyPicker(!showCurrencyPicker)}
-              className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-300 transition"
+              className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-300 transition"
             >
-              {currency} <span className="text-[8px]">&#9660;</span>
+              {currency}
+              <ChevronDown className="w-3 h-3" strokeWidth={1.5} />
             </button>
           </div>
           <div className="flex items-center gap-2">

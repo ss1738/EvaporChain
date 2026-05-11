@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Check, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import {
   bridgeManager,
@@ -478,7 +479,7 @@ function StepRow({ step }: { step: BridgeStep }) {
       {/* Status icon */}
       {step.status === "completed" && (
         <div className="w-4 h-4 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-          <span className="text-emerald-600 text-[8px]">&#10003;</span>
+          <Check className="w-2.5 h-2.5 text-emerald-600" strokeWidth={3} />
         </div>
       )}
       {step.status === "in_progress" && (
@@ -489,7 +490,7 @@ function StepRow({ step }: { step: BridgeStep }) {
       )}
       {step.status === "failed" && (
         <div className="w-4 h-4 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-          <span className="text-red-600 text-[8px]">&#10007;</span>
+          <X className="w-2.5 h-2.5 text-red-600" strokeWidth={3} />
         </div>
       )}
 

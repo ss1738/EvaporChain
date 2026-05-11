@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ArrowLeft, Check, ChevronDown, X } from "lucide-react";
+import { ArrowLeft, ArrowUpDown, Check, ChevronDown, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { api, type TokenInfo, type SwapQuote } from "@/utils/api";
@@ -321,9 +321,10 @@ export function SwapScreen() {
         <div className="flex justify-center -my-1 relative z-10">
           <button
             onClick={handleFlip}
-            className="w-8 h-8 rounded-full bg-evap-surface border border-evap-border flex items-center justify-center hover:border-evap-cyan/40 transition text-sm text-zinc-400 hover:text-evap-cyan"
+            className="w-8 h-8 rounded-full bg-evap-surface border border-evap-border flex items-center justify-center hover:border-evap-cyan/40 transition text-zinc-400 hover:text-evap-cyan"
+            aria-label="Flip swap direction"
           >
-            ↕
+            <ArrowUpDown className="w-4 h-4" strokeWidth={1.5} />
           </button>
         </div>
 
