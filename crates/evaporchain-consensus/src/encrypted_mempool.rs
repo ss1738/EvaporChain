@@ -834,4 +834,46 @@ mod tests {
         );
         assert_eq!(pool.pending_count().1, MAX_PLAINTEXT_PENDING);
     }
+
+    /// T1.20 — MevPool trait default `len()` and `is_empty()`
+    /// route through pending_count. Previously the blanket-impl
+    /// fall-through defaults were unreached (lines 383-391).
+    #[test]
+    fn t1_20_mev_pool_default_len_and_is_empty() {
+        let pool: Box<dyn MevPool> = Box::new(EncryptedMempool::new(1));
+        assert!(pool.is_empty());
+        assert_eq!(pool.len(), 0);
+
+        let mut pool: Box<dyn MevPool> = Box::new(EncryptedMempool::new(1));
+        let nonce = [1u8; 32];
+        let tx = dummy_tx(42);
+        let enc = encrypt_transaction(&tx, &nonce, 1);
+        pool.submit_encrypted(enc);
+        assert!(!pool.is_empty());
+        assert_eq!(pool.len(), 1);
+    }
+
+    /// T1.20 — EncryptedMempool::default() routes through
+    /// new(reveal_delay=2). Covers lines 327-329.
+    #[test]
+    fn t1_20_encrypted_mempool_default_uses_delay_2() {
+        let pool: EncryptedMempool = Default::default();
+        assert_eq!(pool.reveal_delay(), 2);
+    }
+
+    /// T1.20 — verify_and_decrypt with mismatched commitment hash
+    /// rejects via CommitmentMismatch. Covers lines 134-137.
+    #[test]
+    fn t1_20_verify_decrypt_commitment_mismatch_rejected() {
+        let nonce = [9u8; 32];
+        let tx = dummy_tx(7);
+        let mut enc = encrypt_transaction(&tx, &nonce, 1);
+        // Mutate the commitment so it no longer matches.
+        enc.commitment[0] ^= 0xFF;
+        let r = verify_and_decrypt(&enc, &nonce);
+        match r {
+            Err(MevError::CommitmentMismatch { .. }) => {}
+            other => panic!("expected CommitmentMismatch, got {:?}", other),
+        }
+    }
 }
