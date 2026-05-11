@@ -1475,3 +1475,139 @@ fn mcc_phase_c6_byzantine_proposer_wrong_head_does_not_perturb_honest_argmax() {
         );
     }
 }
+
+// ─── T0.6 — multi-validator slash determinism ────────────────────────
+//
+// The MAINNET_READINESS T0.6 acceptance is "5 adversarial-validator
+// scenarios, each producing the expected slash + log". The existing
+// D.2 tests cover the substrate path (counter + entropic_slash math)
+// from a single validator instance's vantage point. This test adds
+// the multi-instance determinism contract: when 4 independent
+// validators observe the same equivocation event, the slash amount
+// each computes locally MUST be byte-identical.
+//
+// Without this property, slashes diverge across validators and the
+// validator_set state forks. With it, slashes become a deterministic
+// function of (validator_id, window) and the chain stays in lockstep.
+
+#[test]
+fn t0_6_multi_validator_equivocation_slash_is_deterministic() {
+    // 4 independent validator instances, all in mcc_full. Same stake
+    // configuration (make_validator_set_4 grants 1000 to each).
+    let mut v1 = make_validator_consensus(1);
+    let mut v2 = make_validator_consensus(2);
+    let mut v3 = make_validator_consensus(3);
+    let mut v4 = make_validator_consensus(4);
+
+    // Each validator independently calls sanov_slash_equivocation
+    // for validator 99 with the same window. (Validator 99 doesn't
+    // exist in the set — sanov_slash_equivocation returns 0 for
+    // unknown validators, locking the "no-such-validator → 0"
+    // contract across all 4 instances.)
+    const WINDOW: u64 = 100;
+    let s1 = v1.sanov_slash_equivocation(99, WINDOW);
+    let s2 = v2.sanov_slash_equivocation(99, WINDOW);
+    let s3 = v3.sanov_slash_equivocation(99, WINDOW);
+    let s4 = v4.sanov_slash_equivocation(99, WINDOW);
+    assert_eq!(s1, 0);
+    assert_eq!(s1, s2);
+    assert_eq!(s2, s3);
+    assert_eq!(s3, s4);
+
+    // Each validator slashes validator 4 (which DOES exist in their
+    // set) for equivocation. The Sanov math must produce the same
+    // slash amount across all 4 instances — validator-determinism
+    // of the slashing function.
+    let target_validator: u64 = 4;
+    let target_stake_before_v1 = v1
+        .validator_set
+        .get(target_validator)
+        .expect("validator 4 exists")
+        .stake;
+    let target_stake_before_v2 = v2.validator_set.get(target_validator).unwrap().stake;
+    let target_stake_before_v3 = v3.validator_set.get(target_validator).unwrap().stake;
+    let target_stake_before_v4 = v4.validator_set.get(target_validator).unwrap().stake;
+    assert_eq!(target_stake_before_v1, target_stake_before_v2);
+    assert_eq!(target_stake_before_v2, target_stake_before_v3);
+    assert_eq!(target_stake_before_v3, target_stake_before_v4);
+
+    let amount_v1 = v1.sanov_slash_equivocation(target_validator, WINDOW);
+    let amount_v2 = v2.sanov_slash_equivocation(target_validator, WINDOW);
+    let amount_v3 = v3.sanov_slash_equivocation(target_validator, WINDOW);
+    let amount_v4 = v4.sanov_slash_equivocation(target_validator, WINDOW);
+
+    assert!(amount_v1 > 0, "non-zero stake + equivocation → non-zero slash");
+    assert_eq!(amount_v1, amount_v2, "slash amount must be identical across validators");
+    assert_eq!(amount_v2, amount_v3);
+    assert_eq!(amount_v3, amount_v4);
+
+    // Post-slash state: validator_set.slash_with_amount removes the
+    // validator entirely when post-slash stake falls below MIN_STAKE
+    // (consensus-types/src/lib.rs:492). All 4 validators must take
+    // the SAME action — either all 4 retain validator 4 with reduced
+    // stake, or all 4 remove it. Validator-determinism of the
+    // post-slash validator set.
+    let post_v1 = v1.validator_set.get(target_validator).cloned();
+    let post_v2 = v2.validator_set.get(target_validator).cloned();
+    let post_v3 = v3.validator_set.get(target_validator).cloned();
+    let post_v4 = v4.validator_set.get(target_validator).cloned();
+    assert_eq!(
+        post_v1.is_some(),
+        post_v2.is_some(),
+        "validator-removal decision must agree across instances"
+    );
+    assert_eq!(post_v2.is_some(), post_v3.is_some());
+    assert_eq!(post_v3.is_some(), post_v4.is_some());
+    if let (Some(p1), Some(p2), Some(p3), Some(p4)) = (&post_v1, &post_v2, &post_v3, &post_v4) {
+        // Retained: stake must match across validators.
+        assert_eq!(p1.stake, p2.stake);
+        assert_eq!(p2.stake, p3.stake);
+        assert_eq!(p3.stake, p4.stake);
+    }
+}
+
+// ─── T0.6 — downtime slash determinism ───────────────────────────────
+//
+// Companion to the equivocation determinism test above. Locks the
+// same contract for sanov_slash_downtime: when 4 validators
+// independently observe the same missed-block count for a target,
+// they compute identical slash amounts.
+
+#[test]
+fn t0_6_multi_validator_downtime_slash_is_deterministic() {
+    let mut v1 = make_validator_consensus(1);
+    let mut v2 = make_validator_consensus(2);
+    let mut v3 = make_validator_consensus(3);
+    let mut v4 = make_validator_consensus(4);
+
+    const MISSED: u64 = 25;
+    const WINDOW: u64 = 100;
+    let target_validator: u64 = 4;
+
+    let a1 = v1.sanov_slash_downtime(target_validator, MISSED, WINDOW);
+    let a2 = v2.sanov_slash_downtime(target_validator, MISSED, WINDOW);
+    let a3 = v3.sanov_slash_downtime(target_validator, MISSED, WINDOW);
+    let a4 = v4.sanov_slash_downtime(target_validator, MISSED, WINDOW);
+
+    assert!(a1 > 0, "missed=25/window=100 well exceeds tolerance → positive slash");
+    assert_eq!(a1, a2);
+    assert_eq!(a2, a3);
+    assert_eq!(a3, a4);
+
+    // Validator-set state is byte-identical across instances:
+    // either all retain target_validator with same stake, or all
+    // remove it (sanov_slash_downtime calls slash_with_amount which
+    // can remove on under-MIN_STAKE).
+    let post_v1 = v1.validator_set.get(target_validator).cloned();
+    let post_v2 = v2.validator_set.get(target_validator).cloned();
+    let post_v3 = v3.validator_set.get(target_validator).cloned();
+    let post_v4 = v4.validator_set.get(target_validator).cloned();
+    assert_eq!(post_v1.is_some(), post_v2.is_some());
+    assert_eq!(post_v2.is_some(), post_v3.is_some());
+    assert_eq!(post_v3.is_some(), post_v4.is_some());
+    if let (Some(p1), Some(p2), Some(p3), Some(p4)) = (&post_v1, &post_v2, &post_v3, &post_v4) {
+        assert_eq!(p1.stake, p2.stake);
+        assert_eq!(p2.stake, p3.stake);
+        assert_eq!(p3.stake, p4.stake);
+    }
+}
