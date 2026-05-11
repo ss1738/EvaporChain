@@ -158,6 +158,29 @@ mod tests {
         );
     }
 
+    /// Mult sanity check — `a * b == c` for non-native Fq.
+    #[test]
+    fn nonnative_fq_mul_satisfied_when_correct() {
+        let mut rng = seeded_rng();
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+
+        let a_val = PallasFq::rand(&mut rng);
+        let b_val = PallasFq::rand(&mut rng);
+        let c_val = a_val * b_val;
+
+        let a = alloc_nonnative_fq_witness(cs.clone(), a_val).expect("alloc a");
+        let b = alloc_nonnative_fq_witness(cs.clone(), b_val).expect("alloc b");
+        let c = alloc_nonnative_fq_witness(cs.clone(), c_val).expect("alloc c");
+
+        let product = &a * &b;
+        product.enforce_equal(&c).expect("enforce");
+
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "a * b == c must be satisfied for c = a * b"
+        );
+    }
+
     /// `a + b == c` is unsatisfied when c ≠ a + b. Critical — without
     /// this gate, the gadget would accept arbitrary triples.
     #[test]
