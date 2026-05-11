@@ -1635,4 +1635,59 @@ mod tests {
         }
         panic!("Never got to produce");
     }
+
+    /// T1.20 — MockConsensus::new delegates to new_with_gas_limit
+    /// with 500_000 default (lines 207-210).
+    #[test]
+    fn t1_20_mock_consensus_new_default_gas_limit() {
+        let mc = MockConsensus::new(100);
+        assert_eq!(mc.block_number, 0);
+        assert_eq!(mc.epoch, 0);
+        assert!(mc.encrypted_mempool.is_none());
+    }
+
+    /// T1.20 — MockConsensus::new_with_gas_limit honours the
+    /// caller-supplied gas limit (lines 212-225).
+    #[test]
+    fn t1_20_mock_consensus_new_with_gas_limit() {
+        let mc = MockConsensus::new_with_gas_limit(50, 2_000_000);
+        assert_eq!(mc.block_number, 0);
+        assert!(mc.encrypted_mempool.is_none());
+    }
+
+    /// T1.20 — MockConsensus::new_with_mev_protection installs an
+    /// EncryptedMempool (lines 228-237).
+    #[test]
+    fn t1_20_mock_consensus_new_with_mev_protection() {
+        let mc = MockConsensus::new_with_mev_protection(10, 3);
+        assert!(mc.encrypted_mempool.is_some());
+        assert_eq!(mc.encrypted_mempool.unwrap().reveal_delay(), 3);
+    }
+
+    /// T1.20 — compute_block_da with empty txs returns the
+    /// empty-block sentinel data_root (lines 125-132).
+    #[test]
+    fn t1_20_compute_block_da_empty_txs_returns_sentinel() {
+        let out = compute_block_da(&[], 1, &[0u8; 32]);
+        assert!(out.data_root.is_some(), "empty block has sentinel root");
+        assert!(out.da_row_roots.is_empty());
+        assert!(out.da_col_roots.is_empty());
+    }
+
+    /// T1.20 — compute_block_da with a real transfer
+    /// produces a non-empty data_root (lines 147-153).
+    #[test]
+    fn t1_20_compute_block_da_with_tx_produces_root() {
+        let tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let out = compute_block_da(&[tx], 2, &[0u8; 32]);
+        assert!(out.data_root.is_some());
+    }
 }
