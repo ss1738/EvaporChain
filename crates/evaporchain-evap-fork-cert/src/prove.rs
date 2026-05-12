@@ -105,4 +105,27 @@ mod tests {
         assert!(c.decayed_energy > 500);
         assert!(c.decayed_energy < 1000);
     }
+
+    /// T1.20 — block whose observed_epoch is past the eval_epoch
+    /// is skipped (line 23 — the future-block continue branch).
+    ///  still counts it but  doesn't.
+    #[test]
+    fn t1_20_future_observed_block_skipped() {
+        let blocks = [
+            ForkBlock {
+                seed_energy: 1000,
+                observed_epoch: 0,
+            },
+            ForkBlock {
+                seed_energy: 500,
+                observed_epoch: 999, // far in the future of eval_epoch=100
+            },
+        ];
+        let c = prove_fork_evaporated([1u8; 32], &blocks, lambda(), 100, 1);
+        // Both blocks contribute to total_seed.
+        assert_eq!(c.total_seed_energy, 1500);
+        // Only the first block contributes to decayed (second is skipped).
+        // First block: seed=1000, elapsed=100 → half-life 100 → 500.
+        assert_eq!(c.decayed_energy, 500);
+    }
 }
