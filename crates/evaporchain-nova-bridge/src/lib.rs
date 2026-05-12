@@ -67,6 +67,7 @@ pub mod grain_lfsr;
 pub mod mds_linalg;
 pub mod neptune_dump_parser;
 pub mod recursive_snark_fixture;
+pub mod vendored_neptune_grain;
 pub mod verifier_circuit;
 
 pub use recursive_snark_fixture::{
