@@ -283,10 +283,10 @@ mod tests {
         assert!(is_antichain(&lc, &ac));
     }
 
-    /// Phase 4.2 robustness — invariant: for any randomly-generated
-    /// DAG, `closing_antichain` is always actually an antichain.
-    /// Proptest sweeps random DAG shapes (linear chains + tree-like
-    /// branching) and verifies the postcondition.
+    // Phase 4.2 robustness — invariant: for any randomly-generated
+    // DAG, `closing_antichain` is always actually an antichain.
+    // Proptest sweeps random DAG shapes (linear chains + tree-like
+    // branching) and verifies the postcondition.
     proptest::proptest! {
         #[test]
         fn closing_antichain_is_always_an_antichain(
