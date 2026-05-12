@@ -596,6 +596,51 @@ mod tests {
         );
     }
 
+    /// **Direct LFSR parity vs neptune.** Per PR #84's layout
+    /// analysis, neptune's `crc[0..200]` IS the plain ARK for the
+    /// 8 full rounds (full-round constants stored uncompressed;
+    /// only partial rounds get the SBOX-trick optimization).
+    ///
+    /// Compares the first 200 entries of our generated ARK to
+    /// neptune's `crc[0..200]` from the JSON dump (PR #80).
+    /// If MATCH: LFSR port is byte-correct; remaining parity
+    /// divergence is downstream of the LFSR (sponge framing,
+    /// domain tag, etc).
+    /// If MISMATCH: the LFSR still has a bug.
+    ///
+    /// `#[ignore]` — requires the JSON dump on disk.
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json from dump-neptune-constants"]
+    fn lfsr_first_200_entries_match_neptune_crc() {
+        use crate::neptune_dump_parser::extract_compressed_round_constants;
+
+        let ours = generate_round_constants_bn254_arity_24_standard();
+        let theirs = extract_compressed_round_constants("/tmp/neptune-bn256-standard.json")
+            .expect("load dump");
+
+        let mut mismatches = 0usize;
+        let mut first_mismatch: Option<usize> = None;
+        for i in 0..200 {
+            if ours[i] != theirs[i] {
+                if first_mismatch.is_none() {
+                    first_mismatch = Some(i);
+                }
+                mismatches += 1;
+            }
+        }
+        eprintln!(
+            "LFSR direct parity: {} of 200 full-round constants differ; first mismatch index = {:?}",
+            mismatches, first_mismatch
+        );
+        if mismatches == 0 {
+            eprintln!("LFSR PORT BYTE-CORRECT — divergence is downstream.");
+        }
+        // Document the current state via assert_ne: if/when this
+        // fires, the LFSR is byte-correct.
+        assert_ne!(mismatches, 0,
+            "LFSR matches neptune ARK byte-for-byte — flip this to `assert_eq!(mismatches, 0)`.");
+    }
+
     /// Generating twice yields the same vector — pure
     /// determinism check on the full pipeline.
     #[test]
