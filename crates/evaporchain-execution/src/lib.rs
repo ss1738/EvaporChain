@@ -7918,7 +7918,7 @@ contract Counter {
     }
 
     #[test]
-    fn t1_20_execution_cache_key_binds_tx_hash_AND_pre_root() {
+    fn t1_20_execution_cache_key_binds_tx_hash_and_pre_root() {
         let mut c = ExecutionCache::new(10);
         let tx_h = [1u8; 32];
         c.put(&tx_h, &[2u8; 32], 21_000, true, 100);

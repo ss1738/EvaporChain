@@ -2111,12 +2111,6 @@ mod tests {
         assert_eq!(tx.sender(), Some(&[0xAA; 32]));
     }
 
-    /// Phase 3.1 of `CROOKS_MEV_INTEGRATION_PLAN.md` — `RefundTx`
-    /// round-trip serializes through serde and surfaces the
-    /// attacker (debited party) as `sender()`. No nonce — the
-    /// (source_block_height, source_observation_idx) pair is the
-    /// unique identifier for replay protection.
-    #[test]
     /// Phase 2.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `effective_parents()`
     /// returns the explicit `parents` Vec when populated, else
     /// `vec![parent_hash]` (single-parent fallback).
