@@ -50,9 +50,13 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod poseidon_budget;
 pub mod recursive_snark_fixture;
 pub mod verifier_circuit;
 
+pub use poseidon_budget::{
+    arkworks_default_config_for_bn254, measure_budget, PoseidonBudget,
+};
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
 };
