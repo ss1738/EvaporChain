@@ -4,13 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Before starting any session
 
-Read these authoritative state-of-chain docs in order:
+Read exactly these five state-of-chain docs in order. Stop after the top 2-3 entries of journal files (`SESSION_PROGRESS.md`, `CHANGELOG.md`) — full read is not needed.
 
-1. **`SESSION_PROGRESS.md`** — most recent operational state across sessions; what's blocked, what's next. Newest entry at top. Read this FIRST to know where the build is.
-2. `DOCTRINE_PUNCH_LIST.md` — layered build plan (Layers 0–7), current status of each
-3. `research/INVENTION_STACK.md` — canonical doctrine; Tier-0 frontier primitives
-4. `AUDIT_2026_05_06.md` — most recent end-to-end audit (7 CRITICAL / 4 HIGH / 5 MEDIUM substrates all closed)
-5. `CHANGELOG.md` — session-by-session ship log (formal, commit-by-commit detail)
+1. **`SESSION_PROGRESS.md`** — most recent operational state. Newest entry at top. Read FIRST to know where the build is.
+2. **`MAINNET_READINESS.md`** — lane-claim board (🟡 OPEN / 🟢 CLAIMED / ✅ DONE). Pick the lane you'll drive in this session here.
+3. **`DOCTRINE_PUNCH_LIST.md`** — layered build plan (Layers 0–7), what's already shipped at the doctrine level.
+4. **`AUDIT_2026_05_11.md`** — most recent findings (the only audit doc at root; older audits live in `docs/archive/obsolete-audits/`).
+5. **`CHANGELOG.md`** — grep for your area; do not read top-to-bottom.
+
+Sprint narrative + doc / dead-crate audit lives in **`MAINNET_SPRINT_PLAN_2026_05_11.md`**. Read it once on your first session; not required thereafter.
+
+Completed plan docs (CROOKS_MEV, LAMBDA_FOLD, LIGHT_CONE, MCC_FULL) live in `docs/archive/completed-plans/`. Older audits in `docs/archive/obsolete-audits/`. Deprecated punch-lists in `docs/archive/deprecated/`. Treat as read-only history.
 
 ## Before ending any session
 

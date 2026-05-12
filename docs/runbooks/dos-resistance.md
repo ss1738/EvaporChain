@@ -17,7 +17,13 @@ Vector 5 (DAG fork-spam) — ✅ CLOSED 2026-05-11. Multi-validator convergence 
 - `t0_7_v5_dag_fork_spam_convergence_across_4_validators`: 50 sibling forks injected into 4 validators' DAGs; all 4 agree on candidate_heads, enumerate_candidate_heads (caliber-ordered), authoritative head argmax, propose_parents (capped at `light_cone_max_concurrent_forks=4`), and antichain digest.
 - `t0_7_v5_fork_spam_ordering_independence`: same 30 forks observed in forward vs reverse order by two validators; full substrate state converges. Path-independence under gossip jitter.
 
-Vectors 6 (gas exhaustion) and 7 (memory blow-up via large blobs) are covered elsewhere — `block_stm` tests + `test_global_byte_cap_rejects_when_pool_would_overflow` in `mempool.rs` respectively.
+Vector 6 — ShardSample request flood. ✅ CLOSED 2026-05-11 (commit `8c59fad`, AUDIT-2026-05-11-1/2). Two-gate defense on the libp2p `ShardSample` inbound handler at `crates/evaporchain-network/src/service.rs:1746-1779`, symmetric to BlockSync:
+- **Per-peer rate-limit** — `rate_limiter.check_and_increment(&peer)` rejects requests from peers over the gossipsub/sync per-peer budget. A peer that has saturated its other-protocol budget can no longer flood ShardSample.
+- **Queries cap** — `MAX_SHARD_QUERIES_PER_REQUEST = 256` per request; overshoot drops the request AND records a peer violation via `ban_list.record_violation(peer)`. Each query forces a Merkle proof construction; cap pins per-request CPU to a bounded constant.
+
+Regression test: `crates/evaporchain-network/src/service.rs::tests::shard_query_cap_is_capped_at_256` pins the cap value + verifies a serialized request at the cap stays <64 KB (well under libp2p's 1 MB JSON ceiling).
+
+Vectors 7 (gas exhaustion) and 8 (memory blow-up via large blobs) are covered elsewhere — `block_stm` tests + `test_global_byte_cap_rejects_when_pool_would_overflow` in `mempool.rs` respectively.
 
 ## Operational acceptance — cluster-load DoS verification
 
@@ -33,9 +39,9 @@ T0.7 acceptance criterion: harness runs ≥1hr at each load level without admiss
 Drive 1k → 10k → 100k tx/s sustained from 4 client nodes:
 
 ```bash
-scripts/dos-flood.sh --rate 1000 --duration 1h
-scripts/dos-flood.sh --rate 10000 --duration 1h
-scripts/dos-flood.sh --rate 100000 --duration 1h
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 1000   --duration 1h
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 10000  --duration 1h
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 100000 --duration 1h
 ```
 
 Pass criteria per load level:
@@ -49,7 +55,7 @@ Pass criteria per load level:
 Drive 1k malformed-sig tx/s for 1hr:
 
 ```bash
-scripts/dos-flood.sh --rate 1000 --duration 1h --garbage-sigs
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 1000 --duration 1h --garbage-sigs
 ```
 
 Pass criteria:
@@ -62,13 +68,37 @@ Pass criteria:
 Drive 1k tx/s from a single sender (Sybil isolation):
 
 ```bash
-scripts/dos-flood.sh --rate 1000 --duration 1h --single-sender
+scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 1000 --duration 1h --single-sender
 ```
 
 Pass criteria:
 - That sender's account-tx-count caps at 64 immediately
 - Remaining bandwidth (10K − 64 = 9936 slots) stays available for other senders
 - A second client at 100 tx/s from a different sender achieves baseline acceptance rate
+
+### Vector 6 — ShardSample request flood
+
+Drive a malicious light-client peer that sends shard-sample requests at the per-peer rate limit (gossipsub/sync budget) AND with `queries.len() > 256` payloads.
+
+> ⚠ **Implementation note (2026-05-11):** the ShardSample protocol is libp2p request-response binary, not HTTP. A bash flood script cannot drive it the way `dos-flood.sh` drives HTTP tx submissions. A Rust harness binary (`crates/evaporchain-network/src/bin/shard-sample-flood.rs` or similar) that connects as a libp2p peer and sends crafted `ShardSampleRequest` payloads is the right shape. Tracked as a follow-up; the regression test `shard_query_cap_is_capped_at_256` already pins the unit-level defense.
+
+Once the Rust harness lands, invoke it as:
+
+```bash
+cargo run --release --bin shard-sample-flood -- \
+  --target-peer-id <peer-id> \
+  --target-addr /ip4/100.119.53.101/tcp/9000 \
+  --rate 1000 \
+  --queries-per-request 1024 \
+  --duration 1h
+```
+
+Pass criteria per target node:
+- `rate_limiter` rejects log lines fire at the configured per-peer ceiling (warn: `Rate-limited peer … dropping shard-sample request`).
+- `ban_list.record_violation` fires every time `queries.len() > 256` (warn: `Peer … sent N shard queries, cap is 256 — recording violation`).
+- Peer crosses the `ban_threshold` and ends up in `banned` map after the runbook-documented number of violations.
+- `cargo test -p evaporchain-network shard_query_cap_is_capped_at_256` stays green; the runtime gate matches the regression test.
+- Target node's CPU does NOT spike for ShardSample serving — proof-generation throughput pinned by the 256-query cap.
 
 ### Failure-mode triage
 
@@ -83,4 +113,6 @@ If admission contract is violated mid-test:
 - `MAINNET_READINESS.md` T0.7
 - `crates/evaporchain-consensus/tests/dos_resistance.rs`
 - `crates/evaporchain-consensus/src/mempool.rs` — admission gate implementation
+- `crates/evaporchain-network/src/service.rs` — libp2p ShardSample + BlockSync inbound gates
+- `AUDIT_2026_05_11.md` — AUDIT-2026-05-11-1/2 ShardSample DoS findings + fix
 - `evaporchain_verification_track_2026_05_02.md` — historic per-(height,round) suppression bug

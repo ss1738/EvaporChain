@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-memento"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Memento contracts — commit-and-forget cryptographic substrate. A `MementoContract` holds a sealed BLAKE3 commitment to a payload + a trigger condition; the payload reveals only when the chain witnesses the trigger satisfied (block height reached, wallet idle for N epochs, energy below threshold, or owner-signed). Novel because the trigger conditions are thermodynamic — they react to chain decay state, not just timelocks. Tier-3 specialized primitive (per IMPOSSIBLE_RESEARCH_STACK Branch 4 'Memento contracts (commit-and-forget)')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
