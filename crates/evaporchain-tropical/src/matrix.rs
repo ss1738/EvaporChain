@@ -120,4 +120,22 @@ mod tests {
         m.set(1, 0, TropicalScalar::finite(2));
         assert!(!m.is_symmetric());
     }
+
+    /// T1.20 — try_get + try_set: in-bounds returns Ok, out-of-
+    /// bounds returns OutOfBounds (lines 44-61).
+    #[test]
+    fn t1_20_matrix_try_get_set_bounds_checked() {
+        let mut m = TropicalMatrix::new(2);
+        // In-bounds set + get.
+        m.try_set(0, 1, TropicalScalar::finite(5)).unwrap();
+        assert_eq!(m.try_get(0, 1).unwrap(), TropicalScalar::finite(5));
+
+        // Out-of-bounds get returns Err.
+        assert!(m.try_get(2, 0).is_err());
+        assert!(m.try_get(0, 2).is_err());
+
+        // Out-of-bounds set returns Err.
+        assert!(m.try_set(2, 0, TropicalScalar::finite(1)).is_err());
+        assert!(m.try_set(0, 2, TropicalScalar::finite(1)).is_err());
+    }
 }
