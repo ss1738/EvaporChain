@@ -24,21 +24,22 @@
 //!
 //! # What this module ships
 //!
-//! `parse_dump(path) -> NeptuneDumpShape` — reads the JSON, walks
-//! the structure, and returns dimensions / counts / a sample
-//! scalar hex per field. Does NOT yet decode every scalar — the
-//! halo2curves-to-arkworks conversion needs a hex-decode followed
-//! by `Fr::from_repr_vartime`, which works but adds bulk this PR
-//! doesn't need.
+//! Two parser kinds:
 //!
-//! # What's NOT here
+//! **Structural** (no scalar decode):
+//!   - [`parse_dump`] → [`NeptuneDumpShape`] — dimensions, round
+//!     counts, sample hex per field.
 //!
-//! - Full scalar conversion to `ark_bn254::Fr`. Possible with the
-//!   PR #66 `scalar_adapter` + hex-decode, but adds dep churn this
-//!   PR doesn't need. Separate follow-up.
-//! - Grain-LFSR ARK regeneration. `crc` is the COMPRESSED form;
-//!   recovering plain ARK requires either the LFSR seed reproducer
-//!   or inverting the optimization. That's the actual BESPOKE wedge.
+//! **Decoding** (hex → `ark_bn254::Fr`):
+//!   - [`decode_hex_scalar`] — single 64-char hex → Fr.
+//!   - [`extract_mds_matrix`] — `mds.m` (the plain MDS).
+//!   - [`extract_mds_inverse_matrix`] — `mds.m_inv`.
+//!   - [`extract_mds_m_hat`] / [`extract_mds_m_hat_inv`] /
+//!     [`extract_mds_m_prime`] / [`extract_mds_m_double_prime`] —
+//!     the four sparse-matrix sub-matrices.
+//!   - [`extract_compressed_round_constants`] — full `crc` array.
+//!   - [`expected_crc_len`] — structural pin: `full_rounds × width
+//!     + partial_rounds` (= 259 for arity-24 standard).
 
 use std::fs;
 use std::path::Path;

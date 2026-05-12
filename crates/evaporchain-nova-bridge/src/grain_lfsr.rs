@@ -1,16 +1,21 @@
-//! Phase 2.2-section-2 BESPOKE: grain LFSR seed initialization for
-//! Poseidon round-constant generation.
+//! Grain LFSR for Poseidon round-constant generation.
 //!
-//! This module ships ONLY the seed construction (step 1 of a
-//! multi-step algorithm). The remaining steps are:
+//! Byte-correct port of neptune's `round_constants.rs` Grain-80
+//! LFSR + the surrounding `generate_constants` driver. Produces
+//! plain ARK matching neptune's `round_keys()` byte-for-byte
+//! (verified at PR #97 via `lfsr_first_25_plain_round_0_parity`).
 //!
-//! - Clock the LFSR 160 rounds to "warm up" (discard output).
-//! - Generate output bits with the filter-and-discard-zeros loop.
-//! - Pack each 254-bit window into a field element mod p.
-//! - Produce `(full_rounds + partial_rounds) × width` round
-//!   constants total.
+//! # What ships
 //!
-//! Future PRs in the stack fill those in.
+//! - [`GrainSeedParams`] + [`grain_seed_state`] — 80-bit seed
+//!   construction from `(field_type, sbox_type, field_size,
+//!   sbox_count, full_rounds, partial_rounds)`.
+//! - [`GrainLfsr`] — clock + warmup + filter loop + byte-packing
+//!   + field-element emission with bias rejection.
+//! - [`generate_round_constants_bn254_arity_24_standard`] —
+//!   convenience function producing the full
+//!   `(full_rounds + partial_rounds) × width = 1,675` Fr vector
+//!   for our chain's Poseidon-128 parameters.
 //!
 //! # Seed layout (per the Poseidon paper / neptune `round_constants.rs`)
 //!
