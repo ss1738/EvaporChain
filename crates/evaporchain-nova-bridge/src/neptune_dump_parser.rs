@@ -283,6 +283,66 @@ pub fn extract_mds_inverse_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>
     Ok(out)
 }
 
+/// Shared internal helper: parse `mds.{field}` as a 2D Fr matrix
+/// from the JSON dump. Used by every per-matrix extractor.
+fn extract_mds_sub_matrix<P: AsRef<Path>>(
+    path: P,
+    field_name: &'static str,
+) -> Result<Vec<Vec<Fr>>, String> {
+    let bytes =
+        fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
+    let v: Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+    let m = v
+        .get("mds")
+        .and_then(|m| m.get(field_name))
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing `mds.{field_name}` as array"))?;
+    let mut out: Vec<Vec<Fr>> = Vec::with_capacity(m.len());
+    for (row_idx, row) in m.iter().enumerate() {
+        let cells = row
+            .as_array()
+            .ok_or_else(|| format!("mds.{field_name}[{row_idx}] not an array"))?;
+        let mut row_frs: Vec<Fr> = Vec::with_capacity(cells.len());
+        for (col_idx, cell) in cells.iter().enumerate() {
+            let hex = cell.as_str().ok_or_else(|| {
+                format!("mds.{field_name}[{row_idx}][{col_idx}] not a string")
+            })?;
+            let fr = decode_hex_scalar(hex).map_err(|e| {
+                format!("decode mds.{field_name}[{row_idx}][{col_idx}]: {e}")
+            })?;
+            row_frs.push(fr);
+        }
+        out.push(row_frs);
+    }
+    Ok(out)
+}
+
+/// Extract `mds.m_hat` — the (width-1) × (width-1) MDS sub-matrix
+/// used by neptune's sparse-matrix transformation. Required for
+/// the eventual SBOX-trick sponge port.
+pub fn extract_mds_m_hat<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
+    extract_mds_sub_matrix(path, "m_hat")
+}
+
+/// Extract `mds.m_hat_inv` — inverse of `m_hat`.
+pub fn extract_mds_m_hat_inv<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
+    extract_mds_sub_matrix(path, "m_hat_inv")
+}
+
+/// Extract `mds.m_prime` — modified MDS matrix used in neptune's
+/// `Poseidon::hash_optimized_static` during the partial-round
+/// phase boundary.
+pub fn extract_mds_m_prime<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
+    extract_mds_sub_matrix(path, "m_prime")
+}
+
+/// Extract `mds.m_double_prime` — second modified MDS matrix used
+/// in neptune's sparse-matrix transformation.
+pub fn extract_mds_m_double_prime<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
+    extract_mds_sub_matrix(path, "m_double_prime")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +465,45 @@ mod tests {
     }
 
     #[test]
+    /// Real-data: each of the 4 MDS sub-matrices extracts from
+    /// PR #80's dump with non-empty shape. `m_hat` and
+    /// `m_hat_inv` are (width-1)×(width-1) = 24×24 for arity-24.
+    /// `m_prime` and `m_double_prime` are width×width = 25×25.
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json"]
+    fn all_mds_sub_matrices_extract_from_real_dump() {
+        let path = "/tmp/neptune-bn256-standard.json";
+        let m_hat = extract_mds_m_hat(path).expect("m_hat");
+        let m_hat_inv = extract_mds_m_hat_inv(path).expect("m_hat_inv");
+        let m_prime = extract_mds_m_prime(path).expect("m_prime");
+        let m_dp = extract_mds_m_double_prime(path).expect("m_double_prime");
+
+        assert_eq!(m_hat.len(), 24, "m_hat is (width-1)×(width-1) for arity-24");
+        assert_eq!(m_hat_inv.len(), 24);
+        assert_eq!(m_prime.len(), 25, "m_prime is width×width");
+        assert_eq!(m_dp.len(), 25);
+        // Spot-check inner dims.
+        assert_eq!(m_hat[0].len(), 24);
+        assert_eq!(m_prime[0].len(), 25);
+    }
+
+    /// Missing sub-matrix → clean `Err`.
+    #[test]
+    fn missing_sub_matrix_errors_cleanly() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-no-m-hat.json");
+        let one = format!("01{}", "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{one}\"]],\"m_inv\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\"crc\":[\"{one}\"],\"psm\":[],\"sm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        std::fs::write(&path, json).unwrap();
+        let result = extract_mds_m_hat(&path);
+        assert!(result.is_err(), "missing m_hat must fail");
+        let err = result.unwrap_err();
+        assert!(err.contains("m_hat"), "error must mention m_hat: {err}");
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn rejects_missing_rf() {
         let dir = std::env::temp_dir();
         let path = dir.join("neptune-bad.json");
