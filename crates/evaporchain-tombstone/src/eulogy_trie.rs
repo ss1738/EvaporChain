@@ -163,4 +163,21 @@ mod tests {
         assert_eq!(t.get(&addr(1)), Some(&stone));
         assert_eq!(t.get(&addr(99)), None);
     }
+
+    /// T1.20 — EulogyTrie accessors: len, is_empty, iter (lines
+    /// 60-70).
+    #[test]
+    fn t1_20_eulogy_trie_accessors_and_iter() {
+        let mut t = EulogyTrie::new();
+        assert!(t.is_empty());
+        assert_eq!(t.len(), 0);
+        assert_eq!(t.iter().count(), 0);
+
+        t.insert(addr(1), ts(1, 10)).unwrap();
+        t.insert(addr(2), ts(2, 20)).unwrap();
+        assert!(!t.is_empty());
+        assert_eq!(t.len(), 2);
+        let collected: Vec<_> = t.iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
 }
