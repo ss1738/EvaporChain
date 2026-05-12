@@ -79,6 +79,76 @@ impl GrainSeedParams {
     }
 }
 
+/// In-memory Grain-80 LFSR state. Holds 80 bits as a `[u8; 10]`
+/// where the **MSB of `state[0]` is bit position 0** (left-most,
+/// matching the Poseidon paper convention).
+///
+/// Clocking shifts left by 1 — bit 0 falls out, the new feedback
+/// bit enters at position 79.
+#[derive(Clone, Debug)]
+pub struct GrainLfsr {
+    state: [u8; 10],
+}
+
+impl GrainLfsr {
+    /// Initialize from a 10-byte seed (e.g. from [`grain_seed_state`]).
+    pub fn from_seed(seed: [u8; 10]) -> Self {
+        Self { state: seed }
+    }
+
+    /// Read the bit at logical position `i` (0 = MSB of `state[0]`,
+    /// 79 = LSB of `state[9]`).
+    fn bit(&self, i: usize) -> u8 {
+        let byte = i / 8;
+        let bit_in_byte = 7 - (i % 8);
+        (self.state[byte] >> bit_in_byte) & 1
+    }
+
+    /// Compute the feedback bit per Grain-80's polynomial:
+    ///   `f = state[0] ⊕ state[13] ⊕ state[23] ⊕ state[38] ⊕ state[51] ⊕ state[62]`
+    fn feedback(&self) -> u8 {
+        self.bit(0) ^ self.bit(13) ^ self.bit(23) ^ self.bit(38) ^ self.bit(51) ^ self.bit(62)
+    }
+
+    /// Shift the state left by 1 bit, dropping bit 0 and inserting
+    /// `new_bit` at position 79. Returns the bit that just fell off
+    /// (bit 0 of the pre-shift state — useful for the warmup
+    /// discard).
+    fn shift_in(&mut self, new_bit: u8) -> u8 {
+        let dropped = self.bit(0);
+        // Shift each byte left by one, carry MSB from the next byte.
+        for i in 0..9 {
+            self.state[i] = (self.state[i] << 1) | (self.state[i + 1] >> 7);
+        }
+        // Last byte: shift left + insert new_bit at LSB.
+        self.state[9] = (self.state[9] << 1) | (new_bit & 1);
+        dropped
+    }
+
+    /// Advance the LFSR by one step and return the new feedback
+    /// bit just inserted at position 79.
+    pub fn clock(&mut self) -> u8 {
+        let f = self.feedback();
+        self.shift_in(f);
+        f
+    }
+
+    /// Run the standard 160-round warmup, discarding all output.
+    /// Per the Poseidon paper, this mixes the seed into the state
+    /// before any real bits are emitted.
+    pub fn warmup(&mut self) {
+        for _ in 0..160 {
+            self.clock();
+        }
+    }
+
+    /// Read the current state as raw bytes — exposed for testing
+    /// the post-warmup state pin.
+    pub fn state_bytes(&self) -> [u8; 10] {
+        self.state
+    }
+}
+
 /// Construct the 80-bit grain LFSR initial state for the given
 /// parameters. Returns 10 bytes (80 bits) in big-endian order —
 /// `state[0]` is the most significant byte.
@@ -186,6 +256,45 @@ mod tests {
         //   bits 54..80  = 11...1 (26)   (padding)             ✓
         let expected: [u8; 10] = [0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF];
         assert_eq!(seed, expected, "seed bits for bn254/arity-24/standard");
+    }
+
+    /// Verify `bit()` reads the canonical position. With seed
+    /// `0x84 03 F8 ...` the first 8 bits are `10000100`, so:
+    ///   bit(0)=1, bit(1)=0, bit(2)=0, bit(3)=0,
+    ///   bit(4)=0, bit(5)=1, bit(6)=0, bit(7)=0.
+    #[test]
+    fn lfsr_bit_indexing() {
+        let lfsr = GrainLfsr::from_seed([0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(lfsr.bit(0), 1);
+        assert_eq!(lfsr.bit(1), 0);
+        assert_eq!(lfsr.bit(5), 1);
+        assert_eq!(lfsr.bit(7), 0);
+    }
+
+    /// A single clock shifts the state left by 1 bit and inserts
+    /// the feedback bit at position 79. After clocking, bit 0
+    /// must equal the OLD bit 1.
+    #[test]
+    fn clock_shifts_left_by_one() {
+        let mut lfsr = GrainLfsr::from_seed([0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF]);
+        let old_bit_1 = lfsr.bit(1);
+        lfsr.clock();
+        assert_eq!(lfsr.bit(0), old_bit_1, "post-clock bit 0 must equal pre-clock bit 1");
+    }
+
+    /// Determinism: same seed + same number of clocks yields the
+    /// same state. Catches any non-determinism leaking in.
+    #[test]
+    fn warmup_is_deterministic_and_changes_state() {
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+
+        let mut a = GrainLfsr::from_seed(seed);
+        let mut b = GrainLfsr::from_seed(seed);
+        a.warmup();
+        b.warmup();
+        assert_eq!(a.state_bytes(), b.state_bytes(), "warmup deterministic");
+        assert_ne!(a.state_bytes(), seed, "warmup must change the state");
+        assert_ne!(a.state_bytes(), [0u8; 10], "warmup must not zero the state");
     }
 
     /// Changing any one parameter must produce a different seed.
