@@ -242,4 +242,144 @@ mod tests {
         assert_eq!(msgs[1].target_energy, 500);
         assert_eq!(msgs[2].target_energy, 10);
     }
+
+    /// T1.20 — `send()` assigns sequential ids starting at 0 (lines
+    /// 67-74). Existing tests use `send()` but never inspect the
+    /// returned id, so the monotonic-id contract was uncovered.
+    #[test]
+    fn t1_20_send_returns_sequential_ids() {
+        let mut router = CrossShardRouter::new();
+        let id0 = router.send(make_msg(0, 1, 100));
+        let id1 = router.send(make_msg(0, 1, 200));
+        let id2 = router.send(make_msg(0, 2, 300));
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    /// T1.20 — `drain_for_shard` removes the queue (line 82). A second
+    /// drain of the same shard must return empty, not the same set.
+    #[test]
+    fn t1_20_drain_for_shard_clears_the_queue() {
+        let mut router = CrossShardRouter::new();
+        router.send(make_msg(0, 1, 100));
+        router.send(make_msg(0, 1, 200));
+        assert_eq!(router.drain_for_shard(ShardId(1)).len(), 2);
+        assert!(router.drain_for_shard(ShardId(1)).is_empty(),
+            "second drain must be empty (queue was removed)");
+        assert_eq!(router.queue_depth(ShardId(1)), 0);
+    }
+
+    /// T1.20 — `acknowledge` on an unknown message_id is a no-op
+    /// (line 91: `remove` returns `Option`, ignored). Other pending
+    /// receipts must NOT be disturbed.
+    #[test]
+    fn t1_20_acknowledge_unknown_id_is_noop() {
+        let mut router = CrossShardRouter::new();
+        let real_id = router.send(make_msg(0, 1, 100));
+        let fake_receipt = CrossShardReceipt {
+            message_id: 9_999_999,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success: true,
+            result_hash: [0u8; 32],
+            processed_at: 999,
+        };
+        router.acknowledge(fake_receipt);
+        assert_eq!(
+            router.pending_count(),
+            1,
+            "ack on unknown id must not remove real entry"
+        );
+        // Sanity: acknowledging the real id still works.
+        let real_receipt = CrossShardReceipt {
+            message_id: real_id,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success: true,
+            result_hash: [0u8; 32],
+            processed_at: 1000,
+        };
+        router.acknowledge(real_receipt);
+        assert_eq!(router.pending_count(), 0);
+    }
+
+    /// T1.20 — `receipts_root` dedups by `message_id` (lines 107-111).
+    /// A receipt repeated in the input slice must not change the root
+    /// vs the single-receipt case.
+    #[test]
+    fn t1_20_receipts_root_dedups_by_message_id() {
+        let r = CrossShardReceipt {
+            message_id: 7,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success: true,
+            result_hash: [0x11; 32],
+            processed_at: 100,
+        };
+        let single = CrossShardRouter::receipts_root(std::slice::from_ref(&r));
+        let doubled = CrossShardRouter::receipts_root(&[r.clone(), r.clone()]);
+        assert_eq!(
+            single, doubled,
+            "second copy of same message_id must be filtered"
+        );
+    }
+
+    /// T1.20 — `receipts_root` for two distinct receipts builds the
+    /// even-count Merkle pair (lines 116-119, the `chunk.len() > 1`
+    /// branch). Distinct inputs must produce a distinct root from
+    /// either single-receipt root.
+    #[test]
+    fn t1_20_receipts_root_two_distinct_receipts() {
+        let r1 = CrossShardReceipt {
+            message_id: 1,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success: true,
+            result_hash: [0xAA; 32],
+            processed_at: 10,
+        };
+        let r2 = CrossShardReceipt {
+            message_id: 2,
+            from_shard: ShardId(0),
+            to_shard: ShardId(2),
+            success: false,
+            result_hash: [0xBB; 32],
+            processed_at: 20,
+        };
+        let root = CrossShardRouter::receipts_root(&[r1.clone(), r2.clone()]);
+        let solo1 = CrossShardRouter::receipts_root(std::slice::from_ref(&r1));
+        let solo2 = CrossShardRouter::receipts_root(std::slice::from_ref(&r2));
+        assert_ne!(root, solo1);
+        assert_ne!(root, solo2);
+        assert_ne!(solo1, solo2);
+    }
+
+    /// T1.20 — `receipts_root` odd-count case pads the last leaf with
+    /// itself (lines 120-122: `else { combined.extend_from_slice(&chunk[0]); }`).
+    /// Three distinct receipts exercise the odd-count chunk branch
+    /// at the leaf level.
+    #[test]
+    fn t1_20_receipts_root_odd_count_pads_last_leaf() {
+        let mk = |id: u64, hash_byte: u8| CrossShardReceipt {
+            message_id: id,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success: true,
+            result_hash: [hash_byte; 32],
+            processed_at: id * 10,
+        };
+        let r1 = mk(1, 0x11);
+        let r2 = mk(2, 0x22);
+        let r3 = mk(3, 0x33);
+        let root = CrossShardRouter::receipts_root(&[r1.clone(), r2.clone(), r3.clone()]);
+        // Must be deterministic.
+        let root_again =
+            CrossShardRouter::receipts_root(&[r1.clone(), r2.clone(), r3.clone()]);
+        assert_eq!(root, root_again);
+        // Must differ from the 2-receipt root (the odd-count padding
+        // changes the tree shape vs even-count).
+        let root2 = CrossShardRouter::receipts_root(&[r1, r2]);
+        assert_ne!(root, root2);
+    }
 }
