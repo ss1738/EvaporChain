@@ -3182,4 +3182,125 @@ mod tests {
         let result = load_keypair_from_file(&path);
         assert!(result.is_err());
     }
+
+    /// T1.20 — RateLimiter::enabled() returns false when rps=0
+    /// (disabled). try_consume short-circuits to true. Covers
+    /// lines 460-462, 466-468 (enabled false branch).
+    #[test]
+    fn t1_20_rate_limiter_disabled_always_allows() {
+        let mut rl = RateLimiter::new(0.0, 0);
+        assert!(!rl.enabled());
+        // Disabled limiter never rejects.
+        for _ in 0..100 {
+            assert!(rl.try_consume([1u8; 32]));
+        }
+    }
+
+    /// T1.20 — RateLimiter exhausts burst then rejects.
+    #[test]
+    fn t1_20_rate_limiter_burst_then_throttle() {
+        let mut rl = RateLimiter::new(0.001, 3); // 3 burst, ~0 rps
+        // First 3 allowed.
+        assert!(rl.try_consume([1u8; 32]));
+        assert!(rl.try_consume([1u8; 32]));
+        assert!(rl.try_consume([1u8; 32]));
+        // 4th throttled (rps ~0 so no refill).
+        assert!(!rl.try_consume([1u8; 32]));
+    }
+
+    /// T1.20 — IdempotencyCache overwrite path: same key
+    /// re-inserted updates value without growing size. Covers
+    /// lines 784-790 (Entry::Occupied branch).
+    #[test]
+    fn t1_20_idempotency_cache_overwrite_keeps_size() {
+        use evaporchain_types::UserOpTx;
+        let mut cache = IdempotencyCache::with_persist(
+            10,
+            Duration::from_secs(60),
+            None,
+        );
+        let key = "abc".to_string();
+        let make_resp = |n: u64| SponsorshipResponse {
+            user_op: UserOpTx {
+                sender: [0u8; 32],
+                nonce: n,
+                call_data: vec![],
+                call_gas_limit: 0,
+                paymaster: None,
+                paymaster_nonce: None,
+                paymaster_data: None,
+                paymaster_signature: None,
+                paymaster_public_key: None,
+                signature: None,
+                public_key: None,
+            },
+            paymaster_address_hex: "0x".into(),
+            paymaster_nonce: n,
+        };
+        cache.insert(key.clone(), make_resp(1));
+        let size_after_first = cache.entries.len();
+        // Re-insert same key with different value.
+        cache.insert(key.clone(), make_resp(2));
+        assert_eq!(cache.entries.len(), size_after_first);
+        // Latest value wins.
+        let got = cache.get(&key).expect("entry present");
+        assert_eq!(got.paymaster_nonce, 2);
+    }
+
+    /// T1.20 — IdempotencyCache eviction on max_keys overflow.
+    /// Oldest entry by insertion order is dropped. Covers lines
+    /// 795-806.
+    #[test]
+    fn t1_20_idempotency_cache_eviction_on_max_keys() {
+        use evaporchain_types::UserOpTx;
+        let mut cache = IdempotencyCache::with_persist(
+            2,
+            Duration::from_secs(60),
+            None,
+        );
+        let make_resp = |n: u64| SponsorshipResponse {
+            user_op: UserOpTx {
+                sender: [0u8; 32],
+                nonce: n,
+                call_data: vec![],
+                call_gas_limit: 0,
+                paymaster: None,
+                paymaster_nonce: None,
+                paymaster_data: None,
+                paymaster_signature: None,
+                paymaster_public_key: None,
+                signature: None,
+                public_key: None,
+            },
+            paymaster_address_hex: "0x".into(),
+            paymaster_nonce: n,
+        };
+        cache.insert("a".into(), make_resp(1));
+        cache.insert("b".into(), make_resp(2));
+        // Third insert evicts "a" (oldest).
+        cache.insert("c".into(), make_resp(3));
+        assert!(cache.get("a").is_none(), "oldest should be evicted");
+        assert!(cache.get("b").is_some());
+        assert!(cache.get("c").is_some());
+        assert_eq!(cache.entries.len(), 2);
+    }
+
+    /// T1.20 — IdempotencyCache::enabled() reports true when
+    /// max_keys > 0.
+    #[test]
+    fn t1_20_idempotency_cache_enabled_when_max_keys_positive() {
+        let cache = IdempotencyCache::with_persist(
+            5,
+            Duration::from_secs(30),
+            None,
+        );
+        assert!(cache.enabled());
+
+        let disabled = IdempotencyCache::with_persist(
+            0,
+            Duration::from_secs(30),
+            None,
+        );
+        assert!(!disabled.enabled());
+    }
 }

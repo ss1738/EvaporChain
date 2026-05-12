@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { api, type TokenInfo } from "@/utils/api";
 import { Header } from "./Header";
@@ -53,14 +54,14 @@ export function PortfolioScreen() {
     <div className="flex flex-col h-full">
       <Header />
       <div className="px-4 pt-4 pb-2">
-        <button onClick={() => setView("home")} className="text-xs text-zinc-500 hover:text-zinc-300 mb-3">← Back</button>
+        <button onClick={() => setView("home")} className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"><><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</></button>
         <h2 className="text-lg font-semibold text-zinc-100">Portfolio Analytics</h2>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 space-y-3 pb-4">
         {/* Total value */}
         <div className="px-4 py-4 rounded-xl bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Total Portfolio Value</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Total Portfolio Value</p>
           <p className="text-2xl font-bold text-zinc-100">
             {evapPrice > 0
               ? `$${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -78,17 +79,17 @@ export function PortfolioScreen() {
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-full bg-evap-cyan/20 flex items-center justify-center">
-                <span className="text-[10px] font-bold text-evap-cyan">E</span>
+                <span className="text-xs font-bold text-evap-cyan">E</span>
               </div>
               <div>
                 <p className="text-xs font-medium text-zinc-200">EVAP</p>
-                <p className="text-[10px] text-zinc-500">EvaporChain</p>
+                <p className="text-xs text-zinc-500">EvaporChain</p>
               </div>
             </div>
             <div className="text-right">
               <p className="text-xs font-semibold text-zinc-200">{formatBalance(balance)} EVAP</p>
               {evapPrice > 0 && (
-                <p className="text-[10px] text-zinc-500">
+                <p className="text-xs text-zinc-500">
                   ${evapUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               )}
@@ -97,7 +98,7 @@ export function PortfolioScreen() {
           {totalUsd > 0 && (
             <div className="flex items-center gap-2 mt-2">
               <Bar pct={evapUsd / totalUsd * 100} color="bg-evap-cyan" />
-              <span className="text-[10px] text-zinc-500 w-10 text-right">
+              <span className="text-xs text-zinc-500 w-10 text-right">
                 {(evapUsd / totalUsd * 100).toFixed(1)}%
               </span>
             </div>
@@ -110,31 +111,31 @@ export function PortfolioScreen() {
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center">
-                  <span className="text-[10px] font-bold text-zinc-400">{token.symbol[0]}</span>
+                  <span className="text-xs font-bold text-zinc-400">{token.symbol[0]}</span>
                 </div>
                 <div>
                   <p className="text-xs font-medium text-zinc-200">{token.symbol}</p>
-                  <p className="text-[10px] text-zinc-500">{token.name}</p>
+                  <p className="text-xs text-zinc-500">{token.name}</p>
                 </div>
               </div>
               <div className="text-right">
                 <p className="text-xs font-semibold text-zinc-200">{token.balance.toLocaleString()} {token.symbol}</p>
                 {price && (
-                  <p className="text-[10px] text-zinc-500">
+                  <p className="text-xs text-zinc-500">
                     ${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 )}
               </div>
             </div>
             {price && (
-              <p className={`text-[10px] text-right ${price.change_24h_pct >= 0 ? "text-evap-green" : "text-evap-red"}`}>
+              <p className={`text-xs text-right ${price.change_24h_pct >= 0 ? "text-evap-green" : "text-evap-red"}`}>
                 {price.change_24h_pct >= 0 ? "+" : ""}{price.change_24h_pct.toFixed(2)}% 24h
               </p>
             )}
             {totalUsd > 0 && (
               <div className="flex items-center gap-2 mt-1">
                 <Bar pct={usd / totalUsd * 100} color="bg-zinc-600" />
-                <span className="text-[10px] text-zinc-500 w-10 text-right">
+                <span className="text-xs text-zinc-500 w-10 text-right">
                   {(usd / totalUsd * 100).toFixed(1)}%
                 </span>
               </div>
@@ -144,30 +145,30 @@ export function PortfolioScreen() {
 
         {/* Objects analytics */}
         <div className="px-4 py-4 rounded-xl bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider mb-3">On-Chain Objects</p>
+          <p className="text-xs text-zinc-400 font-semibold uppercase tracking-wider mb-3">On-Chain Objects</p>
           <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="text-center">
               <p className="text-sm font-bold text-evap-green">{activeObjects}</p>
-              <p className="text-[10px] text-zinc-500">Active</p>
+              <p className="text-xs text-zinc-500">Active</p>
             </div>
             <div className="text-center">
               <p className="text-sm font-bold text-yellow-500">{graceObjects}</p>
-              <p className="text-[10px] text-zinc-500">Grace</p>
+              <p className="text-xs text-zinc-500">Grace</p>
             </div>
             <div className="text-center">
               <p className="text-sm font-bold text-zinc-500">{ghostObjects}</p>
-              <p className="text-[10px] text-zinc-500">Evaporated</p>
+              <p className="text-xs text-zinc-500">Evaporated</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-500">Total energy</span>
+            <span className="text-xs text-zinc-500">Total energy</span>
             <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
               <div
                 className="h-full rounded-full bg-evap-cyan"
                 style={{ width: `${Math.min((activeObjects / Math.max(activeObjects + graceObjects + ghostObjects, 1)) * 100, 100)}%` }}
               />
             </div>
-            <span className="text-[10px] text-zinc-400 font-mono">{totalEnergy.toLocaleString()}</span>
+            <span className="text-xs text-zinc-400 font-mono">{totalEnergy.toLocaleString()}</span>
           </div>
         </div>
 

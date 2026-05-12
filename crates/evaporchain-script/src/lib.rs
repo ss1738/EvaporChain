@@ -1468,4 +1468,36 @@ contract Tiny {
         assert!(result.is_ok(), "default call must succeed; got {:?}", result.err());
         assert_eq!(result.unwrap().return_value, Value::U64(42));
     }
+
+    /// T1.20 — Value::Display for Map variant. Previously
+    /// uncovered (lines 80-83).
+    #[test]
+    fn t1_20_value_display_map() {
+        use std::collections::HashMap;
+        let mut m = HashMap::new();
+        m.insert("b".to_string(), Value::U64(2));
+        m.insert("a".to_string(), Value::U64(1));
+        let v = Value::Map(m);
+        let s = format!("{v}");
+        // Keys are sorted alphabetically.
+        assert!(s.contains("a"));
+        assert!(s.contains("b"));
+        assert!(s.starts_with('{'));
+        assert!(s.ends_with('}'));
+    }
+
+    /// T1.20 — Value::to_map_key for every variant (covers all
+    /// arms in the to_map_key match, lines 63-71).
+    #[test]
+    fn t1_20_value_to_map_key_all_variants() {
+        assert_eq!(Value::U64(42).to_map_key(), "u:42");
+        assert_eq!(Value::Bool(true).to_map_key(), "b:true");
+        assert_eq!(Value::Str("foo".into()).to_map_key(), "s:foo");
+        let mut a = [0u8; 32];
+        a[0] = 0xAB;
+        assert!(Value::Address(a).to_map_key().starts_with("a:"));
+        assert_eq!(Value::Null.to_map_key(), "n:null");
+        assert_eq!(Value::Map(Default::default()).to_map_key(), "m:map");
+        assert_eq!(Value::Array(vec![]).to_map_key(), "r:array");
+    }
 }

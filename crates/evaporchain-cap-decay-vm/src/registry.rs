@@ -681,4 +681,15 @@ mod tests {
             }
         }
     }
+
+    /// T1.20 — CapRegistry::new, len, is_empty on fresh registry
+    /// (lines 46-56).
+    #[test]
+    fn t1_20_registry_new_and_empty() {
+        let r = CapRegistry::new();
+        assert!(r.is_empty());
+        assert_eq!(r.len(), 0);
+        let r_default: CapRegistry = Default::default();
+        assert!(r_default.is_empty());
+    }
 }

@@ -143,7 +143,7 @@ export function AiAssistant() {
           </div>
           <div>
             <h1 className="text-sm font-semibold text-zinc-800">AI Assistant</h1>
-            <p className="text-[10px] text-zinc-400">Natural language wallet</p>
+            <p className="text-xs text-zinc-400">Natural language wallet</p>
           </div>
         </div>
       </div>
@@ -169,7 +169,7 @@ export function AiAssistant() {
             <button
               key={i}
               onClick={() => handleSend(s)}
-              className="px-3 py-1.5 rounded-full bg-white border border-zinc-200 text-[11px] text-zinc-600 font-medium whitespace-nowrap hover:border-cyan-300 hover:text-cyan-700 transition"
+              className="px-3 py-1.5 rounded-full bg-white border border-zinc-200 text-xs text-zinc-600 font-medium whitespace-nowrap hover:border-cyan-300 hover:text-cyan-700 transition"
             >
               {s}
             </button>
@@ -287,7 +287,7 @@ function renderFormattedText(text: string, isUser: boolean) {
           return (
             <code
               key={`${i}-${j}`}
-              className={`px-1 py-0.5 rounded text-[11px] font-mono ${
+              className={`px-1 py-0.5 rounded text-xs font-mono ${
                 isUser ? "bg-cyan-700/50" : "bg-zinc-100"
               }`}
             >
@@ -309,7 +309,7 @@ function ActionCard({ action }: { action: AiAction }) {
     case "preview_transfer":
       return (
         <div className="mt-2 p-3 rounded-lg bg-cyan-50 border border-cyan-200">
-          <p className="text-[10px] font-semibold text-cyan-700 uppercase tracking-wide mb-1">Transfer Preview</p>
+          <p className="text-xs font-semibold text-cyan-700 uppercase tracking-wide mb-1">Transfer Preview</p>
           <div className="space-y-1">
             <div className="flex justify-between">
               <span className="text-xs text-zinc-500">Amount</span>
@@ -317,7 +317,7 @@ function ActionCard({ action }: { action: AiAction }) {
             </div>
             <div className="flex justify-between">
               <span className="text-xs text-zinc-500">To</span>
-              <span className="text-[11px] font-mono text-zinc-600">
+              <span className="text-xs font-mono text-zinc-600">
                 {action.to.slice(0, 10)}...{action.to.slice(-6)}
               </span>
             </div>
@@ -328,7 +328,7 @@ function ActionCard({ action }: { action: AiAction }) {
     case "preview_refresh":
       return (
         <div className="mt-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
-          <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-1">Refresh Preview</p>
+          <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Refresh Preview</p>
           <div className="space-y-1">
             <div className="flex justify-between">
               <span className="text-xs text-zinc-500">Object</span>
@@ -345,7 +345,7 @@ function ActionCard({ action }: { action: AiAction }) {
     case "preview_bridge":
       return (
         <div className="mt-2 p-3 rounded-lg bg-violet-50 border border-violet-200">
-          <p className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide mb-1">Bridge Preview</p>
+          <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-1">Bridge Preview</p>
           <div className="space-y-1">
             <div className="flex justify-between">
               <span className="text-xs text-zinc-500">Amount</span>
@@ -399,17 +399,17 @@ function ActionCard({ action }: { action: AiAction }) {
             >
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-zinc-700">{r.objectName}</span>
-                <span className={`text-[10px] font-semibold uppercase ${
+                <span className={`text-xs font-semibold uppercase ${
                   r.urgency === "critical" ? "text-red-600" : r.urgency === "warning" ? "text-amber-600" : "text-zinc-400"
                 }`}>
                   {r.urgency}
                 </span>
               </div>
               <div className="flex justify-between mt-0.5">
-                <span className="text-[10px] text-zinc-500">
+                <span className="text-xs text-zinc-500">
                   {r.currentEnergy}/{r.maxEnergy} energy
                 </span>
-                <span className="text-[10px] text-zinc-500">
+                <span className="text-xs text-zinc-500">
                   ~{r.estimatedCost} EVAP
                 </span>
               </div>
@@ -426,7 +426,7 @@ function ActionCard({ action }: { action: AiAction }) {
 function MiniStat({ label, value }: { label: string; value?: string }) {
   return (
     <div>
-      <p className="text-[10px] text-zinc-400">{label}</p>
+      <p className="text-xs text-zinc-400">{label}</p>
       <p className="text-xs font-semibold text-zinc-700">{value ?? "--"}</p>
     </div>
   );

@@ -507,4 +507,81 @@ mod tests {
             report.metrics.valid_samples
         );
     }
+
+    /// Lying-coords peer: returns a CellProof whose `(row, col)`
+    /// fields don't match the queried position. The sampler MUST
+    /// reject the proof + mark the peer OutOfRange. Covers lines
+    /// 151-156 (the `proof.row != q.row || proof.col != q.col`
+    /// branch).
+    struct LyingCoordsCellSource {
+        package: BlockDA2DPackage,
+        peer_id: String,
+        faulty_log: RefCell<Vec<(String, PeerFaultReason)>>,
+    }
+
+    impl CellSource for LyingCoordsCellSource {
+        fn fetch_cell(
+            &self,
+            _height: u64,
+            row: usize,
+            col: usize,
+        ) -> Result<(String, CellProof), CellSourceError> {
+            let da = BlockDA2D::new();
+            let mut proof = da
+                .prove_cell(&self.package, row, col)
+                .map_err(|e| CellSourceError::Malformed(format!("{e:?}")))?;
+            // Lie about coords: swap row/col so the sampler's coord
+            // check trips.
+            proof.row = col;
+            proof.col = row;
+            Ok((self.peer_id.clone(), proof))
+        }
+
+        fn report_faulty(&self, peer_id: &str, reason: PeerFaultReason) {
+            self.faulty_log
+                .borrow_mut()
+                .push((peer_id.to_string(), reason));
+        }
+    }
+
+    #[test]
+    fn t1_20_lying_coords_peer_marked_out_of_range() {
+        let package = build_test_package();
+        let header = package.header.clone();
+        let _faulty_log: RefCell<Vec<(String, PeerFaultReason)>> =
+            RefCell::new(Vec::new());
+        let source = LyingCoordsCellSource {
+            package,
+            peer_id: "liar".into(),
+            faulty_log: RefCell::new(Vec::new()),
+        };
+        let sampler = LightClientSampler::new(source);
+
+        let report = sampler.sample_block(&header, 1, 8, b"t1_20-coords-lie");
+        // All samples should fail since the lying source returns bad coords.
+        assert!(!report.results.iter().all(|r| r.valid));
+        // The liar must appear in faulty_peers under OutOfRange.
+        let logged = report
+            .faulty_peers
+            .iter()
+            .any(|(peer, reason)| peer == "liar" && matches!(reason, PeerFaultReason::OutOfRange));
+        assert!(logged, "lying-coords peer must be marked OutOfRange");
+    }
+
+    /// T1.20 — LightClientSampler::da() returns a reference to the
+    /// inner BlockDA2D. Covers lines 216-218 (test-mode accessor).
+    #[test]
+    fn t1_20_sampler_da_accessor() {
+        let package = build_test_package();
+        let source = MockCellSource {
+            package,
+            peers: vec![("p".into(), PeerBehavior::Honest)],
+            round_robin: RefCell::new(0),
+            faulty_log: RefCell::new(Vec::new()),
+        };
+        let sampler = LightClientSampler::new(source);
+        // The accessor just needs to compile + return; the value
+        // is opaque to the caller.
+        let _ = sampler.da();
+    }
 }

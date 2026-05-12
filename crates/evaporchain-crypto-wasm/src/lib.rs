@@ -29,33 +29,85 @@
 //!
 //! **Do NOT use this module in regular web pages** — any same-origin script
 //! could read the WASM linear memory and extract secret keys.
+//!
+//! # Compile-time enforcement — `extension-context` feature flag
+//!
+//! The two SK-touching `wasm_bindgen` entry points (`mlDsaKeygen` and
+//! `mlDsaSign`) are gated behind a Cargo feature `extension-context`
+//! (OFF by default). Building this crate without that feature produces
+//! a WASM binary that exposes ONLY the public-key surfaces
+//! (`mlDsaVerify`, `deriveAddress`) to JS — making wallet-style
+//! secret handling structurally impossible.
+//!
+//! The browser extension's reproducible build script
+//! (`extension/scripts/build-wasm.sh`) enables `extension-context`
+//! explicitly. Any other build path that omits the flag produces a
+//! "verifier-only" WASM that cannot leak secrets through any wired
+//! JS export. See `docs/runbooks/wasm-crypto-csp.md` for the threat
+//! model + opt-in discipline.
 
 use pqc_dilithium::Keypair;
 use sha2::{Digest, Sha256};
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
-// Compile-time layout sanity check — `reconstruct_keypair` below
+// Compile-time layout sanity checks — `reconstruct_keypair` below
 // relies on `Keypair`'s in-memory layout being exactly
 // `{ public: [u8; PUBLICKEYBYTES], secret: [u8; SECRETKEYBYTES] }`
-// with no padding. The upstream `pqc_dilithium 0.2.0` struct
-// (api.rs:5-8) is `#[derive(Copy, Clone, ...)]` over two
-// fixed-size byte arrays, which Rust lays out contiguously by
-// convention; this assert flips that convention into a load-bearing
-// invariant. Any future upstream change that adds padding,
-// reorders fields, or wraps a field in a smart pointer trips
-// the build here instead of producing silent memory corruption.
-const _ASSERT_KEYPAIR_LAYOUT: () = {
+// with `public` at byte offset 0 and no padding. The upstream
+// `pqc_dilithium 0.2.0` struct (api.rs:5-8) is `#[derive(Copy, Clone,
+// ...)]` over two fixed-size byte arrays. Critically, the struct is
+// **not `#[repr(C)]`**, so under Rust's default `repr(Rust)` the
+// compiler is technically free to reorder fields and add padding.
+// In practice today every Rust compiler lays out plain-byte-array
+// structs in declaration order with no padding, but we pin that
+// behaviour explicitly with two checks rather than rely on it
+// implicitly.
+//
+// (1) Size invariant — rules out padding. With two `[u8; N]` fields
+//     of total declared size `PK + SK`, any padding would push
+//     `size_of` above that bound.
+// (2) `public` at offset 0 — rules out a hypothetical future
+//     compiler / upstream-rewrite that swapped the field order.
+//     If `secret` came first, our `copy_nonoverlapping(.., kp_ptr.add(PK), SK)`
+//     would clobber the `public` slot and the unrelated trailing
+//     bytes — silent memory corruption.
+//
+// We can NOT check `offset_of!(Keypair, secret)` from this crate
+// because `secret` is a private field upstream — the privacy check
+// fires in 1.77+. The `(1) + (2)` pair is sufficient: with no padding
+// and `public` at offset 0, the only place `secret` can be is at
+// offset `PUBLICKEYBYTES`.
+const _ASSERT_KEYPAIR_SIZE: () = {
     if std::mem::size_of::<Keypair>()
         != pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES
     {
-        panic!("pqc_dilithium::Keypair layout drifted — reconstruct_keypair's offset math is no longer valid; pin or audit before continuing");
+        panic!("pqc_dilithium::Keypair size drifted — reconstruct_keypair's offset math is no longer valid; pin or audit before continuing");
     }
+};
+
+const _ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN: () = {
+    if std::mem::offset_of!(Keypair, public) != 0 {
+        panic!("pqc_dilithium::Keypair field order drifted — `public` is no longer at offset 0; reconstruct_keypair would clobber the wrong slot");
+    }
+};
+
+// Legacy name kept for any out-of-tree code that referenced it; both
+// new asserts above were previously bundled under this single name.
+#[allow(dead_code)]
+const _ASSERT_KEYPAIR_LAYOUT: () = {
+    let _ = _ASSERT_KEYPAIR_SIZE;
+    let _ = _ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN;
 };
 
 /// Generate a new ML-DSA keypair.
 ///
 /// Returns a JS object `{ publicKey: Uint8Array, secretKey: Uint8Array }`.
+///
+/// ⚠️ **SK-exposing surface** — only compiled when the
+/// `extension-context` Cargo feature is enabled. See the module
+/// header for the threat model.
+#[cfg(feature = "extension-context")]
 #[wasm_bindgen(js_name = "mlDsaKeygen")]
 pub fn ml_dsa_keygen() -> Result<JsValue, JsValue> {
     let kp = Keypair::generate();
@@ -88,6 +140,14 @@ pub fn ml_dsa_keygen() -> Result<JsValue, JsValue> {
 /// wrapper's `Drop` runs on every exit path — normal return, `?`
 /// short-circuit, or panic unwind — so signature material does not
 /// linger in any code path.
+///
+/// ⚠️ **SK-touching surface** — only compiled when the
+/// `extension-context` Cargo feature is enabled. The SK byte slice
+/// passed from JS lives in WASM linear memory during the call;
+/// gating the function entirely prevents that exposure window from
+/// existing in non-extension builds. See the module header for the
+/// threat model.
+#[cfg(feature = "extension-context")]
 #[wasm_bindgen(js_name = "mlDsaSign")]
 pub fn ml_dsa_sign(secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>, JsValue> {
     let kp = reconstruct_keypair(secret_key).map_err(|e| JsValue::from_str(&e))?;
@@ -127,16 +187,41 @@ pub fn derive_address(public_key: &[u8]) -> String {
 /// `cfg(dilithium_kat)` flag, not available in the default build.
 ///
 /// We therefore use a layout-dependent unsafe path, hardened with
-/// two layout guards plus an explicit-zeroize Drop discipline at
+/// **three** layout guards plus an explicit-zeroize Drop discipline at
 /// the call site:
 ///
 /// 1. **Compile-time size assertion** at module top —
+///    `_ASSERT_KEYPAIR_SIZE` pins
 ///    `size_of::<Keypair>() == PUBLICKEYBYTES + SECRETKEYBYTES`.
-///    Catches added padding or reordered fields when the
-///    dependency is bumped (silent memory corruption → build
-///    failure).
-/// 2. **Length-check** — secret-key byte slice must be exactly
+///    Rules out any future upstream change that adds padding (silent
+///    memory corruption → build failure).
+/// 2. **Compile-time field-offset assertion** at module top —
+///    `_ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN` pins
+///    `offset_of!(Keypair, public) == 0`. Rules out a hypothetical
+///    upstream reorder that puts `secret` first; together with (1)
+///    this implies `secret` is at offset `PUBLICKEYBYTES`.
+/// 3. **Length-check** — secret-key byte slice must be exactly
 ///    `SECRETKEYBYTES`.
+///
+/// The `pqc_dilithium 0.2.0` `Keypair` struct is `#[derive(Copy, ...)]`
+/// over two `[u8; N]` fields with NO `#[repr(C)]`. Rust's default
+/// `repr(Rust)` is technically free to reorder fields, but in
+/// practice every Rust compiler lays plain-byte-array structs out in
+/// declaration order with no padding. Guards (1) and (2) pin that
+/// implicit behaviour explicitly — any compiler upgrade or upstream
+/// rewrite that broke either invariant trips the build before this
+/// unsafe block runs.
+///
+/// **Why not call the upstream `crypto_sign_signature` directly?**
+/// That function (in `pqc_dilithium::sign`) takes an `sk: &[u8]`
+/// argument and would let us avoid the layout-dependent overwrite
+/// entirely. But it's only `pub use`'d from the crate root under
+/// `#[cfg(dilithium_kat)]` — a build-time cfg flag, not a Cargo
+/// feature — so we can't enable it from downstream without
+/// global `RUSTFLAGS` (which would affect every other crate too) or
+/// vendoring/forking `pqc_dilithium`. Both alternatives were
+/// considered and rejected as more invasive than the hardened
+/// unsafe block.
 ///
 /// The reconstructed keypair's `public` field is whatever the
 /// throwaway `Keypair::generate()` produced — it does NOT match
@@ -155,6 +240,7 @@ pub fn derive_address(public_key: &[u8]) -> String {
 /// [`zeroize_keypair`] on the returned keypair immediately after
 /// `kp.sign` returns, so the secret bytes do not linger in the
 /// stack slot beyond the sign call.
+#[cfg(any(feature = "extension-context", test))]
 fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<ZeroizingKeypair, String> {
     use pqc_dilithium::SECRETKEYBYTES;
     if sk_bytes.len() != SECRETKEYBYTES {
@@ -171,13 +257,20 @@ fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<ZeroizingKeypair, String> {
     // guarded by the compile-time size assertion at module top.
     let mut kp = Keypair::generate();
 
-    // SAFETY: layout invariant `{ public: [u8; PK], secret: [u8; SK] }`
-    // with `size_of == PK + SK` is asserted at compile time
-    // (`_ASSERT_KEYPAIR_LAYOUT` at module top). The caller-supplied
-    // bytes are exactly `SECRETKEYBYTES` per the length check
-    // immediately above. `copy_nonoverlapping` is sound for
-    // distinct allocations (caller-supplied slice vs our stack
-    // `kp`).
+    // SAFETY: layout invariants
+    //   (a) `size_of::<Keypair>() == PK + SK` — _ASSERT_KEYPAIR_SIZE
+    //       (rules out padding)
+    //   (b) `offset_of!(Keypair, public) == 0` —
+    //       _ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN (rules out field swap)
+    //   (a) + (b) together imply `secret` lives at byte offset PK
+    //       and the write below lands in the `secret` slot.
+    //
+    // The caller-supplied bytes are exactly `SECRETKEYBYTES` per the
+    // length check immediately above. `copy_nonoverlapping` is sound
+    // for distinct allocations (caller-supplied slice vs our stack
+    // `kp`); the source and destination cannot overlap because `kp`
+    // is freshly stack-allocated and `sk_bytes` is the caller's
+    // borrow.
     unsafe {
         let kp_ptr = &mut kp as *mut Keypair as *mut u8;
         let sk_offset = pqc_dilithium::PUBLICKEYBYTES;
@@ -202,8 +295,10 @@ fn reconstruct_keypair(sk_bytes: &[u8]) -> Result<ZeroizingKeypair, String> {
 /// `size_of::<Keypair>() == PUBLICKEYBYTES + SECRETKEYBYTES`. A
 /// future upstream change that adds padding or non-`u8` fields
 /// would trip the build before reaching this code.
+#[cfg(any(feature = "extension-context", test))]
 struct ZeroizingKeypair(Keypair);
 
+#[cfg(any(feature = "extension-context", test))]
 impl std::ops::Deref for ZeroizingKeypair {
     type Target = Keypair;
     fn deref(&self) -> &Keypair {
@@ -211,12 +306,14 @@ impl std::ops::Deref for ZeroizingKeypair {
     }
 }
 
+#[cfg(any(feature = "extension-context", test))]
 impl std::ops::DerefMut for ZeroizingKeypair {
     fn deref_mut(&mut self) -> &mut Keypair {
         &mut self.0
     }
 }
 
+#[cfg(any(feature = "extension-context", test))]
 impl Drop for ZeroizingKeypair {
     fn drop(&mut self) {
         zeroize_keypair(&mut self.0);
@@ -230,11 +327,16 @@ impl Drop for ZeroizingKeypair {
 /// assertion as the unsafe write in `reconstruct_keypair` —
 /// `Keypair` is exactly `PUBLICKEYBYTES + SECRETKEYBYTES` contiguous
 /// bytes with no `Drop` of its own.
+#[cfg(any(feature = "extension-context", test))]
 fn zeroize_keypair(kp: &mut Keypair) {
     let total = pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES;
-    // SAFETY: layout invariant asserted at module top. Byte-wide
-    // slice write is sound because the entire struct is plain
-    // bytes (two `[u8; N]` fields, no Drop, no padding).
+    // SAFETY: layout invariants pinned by `_ASSERT_KEYPAIR_SIZE` and
+    // `_ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN` at module top. With `public`
+    // at offset 0, no padding, and `Keypair` consisting entirely of
+    // two `[u8; N]` fields, the whole struct is `total` contiguous
+    // bytes that we can re-borrow as a `&mut [u8]` slice. `Keypair`
+    // has no `Drop` so byte-wide overwrite cannot violate any
+    // invariant; it's plain-old-data.
     let bytes: &mut [u8] =
         unsafe { std::slice::from_raw_parts_mut(kp as *mut Keypair as *mut u8, total) };
     bytes.zeroize();
@@ -281,6 +383,60 @@ mod tests {
     #[test]
     fn test_invalid_sk_length() {
         assert!(reconstruct_keypair(&[0u8; 10]).is_err());
+    }
+
+    /// CRITICAL-1 finish — empirically pin the layout invariants the
+    /// `unsafe` block in `reconstruct_keypair` depends on. The
+    /// `_ASSERT_KEYPAIR_SIZE` and `_ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN`
+    /// constants at module top catch this at compile time; this test
+    /// catches the same regression at run time AND demonstrates the
+    /// observable behaviour for anyone reading the test suite.
+    ///
+    /// If pqc_dilithium ever bumps to a version that reorders fields
+    /// or adds padding, both the compile-time assert AND this test
+    /// fire — making the layout dependency loudly visible from two
+    /// different signal sources.
+    #[test]
+    fn keypair_layout_invariants_hold_at_runtime() {
+        // Invariant 1: total struct size matches PK + SK exactly
+        // (no padding, no extra fields).
+        assert_eq!(
+            std::mem::size_of::<Keypair>(),
+            pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES,
+            "Keypair size must equal PK + SK — no padding, no extras"
+        );
+
+        // Invariant 2: `public` is at offset 0. We can't directly
+        // check `offset_of!(Keypair, secret)` because `secret` is a
+        // private field upstream (1.77+ privacy check fires), but
+        // invariants (1) + (2) together imply `secret` is at offset
+        // PUBLICKEYBYTES.
+        assert_eq!(
+            std::mem::offset_of!(Keypair, public),
+            0,
+            "Keypair.public must be at offset 0 — `reconstruct_keypair`'s \
+             `kp_ptr.add(PUBLICKEYBYTES)` write assumes this and would \
+             clobber the wrong slot if `secret` came first"
+        );
+
+        // Invariant 3 (observable): after generating a real Keypair,
+        // reading the first PUBLICKEYBYTES bytes via raw pointer
+        // produces exactly the `public` field's bytes. This proves
+        // the layout assumption is correct in practice, not just per
+        // the type system.
+        let kp = Keypair::generate();
+        let raw_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &kp as *const Keypair as *const u8,
+                std::mem::size_of::<Keypair>(),
+            )
+        };
+        assert_eq!(
+            &raw_bytes[..pqc_dilithium::PUBLICKEYBYTES],
+            &kp.public[..],
+            "first PK bytes of the struct must equal Keypair.public — \
+             empirical confirmation of offset 0"
+        );
     }
 
     /// AUDIT_2026_05_06.md CRITICAL-1 hardening — round-trip

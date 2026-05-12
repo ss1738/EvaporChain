@@ -113,7 +113,7 @@ export function HlwaCard() {
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-xs font-semibold text-zinc-800">HLWA wrapped asset</h3>
-          <p className="text-[10px] text-zinc-500 mt-0.5">
+          <p className="text-xs text-zinc-500 mt-0.5">
             Effective supply decays as attestation freshness ages (λ-decay).
           </p>
         </div>
@@ -124,7 +124,7 @@ export function HlwaCard() {
 
       {error && (
         <div className="px-2 py-1.5 rounded bg-red-50 border border-red-200">
-          <p className="text-[10px] text-red-600">{error}</p>
+          <p className="text-xs text-red-600">{error}</p>
         </div>
       )}
 
@@ -163,7 +163,7 @@ export function HlwaCard() {
       {/* Excess-to-burn warning */}
       {excess > 0 && (
         <div className="px-2 py-1.5 rounded bg-amber-50 border border-amber-200">
-          <p className="text-[10px] text-amber-700">
+          <p className="text-xs text-amber-700">
             <span className="font-semibold">{excess.toLocaleString()} HLWA</span> excess
             above effective supply — bridge would burn this on next anti-inflation gate.
           </p>
@@ -174,14 +174,14 @@ export function HlwaCard() {
         <button
           onClick={fetchSupply}
           disabled={loading}
-          className="flex-1 py-1.5 rounded-lg bg-zinc-100 text-zinc-700 text-[11px] font-medium hover:bg-zinc-200 transition disabled:opacity-50"
+          className="flex-1 py-1.5 rounded-lg bg-zinc-100 text-zinc-700 text-xs font-medium hover:bg-zinc-200 transition disabled:opacity-50"
         >
           {loading ? "…" : "Refresh"}
         </button>
         <button
           onClick={handleReAttest}
           disabled={reAttesting || loading}
-          className="flex-1 py-1.5 rounded-lg bg-cyan-600 text-white text-[11px] font-medium hover:bg-cyan-700 transition disabled:opacity-50"
+          className="flex-1 py-1.5 rounded-lg bg-cyan-600 text-white text-xs font-medium hover:bg-cyan-700 transition disabled:opacity-50"
         >
           {reAttesting ? "Re-attesting…" : "Re-attest from origin"}
         </button>

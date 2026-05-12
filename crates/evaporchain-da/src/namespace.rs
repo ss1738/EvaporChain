@@ -675,4 +675,58 @@ mod tests {
             }
         );
     }
+
+    /// T1.20 — NmtBuildError::Display prints reserved namespace hex
+    /// (lines 30-38). Previously the Display impl was unreached
+    /// (only PartialEq comparison used in tests).
+    #[test]
+    fn t1_20_nmt_build_error_display() {
+        let err = NmtBuildError::ReservedNamespace {
+            namespace: NAMESPACE_MAX,
+        };
+        let s = format!("{}", err);
+        assert!(s.contains("reserved namespace"));
+        assert!(s.contains("ffffffffffffffff"));
+    }
+
+    /// T1.20 — from_blobs silently filters reserved-namespace blobs
+    /// with a warning (lines 173-178 — the warn-and-drop branch).
+    #[test]
+    fn t1_20_from_blobs_drops_reserved_with_warning() {
+        let blobs = vec![
+            NamespacedBlob {
+                namespace: [1u8; 8],
+                data: vec![0xAA],
+            },
+            NamespacedBlob {
+                namespace: NAMESPACE_MAX,
+                data: vec![0xBB],
+            },
+        ];
+        let nmt = NamespaceMerkleTree::from_blobs(&blobs);
+        // Only the non-reserved blob makes it into the commitments.
+        let commits = nmt.blob_commitments();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].namespace, [1u8; 8]);
+    }
+
+    /// T1.20 — from_leaves silently filters reserved-namespace leaves
+    /// with a warning (lines 219-228 — the warn-and-drop branch).
+    #[test]
+    fn t1_20_from_leaves_drops_reserved_with_warning() {
+        let leaves = vec![
+            NmtLeaf {
+                namespace: [1u8; 8],
+                data_hash: [0xAA; 32],
+            },
+            NmtLeaf {
+                namespace: NAMESPACE_MAX,
+                data_hash: [0xBB; 32],
+            },
+        ];
+        let nmt = NamespaceMerkleTree::from_leaves(leaves);
+        // The reserved leaf was filtered; only one survives.
+        let commits = nmt.blob_commitments();
+        assert_eq!(commits.len(), 1);
+    }
 }

@@ -175,4 +175,35 @@ mod tests {
         deduped.dedup();
         assert_eq!(uris.len(), deduped.len(), "duplicate resource URIs");
     }
+
+    /// T1.20 — read_resource with missing uri returns
+    /// "Missing 'uri' parameter" error. Never reaches the HTTP
+    /// dispatch.
+    #[tokio::test]
+    async fn t1_20_read_resource_missing_uri_errors() {
+        let ctx = Context {
+            node_url: "http://localhost:0".into(),
+            client: reqwest::Client::new(),
+            api_token: None,
+        };
+        let r = read_resource(&ctx, &json!({})).await;
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("Missing"));
+    }
+
+    /// T1.20 — read_resource with unknown uri scheme falls
+    /// through the match to the _ => Err arm. Covers the unknown-
+    /// URI default branch.
+    #[tokio::test]
+    async fn t1_20_read_resource_unknown_uri_errors() {
+        let ctx = Context {
+            node_url: "http://localhost:0".into(),
+            client: reqwest::Client::new(),
+            api_token: None,
+        };
+        let r = read_resource(&ctx, &json!({"uri": "evaporchain://nope"})).await;
+        assert!(r.is_err());
+        let e = r.unwrap_err();
+        assert!(e.contains("Unknown resource URI"), "got: {e}");
+    }
 }

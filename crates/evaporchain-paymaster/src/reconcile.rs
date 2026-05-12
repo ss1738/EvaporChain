@@ -304,4 +304,35 @@ mod tests {
         assert_eq!(m.last_reconcile_unix_ms.load(std::sync::atomic::Ordering::Relaxed), 0);
         assert_eq!(m.drift_detections_total.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
+
+    /// T1.20 — check_alignment returns ReconcileError::BadStatus
+    /// when the chain RPC returns a non-2xx (lines 97-101).
+    /// Spins a mock chain that always 500s.
+    #[tokio::test]
+    async fn t1_20_check_alignment_bad_status_propagated() {
+        async fn handler() -> (axum::http::StatusCode, &'static str) {
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom")
+        }
+        let app = Router::new().route("/api/address/:addr", get(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .ok();
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let url = format!("http://{addr}");
+
+        let r = check_alignment(&url, [1u8; 32], 0).await;
+        match r {
+            Err(ReconcileError::BadStatus { status, .. }) => assert_eq!(status, 500),
+            other => panic!("expected BadStatus, got {:?}", other),
+        }
+        let _ = shutdown_tx.send(());
+    }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { ImageOff } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent } from "@/utils/format";
@@ -74,7 +75,7 @@ export function NftGallery() {
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
-            <span className="text-3xl mb-3">🖼</span>
+            <ImageOff className="w-8 h-8 mb-3 text-zinc-600" strokeWidth={1.5} />
             <p className="text-sm text-zinc-500">No NFTs yet</p>
             <p className="text-xs text-zinc-600 mt-1">Mint your first on the marketplace</p>
           </div>
@@ -122,12 +123,12 @@ function NftCard({ nft, onTap }: { nft: NftItem; onTap: () => void }) {
             className="w-full h-full object-cover rounded-md"
           />
         ) : (
-          <span className="text-2xl text-zinc-600">🖼</span>
+          <ImageOff className="w-6 h-6 text-zinc-600" strokeWidth={1.5} />
         )}
       </div>
 
       {/* Name + collection */}
-      <p className="text-[11px] font-semibold text-zinc-200 truncate">{nft.name}</p>
+      <p className="text-xs font-semibold text-zinc-200 truncate">{nft.name}</p>
       <p className="text-[9px] text-zinc-500 truncate mb-1.5">{nft.collection}</p>
 
       {/* State badge */}
@@ -155,7 +156,7 @@ function SortPill({ label, active, onClick }: { label: string; active: boolean; 
   return (
     <button
       onClick={onClick}
-      className={`text-[10px] px-2.5 py-1 rounded-full border transition ${
+      className={`text-xs px-2.5 py-1 rounded-full border transition ${
         active
           ? "bg-evap-cyan/10 border-evap-cyan/40 text-evap-cyan"
           : "border-evap-border text-zinc-500 hover:text-zinc-300"
@@ -177,7 +178,7 @@ function FilterPill({ label, active, onClick }: { label: string; active: boolean
   return (
     <button
       onClick={onClick}
-      className={`text-[10px] px-2.5 py-1 rounded-full border transition ${
+      className={`text-xs px-2.5 py-1 rounded-full border transition ${
         active
           ? colorMap[label]
           : "border-evap-border text-zinc-500 hover:text-zinc-300"

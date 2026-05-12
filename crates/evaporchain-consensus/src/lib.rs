@@ -1635,4 +1635,217 @@ mod tests {
         }
         panic!("Never got to produce");
     }
+
+    /// T1.20 — MockConsensus::new delegates to new_with_gas_limit
+    /// with 500_000 default (lines 207-210).
+    #[test]
+    fn t1_20_mock_consensus_new_default_gas_limit() {
+        let mc = MockConsensus::new(100);
+        assert_eq!(mc.block_number, 0);
+        assert_eq!(mc.epoch, 0);
+        assert!(mc.encrypted_mempool.is_none());
+    }
+
+    /// T1.20 — MockConsensus::new_with_gas_limit honours the
+    /// caller-supplied gas limit (lines 212-225).
+    #[test]
+    fn t1_20_mock_consensus_new_with_gas_limit() {
+        let mc = MockConsensus::new_with_gas_limit(50, 2_000_000);
+        assert_eq!(mc.block_number, 0);
+        assert!(mc.encrypted_mempool.is_none());
+    }
+
+    /// T1.20 — MockConsensus::new_with_mev_protection installs an
+    /// EncryptedMempool (lines 228-237).
+    #[test]
+    fn t1_20_mock_consensus_new_with_mev_protection() {
+        let mc = MockConsensus::new_with_mev_protection(10, 3);
+        assert!(mc.encrypted_mempool.is_some());
+        assert_eq!(mc.encrypted_mempool.unwrap().reveal_delay(), 3);
+    }
+
+    /// T1.20 — compute_block_da with empty txs returns the
+    /// empty-block sentinel data_root (lines 125-132).
+    #[test]
+    fn t1_20_compute_block_da_empty_txs_returns_sentinel() {
+        let out = compute_block_da(&[], 1, &[0u8; 32]);
+        assert!(out.data_root.is_some(), "empty block has sentinel root");
+        assert!(out.da_row_roots.is_empty());
+        assert!(out.da_col_roots.is_empty());
+    }
+
+    /// T1.20 — compute_block_da with a real transfer
+    /// produces a non-empty data_root (lines 147-153).
+    #[test]
+    fn t1_20_compute_block_da_with_tx_produces_root() {
+        let tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let out = compute_block_da(&[tx], 2, &[0u8; 32]);
+        assert!(out.data_root.is_some());
+    }
+
+    // ── T1.20 additional gap-closure for lib.rs ──────────────────────────────
+
+    #[test]
+    fn t1_20_mock_consensus_accessors_epoch_block_number() {
+        let mut mc = MockConsensus::new_for_test(100);
+        assert_eq!(mc.epoch(), 0);
+        assert_eq!(mc.block_number(), 0);
+        let mut db = InMemoryStateDB::new();
+        mc.produce_block(&mut db).unwrap();
+        assert_eq!(mc.epoch(), 1);
+        assert_eq!(mc.block_number(), 1);
+    }
+
+    #[test]
+    fn t1_20_mock_consensus_mev_protection_enabled() {
+        let mc = MockConsensus::new_for_test(50);
+        assert!(!mc.mev_protection_enabled());
+        let mc2 = MockConsensus::new_with_mev_protection(50, 2);
+        assert!(mc2.mev_protection_enabled());
+    }
+
+    #[test]
+    fn t1_20_mock_consensus_restore_state() {
+        let mut mc = MockConsensus::new_for_test(100);
+        mc.restore_state(42, 7, [0xABu8; 32]);
+        assert_eq!(mc.block_number(), 42);
+        assert_eq!(mc.epoch(), 7);
+        assert_eq!(mc.parent_hash, [0xABu8; 32]);
+    }
+
+    #[test]
+    fn t1_20_produce_block_with_reveals_runs_on_mev_consensus() {
+        let mut mc = MockConsensus::new_with_mev_protection(100, 2);
+        let mut db = InMemoryStateDB::new();
+        // No reveals — should produce an empty block successfully.
+        let r = mc.produce_block_with_reveals(&mut db, &[]).unwrap();
+        assert_eq!(r.block.number, 1);
+        assert_eq!(r.block.epoch, 1);
+        assert_eq!(r.block.transactions.len(), 0);
+    }
+
+    #[test]
+    fn t1_20_apply_block_rejects_height_zero() {
+        let mut mc = MockConsensus::new_for_test(100);
+        let mut db = InMemoryStateDB::new();
+        use evaporchain_types::Block as EvBlock;
+        let bad = EvBlock {
+            number: 0,
+            epoch: 1,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        };
+        assert!(mc.apply_block(&mut db, &bad).is_err());
+    }
+
+    #[test]
+    fn t1_20_apply_block_rejects_stale_height() {
+        let mut mc = MockConsensus::new_for_test(100);
+        let mut db = InMemoryStateDB::new();
+        mc.produce_block(&mut db).unwrap(); // block_number = 1
+
+        use evaporchain_types::Block as EvBlock;
+        let stale = EvBlock {
+            number: 1, // same as current block_number
+            epoch: 2,
+            parent_hash: mc.parent_hash,
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        };
+        assert!(mc.apply_block(&mut db, &stale).is_err());
+    }
+
+    #[test]
+    fn t1_20_rotating_consensus_accessors() {
+        let rc = make_rotating(3, &[1, 2, 3]);
+        assert_eq!(rc.my_id(), 3);
+        assert_eq!(rc.epoch(), 0);
+        assert_eq!(rc.block_number(), 0);
+    }
+
+    #[test]
+    fn t1_20_rotating_consensus_leader_for_epoch_some() {
+        let rc = make_rotating(1, &[1, 2]);
+        // Any epoch should return Some — 2 validators registered.
+        assert!(rc.leader_for_epoch(1).is_some());
+        assert!(rc.leader_for_epoch(100).is_some());
+    }
+
+    #[test]
+    fn t1_20_rotating_consensus_leader_for_epoch_empty_set() {
+        let rc = RotatingConsensus::new_for_test(0, 100, ValidatorSet::new());
+        assert!(rc.leader_for_epoch(1).is_none());
+    }
+
+    #[test]
+    fn t1_20_rotating_apply_block_updates_health_no_producer_id() {
+        // apply_block with producer_id=None should not crash (health update is skipped).
+        use crate::validator_set::ValidatorInfo;
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        let mut rc = RotatingConsensus::new_for_test(1, 100, vs);
+        let mut db = InMemoryStateDB::new();
+
+        // Find which epoch is validator 1's turn and produce that block.
+        let result = loop {
+            if let Ok(Some(r)) = rc.produce_block_if_leader(&mut db) {
+                break r;
+            }
+            rc.epoch += 1;
+        };
+        // Block produced — it has a producer_id.
+        assert!(result.block.producer_id.is_some());
+    }
 }

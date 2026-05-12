@@ -47,4 +47,14 @@ mod tests {
         assert_eq!(c.refresh_pool_floor, 1_000);
         assert_eq!(c.sustained_epochs, 4_096);
     }
+
+    /// T1.20 — MortisCondition::default() routes through
+    /// default_genesis (lines 35-37).
+    #[test]
+    fn t1_20_default_equals_default_genesis() {
+        let d: MortisCondition = Default::default();
+        let g = MortisCondition::default_genesis();
+        assert_eq!(d.refresh_pool_floor, g.refresh_pool_floor);
+        assert_eq!(d.sustained_epochs, g.sustained_epochs);
+    }
 }

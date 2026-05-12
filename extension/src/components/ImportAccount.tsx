@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { BrowserKeyStore } from "@/crypto/keystore";
 import {
@@ -109,7 +110,7 @@ export function ImportAccount() {
           onClick={() => setView("create")}
           className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
         >
-          ← Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
         <h1 className="text-lg font-semibold text-zinc-100 mb-1">Import Wallet</h1>
         <p className="text-xs text-zinc-500 mb-4">
@@ -226,7 +227,7 @@ export function ImportAccount() {
 
       <div className="px-4 pb-4 mt-auto">
         <div className="px-3 py-2 rounded-md bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-500 text-center">
+          <p className="text-xs text-zinc-500 text-center">
             Your seed phrase and keys never leave your browser.
           </p>
         </div>

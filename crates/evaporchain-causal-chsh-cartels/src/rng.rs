@@ -171,4 +171,23 @@ mod tests {
         // we can assert a tight band.
         assert!(trues > 4_700 && trues < 5_300, "trues = {trues}");
     }
+
+    /// T1.20 — next_u32 produces a deterministic value from the
+    /// blake3-stream and two distinct seeds produce different
+    /// values. Lines 54-60.
+    #[test]
+    fn t1_20_next_u32_deterministic_and_seed_sensitive() {
+        let mut a = Blake3Rng::new(b"t1.20-domain", &[1u8; 32]);
+        let mut b = Blake3Rng::new(b"t1.20-domain", &[1u8; 32]);
+        // Same seed + domain → same u32 stream.
+        for _ in 0..8 {
+            assert_eq!(a.next_u32(), b.next_u32());
+        }
+        // Different seed → different u32 stream.
+        let mut c = Blake3Rng::new(b"t1.20-domain", &[2u8; 32]);
+        let mut d = Blake3Rng::new(b"t1.20-domain", &[1u8; 32]);
+        let cv: Vec<u32> = (0..8).map(|_| c.next_u32()).collect();
+        let dv: Vec<u32> = (0..8).map(|_| d.next_u32()).collect();
+        assert_ne!(cv, dv);
+    }
 }

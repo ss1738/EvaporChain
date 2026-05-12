@@ -189,7 +189,7 @@ export function HotColdStakeCard() {
           <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40">
             Stake
           </span>
-          <span className="text-[10px] font-medium text-zinc-300 uppercase tracking-wide">
+          <span className="text-xs font-medium text-zinc-300 uppercase tracking-wide">
             Hot / Cold equilibrium
           </span>
         </div>
@@ -200,7 +200,7 @@ export function HotColdStakeCard() {
 
       {error && (
         <div className="px-2 py-1.5 rounded bg-evap-red/10 border border-evap-red/30">
-          <p className="text-[10px] text-evap-red">{error}</p>
+          <p className="text-xs text-evap-red">{error}</p>
         </div>
       )}
 
@@ -210,7 +210,7 @@ export function HotColdStakeCard() {
           <span className="text-2xl font-bold text-zinc-100 tabular-nums">
             {tempPct.toFixed(1)}%
           </span>
-          <span className="text-[10px] text-zinc-500">hot fraction</span>
+          <span className="text-xs text-zinc-500">hot fraction</span>
           <span
             className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full border ${
               tempPct > 66
@@ -265,7 +265,7 @@ export function HotColdStakeCard() {
       {/* Move-stake controls */}
       <div className="rounded bg-evap-bg/60 border border-evap-border p-2 space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-zinc-400 uppercase tracking-wider">
+          <span className="text-xs text-zinc-400 uppercase tracking-wider">
             Move stake hot ↔ cold
           </span>
         </div>
@@ -275,7 +275,7 @@ export function HotColdStakeCard() {
             min={1}
             value={moveAmount}
             onChange={(e) => setMoveAmount(Math.max(0, Number(e.target.value) || 0))}
-            className="flex-1 px-2 py-1 rounded bg-evap-surface border border-evap-border text-[11px] text-zinc-200 tabular-nums focus:outline-none focus:border-evap-cyan/60"
+            className="flex-1 px-2 py-1 rounded bg-evap-surface border border-evap-border text-xs text-zinc-200 tabular-nums focus:outline-none focus:border-evap-cyan/60"
             placeholder="amount"
           />
           <span className="text-[9px] text-zinc-500">EVAP</span>
@@ -284,7 +284,7 @@ export function HotColdStakeCard() {
           <button
             onClick={handlePromote}
             disabled={busy !== "idle" || moveAmount <= 0}
-            className="flex-1 py-1.5 rounded text-[10px] font-medium bg-evap-amber/15 text-evap-amber border border-evap-amber/40 hover:border-evap-amber/70 transition disabled:opacity-50"
+            className="flex-1 py-1.5 rounded text-xs font-medium bg-evap-amber/15 text-evap-amber border border-evap-amber/40 hover:border-evap-amber/70 transition disabled:opacity-50"
             title="Move cold → hot (active block-production stake)"
           >
             {busy === "promote" ? "…" : "Cold → Hot"}
@@ -292,7 +292,7 @@ export function HotColdStakeCard() {
           <button
             onClick={handleDemote}
             disabled={busy !== "idle" || moveAmount <= 0}
-            className="flex-1 py-1.5 rounded text-[10px] font-medium bg-evap-cyan/15 text-evap-cyan border border-evap-cyan/40 hover:border-evap-cyan/70 transition disabled:opacity-50"
+            className="flex-1 py-1.5 rounded text-xs font-medium bg-evap-cyan/15 text-evap-cyan border border-evap-cyan/40 hover:border-evap-cyan/70 transition disabled:opacity-50"
             title="Move hot → cold (long-term reserve)"
           >
             {busy === "demote" ? "…" : "Hot → Cold"}

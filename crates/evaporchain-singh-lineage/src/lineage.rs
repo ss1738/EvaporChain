@@ -415,4 +415,23 @@ mod tests {
         let back: Lineage = serde_json::from_str(&s).unwrap();
         assert_eq!(l, back);
     }
+
+    /// T1.20 — remove_successor by non-issuer is rejected
+    /// (lines 122-125 — NotIssuer { caller, issuer } error).
+    #[test]
+    fn t1_20_remove_successor_requires_issuer() {
+        let mut l = doctrine_lineage();
+        l.add_successor(addr(1), daughter()).unwrap();
+        // addr(99) is not the issuer.
+        let err = l.remove_successor(addr(99), addr(2)).unwrap_err();
+        match err {
+            LineageError::NotIssuer { caller, issuer } => {
+                assert_eq!(caller, addr(99));
+                assert_eq!(issuer, addr(1));
+            }
+            other => panic!("expected NotIssuer, got {other:?}"),
+        }
+        // The successor stays in place.
+        assert_eq!(l.successors.len(), 1);
+    }
 }

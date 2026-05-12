@@ -76,7 +76,7 @@ export function CreateAccount() {
       </button>
 
       <div className="mt-4 px-4 py-2 rounded-md bg-evap-surface border border-evap-border">
-        <p className="text-[10px] text-zinc-500 text-center">
+        <p className="text-xs text-zinc-500 text-center">
           Keys are encrypted with AES-256-GCM and never leave your browser.
         </p>
       </div>

@@ -55,14 +55,40 @@ StartLimitBurst=5
 StartLimitIntervalSec=600
 StandardOutput=journal
 StandardError=journal
+# Pre-flight check: refuse to start if required env vars are missing.
+# See `docs/runbooks/production-env-checklist.md` for the full list +
+# rationale per var. For dev / non-MCP deployments, pass
+# `--allow-missing-mcp` to relax the MCP-token requirement.
+ExecStartPre={{HOME}}/EvaporChain/scripts/verify-prod-env.sh
 # Make sure the cargo / rustup PATH is available so any rebuild
 # triggered downstream doesn't fail with `cargo: command not found`.
 Environment="PATH={{HOME}}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="LAUNCHED_BY_SUPERVISOR=1"
+# ── Production env vars (see docs/runbooks/production-env-checklist.md) ──
+#
 # Admin endpoints (/api/admin/*) gated by this key. Cluster-soak shared
 # secret — same value on every validator so the operator can reach the
 # admin surface from a single curl. Rotate before any mainnet exposure.
 Environment="EVAPORCHAIN_ADMIN_KEY=cluster-soak-2026-05-admin-recovery-key"
+# Oracle ingest (/api/oracle/ingest) gated by this key. Uncomment +
+# replace with a strong random value for production:
+#Environment="EVAPORCHAIN_ORACLE_KEY=<openssl rand -hex 32>"
+# MCP-channel POSTs (/api/tx/*, /api/faucet, /api/contracts/*,
+# /api/fork_cert/prove, /api/mera/commit) gated by this token when
+# set. **Unset = pass-through (unauthenticated)** — set this on any
+# node exposed to AI-agent MCP traffic. The SAME value must be set on
+# both the node AND the MCP server process.
+#Environment="EVAPORCHAIN_MCP_API_TOKEN=<openssl rand -hex 32>"
+# BLS validator key at-rest encryption passphrase. WITHOUT this, the
+# node re-generates the BLS key on every restart, breaking
+# multi-validator clusters. Path-based to avoid /proc/<pid>/environ
+# exposure. See validator-passphrase-migration.md.
+#Environment="EVAPORCHAIN_VALIDATOR_KEY_PASS_FILE=/etc/evaporchain/bls.pass"
+# Optional TLS — uncomment for HTTPS on the API port. Without these,
+# the node binds plaintext HTTP (localhost or behind a TLS-terminating
+# reverse proxy only).
+#Environment="EVAPORCHAIN_TLS_CERT=/etc/evaporchain/tls.crt"
+#Environment="EVAPORCHAIN_TLS_KEY=/etc/evaporchain/tls.key"
 
 [Install]
 WantedBy=multi-user.target

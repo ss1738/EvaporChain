@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { daVerify, type DaVerifyOutcome } from "@/utils/da-verify";
 import { Header } from "./Header";
@@ -85,10 +86,10 @@ export function DaVerifyScreen() {
           onClick={() => setView("settings")}
           className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
         >
-          ← Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
         <h2 className="text-lg font-semibold text-zinc-200">Verify node honesty</h2>
-        <p className="text-[11px] text-zinc-500 mt-1 leading-snug">
+        <p className="text-xs text-zinc-500 mt-1 leading-snug">
           Run a Celestia-style data-availability sampling round against the{" "}
           {nodes.length === 1 ? "active node" : `${nodes.length} configured nodes`}.
           Cross-checks the on-chain <code>data_root</code> against the served 2D
@@ -104,7 +105,7 @@ export function DaVerifyScreen() {
           <label className="block text-xs font-medium text-zinc-400 mb-1">
             Active node <span className="text-zinc-600">(always sampled)</span>
           </label>
-          <div className="rounded-lg bg-evap-surface border border-evap-border px-3 py-2 text-[11px] font-mono text-zinc-400 break-all">
+          <div className="rounded-lg bg-evap-surface border border-evap-border px-3 py-2 text-xs font-mono text-zinc-400 break-all">
             {nodeUrl}
           </div>
         </div>
@@ -118,10 +119,10 @@ export function DaVerifyScreen() {
             onChange={(e) => setExtraPeersText(e.target.value)}
             placeholder={"http://node2:8080\nhttp://node3:8080"}
             rows={3}
-            className="w-full rounded-lg border border-evap-border bg-evap-surface px-3 py-2 text-[11px] font-mono text-zinc-200 placeholder:text-zinc-600 focus:border-evap-cyan focus:outline-none focus:ring-1 focus:ring-evap-cyan resize-y"
+            className="w-full rounded-lg border border-evap-border bg-evap-surface px-3 py-2 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:border-evap-cyan focus:outline-none focus:ring-1 focus:ring-evap-cyan resize-y"
           />
           {extraPeers.length > 0 && (
-            <p className="mt-1 text-[10px] text-zinc-500">
+            <p className="mt-1 text-xs text-zinc-500">
               Round-robining across {nodes.length} peers per cell.
             </p>
           )}
@@ -162,7 +163,7 @@ export function DaVerifyScreen() {
         </div>
 
         {/* Skip-attestation toggle (advanced) */}
-        <label className="flex items-center gap-2 text-[11px] text-zinc-500">
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
           <input
             type="checkbox"
             checked={skipChain}
@@ -205,12 +206,12 @@ export function DaVerifyScreen() {
               >
                 {outcome.passes ? "✓ Honest" : "✗ Not honest"}
               </span>
-              <span className="text-[10px] text-zinc-500">
+              <span className="text-xs text-zinc-500">
                 chain attest: {outcome.attestation.kind}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-1 text-[11px] text-zinc-400">
+            <div className="grid grid-cols-2 gap-1 text-xs text-zinc-400">
               <span>Samples valid:</span>
               <span className="text-zinc-200 text-right">
                 {outcome.samples_valid} / {outcome.samples_requested}
@@ -230,7 +231,7 @@ export function DaVerifyScreen() {
             </div>
 
             {outcome.attestation.kind === "mismatch" && (
-              <div className="rounded border border-evap-red/40 bg-evap-red/10 p-2 text-[10px] text-evap-red">
+              <div className="rounded border border-evap-red/40 bg-evap-red/10 p-2 text-xs text-evap-red">
                 <div className="font-semibold mb-0.5">data_root mismatch</div>
                 <div className="font-mono break-all">
                   on-chain: {outcome.attestation.on_chain.slice(0, 32)}…
@@ -242,7 +243,7 @@ export function DaVerifyScreen() {
             )}
 
             {outcome.faulty_peers.length > 0 && (
-              <div className="rounded border border-evap-red/40 bg-evap-red/10 p-2 text-[10px] text-evap-red space-y-0.5">
+              <div className="rounded border border-evap-red/40 bg-evap-red/10 p-2 text-xs text-evap-red space-y-0.5">
                 <div className="font-semibold">
                   ⚠ {outcome.faulty_peers.length} peer(s) served bad cells:
                 </div>
@@ -257,7 +258,7 @@ export function DaVerifyScreen() {
           </div>
         )}
 
-        <p className="text-[10px] text-zinc-600 leading-snug pt-2">
+        <p className="text-xs text-zinc-600 leading-snug pt-2">
           Verification math is byte-identical to the Rust chain code in{" "}
           <code>evaporchain-da</code>. The wallet rejects a block iff a Rust
           node would. See <code>extension/src/utils/da-verify.ts</code> for

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { CheckCircle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent, formatBalance } from "@/utils/format";
@@ -150,7 +151,7 @@ export function BatchRefresh() {
           </p>
           <button
             onClick={() => setResult(null)}
-            className="mt-2 w-full text-[10px] text-zinc-400 hover:text-zinc-200"
+            className="mt-2 w-full text-xs text-zinc-400 hover:text-zinc-200"
           >
             Dismiss
           </button>
@@ -174,7 +175,7 @@ export function BatchRefresh() {
 
       {/* Threshold selector */}
       <div className="px-4 pb-3">
-        <p className="text-[11px] text-zinc-400 mb-2">
+        <p className="text-xs text-zinc-400 mb-2">
           Refresh all objects below <span className="text-evap-cyan font-semibold">{threshold}%</span> energy
         </p>
         <div className="flex gap-1.5">
@@ -182,7 +183,7 @@ export function BatchRefresh() {
             <button
               key={pct}
               onClick={() => setThreshold(pct)}
-              className={`flex-1 py-1.5 text-[10px] rounded-lg border transition ${
+              className={`flex-1 py-1.5 text-xs rounded-lg border transition ${
                 threshold === pct
                   ? "bg-evap-cyan/10 border-evap-cyan/40 text-evap-cyan"
                   : "border-evap-border text-zinc-500 hover:text-zinc-300"
@@ -203,7 +204,7 @@ export function BatchRefresh() {
             onChange={e => setThreshold(Number(e.target.value))}
             className="flex-1 h-1 accent-evap-cyan"
           />
-          <span className="text-[10px] text-zinc-500 w-8 text-right">{threshold}%</span>
+          <span className="text-xs text-zinc-500 w-8 text-right">{threshold}%</span>
         </div>
       </div>
 
@@ -211,7 +212,7 @@ export function BatchRefresh() {
       <div className="flex-1 overflow-y-auto px-4 pb-2 space-y-1.5">
         {eligibleObjects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10">
-            <span className="text-2xl mb-2">✅</span>
+            <span className="text-2xl mb-2"><CheckCircle className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
             <p className="text-sm text-zinc-500">All objects above {threshold}%</p>
             <p className="text-xs text-zinc-600 mt-1">Nothing to refresh</p>
           </div>
@@ -246,10 +247,10 @@ export function BatchRefresh() {
                   {/* Object info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-[11px] font-semibold text-zinc-200 truncate">
+                      <p className="text-xs font-semibold text-zinc-200 truncate">
                         {obj.name || "Object"}
                       </p>
-                      <span className="text-[10px] text-zinc-500">{pct}%</span>
+                      <span className="text-xs text-zinc-500">{pct}%</span>
                     </div>
                     <EnergyBar current={obj.current_energy} max={obj.max_energy} showLabel={false} size="sm" />
                   </div>
@@ -276,10 +277,10 @@ export function BatchRefresh() {
       {selectedObjects.length > 0 && (
         <div className="px-4 py-3 border-t border-evap-border bg-evap-surface/50">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-zinc-400">
+            <span className="text-xs text-zinc-400">
               Total objects: <span className="text-zinc-200 font-medium">{selectedObjects.length}</span>
             </span>
-            <span className="text-[10px] text-zinc-400">
+            <span className="text-xs text-zinc-400">
               Total cost: <span className="text-evap-cyan font-medium">{formatBalance(totalCost)} EVAP</span>
             </span>
           </div>
@@ -304,7 +305,7 @@ export function BatchRefresh() {
       {/* Auto-refresh scheduler */}
       <div className="px-4 py-3 border-t border-evap-border">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] font-semibold text-zinc-300">Auto-Refresh Scheduler</p>
+          <p className="text-xs font-semibold text-zinc-300">Auto-Refresh Scheduler</p>
           <button
             onClick={() => setAutoEnabled(!autoEnabled)}
             className={`w-9 h-5 rounded-full transition relative ${
@@ -322,7 +323,7 @@ export function BatchRefresh() {
         {autoEnabled && (
           <div className="space-y-2">
             <div>
-              <p className="text-[10px] text-zinc-500 mb-1">
+              <p className="text-xs text-zinc-500 mb-1">
                 Keep objects above <span className="text-evap-cyan">{autoThreshold}%</span> automatically
               </p>
               <input
@@ -336,7 +337,7 @@ export function BatchRefresh() {
             </div>
 
             <div>
-              <p className="text-[10px] text-zinc-500 mb-1">Frequency</p>
+              <p className="text-xs text-zinc-500 mb-1">Frequency</p>
               <div className="flex gap-1.5">
                 {([
                   { key: "every-epoch" as AutoFrequency, label: "Every epoch" },

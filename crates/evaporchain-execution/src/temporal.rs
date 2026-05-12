@@ -792,4 +792,186 @@ mod tests {
         assert_eq!(result.callbacks[0].1, "critical");
         assert_eq!(engine.active_count(), 0);
     }
+
+    // ─── T1.20 additional gap-closure tests ──────────────────────────
+
+    /// T1.20 — empty inner_tx_bytes is rejected with EmptyInnerTx
+    /// error (previously uncovered branch at line 145-148).
+    #[test]
+    fn t1_20_deferred_reject_empty_inner_tx() {
+        let mut queue = DeferredQueue::new();
+        let tx = make_deferred_tx(addr(1), vec![TemporalGuard::AfterEpoch(5)], vec![]);
+        assert!(matches!(
+            queue.submit(tx),
+            Err(TemporalError::EmptyInnerTx)
+        ));
+    }
+
+    /// T1.20 — exercise BeforeEpoch standalone guard with no
+    /// AfterEpoch. Block stays in queue until expiry hits, then
+    /// expires. Covers the BeforeEpoch-only path through process_epoch.
+    #[test]
+    fn t1_20_deferred_before_epoch_standalone() {
+        let mut queue = DeferredQueue::new();
+        let contract_engine = ContractEngine::new();
+        let db = InMemoryStateDB::new();
+
+        let tx = make_deferred_tx(
+            addr(2),
+            vec![TemporalGuard::BeforeEpoch(10)],
+            vec![0xEF],
+        );
+        queue.submit(tx).unwrap();
+
+        // Epoch 0: BeforeEpoch(10) passes, no AfterEpoch so earliest=0,
+        // guard evaluates true → matures immediately.
+        let result = queue.process_epoch(0, &db, &contract_engine);
+        assert_eq!(result.matured, 1);
+    }
+
+    /// T1.20 — EnergyAbove guard: missing object should fail (energy=0
+    /// can't be above threshold). Previously uncovered branch at lines
+    /// 262-264.
+    #[test]
+    fn t1_20_deferred_energy_above_missing_object() {
+        let mut queue = DeferredQueue::new();
+        let contract_engine = ContractEngine::new();
+        let obj_id = addr(77);
+
+        let tx = make_deferred_tx(
+            addr(3),
+            vec![TemporalGuard::EnergyAbove(obj_id, 100)],
+            vec![0xDD],
+        );
+        queue.submit(tx).unwrap();
+
+        // Object NOT in DB → EnergyAbove returns false → guard fails.
+        let db = InMemoryStateDB::new();
+        let result = queue.process_epoch(1, &db, &contract_engine);
+        assert_eq!(result.matured, 0);
+        assert_eq!(result.pending, 1);
+    }
+
+    /// T1.20 — EnergyAbove guard with object that satisfies the
+    /// threshold. Then decay below threshold → guard fails. Covers
+    /// the EnergyAbove pass and fail branches.
+    #[test]
+    fn t1_20_deferred_energy_above_pass_then_decay() {
+        let mut queue = DeferredQueue::new();
+        let contract_engine = ContractEngine::new();
+        let obj_id = addr(78);
+
+        let tx = make_deferred_tx(
+            addr(4),
+            vec![TemporalGuard::EnergyAbove(obj_id, 200)],
+            vec![0xCD],
+        );
+        queue.submit(tx).unwrap();
+
+        let mut db = InMemoryStateDB::new();
+        db.put_object(make_object(obj_id, 1000, 10, 0));
+
+        // Epoch 0: energy=1000 > 200, matures.
+        let result = queue.process_epoch(0, &db, &contract_engine);
+        assert_eq!(result.matured, 1);
+    }
+
+    /// T1.20 — ContractInPhase guard: missing contract → fails.
+    /// Covers lines 304-306 (contract not found in engine).
+    #[test]
+    fn t1_20_deferred_contract_in_phase_missing_contract() {
+        let mut queue = DeferredQueue::new();
+        let contract_engine = ContractEngine::new();
+        let db = InMemoryStateDB::new();
+
+        let tx = make_deferred_tx(
+            addr(5),
+            vec![TemporalGuard::ContractInPhase(999, "active".into())],
+            vec![0xEE],
+        );
+        queue.submit(tx).unwrap();
+
+        // Contract 999 doesn't exist → guard fails → stays pending.
+        let result = queue.process_epoch(1, &db, &contract_engine);
+        assert_eq!(result.matured, 0);
+        assert_eq!(result.pending, 1);
+    }
+
+    /// T1.20 — DeferredQueue::is_empty and len() coverage for empty
+    /// path.
+    #[test]
+    fn t1_20_deferred_queue_empty_and_default() {
+        let queue = DeferredQueue::default();
+        assert!(queue.is_empty());
+        assert_eq!(queue.len(), 0);
+    }
+
+    /// T1.20 — DecayWatcherEngine::watchers_for_object filters by
+    /// object id. Previously uncovered branch.
+    #[test]
+    fn t1_20_watchers_for_object_filters() {
+        let mut engine = DecayWatcherEngine::new();
+        let obj_a = addr(60);
+        let obj_b = addr(61);
+
+        engine
+            .register(obj_a, 100, true, 1, "m".into(), "{}".into(), 0)
+            .unwrap();
+        engine
+            .register(obj_a, 200, true, 2, "m".into(), "{}".into(), 0)
+            .unwrap();
+        engine
+            .register(obj_b, 300, true, 3, "m".into(), "{}".into(), 0)
+            .unwrap();
+
+        let a_watchers = engine.watchers_for_object(&obj_a);
+        assert_eq!(a_watchers.len(), 2);
+        let b_watchers = engine.watchers_for_object(&obj_b);
+        assert_eq!(b_watchers.len(), 1);
+        let c_watchers = engine.watchers_for_object(&addr(99));
+        assert_eq!(c_watchers.len(), 0);
+    }
+
+    /// T1.20 — DeferredEntry Ord: lower earliest_epoch = higher
+    /// priority (min-heap). Tie-break by seq. Covers lines 86-104.
+    #[test]
+    fn t1_20_deferred_priority_order() {
+        let mut queue = DeferredQueue::new();
+        let contract_engine = ContractEngine::new();
+        let db = InMemoryStateDB::new();
+
+        // Submit in reverse order: later AfterEpoch first.
+        let tx_late = make_deferred_tx(addr(10), vec![TemporalGuard::AfterEpoch(20)], vec![0x02]);
+        let tx_early = make_deferred_tx(addr(11), vec![TemporalGuard::AfterEpoch(5)], vec![0x01]);
+        queue.submit(tx_late).unwrap();
+        queue.submit(tx_early).unwrap();
+
+        // Epoch 5: only the earlier one matures.
+        let result = queue.process_epoch(5, &db, &contract_engine);
+        assert_eq!(result.matured, 1);
+        assert_eq!(result.matured_txs[0].1, vec![0x01]);
+        assert_eq!(result.pending, 1);
+
+        // Epoch 25: the later one matures.
+        let result = queue.process_epoch(25, &db, &contract_engine);
+        assert_eq!(result.matured, 1);
+        assert_eq!(result.matured_txs[0].1, vec![0x02]);
+    }
+
+    /// T1.20 — DecayWatcherEngine MAX_WATCHERS overflow returns
+    /// TooManyWatchers error. Covers lines 384-386.
+    #[test]
+    fn t1_20_watcher_max_capacity() {
+        let mut engine = DecayWatcherEngine::new();
+        for i in 0..MAX_WATCHERS {
+            let mut a = [0u8; 32];
+            a[0] = (i & 0xff) as u8;
+            a[1] = ((i >> 8) & 0xff) as u8;
+            engine
+                .register(a, 100, true, 1, "m".into(), "{}".into(), 0)
+                .unwrap();
+        }
+        let res = engine.register(addr(255), 100, true, 1, "m".into(), "{}".into(), 0);
+        assert!(matches!(res, Err(TemporalError::TooManyWatchers { .. })));
+    }
 }

@@ -84,3 +84,64 @@ impl PatronageBook {
             .fold(0u64, |a, b| a.saturating_add(b))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cv(oid: u8, expires: u64, pre_funded: u64, score: u64) -> PatronageCovenant {
+        PatronageCovenant {
+            object_id: vec![oid],
+            namespace_id: vec![],
+            donation_per_epoch: 10,
+            created_epoch: 0,
+            expires_epoch: expires,
+            pre_funded,
+            patronage_score: score,
+            last_honoured_epoch: None,
+        }
+    }
+
+    /// T1.20 — PatronageBook len, is_empty, iter on fresh + populated.
+    #[test]
+    fn t1_20_book_accessors() {
+        let mut b = PatronageBook::new(vec![0xFF]);
+        assert!(b.is_empty());
+        assert_eq!(b.len(), 0);
+        assert_eq!(b.iter().count(), 0);
+
+        b.insert(cv(1, 100, 50, 5));
+        b.insert(cv(2, 200, 30, 7));
+        assert!(!b.is_empty());
+        assert_eq!(b.len(), 2);
+        assert_eq!(b.iter().count(), 2);
+    }
+
+    /// T1.20 — expire_all removes covenants whose expires_epoch <=
+    /// the cutoff and returns them.
+    #[test]
+    fn t1_20_book_expire_all() {
+        let mut b = PatronageBook::new(vec![0xFF]);
+        b.insert(cv(1, 50, 10, 1));
+        b.insert(cv(2, 100, 20, 2));
+        b.insert(cv(3, 200, 30, 3));
+
+        let expired = b.expire_all(100);
+        // Should expire object_ids 1 (expires=50) + 2 (expires=100, <=).
+        assert_eq!(expired.len(), 2);
+        assert_eq!(b.len(), 1);
+        // The 200-expiry covenant remains.
+        assert!(b.get(&[3]).is_some());
+    }
+
+    /// T1.20 — total_pre_funded + total_active_score sum across
+    /// every covenant.
+    #[test]
+    fn t1_20_book_totals() {
+        let mut b = PatronageBook::new(vec![0xFF]);
+        b.insert(cv(1, 100, 50, 5));
+        b.insert(cv(2, 200, 30, 7));
+        assert_eq!(b.total_pre_funded(), 80);
+        assert_eq!(b.total_active_score(), 12);
+    }
+}

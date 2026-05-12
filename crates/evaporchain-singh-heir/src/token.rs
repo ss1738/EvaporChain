@@ -485,4 +485,85 @@ mod tests {
             proptest::prop_assert_eq!(n.energy, expected);
         }
     }
+
+    /// T1.20 — certify_holder_death + mark_heir_state + tick_to
+    /// all check Escheated guard (lines 87-89, 102-104, 116-118).
+    /// After escheat, all three return Err(Escheated).
+    #[test]
+    fn t1_20_escheated_blocks_all_mutations() {
+        let kin = vec![KinEdge {
+            heir: bob(),
+            state: HeirState::Live,
+        }];
+        let mut t = HeirloomNft::mint(tid(1), alice(), 1024, kin, 0).unwrap();
+        // Force escheat: mark holder dead without any kin alive.
+        t.certify_holder_death().unwrap();
+        t.mark_heir_state(bob(), HeirState::Dead).unwrap();
+        // No live heir → inherit() returns Err and escheats.
+        let _ = t.inherit();
+        assert!(t.escheated);
+
+        // Now every mutation should refuse with Escheated.
+        assert_eq!(
+            t.certify_holder_death().unwrap_err(),
+            HeirloomError::Escheated
+        );
+        assert_eq!(
+            t.mark_heir_state(bob(), HeirState::Refused).unwrap_err(),
+            HeirloomError::Escheated
+        );
+        assert_eq!(
+            t.tick_to(100, 500).unwrap_err(),
+            HeirloomError::Escheated
+        );
+    }
+
+    /// T1.20 — tick_to rejects non-monotone time (lines 120-123).
+    #[test]
+    fn t1_20_tick_to_non_monotone_rejected() {
+        let kin = vec![KinEdge {
+            heir: bob(),
+            state: HeirState::Live,
+        }];
+        let mut t = HeirloomNft::mint(tid(1), alice(), 1024, kin, 50).unwrap();
+        // Forward tick ok.
+        assert!(t.tick_to(100, 800).is_ok());
+        // Backward tick rejected.
+        let err = t.tick_to(99, 700).unwrap_err();
+        assert!(matches!(err, HeirloomError::NonMonotoneTick { .. }));
+        // Equal tick also rejected.
+        assert!(matches!(
+            t.tick_to(100, 700).unwrap_err(),
+            HeirloomError::NonMonotoneTick { .. }
+        ));
+    }
+
+    /// T1.20 — mark_heir_state for a non-existent heir is a no-op
+    /// (silently does nothing). Covers the `if let Some` miss path
+    /// at line 105.
+    #[test]
+    fn t1_20_mark_heir_state_unknown_heir_no_op() {
+        let kin = vec![KinEdge {
+            heir: bob(),
+            state: HeirState::Live,
+        }];
+        let mut t = HeirloomNft::mint(tid(1), alice(), 1024, kin, 0).unwrap();
+        // carol() is not in the kin list — no-op.
+        assert!(t.mark_heir_state(carol(), HeirState::Dead).is_ok());
+        // bob remained Live.
+        assert_eq!(t.kin[0].state, HeirState::Live);
+    }
+
+    /// T1.20 — inherit when holder still alive returns
+    /// HolderStillAlive (line 131).
+    #[test]
+    fn t1_20_inherit_blocked_when_holder_alive() {
+        let kin = vec![KinEdge {
+            heir: bob(),
+            state: HeirState::Live,
+        }];
+        let mut t = HeirloomNft::mint(tid(1), alice(), 1024, kin, 0).unwrap();
+        // Holder still alive — inherit refuses.
+        assert_eq!(t.inherit().unwrap_err(), HeirloomError::HolderStillAlive);
+    }
 }

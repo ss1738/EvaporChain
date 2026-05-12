@@ -210,10 +210,10 @@ export function BuyScreen() {
         {/* Amount input */}
         <div className="rounded-lg bg-evap-surface border border-evap-border p-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-zinc-500">You pay</span>
+            <span className="text-xs text-zinc-500">You pay</span>
             <button
               onClick={() => setShowCurrencyPicker(!showCurrencyPicker)}
-              className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-zinc-300 transition"
+              className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-300 transition"
             >
               {currency} <span className="text-[8px]">&#9660;</span>
             </button>
@@ -233,7 +233,7 @@ export function BuyScreen() {
             />
           </div>
           {parsedAmount > 0 && parsedAmount < 10 && (
-            <p className="text-[10px] text-red-400 mt-1">
+            <p className="text-xs text-red-400 mt-1">
               Minimum purchase is {CURRENCY_SYMBOLS[currency]}10
             </p>
           )}
@@ -248,7 +248,7 @@ export function BuyScreen() {
                     setCurrency(c);
                     setShowCurrencyPicker(false);
                   }}
-                  className={`flex-1 py-1.5 rounded text-[10px] font-medium transition ${
+                  className={`flex-1 py-1.5 rounded text-xs font-medium transition ${
                     currency === c
                       ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
                       : "bg-evap-border/50 text-zinc-400 hover:text-zinc-300"
@@ -264,8 +264,8 @@ export function BuyScreen() {
         {/* EVAP amount preview */}
         <div className="rounded-lg bg-evap-surface border border-evap-border p-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-zinc-500">You receive</span>
-            <span className="text-[10px] text-zinc-500">EVAP</span>
+            <span className="text-xs text-zinc-500">You receive</span>
+            <span className="text-xs text-zinc-500">EVAP</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-evap-cyan to-evap-purple flex items-center justify-center text-[8px] font-bold text-black shrink-0">
@@ -281,7 +281,7 @@ export function BuyScreen() {
               )}
             </span>
           </div>
-          <p className="text-[10px] text-zinc-600 mt-1">
+          <p className="text-xs text-zinc-600 mt-1">
             1 EVAP = {CURRENCY_SYMBOLS[currency]}
             {evapRate.toFixed(4)} {currency}
             {rateLoading && " (refreshing...)"}
@@ -290,7 +290,7 @@ export function BuyScreen() {
 
         {/* Payment method selector */}
         <div className="rounded-lg bg-evap-surface border border-evap-border p-3">
-          <span className="text-[10px] text-zinc-500 mb-2 block">
+          <span className="text-xs text-zinc-500 mb-2 block">
             Payment method
           </span>
           <div className="flex gap-2">
@@ -298,7 +298,7 @@ export function BuyScreen() {
               <button
                 key={pm.id}
                 onClick={() => setPaymentMethod(pm.id)}
-                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg border transition text-[10px] font-medium ${
+                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg border transition text-xs font-medium ${
                   paymentMethod === pm.id
                     ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
                     : "border-evap-border bg-evap-surface text-zinc-400 hover:border-zinc-500"
@@ -313,7 +313,7 @@ export function BuyScreen() {
 
         {/* Provider toggle */}
         <div className="rounded-lg bg-evap-surface border border-evap-border p-3">
-          <span className="text-[10px] text-zinc-500 mb-2 block">
+          <span className="text-xs text-zinc-500 mb-2 block">
             Provider
           </span>
           <div className="flex rounded-lg bg-evap-border/50 p-0.5">
@@ -337,31 +337,31 @@ export function BuyScreen() {
         {parsedAmount > 0 && (
           <div className="rounded-lg bg-evap-surface border border-evap-border p-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-500">Subtotal</span>
-              <span className="text-[10px] text-zinc-300">
+              <span className="text-xs text-zinc-500">Subtotal</span>
+              <span className="text-xs text-zinc-300">
                 {CURRENCY_SYMBOLS[currency]}
                 {parsedAmount.toFixed(2)}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-500">Network fee</span>
-              <span className="text-[10px] text-zinc-300">
+              <span className="text-xs text-zinc-500">Network fee</span>
+              <span className="text-xs text-zinc-300">
                 {CURRENCY_SYMBOLS[currency]}
                 {networkFee.toFixed(2)}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-500">
+              <span className="text-xs text-zinc-500">
                 {PROVIDERS.find((p) => p.id === provider)?.label} fee (
                 {PROVIDER_FEE_PERCENT[provider]}%)
               </span>
-              <span className="text-[10px] text-zinc-300">
+              <span className="text-xs text-zinc-300">
                 {CURRENCY_SYMBOLS[currency]}
                 {providerFee.toFixed(2)}
               </span>
             </div>
             <div className="border-t border-evap-border pt-2 flex items-center justify-between">
-              <span className="text-[10px] text-zinc-400 font-medium">
+              <span className="text-xs text-zinc-400 font-medium">
                 Total
               </span>
               <span className="text-xs text-zinc-200 font-semibold">
@@ -374,7 +374,7 @@ export function BuyScreen() {
 
         {/* KYC notice */}
         <div className="px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/20">
-          <p className="text-[10px] text-amber-400/80 text-center">
+          <p className="text-xs text-amber-400/80 text-center">
             Identity verification handled by{" "}
             {PROVIDERS.find((p) => p.id === provider)?.label}
           </p>

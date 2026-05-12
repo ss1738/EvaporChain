@@ -321,4 +321,20 @@ mod tests {
             proptest::prop_assert!(bound_high >= bound_low);
         }
     }
+
+    /// T1.20 — max_range error paths: empty input + invalid range
+    /// (lines 102-113).
+    #[test]
+    fn t1_20_max_range_empty_and_invalid_range() {
+        assert_eq!(max_range(&[]).unwrap_err(), BernsteinError::Empty);
+        let err = max_range(&[cv(50, 10, 100, 0)]).unwrap_err();
+        match err {
+            BernsteinError::InvalidRange { idx, lo, hi } => {
+                assert_eq!(idx, 0);
+                assert_eq!(lo, 50);
+                assert_eq!(hi, 10);
+            }
+            other => panic!("expected InvalidRange, got {other:?}"),
+        }
+    }
 }

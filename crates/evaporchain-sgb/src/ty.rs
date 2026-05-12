@@ -138,4 +138,24 @@ mod tests {
         let back: Type<Base> = serde_json::from_str(&s).unwrap();
         assert_eq!(t, back);
     }
+
+    /// T1.20 — Type::with constructor (lines 60-63).
+    #[test]
+    fn t1_20_type_with() {
+        let t = Type::<()>::with(Type::Lin(()), Type::Lin(()));
+        match t {
+            Type::Conn(Connective::With, _, _) => {}
+            _ => panic!("expected With"),
+        }
+    }
+
+    /// T1.20 — Type::plus constructor (lines 65-68).
+    #[test]
+    fn t1_20_type_plus() {
+        let t = Type::<()>::plus(Type::Lin(()), Type::Lin(()));
+        match t {
+            Type::Conn(Connective::Plus, _, _) => {}
+            _ => panic!("expected Plus"),
+        }
+    }
 }

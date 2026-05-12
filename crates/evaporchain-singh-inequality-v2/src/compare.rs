@@ -160,4 +160,24 @@ mod tests {
         let adv_eq = bernstein_strictly_tighter(15, &worst_case, 1).unwrap();
         assert_eq!(adv_eq.v1_variance_bound, adv_eq.v2_variance_bound);
     }
+
+    /// T1.20 — bernstein_strictly_tighter on empty contribs returns
+    /// Empty error (lines 60-67 — exercises map_v1_err Empty arm).
+    #[test]
+    fn t1_20_bernstein_strictly_tighter_empty_returns_empty() {
+        let r = bernstein_strictly_tighter(10, &[], 1);
+        assert!(matches!(r, Err(BernsteinError::Empty)));
+    }
+
+    /// T1.20 — bernstein_strictly_tighter on invalid-range contrib
+    /// propagates InvalidRange via map_v1_err (line 65).
+    #[test]
+    fn t1_20_bernstein_strictly_tighter_invalid_range_propagates() {
+        let bad = vec![cv(100, 5, 1000, 0)];
+        let r = bernstein_strictly_tighter(10, &bad, 1);
+        match r {
+            Err(BernsteinError::InvalidRange { idx: 0, lo: 100, hi: 5 }) => {}
+            other => panic!("expected InvalidRange, got {other:?}"),
+        }
+    }
 }

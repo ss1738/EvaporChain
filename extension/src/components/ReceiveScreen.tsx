@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { Header } from "./Header";
 import { generateQRDataUrl } from "@/utils/qr";
@@ -24,9 +25,9 @@ export function ReceiveScreen() {
       <div className="px-4 pt-4">
         <button
           onClick={() => setView("home")}
-          className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
+          className="text-xs text-zinc-500 hover:text-zinc-300 mb-3 inline-flex items-center gap-1"
         >
-          ← Back
+          <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.5} /> Back
         </button>
         <h2 className="text-lg font-semibold text-zinc-100 mb-1">Receive EVAP</h2>
         <p className="text-xs text-zinc-500 mb-6">
@@ -52,7 +53,7 @@ export function ReceiveScreen() {
 
         {/* Address */}
         <div className="w-full px-3 py-3 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-500 mb-1">Your Address</p>
+          <p className="text-xs text-zinc-500 mb-1">Your Address</p>
           <p className="text-xs font-mono text-zinc-300 break-all leading-relaxed">
             {activeAccount.address}
           </p>
@@ -65,7 +66,7 @@ export function ReceiveScreen() {
           Copy Address
         </button>
 
-        <p className="text-[10px] text-zinc-600 mt-3 text-center">
+        <p className="text-xs text-zinc-600 mt-3 text-center">
           Only send EVAP to this address. Sending other tokens may result in loss.
         </p>
       </div>

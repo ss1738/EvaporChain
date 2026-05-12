@@ -22,8 +22,8 @@ export function EnergyBar({ current, max, showLabel = true, size = "md" }: Energ
       </div>
       {showLabel && (
         <div className="flex justify-between mt-1">
-          <span className="text-[10px] text-zinc-500">{current.toLocaleString()} / {max.toLocaleString()}</span>
-          <span className="text-[10px] font-medium" style={{ color }}>{percent}%</span>
+          <span className="text-xs text-zinc-500">{current.toLocaleString()} / {max.toLocaleString()}</span>
+          <span className="text-xs font-medium" style={{ color }}>{percent}%</span>
         </div>
       )}
     </div>

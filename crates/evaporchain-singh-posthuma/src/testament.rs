@@ -470,4 +470,47 @@ mod tests {
         let back: Testament = serde_json::from_str(&s).unwrap();
         assert_eq!(t_mem, back);
     }
+
+    /// T1.20 — Testament::visible_energy_at on a Sealed
+    /// testament returns initial_visible_energy (line 156).
+    /// Sealed branch was uncovered.
+    #[test]
+    fn t1_20_visible_energy_at_on_sealed_returns_initial() {
+        let t = fresh(1, 0xAA, 100);
+        // Sealed → returns the initial pool regardless of epoch.
+        assert_eq!(t.visible_energy_at(0), 1000);
+        assert_eq!(t.visible_energy_at(99_999), 1000);
+    }
+
+    /// T1.20 — visible_energy_at on a Memorial testament returns 0
+    /// (line 161). Memorial branch was uncovered for this getter.
+    #[test]
+    fn t1_20_visible_energy_at_on_memorial_returns_zero() {
+        let mut t = fresh(1, 0xAA, 100);
+        let mut id = [0u8; 32];
+        id[0] = 1;
+        let c = cert_for(id, 0, vec![1, 2]);
+        t.accept_death_certificate(&c, always_valid).unwrap();
+        // Walk well past the half-life so visible energy reaches 0.
+        let big_epoch = 10_000_000;
+        // Now fade to memorial.
+        t.fade_to_memorial(big_epoch).unwrap();
+        assert_eq!(t.visible_energy_at(big_epoch), 0);
+        assert_eq!(t.visible_energy_at(big_epoch + 1000), 0);
+    }
+
+    /// T1.20 — fade_to_memorial on an already-Memorial testament
+    /// returns NotRevealed (line 173, the Memorial arm).
+    #[test]
+    fn t1_20_fade_to_memorial_twice_rejected() {
+        let mut t = fresh(1, 0xAA, 100);
+        let mut id = [0u8; 32];
+        id[0] = 1;
+        let c = cert_for(id, 0, vec![1, 2]);
+        t.accept_death_certificate(&c, always_valid).unwrap();
+        t.fade_to_memorial(10_000_000).unwrap();
+        // Already Memorial — second fade rejects.
+        let err = t.fade_to_memorial(20_000_000).unwrap_err();
+        assert_eq!(err, TestamentError::NotRevealed);
+    }
 }

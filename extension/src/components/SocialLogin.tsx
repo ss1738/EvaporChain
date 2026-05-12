@@ -89,7 +89,7 @@ export function SocialLogin() {
       {/* Reassurance text */}
       <div className="px-6 pb-6">
         <div className="px-4 py-3 rounded-xl bg-evap-surface border border-evap-border">
-          <p className="text-[11px] text-zinc-400 text-center leading-relaxed">
+          <p className="text-xs text-zinc-400 text-center leading-relaxed">
             Your wallet is secured on this device. No one else has access.
           </p>
         </div>

@@ -385,4 +385,64 @@ mod tests {
         // No way to assert directly without a join handle; the test's
         // value is that this doesn't deadlock or leak.
     }
+
+    /// T1.20 — FoldQueue::spawn (default interval) delegates to
+    /// spawn_with using DEFAULT_CHAIN_PROOF_INTERVAL. Covers
+    /// lines 84-86.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn t1_20_fold_queue_spawn_default_interval() {
+        let prover = Arc::new(Mutex::new(ChainProver::new(
+            Box::new(MockProver::new()),
+            [0u8; 32],
+            0,
+        )));
+        let queue = FoldQueue::spawn(prover, 4);
+        assert_eq!(queue.capacity(), 4);
+        // Submit a block to confirm worker is alive.
+        let outcome = queue.submit(dummy_block(1), [1u8; 32]);
+        assert_eq!(outcome, SubmitOutcome::Queued);
+    }
+
+    /// T1.20 — FoldQueue::capacity() getter (lines 161-163).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn t1_20_fold_queue_capacity_getter() {
+        let queue = make_queue(7);
+        assert_eq!(queue.capacity(), 7);
+    }
+
+    /// T1.20 — FoldQueue::approx_depth tracks pending submissions.
+    /// At rest approx_depth is 0; after spamming submissions it
+    /// briefly rises. Doesn't directly assert nonzero because the
+    /// worker drains under MockProver, but the getter path is
+    /// exercised.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn t1_20_fold_queue_approx_depth_getter() {
+        let queue = make_queue(8);
+        let _ = queue.approx_depth();
+        for n in 1..=4 {
+            let _ = queue.submit(dummy_block(n), [n as u8; 32]);
+        }
+        let _ = queue.approx_depth();
+    }
+
+    /// T1.20 — chain_proof_interval=0 disables auto-publication.
+    /// latest_proof remains None after submission. Covers the
+    /// `should_publish = false` branch around lines 219-220.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn t1_20_fold_queue_zero_interval_disables_publish() {
+        let prover = Arc::new(Mutex::new(ChainProver::new(
+            Box::new(MockProver::new()),
+            [0u8; 32],
+            0,
+        )));
+        // Interval 0 means never auto-publish.
+        let queue = FoldQueue::spawn_with(prover, 4, 0);
+        for n in 1..=3 {
+            let _ = queue.submit(dummy_block(n), [n as u8; 32]);
+        }
+        // Drain time.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // latest_proof should remain None — no auto-publication.
+        assert!(queue.latest_proof().is_none());
+    }
 }

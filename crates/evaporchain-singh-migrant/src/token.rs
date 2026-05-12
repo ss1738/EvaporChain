@@ -337,4 +337,26 @@ mod tests {
         let back: MigrantToken = serde_json::from_str(&s).unwrap();
         assert_eq!(t, back);
     }
+
+    /// T1.20 — is_evaporated returns true once energy has decayed
+    /// to zero, false while energy > 0 (lines 125-127).
+    #[test]
+    fn t1_20_is_evaporated_after_full_decay() {
+        // Tiny initial energy + small half-life + long wait → energy = 0.
+        let t = MigrantToken::mint(id(1), addr(0xAA), 4, 1, 30, 0).unwrap();
+        // At epoch 0 the token has energy > 0.
+        assert!(!t.is_evaporated(0));
+        // After 1000 epochs energy reaches 0.
+        assert!(t.is_evaporated(1000));
+    }
+
+    /// T1.20 — energy_at on a still-alive token returns Ok(>0)
+    /// (line 121 success path).
+    #[test]
+    fn t1_20_energy_at_alive_returns_positive() {
+        let t = fresh(0xAA);
+        let e = t.energy_at(0).unwrap();
+        assert!(e > 0);
+        assert!(e <= 1000);
+    }
 }

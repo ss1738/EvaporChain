@@ -156,6 +156,16 @@ mod tests {
         cr.refresh(1000, 200).unwrap();
         assert_eq!(freshness_bucket(&c, &cr, 200), FreshnessLevel::Fresh);
     }
+
+    /// T1.20 — freshness_bucket returns Expired when cred.level is
+    /// zero (line 51 — defensive fallback for zero-level creds).
+    #[test]
+    fn t1_20_freshness_bucket_zero_level_returns_expired() {
+        let c = class(100);
+        let mut cr = cred(1000, 50);
+        cr.level = 0;
+        assert_eq!(freshness_bucket(&c, &cr, 50), FreshnessLevel::Expired);
+    }
 }
 
 #[cfg(test)]
