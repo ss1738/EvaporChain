@@ -649,4 +649,29 @@ mod tests {
             }
         }
     }
+
+    /// T1.20 — ConsensusCheckpoint::with_bell_reading attaches +
+    /// clears the Bell-Beacon reading via chained builder (lines
+    /// 170-173).
+    #[test]
+    fn t1_20_checkpoint_with_bell_reading_roundtrip() {
+        let cp = make_checkpoint(7);
+        assert!(cp.last_bell_reading.is_none());
+
+        let reading = CheckpointedBellReading {
+            s_value_milli: 2700,
+            block_height: 7,
+            epoch: 7,
+            certified: true,
+        };
+        let cp_with = cp.clone().with_bell_reading(Some(reading.clone()));
+        assert!(cp_with.last_bell_reading.is_some());
+        let r = cp_with.last_bell_reading.unwrap();
+        assert_eq!(r.s_value_milli, 2700);
+        assert!(r.certified);
+
+        // Clearing path: pass None.
+        let cp_cleared = cp.with_bell_reading(None);
+        assert!(cp_cleared.last_bell_reading.is_none());
+    }
 }
