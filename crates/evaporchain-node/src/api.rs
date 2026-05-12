@@ -5079,9 +5079,9 @@ pub struct SinghAttractorForkChoiceResp {
 }
 
 /// Singh-Attractor fork choice over caller-supplied candidate heads
-/// + attractor basins. For each candidate head, the chain reads its
+/// plus attractor basins. For each candidate head, the chain reads its
 /// block "energy" from the Light-Cone DAG and returns whichever head
-/// lands in (or nearest to) an attractor basin. Per INVENTION_STACK.md
+/// lands in (or nearest to) an attractor basin. Per `INVENTION_STACK.md`
 /// §4.2 (Tier 2). Available alongside MCC for light clients to choose
 /// either rule.
 async fn post_singh_attractor_fork_choice(
