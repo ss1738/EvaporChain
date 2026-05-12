@@ -48,6 +48,42 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-12 (evening) — wallet: fix SK decryption bug + sign-tx/submit endpoints + behavior test cleanup
+
+**Focus:** Fresh-eye audit of evaporchain-wallet → build the user-facing wallet: fix the silent SK-decryption bug in the node, add chain-id-bound sign-tx/submit API endpoints, and purge deprecated sign() calls from all 6 behavior test files.
+
+**Commits shipped:** 3 (`5a96a880` → `b3b7ec51`)
+
+**Deliverables:**
+- `wallet/tests`: replaced all deprecated `sign()`/`sign_transaction()` calls with `sign_for_chain()`/`sign_transaction_for_chain()` across all 6 behavior test files; updated verification to use `signing_message(chain_id)` — tests now exercise the chain-valid path end-to-end
+- `auth.rs`: made `decrypt_secret_key` pub (was `#[allow(dead_code)]`) so api.rs can call it
+- `api.rs`: fixed silent bug in `sign_transaction()` — node was storing XChaCha20-Poly1305 encrypted SK in user_db but using the ciphertext bytes directly as MlDsaKeypair raw SK; silently fell back to the node keypair for EVERY user wallet tx (user signatures were never actually used); fix calls `decrypt_secret_key` before decoding
+- `api.rs`: added `POST /api/wallet/sign-tx` — sign any unsigned Transaction JSON with the caller's ML-DSA wallet key; chain-id-bound; no node-keypair fallback; returns signed tx JSON + BLAKE3 hash
+- `api.rs`: added `POST /api/wallet/submit` — sign + submit in one step; same auth path
+
+**Empirical results:**
+- wallet behavior tests: 9/9 green (all 6 behavior files)
+- node cargo check: clean (0 errors)
+- node tests: 234/235 (1 pre-existing failure in faucet rate-limit test, unrelated)
+
+**Decisions made:**
+- wallet sign-tx/submit go on the ApiState router (not AuthState) so they can access chain_id + user_db in one handler
+- No node-keypair fallback in sign-tx: if the address has no stored key, it's an error not a silent downgrade
+- behavior tests use `"evaporchain-testnet"` as chain_id — consistent with executor test defaults
+
+**What's next:**
+- Continue T1.20 coverage: `execution/block_stm.rs` (74.78%, 989 missed), `execution/parallel.rs` (78.89%, 789 missed)
+- Build wallet UI: upgrade `wallet.html` send form to wire to `POST /api/wallet/submit`
+- Fix T1.15: per-key in-flight locking in paymaster
+
+**Blockers / open questions:**
+- The node and the wallet crate use separate key storage (user_db SQLite vs KeyStore JSON). Long-term they should unify — wallet crate should be the single key store. Not urgent.
+
+**Cross-references:**
+- Commits: `5a96a880`, `b8630ff4`, `b3b7ec51`
+
+---
+
 ## 2026-05-12 (morning) — T1.20 coverage push: 5-node fork fix + 90 new tests across execution/state/consensus
 
 **Focus:** Restore 5-node cluster lockstep after BatchUndoLog fork, then drive T1.20 coverage across execution/parallel, state/rocksdb_backend, and consensus/state_sync + lib.
