@@ -31,7 +31,7 @@
 
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::SeedableRng;
-use evaporchain_verkle_wrapper::{prove, setup, verify, VerkleFixture};
+use evaporchain_verkle_wrapper::{prove, proof_bytes_to_eip197, setup, verify, VerkleFixture};
 use std::path::PathBuf;
 
 fn main() {
@@ -102,13 +102,21 @@ fn main() {
     eprintln!("Self-verifying...");
     verify(&vk, &fixture.public_inputs, &proof_bytes).expect("verify must succeed");
 
+    eprintln!("Converting to EIP-197 calldata (256-byte uncompressed)...");
+    let eip197_bytes =
+        proof_bytes_to_eip197(&proof_bytes).expect("eip197 conversion must succeed");
+    eprintln!("  eip197 = {} bytes", eip197_bytes.len());
+
     let proof_path = with_suffix(&out_stem, ".proof.bin");
+    let eip197_path = with_suffix(&out_stem, ".eip197.bin");
     let vk_path = with_suffix(&out_stem, ".vk.bin");
     if let Some(parent) = proof_path.parent() {
         std::fs::create_dir_all(parent).unwrap_or_else(|e| panic!("mkdir {}: {e}", parent.display()));
     }
     std::fs::write(&proof_path, &proof_bytes)
         .unwrap_or_else(|e| panic!("write {}: {e}", proof_path.display()));
+    std::fs::write(&eip197_path, eip197_bytes)
+        .unwrap_or_else(|e| panic!("write {}: {e}", eip197_path.display()));
 
     let mut vk_bytes = Vec::new();
     vk.serialize_compressed(&mut vk_bytes)
@@ -116,8 +124,9 @@ fn main() {
     std::fs::write(&vk_path, &vk_bytes)
         .unwrap_or_else(|e| panic!("write {}: {e}", vk_path.display()));
 
-    eprintln!("Wrote {} ({} bytes)", proof_path.display(), proof_bytes.len());
-    eprintln!("Wrote {} ({} bytes)", vk_path.display(), vk_bytes.len());
+    eprintln!("Wrote {} ({} bytes — arkworks compressed)", proof_path.display(), proof_bytes.len());
+    eprintln!("Wrote {} ({} bytes — EIP-197 calldata for L1)", eip197_path.display(), eip197_bytes.len());
+    eprintln!("Wrote {} ({} bytes — verifying key)", vk_path.display(), vk_bytes.len());
     eprintln!("Done — STARTER ONLY. Do not deploy this VK to L1.");
 }
 
