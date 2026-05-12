@@ -50,10 +50,14 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod canonical_io;
 pub mod groth16_wrapper;
 pub mod recursive_snark_fixture;
 pub mod verifier_circuit;
 
+pub use canonical_io::{
+    pk_from_bytes, pk_to_bytes, proof_from_bytes, proof_to_bytes, vk_from_bytes, vk_to_bytes,
+};
 pub use groth16_wrapper::{
     prepare_vk, prove, public_inputs_in_alloc_order, setup, verify, verify_prepared, WrapperKeys,
 };
