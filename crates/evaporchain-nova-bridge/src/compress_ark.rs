@@ -1,42 +1,38 @@
-//! Phase 2.2-section-2 BESPOKE: port of neptune's
-//! `compress_round_constants` (first slice).
+//! Port of neptune's `compress_round_constants` (`preprocessing.rs`).
 //!
-//! This module begins the final BESPOKE wedge — closing the residual
-//! hash-parity gap between our `fully_aligned_poseidon_config` and
-//! neptune's actual sponge output (PR #100 narrowed the gap to
-//! SBOX-trick partial-round fusion).
+//! Reproduces neptune's compressed-ARK byte-for-byte from our LFSR
+//! plain ARK + neptune's `mds.m_inv`. With this in place, the
+//! constants layer of Section 2 is byte-correct vs neptune
+//! (PR #103: `FULL compressed parity: 0 of 259 mismatches`).
 //!
-//! # What's ported in THIS PR
+//! # Public API
 //!
-//! The FIRST piece of neptune's `preprocessing.rs::compress_round_constants`:
+//! - [`compress_first_full_rounds`]: first slice only (round 0
+//!   plain + rounds 1..3 inverse-MDS-transformed = 100 entries).
+//!   Matches `neptune crc[0..100]`. Useful for isolated testing.
+//! - [`compress_full`]: full algorithm — emits all 259 entries
+//!   matching neptune `crc[0..259]` for BN254 / arity-24 /
+//!   `Strength::Standard`.
 //!
-//! ```text
-//! res.extend(round_keys(0));          // already correct — plain ARK
+//! # Parameters (BN254 / arity-24 / Standard)
 //!
-//! let end = if unpreprocessed > 0 {   // = half_full_rounds - 1 for our params
-//!     half_full_rounds
-//! } else {
-//!     half_full_rounds - 1
-//! };
-//! for i in 0..end {
-//!     let next_round = round_keys(i + 1);
-//!     let inverted = left_apply_matrix(inverse_matrix, next_round);
-//!     res.extend(inverted);
-//! }
-//! ```
+//! `full_rounds = 8`, `partial_rounds = 59`, `width = 25`,
+//! `half_full_rounds = 4`, `partial_preprocessed = partial_rounds`
+//! (so `unpreprocessed = 0`). Output length:
+//! `full_rounds * width + partial_rounds = 200 + 59 = 259`.
 //!
-//! For BN254 / arity-24 / Strength::Standard:
-//! - `full_rounds = 8`, `partial_rounds = 59`
-//! - `half_full_rounds = 4`
-//! - `partial_preprocessed = partial_rounds = 59` → `unpreprocessed = 0`
-//! - `end = half_full_rounds - 1 = 3`
+//! # Algorithm layout (matches neptune `preprocessing.rs:30-170`)
 //!
-//! So `compress_first_full_rounds` emits 1 (plain round 0) + 3
-//! (inverse-transformed rounds 1, 2, 3) = 4 rounds × 25 width =
-//! **100 entries**. They match neptune's `crc[0..100]`.
+//! 1. Round 0 plain (25 entries)
+//! 2. `inverse_mds * rounds[1..3]` (3 × 25 = 75 entries)
+//! 3. Backward partial-round fold over 59 rounds → `round_acc` +
+//!    `partial_keys`
+//! 4. `inverse_mds * round_acc` (25 entries)
+//! 5. `partial_keys` popped in reverse (59 entries)
+//! 6. `inverse_mds * rounds[64..66]` (3 × 25 = 75 entries — second
+//!    half-full)
 //!
-//! Rounds 4..7 (the SECOND half-full set) + 59 partial rounds get
-//! the backward-fold preprocessing in a follow-up PR.
+//! Total: 25 + 75 + 25 + 59 + 75 = 259.
 
 use crate::mds_linalg::{left_apply_matrix, vec_add};
 use ark_bn254::Fr;

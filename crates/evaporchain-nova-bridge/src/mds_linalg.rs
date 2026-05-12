@@ -1,18 +1,19 @@
-//! Linear-algebra primitives for porting neptune's
-//! `compress_round_constants` (Phase 2.2-section-2 BESPOKE final
-//! step). The SBOX-trick optimization in neptune fuses
-//! partial-round constants by left-multiplying them through the
-//! inverse MDS matrix; this module ships the building block.
+//! Linear-algebra primitives mirroring neptune's
+//! `nova-snark/.../matrix.rs`. Used by [`crate::compress_ark`] to
+//! port neptune's `compress_round_constants` SBOX-trick
+//! optimization (which left-multiplies partial-round constants
+//! through the inverse MDS matrix).
 //!
 //! # Functions
 //!
 //! - [`left_apply_matrix`]: `M · v` over `ark_bn254::Fr`.
 //! - [`vec_add`]: element-wise vector addition.
+//! - [`matrix_mul`]: row-major matrix-matrix product.
+//! - [`identity_matrix`]: build an N×N identity.
 //!
-//! Mirrors neptune's `nova-snark/.../matrix.rs::left_apply_matrix`
-//! and `vec_add`. Once these land, the next step is the full
-//! `compress_round_constants` port from neptune's
-//! `preprocessing.rs`.
+//! Real-data invariants verified on neptune's extracted matrices:
+//! `m · m_inv = I₂₅` and `m_hat · m_hat_inv = I₂₄` over the dump
+//! from `dump-neptune-constants`.
 
 use ark_bn254::Fr;
 
