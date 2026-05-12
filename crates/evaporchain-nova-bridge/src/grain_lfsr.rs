@@ -155,29 +155,30 @@ impl GrainLfsr {
         self.state
     }
 
-    /// Emit one filtered output bit per the Poseidon paper's
-    /// discard-zeros rejection scheme:
+    /// Emit one filtered output bit per neptune's `Iterator::next`
+    /// (round_constants.rs:158-168):
     ///
     /// ```text
-    /// loop {
-    ///   new_bit  = clock()
-    ///   cond_bit = clock()
-    ///   if cond_bit == 1 { return new_bit }
-    ///   // else discard `new_bit` and try again
+    /// cond = clock()
+    /// while cond == 0 {
+    ///     _ = clock()       // discard one bit
+    ///     cond = clock()    // retry cond
     /// }
+    /// output = clock()
+    /// return output
     /// ```
     ///
-    /// Half the LFSR output is consumed by the conditional gate;
-    /// the rest passes through. This is the standard CSPRNG
-    /// debiasing for grain-based round-constant generation.
+    /// **CRITICAL: order matters.** The COND bit is clocked FIRST;
+    /// the OUTPUT bit is clocked AFTER cond=1. Earlier PR (#88)
+    /// had this reversed (output first, then cond) which produced
+    /// a different byte stream from neptune for the same seed.
     pub fn next_filtered_bit(&mut self) -> u8 {
-        loop {
-            let new_bit = self.clock();
-            let cond_bit = self.clock();
-            if cond_bit == 1 {
-                return new_bit;
-            }
+        let mut cond = self.clock();
+        while cond == 0 {
+            let _ = self.clock(); // discard one bit
+            cond = self.clock(); // retry cond
         }
+        self.clock()
     }
 
     /// Emit one `ark_bn254::Fr` field element by generating 254
