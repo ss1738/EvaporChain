@@ -8,12 +8,15 @@
 //! three verification sections evolve as follows:
 //!
 //!   - **Section 1: structural checks** — `num_steps != 0`, z0 non-empty,
-//!     z0/zi arity match. **DONE** as off-circuit precondition gate
-//!     ([`NovaVerifierCircuit::validate_structurally`], PR #64). Maps
-//!     failures to `SynthesisError::Unsatisfiable` in
-//!     `generate_constraints`. Field-level checks against
-//!     `RecursiveSNARK` private fields (`self.i == num_steps`,
-//!     `instance.X.len() == 2`) are deferred to the Phase 2.3 adapter.
+//!     z0/zi arity match. **OPEN on this branch's lineage** — inline
+//!     TODO in `generate_constraints` (~half day work). PR #64's
+//!     off-circuit `validate_structurally` gate lives on a parallel
+//!     stack that is not merged here; until it lands (or is
+//!     re-implemented on this branch), the only structural guarantee
+//!     is the public-input arity contract pinned by the two skeleton
+//!     tests in this module. Field-level checks against `RecursiveSNARK`
+//!     private fields (`self.i == num_steps`, `instance.X.len() == 2`)
+//!     are deferred to the Phase 2.3 adapter regardless.
 //!
 //!   - **Section 2 — constants layer**: re-hash
 //!     `(pp.digest, num_steps, z0, zi, R1CS-instance, ri)` with
