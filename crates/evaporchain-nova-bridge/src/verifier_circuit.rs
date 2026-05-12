@@ -103,9 +103,17 @@ pub enum StructuralValidationError {
 /// The witness values are passed in as `Bn254Fr` already — the
 /// type-conversion adapter (Phase 2.3) feeds them in pre-converted.
 ///
-/// **Current state:** structural skeleton + ConstraintSynthesizer
-/// stub. Sections 1-3 of the verify algorithm are documented as
-/// TODOs in `generate_constraints` with effort estimates inline.
+/// **Current state (post-PR #125):**
+///   - Section 1 structural checks: **DONE** via off-circuit
+///     [`Self::validate_structurally`] gate, wired into
+///     `generate_constraints` and mapped to
+///     `SynthesisError::Unsatisfiable`.
+///   - Section 2 Poseidon transcript: still TODO in
+///     `generate_constraints` (constants-layer landed earlier on a
+///     parallel stack; sponge framing remains BESPOKE).
+///   - Section 3 RelaxedR1CS satisfiability: still TODO in
+///     `generate_constraints` (BESPOKE, 3-5 days research — see
+///     Open Q4 in `DESIGN.md` on the parallel stack).
 #[derive(Clone, Debug)]
 pub struct NovaVerifierCircuit {
     /// Number of fold steps the accumulator has executed.
