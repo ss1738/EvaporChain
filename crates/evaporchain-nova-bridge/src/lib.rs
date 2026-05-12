@@ -56,7 +56,9 @@ pub mod recursive_snark_fixture;
 pub mod section2_gadget;
 pub mod verifier_circuit;
 
-pub use neptune_dump_parser::{parse_dump, NeptuneDumpShape};
+pub use neptune_dump_parser::{
+    decode_hex_scalar, extract_mds_matrix, parse_dump, NeptuneDumpShape,
+};
 pub use neptune_reference::{neptune_hash_primary, PrimaryScalar};
 pub use section2_gadget::{
     enforce_poseidon_primary, enforce_section_2_primary, placeholder_poseidon_config,

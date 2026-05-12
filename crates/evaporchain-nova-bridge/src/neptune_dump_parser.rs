@@ -43,6 +43,8 @@
 use std::fs;
 use std::path::Path;
 
+use ark_bn254::Fr;
+use ark_ff::PrimeField;
 use serde_json::Value;
 
 /// Structural report of a parsed neptune-dump JSON. All fields
@@ -123,6 +125,75 @@ pub fn parse_dump<P: AsRef<Path>>(path: P) -> Result<NeptuneDumpShape, String> {
     })
 }
 
+/// Decode a hex-encoded halo2curves canonical-bytes string into
+/// `ark_bn254::Fr`.
+///
+/// Halo2curves serializes scalars via `to_repr()` which yields
+/// 32 little-endian bytes; serde renders those as a 64-char
+/// lowercase-hex string. To get an `ark_bn254::Fr` of the same
+/// numeric value, decode hex and call `from_le_bytes_mod_order`.
+///
+/// Accepts an optional `0x` / `0X` prefix.
+pub fn decode_hex_scalar(hex: &str) -> Result<Fr, String> {
+    let stripped = hex
+        .strip_prefix("0x")
+        .or_else(|| hex.strip_prefix("0X"))
+        .unwrap_or(hex);
+    if stripped.len() != 64 {
+        return Err(format!(
+            "expected 64-char hex (32 bytes), got {} chars",
+            stripped.len()
+        ));
+    }
+    let mut bytes_le = [0u8; 32];
+    for i in 0..32 {
+        bytes_le[i] = u8::from_str_radix(&stripped[i * 2..i * 2 + 2], 16)
+            .map_err(|e| format!("hex decode at byte {i}: {e}"))?;
+    }
+    Ok(Fr::from_le_bytes_mod_order(&bytes_le))
+}
+
+/// Parse a neptune dump JSON and extract the PLAIN MDS matrix `m`
+/// as `Vec<Vec<ark_bn254::Fr>>`.
+///
+/// Returns the matrix in row-major order. For arity-24 standard
+/// strength this is 25×25 (state width = 25).
+///
+/// **Note.** The MDS `m` field IS the plain MDS — it's the round
+/// constants (`crc`) that are compressed. So this matrix is
+/// directly usable in an arkworks `PoseidonConfig`. ARK is the
+/// remaining BESPOKE wedge.
+pub fn extract_mds_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
+    let bytes =
+        fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
+    let v: Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+
+    let m = v
+        .get("mds")
+        .and_then(|m| m.get("m"))
+        .and_then(Value::as_array)
+        .ok_or("missing `mds.m` as array")?;
+
+    let mut out: Vec<Vec<Fr>> = Vec::with_capacity(m.len());
+    for (row_idx, row) in m.iter().enumerate() {
+        let cells = row
+            .as_array()
+            .ok_or_else(|| format!("mds.m[{row_idx}] not an array"))?;
+        let mut row_frs: Vec<Fr> = Vec::with_capacity(cells.len());
+        for (col_idx, cell) in cells.iter().enumerate() {
+            let hex = cell
+                .as_str()
+                .ok_or_else(|| format!("mds.m[{row_idx}][{col_idx}] not a string"))?;
+            let fr = decode_hex_scalar(hex)
+                .map_err(|e| format!("decode mds.m[{row_idx}][{col_idx}]: {e}"))?;
+            row_frs.push(fr);
+        }
+        out.push(row_frs);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,6 +240,52 @@ mod tests {
         assert_eq!(shape.mds_m00_hex, "aabbcc");
         assert_eq!(shape.crc_0_hex, "fedcba");
 
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn decode_hex_scalar_zero_one_roundtrip() {
+        // 32 zero bytes → Fr::ZERO
+        let zero_hex = "0".repeat(64);
+        let z = decode_hex_scalar(&zero_hex).expect("decode");
+        assert_eq!(z, Fr::from(0u64));
+
+        // LE byte 0x01 followed by 31 zero bytes → Fr::ONE
+        let mut one_hex = String::from("01");
+        one_hex.push_str(&"0".repeat(62));
+        let o = decode_hex_scalar(&one_hex).expect("decode");
+        assert_eq!(o, Fr::from(1u64));
+    }
+
+    #[test]
+    fn decode_hex_scalar_accepts_0x_prefix() {
+        let z = decode_hex_scalar(&format!("0x{}", "0".repeat(64))).expect("decode");
+        assert_eq!(z, Fr::from(0u64));
+    }
+
+    #[test]
+    fn decode_hex_scalar_rejects_wrong_length() {
+        let result = decode_hex_scalar("abcd");
+        assert!(result.is_err(), "short hex must fail");
+    }
+
+    #[test]
+    fn extract_mds_matrix_from_fixture() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-mds-fixture.json");
+        // 2×2 MDS with known hex entries. byte 0x01 LE → Fr::ONE
+        // for the [0][0] entry, byte 0x02 LE → Fr(2) for [1][1].
+        let one_hex = format!("01{}", "0".repeat(62));
+        let two_hex = format!("02{}", "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{one_hex}\",\"{one_hex}\"],[\"{one_hex}\",\"{two_hex}\"]],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\"crc\":[\"{one_hex}\"],\"psm\":[],\"sm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        fs::write(&path, json).unwrap();
+        let mds = extract_mds_matrix(&path).expect("extract");
+        assert_eq!(mds.len(), 2);
+        assert_eq!(mds[0].len(), 2);
+        assert_eq!(mds[0][0], Fr::from(1u64));
+        assert_eq!(mds[1][1], Fr::from(2u64));
         let _ = fs::remove_file(&path);
     }
 
