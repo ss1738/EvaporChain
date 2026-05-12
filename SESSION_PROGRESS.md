@@ -48,6 +48,69 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-12 (afternoon) — T0.10 Path A foundation slice: 5 stacked PRs against main
+
+**Focus:** Land every concrete, non-BESPOKE piece of Phase 2.2 / 2.3 / 2.4 for the Nova → Groth16-on-BN254 bridge as independent PRs, so the remaining bespoke Section-2 (Poseidon port) and Section-3 (RelaxedR1CS in-circuit) work has a stable substrate to plug into.
+
+**Commits shipped:** 5 (one per PR; all open against `main`).
+
+| PR | Title | Tests |
+|---|---|---|
+| #64 | Section 1 structural-validation gate | +5 (1 happy + 3 per-variant + 1 e2e Unsatisfiable) |
+| #65 | Section 2 prep — typed absorb-order spec | +6 (incl. cross-side swap canary) |
+| #66 | Phase 2.3 prep — nova↔arkworks scalar bridge + e2e fixture test | +8 + 1 (1024-scalar round-trips, boundaries, addition-preservation, real RecursiveSNARK output conversion) |
+| #67 | Phase 2.4 starter — Groth16 setup/prove/verify wrapper | +4 (setup, round-trip, soundness canary, prepared-vs-unprepared agree) |
+| #68 | Constraint-count probe + skeleton baseline | +2 (pins (5, 0, 0) for dummy + z-arity scaling) |
+
+**Deliverables (in dependency order):**
+
+- **PR #64.** `StructuralValidationError` enum (NumStepsIsZero / Z0Empty / StateVectorArityMismatch) + `NovaVerifierCircuit::validate_structurally(&self)` run as off-circuit precondition gate in `generate_constraints`. Field-level checks (`self.i == num_steps`, `instance.X.len() == 2`) deferred to Phase 2.3 adapter — encoding them in-circuit would force the prover to allocate the entire RecursiveSNARK as witness. `SCAFFOLD_VERSION` bumped `phase-2.2-skeleton` → `phase-2.2-section-1`.
+
+- **PR #65.** `poseidon_transcript` module: `TranscriptSlot` enum + `absorb_order(side, z_arity)` builder pinning nova-snark 0.68's exact absorb sequence from `src/nova/mod.rs:598-624`. Plus `NOVA_SPONGE_SPEC` const documenting neptune's `arity=24`, `Strength::Standard`, `Simplex`, IOPattern `[Absorb(len), Squeeze(1)]`, `NUM_HASH_BITS=250`. No hashing yet — that's the BESPOKE work.
+
+- **PR #66.** `scalar_adapter` module: 4 byte-level conversion fns between `halo2curves::bn256::Fr` ↔ `ark_bn254::Fr` and `halo2curves::grumpkin::Fr` ↔ `ark_bn254::Fq` via 32-byte LE round-trip. Reached through nova-snark's `provider::bn256_grumpkin` re-export so no direct `halo2curves` dep. Second commit on this branch adds `public_inputs_for_bridge(rs) -> Vec<ark_bn254::Fr>` — first place adapter touches real RecursiveSNARK data; test confirms 2-step fixture's `Scalar1::from(2)` converts to `ark_bn254::Fr::from(2)`.
+
+- **PR #67.** New `groth16_wrapper` module + `ark-groth16 = "0.5"` + `ark-snark = "0.5"` deps. `setup`/`prove`/`verify` + `prepare_vk`/`verify_prepared` + `public_inputs_in_alloc_order(circuit)`. The pipeline now produces a real `Proof<Bn254>` end-to-end on the constraint-empty skeleton — soundness canary confirms mutated `public_inputs[0]` rejects.
+
+- **PR #68.** `report_shape(circuit) -> CircuitShape` returning `(num_instance_variables, num_witness_variables, num_constraints)`. Baseline pinned: 5 instance vars (2 hashes + 1 z0 + 1 zi + 1 const), 0 witness, 0 constraints. Every future Section 2/3 PR can quote empirical "added X constraints" against this against the 2^N trusted-setup ceiling.
+
+**Empirical results:**
+
+- All 5 PRs build + test green on Mini 1. Total tests across the 5 PRs: **25 new** (1 e2e fixture + 5 + 6 + 8 + 4 + 2 = wrapping the foundation in regression coverage).
+- Groth16 pipeline produces a verifying proof for the constraint-empty circuit, and rejects on `public_inputs[0] += 1` mutation. Pipeline plumbing is correct; any future failure narrows to constraint-level (Sections 2 + 3).
+- Scalar adapter: 1024 random scalars per direction × 2 fields × 2 round-trip directions = **4096 random round-trips green**, plus boundaries + addition-preservation.
+- Constraint baseline: (5, 0, 0) is the floor Sections 2/3 will grow from.
+
+**Decisions made:**
+
+- **Section 1 split between off-circuit and adapter-time.** Cheap checks (num_steps != 0, z0 non-empty, arity match) go in the off-circuit gate; field-level checks against RecursiveSNARK private fields go in Phase 2.3. Encoding field-level checks in-circuit would waste orders-of-magnitude constraints.
+- **No `halo2curves` direct dep.** Used `nova_snark::provider::bn256_grumpkin::{bn256, grumpkin}::Scalar` re-exports instead. Keeps the Cargo.toml lean; halo2curves version follows whatever nova-snark pins.
+- **`ark-bn254` gains `features = ["curve"]`** to expose pairing-friendly trait impls needed by `ark-groth16`.
+- **Section 2 in-circuit Poseidon needs a neptune-constants port.** Arkworks generic Poseidon won't drop-in match — neptune uses Strobe-style sponge with its own MDS + round constants for `Strength::Standard` × `U24`. The port is the BESPOKE 1-3d work.
+
+**What's next:**
+
+- Get the 5 foundation PRs reviewed + merged (or rebased if main moves) — without this, further stacking gets painful.
+- After merge: pick one of three lanes:
+  - **Section 2 in-circuit Poseidon** (BESPOKE; port neptune constants → arkworks Poseidon-config; verify byte-equivalence against `PoseidonRO` reference)
+  - **Phase 2.5 Solidity smoke test** (write `NovaBridgeVerifier.sol` that decodes the PR #67 wrapper's `Proof<Bn254>` bytes + verifies via EIP-197 precompile)
+  - **Section 3 RelaxedR1CS in-circuit** (3-5d BESPOKE; encode `<a,z>·<b,z>=<c,z>` for each row of nova's sparse R1CS, OR sumcheck protocol-replay)
+
+**Blockers / open questions:**
+
+- All five PRs need to land before another round of stacking is productive. Operator merge gate.
+- The Section 2 Poseidon port hits one open question: whether to port neptune's constant-generation algorithm or to extract the constants at runtime via a build.rs and emit as Rust consts. Both work; the build.rs route is faster to ship but adds a build-time dependency on nova-snark.
+- Constraint budget vs trusted-setup ceiling still open — depends on the Powers-of-Tau ceremony pick (2^18 vs 2^20). Section 2 alone is likely O(20K) constraints; Section 3 is the unknown.
+
+**Cross-references:**
+
+- PRs: [#64](https://github.com/ss1738/EvaporChain/pull/64), [#65](https://github.com/ss1738/EvaporChain/pull/65), [#66](https://github.com/ss1738/EvaporChain/pull/66), [#67](https://github.com/ss1738/EvaporChain/pull/67), [#68](https://github.com/ss1738/EvaporChain/pull/68)
+- `crates/evaporchain-nova-bridge/DESIGN.md` — sub-path rationale, open questions
+- nova-snark `src/nova/mod.rs:598-624` — canonical absorb sequence (PR #65 mirror)
+- `MAINNET_LAUNCH_CHECKLIST.md` — Phase 2.2 / 2.3 / 2.4 line items now `🟡 in progress`
+
+---
+
 ## 2026-05-12 (morning) — T1.20 coverage push: 5-node fork fix + 90 new tests across execution/state/consensus
 
 **Focus:** Restore 5-node cluster lockstep after BatchUndoLog fork, then drive T1.20 coverage across execution/parallel, state/rocksdb_backend, and consensus/state_sync + lib.
