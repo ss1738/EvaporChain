@@ -110,6 +110,7 @@ pub mod groth16_wrapper;
 pub mod l_u_secondary_extract;
 pub mod mds_linalg;
 pub mod neptune_dump_parser;
+pub mod neptune_permutation_gadget;
 pub mod neptune_reference;
 pub mod recursive_snark_fixture;
 pub mod scalar_adapter;
