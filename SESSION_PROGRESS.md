@@ -48,6 +48,49 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-12 (evening) — EvaporScript stdlib: fill 9 missing pilot contracts
+
+**Focus:** Workspace CI was blocked because 9 pilot tests in `crates/evaporchain-script/tests/` used `include_str!` on `.es` contracts that had never been written. Wrote all 9.
+
+**Commits shipped:** 1 (`c44b0e36`). Branched off `origin/main` as `pr/evaporscript-stdlib-contracts` to avoid the parallel-session divergence on `pr/t0-substrate-memento-contracts`. PR #150 open.
+
+**Deliverables:**
+| Contract | Pilot tests | Doctrine pin |
+|---|---|---|
+| `time_lock.es` | 15/15 | claim window bounded by contract energy |
+| `oracle_feed.es` | 10/10 | freshness is structural, not consumer convention |
+| `subscription.es` | 13/13 | no off-chain reaper — evap = lapse |
+| `vesting_schedule.es` | 12/12 | unclaimed vested forfeits at evap |
+| `payment_split.es` | 12/12 | pull-payment, bps sum to 10_000 exactly |
+| `bounty.es` | 13/13 | unaccepted bounty refunds at evap |
+| `lottery.es` | 12/12 | unresolved draw void by physics |
+| `multisig.es` | 11/11 | one-decision-per-contract, expired-at-evap |
+| `sealed_bid_auction.es` | 12/12 | effective ≤ nominal; void if not settled |
+
+Each contract's revert strings + method names are pinned by the pilot tests verbatim.
+
+**Empirical results:**
+- All 9 pilots green on first run on Mini 1 except `vesting_schedule` (caught language gap below and rewrote — second pass green).
+- Full `cargo test -p evaporchain-script`: 258 tests pass / 0 fail.
+
+**Decisions made:**
+- EvaporScript has no contract-internal method dispatch (`self.method()` resolves to builtins only). Vested-math in `vesting_schedule.es` is duplicated across `claim`/`pending_amount`/`on_evaporate` by design — not a refactor opportunity.
+- Map default for missing keys is `Value::U64(0)` regardless of value type. `bounty.es` uses a parallel `u64 has_submitted` presence map alongside `submissions: map[address -> string]` rather than peeking at the empty-string sentinel.
+
+**What's next:**
+- Workspace `cargo test --workspace --no-run` still fails on two `evaporchain-nova-bridge` examples (`extract_real_crc`, `parse_real_smoke`) that reference symbols not re-exported from the crate root — separate from the `.es` gap; pre-existing in-progress nova-bridge edits on Mini 1. Owner to fix in their session.
+- Parallel-session work on `pr/t0-substrate-memento-contracts` continues to diverge from `main`; needs an operator-level reconciliation before the contracts branch and tendermint-coverage branches both land cleanly on main.
+
+**Blockers / open questions:**
+- None for the EvaporScript stdlib lane itself — PR #150 is review-ready.
+
+**Cross-references:**
+- PR https://github.com/ss1738/EvaporChain/pull/150
+- Commit `c44b0e36` (this session)
+- Memory entry `evaporchain_evaporscript_grammar_gotchas.md` (Claude memory)
+
+---
+
 ## 2026-05-12 (late evening) — T1.20 parallel.rs batch 7: +57 tests, 78.89%→83.46%
 
 **Focus:** T1.20 coverage batch for execution/parallel.rs — all uncovered gas/partitioning/execute_partition arms.
