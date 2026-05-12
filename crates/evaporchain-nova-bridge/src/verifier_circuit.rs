@@ -123,9 +123,18 @@ pub struct NovaVerifierCircuit {
     pub z0: Vec<Bn254Fr>,
     /// Output state vector after `num_steps` folds. Public input.
     pub zi: Vec<Bn254Fr>,
-    /// The two committed hashes from `l_u_secondary.X[..2]`.
-    /// Section-2 check: re-hash everything and compare.
+    /// First of the two committed hashes — `l_u_secondary.X[0]`,
+    /// extracted via [`crate::l_u_secondary_extract`] and passed
+    /// through [`crate::scalar_adapter::secondary_to_ark_fr_lossy`]
+    /// at adapter time. Section-2 check (when wired): the in-
+    /// circuit re-hash of `(pp.digest, num_steps, z0, zi, …)` must
+    /// equal this value.
     pub committed_hash_primary: Bn254Fr,
+    /// Second of the two committed hashes — `l_u_secondary.X[1]`,
+    /// extracted via [`crate::l_u_secondary_extract`] and passed
+    /// through [`crate::scalar_adapter::secondary_to_ark_fr_lossy`]
+    /// at adapter time. Section-2 check companion to
+    /// [`Self::committed_hash_primary`].
     pub committed_hash_secondary: Bn254Fr,
     // Section-3 witnesses (RelaxedR1CS instances + their R1CS
     // satisfying assignments) are intentionally NOT field members
