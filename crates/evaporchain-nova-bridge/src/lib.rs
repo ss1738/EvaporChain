@@ -28,24 +28,37 @@
 //! accumulation *outside* the Groth16 circuit; the wrapper only needs to
 //! verify the final accumulator state, which is constraint-cheap.
 //!
-//! See `DESIGN.md` next to this `lib.rs` for:
+//! A `DESIGN.md` companion (on a parallel docstring-refresh stack,
+//! not yet merged into `main`) covers:
 //!   - The three sub-paths considered (A1 = raw RecursiveSNARK, A2 = CompressedSNARK,
 //!     A3 = re-prove via relayer) and why A3 is the recommended path.
 //!   - The open research questions for Phase 2.2 onward.
 //!   - The Phase 2 milestone breakdown.
 //!
-//! # Status — Phase 2.1 scaffold
+//! # Status (as of `SCAFFOLD_VERSION = "phase-2.2-section-1"`)
 //!
-//! This crate ships:
-//!   - Cargo.toml with nova-snark + arkworks deps pinned to the chain's
-//!     existing versions (no new dependency drift).
-//!   - This module-level doc + the design rationale doc next to it.
-//!   - No working verifier yet. The verifier circuit is the multi-day
-//!     research deliverable for Phase 2.2-2.3.
-//!
-//! Phase 2.1's goal is to give the *next* session a clean starting
-//! point with the surrounding plumbing in place, so the research
-//! attention can stay on the verifier algorithm itself.
+//! - **Phase 2.1 — scaffold (DONE, PR #52):** Cargo.toml with
+//!   nova-snark + arkworks deps pinned to the chain's existing
+//!   versions; no new dependency drift.
+//! - **Phase 2.2 starter — fixture generator (DONE, PR #55):** see
+//!   [`recursive_snark_fixture`].
+//! - **Phase 2.2 skeleton — verifier circuit shape (DONE, earlier
+//!   commit):** see [`verifier_circuit::NovaVerifierCircuit`] +
+//!   `ConstraintSynthesizer` impl + public-input wiring contract.
+//! - **Phase 2.2 Section 1 — structural checks (DONE, PR #125):**
+//!   off-circuit precondition gate
+//!   [`verifier_circuit::NovaVerifierCircuit::validate_structurally`],
+//!   typed
+//!   [`verifier_circuit::StructuralValidationError`] variants, wired
+//!   into `generate_constraints` as
+//!   `SynthesisError::Unsatisfiable`.
+//! - **Phase 2.2 Section 2 — Poseidon transcript (PARTIAL):**
+//!   constants layer byte-correct against neptune on the parallel
+//!   docstring-refresh stack (not yet on `main`). Sponge-framing
+//!   gap remains BESPOKE multi-day work.
+//! - **Phase 2.2 Section 3 — RelaxedR1CS satisfiability (OPEN):**
+//!   BESPOKE, 3-5 day research deliverable.
+//! - **Phase 2.3+ — scalar adapter + Groth16 wrapper (OPEN).**
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
