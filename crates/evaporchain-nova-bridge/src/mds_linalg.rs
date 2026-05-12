@@ -53,6 +53,37 @@ pub fn vec_add(a: &[Fr], b: &[Fr]) -> Vec<Fr> {
     a.iter().zip(b.iter()).map(|(x, y)| *x + *y).collect()
 }
 
+/// Matrix-matrix product `a · b`. Both matrices are row-major
+/// `Vec<Vec<Fr>>`. Inner dimension of `a` must match outer
+/// dimension of `b` (i.e., `a[0].len() == b.len()`).
+pub fn matrix_mul(a: &[Vec<Fr>], b: &[Vec<Fr>]) -> Vec<Vec<Fr>> {
+    assert!(!a.is_empty() && !b.is_empty(), "matrices must be non-empty");
+    let inner = a[0].len();
+    assert_eq!(inner, b.len(), "matrix_mul: a.cols ({inner}) ≠ b.rows ({})", b.len());
+    let cols = b[0].len();
+    let mut out: Vec<Vec<Fr>> = Vec::with_capacity(a.len());
+    for row in a {
+        let mut out_row = vec![Fr::from(0u64); cols];
+        for k in 0..inner {
+            let aik = row[k];
+            for (j, out_cell) in out_row.iter_mut().enumerate().take(cols) {
+                *out_cell += aik * b[k][j];
+            }
+        }
+        out.push(out_row);
+    }
+    out
+}
+
+/// Build an N×N identity matrix over `ark_bn254::Fr`.
+pub fn identity_matrix(n: usize) -> Vec<Vec<Fr>> {
+    let mut m = vec![vec![Fr::from(0u64); n]; n];
+    for i in 0..n {
+        m[i][i] = Fr::from(1u64);
+    }
+    m
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +174,83 @@ mod tests {
         let a = vec![Fr::from(1u64)];
         let b = vec![Fr::from(1u64), Fr::from(2u64)];
         let _ = vec_add(&a, &b);
+    }
+
+    #[test]
+    fn matrix_mul_identity_is_identity() {
+        let i3 = identity_matrix(3);
+        let a = vec![
+            vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)],
+            vec![Fr::from(4u64), Fr::from(5u64), Fr::from(6u64)],
+            vec![Fr::from(7u64), Fr::from(8u64), Fr::from(9u64)],
+        ];
+        assert_eq!(matrix_mul(&i3, &a), a);
+        assert_eq!(matrix_mul(&a, &i3), a);
+    }
+
+    #[test]
+    fn matrix_mul_concrete_2x2() {
+        // [[1,2],[3,4]] · [[5,6],[7,8]] = [[19,22],[43,50]]
+        let a = vec![
+            vec![Fr::from(1u64), Fr::from(2u64)],
+            vec![Fr::from(3u64), Fr::from(4u64)],
+        ];
+        let b = vec![
+            vec![Fr::from(5u64), Fr::from(6u64)],
+            vec![Fr::from(7u64), Fr::from(8u64)],
+        ];
+        let c = matrix_mul(&a, &b);
+        assert_eq!(c[0][0], Fr::from(19u64));
+        assert_eq!(c[0][1], Fr::from(22u64));
+        assert_eq!(c[1][0], Fr::from(43u64));
+        assert_eq!(c[1][1], Fr::from(50u64));
+    }
+
+    #[test]
+    fn identity_matrix_shape() {
+        let i25 = identity_matrix(25);
+        assert_eq!(i25.len(), 25);
+        for (i, row) in i25.iter().enumerate() {
+            assert_eq!(row.len(), 25);
+            for (j, cell) in row.iter().enumerate() {
+                if i == j {
+                    assert_eq!(*cell, Fr::from(1u64));
+                } else {
+                    assert_eq!(*cell, Fr::from(0u64));
+                }
+            }
+        }
+    }
+
+    /// **Mathematical invariant on real neptune data.**
+    /// `m · m_inv = I` and `m_hat · m_hat_inv = I` for the
+    /// matrices extracted in PR #80's dump.
+    ///
+    /// If this fires, either:
+    /// - Our matrix-mul impl has a bug, OR
+    /// - The extracted matrices have been corrupted somewhere
+    /// - OR neptune's `m_inv` field doesn't actually hold the
+    ///   matrix inverse (unlikely but worth catching)
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json"]
+    fn real_neptune_mds_inverse_invariants_hold() {
+        use crate::neptune_dump_parser::{
+            extract_mds_inverse_matrix, extract_mds_m_hat, extract_mds_m_hat_inv,
+            extract_mds_matrix,
+        };
+        let dump_path = "/tmp/neptune-bn256-standard.json";
+
+        // m · m_inv == I (25×25)
+        let m = extract_mds_matrix(dump_path).expect("m");
+        let m_inv = extract_mds_inverse_matrix(dump_path).expect("m_inv");
+        let product = matrix_mul(&m, &m_inv);
+        assert_eq!(product, identity_matrix(25), "m · m_inv must be I");
+
+        // m_hat · m_hat_inv == I (24×24)
+        let m_hat = extract_mds_m_hat(dump_path).expect("m_hat");
+        let m_hat_inv = extract_mds_m_hat_inv(dump_path).expect("m_hat_inv");
+        let product_hat = matrix_mul(&m_hat, &m_hat_inv);
+        assert_eq!(product_hat, identity_matrix(24), "m_hat · m_hat_inv must be I");
     }
 
     /// **Real-data test.** Multiply the extracted neptune MDS by
