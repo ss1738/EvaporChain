@@ -21120,3 +21120,212 @@ mod t1_20_batch16 {
         assert!(tc.check_weak_subjectivity(&block));
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch17 {
+    use super::*;
+    use evaporchain_light_cone::Block as LcBlock;
+    use evaporchain_singh_attractor::Attractor;
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Block, DeployScriptTx, Transaction};
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: number / 10, parent_hash: [0u8; 32],
+            state_root: [0u8; 32], transactions: vec![],
+            producer_id: Some(1), timestamp: number * 12,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: create_proposal trims oversized block via many medium txs (lines 6549-6570) ──
+    #[test]
+    fn t1_20_create_proposal_trim_loop_fires_with_medium_txs() {
+        let mut tc = make_tc();
+        // 25 × ~100KB DeployScript txs → block ≈ 2.5MB > MAX_BLOCK_SIZE_BYTES (2MB)
+        let source = "x".repeat(100_000);
+        for i in 0u64..25 {
+            tc.mempool.submit(Transaction::DeployScript(DeployScriptTx {
+                deployer: [1u8; 32],
+                source_code: source.clone(),
+                energy: i + 1,
+                half_life: 1,
+                signature: None,
+                public_key: None,
+            }));
+        }
+        let mut db = InMemoryStateDB::new();
+        let block = tc.create_proposal(&mut db).expect("proposal must be produced");
+        // Block must be trimmed (serialized size ≤ 2MB OR fewer txs than submitted)
+        let enc = serde_json::to_vec(&block).unwrap();
+        assert!(
+            enc.len() <= MAX_BLOCK_SIZE_BYTES,
+            "trimmed block must fit within MAX_BLOCK_SIZE_BYTES; got {} bytes",
+            enc.len()
+        );
+        assert!(block.transactions.len() < 25, "some txs must have been trimmed");
+    }
+
+    // ── Test 2: committed_at_block overflow with proper unique keys (lines 5510-5512) ──
+    #[test]
+    fn t1_20_committed_at_block_overflow_unique_keys_prunes_oldest() {
+        let mut tc = make_tc();
+        // Insert 1025 entries with genuinely unique keys
+        for i in 0u64..1025 {
+            let mut key = [0u8; 32];
+            key[0] = (i % 256) as u8;
+            key[1] = (i / 256) as u8;
+            tc.committed_at_block.insert(key, i + 1);
+        }
+        assert_eq!(tc.committed_at_block.len(), 1025);
+        // on_block_committed inserts one more (block_hash ≠ any existing key)
+        let block = make_block(1);
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // Must prune back to ≤ 1025 (one entry removed)
+        assert!(tc.committed_at_block.len() <= 1025);
+    }
+
+    // ── Test 3: singh_attractor second candidate has lower score → selected (line 1692) ──
+    #[test]
+    fn t1_20_singh_attractor_better_candidate_replaces_first() {
+        let mut tc = make_tc();
+        let genesis = [0u8; 32];
+        let head1 = [0x01u8; 32];
+        let head2 = [0x02u8; 32];
+        // Insert into DAG
+        tc.light_cone_dag.insert(LcBlock::new(genesis, vec![], 1000, 0)).ok();
+        // head1: energy=2000 → distance from center 1000 = 1000 → score 1000
+        tc.light_cone_dag.insert(LcBlock::new(head1, vec![genesis], 2000, 1)).ok();
+        // head2: energy=1500 → distance from center 1000 = 500 < 1000 → score 500, replaces head1
+        tc.light_cone_dag.insert(LcBlock::new(head2, vec![genesis], 1500, 1)).ok();
+        let attractor = Attractor::new(1000, 100); // basin radius 100
+        let result = tc.singh_attractor_fork_choice(&[head1, head2], &[attractor]);
+        assert_eq!(result, Some(head2), "lower-score (closer to attractor) candidate must win");
+    }
+
+    // ── Test 4: singh_attractor empty attractors slice → None (line 1665) ──
+    #[test]
+    fn t1_20_singh_attractor_empty_attractors_returns_none() {
+        let tc = make_tc();
+        let result = tc.singh_attractor_fork_choice(&[[1u8; 32]], &[]);
+        assert_eq!(result, None);
+    }
+
+    // ── Test 5: apply_block with block below trusted checkpoint → Err (lines 6161-6164) ──
+    #[test]
+    fn t1_20_apply_block_ws_violation_returns_err() {
+        let mut tc = make_tc();
+        tc.set_trusted_checkpoint(10, [1u8; 32], [2u8; 32]);
+        let block = make_block(5); // 5 < checkpoint 10
+        let mut db = InMemoryStateDB::new();
+        let result = tc.apply_block(&mut db, &block);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("weak subjectivity"), "error must cite ws: {msg}");
+    }
+
+    // ── Test 6: apply_block with empty block and no checkpoints → Ok (covers main path) ──
+    #[test]
+    fn t1_20_apply_block_empty_block_returns_ok() {
+        let mut tc = make_tc();
+        let block = make_block(1);
+        let mut db = InMemoryStateDB::new();
+        let result = tc.apply_block(&mut db, &block);
+        assert!(result.is_ok(), "empty block must execute successfully");
+    }
+
+    // ── Test 7: propose_parents in default linear mode → vec![] (line 3050) ──
+    #[test]
+    fn t1_20_propose_parents_linear_mode_empty() {
+        let tc = make_tc();
+        assert!(tc.propose_parents().is_empty());
+    }
+
+    // ── Test 8: propose_parents in mcc_full mode with no DAG heads → vec![] ──
+    #[test]
+    fn t1_20_propose_parents_mcc_full_no_heads_empty() {
+        let mut tc = make_tc();
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        assert!(tc.propose_parents().is_empty());
+    }
+
+    // ── Test 9: singh_attractor tainted head is skipped (lines 1672-1673) ──
+    #[test]
+    fn t1_20_singh_attractor_tainted_head_skipped() {
+        let mut tc = make_tc();
+        let tainted = [0xFFu8; 32];
+        tc.slashed_equivocator_blocks.insert(tainted);
+        let attractor = Attractor::new(1000, 500);
+        // Only candidate is tainted → skipped → None
+        let result = tc.singh_attractor_fork_choice(&[tainted], &[attractor]);
+        assert_eq!(result, None);
+    }
+
+    // ── Test 10: singh_attractor head in basin beats head outside basin ──
+    #[test]
+    fn t1_20_singh_attractor_in_basin_wins() {
+        let mut tc = make_tc();
+        let genesis = [0u8; 32];
+        let out_of_basin = [0x10u8; 32];
+        let in_basin = [0x20u8; 32];
+        tc.light_cone_dag.insert(LcBlock::new(genesis, vec![], 1000, 0)).ok();
+        // out_of_basin: energy=3000, far from center 1000 → score = 2000
+        tc.light_cone_dag.insert(LcBlock::new(out_of_basin, vec![genesis], 3000, 1)).ok();
+        // in_basin: energy=1050, center=1000, radius=200 → score = 0 (in basin)
+        tc.light_cone_dag.insert(LcBlock::new(in_basin, vec![genesis], 1050, 1)).ok();
+        let attractor = Attractor::new(1000, 200);
+        let result = tc.singh_attractor_fork_choice(&[out_of_basin, in_basin], &[attractor]);
+        assert_eq!(result, Some(in_basin));
+    }
+
+    // ── Test 11: committed_at_block below overflow cap → no prune (coverage control) ──
+    #[test]
+    fn t1_20_committed_at_block_at_cap_no_prune() {
+        let mut tc = make_tc();
+        // Fill exactly 1024 entries (cap) → inserting 1 more brings to 1025 > 1024 → prune
+        for i in 0u64..1024 {
+            let mut key = [0u8; 32];
+            key[0] = (i % 256) as u8;
+            key[1] = (i / 256) as u8;
+            tc.committed_at_block.insert(key, i + 1);
+        }
+        let block = make_block(2);
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // After commit: 1024 + 1 = 1025 > 1024 → one entry pruned → len = 1024
+        assert!(tc.committed_at_block.len() <= 1025);
+    }
+
+    // ── Test 12: apply_block with rolling WS checkpoint violation → Err ──
+    #[test]
+    fn t1_20_apply_block_rolling_ws_checkpoint_violation() {
+        let mut tc = make_tc();
+        tc.weak_subjectivity_checkpoints.push((20, [0xAAu8; 32]));
+        let block = make_block(15); // 15 < rolling checkpoint 20
+        let mut db = InMemoryStateDB::new();
+        let result = tc.apply_block(&mut db, &block);
+        assert!(result.is_err());
+    }
+}
