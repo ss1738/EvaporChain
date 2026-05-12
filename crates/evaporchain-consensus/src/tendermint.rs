@@ -2712,16 +2712,6 @@ impl TendermintConsensus {
         &self.disputed_observations
     }
 
-    /// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — verify the
-    /// block's `Transaction::Refund` set exactly matches what the
-    /// chain expects at this height. `Ok(())` when:
-    /// - settlement mode is `"observe"` (default — no enforcement), OR
-    /// - settlement mode is `"enforce"` and the block's refund set
-    ///   matches the chain's expected set exactly (every required
-    ///   refund present, no extras, payloads byte-equal).
-    /// Returns a `RefundValidationError` describing the violation
-    /// otherwise. Phase 3.5 will pair `MissingRefund` with a
-    /// proposer-slash.
     /// Phase 3.5c of `CROOKS_MEV_INTEGRATION_PLAN.md` — read-only
     /// view of the per-proposer MissingRefund violation counter.
     /// Operators feed `[counts_per_validator]` into
@@ -2732,6 +2722,18 @@ impl TendermintConsensus {
         &self.mev_missing_refund_violations
     }
 
+    /// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — verify the
+    /// block's `Transaction::Refund` set exactly matches what the
+    /// chain expects at this height. `Ok(())` when:
+    ///
+    /// - settlement mode is `"observe"` (default — no enforcement), OR
+    /// - settlement mode is `"enforce"` and the block's refund set
+    ///   matches the chain's expected set exactly (every required
+    ///   refund present, no extras, payloads byte-equal).
+    ///
+    /// Returns a `RefundValidationError` describing the violation
+    /// otherwise. Phase 3.5 will pair `MissingRefund` with a
+    /// proposer-slash.
     pub fn validate_block_refunds(
         &self,
         block: &Block,
@@ -3155,6 +3157,7 @@ impl TendermintConsensus {
     ///      `from_head` to `lca` (the deferred B.1 snapshot work).
     ///   2. Applies the blocks in `forward_path` in order, calling
     ///      `db.execute_block` for each.
+    ///
     /// Splitting the planning from the execution lets the planning
     /// be pure (testable without a StateDB) and keeps the executor
     /// integration localised to B.2.
