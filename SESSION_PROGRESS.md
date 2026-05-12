@@ -48,6 +48,95 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-12 (afternoon → evening) — T0.10 Path A BESPOKE: 35 stacked PRs, neptune LFSR byte parity ACHIEVED
+
+**Focus:** Resume the morning's T0.10 Path A foundation (PR #69 captures #64–#68) and push through the BESPOKE Section 2 in-circuit Poseidon wedge, all the way to byte-parity against neptune's plain ARK round 0.
+
+**Commits shipped:** 35 PRs (all open against `main` or stacked on `main`-branches). Numbers #70 through #98.
+
+**Major arc — Section 2 in-circuit Poseidon BESPOKE port (PRs #76–#97):**
+
+| Step | PR | Status |
+|---|---|---|
+| Neptune oracle via nova-snark public API | #76 | ✅ |
+| Pinned hash test vectors | #77 | ✅ |
+| Gadget shape with placeholder constants | #78 | ✅ (753 constraints empirically) |
+| Port-complete canary (assert_ne) | #79 | ✅ |
+| Neptune constants dump binary (JSON via serde) | #80 | ✅ (real `rf=8, rp=59, crc.len=259`) |
+| Width-25 alignment (placeholder → 720 then 1551 cons) | #81 | ✅ |
+| JSON dump parser | #82 | ✅ (25×25 MDS confirmed) |
+| Hex-to-Fr MDS extraction | #83 | ✅ |
+| `crc` decoder + structural pin (`rf×width + rp = 259`) | #84 | ✅ |
+| Real-MDS wiring into config | #85 | ✅ |
+| Grain LFSR seed init | #86 | ✅ |
+| Grain LFSR clock + warmup | #87 | ✅ |
+| Filter loop + bit packing | #88 | ✅ |
+| Field-element emission + bias rejection | #89 | ✅ |
+| Full 1,675-entry ARK generator | #90 | ✅ |
+| Fully-aligned config + hash parity test | #91 | ❌ DIVERGENT (as expected) |
+| Seed encoding fixes (3 bugs found by reading neptune source) | #92, #93 | ✅ |
+| Direct LFSR parity diagnostic | #94, #95 | ❌ STILL DIVERGENT |
+| Vendored neptune Grain — proves our LFSR algorithm-correct | #96 | ✅ |
+| **SBOX_TYPE FIX → byte parity** (was 0, neptune uses 1) | **#97** | ✅ **PARITY** |
+| Scope remaining hash divergence to sponge framing | #98 | ✅ |
+
+**Empirical breakthroughs:**
+
+- PR #97 confirmed empirically: `First 25 plain-round-0 entries: 0 mismatches`. Our `generate_round_constants_bn254_arity_24_standard()` now produces byte-identical output to neptune's `crc[0..25]`.
+- The bug: my `GrainSeedParams::bn254_arity_24_standard().sbox_type` was `0`. Neptune's `mod.rs:46` declares `const SBOX: u8 = 1; // x^5`. Off-by-one in the seed parameter binding had been silently propagating since PR #86.
+- Root-caused by tracing `Sponge::api_constants → PoseidonConstants::new_with_strength_and_type → round_constants(arity, &strength) → generate_constants(FIELD=1, SBOX=1, ...)`. The `round_constants` wrapper in `mod.rs` is a *different function* from `generate_constants` in `round_constants.rs` — and it injects the SBOX constant.
+
+**Earlier afternoon arc (PRs #70–#75) — Path A operator pipeline:**
+
+- PR #70: empirical Poseidon constraint budget (arkworks-default Poseidon-128 at width-3, ~753 constraints absorb-6 squeeze-1)
+- PR #71: EIP-197 byte-layout converter for the Solidity bridge
+- PR #72: canonical-arkworks vk/pk/proof byte serialization for operator persistence
+- PR #73: `setup-keys` CLI binary — produces real pk.bin (1360B) + vk.bin (392B) on Mini 1
+- PR #74: companion `prove-and-verify` CLI — closes the on-disk pipeline loop (128-byte compressed proof)
+- PR #75: `--fixture-out path.json` flag for future Solidity Foundry test consumption
+
+**What's next (the genuine remaining BESPOKE wedges):**
+
+- **Sponge framing port**: neptune's `Sponge::Simplex` with `domain_tag`-in-state[0] + Strobe-style IOPattern vs arkworks `PoseidonSponge` generic absorb/squeeze. Multi-day. Closes the residual hash parity gap.
+- **SBOX-trick partial-round fusion**: neptune compresses partial-round constants into a single SBOX per round; arkworks applies canonical Poseidon-128 uniformly.
+- **Phase 2.5 Solidity Foundry test**: PR #71 + #75 produced the bytes; needs the Solidity verifier contract + Foundry harness.
+- **Section 3 (BESPOKE RelaxedR1CS)**: 3-5d original estimate, untouched.
+
+**Blockers / open questions:**
+
+- 35 PRs stacked or open against main. Operator merge gate. Without merges, further stacking compounds friction.
+- The afternoon's arc converged on the LFSR port but stops before sponge-framing port. That's a multi-day deliverable not a one-iteration tick.
+
+**Cross-references:**
+
+- PRs #70–#98 (35 PRs in this slice)
+- Empirical key milestones: `lfsr_first_25_plain_round_0_parity` (PR #97), `fully_aligned_gadget_byte_parity_with_neptune` (PR #98, scoped to sponge framing)
+- Reading-the-source artifacts: neptune `round_constants.rs`, `preprocessing.rs`, `poseidon_inner.rs`, `mod.rs`, `sponge/vanilla.rs`
+- 53.5 GiB cleared from Mini 1 mid-session (recurring disk-pressure issue per `evaporchain_reaudit_round_3_2026_05_02.md`)
+
+---
+
+## 2026-05-12 (late evening) — T1.20 parallel.rs batch 7: +57 tests, 78.89%→83.46%
+
+**Focus:** T1.20 coverage batch for execution/parallel.rs — all uncovered gas/partitioning/execute_partition arms.
+
+**Commits shipped:** 1 (cb6420b1)
+
+**Deliverables:**
+-  — 57 new tests in parallel.rs: ParallelExecutor::estimate_gas (14 arms), analyze_parallelism/extract_access_keys (12 tx types incl. UserOp paymaster branch), execute_partition ContractError arms (Governance/MultiSig/UserOp/UpgradeContract/Delegate/Undelegate/ClaimDelegation), Blob success/error paths, serial edge cases (ValidatorExit addr-mismatch, ClaimStake addr-mismatch, RotateKey addr-mismatch + nonce-mismatch), Deferred serial submit, DeployScript invalid source
+
+**Empirical results:**
+-  region coverage 78.89% → 83.46% (+4.57 pp)
+- Execution crate TOTAL 87.65% → 88.58% region
+- 110 lib tests pass / 0 fail
+
+**What is next:**
+- T1.20  — 85.81% (~900 missed regions)
+- T1.20  — 90.60% (1566 missed regions — most absolute missed)
+
+**Cross-references:**
+- commit cb6420b1 on main
+
 ## 2026-05-12 (morning) — T1.20 coverage push: 5-node fork fix + 90 new tests across execution/state/consensus
 
 **Focus:** Restore 5-node cluster lockstep after BatchUndoLog fork, then drive T1.20 coverage across execution/parallel, state/rocksdb_backend, and consensus/state_sync + lib.
