@@ -1,55 +1,48 @@
 //! Non-native Pallas G1 affine point addition gadget — second layer
 //! of the sub-B-finish foundation.
 //!
-//! # Known issue (2026-05-12 update) — completeness gap, NOT soundness
+//! # Resolution (2026-05-12) — constraint (2) num_additions split
 //!
-//! The gadget math is correct (off-circuit verification holds for
-//! every constraint), and the gadget correctly **rejects** invalid
-//! `(P1, P2, P3)` triples (soundness: `g1_add_unsatisfied_when_p3_wrong`).
-//! However, the constraint system reports `unsatisfied` for **valid**
-//! `(P1, P2, P3 = P1 + P2)` triples — a completeness failure that
-//! reproduces in **both** arkworks 0.4 (`NonNativeFieldVar`) AND
-//! arkworks 0.5 (`EmulatedFpVar`) for the same-bit-size field pair
-//! `PallasFq (254-bit)` ↔ `Bn254Fr (254-bit)`.
+//! The completeness gap is CLOSED. Root cause: arkworks's same-bit-size
+//! 254↔254 `enforce_equal` has a headroom limit on the combined
+//! `num_of_additions_over_normal_form` budget; empirically a delta of
+//! 4 fails while a delta of 3 passes. Per the `+`/`-` accounting in
+//! `ark-r1cs-std-0.5 emulated_fp/allocated_field_var.rs:148,170` each
+//! add/sub adds 1 to the operand's running counter.
 //!
-//! **Empirically tested resolutions (none yet close the gap):**
+//! Constraint shapes after the fix:
 //!
-//!   ~~1. arkworks 0.5 `EmulatedFpVar` upgrade~~ — `a1d8ac9` 2026-05-11.
-//!      Does not fix; same panic as on 0.4.
-//!   ~~2. Constraint-shape rewrite (additive form on both sides)~~ —
-//!      `2c2cddf` 2026-05-11. Made it worse: each `enforce_equal`
-//!      compared `num_additions = 2` vs `num_additions = 2`, doubling
-//!      the headroom drain.
-//!   ~~3. Canonical form on arkworks 0.5~~ — 2026-05-12.
-//!      Reverted shape 2 → canonical; constraint count halved
-//!      (~9-10k → ~4037), satisfaction still fails. The gap is
-//!      structurally at the limb-decomposition layer, not the
-//!      constraint shape. **Kept anyway — strict improvement.**
+//! | Constraint | LHS num_add | RHS num_add | Pass |
+//! |---|---|---|---|
+//! | (1) `λ(x₂−x₁) = y₂−y₁`         | 1 (mult)    | 1 (sub)    | ✅ |
+//! | (2a) `x_sum−x₃ = x₁+x₂`        | 1 (sub)     | 1 (add)    | ✅ |
+//! | (2b) `λ² = x_sum`              | 1 (mult)    | 0 (witness)| ✅ |
+//! | (3) `λ(x₁−x₃) = y₃+y₁`         | 1 (mult)    | 1 (add)    | ✅ |
 //!
-//! **Untested remaining options (all multi-day-to-week deep work):**
+//! Pre-fix constraint (2) had RHS `x₁ + x₂ + x₃` with num_add = 2 —
+//! exactly 1 past the budget. The intermediate witness `x_sum` adds
+//! one extra non-native witness + one `enforce_equal`, marginal
+//! constraint cost (~+200), and unblocks the gadget completely.
 //!
-//!   4. **`r1cs-bitcoin`'s non-native gadget** — different limb strategy
-//!      (~6 × 64-bit limbs with explicit reduction barriers). Est. 3-5
-//!      days. Adds external-dep / less-audited risk.
-//!   5. **Custom limb decomposition** tuned for the 254↔254 same-bit-size
-//!      pair: pick limb_size such that `num_of_additions × num_limbs ×
-//!      2^limb_size < BaseField::MODULUS` with enough headroom for
-//!      chained mult-then-add sequences. Est. 1-2 weeks. Most maintainable
-//!      long-term.
-//!   6. **CycleFold / kateholdem-style folding** — instead of emulating
-//!      Pallas Fq inside Bn254 Fr, fold over a curve cycle where one
-//!      side IS native and pair with the other via accumulation.
-//!      Est. 4-6 weeks. Biggest scope; rethinks the entire wrapper.
+//! **Bisect history that led here (all on Mini 1, release):**
 //!
-//! Symptoms: in both the canonical sub-form and the rewritten additive
-//! form, an arkworks-internal range/equality constraint deep in the
-//! limb-reduction layer fails despite both sides reducing to the same
-//! BigInt off-circuit. The bug is unrelated to the affine-add formula
-//! itself.
+//!   1. arkworks 0.4 → 0.5 upgrade — gap still open.
+//!   2. Additive-form rewrite of all 3 constraints — gap still open;
+//!      constraint count ballooned to ~9-10k.
+//!   3. Canonical-form revert — gap still open; constraint count
+//!      ~4037. (Shipped as #49 anyway: strict improvement.)
+//!   4. arkworks `find_parameters` patches (max_limb_size = 80, then
+//!      32) — gap still open. Eliminated parameter selection as the
+//!      cause.
+//!   5. Minimal `EmulatedFpVar<PallasFq, Bn254Fr>` mult-then-eq test
+//!      — passed. Eliminated arkworks-itself as the cause for the
+//!      simple case.
+//!   6. Per-constraint isolation bisect of g1_add — only constraint
+//!      (2) failed in isolation. Pinpointed the bug.
+//!   7. Intermediate-witness split for constraint (2) — **passed**.
+//!      Fix landed in `enforce_g1_add` below.
 //!
-//! The satisfied-triple test is `#[ignore]`'d below with the diagnostic
-//! preserved in-source. The soundness test + constraint-count test stay
-//! active (the count test inspects shape, not satisfaction).
+//! The fix relies on no upstream patch — runs on stock arkworks 0.5.
 //!
 //! # What this gadget proves
 //!
@@ -160,16 +153,21 @@ pub fn enforce_g1_add(
     let lambda_val = compute_lambda(p1, p2)?;
     let lambda = alloc_nonnative_fq_witness(cs.clone(), lambda_val)?;
 
-    // Canonical-form constraints (each `enforce_equal` compares one
-    // post-mult side with one sum-of-witnesses side). The earlier
-    // "additive rewrite" attempted to balance shapes by adding a
-    // constant to BOTH sides, but that made each side carry
-    // num_of_additions = 2; the combined `enforce_equal` then had to
-    // reduce a `num_additions = 4` delta — past the headroom for the
-    // same-bit-size PallasFq↔Bn254Fr pair under arkworks 0.5
-    // `EmulatedFpVar`. The canonical form keeps each enforce_equal at
-    // num_additions ≤ 1 on both sides, so the in-circuit reduction
-    // chain has the headroom it needs.
+    // ── Constraint chain ──
+    //
+    // Every `enforce_equal` must keep the combined `num_of_additions`
+    // budget under arkworks's same-bit-size 254↔254 headroom limit.
+    // Empirically (bisect 2026-05-12) the limit is `num_add(LHS) +
+    // num_add(RHS) + 1 ≤ 3`. Constraints (1) and (3) naturally satisfy
+    // this — mult-result on LHS (num_add = 1) vs single-add/sub on RHS
+    // (num_add = 1).
+    //
+    // Constraint (2) `λ² = x₁ + x₂ + x₃` has THREE field vars on the
+    // RHS, which (via the `add` accounting at `ark-r1cs-std-0.5
+    // emulated_fp/allocated_field_var.rs:148`) raises RHS num_add to 2.
+    // That blows the limit. Fix: allocate `x_sum = x₁ + x₂ + x₃` as a
+    // SEPARATE witness, then split the additive relation into two
+    // smaller `enforce_equal`s. Each per-side num_add stays ≤ 1.
     //
     // (1) Slope definition: λ · (x₂ − x₁) = (y₂ − y₁)
     let dx = &p2.x - &p1.x;
@@ -177,9 +175,22 @@ pub fn enforce_g1_add(
     let lambda_dx = &lambda * &dx;
     lambda_dx.enforce_equal(&dy)?;
 
-    // (2) x-coord: λ² = x₃ + x₁ + x₂
+    // (2) x-coord: λ² = x₁ + x₂ + x₃   (split via intermediate witness)
+    //
+    // 2a — allocate `x_sum_val = x₁ + x₂ + x₃` off-circuit.
+    use ark_r1cs_std::R1CSVar;
+    let x_sum_val: PallasFq = p1.x.value()? + p2.x.value()? + p3.x.value()?;
+    let x_sum = alloc_nonnative_fq_witness(cs.clone(), x_sum_val)?;
+    //
+    // 2b — enforce `x_sum − x₃ == x₁ + x₂`. LHS: 1 sub (num_add = 1);
+    //      RHS: 1 add (num_add = 1). Within headroom.
+    let x_sum_minus_x3 = &x_sum - &p3.x;
+    let x12 = &p1.x + &p2.x;
+    x_sum_minus_x3.enforce_equal(&x12)?;
+    //
+    // 2c — enforce `λ² == x_sum`. LHS: mult-result (num_add = 1);
+    //      RHS: fresh witness (num_add = 0). Within headroom.
     let lambda_sq = &lambda * &lambda;
-    let x_sum = &p3.x + &p1.x + &p2.x;
     lambda_sq.enforce_equal(&x_sum)?;
 
     // (3) y-coord: λ · (x₁ − x₃) = y₃ + y₁
@@ -277,11 +288,13 @@ mod tests {
     /// sides). The failure is internal to arkworks's limb-reduction
     /// layer for same-bit-size target/base field pairs.
     ///
-    /// `#[ignore]`'d with the diagnostic preserved. The test will
-    /// flip to PASS once sub-B-finish addresses the completeness gap
-    /// (arkworks upgrade or non-native lib swap).
+    /// Satisfied path — for a valid (P1, P2, P3 = P1 + P2) triple
+    /// the constraint system MUST be satisfiable. Was `#[ignore]`'d
+    /// while the completeness gap was open; closed 2026-05-12 via
+    /// the constraint (2) intermediate-witness split (see module
+    /// doc "Resolution: constraint (2) num_additions split"). The
+    /// test is now active and pins the fix.
     #[test]
-    #[ignore = "arkworks 0.4 NonNativeFieldVar AND 0.5 EmulatedFpVar both exhibit completeness gap for PallasFq×Bn254Fr — needs r1cs-bitcoin / custom limb-decomp / CycleFold (see module doc)"]
     fn g1_add_satisfied_for_valid_triple() {
         let mut rng = seeded_rng();
         let (p1, p2, p3) = random_distinct_pallas_triple(&mut rng);
@@ -306,14 +319,10 @@ mod tests {
 
         assert!(
             cs.is_satisfied().expect("is_satisfied"),
-            "valid (P1, P2, P3) triple SHOULD satisfy constraints — \
-             currently fails due to arkworks limb-completeness gap for \
-             PallasFq×Bn254Fr. Reproduces in both arkworks 0.4 \
-             (NonNativeFieldVar) and 0.5 (EmulatedFpVar). Off-circuit \
-             math is correct (asserted above); the failure is internal \
-             to arkworks's limb-reduction layer. Track sub-B-finish \
-             for resolution via r1cs-bitcoin / custom limb-decomp / \
-             CycleFold (see module doc)."
+            "valid (P1, P2, P3 = P1 + P2) triple must satisfy the three \
+             affine-add constraints — the constraint (2) num_additions \
+             split (see enforce_g1_add) keeps each enforce_equal within \
+             arkworks's same-bit-size 254↔254 headroom."
         );
     }
 
