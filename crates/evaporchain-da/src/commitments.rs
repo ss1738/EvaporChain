@@ -298,4 +298,123 @@ mod tests {
             }
         }
     }
+
+    /// T1.20 — `generate_cell_proof` returns `None` for out-of-bounds
+    /// indices (lines 102-104). The verifier must never see a proof
+    /// for a cell outside the extended dim.
+    #[test]
+    fn t1_20_generate_cell_proof_out_of_bounds_returns_none() {
+        let encoder = ErasureEncoder2D::with_cell_size(32);
+        let data = vec![0u8; 256];
+        let matrix = encoder.encode_2d(&data).unwrap();
+        let rc = RowColumnCommitments::from_matrix(&matrix);
+        let dim = rc.extended_dim;
+        assert!(rc.generate_cell_proof(&matrix, dim, 0).is_none(),
+            "row == dim must reject");
+        assert!(rc.generate_cell_proof(&matrix, 0, dim).is_none(),
+            "col == dim must reject");
+        assert!(rc.generate_cell_proof(&matrix, dim + 100, dim + 100).is_none(),
+            "far out-of-bounds must reject");
+    }
+
+    /// T1.20 — adversarial: tampered `cell_data` must fail verification
+    /// at the cell-hash check (lines 144-147). This is the soundness
+    /// gate that catches a malicious server returning a different
+    /// payload than what the row/column commitments witness.
+    #[test]
+    fn t1_20_verify_rejects_tampered_cell_data() {
+        let encoder = ErasureEncoder2D::with_cell_size(32);
+        let data = vec![0xAAu8; 512];
+        let matrix = encoder.encode_2d(&data).unwrap();
+        let rc = RowColumnCommitments::from_matrix(&matrix);
+        let mut proof = rc.generate_cell_proof(&matrix, 1, 1).unwrap();
+        assert!(rc.verify_cell_proof(&proof), "honest proof must verify");
+        // Flip one byte of cell_data — cell_hash stays the same (it was
+        // captured pre-tampering) but the recomputed hash diverges.
+        if !proof.cell_data.is_empty() {
+            proof.cell_data[0] ^= 0xFF;
+        }
+        assert!(!rc.verify_cell_proof(&proof),
+            "tampered cell_data must fail verification");
+    }
+
+    /// T1.20 — adversarial: tampered `row_siblings` must fail the row
+    /// Merkle path reconstruction (lines 150-153). Adversary cannot
+    /// forge a sibling chain to a valid `row_root`.
+    #[test]
+    fn t1_20_verify_rejects_tampered_row_siblings() {
+        let encoder = ErasureEncoder2D::with_cell_size(32);
+        let data = vec![0xBBu8; 512];
+        let matrix = encoder.encode_2d(&data).unwrap();
+        let rc = RowColumnCommitments::from_matrix(&matrix);
+        let mut proof = rc.generate_cell_proof(&matrix, 2, 0).unwrap();
+        assert!(rc.verify_cell_proof(&proof), "honest proof must verify");
+        // Corrupt a sibling — Merkle path reconstruction yields a
+        // different root, mismatch against `row_root` fails verify.
+        if !proof.row_siblings.is_empty() {
+            proof.row_siblings[0][0] ^= 0xFF;
+        }
+        assert!(!rc.verify_cell_proof(&proof),
+            "tampered row_siblings must fail verification");
+    }
+
+    /// T1.20 — adversarial: mismatched `data_root` field must fail at
+    /// the data-root consistency check (lines 162-164). The verifier
+    /// is bound to the commitments it holds; an attacker swapping in a
+    /// different data_root in the proof envelope is rejected.
+    #[test]
+    fn t1_20_verify_rejects_mismatched_data_root() {
+        let encoder = ErasureEncoder2D::with_cell_size(32);
+        let data = vec![0xCCu8; 256];
+        let matrix = encoder.encode_2d(&data).unwrap();
+        let rc = RowColumnCommitments::from_matrix(&matrix);
+        let mut proof = rc.generate_cell_proof(&matrix, 0, 0).unwrap();
+        assert!(rc.verify_cell_proof(&proof), "honest proof must verify");
+        proof.data_root[0] ^= 0xFF;
+        assert!(!rc.verify_cell_proof(&proof),
+            "mismatched data_root must fail verification");
+    }
+
+    /// T1.20 — `merkle_root` edge cases (lines 202-207): empty input
+    /// returns `[0u8; 32]`; single leaf returns itself. These are
+    /// internal-helper invariants but they pin the boundary behavior
+    /// of the data_root construction.
+    #[test]
+    fn t1_20_merkle_root_empty_and_single_leaf() {
+        assert_eq!(merkle_root(&[]), [0u8; 32]);
+        let leaf: [u8; 32] = [0x42; 32];
+        assert_eq!(merkle_root(&[leaf]), leaf);
+    }
+
+    /// T1.20 — `generate_2d_queries` is deterministic in
+    /// (seed, block_number, num_samples) AND every query falls within
+    /// `extended_dim`. The DAS sampler relies on both — non-determinism
+    /// would break consensus on which cells light clients sampled;
+    /// out-of-bounds would let the server reject every query as
+    /// "no such cell".
+    #[test]
+    fn t1_20_generate_2d_queries_deterministic_and_bounded() {
+        let seed = b"das-seed-v1";
+        let dim = 16;
+        let q1 = generate_2d_queries(42, dim, 8, seed);
+        let q2 = generate_2d_queries(42, dim, 8, seed);
+        assert_eq!(q1.len(), 8);
+        assert_eq!(
+            q1.iter().map(|q| (q.row, q.col)).collect::<Vec<_>>(),
+            q2.iter().map(|q| (q.row, q.col)).collect::<Vec<_>>(),
+            "same (seed, block, n) must yield identical queries"
+        );
+        for q in &q1 {
+            assert!(q.row < dim, "query row {} must be < dim {}", q.row, dim);
+            assert!(q.col < dim, "query col {} must be < dim {}", q.col, dim);
+        }
+        // Different block_number → different queries (otherwise the
+        // sampler degenerates).
+        let q3 = generate_2d_queries(43, dim, 8, seed);
+        assert_ne!(
+            q1.iter().map(|q| (q.row, q.col)).collect::<Vec<_>>(),
+            q3.iter().map(|q| (q.row, q.col)).collect::<Vec<_>>(),
+            "different block_number must change queries"
+        );
+    }
 }
