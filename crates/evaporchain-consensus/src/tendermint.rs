@@ -67,6 +67,15 @@ pub trait ProofVerifier: Send + Sync {
 // ─────────────────────── Configuration ───────────────────────────────────
 
 /// Default timeout for each consensus phase.
+/// Maximum number of pending Causal-CHSH cartel-alarm events the
+/// chain will retain awaiting operator drain via
+/// `/api/cartel_alarm/pending_events`. Per-height de-duplication
+/// (see `maybe_emit_cartel_alarm_event`) already keeps the queue
+/// sparse, but a never-draining operator + long uptime could still
+/// grow it unbounded. Generous default since events are rare and
+/// reaching the cap signals a long-standing un-monitored alarm.
+const MAX_PENDING_CARTEL_ALARMS: usize = 1024;
+
 /// Window size (in slots) for Sanov equivocation slash. KL divergence is
 /// computed as 1 double-sign in 100 honest proposals → near-full slash.
 /// Maximum number of pending (commitment, nonce) reveal pairs the
@@ -1932,6 +1941,25 @@ impl TendermintConsensus {
             samples_per_bucket = ?event.samples_per_bucket,
             "Causal-CHSH cartel alarm fired (chain self-monitor crossed doctrine ceiling)"
         );
+        // Capacity cap. If the operator hasn't drained
+        // /api/cartel_alarm/pending_events for ~1024 distinct alarm
+        // heights, reaching the cap means a long-standing un-monitored
+        // alarm — at that point dropping the newest event in favour
+        // of preserving the oldest (which gave the earliest warning)
+        // is the right policy. The WARN log above still fires on
+        // every drop so operators tailing structured logs don't lose
+        // observability when the queue is full.
+        if self.pending_cartel_alarms.len() >= MAX_PENDING_CARTEL_ALARMS {
+            warn!(
+                target: "cartel_alarm",
+                at_height = event.at_height,
+                queue_size = self.pending_cartel_alarms.len(),
+                cap = MAX_PENDING_CARTEL_ALARMS,
+                "Dropping cartel alarm event — pending queue at cap; \
+                 oldest events preserved for early-warning posterity"
+            );
+            return;
+        }
         self.pending_cartel_alarms.push(event);
     }
 
@@ -8973,6 +9001,81 @@ mod tests {
             snap_default.get("cartel_alarm_mode").map(|s| s.as_str()),
             Some("observe"),
             "default cartel_alarm_mode must be observe"
+        );
+    }
+
+    /// T0.7 vector 4 companion (third surface — cartel alarm queue).
+    /// Without a cap, the chain's pending-cartel-alarms queue grows
+    /// unbounded over uptime if the operator never drains
+    /// /api/cartel_alarm/pending_events. Per-height de-dup keeps the
+    /// queue sparse, but reaching the cap (1024 distinct alarm
+    /// heights) signals a long-standing un-monitored alarm. Policy
+    /// at the cap: drop newest, preserve oldest (earliest-warning
+    /// posterity).
+    #[test]
+    fn cartel_alarm_queue_caps_at_max_pending_with_drop_newest_policy() {
+        use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("cartel_alarm_mode", "alarm")
+            .expect("alarm mode must be allowlisted");
+
+        // Fill to MAX_PENDING_CARTEL_ALARMS distinct heights.
+        for height in 1..=MAX_PENDING_CARTEL_ALARMS as u64 {
+            let status = AlarmStatus {
+                s_honest: 2.5,
+                s_cartel_synthetic: 3.6,
+                gap: 1.1,
+                s_honest_milli: 2500,
+                s_cartel_synthetic_milli: 3600,
+                gap_milli: 1100,
+                verdict: "Fail".to_string(),
+                last_run_at_height: height,
+                samples_per_bucket: [25, 25, 25, 25],
+                thresholds: GateThresholds::doctrine(),
+            };
+            tc.cartel_alarm._inject_status_for_test(status);
+            tc.maybe_emit_cartel_alarm_event();
+        }
+        assert_eq!(
+            tc.pending_cartel_alarms.len(),
+            MAX_PENDING_CARTEL_ALARMS,
+            "queue must fill exactly to the cap"
+        );
+
+        // The (cap+1)-th distinct height is dropped — newest discarded.
+        let over_height = MAX_PENDING_CARTEL_ALARMS as u64 + 1;
+        let over_status = AlarmStatus {
+            s_honest: 2.5,
+            s_cartel_synthetic: 3.6,
+            gap: 1.1,
+            s_honest_milli: 2500,
+            s_cartel_synthetic_milli: 3600,
+            gap_milli: 1100,
+            verdict: "Fail".to_string(),
+            last_run_at_height: over_height,
+            samples_per_bucket: [25, 25, 25, 25],
+            thresholds: GateThresholds::doctrine(),
+        };
+        tc.cartel_alarm._inject_status_for_test(over_status);
+        tc.maybe_emit_cartel_alarm_event();
+
+        // Queue size unchanged — the at-cap path returned early.
+        assert_eq!(
+            tc.pending_cartel_alarms.len(),
+            MAX_PENDING_CARTEL_ALARMS,
+            "at-cap emit must NOT grow the queue"
+        );
+
+        // Oldest events preserved. Drain and verify the first event is
+        // height 1 and the last is MAX_PENDING_CARTEL_ALARMS — the
+        // (cap+1)-th wasn't enqueued.
+        let drained = tc.take_pending_cartel_alarms();
+        assert_eq!(drained.len(), MAX_PENDING_CARTEL_ALARMS);
+        assert_eq!(drained.first().map(|e| e.at_height), Some(1));
+        assert_eq!(
+            drained.last().map(|e| e.at_height),
+            Some(MAX_PENDING_CARTEL_ALARMS as u64)
         );
     }
 
