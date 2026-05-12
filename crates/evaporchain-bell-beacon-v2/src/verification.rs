@@ -462,4 +462,36 @@ mod tests {
             .is_err());
         }
     }
+
+    /// T1.20 — InvalidWindowRange when window_end <= window_start
+    /// (lines 60-63).
+    #[test]
+    fn t1_20_invalid_window_range_rejected() {
+        let (pairs, prev, mut cert) = good_cert();
+        cert.window_end = cert.window_start; // inverted
+        let err = verify_certificate(
+            "test-chain-v1",
+            &pairs,
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
+        assert!(matches!(err, VerifyError::InvalidWindowRange { .. }));
+    }
+
+    /// T1.20 — EmptyWindow when pairs is empty (line 66).
+    #[test]
+    fn t1_20_empty_window_rejected() {
+        let (_pairs, prev, cert) = good_cert();
+        let err = verify_certificate(
+            "test-chain-v1",
+            &[],
+            prev,
+            GateThresholds::doctrine(),
+            &cert,
+        )
+        .unwrap_err();
+        assert_eq!(err, VerifyError::EmptyWindow);
+    }
 }
