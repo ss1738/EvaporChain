@@ -885,7 +885,7 @@ impl SnapshotFile {
                 .validators
                 .iter()
                 .find(|v| v.id == *sid)
-                .ok_or_else(|| SnapshotError::QuorumCertUnknownValidator(*sid))?;
+                .ok_or(SnapshotError::QuorumCertUnknownValidator(*sid))?;
             match &v.bls_public_key {
                 Some(b) => pks.push(BlsPublicKey(b.clone())),
                 None => {

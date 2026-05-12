@@ -209,7 +209,7 @@ pub fn top_k_eigenvalues(matrix: &[Vec<f64>], k: usize, seed: u64) -> Vec<f64> {
     }
     let k = k.min(n);
     // Working copy — we'll deflate it as we extract each eigenpair.
-    let mut m: Vec<Vec<f64>> = matrix.iter().cloned().collect();
+    let mut m: Vec<Vec<f64>> = matrix.to_vec();
     let mut eigvals = Vec::with_capacity(k);
     let mut rng = crate::synthetic::Rng::new(seed);
 

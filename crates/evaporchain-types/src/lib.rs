@@ -472,7 +472,7 @@ impl VestingLock {
 }
 
 /// An account with a balance.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Account {
     pub address: AccountAddress,
     pub balance: u64,
@@ -526,19 +526,6 @@ impl Account {
     }
 }
 
-impl Default for Account {
-    fn default() -> Self {
-        Self {
-            address: [0u8; 32],
-            balance: 0,
-            nonce: 0,
-            storage_deposit: 0,
-            storage_bytes: 0,
-            last_touched_epoch: 0,
-            vesting: None,
-        }
-    }
-}
 
 /// Multi-signature transaction executed at the protocol level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
