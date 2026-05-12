@@ -11245,12 +11245,20 @@ async fn post_batch(
                     sign_transaction(&mut tx, &state, None);
                     // Canonical tx hash — see post_transfer.
                     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                    state.submit_tx(tx);
-                    BatchItemResult {
-                        index: i,
-                        success: true,
-                        message: "Transfer queued".into(),
-                        tx_hash: Some(hash),
+                    if state.submit_tx(tx) {
+                        BatchItemResult {
+                            index: i,
+                            success: true,
+                            message: "Transfer queued".into(),
+                            tx_hash: Some(hash),
+                        }
+                    } else {
+                        BatchItemResult {
+                            index: i,
+                            success: false,
+                            message: "Transfer rejected: mempool full or per-account cap reached".into(),
+                            tx_hash: None,
+                        }
                     }
                 }
                 (Err(e), _) | (_, Err(e)) => BatchItemResult {
@@ -11291,12 +11299,20 @@ async fn post_batch(
                         sign_transaction(&mut tx, &state, None);
                         // Canonical tx hash — see post_transfer.
                         let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                        state.submit_tx(tx);
-                        BatchItemResult {
-                            index: i,
-                            success: true,
-                            message: "CreateObject queued".into(),
-                            tx_hash: Some(hash),
+                        if state.submit_tx(tx) {
+                            BatchItemResult {
+                                index: i,
+                                success: true,
+                                message: "CreateObject queued".into(),
+                                tx_hash: Some(hash),
+                            }
+                        } else {
+                            BatchItemResult {
+                                index: i,
+                                success: false,
+                                message: "CreateObject rejected: mempool full or per-account cap reached".into(),
+                                tx_hash: None,
+                            }
                         }
                     }
                     (Err(e), _) | (_, Err(e)) => BatchItemResult {
@@ -11321,12 +11337,20 @@ async fn post_batch(
                     sign_transaction(&mut tx, &state, None);
                     // Canonical tx hash — see post_transfer.
                     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                    state.submit_tx(tx);
-                    BatchItemResult {
-                        index: i,
-                        success: true,
-                        message: "Refresh queued".into(),
-                        tx_hash: Some(hash),
+                    if state.submit_tx(tx) {
+                        BatchItemResult {
+                            index: i,
+                            success: true,
+                            message: "Refresh queued".into(),
+                            tx_hash: Some(hash),
+                        }
+                    } else {
+                        BatchItemResult {
+                            index: i,
+                            success: false,
+                            message: "Refresh rejected: mempool full or per-account cap reached".into(),
+                            tx_hash: None,
+                        }
                     }
                 }
                 Err(e) => BatchItemResult {
@@ -11350,12 +11374,20 @@ async fn post_batch(
                     sign_transaction(&mut tx, &state, None);
                     // Canonical tx hash — see post_transfer.
                     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                    state.submit_tx(tx);
-                    BatchItemResult {
-                        index: i,
-                        success: true,
-                        message: "Resurrect queued".into(),
-                        tx_hash: Some(hash),
+                    if state.submit_tx(tx) {
+                        BatchItemResult {
+                            index: i,
+                            success: true,
+                            message: "Resurrect queued".into(),
+                            tx_hash: Some(hash),
+                        }
+                    } else {
+                        BatchItemResult {
+                            index: i,
+                            success: false,
+                            message: "Resurrect rejected: mempool full or per-account cap reached".into(),
+                            tx_hash: None,
+                        }
                     }
                 }
                 Err(e) => BatchItemResult {
