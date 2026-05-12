@@ -56,4 +56,12 @@ mod tests {
         assert_eq!(i.acc_hash, [0u8; 32]);
         assert_eq!(i.total_energy_remaining, 0);
     }
+
+    /// T1.20 — FoldedInstance::default routes through identity.
+    #[test]
+    fn t1_20_default_equals_identity() {
+        let d: FoldedInstance = Default::default();
+        let i = FoldedInstance::identity();
+        assert_eq!(d, i);
+    }
 }
