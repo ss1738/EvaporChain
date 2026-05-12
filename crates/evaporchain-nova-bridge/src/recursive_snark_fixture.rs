@@ -1,12 +1,6 @@
-//! Phase 2.2 starter — produce a real `RecursiveSNARK<Bn256EngineKZG,
-//! GrumpkinEngine, _>` accumulator we can hand to the in-circuit
-//! verifier work as a fixture.
-//!
-//! The eventual in-circuit verifier (Phase 2.2 finish) needs a
-//! concrete `RecursiveSNARK` value to consume as witness. Without this
-//! generator, the verifier development has no input to test against;
-//! with it, the verifier work can focus on the algorithm, not the
-//! plumbing.
+//! Produce a real `RecursiveSNARK<Bn256EngineKZG, GrumpkinEngine, _>`
+//! accumulator as a fixture for the in-circuit verifier work
+//! (`crate::verifier_circuit`, `crate::section2_gadget`).
 //!
 //! This module ships:
 //!   - [`TrivialIncrementCircuit`] — a 1-arity step circuit that
@@ -15,8 +9,11 @@
 //!     `RecursiveSNARK::new` + `prove_step` N times, returns the
 //!     accumulator.
 //!   - [`fixture_stats`] — measures size + key fields of a
-//!     `RecursiveSNARK` so we can sanity-check what the verifier
-//!     will consume.
+//!     `RecursiveSNARK`.
+//!   - [`public_inputs_for_bridge`] — converts a fixture's output
+//!     state vector through PR #66's scalar adapter to
+//!     `Vec<ark_bn254::Fr>` for direct consumption by
+//!     `NovaVerifierCircuit`.
 //!
 //! # Why not just a CompressedSNARK?
 //!
