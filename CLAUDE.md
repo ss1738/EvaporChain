@@ -81,7 +81,7 @@ contracts/evaporscript/mortal_message.es   # reference pilot contract
 | `evaporchain-crypto` | BLAKE3, ML-DSA (Dilithium3 post-quantum), BLS12-381 aggregation, VRF, Verkle trie, Energy-Verkle trie, MMR nullifiers |
 | `evaporchain-state` | `StateDB` trait + RocksDB impl; Evaporation Engine (Active→Grace→Ghost); Refresh Engine; WAL crash recovery |
 | `evaporchain-contracts` | 8 template contracts + rule engine (triggers/conditions/actions) |
-| `evaporchain-script` | EvaporScript: parser → compiler (constant-fold + DCE) → 65-opcode VM with gas metering |
+| `evaporchain-script` | EvaporScript: parser → compiler (constant-fold + DCE) → 44-opcode VM with gas metering |
 | `evaporchain-execution` | `SimpleExecutor` (sequential) + `BlockStmExecutor` (parallel OCC); PID fee controller; conservation audit gate |
 | `evaporchain-consensus` | Tendermint BFT (Propose→Prevote→Precommit→Commit); BLS aggregation; encrypted mempool; epoch manager; Light-Cone DAG substrate; MCC fork-choice; Crooks-MEV pipeline |
 | `evaporchain-proving` | Nova IVC recursive proofs (`nova-snark 0.68`); `RealBlockCircuit` arity-8 with energy-fold; Lambda-Fold |

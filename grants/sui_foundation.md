@@ -9,7 +9,7 @@ EvaporChain is an independent Layer-1 blockchain whose smart contract VM (Evapor
 We are not asking Sui to depend on EvaporChain. We are asking Sui to fund the research that prototypes patterns Move-the-language could choose to adopt later — an independent reference implementation showing that temporal validity can live at the type level, with empirical performance + correctness data the Move language designers can use as input.
 
 ## What We Built (Independent Implementation, Not a Move Extension)
-- **EvaporScript**: a custom non-Turing-complete VM with 65 gas-metered opcodes. Includes `EpochNow`, `BlockNum`, `EnergyOf`, `RequireEpochRange`, `ComputeDecay` opcodes that bind temporal validity into the type system. Not binary-compatible with Move; demonstrates the *concept* Move could later adopt.
+- **EvaporScript**: a custom non-Turing-complete VM with 44 gas-metered opcodes. Includes `EpochNow`, `BlockNum`, `EnergyOf`, `RequireEpochRange`, `ComputeDecay` opcodes that bind temporal validity into the type system. Not binary-compatible with Move; demonstrates the *concept* Move could later adopt.
 - **8 contract templates** with explicit `caller != creator` access control + lifecycle hooks (mortal NFTs, refresh markets, expiring tokens, etc.).
 - **Live integer-arithmetic decay** verified by Coq mechanization (`research/coq/EnergyDecayMonotonicity.v`, exit-0 under Rocq 9.1.1).
 - **25,435 tests** across 147 workspace crates; live 2-Mini Tailscale testnet at h=940+ lockstep.
@@ -32,7 +32,7 @@ We are not asking Sui to depend on EvaporChain. We are asking Sui to fund the re
 This grant funds **independent research that may inspire Move language extensions** — it does **not** fund a Move-compatible binary, a Move-stack integration, or anything that would let Sui chain code call into EvaporChain code. Anyone reviewing this grant should understand:
 
 - EvaporScript and Move are two different languages with two different binary formats.
-- The 65 EvaporScript opcodes do not map 1:1 to Move bytecode.
+- The 44 EvaporScript opcodes do not map 1:1 to Move bytecode.
 - "Move-compatible" is **not** a claim we make. The deliverable is concept-level research.
 - The intended audience for the deliverables is Move language designers + Sui ecosystem researchers, not Sui application developers.
 

@@ -358,7 +358,7 @@ Once commission is decided, this falls out: delegators receive `(1 − commissio
 
 ### Q9. Gas cost calibration
 
-Current gas costs mirror Ethereum 1.0. EvaporChain has different opcodes (EvaporScript VM with 65 opcodes). Fix:
+Current gas costs mirror Ethereum 1.0. EvaporChain has different opcodes (EvaporScript VM with 44 opcodes). Fix:
 - Benchmark each opcode's actual M4-Mini execution cost
 - Set gas costs to 1 gas ≈ 1 ns of compute (Ethereum convention)
 - Re-derive `GAS_TRANSFER`, `GAS_DELEGATE`, `GAS_VALIDATOR_STAKE`, `GAS_CREATE_OBJECT`, `GAS_REFRESH`, `GAS_DEPLOY_CONTRACT`, `GAS_CALL_CONTRACT`, `GAS_DEPLOY_SCRIPT`, `GAS_CALL_SCRIPT` from real measurements
