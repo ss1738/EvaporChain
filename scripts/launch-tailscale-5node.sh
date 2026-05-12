@@ -39,6 +39,26 @@ for I in 1 2 3 4 5; do
     fi
 done
 
+# Pre-flight: required env vars present. Pairs with the systemd
+# template's ExecStartPre= on Linux side (PR #44). Default invocation
+# uses --allow-missing-mcp so the running cluster (which predates the
+# 2026-05-11 MCP-channel-auth middleware in PR #35) doesn't enter a
+# restart loop when launchd picks the new launcher up.
+#
+# To upgrade THIS host to enforced MCP-channel auth:
+#   1. Set EVAPORCHAIN_MCP_API_TOKEN in com.evaporchain.validator.plist
+#      (currently a commented-out hint).
+#   2. Remove the --allow-missing-mcp flag from the line below.
+#   3. `launchctl unload && load` the plist.
+#
+# Skip the check entirely (dev hosts) by setting EVAPORCHAIN_SKIP_PREFLIGHT=1.
+if [ -z "${EVAPORCHAIN_SKIP_PREFLIGHT:-}" ] && [ -x "./scripts/verify-prod-env.sh" ]; then
+    if ! ./scripts/verify-prod-env.sh --allow-missing-mcp; then
+        echo "FATAL: env-var pre-flight failed. See docs/runbooks/production-env-checklist.md."
+        exit 1
+    fi
+fi
+
 BINARY="./target/release/evaporchain-node"
 if [ ! -f "$BINARY" ]; then
     echo "FATAL: $BINARY not found. Build with: cargo build --release -p evaporchain-node"
