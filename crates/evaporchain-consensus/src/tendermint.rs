@@ -14251,6 +14251,147 @@ mod tests {
         });
         assert!(has_prevote, "Without verifier, block should be accepted");
     }
+
+    // ── T1.20 gap-closure ─────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_new_with_gas_limit_constructs_and_block_number_is_zero() {
+        let vs = make_validator_set(&[1, 2, 3]);
+        let tc = TendermintConsensus::new_with_gas_limit(1, 10, vs, 2_000_000);
+        assert_eq!(tc.block_number(), 0);
+        assert_eq!(tc.epoch(), 0);
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_unrecognised_mode() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let err = tc
+            .governance_set_fork_choice_mode("bogus", vec![], &[1000], 100)
+            .unwrap_err();
+        assert!(matches!(err, GovernanceAmendmentError::UnrecognisedMode(_)));
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_empty_attractors_rejected() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        // singh_attractor requires at least one attractor.
+        let err = tc
+            .governance_set_fork_choice_mode("singh_attractor", vec![], &[1000], 100)
+            .unwrap_err();
+        assert!(matches!(err, GovernanceAmendmentError::EmptyAttractors));
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_insufficient_stake() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        // endorser stake 50 < required 1000.
+        let err = tc
+            .governance_set_fork_choice_mode("mcc", vec![], &[50], 1000)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceAmendmentError::InsufficientStake { endorsing: 50, required: 1000 }
+        ));
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_mcc_success_and_getter() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        tc.governance_set_fork_choice_mode("mcc", vec![], &[5000], 1000)
+            .unwrap();
+        assert_eq!(tc.fork_choice_mode(), "mcc");
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_singh_attractor_success() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let att = evaporchain_singh_attractor::Attractor::new(500, 100);
+        tc.governance_set_fork_choice_mode("singh_attractor", vec![att], &[5000], 1000)
+            .unwrap();
+        assert_eq!(tc.fork_choice_mode(), "singh_attractor");
+        assert_eq!(tc.fork_choice_attractors.len(), 1);
+    }
+
+    #[test]
+    fn t1_20_fork_choice_mode_getter_default_is_mcc() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        // No param set → should fall back to "mcc".
+        assert_eq!(tc.fork_choice_mode(), "mcc");
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_downtime_zero_missed_returns_zero() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let slashed = tc.sanov_slash_downtime(1, 0, 100);
+        assert_eq!(slashed, 0);
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_downtime_unknown_validator_returns_zero() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let slashed = tc.sanov_slash_downtime(99, 50, 100);
+        assert_eq!(slashed, 0);
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_downtime_nonzero_missed_produces_slash() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        // Extreme downtime: 95/100 blocks missed → non-zero slash.
+        let slashed = tc.sanov_slash_downtime(1, 95, 100);
+        // Can't assert exact amount (depends on sanov formula), just that it's non-zero.
+        assert!(slashed > 0, "extreme downtime should produce a slash > 0");
+    }
+
+    #[test]
+    fn t1_20_conservation_violation_discriminant_all_variants() {
+        use evaporchain_energy_kernel::ConservationViolation;
+        let r = conservation_violation_discriminant(&ConservationViolation::RedirectChangedTotal {
+            before: 1000,
+            after: 900,
+        });
+        assert_eq!(r, "RedirectChangedTotal");
+
+        let d = conservation_violation_discriminant(&ConservationViolation::DecayIncreasedTotal {
+            before: 1000,
+            after: 1100,
+        });
+        assert_eq!(d, "DecayIncreasedTotal");
+
+        let e = conservation_violation_discriminant(&ConservationViolation::DecayExceededLambda {
+            before: 1000,
+            after: 0,
+            max_decay: 10,
+            epochs: 1,
+            half_life: 200,
+        });
+        assert_eq!(e, "DecayExceededLambda");
+    }
+
+    #[test]
+    fn t1_20_tur_liveness_verdict_none_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.tur_liveness_verdict().is_none());
+    }
+
+    #[test]
+    fn t1_20_lambda_fold_instance_is_identity_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let instance = tc.lambda_fold_instance();
+        let identity = evaporchain_lambda_fold::FoldedInstance::identity();
+        assert_eq!(instance, identity);
+    }
+
+    #[test]
+    fn t1_20_mev_missing_refund_violations_getter_empty() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.mev_missing_refund_violations().is_empty());
+    }
+
+    #[test]
+    fn t1_20_disputed_observations_getter_empty_at_start() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.disputed_observations().is_empty());
+    }
 }
 
 // ─────────────────────────── Integration Tests ─────────────────────────────
