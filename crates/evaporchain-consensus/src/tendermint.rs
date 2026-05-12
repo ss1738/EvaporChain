@@ -2715,16 +2715,13 @@ impl TendermintConsensus {
     /// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — verify the
     /// block's `Transaction::Refund` set exactly matches what the
     /// chain expects at this height. `Ok(())` when:
-    ///
     /// - settlement mode is `"observe"` (default — no enforcement), OR
     /// - settlement mode is `"enforce"` and the block's refund set
     ///   matches the chain's expected set exactly (every required
     ///   refund present, no extras, payloads byte-equal).
-    ///
     /// Returns a `RefundValidationError` describing the violation
     /// otherwise. Phase 3.5 will pair `MissingRefund` with a
     /// proposer-slash.
-    ///
     /// Phase 3.5c of `CROOKS_MEV_INTEGRATION_PLAN.md` — read-only
     /// view of the per-proposer MissingRefund violation counter.
     /// Operators feed `[counts_per_validator]` into
@@ -3158,7 +3155,6 @@ impl TendermintConsensus {
     ///      `from_head` to `lca` (the deferred B.1 snapshot work).
     ///   2. Applies the blocks in `forward_path` in order, calling
     ///      `db.execute_block` for each.
-    ///
     /// Splitting the planning from the execution lets the planning
     /// be pure (testable without a StateDB) and keeps the executor
     /// integration localised to B.2.
@@ -3259,9 +3255,9 @@ impl TendermintConsensus {
     ///      as `RestoreFailed`.
     ///   3. For each `block_id in plan.forward_path`:
     ///      a. `block_lookup(block_id)` — fetch the block. Errors
-    ///     as `BlockNotFound`.
+    ///         as `BlockNotFound`.
     ///      b. `block_apply(db, &block)` — execute. Errors as
-    ///     `ApplyFailed { block, msg }`.
+    ///         `ApplyFailed { block, msg }`.
     ///
     /// **Atomicity caveat (Phase B.4 follow-up):** if step 3 fails
     /// midway, the StateDB is in a partial state — at the LCA plus
@@ -20508,5 +20504,242 @@ mod t1_20_batch13 {
             )
         });
         assert!(has_bls_precommit, "BLS-signed nil precommit expected on prevote timeout");
+    }
+}
+
+#[cfg(test)]
+mod t1_20_batch14 {
+    use super::*;
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Block, CommitCertificate, Transaction, TransferTx};
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block(number: u64) -> Block {
+        Block {
+            number,
+            epoch: number / 10,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            producer_id: Some(1),
+            timestamp: number * 12,
+            chain_id: String::new(),
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    fn make_transfer(nonce: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 1,
+            nonce,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        })
+    }
+
+    // ── Test 1: sanov_slash_downtime identical distributions → slash = 0 (lines 2122-2123) ──
+    #[test]
+    fn t1_20_sanov_slash_identical_distributions_zero() {
+        // missed=1, window=2 → w=2, observed=[1,1], honest=[1,1] → D_KL=0 → slash=0
+        let mut tc = make_tc();
+        assert_eq!(tc.sanov_slash_downtime(1, 1, 2), 0);
+    }
+
+    // ── Test 2: precommit hash mismatch in tick() WITH txs requeues them (lines 4471-4473) ──
+    #[test]
+    fn t1_20_precommit_mismatch_tick_txs_requeued() {
+        let mut tc = make_tc();
+        let quorum_hash = [42u8; 32];
+        let mut block = make_block(1);
+        block.transactions = vec![make_transfer(1), make_transfer(2)];
+        tc.round_state.phase = Phase::Precommit;
+        tc.round_state.proposed_block = Some(block);
+        // Two validators precommit quorum_hash — 2000 stake = threshold
+        tc.round_state.precommits.insert(1, Some(quorum_hash));
+        tc.round_state.precommits.insert(2, Some(quorum_hash));
+        let mempool_before = tc.mempool.len();
+        let mut db = InMemoryStateDB::new();
+        tc.tick(&mut db);
+        assert!(tc.mempool.len() > mempool_before, "stale txs should be requeued");
+    }
+
+    // ── Test 3: precommit hash mismatch in on_message WITH txs (lines 5420-5422) ──
+    #[test]
+    fn t1_20_precommit_mismatch_on_message_txs_requeued() {
+        let mut tc = make_tc();
+        let quorum_hash = [42u8; 32];
+        let mut block = make_block(1);
+        block.transactions = vec![make_transfer(10), make_transfer(11)];
+        tc.round_state.proposed_block = Some(block);
+        // Validator 1 precommitted (1000 stake, below quorum)
+        tc.round_state.precommits.insert(1, Some(quorum_hash));
+        let mempool_before = tc.mempool.len();
+        // Validator 2 sends matching precommit → 2000 stake = quorum → hash mismatch → requeue
+        tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(quorum_hash),
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert!(
+            tc.mempool.len() > mempool_before,
+            "stale txs should be requeued after on_message mismatch"
+        );
+    }
+
+    // ── Test 4: finality gap history pop_front on overflow (lines 5987-5989) ──
+    #[test]
+    fn t1_20_finality_gap_pop_front_on_overflow() {
+        let mut tc = make_tc();
+        // Pre-fill to exact capacity
+        for i in 0u64..FINALITY_GAP_HISTORY_CAP as u64 {
+            tc.finality_gap_history.push_back((i, 0));
+        }
+        assert_eq!(tc.finality_gap_history.len(), FINALITY_GAP_HISTORY_CAP);
+        // Block with cert triggers the production committed_at→gap path
+        let mut block = make_block(1);
+        block.commit_certificate = Some(CommitCertificate {
+            height: 1,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![],
+            signer_ids: vec![],
+        });
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // push_back → 1025 > 1024 → pop_front fires → back to cap
+        assert_eq!(tc.finality_gap_history.len(), FINALITY_GAP_HISTORY_CAP);
+    }
+
+    // ── Test 5: gas limit enforced in create_proposal (lines 6437-6455) ──
+    #[test]
+    fn t1_20_gas_limit_enforced_create_proposal() {
+        let mut tc = make_tc();
+        // new_for_test sets block_gas_limit=0 (unlimited); set it explicitly.
+        tc.executor.block_gas_limit = 500_000;
+        // 30 transfers × 21_000 gas = 630_000 > 500_000 block_gas_limit
+        for i in 0..30u64 {
+            tc.mempool.submit(make_transfer(i));
+        }
+        let mut db = InMemoryStateDB::new();
+        let block = tc.create_proposal(&mut db).expect("should produce a block");
+        // 23 × 21_000 = 483_000 ≤ 500_000; 24th: 504_000 > 500_000 → rejected
+        assert!(
+            block.transactions.len() < 30,
+            "gas limit should truncate; got {} txs",
+            block.transactions.len()
+        );
+        assert!(tc.mempool.len() > 0, "rejected txs should be back in mempool");
+    }
+
+    // ── Test 6: verify_cert signer has no BLS key → false (line 7124) ──
+    #[test]
+    fn t1_20_verify_cert_signer_missing_bls_key() {
+        let tc = make_tc();
+        // Validator 1 is in the set but has no bls_public_key
+        let cert = CommitCertificate {
+            height: 1,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![],
+            signer_ids: vec![1],
+        };
+        assert!(!tc.verify_commit_certificate_for_sync(&cert));
+    }
+
+    // ── Test 7: verify_cert signer not in validator set → false (line 7127) ──
+    #[test]
+    fn t1_20_verify_cert_signer_not_in_set() {
+        let tc = make_tc();
+        let cert = CommitCertificate {
+            height: 1,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![],
+            signer_ids: vec![999],
+        };
+        assert!(!tc.verify_commit_certificate_for_sync(&cert));
+    }
+
+    // ── Test 8: current_proposer() returns Some (lines 6929-6931) ──
+    #[test]
+    fn t1_20_current_proposer_returns_some() {
+        let tc = make_tc();
+        assert!(tc.current_proposer().is_some());
+    }
+
+    // ── Test 9: advance_round at MAX_ROUNDS_PER_HEIGHT - 1 resets to round 0 (lines 6881-6883) ──
+    #[test]
+    fn t1_20_advance_round_max_resets_to_zero() {
+        let mut tc = make_tc();
+        // next_round = 9 + 1 = 10 == MAX_ROUNDS_PER_HEIGHT → reset path
+        tc.round_state.round = 9;
+        tc.advance_round();
+        assert_eq!(tc.round_state.round, 0);
+    }
+
+    // ── Test 10: verify_cert with duplicate signer_ids rejected (line 7096) ──
+    #[test]
+    fn t1_20_verify_cert_duplicate_signers_rejected() {
+        let tc = make_tc();
+        let cert = CommitCertificate {
+            height: 1,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![],
+            signer_ids: vec![1, 1],
+        };
+        assert!(!tc.verify_commit_certificate_for_sync(&cert));
+    }
+
+    // ── Test 11: check_precommit_quorum returns Some(Some(hash)) when threshold met ──
+    #[test]
+    fn t1_20_check_precommit_quorum_returns_quorum_hash() {
+        let mut tc = make_tc();
+        let hash = [7u8; 32];
+        // 1000 + 1000 = 2000 = ceil(3000 * 2/3) = threshold
+        tc.round_state.precommits.insert(1, Some(hash));
+        tc.round_state.precommits.insert(2, Some(hash));
+        assert_eq!(tc.check_precommit_quorum(), Some(Some(hash)));
+    }
+
+    // ── Test 12: advance_round normal path increments round (covers line 6892) ──
+    #[test]
+    fn t1_20_advance_round_normal_increments_round() {
+        let mut tc = make_tc();
+        // round 0 → next_round = 1 < MAX_ROUNDS_PER_HEIGHT → normal advance
+        tc.advance_round();
+        assert_eq!(tc.round_state.round, 1);
     }
 }
