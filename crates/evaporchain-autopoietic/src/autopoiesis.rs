@@ -222,4 +222,29 @@ mod tests {
         assert_eq!(in_window.sentinel, SubsystemHealth::Healthy);
         assert_eq!(out_window.sentinel, SubsystemHealth::Degraded);
     }
+
+    /// T1.20 — patronage = Degraded path: total_energy > 0 but below
+    /// min_patronage_energy. Closes the only uncovered line (120).
+    #[test]
+    fn patronage_below_min_but_nonzero_is_degraded() {
+        use evaporchain_refresh_patronage::PatronageCovenant;
+        let mut book = PatronageBook::new(b"degraded-test-ns".to_vec());
+        // Covenant with score=50 — non-zero but below the min=100.
+        let oid = vec![0xAA; 32];
+        book.insert(PatronageCovenant {
+            object_id: oid.clone(),
+            namespace_id: vec![],
+            donation_per_epoch: 10,
+            created_epoch: 0,
+            expires_epoch: 1_000_000,
+            pre_funded: 100,
+            patronage_score: 50,
+            last_honoured_epoch: None,
+        });
+        // min_patronage_energy = 100, sentinel + llsa healthy.
+        let sys = ChainAutopoiesis::new(AlwaysAcceptVerifier, 100, 10);
+        let r = sys.health_report(&book, &[oid], Some(95), 100);
+        // total_energy = 50 (from the covenant); 0 < 50 < 100 → Degraded.
+        assert_eq!(r.patronage, SubsystemHealth::Degraded);
+    }
 }
