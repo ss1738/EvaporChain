@@ -9210,18 +9210,18 @@ mod tests {
 
         let insert_start = std::time::Instant::now();
         for round in 0..blocks_per_fork {
-            for fork_idx in 0..n_forks {
+            for (fork_idx, tip) in tips.iter_mut().enumerate().take(n_forks) {
                 let mut new_tip = [0u8; 32];
                 new_tip[0] = 0xA0 + fork_idx as u8;
                 new_tip[1] = (round as u8).wrapping_add(1);
                 new_tip[2] = ((round >> 8) as u8).wrapping_add(1);
-                let parent = tips[fork_idx];
+                let parent = *tip;
                 if tc
                     .light_cone_dag
                     .insert(LcBlock::new(new_tip, vec![parent], 100, (round + 2) as u64))
                     .is_ok()
                 {
-                    tips[fork_idx] = new_tip;
+                    *tip = new_tip;
                 }
             }
         }
