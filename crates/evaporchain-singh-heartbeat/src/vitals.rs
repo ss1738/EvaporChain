@@ -276,7 +276,7 @@ mod proptests {
             extra in 0u64..10_000,
         ) {
             let it = item_helper(energy, half_life);
-            let v_a = pulse_at(&[it.clone()], t_a);
+            let v_a = pulse_at(std::slice::from_ref(&it), t_a);
             let v_b = pulse_at(&[it], t_a.saturating_add(extra));
             prop_assert!(
                 v_b.bpm >= v_a.bpm,

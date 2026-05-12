@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn single_receipt_root_is_its_leaf_hash() {
         let r = receipt(1, 100, 1);
-        assert_eq!(merkle_root(&[r.clone()]), leaf_hash(&r));
+        assert_eq!(merkle_root(std::slice::from_ref(&r)), leaf_hash(&r));
     }
 
     #[test]

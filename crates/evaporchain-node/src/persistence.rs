@@ -1314,7 +1314,7 @@ mod tests {
     #[test]
     fn test_merkle_root_single_tx() {
         let tx = make_transfer([1; 32], [2; 32], 100);
-        let root = compute_tx_merkle_root(&[tx.clone()]);
+        let root = compute_tx_merkle_root(std::slice::from_ref(&tx));
         assert_eq!(root, ChainStore::compute_tx_hash(&tx));
     }
 

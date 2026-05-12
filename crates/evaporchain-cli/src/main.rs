@@ -6211,7 +6211,7 @@ mod tests {
     async fn da_verify_honest_server_passes() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::Honest).await;
-        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+        let outcome = da_verify_inner(std::slice::from_ref(&server.addr), 7, 8, 0.99, None, false)
             .await
             .expect("honest server must produce an outcome");
         assert_eq!(outcome.attestation_label, "verified");
@@ -6226,7 +6226,7 @@ mod tests {
     async fn da_verify_chain_root_mismatch_aborts_before_sampling() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::ChainRootMismatch).await;
-        let err = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+        let err = da_verify_inner(std::slice::from_ref(&server.addr), 7, 8, 0.99, None, false)
             .await
             .expect_err("mismatch must abort");
         let msg = format!("{err:#}");
@@ -6261,7 +6261,7 @@ mod tests {
     async fn da_verify_block_not_in_ring_proceeds_with_label() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::BlockNotInRing).await;
-        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+        let outcome = da_verify_inner(std::slice::from_ref(&server.addr), 7, 8, 0.99, None, false)
             .await
             .expect("block-not-in-ring is not a hard fail");
         assert_eq!(outcome.attestation_label, "block-not-in-ring");
@@ -6273,7 +6273,7 @@ mod tests {
     async fn da_verify_no_data_root_proceeds_with_label() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::NoDataRoot).await;
-        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+        let outcome = da_verify_inner(std::slice::from_ref(&server.addr), 7, 8, 0.99, None, false)
             .await
             .expect("no-data-root is not a hard fail");
         assert_eq!(outcome.attestation_label, "no-data-root");
@@ -6284,7 +6284,7 @@ mod tests {
     async fn da_verify_fabricated_cells_marks_peer_faulty() {
         let pkg = build_test_package();
         let server = spawn_server(7, pkg, DaServerMode::FabricatedCells).await;
-        let outcome = da_verify_inner(&[server.addr.clone()], 7, 8, 0.99, None, false)
+        let outcome = da_verify_inner(std::slice::from_ref(&server.addr), 7, 8, 0.99, None, false)
             .await
             .expect("fabricated cells produce an outcome (with faulty peers)");
         assert!(
