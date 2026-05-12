@@ -426,26 +426,38 @@ mod tests {
         eprintln!("neptune  bytes LE: {neptune_bytes_le:?}");
         eprintln!("arkworks bytes LE: {ark_bytes_le:?}");
 
-        // EMPIRICAL OUTCOME (Mini 1, this PR):
-        //   neptune  = [119, 216, 133, 86, ...]
-        //   arkworks = [234, 150,  45, 205, ...]
-        //   → DIVERGENT.
+        // **Updated as of PR #97 (sbox_type fix):**
         //
-        // The grain LFSR algorithm in `crate::grain_lfsr` follows
-        // the Poseidon paper / hadeshash Sage reference. Neptune's
-        // bundled fork diverges somehow — possibly:
-        //   (a) Different seed-parameter encoding
-        //   (b) Different filter / discard rule
-        //   (c) The SBOX-trick optimization changes ARK semantics
-        //   (d) Domain-tag absorbed into state[0] before sponge
+        // The LFSR is now byte-correct — plain ARK round 0 matches
+        // neptune crc[0..25] exactly (see grain_lfsr's
+        // `lfsr_first_25_plain_round_0_parity` test, which now
+        // passes with `assert!(mismatches.is_empty())`).
         //
-        // Next BESPOKE step: read neptune's `generate_constants`
-        // path and diff against our `grain_lfsr` impl. When parity
-        // is reached, flip `assert_ne!` → `assert_eq!`.
+        // Yet the FULL HASH still diverges:
+        //   neptune  = [119, 216, 133,  86, ...]
+        //   arkworks = [ 56, 235,  73,  76, ...]
+        //
+        // The remaining gap is no longer in the constants — it's
+        // in the SPONGE FRAMING:
+        //
+        //   (a) Neptune's `Sponge` includes a `domain_tag` absorbed
+        //       into state[0] before any user input. Arkworks
+        //       `PoseidonSponge` doesn't.
+        //   (b) Neptune uses Strobe-style `Simplex` framing with
+        //       explicit IOPattern (Absorb(len), Squeeze(1)).
+        //       Arkworks uses generic absorb/squeeze.
+        //   (c) Partial rounds in neptune are SBOX-trick-fused so
+        //       the per-round operation isn't `MDS·(state+ARK)^5`
+        //       uniformly. Arkworks PoseidonSponge applies the
+        //       canonical Poseidon-128 per-round operation.
+        //
+        // Bridging this requires either a full port of neptune's
+        // sponge into arkworks (multi-day) OR a vendored
+        // permutation that we drive directly from R1CS.
         assert_ne!(
             ark_bytes_le, neptune_bytes_le,
-            "DIVERGENT (current state) — when this fires, parity has been ACHIEVED and \
-             this assert should flip to `assert_eq!`"
+            "DIVERGENT (sponge framing) — when this fires, the sponge port \
+             has also landed; flip to `assert_eq!` to mark Section 2 byte-complete"
         );
     }
 
