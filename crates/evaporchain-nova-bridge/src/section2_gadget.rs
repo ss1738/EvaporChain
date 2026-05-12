@@ -225,4 +225,86 @@ mod tests {
         let b = mk();
         assert_eq!(a, b, "gadget must produce identical CS shape across runs");
     }
+
+    /// **Port-complete canary.** Today: confirms gadget output
+    /// ≠ neptune oracle output (because placeholder constants).
+    /// After the BESPOKE port: this test INVERTS to `assert_eq!`,
+    /// proving byte parity.
+    ///
+    /// Input is the Section-2 primary-side minimal absorb sequence:
+    ///   `[pp.digest=0, num_steps=1, z0[0]=0, zi[0]=1, ri=0]`
+    /// (matches PR #77's `pinned_section_2_primary_minimal_absorb_sequence`)
+    ///
+    /// This test serves three purposes:
+    ///
+    /// 1. Documents the divergence: the arkworks-default Poseidon
+    ///    config produces a DIFFERENT scalar than neptune for the
+    ///    same input sequence (because round constants + MDS
+    ///    differ).
+    /// 2. Provides a single byte-comparison test point that the
+    ///    BESPOKE port can re-run to confirm parity.
+    /// 3. Catches a future regression where someone accidentally
+    ///    swaps in the neptune constants partially (and the
+    ///    arkworks gadget starts matching some test inputs but not
+    ///    others).
+    #[test]
+    fn placeholder_gadget_diverges_from_neptune_oracle() {
+        use crate::neptune_reference::{neptune_hash_primary, PrimaryScalar};
+        use ff::{Field as _, PrimeField as _};
+        use ark_r1cs_std::R1CSVar;
+
+        // Neptune-side: the pinned minimal absorb (PR #77).
+        let neptune_inputs = vec![
+            PrimaryScalar::ZERO,        // pp.digest
+            PrimaryScalar::from(1u64),  // num_steps
+            PrimaryScalar::ZERO,        // z0[0]
+            PrimaryScalar::from(1u64),  // zi[0]
+            PrimaryScalar::ZERO,        // ri_primary
+        ];
+        let neptune_out = neptune_hash_primary(&neptune_inputs);
+        let neptune_bytes_le: [u8; 32] = neptune_out.to_repr().into();
+
+        // Arkworks-side: same input shape but instance=[] so the
+        // absorb count matches neptune's 5 elements exactly.
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let config = placeholder_poseidon_config();
+        let pp_digest =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap();
+        let num_steps =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(1u64))).unwrap();
+        let z0 = vec![FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap()];
+        let zi = vec![FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(1u64))).unwrap()];
+        let instance: Vec<FpVar<Bn254Fr>> = vec![];
+        let ri =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(0u64))).unwrap();
+        let hash_var = enforce_section_2_primary(
+            cs.clone(),
+            &config,
+            &pp_digest,
+            &num_steps,
+            &z0,
+            &zi,
+            &instance,
+            &ri,
+        )
+        .expect("synthesize");
+        let ark_out: Bn254Fr = hash_var.value().expect("witness value");
+        let ark_bigint = ark_ff::PrimeField::into_bigint(ark_out);
+        let bytes_le = ark_ff::BigInteger::to_bytes_le(&ark_bigint);
+        let mut ark_bytes_le = [0u8; 32];
+        let copy_len = bytes_le.len().min(32);
+        ark_bytes_le[..copy_len].copy_from_slice(&bytes_le[..copy_len]);
+
+        eprintln!("neptune bytes LE:  {neptune_bytes_le:?}");
+        eprintln!("arkworks bytes LE: {ark_bytes_le:?}");
+
+        // Today: bytes MUST differ. Tomorrow (post-port): assert_eq.
+        assert_ne!(
+            ark_bytes_le, neptune_bytes_le,
+            "placeholder constants must NOT match neptune — if this fires either \
+             (a) the BESPOKE neptune-constants port landed (flip to assert_eq), or \
+             (b) by astronomical coincidence the placeholder Poseidon produced the \
+             same hash on this input."
+        );
+    }
 }
