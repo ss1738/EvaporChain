@@ -201,4 +201,11 @@ mod tests {
         let back: SealedVault = serde_json::from_str(&s).unwrap();
         assert_eq!(v, back);
     }
+
+    /// T1.20 — SealedVault::new rejects zero m_threshold (line 77).
+    #[test]
+    fn t1_20_rejects_zero_threshold() {
+        let err = SealedVault::new([1; 32], 10, 0, vec![validator(1)], [1; 32]).unwrap_err();
+        assert_eq!(err, VaultError::ZeroThreshold);
+    }
 }
