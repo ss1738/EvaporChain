@@ -478,6 +478,58 @@ Aggregate: ~140 new tests across 11 files; 0 regressions in existing tests.
 - `crates/evaporchain-total-evaporscript/{lib,check,term}.rs` — Item B substrate context (richer Term AST with BoundedFor/BoundedWhile constructs the V1 lint defers to V1.5).
 - `crates/evaporchain-script/tests/mortal_nft_pilot.rs` — pre-existing pilot pattern this session's pilots model on.
 - `CHANGELOG.md` 2026-05-09 entry for the formal commit-by-commit log.
+---
+
+## 2026-05-09 (mainnet-readiness arc) — 11 PRs across 7 lanes
+
+**Focus:** wide-spread MAINNET_READINESS lane closure. Bridge V2 cryptographic stack closed end-to-end (T0.9 ✅, T0.10 starter, T0.11 ✅), four lanes pinned with adversarial test bundles (T0.5/6/7/8), three production-code follow-ups closed cross-restart soundness gaps the tests revealed.
+
+**Commits shipped:** ~16 commits across 11 feature branches. Not yet on `origin/main` — opened as PRs (#1 through #11). This entry supersedes the narrower PR #3 (which captured only the bridge-V2 portion).
+
+**Deliverables (PR-by-PR):**
+
+| PR | Lane | Type | Branch | Notes |
+|---|---|---|---|---|
+| #1 | T0.9 V2 prove/verify | feature | `pr/t0-9-sub-d-followup` | Real Halo2 IPA prove + verify on Pallas/Vesta. Witness refactored to `Value<F>`; sibling coords supplied independently (no longer tautological). 73s round-trip on Mini 1. |
+| #2 | T0.10 starter | feature | `lane/t0-10-verkle-verifier-starter` | `IVerkleProofVerifier` interface + skeleton (reverts `Groth16VKNotWired` until ceremony lands) + JSON fixture schema. 8/8 forge tests. Stacked on #1. |
+| #3 | session-doc | doc | `pr/session-progress-bridge-v2` | Bridge-V2-only arc entry. Superseded by THIS commit. |
+| #4 | T0.11 sub-A reorg/replay | tests | `pr/t0-11-reorg-replay-tests` | 5 forge tests pinning leaf-mutation rejection, fired-slot stickiness, multi-deployment isolation, L1 reorg simulation via `vm.snapshotState`. |
+| #5 | T0.8 sub-A adversarial snapshots | tests | `pr/t0-8-adversarial-snapshot-tests` | 5 cargo tests; 4 pin existing crypto, 1 documents a quorum-cert gap (sub-task 2 follow-up). |
+| #6 | T0.5 sub-task 5 spend-evict-respend | tests | `pr/t0-5-pnt-respend-clean` | 1 test pinning PNT v1+ joint-security claim (StaleAnchor + canonical nullifier set). Documents cross-restart concern → closed by #8. |
+| #7 | T0.7 vector 3 mempool DoS | tests | `pr/t0-7-mempool-dos-tests-clean` | 4 tests: per-account fairness, TTL eviction, per-tx oversize, NMT ns=0 rejection. |
+| #8 | T0.5 nullifier-set restore | feature | `pr/t0-5-nullifier-restore` | `restore_from_db` rebuilds `engine.nullifier_set` from `db.all_nullifiers()`. Closes #6's documented gap. |
+| #9 | T0.5 shield+transfer commitment persist | feature | `pr/t0-5-shield-persist-commitment` | `execute_shield` + `execute_private_transfer` now call `db.append_note_commitment`. Closes #8's "shield doesn't persist" sub-gap. |
+| #10 | T0.5 unshield change-note persist | feature | `pr/t0-5-unshield-change-persist` | Third call site (change outputs in `execute_unshield`). Closes the persistence trio. |
+| #11 | T0.6 sanov_slash_downtime | tests | `pr/t0-6-downtime-slash-tests` | 6 tests pinning the downtime-slash math (zero / unknown / within-tolerance / well-beyond / jail-at-3 / no-jail-at-2). |
+
+**Empirical results (Mini 1 unless noted):**
+- T0.9 V2 round-trip (`prove_v2_and_verify_v2_round_trip`, `--ignored`): **OK** in 73s after release-mode compile
+- All test bundles pass on first or second iteration (some required follow-up commits to fix module-scope helper issues)
+- Forge regressions: 56/56 (was 55) post #2; 14/14 dispatcher tests (was 9) post #4
+- Privacy: 33/33 → 34/34 across PRs #6/#8/#9/#10
+- Mempool: 4/4 new DoS tests + 535+ unchanged
+- Slashing: 6/6 new downtime tests + 535+ unchanged
+
+**Decisions made:**
+- **Stacked PR pattern** for dependency chains (#2 stacks on #1; #6→#8→#9→#10 form a closed loop)
+- **Documented-vulnerability-as-test pattern** — PR #5's partial-state-withhold test deliberately PASSES on current code to mark the quorum-cert gap (test inverts when sub-task 2 lands)
+- **Reverting Groth16 starter, not always-true stub** — silent stubs are footguns; loud reverts force callers to see the unwired state
+- **No force-pushes** — branch protection + parallel-session contention made every retry land as a fresh commit. Used `git stash` + cherry-pick to recover from sed-too-broad and parallel-branch contamination on multiple occasions.
+
+**What's next:**
+1. Reviewer pass on PRs #1–#11 + decide merge order (#1 first; #2 rebases off it; #6→#8→#9→#10 ideally land together as a coherent T0.5 cycle)
+2. T0.7 remaining vectors (1, 2, 4, 5, 6, 7) need either perf harness (vec 1), DAG-state setup (vec 5), or larger scaffolding — separate session
+3. T0.8 sub-task 2 (snapshot quorum-cert verification, ≥2f+1 attestations) — multi-day production-code work that closes PR #5's documented gap
+4. T0.10 sub-B (Halo2-IPA-in-BN254 wrapper circuit) + sub-C (trusted setup ceremony) — multi-week, infrastructure-level
+
+**Blockers / open questions:**
+- Several lanes (T0.1, T0.3, T0.5 ops, T0.6) need a live cluster — Phase C deploy from earlier in the day is still pending
+- Parallel-session contention recurred 3-4 times this session: stowaway commits on shared branches (`cdc33b7` EvaporScript stdlib on `lane/t0-9-d-finish-prover-v2`), branch-switch-mid-edit (T0.7 first attempt), file-modified-since-read on `tendermint.rs` (T0.6 first attempt). Resolved each time via fresh-branch + cherry-pick + clean-patch workflow.
+
+**Cross-references:**
+- PRs #1–#11: https://github.com/ss1738/EvaporChain/pulls
+- `MAINNET_READINESS.md` lanes T0.5, T0.6, T0.7, T0.8, T0.9, T0.10, T0.11 (status updates implicit until merge)
+- Memory: `evaporchain_t0_9_d_finish_done.md` (V2 stack notes, sub-D follow-up details)
 
 ---
 
