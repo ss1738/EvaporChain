@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import {
   aiEngine,
@@ -135,7 +136,7 @@ export function AiAssistant() {
           onClick={() => setView("home")}
           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-50 text-zinc-600 transition"
         >
-          <span className="text-lg">&larr;</span>
+          <ArrowLeft className="w-5 h-5" strokeWidth={1.5} />
         </button>
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-400 to-cyan-600 flex items-center justify-center">
@@ -258,7 +259,7 @@ function MessageBubble({
         )}
 
         {/* Timestamp */}
-        <p className={`text-[9px] mt-1.5 ${isUser ? "text-cyan-200" : "text-zinc-300"}`}>
+        <p className={`text-[10px] mt-1.5 ${isUser ? "text-cyan-200" : "text-zinc-300"}`}>
           {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </p>
       </div>

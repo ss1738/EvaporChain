@@ -103,7 +103,7 @@ export function ShardScreen() {
                 />
               </div>
               {shardsHealth.compaction_candidates > 0 && (
-                <p className="text-[9px] text-evap-amber mt-2">
+                <p className="text-[10px] text-evap-amber mt-2">
                   {shardsHealth.compaction_candidates} shard
                   {shardsHealth.compaction_candidates === 1 ? "" : "s"} flagged
                   for compaction
@@ -126,7 +126,7 @@ export function ShardScreen() {
               </span>
               .
             </p>
-            <p className="text-[9px] text-zinc-500 font-mono truncate mt-1">
+            <p className="text-[10px] text-zinc-500 font-mono truncate mt-1">
               {activeAccount.address}
             </p>
           </div>
@@ -175,12 +175,12 @@ export function ShardScreen() {
                           Shard {s.shard_id}
                         </span>
                         {isMine && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-cyan/15 text-evap-cyan border border-evap-cyan/30">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-evap-cyan/15 text-evap-cyan border border-evap-cyan/30">
                             you
                           </span>
                         )}
                         {s.is_dead && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-red/15 text-evap-red border border-evap-red/30">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-evap-red/15 text-evap-red border border-evap-red/30">
                             dead
                           </span>
                         )}
@@ -211,7 +211,7 @@ export function ShardScreen() {
         </div>
 
         <div className="mx-4 mb-4 px-3 py-2 rounded-lg bg-evap-cyan/5 border border-evap-cyan/20">
-          <p className="text-[9px] text-zinc-400 leading-snug">
+          <p className="text-[10px] text-zinc-400 leading-snug">
             Shard assignment is deterministic: each 20-byte object id (and
             account address) maps to one shard via its first two bytes. Cross-
             shard transfers are routed by the shard bridge and may take longer
@@ -242,7 +242,7 @@ function Stat({
       : "text-zinc-200";
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider">
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider">
         {label}
       </p>
       <p className={`text-sm font-semibold mt-0.5 tabular-nums ${valueColor}`}>
@@ -255,7 +255,7 @@ function Stat({
 function ShardStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider">
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider">
         {label}
       </p>
       <p className="text-xs font-medium text-zinc-300 tabular-nums mt-0.5 truncate">

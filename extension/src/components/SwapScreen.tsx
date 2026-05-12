@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ArrowLeft, Check, ChevronDown, X } from "lucide-react";
+import { ArrowLeft, ArrowUpDown, Check, ChevronDown, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { api, type TokenInfo, type SwapQuote } from "@/utils/api";
@@ -176,7 +176,7 @@ export function SwapScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-evap-green/20 flex items-center justify-center mb-4">
-            <span className="text-3xl"><Check className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
+            <Check className="w-8 h-8 text-evap-green" strokeWidth={2} />
           </div>
           <p className="text-sm font-semibold text-zinc-200">Swap Successful</p>
           <p className="text-xs text-zinc-500 mt-1">
@@ -201,7 +201,7 @@ export function SwapScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-evap-red/20 flex items-center justify-center mb-4">
-            <span className="text-3xl"><X className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
+            <X className="w-8 h-8 text-evap-red" strokeWidth={2} />
           </div>
           <p className="text-sm font-semibold text-zinc-200">Swap Failed</p>
           <p className="text-xs text-zinc-500 mt-1 text-center">{error ?? "Something went wrong"}</p>
@@ -321,9 +321,10 @@ export function SwapScreen() {
         <div className="flex justify-center -my-1 relative z-10">
           <button
             onClick={handleFlip}
-            className="w-8 h-8 rounded-full bg-evap-surface border border-evap-border flex items-center justify-center hover:border-evap-cyan/40 transition text-sm text-zinc-400 hover:text-evap-cyan"
+            className="w-8 h-8 rounded-full bg-evap-surface border border-evap-border flex items-center justify-center hover:border-evap-cyan/40 transition text-zinc-400 hover:text-evap-cyan"
+            aria-label="Flip swap direction"
           >
-            ↕
+            <ArrowUpDown className="w-4 h-4" strokeWidth={1.5} />
           </button>
         </div>
 
@@ -479,7 +480,7 @@ export function SwapScreen() {
 function Footer() {
   return (
     <div className="px-4 py-3 mt-auto">
-      <p className="text-[9px] text-zinc-600 text-center">
+      <p className="text-[10px] text-zinc-600 text-center">
         Powered by EvaporChain DEX
       </p>
     </div>

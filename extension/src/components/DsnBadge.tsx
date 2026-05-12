@@ -43,7 +43,7 @@ export function DsnBadge() {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span
-            className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
               isLargeSet
                 ? "bg-evap-purple/15 text-evap-purple border-evap-purple/40"
                 : "bg-zinc-700/40 text-zinc-400 border-zinc-600/40"
@@ -58,7 +58,7 @@ export function DsnBadge() {
         </div>
         <button
           onClick={() => setView("dsn-details")}
-          className="text-[9px] text-evap-purple hover:text-evap-purple/80 transition shrink-0"
+          className="text-[10px] text-evap-purple hover:text-evap-purple/80 transition shrink-0"
         >
           Details<ChevronRight className="inline w-3.5 h-3.5 -mt-0.5" strokeWidth={1.5} />
         </button>
@@ -67,9 +67,9 @@ export function DsnBadge() {
         Your shielded transfers are anonymous within this set.
       </p>
       <div className="flex items-center justify-between mt-1.5">
-        <p className="text-[9px] text-zinc-600 uppercase tracking-wider">Root</p>
+        <p className="text-[10px] text-zinc-600 uppercase tracking-wider">Root</p>
         <p
-          className="text-[9px] text-zinc-400 font-mono"
+          className="text-[10px] text-zinc-400 font-mono"
           title={root || undefined}
         >
           {shortRoot}

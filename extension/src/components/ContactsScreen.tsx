@@ -213,7 +213,7 @@ export function ContactsScreen() {
         </div>
 
         <div className="mx-4 mb-4 px-3 py-2 rounded-lg bg-evap-cyan/5 border border-evap-cyan/20">
-          <p className="text-[9px] text-zinc-400 leading-snug">
+          <p className="text-[10px] text-zinc-400 leading-snug">
             Contacts are stored locally in your browser via
             chrome.storage.local. They never leave your device. The
             send screen autocompletes from this list as you type.

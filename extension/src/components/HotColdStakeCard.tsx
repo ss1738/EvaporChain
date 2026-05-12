@@ -186,14 +186,14 @@ export function HotColdStakeCard() {
     <div className="rounded-lg bg-evap-surface border border-evap-border p-3 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40">
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40">
             Stake
           </span>
           <span className="text-xs font-medium text-zinc-300 uppercase tracking-wide">
             Hot / Cold equilibrium
           </span>
         </div>
-        <span className="text-[9px] px-2 py-0.5 rounded-full bg-evap-bg text-zinc-400 border border-evap-border">
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-evap-bg text-zinc-400 border border-evap-border">
           λ {hotLambda} / {coldLambda.toLocaleString()} ep
         </span>
       </div>
@@ -212,7 +212,7 @@ export function HotColdStakeCard() {
           </span>
           <span className="text-xs text-zinc-500">hot fraction</span>
           <span
-            className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full border ${
+            className={`ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
               tempPct > 66
                 ? "bg-evap-amber/15 text-evap-amber border-evap-amber/40"
                 : tempPct > 33
@@ -278,7 +278,7 @@ export function HotColdStakeCard() {
             className="flex-1 px-2 py-1 rounded bg-evap-surface border border-evap-border text-xs text-zinc-200 tabular-nums focus:outline-none focus:border-evap-cyan/60"
             placeholder="amount"
           />
-          <span className="text-[9px] text-zinc-500">EVAP</span>
+          <span className="text-[10px] text-zinc-500">EVAP</span>
         </div>
         <div className="flex gap-2">
           <button
@@ -299,7 +299,7 @@ export function HotColdStakeCard() {
           </button>
         </div>
         {lastMove && (
-          <p className="text-[9px] text-zinc-500 leading-snug">
+          <p className="text-[10px] text-zinc-500 leading-snug">
             Last move:{" "}
             <span
               className={
@@ -315,7 +315,7 @@ export function HotColdStakeCard() {
         )}
       </div>
 
-      <p className="text-[9px] text-zinc-500 leading-snug">
+      <p className="text-[10px] text-zinc-500 leading-snug">
         Pure-compute simulator over the substrate at{" "}
         <span className="font-mono">/api/hot_cold_stake/&#123;decay,promote,demote&#125;</span>.
         No signature, no chain mutation — promote/demote that mutates
@@ -340,14 +340,14 @@ function PoolStat({
   const showDelta = typeof delta === "number" && Math.abs(delta) >= 1;
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{label}</p>
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
       <div className="flex items-baseline gap-1 mt-0.5">
         <span className={`text-sm font-semibold tabular-nums ${color ?? "text-zinc-200"}`}>
           {value}
         </span>
         {showDelta && (
           <span
-            className={`text-[9px] tabular-nums ${
+            className={`text-[10px] tabular-nums ${
               (delta ?? 0) >= 0 ? "text-evap-green" : "text-evap-red"
             }`}
           >

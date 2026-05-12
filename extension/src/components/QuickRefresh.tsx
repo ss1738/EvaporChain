@@ -60,11 +60,11 @@ export function QuickRefresh() {
           </p>
 
           <div className="space-y-1 mb-2">
-            <div className="flex justify-between text-[9px]">
+            <div className="flex justify-between text-[10px]">
               <span className="text-zinc-500">Energy cost</span>
               <span className="text-evap-cyan font-medium">{formatBalance(totalCost)} EVAP</span>
             </div>
-            <div className="flex justify-between text-[9px]">
+            <div className="flex justify-between text-[10px]">
               <span className="text-zinc-500">Extends life by</span>
               <span className="text-evap-green font-medium">~{averageEpochsExtended} epochs</span>
             </div>
@@ -88,7 +88,7 @@ export function QuickRefresh() {
 
           <button
             onClick={() => setExpanded(false)}
-            className="mt-1.5 w-full text-[9px] text-zinc-500 hover:text-zinc-300"
+            className="mt-1.5 w-full text-[10px] text-zinc-500 hover:text-zinc-300"
           >
             Dismiss
           </button>

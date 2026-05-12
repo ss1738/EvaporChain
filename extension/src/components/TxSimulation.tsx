@@ -114,7 +114,7 @@ export function TxSimulation({
         <div className="flex flex-col items-center justify-center py-6">
           <div className="w-8 h-8 border-2 border-evap-cyan border-t-transparent rounded-full animate-spin mb-3" />
           <p className="text-xs text-zinc-400">Simulating transaction...</p>
-          <p className="text-[9px] text-zinc-600 mt-1">Calculating energy costs and decay impact</p>
+          <p className="text-[10px] text-zinc-600 mt-1">Calculating energy costs and decay impact</p>
         </div>
       </div>
     );
@@ -169,9 +169,9 @@ export function TxSimulation({
         <div className="grid grid-cols-2 gap-2">
           {/* Before */}
           <div className="rounded-md bg-evap-bg p-2.5 border border-evap-border">
-            <span className="text-[9px] text-zinc-500 uppercase tracking-wide block mb-1.5">Before</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide block mb-1.5">Before</span>
             <p className="text-sm font-semibold text-zinc-200">{formatBalance(simulation!.balanceBefore)}</p>
-            <p className="text-[9px] text-zinc-500">EVAP</p>
+            <p className="text-[10px] text-zinc-500">EVAP</p>
             <div className="mt-1.5 w-full h-1.5 bg-evap-border rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all"
@@ -181,16 +181,16 @@ export function TxSimulation({
                 }}
               />
             </div>
-            <p className="text-[9px] mt-0.5" style={{ color: energyColor(balanceBeforePercent) }}>
+            <p className="text-[10px] mt-0.5" style={{ color: energyColor(balanceBeforePercent) }}>
               {balanceBeforePercent}% energy
             </p>
           </div>
 
           {/* After */}
           <div className="rounded-md bg-evap-bg p-2.5 border border-evap-border">
-            <span className="text-[9px] text-zinc-500 uppercase tracking-wide block mb-1.5">After</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide block mb-1.5">After</span>
             <p className="text-sm font-semibold text-zinc-200">{formatBalance(simulation!.balanceAfter)}</p>
-            <p className="text-[9px] text-zinc-500">EVAP</p>
+            <p className="text-[10px] text-zinc-500">EVAP</p>
             <div className="mt-1.5 w-full h-1.5 bg-evap-border rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all"
@@ -200,7 +200,7 @@ export function TxSimulation({
                 }}
               />
             </div>
-            <p className="text-[9px] mt-0.5" style={{ color: energyColor(balanceAfterPercent) }}>
+            <p className="text-[10px] mt-0.5" style={{ color: energyColor(balanceAfterPercent) }}>
               {balanceAfterPercent}% energy
             </p>
           </div>
@@ -256,7 +256,7 @@ export function TxSimulation({
 
         {showDetails && (
           <div className="rounded-md bg-evap-bg border border-evap-border p-2 overflow-x-auto">
-            <pre className="text-[9px] text-zinc-400 font-mono leading-relaxed whitespace-pre-wrap break-all">
+            <pre className="text-[10px] text-zinc-400 font-mono leading-relaxed whitespace-pre-wrap break-all">
 {JSON.stringify(
   {
     type: "transfer",

@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { ArrowLeft, Download, Upload, AlertTriangle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { BrowserKeyStore } from "@/crypto/keystore";
 import { Header } from "./Header";
@@ -69,39 +70,54 @@ export function BackupRestoreScreen() {
       <div className="px-4 pt-4 pb-2">
         <button
           onClick={() => setView("settings")}
-          className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
+          className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-4 transition"
         >
-          ← Settings
+          <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.5} /> Settings
         </button>
-        <h2 className="text-lg font-semibold text-zinc-100">Backup &amp; Restore</h2>
-        <p className="text-xs text-zinc-500 mt-1">
-          Export an encrypted backup of your accounts and preferences.
-          Your keys are encrypted with your password — the backup file alone is not sufficient to steal funds.
+        <h2 className="text-xl font-semibold text-zinc-100">Backup &amp; Restore</h2>
+        <p className="text-sm text-zinc-500 mt-1.5">
+          Export an encrypted snapshot of your accounts. Your keys are
+          encrypted with your password — the backup alone cannot steal funds.
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 space-y-4 pb-4">
+      <div className="flex-1 overflow-y-auto px-4 space-y-3 pb-4">
         {/* Export */}
-        <div className="px-4 py-4 rounded-xl bg-evap-surface border border-evap-border space-y-2">
-          <h3 className="text-sm font-semibold text-zinc-200">Export Backup</h3>
-          <p className="text-xs text-zinc-500">
-            Downloads a JSON file containing all your encrypted accounts and settings.
-          </p>
+        <div className="px-4 py-4 rounded-xl bg-evap-surface border border-evap-border">
+          <div className="flex items-start gap-3 mb-3">
+            <div className="w-9 h-9 rounded-lg bg-evap-cyan/10 border border-evap-cyan/20 flex items-center justify-center shrink-0">
+              <Download className="w-4 h-4 text-evap-cyan" strokeWidth={1.5} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-100">Export</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Downloads a JSON file with your encrypted accounts and settings.
+              </p>
+            </div>
+          </div>
           <button
             onClick={handleExport}
             disabled={stage === "exporting" || stage === "importing"}
-            className="w-full py-2 rounded-lg bg-evap-cyan/10 border border-evap-cyan/30 text-xs text-evap-cyan hover:bg-evap-cyan/20 disabled:opacity-50 transition"
+            className="w-full py-2.5 rounded-lg bg-evap-cyan/10 border border-evap-cyan/30 text-sm font-medium text-evap-cyan hover:bg-evap-cyan/20 disabled:opacity-50 transition"
           >
-            {stage === "exporting" ? "Preparing…" : "Download Backup"}
+            {stage === "exporting" ? "Preparing…" : "Download backup"}
           </button>
         </div>
 
         {/* Import */}
-        <div className="px-4 py-4 rounded-xl bg-evap-surface border border-evap-border space-y-2">
-          <h3 className="text-sm font-semibold text-zinc-200">Restore from Backup</h3>
-          <p className="text-xs text-zinc-500">
-            Select a previously exported backup file. This will overwrite your current keystore.
-          </p>
+        <div className="px-4 py-4 rounded-xl bg-evap-surface border border-evap-border">
+          <div className="flex items-start gap-3 mb-3">
+            <div className="w-9 h-9 rounded-lg bg-zinc-700/40 border border-zinc-600/40 flex items-center justify-center shrink-0">
+              <Upload className="w-4 h-4 text-zinc-300" strokeWidth={1.5} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-100">Restore</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Select a previously exported backup. This overwrites your
+                current keystore.
+              </p>
+            </div>
+          </div>
           <input
             ref={fileRef}
             type="file"
@@ -113,11 +129,11 @@ export function BackupRestoreScreen() {
           />
           <label
             htmlFor="backup-file-input"
-            className={`block w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-center text-zinc-300 hover:border-evap-cyan/40 cursor-pointer transition ${
+            className={`block w-full py-2.5 rounded-lg bg-evap-bg border border-evap-border text-sm font-medium text-center text-zinc-300 hover:border-evap-cyan/40 cursor-pointer transition ${
               stage === "importing" ? "opacity-50 pointer-events-none" : ""
             }`}
           >
-            {stage === "importing" ? "Restoring…" : "Choose Backup File"}
+            {stage === "importing" ? "Restoring…" : "Choose backup file"}
           </label>
         </div>
 
@@ -128,15 +144,17 @@ export function BackupRestoreScreen() {
           </div>
         )}
         {info && (
-          <div className="px-4 py-3 rounded-xl bg-evap-cyan/10 border border-evap-cyan/30">
-            <p className="text-xs text-evap-cyan">{info}</p>
+          <div className="px-4 py-3 rounded-xl bg-evap-green/10 border border-evap-green/30">
+            <p className="text-xs text-evap-green">{info}</p>
           </div>
         )}
 
         {/* Warning */}
-        <div className="px-4 py-3 rounded-xl bg-yellow-500/5 border border-yellow-500/20">
-          <p className="text-xs text-yellow-400/80">
-            Never share your backup file unencrypted. Anyone with your backup and password can access your funds.
+        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" strokeWidth={1.5} />
+          <p className="text-xs text-amber-400/90 leading-relaxed">
+            Never share your backup file together with your password.
+            Anyone with both can access your funds.
           </p>
         </div>
       </div>

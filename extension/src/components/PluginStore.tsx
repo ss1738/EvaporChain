@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import {
   pluginManager,
@@ -82,7 +83,7 @@ export function PluginStore() {
           onClick={() => setView("home")}
           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-50 text-zinc-600 transition"
         >
-          <span className="text-lg">&larr;</span>
+          <ArrowLeft className="w-5 h-5" strokeWidth={1.5} />
         </button>
         <h1 className="text-base font-semibold text-zinc-800">Plugins</h1>
         <div className="ml-auto">
@@ -321,7 +322,7 @@ function PluginDetail({
           onClick={onBack}
           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-50 text-zinc-600 transition"
         >
-          <span className="text-lg">&larr;</span>
+          <ArrowLeft className="w-5 h-5" strokeWidth={1.5} />
         </button>
         <h1 className="text-base font-semibold text-zinc-800 truncate">{plugin.name}</h1>
       </div>

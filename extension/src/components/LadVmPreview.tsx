@@ -96,7 +96,7 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
     <div className="rounded-lg border border-evap-purple/30 bg-evap-surface p-3 mt-3">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40">
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40">
             LAD-VM
           </span>
           <span className="text-xs font-medium text-zinc-300 uppercase tracking-wide">
@@ -191,25 +191,25 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
       {result && (
         <div className="mt-2 rounded-md bg-evap-bg border border-evap-border p-2 space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Outcome</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Outcome</span>
             <span className={`text-xs font-semibold ${outcomeColor}`}>
               {result.outcome}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Returned value</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Returned value</span>
             <span className="text-xs text-zinc-300 font-mono">
               {result.returned_value ?? "—"}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Evaporated</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Evaporated</span>
             <span className={`text-xs font-mono ${result.is_evaporated_at_query ? "text-evap-red" : "text-evap-green"}`}>
               {result.is_evaporated_at_query ? "yes" : "no"}
             </span>
           </div>
           {result.detail && (
-            <p className="text-[9px] text-zinc-500 leading-snug pt-1 border-t border-evap-border/60">
+            <p className="text-[10px] text-zinc-500 leading-snug pt-1 border-t border-evap-border/60">
               {result.detail}
             </p>
           )}

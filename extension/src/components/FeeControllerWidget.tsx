@@ -39,12 +39,12 @@ export function FeeControllerWidget() {
     <div className="mx-4 mt-3 px-3 py-2.5 rounded-lg bg-evap-surface border border-evap-border">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[9px] text-zinc-500 uppercase tracking-wider">Base fee</p>
+          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Base fee</p>
           <div className="flex items-baseline gap-1.5 mt-0.5">
             <span className="text-lg font-bold text-zinc-100 tabular-nums">
               {feeStatus ? feeStatus.base_fee.toLocaleString() : "—"}
             </span>
-            <span className="text-[9px] text-zinc-500">wei/gas</span>
+            <span className="text-[10px] text-zinc-500">wei/gas</span>
           </div>
         </div>
 
@@ -81,10 +81,10 @@ export function FeeControllerWidget() {
       {/* Footer detail */}
       {feeStatus && (
         <div className="flex justify-between items-center mt-2 pt-2 border-t border-evap-border">
-          <span className="text-[9px] text-zinc-500">
+          <span className="text-[10px] text-zinc-500">
             E {feeStatus.energy.toLocaleString()} / target {feeStatus.target_energy.toLocaleString()}
           </span>
-          <span className="text-[9px] text-zinc-500">
+          <span className="text-[10px] text-zinc-500">
             ρ {feeStatus.fee_response_ppm.toLocaleString()} ppm
           </span>
         </div>
@@ -102,14 +102,14 @@ function PressurePill({ band }: { band: "low" | "med" | "high" }) {
       : "bg-evap-red/10 border-evap-red/30 text-evap-red";
   const label = band === "low" ? "Low pressure" : band === "med" ? "Med pressure" : "High pressure";
   return (
-    <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${cls}`}>{label}</span>
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${cls}`}>{label}</span>
   );
 }
 
 function DriftIndicator({ converging, delta }: { converging: boolean; delta: number }) {
   return (
     <span
-      className={`text-[9px] flex items-center gap-1 ${
+      className={`text-[10px] flex items-center gap-1 ${
         converging ? "text-evap-green" : "text-evap-amber"
       }`}
       title={`Σ ΔV (last 8) = ${delta.toFixed(2)}`}

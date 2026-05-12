@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { ArrowLeft, Check, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import {
   bridgeManager,
@@ -126,7 +127,7 @@ export function BridgeScreen() {
           onClick={() => setView("home")}
           className="text-zinc-500 hover:text-zinc-700 transition text-sm"
         >
-          &larr;
+          <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
         </button>
         <h1 className="text-sm font-semibold text-zinc-800">Bridge</h1>
       </div>
@@ -478,7 +479,7 @@ function StepRow({ step }: { step: BridgeStep }) {
       {/* Status icon */}
       {step.status === "completed" && (
         <div className="w-4 h-4 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-          <span className="text-emerald-600 text-[8px]">&#10003;</span>
+          <Check className="w-2.5 h-2.5 text-emerald-600" strokeWidth={3} />
         </div>
       )}
       {step.status === "in_progress" && (
@@ -489,7 +490,7 @@ function StepRow({ step }: { step: BridgeStep }) {
       )}
       {step.status === "failed" && (
         <div className="w-4 h-4 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-          <span className="text-red-600 text-[8px]">&#10007;</span>
+          <X className="w-2.5 h-2.5 text-red-600" strokeWidth={3} />
         </div>
       )}
 
@@ -506,7 +507,7 @@ function StepRow({ step }: { step: BridgeStep }) {
       </span>
 
       {step.timestamp && (
-        <span className="text-[9px] text-zinc-300 ml-auto">
+        <span className="text-[10px] text-zinc-300 ml-auto">
           {new Date(step.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       )}
@@ -546,11 +547,11 @@ function HistoryCard({
         </div>
       </div>
       <div className="flex items-center justify-between mt-1">
-        <span className="text-[9px] text-zinc-400">
+        <span className="text-[10px] text-zinc-400">
           {new Date(transfer.initiatedAt).toLocaleDateString()}
         </span>
         <span
-          className={`text-[9px] font-medium ${
+          className={`text-[10px] font-medium ${
             transfer.status === "completed"
               ? "text-emerald-600"
               : transfer.status === "failed"

@@ -91,7 +91,7 @@ export function SettingsScreen() {
                         {entry ? `${formatBalance(entry.balance)} EVAP` : "—"}
                       </p>
                       {entry && !isActive && (
-                        <p className="text-[9px] text-zinc-500">
+                        <p className="text-[10px] text-zinc-500">
                           stale {staleLabel(entry.lastFetched)}
                         </p>
                       )}
@@ -131,7 +131,7 @@ export function SettingsScreen() {
                 );
               })}
             </div>
-            <p className="text-[9px] text-zinc-500 font-mono break-all">
+            <p className="text-[10px] text-zinc-500 font-mono break-all">
               {preferences.network === "mainnet" && MAINNET_URL}
               {preferences.network === "testnet" && TESTNET_URL}
               {preferences.network === "custom" && (preferences.customNodeUrl || "(custom URL)")}

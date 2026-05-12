@@ -151,7 +151,7 @@ export function GovernanceScreen() {
             </span>
           </div>
           {forkChoiceMode?.detail && (
-            <p className="text-[9px] text-zinc-500 mt-2 leading-snug">
+            <p className="text-[10px] text-zinc-500 mt-2 leading-snug">
               {forkChoiceMode.detail}
             </p>
           )}
@@ -212,7 +212,7 @@ export function GovernanceScreen() {
             <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
               Endorse amendment
             </p>
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-purple/10 text-evap-purple border border-evap-purple/30">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-evap-purple/10 text-evap-purple border border-evap-purple/30">
               Pro
             </span>
           </div>
@@ -275,7 +275,7 @@ export function GovernanceScreen() {
                 {submitting ? "Broadcasting…" : "Sign & broadcast amendment"}
               </button>
 
-              <p className="text-[9px] text-zinc-600 leading-snug">
+              <p className="text-[10px] text-zinc-600 leading-snug">
                 Note: the on-chain endpoint enforces quorum from raw stake
                 numbers — this body is signed locally for your tx record but
                 the chain does not require a signature.
@@ -310,11 +310,11 @@ function ModeCard({
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-zinc-200">{name}</span>
         {active ? (
-          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30">
             Active
           </span>
         ) : (
-          <span className="text-[9px] px-1.5 py-0.5 rounded-full text-zinc-500 border border-evap-border">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full text-zinc-500 border border-evap-border">
             {id}
           </span>
         )}
@@ -327,7 +327,7 @@ function ModeCard({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[9px] text-zinc-500 uppercase tracking-wider mb-0.5">{label}</p>
+      <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-0.5">{label}</p>
       {children}
     </div>
   );
