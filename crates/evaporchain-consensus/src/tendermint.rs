@@ -2342,7 +2342,10 @@ impl TendermintConsensus {
             // multiple violation buckets to get non-trivial entropy.
             // Phase 3.5d ships the wiring; entropy-based amount
             // tuning is operator follow-up.
-            let amount = evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]).unwrap_or_default();
+            let amount = match evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]) {
+                Ok(v) => v,
+                Err(_) => 0,
+            };
             if amount > 0 {
                 let actual = self
                     .validator_set
@@ -5952,7 +5955,7 @@ impl TendermintConsensus {
             // the node-side block-record prune at main.rs ~line 4357.
             const LIGHT_CONE_PRUNE_INTERVAL: u64 = 100;
             const LIGHT_CONE_RETENTION_EPOCHS: u64 = 1_000;
-            if block.number > 0 && block.number.is_multiple_of(LIGHT_CONE_PRUNE_INTERVAL) {
+            if block.number > 0 && block.number % LIGHT_CONE_PRUNE_INTERVAL == 0 {
                 let cutoff = block.epoch.saturating_sub(LIGHT_CONE_RETENTION_EPOCHS);
                 if cutoff > 0 {
                     let pruned = self.light_cone_dag.prune_before_epoch(cutoff);
@@ -9472,7 +9475,7 @@ mod tests {
         tc.mev_missing_refund_violations.insert(1, 100);
         let slashed = tc.apply_mev_missing_refund_slashes();
         // Counter reset.
-        assert!(!tc.mev_missing_refund_violations.contains_key(&1));
+        assert!(tc.mev_missing_refund_violations.get(&1).is_none());
         // The result should report at least the validator we
         // configured (real slash amount depends on entropy math).
         let entry_for_1 = slashed.iter().find(|(v, _)| *v == 1);
@@ -9494,7 +9497,7 @@ mod tests {
         // Validator 99 doesn't exist → no slash entry.
         assert!(slashed.iter().all(|(v, _)| *v != 99));
         // Counter reset regardless — operator tooling expects it.
-        assert!(!tc.mev_missing_refund_violations.contains_key(&99));
+        assert!(tc.mev_missing_refund_violations.get(&99).is_none());
     }
 
     /// Phase 4.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
@@ -10899,7 +10902,7 @@ mod tests {
     /// (replay protection).
     #[test]
     fn test_due_refund_txs_grace_window_and_replay_protection() {
-        use evaporchain_types::{Block, TransferTx};
+        use evaporchain_types::{Block, RefundTx, TransferTx};
 
         fn addr_local(seed: u8) -> [u8; 32] {
             let mut a = [0u8; 32];
@@ -12185,26 +12188,26 @@ mod tests {
         assert!(tc.propose_parents().is_empty());
     }
 
-    // MCC Phase C.5 — validator-determinism property test (256
-    // random DAG shapes).
-    //
-    // **The contract:** every honest validator with the same DAG
-    // state must produce the same MCC fork-choice outputs:
-    //   1. `candidate_heads()` returns the same `BTreeSet` of leaves
-    //   2. `enumerate_candidate_heads()` returns the same sorted
-    //      `Vec<(BlockId, caliber)>` (same order, same scores)
-    //   3. `light_cone_antichain_digest()` matches
-    //   4. `plan_replay_to_head` produces the same `ReplayWalk` for
-    //      every (from, to) pair drawn from the candidate heads
-    //
-    // **Why this is a proptest, not a unit test:** the manual
-    // `mcc_phase_a_candidate_heads_converges_across_validators`
-    // test (already shipped) covers a 6-block hand-picked sequence.
-    // This proptest sweeps 256 randomly-generated DAG shapes (linear
-    // chains, branching, multi-parent merges) at sizes 1..=20
-    // blocks, catching any non-determinism that depends on a
-    // specific topology — HashMap iteration order leaking into
-    // scoring, time-based tie-breaks, etc.
+    /// MCC Phase C.5 — validator-determinism property test (256
+    /// random DAG shapes).
+    ///
+    /// **The contract:** every honest validator with the same DAG
+    /// state must produce the same MCC fork-choice outputs:
+    ///   1. `candidate_heads()` returns the same `BTreeSet` of leaves
+    ///   2. `enumerate_candidate_heads()` returns the same sorted
+    ///      `Vec<(BlockId, caliber)>` (same order, same scores)
+    ///   3. `light_cone_antichain_digest()` matches
+    ///   4. `plan_replay_to_head` produces the same `ReplayWalk` for
+    ///      every (from, to) pair drawn from the candidate heads
+    ///
+    /// **Why this is a proptest, not a unit test:** the manual
+    /// `mcc_phase_a_candidate_heads_converges_across_validators`
+    /// test (already shipped) covers a 6-block hand-picked sequence.
+    /// This proptest sweeps 256 randomly-generated DAG shapes (linear
+    /// chains, branching, multi-parent merges) at sizes 1..=20
+    /// blocks, catching any non-determinism that depends on a
+    /// specific topology — HashMap iteration order leaking into
+    /// scoring, time-based tie-breaks, etc.
     proptest::proptest! {
         #[test]
         fn mcc_phase_c5_validator_determinism_under_random_dags(
@@ -13522,11 +13525,11 @@ mod tests {
             // Random "key" string for unknown-key cases.
             junk_key in "[a-z]{3,18}",
         ) {
-            
+            use proptest::prelude::*;
             // Some toolchains don't surface proptest's assertion
             // macros via the prelude glob; explicit imports below
             // make them available unconditionally.
-            use proptest::prop_assert;
+            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
             let (key, value, expected): (&str, String, &str) = match bucket {
                 0 => ("parent_acceptance_mode", "mcc".to_string(), "ok"),
@@ -13609,8 +13612,8 @@ mod tests {
             s_honest_milli in -2000i64..4001,
             last_run_at_height in 0u64..1_000_001,
         ) {
-            
-            
+            use proptest::prelude::*;
+            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
             use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
 
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
@@ -16404,7 +16407,7 @@ mod da_tests {
         // Dropped (same-sender) txs returned to mempool — should still
         // be there for the next proposal.
         assert!(
-            !tc.mempool.is_empty(),
+            tc.mempool.len() >= 1,
             "dropped same-sender txs must remain in pool — got {} pending",
             tc.mempool.len()
         );
@@ -18960,5 +18963,873 @@ mod t1_20_batch6 {
         assert!(s.eulogy_trie_root.is_none());
         assert!(!s.mortis_triggered);
         assert!(s.tombstone_addresses.is_empty());
+    }
+}
+
+// ─── T1.20 batch 7: proposal rejections + governance crooks_mev + misc ──────
+
+#[cfg(test)]
+mod t1_20_batch7 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Transaction, TransferTx};
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block_at(number: u64, epoch: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    fn transfer() -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        })
+    }
+
+    /// Find the round (0..100) where tc.my_id is the proposer.
+    fn find_my_proposer_round(tc: &mut TendermintConsensus) -> u32 {
+        for round in 0..100u32 {
+            tc.round_state = RoundState::new(round);
+            if tc.am_i_proposer() {
+                return round;
+            }
+        }
+        panic!("No proposer round found for my_id={}", tc.my_id);
+    }
+
+    // ── on_message: Proposal with too many transactions rejected ─────────────
+
+    #[test]
+    fn t1_20_on_msg_proposal_too_many_txs_rejected() {
+        let mut tc = make_tc();
+        let round = find_my_proposer_round(&mut tc);
+        let mut block = make_block_at(1, 1);
+        block.chain_id = String::new();
+        // 201 txs exceeds MAX_TXS_PER_BLOCK=200
+        block.transactions = (0..201).map(|_| transfer()).collect();
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1,
+            round,
+            block,
+            proposer_id: 1,
+        });
+        assert!(actions.is_empty(), "too-many-txs proposal must be rejected");
+    }
+
+    // ── on_message: Proposal with chain-id mismatch rejected ─────────────────
+
+    #[test]
+    fn t1_20_on_msg_proposal_chain_id_mismatch_rejected() {
+        let mut tc = make_tc();
+        tc.chain_id = "chain-A".to_string();
+        let round = find_my_proposer_round(&mut tc);
+        let mut block = make_block_at(1, 1);
+        block.chain_id = "chain-B".to_string(); // different from tc.chain_id
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1,
+            round,
+            block,
+            proposer_id: 1,
+        });
+        assert!(actions.is_empty(), "chain-id mismatch must be rejected");
+    }
+
+    // ── on_message: Proposal with gas limit exceeded rejected ─────────────────
+
+    #[test]
+    fn t1_20_on_msg_proposal_gas_limit_exceeded_rejected() {
+        // gas_limit=1; one Transfer costs GAS_TRANSFER=21_000 → exceeds
+        let mut tc = TendermintConsensus::new_with_gas_limit(1, 5, make_vs(), 1);
+        let round = find_my_proposer_round(&mut tc);
+        let mut block = make_block_at(1, 1);
+        block.transactions = vec![transfer()];
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1,
+            round,
+            block,
+            proposer_id: 1,
+        });
+        assert!(actions.is_empty(), "gas-exceeded proposal must be rejected");
+    }
+
+    // ── on_message: KeyAnnounce valid 48-byte key registers BLS key ──────────
+
+    #[test]
+    fn t1_20_on_msg_key_announce_valid_key_registers_for_known_validator() {
+        let mut tc = make_tc();
+        let key = vec![0xAB; 48]; // 48 bytes, empty PoP → skip PoP verify
+        let actions = tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: key.clone(),
+            proof_of_possession: vec![],
+        });
+        assert!(actions.is_empty());
+        // Key must now be registered on validator 1
+        let bls = tc.validator_set.get(1).unwrap().bls_public_key.as_ref();
+        assert_eq!(bls, Some(&key));
+    }
+
+    // ── governance_set_param: crooks_mev_beta_mb valid range ─────────────────
+
+    #[test]
+    fn t1_20_governance_set_param_crooks_mev_beta_mb_valid() {
+        let mut tc = make_tc();
+        assert!(tc
+            .governance_set_param("crooks_mev_beta_mb", "500000")
+            .is_ok());
+        assert_eq!(
+            tc.governance_params.get("crooks_mev_beta_mb").map(|s| s.as_str()),
+            Some("500000")
+        );
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_crooks_mev_beta_mb_zero_rejected() {
+        let mut tc = make_tc();
+        // "0" < 1 → InvalidValue
+        let err = tc
+            .governance_set_param("crooks_mev_beta_mb", "0")
+            .unwrap_err();
+        assert!(matches!(err, GovernanceParamError::InvalidValue { .. }));
+    }
+
+    // ── governance_set_param: crooks_mev_confidence_threshold_ppm ────────────
+
+    #[test]
+    fn t1_20_governance_set_param_confidence_threshold_ppm_valid() {
+        let mut tc = make_tc();
+        assert!(tc
+            .governance_set_param("crooks_mev_confidence_threshold_ppm", "900000")
+            .is_ok());
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_confidence_threshold_ppm_over_max_rejected() {
+        let mut tc = make_tc();
+        // 1_500_000 > 1_000_000 → InvalidValue
+        let err = tc
+            .governance_set_param("crooks_mev_confidence_threshold_ppm", "1500000")
+            .unwrap_err();
+        assert!(matches!(err, GovernanceParamError::InvalidValue { .. }));
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_confidence_threshold_ppm_non_numeric_rejected() {
+        let mut tc = make_tc();
+        let err = tc
+            .governance_set_param("crooks_mev_confidence_threshold_ppm", "bad")
+            .unwrap_err();
+        assert!(matches!(err, GovernanceParamError::InvalidValue { .. }));
+    }
+
+    // ── governance_set_param: crooks_mev_grace_period_blocks ─────────────────
+
+    #[test]
+    fn t1_20_governance_set_param_crooks_mev_grace_period_blocks_valid() {
+        let mut tc = make_tc();
+        assert!(tc
+            .governance_set_param("crooks_mev_grace_period_blocks", "10")
+            .is_ok());
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_crooks_mev_grace_period_blocks_zero_rejected() {
+        let mut tc = make_tc();
+        // "0" parses as u64=0 which is < 1 → rejected
+        let err = tc
+            .governance_set_param("crooks_mev_grace_period_blocks", "0")
+            .unwrap_err();
+        assert!(matches!(err, GovernanceParamError::InvalidValue { .. }));
+    }
+
+    // ── governance_set_param: crooks_mev_refund_window_blocks ────────────────
+
+    #[test]
+    fn t1_20_governance_set_param_crooks_mev_refund_window_blocks_valid() {
+        let mut tc = make_tc();
+        assert!(tc
+            .governance_set_param("crooks_mev_refund_window_blocks", "5")
+            .is_ok());
+    }
+
+    // ── script_engine_mut / contract_engine_mut ───────────────────────────────
+
+    #[test]
+    fn t1_20_script_engine_mut_accessible() {
+        let mut tc = make_tc();
+        let _ = tc.script_engine_mut();
+    }
+
+    #[test]
+    fn t1_20_contract_engine_mut_accessible() {
+        let mut tc = make_tc();
+        let _ = tc.contract_engine_mut();
+    }
+
+    // ── trajectory_to_genesis ─────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_trajectory_to_genesis_not_in_dag_returns_none() {
+        let tc = make_tc();
+        let unknown = [0xFF; 32];
+        assert!(tc.trajectory_to_genesis(unknown).is_none());
+    }
+
+    // ── on_block_committed checkpoint creation ────────────────────────────────
+
+    #[test]
+    fn t1_20_on_block_committed_at_checkpoint_interval_adds_checkpoint() {
+        let mut tc = make_tc();
+        tc.checkpoint_interval = 10;
+        // Commit at block 10 — a multiple of checkpoint_interval
+        let block = make_block_at(10, 1);
+        let state_root = [0x42; 32];
+        tc.on_block_committed(&block, state_root, 0);
+        // A weak-subjectivity checkpoint must now exist at height 10
+        assert!(
+            tc.checkpoints().iter().any(|&(h, r)| h == 10 && r == state_root),
+            "checkpoint must be created at multiples of checkpoint_interval"
+        );
+    }
+
+    // ── execute_block on TendermintConsensus ──────────────────────────────────
+
+    #[test]
+    fn t1_20_execute_block_empty_block_succeeds() {
+        let mut tc = make_tc();
+        let mut db = InMemoryStateDB::new();
+        let block = make_block_at(1, 1);
+        let result = tc.execute_block(&mut db, &block);
+        assert!(result.is_ok(), "empty block execute must succeed");
+    }
+}
+
+// ── T1.20 batch 8 — DAAttestation paths · accessors · trajectory · LcBM · WS rolling · Singh slashed ──
+#[cfg(test)]
+mod t1_20_batch8 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+    use evaporchain_light_cone::Block as LcBlock;
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block_at(number: u64, epoch: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    // ── DAAttestation: unknown validator ─────────────────────────────────────
+
+    #[test]
+    fn t1_20_da_attestation_unknown_validator_returns_empty() {
+        let mut tc = make_tc();
+        let msg = ConsensusMessage::DAAttestation {
+            block_number: 1,
+            data_root: [0u8; 32],
+            validator_id: 99, // not in the validator set
+            samples_verified: 100,
+            stake: 1000,
+            signature: vec![0u8; 96],
+            public_key: vec![0u8; 48],
+        };
+        let actions = tc.on_message(msg);
+        assert!(
+            actions.is_empty(),
+            "unknown validator_id must produce no actions"
+        );
+    }
+
+    // ── DAAttestation: BLS key mismatch ──────────────────────────────────────
+
+    #[test]
+    fn t1_20_da_attestation_bls_key_mismatch_returns_empty() {
+        let mut tc = make_tc();
+        // Register [0xAA;48] as the BLS key for validator 1 (empty PoP bypasses sig check).
+        let registered_key = vec![0xAAu8; 48];
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: registered_key,
+            proof_of_possession: vec![],
+        });
+        // Send attestation claiming a DIFFERENT key — must be rejected.
+        let different_key = vec![0xBBu8; 48];
+        let msg = ConsensusMessage::DAAttestation {
+            block_number: 1,
+            data_root: [0u8; 32],
+            validator_id: 1,
+            samples_verified: 100,
+            stake: 1000,
+            signature: vec![0u8; 96],
+            public_key: different_key,
+        };
+        let actions = tc.on_message(msg);
+        assert!(
+            actions.is_empty(),
+            "BLS key mismatch must produce no actions"
+        );
+    }
+
+    // ── Simple pub accessors ─────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_tur_window_len_fresh_is_zero() {
+        let tc = make_tc();
+        assert_eq!(tc.tur_window_len(), 0);
+    }
+
+    #[test]
+    fn t1_20_consensus_phase_fresh_is_liveness_stable() {
+        let tc = make_tc();
+        assert_eq!(
+            tc.consensus_phase(),
+            evaporchain_rg_phase_map::ConsensusPhase::LivenessStable
+        );
+    }
+
+    #[test]
+    fn t1_20_effective_params_fresh_is_none() {
+        let tc = make_tc();
+        assert!(tc.effective_params().is_none());
+    }
+
+    #[test]
+    fn t1_20_light_cone_block_count_fresh_is_zero() {
+        let tc = make_tc();
+        assert_eq!(tc.light_cone_block_count(), 0);
+    }
+
+    // ── trajectory_to_genesis success path ───────────────────────────────────
+
+    #[test]
+    fn t1_20_trajectory_to_genesis_single_block_returns_some() {
+        let mut tc = make_tc();
+        let id = [0xF1u8; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(id, vec![], 10, 1))
+            .expect("insert");
+        let traj = tc.trajectory_to_genesis(id);
+        assert!(traj.is_some(), "block in dag must yield Some trajectory");
+        let t = traj.unwrap();
+        assert_eq!(t.len(), 1, "single-block trajectory has length 1");
+    }
+
+    #[test]
+    fn t1_20_trajectory_to_genesis_two_block_chain_returns_some() {
+        let mut tc = make_tc();
+        let genesis = [0u8; 32];
+        let child = [0x01u8; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(genesis, vec![], 1000, 0))
+            .expect("insert genesis");
+        tc.light_cone_dag
+            .insert(LcBlock::new(child, vec![genesis], 1001, 1))
+            .expect("insert child");
+        let traj = tc.trajectory_to_genesis(child);
+        assert!(traj.is_some());
+        let t = traj.unwrap();
+        // Genesis-first ordering: [genesis, child]
+        assert_eq!(t.len(), 2);
+        assert_eq!(t.0[0], genesis);
+        assert_eq!(t.0[1], child);
+    }
+
+    // ── LightConeBranchMetadata Debug / PartialEq ────────────────────────────
+
+    #[test]
+    fn t1_20_lcbm_debug_format_contains_fields() {
+        let m = LightConeBranchMetadata::fresh(10, 42);
+        let s = format!("{:?}", m);
+        assert!(s.contains("created_at_block"), "Debug must show created_at_block");
+        assert!(s.contains("caliber"), "Debug must show caliber");
+    }
+
+    #[test]
+    fn t1_20_lcbm_partial_eq_same_fields_equal() {
+        let a = LightConeBranchMetadata::fresh(5, 100);
+        let b = LightConeBranchMetadata::fresh(5, 100);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn t1_20_lcbm_partial_eq_different_caliber_not_equal() {
+        let a = LightConeBranchMetadata::fresh(5, 100);
+        let b = LightConeBranchMetadata::fresh(5, 999);
+        assert_ne!(a, b);
+    }
+
+    // ── check_weak_subjectivity: rolling checkpoint paths ────────────────────
+
+    #[test]
+    fn t1_20_check_ws_rolling_cp_block_below_rejected() {
+        let mut tc = make_tc();
+        // Install a rolling checkpoint at height 10.
+        tc.load_checkpoints(vec![(10, [0xAAu8; 32])]);
+        let block = make_block_at(5, 1); // below checkpoint
+        assert!(
+            !tc.check_weak_subjectivity(&block),
+            "block below rolling checkpoint must be rejected"
+        );
+    }
+
+    #[test]
+    fn t1_20_check_ws_rolling_cp_state_root_mismatch_rejected() {
+        let mut tc = make_tc();
+        tc.load_checkpoints(vec![(10, [0xAAu8; 32])]);
+        let mut block = make_block_at(10, 1);
+        block.state_root = [0xBBu8; 32]; // wrong root at checkpoint height
+        assert!(
+            !tc.check_weak_subjectivity(&block),
+            "state_root mismatch at rolling checkpoint height must be rejected"
+        );
+    }
+
+    // ── singh_attractor_fork_choice: slashed head skipped ────────────────────
+
+    #[test]
+    fn t1_20_singh_attractor_slashed_head_skipped_returns_none() {
+        let mut tc = make_tc();
+        let head = [0xC0u8; 32];
+        // Put the block in the DAG so the loop has something to examine.
+        tc.light_cone_dag
+            .insert(LcBlock::new(head, vec![], 500, 1))
+            .expect("insert");
+        // Mark it as a slashed equivocator — the inner loop must skip it.
+        tc.slashed_equivocator_blocks.insert(head);
+        let att = evaporchain_singh_attractor::Attractor::new(500, 100);
+        let result = tc.singh_attractor_fork_choice(&[head], &[att]);
+        assert!(
+            result.is_none(),
+            "all-slashed candidate set must yield None"
+        );
+    }
+}
+
+// ── T1.20 batch 9 — GovernanceError Display · singh-attractor scoring · PoP failure · crooks param errors ──
+#[cfg(test)]
+mod t1_20_batch9 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+    use evaporchain_light_cone::Block as LcBlock;
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    // ── GovernanceParamError Display ─────────────────────────────────────────
+
+    #[test]
+    fn t1_20_governance_param_error_unknown_key_display() {
+        let e = GovernanceParamError::UnknownKey("bad_key".to_string());
+        let s = format!("{}", e);
+        assert!(s.contains("unknown governance"), "Display must mention 'unknown governance': {s}");
+        assert!(s.contains("bad_key"), "Display must echo the key: {s}");
+    }
+
+    #[test]
+    fn t1_20_governance_param_error_invalid_value_display() {
+        let e = GovernanceParamError::InvalidValue {
+            key: "parent_acceptance_mode".to_string(),
+            value: "bad_val".to_string(),
+            permitted: vec!["linear".to_string(), "mcc".to_string()],
+        };
+        let s = format!("{}", e);
+        assert!(s.contains("invalid value"), "Display must say 'invalid value': {s}");
+        assert!(s.contains("bad_val"), "Display must echo the value: {s}");
+    }
+
+    // ── GovernanceAmendmentError Display ─────────────────────────────────────
+
+    #[test]
+    fn t1_20_governance_amendment_error_unrecognised_mode_display() {
+        let e = GovernanceAmendmentError::UnrecognisedMode("weird".to_string());
+        let s = format!("{}", e);
+        assert!(s.contains("unrecognised"), "Display must say 'unrecognised': {s}");
+    }
+
+    #[test]
+    fn t1_20_governance_amendment_error_empty_attractors_display() {
+        let e = GovernanceAmendmentError::EmptyAttractors;
+        let s = format!("{}", e);
+        assert!(s.contains("singh_attractor"), "Display must mention 'singh_attractor': {s}");
+    }
+
+    #[test]
+    fn t1_20_governance_amendment_error_insufficient_stake_display() {
+        let e = GovernanceAmendmentError::InsufficientStake { endorsing: 100, required: 200 };
+        let s = format!("{}", e);
+        assert!(s.contains("endorsing stake"), "Display must say 'endorsing stake': {s}");
+        assert!(s.contains("100"), "Display must echo endorsing: {s}");
+    }
+
+    // ── crooks_mev_grace_period_blocks / crooks_mev_refund_window_blocks ─────
+
+    #[test]
+    fn t1_20_governance_crooks_mev_grace_period_non_numeric_rejected() {
+        let mut tc = make_tc();
+        let r = tc.governance_set_param("crooks_mev_grace_period_blocks", "not_a_number");
+        assert!(r.is_err(), "non-numeric value must be rejected");
+    }
+
+    #[test]
+    fn t1_20_governance_crooks_mev_grace_period_zero_rejected() {
+        let mut tc = make_tc();
+        let r = tc.governance_set_param("crooks_mev_grace_period_blocks", "0");
+        assert!(r.is_err(), "value 0 (< 1) must be rejected");
+    }
+
+    #[test]
+    fn t1_20_governance_crooks_mev_refund_window_non_numeric_rejected() {
+        let mut tc = make_tc();
+        let r = tc.governance_set_param("crooks_mev_refund_window_blocks", "abc");
+        assert!(r.is_err(), "non-numeric value must be rejected");
+    }
+
+    #[test]
+    fn t1_20_governance_crooks_mev_refund_window_zero_rejected() {
+        let mut tc = make_tc();
+        let r = tc.governance_set_param("crooks_mev_refund_window_blocks", "0");
+        assert!(r.is_err(), "value 0 (< 1) must be rejected");
+    }
+
+    // ── KeyAnnounce: invalid proof-of-possession ──────────────────────────────
+
+    #[test]
+    fn t1_20_key_announce_invalid_pop_rejected() {
+        let mut tc = make_tc();
+        // 96 bytes of zeros is a structurally invalid BLS signature;
+        // verify_proof_of_possession must return false, causing early return.
+        let actions = tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: vec![0xAAu8; 48],
+            proof_of_possession: vec![0u8; 96],
+        });
+        assert!(
+            actions.is_empty(),
+            "invalid PoP must produce no actions (rejected before storing key)"
+        );
+        // Validator 1 must NOT have had its BLS key updated.
+        let vi = tc.validator_set.get(1).expect("validator 1 exists");
+        assert!(
+            vi.bls_public_key.is_none(),
+            "validator BLS key must remain None after PoP rejection"
+        );
+    }
+
+    // ── singh_attractor_fork_choice: in-basin selection ──────────────────────
+
+    #[test]
+    fn t1_20_singh_attractor_in_basin_block_selected() {
+        let mut tc = make_tc();
+        let head = [0xA1u8; 32];
+        // Insert block with energy=500. Attractor center=500, radius=100 → 500 is in-basin.
+        tc.light_cone_dag
+            .insert(LcBlock::new(head, vec![], 500, 1))
+            .expect("insert");
+        let att = evaporchain_singh_attractor::Attractor::new(500, 100);
+        let result = tc.singh_attractor_fork_choice(&[head], &[att]);
+        assert_eq!(result, Some(head), "in-basin block must be selected");
+    }
+
+    #[test]
+    fn t1_20_singh_attractor_in_basin_wins_over_out_of_basin() {
+        let mut tc = make_tc();
+        let in_basin = [0xA0u8; 32];
+        let out_basin = [0xB0u8; 32];
+        // Attractor center=500 radius=100: energy=500 is in-basin (score=0),
+        // energy=900 is out-of-basin (score=400).
+        tc.light_cone_dag
+            .insert(LcBlock::new(in_basin, vec![], 500, 1))
+            .expect("insert in-basin");
+        tc.light_cone_dag
+            .insert(LcBlock::new(out_basin, vec![], 900, 1))
+            .expect("insert out-basin");
+        let att = evaporchain_singh_attractor::Attractor::new(500, 100);
+        let result = tc.singh_attractor_fork_choice(&[in_basin, out_basin], &[att]);
+        assert_eq!(result, Some(in_basin), "in-basin block must beat out-of-basin");
+    }
+
+    #[test]
+    fn t1_20_singh_attractor_tie_break_lex_larger_wins() {
+        let mut tc = make_tc();
+        // Both blocks out-of-basin with same distance to attractor.
+        // center=500 radius=0 (no basin); energy A=600, B=600 → same score.
+        // Lex-larger hash wins.
+        let mut small_hash = [0x10u8; 32];
+        let mut large_hash = [0x20u8; 32];
+        // Make them proper: small < large lexicographically
+        small_hash[0] = 0x10;
+        large_hash[0] = 0x20;
+        tc.light_cone_dag
+            .insert(LcBlock::new(small_hash, vec![], 600, 1))
+            .expect("insert small");
+        tc.light_cone_dag
+            .insert(LcBlock::new(large_hash, vec![], 600, 1))
+            .expect("insert large");
+        let att = evaporchain_singh_attractor::Attractor::new(500, 0);
+        let result = tc.singh_attractor_fork_choice(&[small_hash, large_hash], &[att]);
+        assert_eq!(result, Some(large_hash), "lex-larger hash wins tie-break");
+    }
+
+    // ── trajectory_to_genesis: multi-hop chain exercises the loop body ────────
+
+    #[test]
+    fn t1_20_trajectory_to_genesis_three_block_chain() {
+        let mut tc = make_tc();
+        let a = [0x01u8; 32];
+        let b = [0x02u8; 32];
+        let c = [0x03u8; 32];
+        tc.light_cone_dag.insert(LcBlock::new(a, vec![], 10, 0)).expect("a");
+        tc.light_cone_dag.insert(LcBlock::new(b, vec![a], 11, 1)).expect("b");
+        tc.light_cone_dag.insert(LcBlock::new(c, vec![b], 12, 2)).expect("c");
+        let traj = tc.trajectory_to_genesis(c).expect("must be Some");
+        // Genesis-first: [a, b, c]
+        assert_eq!(traj.len(), 3);
+        assert_eq!(traj.0[0], a);
+        assert_eq!(traj.0[1], b);
+        assert_eq!(traj.0[2], c);
+    }
+}
+
+// ── T1.20 batch 10 — restore_privacy · prune_da · mcc_choose_fork · validate_refunds ──
+#[cfg(test)]
+mod t1_20_batch10 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+    use evaporchain_light_cone::Block as LcBlock;
+    use evaporchain_state::InMemoryStateDB;
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block_at(number: u64, epoch: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    // ── restore_privacy_from_db ───────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_restore_privacy_from_db_empty_db_returns_zero() {
+        let mut tc = make_tc();
+        let db = InMemoryStateDB::new();
+        let result = tc.restore_privacy_from_db(&db);
+        assert!(result.is_ok(), "empty DB must succeed");
+        assert_eq!(result.unwrap(), 0, "empty DB restores zero notes");
+    }
+
+    // ── prune_da_attestations: trigger prune branch ───────────────────────────
+
+    #[test]
+    fn t1_20_prune_da_attestations_over_64_prunes() {
+        let mut tc = make_tc();
+        tc.height = 100;
+        // Insert 65 entries so len > 64 triggers the prune branch.
+        for i in 0u64..65 {
+            tc.da_attestations.insert(i, vec![]);
+            tc.da_block_proposers.insert(i, 1);
+        }
+        assert_eq!(tc.da_attestations.len(), 65);
+        tc.prune_da_attestations();
+        // After prune: only entries with key > height.saturating_sub(64) = 36 remain.
+        assert!(
+            tc.da_attestations.len() < 65,
+            "prune must reduce entries; got {}",
+            tc.da_attestations.len()
+        );
+    }
+
+    #[test]
+    fn t1_20_prune_da_attestations_under_64_no_change() {
+        let mut tc = make_tc();
+        for i in 0u64..10 {
+            tc.da_attestations.insert(i, vec![]);
+        }
+        tc.prune_da_attestations();
+        assert_eq!(tc.da_attestations.len(), 10, "under 64 entries must not be pruned");
+    }
+
+    // ── mcc_choose_fork: non-empty trajectory path ───────────────────────────
+
+    #[test]
+    fn t1_20_mcc_choose_fork_single_in_dag_returns_some() {
+        let mut tc = make_tc();
+        let id = [0xE1u8; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(id, vec![], 1000, 1))
+            .expect("insert");
+        // With one valid candidate, mcc_choose selects it.
+        let result = tc.mcc_choose_fork(&[id], 10_000);
+        assert_eq!(result, Some(id), "single in-DAG candidate must be selected");
+    }
+
+    #[test]
+    fn t1_20_mcc_choose_fork_empty_candidates_returns_none() {
+        let tc = make_tc();
+        assert!(tc.mcc_choose_fork(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_mcc_choose_fork_candidate_not_in_dag_returns_none() {
+        let tc = make_tc();
+        let unknown = [0xFFu8; 32];
+        assert!(tc.mcc_choose_fork(&[unknown], 10_000).is_none());
+    }
+
+    // ── validate_block_refunds: observe mode always Ok ────────────────────────
+
+    #[test]
+    fn t1_20_validate_block_refunds_observe_mode_always_ok() {
+        let tc = make_tc(); // default mode = "observe"
+        let block = make_block_at(1, 1);
+        assert!(tc.validate_block_refunds(&block).is_ok());
+    }
+
+    #[test]
+    fn t1_20_validate_block_refunds_enforce_mode_empty_block_ok() {
+        let mut tc = make_tc();
+        tc.governance_set_param("crooks_mev_settlement_mode", "enforce")
+            .expect("valid param");
+        // Empty block, no due refunds → validation passes.
+        let block = make_block_at(1, 1);
+        assert!(tc.validate_block_refunds(&block).is_ok());
+    }
+
+    // ── mev_missing_refund_violations accessor ────────────────────────────────
+
+    #[test]
+    fn t1_20_mev_missing_refund_violations_fresh_is_empty() {
+        let tc = make_tc();
+        assert!(tc.mev_missing_refund_violations().is_empty());
+    }
+
+    // ── due_refund_txs: fresh state has no due refunds ────────────────────────
+
+    #[test]
+    fn t1_20_due_refund_txs_fresh_is_empty() {
+        let tc = make_tc();
+        assert!(tc.due_refund_txs(1).is_empty());
     }
 }
