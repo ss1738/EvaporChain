@@ -60,12 +60,16 @@ pub use verifier_circuit::NovaVerifierCircuit;
 
 /// Marker constant. Phase 2.2-finish is multi-step:
 ///   - `phase-2.2-starter`    — fixture generator (PR #55)
-///   - `phase-2.2-skeleton`   — verifier circuit skeleton + ConstraintSynthesizer + public-input wiring (this commit)
-///   - `phase-2.2-section-1`  — Section 1 structural checks filled in
+///   - `phase-2.2-skeleton`   — verifier circuit skeleton + ConstraintSynthesizer + public-input wiring
+///   - `phase-2.2-section-1`  — Section 1 structural checks filled in via off-circuit
+///                              `validate_structurally` gate (PR #125, this commit bumps the
+///                              constant). `StructuralValidationError` carries typed rejection
+///                              variants; `generate_constraints` maps failures to
+///                              `SynthesisError::Unsatisfiable`.
 ///   - `phase-2.2-section-2`  — Section 2 Poseidon transcript filled in
 ///   - `phase-2.2-section-3`  — Section 3 RelaxedR1CS satisfiability filled in (BESPOKE)
 ///   - `phase-2.2-complete`   — all three sections + empirical constraint count
-pub const SCAFFOLD_VERSION: &str = "phase-2.2-skeleton";
+pub const SCAFFOLD_VERSION: &str = "phase-2.2-section-1";
 
 #[cfg(test)]
 mod tests {
@@ -76,6 +80,6 @@ mod tests {
     /// `RecursiveSNARK::verify` PoC test when Phase 2.2 finish ships.
     #[test]
     fn scaffold_compiles_and_marker_present() {
-        assert_eq!(SCAFFOLD_VERSION, "phase-2.2-skeleton");
+        assert_eq!(SCAFFOLD_VERSION, "phase-2.2-section-1");
     }
 }
