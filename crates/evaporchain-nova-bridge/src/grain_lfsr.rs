@@ -12,20 +12,22 @@
 //!
 //! Future PRs in the stack fill those in.
 //!
-//! # Seed layout (per the Poseidon paper, Grassi et al. 2019, App. A)
+//! # Seed layout (per the Poseidon paper / neptune `round_constants.rs`)
 //!
 //! The 80-bit LFSR initial state is:
 //!
 //! ```text
-//!   bit  0..2     0b10                       — fixed prefix (2 bits)
-//!   bit  2..6     `field_type`               — 4 bits
-//!   bit  6..10    `sbox_type`                — 4 bits
-//!   bit 10..22    `field_size` (in bits)     — 12 bits
-//!   bit 22..34    `sbox_count` (state width) — 12 bits
-//!   bit 34..44    `full_rounds`              — 10 bits
-//!   bit 44..54    `partial_rounds`           — 10 bits
-//!   bit 54..80    `0xff...` (26 bits of 1)   — padding to 80
+//!   bit  0..2     `field_type`               — 2 bits
+//!   bit  2..6     `sbox_type`                — 4 bits
+//!   bit  6..18    `field_size` (in bits)     — 12 bits
+//!   bit 18..30    `sbox_count` (state width) — 12 bits
+//!   bit 30..40    `full_rounds`              — 10 bits
+//!   bit 40..50    `partial_rounds`           — 10 bits
+//!   bit 50..80    `0xff...` (30 bits of 1)   — padding to 80
 //! ```
+//!
+//! Verified against neptune's `Grain::new` constructor in
+//! `nova-snark/src/frontend/gadgets/poseidon/round_constants.rs:96-112`.
 //!
 //! Big-endian bit packing throughout.
 //!
@@ -260,15 +262,17 @@ pub fn grain_seed_state(params: GrainSeedParams) -> [u8; 10] {
         *bits = (*bits << n_bits) | (value & ((1u128 << n_bits) - 1));
         *pos += n_bits;
     };
-    // Fixed prefix `10` (2 bits)
-    push(&mut bits, &mut pos, 0b10, 2);
-    push(&mut bits, &mut pos, params.field_type as u128, 4);
+    // Layout per neptune `Grain::new` (round_constants.rs:96-112):
+    //   field_type (2) | sbox_type (4) | field_size (12) |
+    //   sbox_count (12) | full_rounds (10) | partial_rounds (10) |
+    //   30 ones (padding)
+    push(&mut bits, &mut pos, params.field_type as u128, 2);
     push(&mut bits, &mut pos, params.sbox_type as u128, 4);
     push(&mut bits, &mut pos, params.field_size as u128, 12);
     push(&mut bits, &mut pos, params.sbox_count as u128, 12);
     push(&mut bits, &mut pos, params.full_rounds as u128, 10);
     push(&mut bits, &mut pos, params.partial_rounds as u128, 10);
-    // Padding: 26 bits of 1 to reach 80 total
+    // Padding: 30 bits of 1 to reach 80 total
     let padding_bits = 80 - pos;
     let padding = (1u128 << padding_bits) - 1;
     push(&mut bits, &mut pos, padding, padding_bits);
@@ -336,14 +340,14 @@ mod tests {
     }
 
     /// Verify the seed has exactly 80 bits (10 bytes) and the
-    /// known fixed prefix `0b10` lands at the MSB position.
+    /// 2-bit field-type prefix (value 1 = prime field for our
+    /// params) lands at bits 0-1.
     #[test]
-    fn seed_shape_and_prefix() {
+    fn seed_shape_and_field_type_prefix() {
         let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
         assert_eq!(seed.len(), 10);
-        // Top two bits of seed[0] = 0b10 → seed[0] starts with bit
-        // pattern 10xxxxxx. Mask off the top two bits.
-        assert_eq!(seed[0] >> 6, 0b10, "fixed prefix bits at MSB");
+        // Top two bits of seed[0] = field_type = 1 → bit pattern 01xxxxxx.
+        assert_eq!(seed[0] >> 6, 0b01, "field_type=1 at top 2 bits");
     }
 
     /// Pin the full 10-byte seed for our parameters so a future
@@ -366,21 +370,17 @@ mod tests {
     #[test]
     fn pinned_seed_for_bn254_arity_24_standard() {
         let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
-        // Empirically captured from a clean Mini-1 run and
-        // verified bit-by-bit against the layout doc:
+        // Matches neptune's `Grain::new` seed layout. Decomposed:
+        //   bits  0..2   = 01            (field_type=1)
+        //   bits  2..6   = 0000          (sbox_type=0)
+        //   bits  6..18  = 000011111110  (field_size=254)
+        //   bits 18..30  = 000000011001  (sbox_count=25)
+        //   bits 30..40  = 0000001000    (full_rounds=8)
+        //   bits 40..50  = 0000111011    (partial_rounds=59)
+        //   bits 50..80  = 30 × 1        (padding)
         //
-        //   0x84 03 F8 06 40 80 EF FF FF FF
-        //
-        // Decomposed by bit window:
-        //   bits  0..2   = 10            (prefix)              ✓
-        //   bits  2..6   = 0001          (field_type=1)        ✓
-        //   bits  6..10  = 0000          (sbox_type=0)         ✓
-        //   bits 10..22  = 000011111110  (field_size=254)      ✓
-        //   bits 22..34  = 000000011001  (sbox_count=25)       ✓
-        //   bits 34..44  = 0000001000    (full_rounds=8)       ✓
-        //   bits 44..54  = 0000111011    (partial_rounds=59)   ✓
-        //   bits 54..80  = 11...1 (26)   (padding)             ✓
-        let expected: [u8; 10] = [0x84, 0x03, 0xF8, 0x06, 0x40, 0x80, 0xEF, 0xFF, 0xFF, 0xFF];
+        //   = 0x40 3F 80 64 08 0E FF FF FF FF
+        let expected: [u8; 10] = [0x40, 0x3F, 0x80, 0x64, 0x08, 0x0E, 0xFF, 0xFF, 0xFF, 0xFF];
         assert_eq!(seed, expected, "seed bits for bn254/arity-24/standard");
     }
 
