@@ -670,8 +670,9 @@ impl ParallelExecutor {
     /// Per-block hook: advance the Singh-Lyapunov fee state against
     /// `gas_used` from the just-applied block. Returns the new base fee
     /// + Lyapunov drift. Mirrors `SimpleExecutor::tick_lyapunov_fee_state`.
-    /// Per INVENTION_STACK.md §4.1 #4 the empty-block drift is provably
-    /// monotone-non-positive (asserted by the property test in
+    ///
+    /// Per `INVENTION_STACK.md` §4.1 row 4 the empty-block drift is
+    /// provably monotone-non-positive (asserted by the property test in
     /// `evaporchain-fee-controller`).
     pub fn tick_lyapunov_fee_state(
         &mut self,
