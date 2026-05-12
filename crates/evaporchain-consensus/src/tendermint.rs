@@ -14567,6 +14567,161 @@ mod tests {
         );
     }
 
+    // ── T1.20 gap-closure batch 3 ─────────────────────────────────────────
+
+    fn make_dummy_cert(height: u64, signer_ids: Vec<u64>) -> CommitCertificate {
+        CommitCertificate {
+            height,
+            round: 0,
+            block_hash: [0xAAu8; 32],
+            aggregate_signature: vec![0u8; 96],
+            signer_ids,
+        }
+    }
+
+    #[test]
+    fn t1_20_verify_cert_for_sync_duplicate_signers_rejected() {
+        // Audit HIGH-9: duplicate signer_ids must be rejected immediately,
+        // before any BLS operation.
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let cert = make_dummy_cert(1, vec![1, 1, 2]); // validator 1 listed twice
+        assert!(
+            !tc.verify_commit_certificate_for_sync(&cert),
+            "cert with duplicate signer_ids must be rejected"
+        );
+    }
+
+    #[test]
+    fn t1_20_verify_cert_for_sync_unknown_signer_rejected() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let cert = make_dummy_cert(1, vec![99]); // id 99 not in validator set
+        assert!(
+            !tc.verify_commit_certificate_for_sync(&cert),
+            "cert with signer not in validator set must be rejected"
+        );
+    }
+
+    #[test]
+    fn t1_20_verify_cert_for_sync_no_bls_key_rejected() {
+        // make_consensus uses ValidatorInfo::new which sets bls_public_key=None.
+        // The inner loop hits the "else { return false }" branch when no key
+        // is registered.
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let cert = make_dummy_cert(1, vec![1, 2, 3]);
+        assert!(
+            !tc.verify_commit_certificate_for_sync(&cert),
+            "cert whose signers have no registered BLS key must be rejected"
+        );
+    }
+
+    #[test]
+    fn t1_20_verify_cert_non_sync_duplicate_signers_rejected() {
+        // verify_commit_certificate (allow_stake_fallback=false) must also
+        // reject duplicate signers.
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let cert = make_dummy_cert(1, vec![2, 2]);
+        assert!(
+            !tc.verify_commit_certificate(&cert),
+            "non-sync cert verify must also reject duplicate signer_ids"
+        );
+    }
+
+    #[test]
+    fn t1_20_verify_cert_empty_signer_ids_rejected() {
+        // An empty signer list means signer_stake=0 < threshold → false.
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let cert = make_dummy_cert(1, vec![]);
+        // No duplicates, but zero signers → below quorum.
+        assert!(
+            !tc.verify_commit_certificate_for_sync(&cert),
+            "cert with no signers must fail quorum check"
+        );
+    }
+
+    #[test]
+    fn t1_20_decay_all_boltzmann_stakes_seeds_all_validators() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.boltzmann_stakes.len(), 0, "starts empty");
+        tc.decay_all_boltzmann_stakes(1);
+        assert_eq!(
+            tc.boltzmann_stakes.len(),
+            3,
+            "decay must seed one entry per validator (3 validators)"
+        );
+    }
+
+    #[test]
+    fn t1_20_decay_all_boltzmann_stakes_empty_set_no_panic() {
+        let mut tc =
+            TendermintConsensus::new_for_test(1, 5, ValidatorSet::with_validators(vec![]));
+        tc.decay_all_boltzmann_stakes(5); // must not panic
+    }
+
+    #[test]
+    fn t1_20_decay_all_boltzmann_stakes_double_call_idempotent_len() {
+        let mut tc = make_consensus(1, &[1, 2]);
+        tc.decay_all_boltzmann_stakes(1);
+        tc.decay_all_boltzmann_stakes(2);
+        // Should still have exactly 2 entries (one per validator).
+        assert_eq!(tc.boltzmann_stakes.len(), 2);
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_equivocation_unknown_validator_returns_zero() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let slashed = tc.sanov_slash_equivocation(99, 100);
+        assert_eq!(slashed, 0, "unknown validator must return 0");
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_equivocation_known_validator_returns_nonzero() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let slashed = tc.sanov_slash_equivocation(1, 100);
+        assert!(
+            slashed > 0,
+            "fully-equivocating validator (window=100) must incur a positive slash"
+        );
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_equivocation_capped_at_stake() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        // make_consensus gives each validator stake=1000.
+        let slashed = tc.sanov_slash_equivocation(1, 1_000_000);
+        // Slash must not exceed original stake.
+        assert!(
+            slashed <= 1000,
+            "slash must be capped at validator stake; got {slashed}"
+        );
+    }
+
+    #[test]
+    fn t1_20_height_and_round_getters_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.height(), 1, "initial height must be 1");
+        assert_eq!(tc.round(), 0, "initial round must be 0");
+    }
+
+    #[test]
+    fn t1_20_epoch_getter_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        // At height=1 the epoch is governed by EPOCH_LENGTH; value ≥ 0.
+        let _ = tc.epoch(); // must not panic
+    }
+
+    #[test]
+    fn t1_20_verify_cert_for_sync_and_non_sync_agree_on_duplicate_rejection() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let cert = make_dummy_cert(5, vec![3, 3]);
+        let sync_result = tc.verify_commit_certificate_for_sync(&cert);
+        let non_sync_result = tc.verify_commit_certificate(&cert);
+        assert_eq!(
+            sync_result, non_sync_result,
+            "sync and non-sync cert verification must agree on duplicate-signer rejection"
+        );
+    }
+
+
 }
 
 // ─────────────────────────── Integration Tests ─────────────────────────────
