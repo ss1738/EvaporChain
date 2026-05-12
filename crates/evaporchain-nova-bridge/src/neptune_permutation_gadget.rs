@@ -141,6 +141,93 @@ pub fn enforce_neptune_full_round<F: PrimeField>(
     Ok(())
 }
 
+/// Off-circuit reference for one neptune **partial** round:
+///
+/// 1. Apply the SBOX-trick only to `state[0]`: `state[0] :=
+///    state[0]^5 + post_ark`. All other state cells are
+///    untouched at this step.
+/// 2. Multiply by the MDS matrix: `state[i] := sum_j(mds[i][j]
+///    * state[j])` for every row `i`.
+///
+/// Mirrors neptune's `partial_round`
+/// (`nova-snark-0.68/src/frontend/gadgets/poseidon/poseidon_inner.rs:382-392`).
+///
+/// `post_ark` is a single scalar (vs the full round's vector) —
+/// neptune's compressed round constants emit ONE entry per
+/// partial round, not `width` entries.
+pub fn neptune_partial_round_native<F: PrimeField>(
+    state: &mut [F],
+    post_ark: F,
+    mds: &[Vec<F>],
+) {
+    let width = state.len();
+    assert_eq!(mds.len(), width, "mds row count must match state width");
+    for row in mds.iter() {
+        assert_eq!(row.len(), width, "mds row width must match state width");
+    }
+
+    // Step 1: S-Box + post-add on state[0] ONLY.
+    let s = state[0];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    state[0] = s * s4 + post_ark;
+
+    // Step 2: MDS multiplication (out := mds · state).
+    let mut out = vec![F::zero(); width];
+    for (i, row) in mds.iter().enumerate() {
+        let mut acc = F::zero();
+        for (j, m) in row.iter().enumerate() {
+            acc += *m * state[j];
+        }
+        out[i] = acc;
+    }
+    state.copy_from_slice(&out);
+}
+
+/// In-circuit equivalent of [`neptune_partial_round_native`].
+///
+/// Cost at width 25: 3 mults for the single S-Box + 25×25 = 625
+/// mults for the MDS matmul = ~628 constraints per partial round.
+/// Cheaper than a full round (which has 75 S-Box mults).
+///
+/// Sparse-MDS optimization (which would replace the 625 with O(1)
+/// constraints) is slice 3 of the port plan, not this slice.
+pub fn enforce_neptune_partial_round<F: PrimeField>(
+    _cs: ConstraintSystemRef<F>,
+    state: &mut Vec<FpVar<F>>,
+    post_ark: F,
+    mds: &[Vec<F>],
+) -> Result<(), SynthesisError> {
+    let width = state.len();
+    assert_eq!(mds.len(), width, "mds row count must match state width");
+    for row in mds.iter() {
+        assert_eq!(row.len(), width, "mds row width must match state width");
+    }
+
+    // Step 1: in-circuit SBOX-trick on state[0] only.
+    let s = state[0].clone();
+    let s2 = &s * &s;
+    let s4 = &s2 * &s2;
+    let s5 = &s * &s4;
+    let post = FpVar::<F>::constant(post_ark);
+    state[0] = s5 + post;
+
+    // Step 2: MDS multiplication — same shape as full-round Step 2.
+    let mut out: Vec<FpVar<F>> = Vec::with_capacity(width);
+    for row in mds.iter() {
+        let mut acc = FpVar::<F>::constant(F::zero());
+        for (j, m) in row.iter().enumerate() {
+            let m_const = FpVar::<F>::constant(*m);
+            acc += &m_const * &state[j];
+        }
+        out.push(acc);
+    }
+    state.clear();
+    state.extend(out);
+
+    Ok(())
+}
+
 /// Convenience: assert two state vectors are bit-equal in the
 /// constraint system. Used by tests to pin gadget output against
 /// the native reference.
@@ -281,6 +368,120 @@ mod tests {
             assert_eq!(
                 v, *expected,
                 "gadget state[{i}] != native at width 25"
+            );
+        }
+        assert!(cs.is_satisfied().expect("is_satisfied"));
+    }
+
+    /// Partial round, hand-computed: width 3, state [3, 5, 7],
+    /// post_ark = 11, identity MDS.
+    ///   After SBOX on state[0]: state = [3^5+11, 5, 7] = [254, 5, 7].
+    ///   After identity MDS: unchanged.
+    #[test]
+    fn native_partial_round_identity_mds_only_state_0_changes() {
+        let mut state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let identity_mds = vec![
+            vec![Bn254Fr::from(1u64), Bn254Fr::from(0u64), Bn254Fr::from(0u64)],
+            vec![Bn254Fr::from(0u64), Bn254Fr::from(1u64), Bn254Fr::from(0u64)],
+            vec![Bn254Fr::from(0u64), Bn254Fr::from(0u64), Bn254Fr::from(1u64)],
+        ];
+
+        neptune_partial_round_native(&mut state, Bn254Fr::from(11u64), &identity_mds);
+        assert_eq!(state[0], Bn254Fr::from(254u64), "3^5 + 11 = 243 + 11 = 254");
+        assert_eq!(state[1], Bn254Fr::from(5u64), "state[1] untouched by SBOX");
+        assert_eq!(state[2], Bn254Fr::from(7u64), "state[2] untouched by SBOX");
+    }
+
+    /// Partial round with a non-trivial MDS — confirms the MDS
+    /// step mixes the (SBOX-applied) state[0] into all output
+    /// cells.
+    ///   pre-MDS:  state = [3^5+11, 5, 7] = [254, 5, 7]
+    ///   MDS row 0: [2, 0, 0] → 2 × 254 = 508
+    ///   MDS row 1: [0, 3, 0] → 3 × 5 = 15
+    ///   MDS row 2: [1, 1, 1] → 254 + 5 + 7 = 266
+    #[test]
+    fn native_partial_round_mds_mixes_state_0_into_other_cells() {
+        let mut state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let mds = vec![
+            vec![Bn254Fr::from(2u64), Bn254Fr::from(0u64), Bn254Fr::from(0u64)],
+            vec![Bn254Fr::from(0u64), Bn254Fr::from(3u64), Bn254Fr::from(0u64)],
+            vec![Bn254Fr::from(1u64), Bn254Fr::from(1u64), Bn254Fr::from(1u64)],
+        ];
+
+        neptune_partial_round_native(&mut state, Bn254Fr::from(11u64), &mds);
+        assert_eq!(state[0], Bn254Fr::from(508u64), "2 * (3^5+11) = 508");
+        assert_eq!(state[1], Bn254Fr::from(15u64), "3 * 5 = 15");
+        assert_eq!(
+            state[2],
+            Bn254Fr::from(266u64),
+            "(3^5+11) + 5 + 7 = 266 (sum-row mixes state[0] in)"
+        );
+    }
+
+    /// **Bit-correctness pin** for partial round at width 3.
+    #[test]
+    fn partial_gadget_matches_native_on_width_3() {
+        let init_state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let post_ark = Bn254Fr::from(11u64);
+        let mds = vec![
+            vec![Bn254Fr::from(2u64), Bn254Fr::from(3u64), Bn254Fr::from(5u64)],
+            vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64), Bn254Fr::from(13u64)],
+            vec![Bn254Fr::from(17u64), Bn254Fr::from(19u64), Bn254Fr::from(23u64)],
+        ];
+
+        let mut native = init_state.clone();
+        neptune_partial_round_native(&mut native, post_ark, &mds);
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_vars: Vec<FpVar<Bn254Fr>> = init_state
+            .iter()
+            .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_partial_round(cs.clone(), &mut state_vars, post_ark, &mds)
+            .expect("synthesize");
+
+        for (i, (var, expected)) in state_vars.iter().zip(native.iter()).enumerate() {
+            let v = var.value().expect("witness value");
+            assert_eq!(
+                v, *expected,
+                "partial gadget state[{i}] {v:?} != native {expected:?}"
+            );
+        }
+        assert!(cs.is_satisfied().expect("is_satisfied"));
+    }
+
+    /// Bit-correctness pin for partial round at chain width 25.
+    #[test]
+    fn partial_gadget_matches_native_on_width_25() {
+        let next_fr = |k: u64| Bn254Fr::from(k.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+
+        let width = 25;
+        let init_state: Vec<Bn254Fr> = (0..width).map(|i| next_fr(i as u64 + 1)).collect();
+        let post_ark = next_fr(999);
+        let mds: Vec<Vec<Bn254Fr>> = (0..width)
+            .map(|i| {
+                (0..width)
+                    .map(|j| next_fr(2000 + (i * width + j) as u64))
+                    .collect()
+            })
+            .collect();
+
+        let mut native = init_state.clone();
+        neptune_partial_round_native(&mut native, post_ark, &mds);
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_vars: Vec<FpVar<Bn254Fr>> = init_state
+            .iter()
+            .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_partial_round(cs.clone(), &mut state_vars, post_ark, &mds)
+            .expect("synthesize");
+
+        for (i, (var, expected)) in state_vars.iter().zip(native.iter()).enumerate() {
+            let v = var.value().expect("witness value");
+            assert_eq!(
+                v, *expected,
+                "partial gadget state[{i}] != native at width 25"
             );
         }
         assert!(cs.is_satisfied().expect("is_satisfied"));
