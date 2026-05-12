@@ -64,6 +64,7 @@
 #![warn(missing_docs)]
 
 pub mod mds_linalg;
+pub mod neptune_dump_parser;
 pub mod recursive_snark_fixture;
 pub mod verifier_circuit;
 
