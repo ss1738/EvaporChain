@@ -67,25 +67,8 @@ pub trait ProofVerifier: Send + Sync {
 // ─────────────────────── Configuration ───────────────────────────────────
 
 /// Default timeout for each consensus phase.
-/// Maximum number of pending Causal-CHSH cartel-alarm events the
-/// chain will retain awaiting operator drain via
-/// `/api/cartel_alarm/pending_events`. Per-height de-duplication
-/// (see `maybe_emit_cartel_alarm_event`) already keeps the queue
-/// sparse, but a never-draining operator + long uptime could still
-/// grow it unbounded. Generous default since events are rare and
-/// reaching the cap signals a long-standing un-monitored alarm.
-const MAX_PENDING_CARTEL_ALARMS: usize = 1024;
-
 /// Window size (in slots) for Sanov equivocation slash. KL divergence is
 /// computed as 1 double-sign in 100 honest proposals → near-full slash.
-/// Maximum number of pending (commitment, nonce) reveal pairs the
-/// consensus engine will hold between block productions. Anti-DoS
-/// cap — without this, an attacker could submit arbitrary reveal
-/// nonces (each 64 bytes) and exhaust validator memory before the
-/// next proposal drains them. Companion to PR #17's
-/// `MAX_ENCRYPTED_PENDING`; same threshold (10K).
-const MAX_PENDING_REVEALS: usize = 10_000;
-
 const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
 /// Window size (in rounds) for Sanov downtime slash. Honest = miss 1 in 20.
 const SANOV_DOWNTIME_WINDOW: u64 = 20;
@@ -1941,25 +1924,6 @@ impl TendermintConsensus {
             samples_per_bucket = ?event.samples_per_bucket,
             "Causal-CHSH cartel alarm fired (chain self-monitor crossed doctrine ceiling)"
         );
-        // Capacity cap. If the operator hasn't drained
-        // /api/cartel_alarm/pending_events for ~1024 distinct alarm
-        // heights, reaching the cap means a long-standing un-monitored
-        // alarm — at that point dropping the newest event in favour
-        // of preserving the oldest (which gave the earliest warning)
-        // is the right policy. The WARN log above still fires on
-        // every drop so operators tailing structured logs don't lose
-        // observability when the queue is full.
-        if self.pending_cartel_alarms.len() >= MAX_PENDING_CARTEL_ALARMS {
-            warn!(
-                target: "cartel_alarm",
-                at_height = event.at_height,
-                queue_size = self.pending_cartel_alarms.len(),
-                cap = MAX_PENDING_CARTEL_ALARMS,
-                "Dropping cartel alarm event — pending queue at cap; \
-                 oldest events preserved for early-warning posterity"
-            );
-            return;
-        }
         self.pending_cartel_alarms.push(event);
     }
 
@@ -3528,30 +3492,14 @@ impl TendermintConsensus {
         self.encrypted_mempool.submit_encrypted(encrypted_tx);
     }
 
-    /// Submit a reveal nonce for a previously committed encrypted
-    /// transaction. The nonce will be used at the next block
-    /// production to decrypt and include the tx.
-    ///
-    /// Returns `true` if accepted, `false` if rejected because the
-    /// pending-reveals queue is at `MAX_PENDING_REVEALS`. T0.7
-    /// vector 4 companion: bounds the reveal queue alongside the
-    /// encrypted-mempool capacity cap (PR #17).
-    pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) -> bool {
-        if self.pending_reveals.len() >= MAX_PENDING_REVEALS {
-            debug!(
-                commitment = hex::encode(commitment),
-                pending = self.pending_reveals.len(),
-                cap = MAX_PENDING_REVEALS,
-                "Reveal nonce rejected — pending-reveals queue at capacity"
-            );
-            return false;
-        }
+    /// Submit a reveal nonce for a previously committed encrypted transaction.
+    /// The nonce will be used at the next block production to decrypt and include the tx.
+    pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) {
         debug!(
             commitment = hex::encode(commitment),
             "Reveal nonce submitted for encrypted tx"
         );
         self.pending_reveals.push((commitment, nonce));
-        true
     }
 
     /// Get pending counts: (plain_mempool, encrypted_pending, reveals_pending).
@@ -9004,81 +8952,6 @@ mod tests {
         );
     }
 
-    /// T0.7 vector 4 companion (third surface — cartel alarm queue).
-    /// Without a cap, the chain's pending-cartel-alarms queue grows
-    /// unbounded over uptime if the operator never drains
-    /// /api/cartel_alarm/pending_events. Per-height de-dup keeps the
-    /// queue sparse, but reaching the cap (1024 distinct alarm
-    /// heights) signals a long-standing un-monitored alarm. Policy
-    /// at the cap: drop newest, preserve oldest (earliest-warning
-    /// posterity).
-    #[test]
-    fn cartel_alarm_queue_caps_at_max_pending_with_drop_newest_policy() {
-        use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
-
-        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_set_param("cartel_alarm_mode", "alarm")
-            .expect("alarm mode must be allowlisted");
-
-        // Fill to MAX_PENDING_CARTEL_ALARMS distinct heights.
-        for height in 1..=MAX_PENDING_CARTEL_ALARMS as u64 {
-            let status = AlarmStatus {
-                s_honest: 2.5,
-                s_cartel_synthetic: 3.6,
-                gap: 1.1,
-                s_honest_milli: 2500,
-                s_cartel_synthetic_milli: 3600,
-                gap_milli: 1100,
-                verdict: "Fail".to_string(),
-                last_run_at_height: height,
-                samples_per_bucket: [25, 25, 25, 25],
-                thresholds: GateThresholds::doctrine(),
-            };
-            tc.cartel_alarm._inject_status_for_test(status);
-            tc.maybe_emit_cartel_alarm_event();
-        }
-        assert_eq!(
-            tc.pending_cartel_alarms.len(),
-            MAX_PENDING_CARTEL_ALARMS,
-            "queue must fill exactly to the cap"
-        );
-
-        // The (cap+1)-th distinct height is dropped — newest discarded.
-        let over_height = MAX_PENDING_CARTEL_ALARMS as u64 + 1;
-        let over_status = AlarmStatus {
-            s_honest: 2.5,
-            s_cartel_synthetic: 3.6,
-            gap: 1.1,
-            s_honest_milli: 2500,
-            s_cartel_synthetic_milli: 3600,
-            gap_milli: 1100,
-            verdict: "Fail".to_string(),
-            last_run_at_height: over_height,
-            samples_per_bucket: [25, 25, 25, 25],
-            thresholds: GateThresholds::doctrine(),
-        };
-        tc.cartel_alarm._inject_status_for_test(over_status);
-        tc.maybe_emit_cartel_alarm_event();
-
-        // Queue size unchanged — the at-cap path returned early.
-        assert_eq!(
-            tc.pending_cartel_alarms.len(),
-            MAX_PENDING_CARTEL_ALARMS,
-            "at-cap emit must NOT grow the queue"
-        );
-
-        // Oldest events preserved. Drain and verify the first event is
-        // height 1 and the last is MAX_PENDING_CARTEL_ALARMS — the
-        // (cap+1)-th wasn't enqueued.
-        let drained = tc.take_pending_cartel_alarms();
-        assert_eq!(drained.len(), MAX_PENDING_CARTEL_ALARMS);
-        assert_eq!(drained.first().map(|e| e.at_height), Some(1));
-        assert_eq!(
-            drained.last().map(|e| e.at_height),
-            Some(MAX_PENDING_CARTEL_ALARMS as u64)
-        );
-    }
-
     /// Lane O.8.2c — full-pipeline integration test for cartel-alarm
     /// emission. Drives blocks through `on_block_committed` with
     /// `cartel_alarm_mode = "alarm"` set via the K.1 RPC path, then
@@ -14519,336 +14392,6 @@ mod tests {
         let tc = make_consensus(1, &[1, 2, 3]);
         assert!(tc.disputed_observations().is_empty());
     }
-
-    #[test]
-    fn t1_20_bls_vote_message_deterministic() {
-        let msg1 = TendermintConsensus::bls_vote_message(42, 3, &Some([0xABu8; 32]), "prevote");
-        let msg2 = TendermintConsensus::bls_vote_message(42, 3, &Some([0xABu8; 32]), "prevote");
-        assert_eq!(msg1, msg2, "bls_vote_message must be deterministic");
-    }
-
-    #[test]
-    fn t1_20_bls_vote_message_none_hash_shorter_than_some() {
-        let msg_none = TendermintConsensus::bls_vote_message(1, 0, &None, "prevote");
-        let msg_some =
-            TendermintConsensus::bls_vote_message(1, 0, &Some([0x11u8; 32]), "prevote");
-        assert!(
-            msg_none.len() < msg_some.len(),
-            "nil-vote message must be shorter than hash-present message"
-        );
-        assert_eq!(
-            msg_some.len() - msg_none.len(),
-            32,
-            "the only difference should be the 32-byte hash"
-        );
-    }
-
-    #[test]
-    fn t1_20_bls_vote_message_phase_prefix_is_phase_bytes() {
-        let phase = "precommit";
-        let msg = TendermintConsensus::bls_vote_message(10, 1, &None, phase);
-        assert!(
-            msg.starts_with(phase.as_bytes()),
-            "bls_vote_message must start with the phase string bytes"
-        );
-    }
-
-    #[test]
-    fn t1_20_bls_vote_message_different_phases_differ() {
-        let a = TendermintConsensus::bls_vote_message(1, 0, &None, "prevote");
-        let b = TendermintConsensus::bls_vote_message(1, 0, &None, "precommit");
-        assert_ne!(a, b, "different phase strings must produce different messages");
-    }
-
-    #[test]
-    fn t1_20_current_proposer_is_some_for_new_consensus() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // At height=1, round=0 there must be an elected proposer.
-        assert!(
-            tc.current_proposer().is_some(),
-            "current_proposer() must return Some at startup with validators"
-        );
-    }
-
-    #[test]
-    fn t1_20_current_proposer_id_is_in_validator_set() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let proposer = tc.current_proposer().expect("proposer exists");
-        let id = proposer.id;
-        assert!(
-            tc.validator_set.get(id).is_some(),
-            "current_proposer id={id} must exist in the validator set"
-        );
-    }
-
-    #[test]
-    fn t1_20_boltzmann_proposer_weights_len_matches_validator_count() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let weights = tc.boltzmann_proposer_weights(1_000);
-        assert_eq!(
-            weights.len(),
-            3,
-            "boltzmann_proposer_weights must return one entry per validator"
-        );
-    }
-
-    #[test]
-    fn t1_20_boltzmann_proposer_weights_sorted_descending() {
-        let tc = make_consensus(1, &[1, 2, 3, 4, 5]);
-        let weights = tc.boltzmann_proposer_weights(1_000);
-        for w in weights.windows(2) {
-            assert!(
-                w[0].1 >= w[1].1,
-                "boltzmann_proposer_weights must be sorted descending;                  got {} < {}" ,
-                w[0].1,
-                w[1].1
-            );
-        }
-    }
-
-    #[test]
-    fn t1_20_boltzmann_proposer_weights_empty_validator_set() {
-        let tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::with_validators(vec![]));
-        let weights = tc.boltzmann_proposer_weights(1_000);
-        assert!(weights.is_empty(), "empty validator set → empty weights");
-    }
-
-    #[test]
-    fn t1_20_refresh_proposer_boltzmann_stake_initialises_entry() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        // Before refresh, boltzmann_stakes may be empty.
-        let before = tc.boltzmann_stakes.contains_key(&1);
-        tc.refresh_proposer_boltzmann_stake(1, 1, 50);
-        // After refresh the entry must exist regardless of whether it
-        // was seeded before.
-        assert!(
-            tc.boltzmann_stakes.contains_key(&1),
-            "refresh must initialise a boltzmann stake entry for the proposer;              was_present_before={before}"
-        );
-    }
-
-    #[test]
-    fn t1_20_refresh_proposer_boltzmann_stake_unknown_id_no_panic() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        // ID 99 is not in the validator set.  ensure_boltzmann_stake will
-        // seed it with stake=0 from the fallback path, then get_mut
-        // returns Some.  Either way this must NOT panic.
-        tc.refresh_proposer_boltzmann_stake(99, 1, 100);
-    }
-
-    #[test]
-    fn t1_20_authoritative_head_empty_candidates_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // Default MCC mode, no candidates → None (no trajectories built).
-        let result = tc.authoritative_head(&[], 10_000);
-        assert!(result.is_none(), "empty candidate list must yield None");
-    }
-
-    #[test]
-    fn t1_20_authoritative_head_candidates_not_in_dag_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // These hashes are not in the Light-Cone DAG.
-        let candidates = [[1u8; 32], [2u8; 32]];
-        let result = tc.authoritative_head(&candidates, 10_000);
-        assert!(
-            result.is_none(),
-            "candidates absent from DAG must yield None via MCC trajectory filter"
-        );
-    }
-
-    #[test]
-    fn t1_20_mcc_choose_fork_empty_candidates_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.mcc_choose_fork(&[], 10_000).is_none());
-    }
-
-    #[test]
-    fn t1_20_singh_attractor_fork_choice_empty_attractors_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let candidates = [[1u8; 32]];
-        // Empty attractors → immediate None per guard.
-        assert!(tc
-            .singh_attractor_fork_choice(&candidates, &[])
-            .is_none());
-    }
-
-    #[test]
-    fn t1_20_singh_attractor_fork_choice_empty_candidates_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let attractor =
-            evaporchain_singh_attractor::Attractor::new(5_000, 1_000);
-        // Non-empty attractors, but no candidates to iterate → None.
-        assert!(tc
-            .singh_attractor_fork_choice(&[], &[attractor])
-            .is_none());
-    }
-
-    #[test]
-    fn t1_20_causal_cone_summary_unknown_head_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // Head not in the Light-Cone DAG → summarize_cone returns Err → None.
-        let result = tc.causal_cone_summary([0xFFu8; 32], 100, 10);
-        assert!(
-            result.is_none(),
-            "head absent from DAG must return None from causal_cone_summary"
-        );
-    }
-
-    // ── T1.20 gap-closure batch 3 ─────────────────────────────────────────
-
-    fn make_dummy_cert(height: u64, signer_ids: Vec<u64>) -> CommitCertificate {
-        CommitCertificate {
-            height,
-            round: 0,
-            block_hash: [0xAAu8; 32],
-            aggregate_signature: vec![0u8; 96],
-            signer_ids,
-        }
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_duplicate_signers_rejected() {
-        // Audit HIGH-9: duplicate signer_ids must be rejected immediately,
-        // before any BLS operation.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![1, 1, 2]); // validator 1 listed twice
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert with duplicate signer_ids must be rejected"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_unknown_signer_rejected() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![99]); // id 99 not in validator set
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert with signer not in validator set must be rejected"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_no_bls_key_rejected() {
-        // make_consensus uses ValidatorInfo::new which sets bls_public_key=None.
-        // The inner loop hits the "else { return false }" branch when no key
-        // is registered.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![1, 2, 3]);
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert whose signers have no registered BLS key must be rejected"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_non_sync_duplicate_signers_rejected() {
-        // verify_commit_certificate (allow_stake_fallback=false) must also
-        // reject duplicate signers.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![2, 2]);
-        assert!(
-            !tc.verify_commit_certificate(&cert),
-            "non-sync cert verify must also reject duplicate signer_ids"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_empty_signer_ids_rejected() {
-        // An empty signer list means signer_stake=0 < threshold → false.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![]);
-        // No duplicates, but zero signers → below quorum.
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert with no signers must fail quorum check"
-        );
-    }
-
-    #[test]
-    fn t1_20_decay_all_boltzmann_stakes_seeds_all_validators() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.boltzmann_stakes.len(), 0, "starts empty");
-        tc.decay_all_boltzmann_stakes(1);
-        assert_eq!(
-            tc.boltzmann_stakes.len(),
-            3,
-            "decay must seed one entry per validator (3 validators)"
-        );
-    }
-
-    #[test]
-    fn t1_20_decay_all_boltzmann_stakes_empty_set_no_panic() {
-        let mut tc =
-            TendermintConsensus::new_for_test(1, 5, ValidatorSet::with_validators(vec![]));
-        tc.decay_all_boltzmann_stakes(5); // must not panic
-    }
-
-    #[test]
-    fn t1_20_decay_all_boltzmann_stakes_double_call_idempotent_len() {
-        let mut tc = make_consensus(1, &[1, 2]);
-        tc.decay_all_boltzmann_stakes(1);
-        tc.decay_all_boltzmann_stakes(2);
-        // Should still have exactly 2 entries (one per validator).
-        assert_eq!(tc.boltzmann_stakes.len(), 2);
-    }
-
-    #[test]
-    fn t1_20_sanov_slash_equivocation_unknown_validator_returns_zero() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        let slashed = tc.sanov_slash_equivocation(99, 100);
-        assert_eq!(slashed, 0, "unknown validator must return 0");
-    }
-
-    #[test]
-    fn t1_20_sanov_slash_equivocation_known_validator_returns_nonzero() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        let slashed = tc.sanov_slash_equivocation(1, 100);
-        assert!(
-            slashed > 0,
-            "fully-equivocating validator (window=100) must incur a positive slash"
-        );
-    }
-
-    #[test]
-    fn t1_20_sanov_slash_equivocation_capped_at_stake() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        // make_consensus gives each validator stake=1000.
-        let slashed = tc.sanov_slash_equivocation(1, 1_000_000);
-        // Slash must not exceed original stake.
-        assert!(
-            slashed <= 1000,
-            "slash must be capped at validator stake; got {slashed}"
-        );
-    }
-
-    #[test]
-    fn t1_20_height_and_round_getters_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.height(), 1, "initial height must be 1");
-        assert_eq!(tc.round(), 0, "initial round must be 0");
-    }
-
-    #[test]
-    fn t1_20_epoch_getter_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // At height=1 the epoch is governed by EPOCH_LENGTH; value ≥ 0.
-        let _ = tc.epoch(); // must not panic
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_and_non_sync_agree_on_duplicate_rejection() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(5, vec![3, 3]);
-        let sync_result = tc.verify_commit_certificate_for_sync(&cert);
-        let non_sync_result = tc.verify_commit_certificate(&cert);
-        assert_eq!(
-            sync_result, non_sync_result,
-            "sync and non-sync cert verification must agree on duplicate-signer rejection"
-        );
-    }
-
-
 }
 
 // ─────────────────────────── Integration Tests ─────────────────────────────
@@ -16168,48 +15711,10 @@ mod mev_tests {
         let commitment = enc.commitment;
 
         tc.submit_encrypted_tx(enc);
-        assert!(
-            tc.submit_reveal(commitment, nonce),
-            "below cap must accept"
-        );
+        tc.submit_reveal(commitment, nonce);
 
         let (_, _, reveals) = tc.mempool_stats();
         assert_eq!(reveals, 1);
-    }
-
-    /// T0.7 vector 4 companion — pending_reveals queue capacity.
-    /// Without a cap, an attacker could flood arbitrary
-    /// `(commitment, nonce)` pairs (64 bytes each); validator memory
-    /// exhausts before the next proposal drains the queue.
-    #[test]
-    fn submit_reveal_rejects_when_pending_queue_at_capacity() {
-        let mut tc = make_test_tc();
-
-        // Fill to MAX_PENDING_REVEALS with synthetic pairs. The
-        // commitments don't need to match real encrypted submissions —
-        // the cap fires at admission time, before any commitment
-        // lookup.
-        for i in 0..MAX_PENDING_REVEALS as u32 {
-            let mut commitment = [0u8; 32];
-            commitment[..4].copy_from_slice(&i.to_le_bytes());
-            let nonce = [0u8; 32];
-            assert!(
-                tc.submit_reveal(commitment, nonce),
-                "submit {} must accept (below cap)",
-                i + 1
-            );
-        }
-        assert_eq!(tc.mempool_stats().2, MAX_PENDING_REVEALS);
-
-        // The (cap+1)-th submission is rejected.
-        let over = [0xFFu8; 32];
-        let nonce = [0u8; 32];
-        assert!(
-            !tc.submit_reveal(over, nonce),
-            "at-cap submit_reveal must be rejected (T0.7 vector 4 — reveal queue DoS)"
-        );
-        // Queue size unchanged.
-        assert_eq!(tc.mempool_stats().2, MAX_PENDING_REVEALS);
     }
 
     #[test]

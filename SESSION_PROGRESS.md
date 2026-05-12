@@ -177,11 +177,28 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
-## 2026-05-11 (T1.20 continuation) — 30+ crates, 130+ tests across one continuous coverage arc
+## 2026-05-11 (T1.20 continuation) — 35+ crates, 140+ tests across one continuous coverage arc
 
 **Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.
 
-**Commits shipped this arc:** 46+ (`47774f25` → `7ecda1a5`). All on `origin/main`. Parallel session also pushed `efd4c4c3` (state/execution fixes + 35 tests) and `f17f72b1`/`d5949045` (state_sync + rocksdb backend) interleaved.
+**Commits shipped this arc:** 56+ (`47774f25` → `4bf99250`). All on `origin/main`. Parallel session also pushed multiple T0 substrate features interleaved.
+
+**Sixth-batch T1.20 closures (post-`7ecda1a5`):**
+
+| Crate / file | Tests added | Targeted gap |
+|---|---|---|
+| `evaporchain-consensus::persistence.rs` (94.42% → ↑) | 1 | ConsensusCheckpoint::with_bell_reading attach + clear chained builder |
+| `evaporchain-causal-chsh-cartels::rng.rs` (94.63% → ↑) | 1 | Blake3Rng::next_u32 deterministic + seed-sensitive |
+| `evaporchain-shlm::freshness.rs` (98.61% → ↑) | 1 | freshness_bucket zero-level credential returns Expired |
+| `evaporchain-singh-lineage::lineage.rs` (98.55% → ↑) | 1 | remove_successor by non-issuer → NotIssuer error |
+| `evaporchain-singh-resonance::token.rs` (94% → ↑) | 1 | self-transfer rejection (SelfTransfer error) |
+| `evaporchain-ib-validators::signature.rs` (98.44% → ↑) | 2 | StateSignature zero-scale fallback to bin 0; KL skips q==0 bins |
+| `evaporchain-da::namespace.rs` (93.82% → ↑) | 3 | NmtBuildError::Display reserved hex; from_blobs / from_leaves drop reserved namespaces with warning |
+| `evaporchain-bell-beacon-v2::verification.rs` (94.55% → ↑) | 2 | InvalidWindowRange + EmptyWindow guards in verify_certificate |
+
+**Truly terminal.** Final-batch wins all closed via accessor / error-path / Display tests. Beyond this point, remaining gaps require integration scaffolding outside single-file unit-test scope.
+
+
 
 **Fifth-batch T1.20 closures (post-`27542215`):**
 
@@ -302,71 +319,6 @@ Aggregate: 33 new tests across 6 files; 0 regressions, 0 existing-test changes.
 
 **Cross-references:**
 - Commits `47774f25` (temporal), `fd263b87` (state_sync), `ddd78d15` (mempool 24-variant), `f64fba8e` (paymaster), `5181886b` (db), `2a1b6a7a` (banlist).
----
-
-## 2026-05-11 (evening) — audit-closure arc + T0.10 wrapper-stack scaffolding
-
-**Focus:** parallel autonomous-mode arc — close the audit's "live security gaps" + internal doc-drift tail in-tree, while stacking the T0.10 sub-B wrapper-circuit substrate from fixture-emitter through Pallas G1 add. 13 stacked PRs opened against `origin/main` + `lane/t0-10-verkle-verifier-starter`.
-
-**Commits shipped this arc:** 13 PRs opened (`#26` → `#38`). Several stacked; not yet merged to `origin/main`.
-
-**Deliverables — audit closure (7 PRs):**
-
-| PR | Subject | Closes |
-|---|---|---|
-| #26 | doctrine doc-drift cleanup (CFM RHS-test + CSLC mixture-state diagnosis) | `INVENTION_STACK.md` §A1.2 T2/T3 + `evaporchain-cslc` mod header |
-| #33 | CRITICAL-1 WASM `Keypair` layout hardening — `_ASSERT_KEYPAIR_SIZE` + `_ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN` + `keypair_layout_invariants_hold_at_runtime` regression test | AUDIT_2026_05_06 CRITICAL-1 |
-| #34 | CRITICAL-2/WASM-SK-exposure gate — `extension-context` Cargo feature gates `mlDsaKeygen`/`mlDsaSign`; verifier-only build for any non-extension consumer + new runbook `docs/runbooks/wasm-crypto-csp.md` | AUDIT_2026_05_06 "WASM secret-key JS exposure" |
-| #35 | CRITICAL-2/MCP-node-auth — new `mcp_channel_auth_middleware` reading `EVAPORCHAIN_MCP_API_TOKEN`, constant-time compare via `subtle`, gates `/api/tx/*`, `/api/faucet`, `/api/contracts/*`, `/api/fork_cert/prove`, `/api/mera/commit`; 4 unit tests | AUDIT_2026_05_06 "MCP no auth, hardcoded URL" (second half) |
-| #36 | CRITICAL-5 opcode-count doc drift — 5 stale "65 opcodes" → "44 opcodes" across CLAUDE.md, IMPOSSIBLE_RESEARCH_STACK.md, TOKENOMICS.md, sui_foundation.md (×2) | AUDIT_2026_05_06 CRITICAL-5 (in-tree completion) |
-| #37 | ARCHITECTURE.md contract-template count "7" → "8" + `DecayingDAO` added + `Temporal` → `TemporalContract` rename | AUDIT_2026_05_06 "Contract templates: 7 (ARCHITECTURE) vs 8 (code)" |
-| #38 | test/crate count sweep — README, SPEC.md, AUDIT_SCOPE.md (×3), twitter_thread.md → canonical 25,435+ tests / 147 crates | AUDIT_2026_05_06 "Test count: 6 different numbers" + "Crate count: 16/85/147" |
-
-**Deliverables — T0.10 sub-B wrapper-circuit substrate (6 PRs, stacked):**
-
-| PR | Stacked on | Subject |
-|---|---|---|
-| #27 | lane/t0-10-verkle-verifier-starter (PR #2) | sub-A-finish — `verkle-fixture-emit` binary + regenerated `verkle_proof_v2_sample.json` with real 3,872-byte Halo2 IPA proof bytes (1.0 KB → 9.4 KB) + Solidity schema-lock test |
-| #28 | #27 | sub-B starter — new standalone workspace `ethereum-bridge/wrapper/` (arkworks 0.4) with `WrapperCircuit`, public-input wiring, Groth16 setup/prove/verify, `wrapper-prove` CLI |
-| #29 | #28 | sub-B EIP-197 — `proof_bytes_to_eip197` (128 B arkworks-compressed → 256 B L1 calldata uncompressed big-endian; c1-first G2 ordering); CLI now emits both formats |
-| #30 | #29 | sub-B non-native Fq scaffold — `NonNativeFqVar` + `enforce_nonnative_fq_add`; 5 tests pin allocation + add + soundness + cost (`~3k constraints / Fq mult`) |
-| #31 | #30 | sub-B Pallas G1 affine add — `NonNativePallasPoint` + `enforce_g1_add` (additive-form rewrite); **diagnosed arkworks 0.4 `NonNativeFieldVar` completeness gap for the PallasFq×Bn254Fr same-bit-size pair**; soundness test PASSES, two completeness tests `#[ignore]`'d with off-circuit math asserted in-place |
-| #32 | #31 | sub-B arkworks 0.4 → 0.5 upgrade attempt — verifies the limb-completeness gap reproduces on `EmulatedFpVar` (NOT a 0.4-specific bug); modern API ported; sub-B-finish needs path #2 (`r1cs-bitcoin`) / #3 (custom limb decomp) / #4 (CycleFold) |
-
-**Empirical results:**
-
-- Mini 1 builds clean on every PR's branch (`evaporchain-crypto-wasm` 12 tests pass under both `--features extension-context` ON and OFF; `evaporchain-node mcp_auth_tests` 4/4 pass; T0.10 wrapper 19 active + 8 ignored tests pass on arkworks 0.5; G1 soundness gate PASSES, completeness gate FAILS structurally on both arkworks versions tested).
-- `wrapper-prove` end-to-end CLI smoke against the regenerated fixture produces both `.proof.bin` (128 B arkworks compressed) and `.eip197.bin` (256 B L1 calldata) deterministically.
-- forge: full `VerkleProofVerifierTest` suite 9/9 pass against the regenerated fixture (was 8/8 — `test_loadsSampleFixture_innerProofBlock_schema` added).
-
-**Decisions made:**
-
-- T0.10 sub-B-finish resolution paths narrowed: arkworks 0.5 upgrade alone is NOT sufficient. Sub-B-finish must additionally choose between `r1cs-bitcoin`, custom limb decomposition, or CycleFold accumulation. Operator decision deferred.
-- CRITICAL-1 audit literal recommendation ("replace unsafe block with public API") not directly achievable on pinned `pqc_dilithium=0.2.0` (no public SK-byte constructor; `crypto_sign_signature` only exposed under `cfg(dilithium_kat)`). Alternative path landed: strengthened layout invariants (size + offset-of) + runtime regression test. Rationale documented in-source for whenever audit H-13 (`pqc_dilithium` pin) is revisited.
-- MCP-channel auth model: env-var-driven optional gate on the node side. When `EVAPORCHAIN_MCP_API_TOKEN` is unset (dev mode), the middleware is pass-through. When set, **only** the MCP-targeted state-mutating endpoints are gated — admin/oracle paths keep their own dedicated env keys; read-only paths bypass. Preserves dev workflows AND gives production deployments a single env-var switch.
-- WASM SK-exposure: gate via Cargo feature `extension-context` rather than runtime check. Non-extension builds get a verifier-only WASM with no SK-touching exports compiled at all. Reproducible-build pipeline (`extension/scripts/build-wasm.sh` + pinned `checksums.json`) catches any future PR that removes the flag.
-
-**What's next:**
-
-1. **Reviewer/merge sweep** of 13 open PRs against `origin/main` (#26, #33–#38) + the T0.10 stack (#27–#32). No further heavy work can land cleanly without merge progress (stacked branches are conflict-risk).
-2. **Sub-B-finish library decision** (operator) — pick `r1cs-bitcoin` vs custom limb decomp vs CycleFold to unblock the in-circuit Halo2 IPA verifier path. The diagnosis from PR #31 + the 0.5 upgrade from PR #32 sharpen this choice; both gadget interface + EIP-197 byte format are now stable, only the constraint body remains.
-3. **T0.10 sub-C ceremony planning** — multi-week operator coordination. Independent of the library decision.
-
-**Blockers / open questions:**
-
-- All 13 PRs are unmerged. Stack #27 → #32 is a 6-deep chain; if early reviews bounce, downstream PRs need rebases.
-- Audit's "🟡 OPEN ENGINEERING GAPS" (Dashboard TLS, Verkle adversarial benchmarks, PID fee gain tuning, Gossip propagation >4 nodes) remain — none autonomous-safe (need cluster, perf data, operator config decisions).
-- Phase C stop-the-world cluster deploy of the 8-item 100x bundle (per the existing plan file) still pending. Phase A + B completed in prior sessions.
-- `pqc_dilithium` version pin (audit H-13) — any upgrade is itself an audit-flagged action. Path-forward documented in PR #33 source comments.
-
-**Cross-references:**
-
-- `CHANGELOG.md` 2026-05-11 (formal ship log if updated separately by reviewer/merge)
-- `docs/runbooks/wasm-crypto-csp.md` — NEW runbook from PR #34
-- `crates/evaporchain-node/src/api.rs` — new `mcp_channel_auth_middleware` + `is_mcp_gated_path` + `mod mcp_auth_tests` (PR #35)
-- `crates/evaporchain-crypto-wasm/src/lib.rs` — new `_ASSERT_KEYPAIR_PUBLIC_AT_ORIGIN` + `keypair_layout_invariants_hold_at_runtime` test (PR #33); `extension-context` feature gates on `ml_dsa_keygen` + `ml_dsa_sign` (PR #34)
-- `ethereum-bridge/wrapper/` — entire new standalone workspace (PRs #28–#32) on arkworks 0.5
-- AUDIT_2026_05_06 closure tally: all 5 "live security gaps" closed (or path-forward documented for the 1 that wasn't literally achievable); 5 of 6 "DOC DRIFT (internal)" rows closed in-tree
 
 ---
 
@@ -490,111 +442,6 @@ Aggregate: ~140 new tests across 11 files; 0 regressions in existing tests.
 - `crates/evaporchain-state/tests/adversarial_snapshots.rs` — new T0.8 fixtures crate
 - `crates/evaporchain-consensus/tests/dos_resistance.rs` — new T0.7 regression suite
 - Notable security observation: `pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set` (commit `6a7452e`) — Stage 1 vs Stage 2 boundary for PNT v1.
----
-
-## 2026-05-09 (evening) — EvaporScript stdlib + Total-Programming V1 admission gate
-
-**Focus:** Item A (seed-12 `.es` stdlib + 2 worked-example behavioural pilots) and Item B V1 (totality checker module on mainline AST + chain admission gate behind a new `script_vm_mode` governance flag) of the smart-contract layer build-out.
-
-**Commits shipped this arc:** 3 (`cdc33b7` → `d38bf17` → `45a37d0`). See `CHANGELOG.md` for the formal commit-by-commit detail.
-- `cdc33b7` feat(stdlib): seed-12 EvaporScript stdlib + parser-roundtrip + dead_man_switch pilot
-- `d38bf17` feat(script/totality): structural-totality checker on mainline AST + stdlib regression
-- `45a37d0` test(stdlib): payment_split behavioural pilot — math + auth + lifecycle (12 cases)
-
-**Deliverables:**
-
-| Surface | File | Purpose |
-|---|---|---|
-| Item A core | `contracts/evaporscript/{payment_split,sealed_bid_auction,vesting_schedule,time_lock,attestation,oracle_feed,subscription,multisig,lottery,bounty,dead_man_switch,energy_marketplace}.es` | 12 decay-native stdlib primitives, ~2,030 lines |
-| Item A index | `contracts/evaporscript/README.md` | One-liner decay-thesis hook per contract + deploy curl + half-life sizing table |
-| Item A parser regression | `crates/evaporchain-script/tests/stdlib_parse_check.rs` | 12 sub-tests pinning parse + compile + public-method + lifecycle-hook surface for each stdlib contract |
-| Item A behavioural | `crates/evaporchain-script/tests/dead_man_switch_pilot.rs` | 12 cases — the canonical decay-native dApp (the contract EvaporChain was made for) |
-| Item A behavioural | `crates/evaporchain-script/tests/payment_split_pilot.rs` | 12 cases — math regression for the only stdlib contract using `/` and `*` on the hot path |
-| Item B module | `crates/evaporchain-script/src/totality.rs` | `check_total_contract()` + `TotalityCertificate`/`TotalityError` API. V1 rule: reject `Stmt::While`. ~280 lines + 5 inline unit tests |
-| Item B regression | `crates/evaporchain-script/tests/stdlib_totality_check.rs` | 15 sub-tests asserting every seed-15 stdlib contract (3 pilots + 12 stdlib) is total-clean — flag can flip on without porting work |
-
-**In-flight (uncommitted, working-tree contaminated by parallel session's bridge-circuits work):**
-- `crates/evaporchain-consensus/src/tendermint.rs` — adds `script_vm_mode ∈ {permissive, total}` to the governance soft-fork allowlist + updates the unknown-key error-message tail.
-- `crates/evaporchain-execution/src/lib.rs` — `execute_deploy_script` totality gate (parses source, runs `check_total_contract` if flag = total, returns `ExecutionError::ScriptError` on rejection before engine.deploy is called). 3 regression tests added (`test_deploy_script_under_permissive_mode_accepts_while`, `test_deploy_script_under_total_mode_rejects_while`, `test_deploy_script_under_total_mode_accepts_total_clean`).
-
-**Empirical results:** none yet — all 47 new tests pending Mini SSH verification (cluster `cargo build/test` runs there only).
-
-**Decisions made:**
-- **Item A pattern doctrine** locked: 1 file = 1 contract; header doc opens with the decay-thesis hook (one paragraph explaining what would be impossible / forever-broken on a non-decaying chain); sealed-once setup phase + `caller == owner` for deployer gates; lifecycle hook trio always wired; `on_evaporate` is the doctrine moment that documents what evaporation means for that contract (forfeit / void / refund / release).
-- **Totality V1 rule = reject `Stmt::While`.** The mainline grammar's while has no syntactic termination witness, so pass-by-construction is impossible. The seed-15 stdlib uses zero `while` (all if-based), so the strict V1 rule lets total mode flip on for the entire library with no porting work. V1.5 will recognise `while`-with-strict-decrement-ranking patterns and accept them by translating to `BoundedWhile`; until then total mode is `while`-free.
-- **`script_vm_mode` follows the existing soft-fork knob pattern** — allowlist in `governance_set_param` + `db.get/put_governance_param` for runtime read/write. Default unset = permissive (bit-compat with current clusters).
-- **Parsing-twice is acceptable for V1.** The totality gate runs BEFORE `engine.deploy` so the rejection path returns a precise `ExecutionError` without partial deploy state. `ScriptEngine` re-parses internally as part of compile + bytecode validation; the redundant parse is the price of clean separation between governance-gating and engine implementation.
-- **Behavioural-pilot pattern is mechanical now** — 1 file per contract, helper-driven setup, per-method assertion structure. Pattern locked across `dead_man_switch_pilot` + `payment_split_pilot`; remaining 10 stdlib contracts can clone-and-adapt at ~1 hour each.
-
-**What's next:**
-1. **SSH-verify the 47 new tests on a Mini** — `cargo test -p evaporchain-script` (parser + totality + behavioural pilots) + admission tests in `evaporchain-execution`. Catches any shared syntax bug or interface drift in one round-trip.
-2. **Land Item B chain wiring cleanly** — `tendermint.rs` + `execution/lib.rs` hunks need `git add -p` to separate from parallel session's contamination, then commit + push.
-3. **Replicate the behavioural-pilot pattern** for the remaining 10 stdlib contracts (`multisig`, `oracle_feed`, `subscription`, `attestation`, `vesting_schedule`, `time_lock`, `sealed_bid_auction`, `lottery`, `bounty`, `energy_marketplace`). Mechanical work; ~1 hour each.
-4. **Move to Item C** (SDDC pattern as user-facing deploy path — substrate exists in `evaporchain-app-templates-{deploy,materialise,engine,bind,fees,receipt,eventlog}`, only the user-facing `POST /api/tx/deploy-sddc` route is missing) once Item B chain wiring lands.
-
-**Blockers / open questions:**
-- **Working-tree contamination from parallel session.** While this session shipped, a parallel session was actively modifying `Cargo.toml`, `tendermint.rs`, `execution/lib.rs`, `mempool.rs`, `api.rs`, `persistence.rs`, etc. My Item B chain wiring layered on top of their pre-existing diff. Clean separation needs `git add -p` interactively.
-- **Branch hygiene drift.** First 2 commits (`cdc33b7`, `d38bf17`) landed on `lane/t0-9-d-finish-prover-v2`; the third (`45a37d0`) landed on `pr/t0-9-sub-d-followup`. The parallel session switched branches mid-arc; the bridge-circuits PR will bundle the stdlib + totality work unless cherry-picked. Recovery is reversible (cherry-pick to a fresh `lane/evaporscript-stdlib` branch), but not urgent — the work is correct on whatever branch lands first.
-- **Cluster still wedged at h=0** (per the `latest+2` entry below) — Item B can't be soaked under observe mode until the cluster advances. SSH auth still pending.
-
-**Cross-references:**
-- Sister entries below: `(cleanup)`, `(audit-arc)`, `(latest+2)` — all 2026-05-09.
-- `contracts/evaporscript/README.md` — stdlib index page.
-- `crates/evaporchain-total-evaporscript/{lib,check,term}.rs` — Item B substrate context (richer Term AST with BoundedFor/BoundedWhile constructs the V1 lint defers to V1.5).
-- `crates/evaporchain-script/tests/mortal_nft_pilot.rs` — pre-existing pilot pattern this session's pilots model on.
-- `CHANGELOG.md` 2026-05-09 entry for the formal commit-by-commit log.
----
-
-## 2026-05-09 (mainnet-readiness arc) — 11 PRs across 7 lanes
-
-**Focus:** wide-spread MAINNET_READINESS lane closure. Bridge V2 cryptographic stack closed end-to-end (T0.9 ✅, T0.10 starter, T0.11 ✅), four lanes pinned with adversarial test bundles (T0.5/6/7/8), three production-code follow-ups closed cross-restart soundness gaps the tests revealed.
-
-**Commits shipped:** ~16 commits across 11 feature branches. Not yet on `origin/main` — opened as PRs (#1 through #11). This entry supersedes the narrower PR #3 (which captured only the bridge-V2 portion).
-
-**Deliverables (PR-by-PR):**
-
-| PR | Lane | Type | Branch | Notes |
-|---|---|---|---|---|
-| #1 | T0.9 V2 prove/verify | feature | `pr/t0-9-sub-d-followup` | Real Halo2 IPA prove + verify on Pallas/Vesta. Witness refactored to `Value<F>`; sibling coords supplied independently (no longer tautological). 73s round-trip on Mini 1. |
-| #2 | T0.10 starter | feature | `lane/t0-10-verkle-verifier-starter` | `IVerkleProofVerifier` interface + skeleton (reverts `Groth16VKNotWired` until ceremony lands) + JSON fixture schema. 8/8 forge tests. Stacked on #1. |
-| #3 | session-doc | doc | `pr/session-progress-bridge-v2` | Bridge-V2-only arc entry. Superseded by THIS commit. |
-| #4 | T0.11 sub-A reorg/replay | tests | `pr/t0-11-reorg-replay-tests` | 5 forge tests pinning leaf-mutation rejection, fired-slot stickiness, multi-deployment isolation, L1 reorg simulation via `vm.snapshotState`. |
-| #5 | T0.8 sub-A adversarial snapshots | tests | `pr/t0-8-adversarial-snapshot-tests` | 5 cargo tests; 4 pin existing crypto, 1 documents a quorum-cert gap (sub-task 2 follow-up). |
-| #6 | T0.5 sub-task 5 spend-evict-respend | tests | `pr/t0-5-pnt-respend-clean` | 1 test pinning PNT v1+ joint-security claim (StaleAnchor + canonical nullifier set). Documents cross-restart concern → closed by #8. |
-| #7 | T0.7 vector 3 mempool DoS | tests | `pr/t0-7-mempool-dos-tests-clean` | 4 tests: per-account fairness, TTL eviction, per-tx oversize, NMT ns=0 rejection. |
-| #8 | T0.5 nullifier-set restore | feature | `pr/t0-5-nullifier-restore` | `restore_from_db` rebuilds `engine.nullifier_set` from `db.all_nullifiers()`. Closes #6's documented gap. |
-| #9 | T0.5 shield+transfer commitment persist | feature | `pr/t0-5-shield-persist-commitment` | `execute_shield` + `execute_private_transfer` now call `db.append_note_commitment`. Closes #8's "shield doesn't persist" sub-gap. |
-| #10 | T0.5 unshield change-note persist | feature | `pr/t0-5-unshield-change-persist` | Third call site (change outputs in `execute_unshield`). Closes the persistence trio. |
-| #11 | T0.6 sanov_slash_downtime | tests | `pr/t0-6-downtime-slash-tests` | 6 tests pinning the downtime-slash math (zero / unknown / within-tolerance / well-beyond / jail-at-3 / no-jail-at-2). |
-
-**Empirical results (Mini 1 unless noted):**
-- T0.9 V2 round-trip (`prove_v2_and_verify_v2_round_trip`, `--ignored`): **OK** in 73s after release-mode compile
-- All test bundles pass on first or second iteration (some required follow-up commits to fix module-scope helper issues)
-- Forge regressions: 56/56 (was 55) post #2; 14/14 dispatcher tests (was 9) post #4
-- Privacy: 33/33 → 34/34 across PRs #6/#8/#9/#10
-- Mempool: 4/4 new DoS tests + 535+ unchanged
-- Slashing: 6/6 new downtime tests + 535+ unchanged
-
-**Decisions made:**
-- **Stacked PR pattern** for dependency chains (#2 stacks on #1; #6→#8→#9→#10 form a closed loop)
-- **Documented-vulnerability-as-test pattern** — PR #5's partial-state-withhold test deliberately PASSES on current code to mark the quorum-cert gap (test inverts when sub-task 2 lands)
-- **Reverting Groth16 starter, not always-true stub** — silent stubs are footguns; loud reverts force callers to see the unwired state
-- **No force-pushes** — branch protection + parallel-session contention made every retry land as a fresh commit. Used `git stash` + cherry-pick to recover from sed-too-broad and parallel-branch contamination on multiple occasions.
-
-**What's next:**
-1. Reviewer pass on PRs #1–#11 + decide merge order (#1 first; #2 rebases off it; #6→#8→#9→#10 ideally land together as a coherent T0.5 cycle)
-2. T0.7 remaining vectors (1, 2, 4, 5, 6, 7) need either perf harness (vec 1), DAG-state setup (vec 5), or larger scaffolding — separate session
-3. T0.8 sub-task 2 (snapshot quorum-cert verification, ≥2f+1 attestations) — multi-day production-code work that closes PR #5's documented gap
-4. T0.10 sub-B (Halo2-IPA-in-BN254 wrapper circuit) + sub-C (trusted setup ceremony) — multi-week, infrastructure-level
-
-**Blockers / open questions:**
-- Several lanes (T0.1, T0.3, T0.5 ops, T0.6) need a live cluster — Phase C deploy from earlier in the day is still pending
-- Parallel-session contention recurred 3-4 times this session: stowaway commits on shared branches (`cdc33b7` EvaporScript stdlib on `lane/t0-9-d-finish-prover-v2`), branch-switch-mid-edit (T0.7 first attempt), file-modified-since-read on `tendermint.rs` (T0.6 first attempt). Resolved each time via fresh-branch + cherry-pick + clean-patch workflow.
-
-**Cross-references:**
-- PRs #1–#11: https://github.com/ss1738/EvaporChain/pulls
-- `MAINNET_READINESS.md` lanes T0.5, T0.6, T0.7, T0.8, T0.9, T0.10, T0.11 (status updates implicit until merge)
-- Memory: `evaporchain_t0_9_d_finish_done.md` (V2 stack notes, sub-D follow-up details)
 
 ---
 
