@@ -623,7 +623,7 @@ mod tests {
         let to = [0xBBu8; 32];
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.transfer(to, 1000, 5);
-        let signed = signer.sign(&tx);
+        let signed = signer.sign_for_chain(&tx, "");
 
         let req = TransferRequest {
             from: format_address(signer.address()),
@@ -648,7 +648,7 @@ mod tests {
         let obj_id = [0xCCu8; 32];
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.create_object(obj_id, 5000, 100, vec![0xAB; 8]);
-        let signed = signer.sign(&tx);
+        let signed = signer.sign_for_chain(&tx, "");
 
         let req = CreateObjectRequest {
             creator: format_address(signer.address()),
@@ -670,7 +670,7 @@ mod tests {
         let obj_id = [0xCCu8; 32];
         let builder = TxBuilder::new(*signer.address());
         let tx = builder.refresh(obj_id, 500);
-        let signed = signer.sign(&tx);
+        let signed = signer.sign_for_chain(&tx, "");
 
         let req = RefreshRequest {
             object_id: format!("0x{}", hex::encode(obj_id)),

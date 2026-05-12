@@ -321,12 +321,12 @@ mod tests {
             mev_refund_eligible: None,
         });
 
-        signer.sign_transaction(&mut tx);
+        signer.sign_transaction_for_chain(&mut tx, "");
 
         assert!(tx.signature().is_some());
         assert!(tx.public_key().is_some());
 
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message("");
         let sig = tx.signature().unwrap();
         let pk = tx.public_key().unwrap();
         assert!(HybridVerifier::verify(&msg, sig, pk));
@@ -345,7 +345,7 @@ mod tests {
             mev_refund_eligible: None,
         });
 
-        let signed = signer.sign(&tx);
+        let signed = signer.sign_for_chain(&tx, "");
         assert!(tx.signature().is_none());
         assert!(signed.signature().is_some());
     }
@@ -456,9 +456,9 @@ mod tests {
             mev_refund_eligible: None,
         });
 
-        signer.sign_transaction(&mut tx);
+        signer.sign_transaction_for_chain(&mut tx, "");
 
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message("");
         let sig = tx.signature().unwrap();
         let pk = tx.public_key().unwrap();
         assert!(HybridVerifier::verify(&msg, sig, pk));

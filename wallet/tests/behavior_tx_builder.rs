@@ -55,8 +55,8 @@ fn build_then_sign_all_types() {
         assert!(!tx.signable_bytes().is_empty());
 
         // Sign
-        let signed = signer.sign(tx);
-        let msg = signed.signable_bytes();
+        let signed = signer.sign_for_chain(tx, "");
+        let msg = signed.signing_message("");
         let sig = signed.signature().unwrap();
         let pk = signed.public_key().unwrap();
         assert!(MlDsaVerifier::verify(&msg, sig, pk));
