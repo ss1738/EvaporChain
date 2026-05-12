@@ -62,7 +62,8 @@ pub use neptune_dump_parser::{
 };
 pub use neptune_reference::{neptune_hash_primary, PrimaryScalar};
 pub use section2_gadget::{
-    enforce_poseidon_primary, enforce_section_2_primary, placeholder_poseidon_config,
+    enforce_poseidon_primary, enforce_section_2_primary, neptune_aligned_poseidon_config,
+    placeholder_poseidon_config,
 };
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,

@@ -72,6 +72,65 @@ use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 /// from neptune's grain LFSR generation), only `find_poseidon_ark_and_mds`
 /// gets replaced; the surrounding `PoseidonConfig::new` call
 /// stays put.
+/// Same shape as [`placeholder_poseidon_config`] but loads the
+/// real neptune MDS matrix from a JSON dump on disk (produced by
+/// the `dump-neptune-constants` binary, PR #80). ARK is still
+/// arkworks-default — the grain LFSR ARK regeneration is the
+/// actual BESPOKE wedge.
+///
+/// This is PARTIAL parity with neptune:
+///   MDS:  REAL neptune values  ←  PR #83's `extract_mds_matrix`
+///   ARK:  arkworks placeholder  (regenerated per call)
+///
+/// The port-complete canary (PR #79) continues to fire because
+/// outputs still differ — ARK contributes to every round. But
+/// the matrix half is now genuine neptune data, so the
+/// constraint count + structural shape are closer to the final
+/// gadget.
+///
+/// **Caveat.** Mixing real MDS with placeholder ARK breaks the
+/// security analysis (ARK is supposed to be paired with the same
+/// MDS that generated it). This config is for DEVELOPMENT use
+/// only — measuring constraint costs, validating shape — NOT
+/// for producing proofs that anyone should trust.
+pub fn neptune_aligned_poseidon_config<P: AsRef<std::path::Path>>(
+    dump_path: P,
+) -> Result<PoseidonConfig<Bn254Fr>, String> {
+    let full_rounds = 8usize;
+    let partial_rounds = 59usize;
+    let alpha = 5u64;
+    let rate = 24usize;
+    let capacity = 1usize;
+    let prime_bits = Bn254Fr::MODULUS_BIT_SIZE as u64;
+
+    let mds = crate::neptune_dump_parser::extract_mds_matrix(&dump_path)?;
+    if mds.len() != rate + capacity || mds.first().map(|r| r.len()) != Some(rate + capacity) {
+        return Err(format!(
+            "neptune MDS dims ({}, {}) ≠ expected ({}, {})",
+            mds.len(),
+            mds.first().map(|r| r.len()).unwrap_or(0),
+            rate + capacity,
+            rate + capacity
+        ));
+    }
+    let (ark, _arkworks_mds) = find_poseidon_ark_and_mds::<Bn254Fr>(
+        prime_bits,
+        rate,
+        full_rounds as u64,
+        partial_rounds as u64,
+        0u64,
+    );
+    Ok(PoseidonConfig::new(
+        full_rounds,
+        partial_rounds,
+        alpha,
+        mds,
+        ark,
+        rate,
+        capacity,
+    ))
+}
+
 pub fn placeholder_poseidon_config() -> PoseidonConfig<Bn254Fr> {
     // Neptune Bn256 U24 Strength::Standard (PR #80 empirical):
     let full_rounds = 8usize;
@@ -246,6 +305,75 @@ mod tests {
         let a = mk();
         let b = mk();
         assert_eq!(a, b, "gadget must produce identical CS shape across runs");
+    }
+
+    /// Confirm `neptune_aligned_poseidon_config` loads + builds
+    /// against a hand-rolled minimal JSON fixture. (The full
+    /// 25×25 real PR #80 fixture lives outside the repo at
+    /// `/tmp/neptune-bn256-standard.json` on Mini 1; not checked
+    /// into git so this test uses a smaller synthetic dump.)
+    ///
+    /// The synthetic dump has a 25×25 identity-like MDS — every
+    /// row has a 1 in the diagonal slot. That's not a real MDS
+    /// (not invertible-resistant for security), but the config
+    /// builder accepts it for shape validation.
+    #[test]
+    fn neptune_aligned_config_loads_real_dims() {
+        use std::fs;
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-aligned-fixture.json");
+
+        // Build 25×25 matrix as a JSON string: row i has 1 at
+        // position i and 0 elsewhere.
+        let one_hex = format!("01{}", "0".repeat(62));
+        let zero_hex = "0".repeat(64);
+        let mut mds_rows = Vec::with_capacity(25);
+        for i in 0..25 {
+            let mut row_cells = Vec::with_capacity(25);
+            for j in 0..25 {
+                row_cells.push(format!("\"{}\"", if i == j { &one_hex } else { &zero_hex }));
+            }
+            mds_rows.push(format!("[{}]", row_cells.join(",")));
+        }
+        let mds_m = mds_rows.join(",");
+        let json = format!(
+            "{{\"mds\":{{\"m\":[{mds_m}],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\"crc\":[],\"psm\":[],\"sm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        fs::write(&path, json).unwrap();
+
+        let config = neptune_aligned_poseidon_config(&path).expect("load aligned config");
+        assert_eq!(config.full_rounds, 8);
+        assert_eq!(config.partial_rounds, 59);
+        assert_eq!(config.rate, 24);
+        assert_eq!(config.capacity, 1);
+        // MDS dimensions are 25×25 (state width = rate + capacity).
+        assert_eq!(config.mds.len(), 25);
+        assert_eq!(config.mds[0].len(), 25);
+        // The diagonal entries must be 1 (per our synthetic dump).
+        for i in 0..25 {
+            assert_eq!(config.mds[i][i], Bn254Fr::from(1u64), "diagonal[{i}]");
+        }
+
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Confirm `neptune_aligned_poseidon_config` rejects wrong MDS
+    /// dimensions cleanly (instead of silently using a malformed
+    /// config).
+    #[test]
+    fn neptune_aligned_config_rejects_wrong_mds_dims() {
+        use std::fs;
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-bad-dims.json");
+        // 3×3 instead of 25×25
+        let one = format!("01{}", "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{one}\",\"{one}\",\"{one}\"],[\"{one}\",\"{one}\",\"{one}\"],[\"{one}\",\"{one}\",\"{one}\"]],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\"crc\":[],\"psm\":[],\"sm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        fs::write(&path, json).unwrap();
+        let result = neptune_aligned_poseidon_config(&path);
+        assert!(result.is_err(), "3×3 MDS must be rejected");
+        let _ = fs::remove_file(&path);
     }
 
     /// Absorb 25 elements — one more than rate=24 — to force a
