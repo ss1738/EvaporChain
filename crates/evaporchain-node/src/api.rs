@@ -11461,7 +11461,13 @@ async fn post_deploy_contract(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Deploy rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11495,7 +11501,13 @@ async fn post_call_contract(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Call rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11627,7 +11639,13 @@ async fn post_deploy_script(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Script deploy rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11661,7 +11679,13 @@ async fn post_call_script(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Script call rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11830,7 +11854,13 @@ async fn post_upgrade_contract(
         )),
         _ => unreachable!(),
     };
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "UpgradeContract rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
