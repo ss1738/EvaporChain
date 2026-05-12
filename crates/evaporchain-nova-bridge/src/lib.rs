@@ -50,9 +50,13 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod groth16_wrapper;
 pub mod recursive_snark_fixture;
 pub mod verifier_circuit;
 
+pub use groth16_wrapper::{
+    prepare_vk, prove, public_inputs_in_alloc_order, setup, verify, verify_prepared, WrapperKeys,
+};
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
 };
