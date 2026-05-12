@@ -1677,4 +1677,320 @@ mod tests {
         let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: bad_meta });
         assert!(actions.is_empty(), "hash count mismatch must be rejected");
     }
+
+    // ═══ T1.20 batch — handle_header_response + misc uncovered branches ═══
+
+    #[test]
+    fn t1_20_handle_header_response_wrong_phase_returns_empty() {
+        // Phase is DiscoveringTip (default) — HeaderResponse must be ignored.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(matches!(sync.phase(), SyncPhase::DiscoveringTip));
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_height_mismatch() {
+        // Phase is VerifyingHeader, but the response carries the wrong height.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(200, &vs, &kps); // height 200
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100); // expecting 100
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty(), "height mismatch must be ignored");
+        assert!(matches!(sync.phase(), SyncPhase::VerifyingHeader));
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_no_lc_no_checkpoint_bootstraps_with_peer() {
+        // No light client, no checkpoint. Valid header bootstraps the LC,
+        // transitions to DownloadingSnapshot, and returns a SnapshotMetadataRequest
+        // directed at the known peer.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        // Register peer so any_peer_at_height(100) returns Some(1)
+        sync.peer_tips.insert(1, (100, [100u8; 32]));
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(!actions.is_empty(), "must return snapshot request");
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                SyncAction::SendToPeer {
+                    message: SyncMessage::SnapshotMetadataRequest { height: 100 },
+                    ..
+                }
+            )),
+            "must request snapshot metadata from peer"
+        );
+        assert!(matches!(
+            sync.phase(),
+            SyncPhase::DownloadingSnapshot { target_height: 100, .. }
+        ));
+        assert!(sync.light_client.is_some(), "light client must be bootstrapped");
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_no_lc_no_checkpoint_no_peer_fails() {
+        // No light client, no checkpoint, no known peers → Failed.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        // No peer_tips entries → any_peer_at_height returns None
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "no peer → must fail");
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_checkpoint_header_below_checkpoint_fails() {
+        // With checkpoint: header height < checkpoint.height → reject.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(50, &vs, &kps); // height 50
+        let checkpoint = GenesisCheckpoint {
+            height: 100,
+            state_root: [0u8; 32],
+            block_hash: [0u8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, checkpoint);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(50);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed());
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_checkpoint_state_root_mismatch_fails() {
+        // With checkpoint at height H: header at H has wrong state_root → reject.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let bad_state_root = [0xAB; 32];
+        let header = make_header_with_state_root(100, &vs, &kps, bad_state_root);
+        let checkpoint = GenesisCheckpoint {
+            height: 100,
+            state_root: [0xFF; 32], // different from header
+            block_hash: [0u8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, checkpoint);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed());
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_checkpoint_empty_cert_fails() {
+        // With checkpoint: header has empty commit certificate → reject.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let mut header = make_header(200, &vs, &kps); // height > checkpoint.height
+        // Strip signer_ids to make it empty
+        header.commit_certificate.signer_ids.clear();
+        let checkpoint = GenesisCheckpoint {
+            height: 100,
+            state_root: [0u8; 32],
+            block_hash: [0u8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, checkpoint);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(200);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed());
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_checkpoint_insufficient_quorum_fails() {
+        // 4-validator set needs 3 signers (4*2/3+1 = 3). Sign with only 2.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let hash = [200u8; 32];
+        let msg = bls_vote_message(200, 0, &hash);
+        let sigs: Vec<BlsSignature> = (0..2u64)
+            .map(|i| kps[i as usize].sign(&msg))
+            .collect();
+        let agg = BlsVerifier::aggregate_signatures(&sigs).unwrap();
+        let cert = CommitCertificate {
+            height: 200,
+            round: 0,
+            block_hash: hash,
+            aggregate_signature: agg.0,
+            signer_ids: vec![0, 1], // only 2 of 4 — below quorum
+        };
+        let mut header = make_header(200, &vs, &kps);
+        header.commit_certificate = cert;
+        let checkpoint = GenesisCheckpoint {
+            height: 100,
+            state_root: [0u8; 32],
+            block_hash: [0u8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, checkpoint);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(200);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "below-quorum cert must fail");
+    }
+
+    #[test]
+    fn t1_20_handle_header_response_checkpoint_quorum_met_bootstraps() {
+        // 4-validator set, sign with all 4 → quorum met → bootstrap succeeds.
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(200, &vs, &kps); // make_header signs with all validators
+        let checkpoint = GenesisCheckpoint {
+            height: 100,
+            state_root: [0u8; 32],
+            block_hash: [0u8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, checkpoint);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(200);
+        sync.peer_tips.insert(1, (200, [200u8; 32]));
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(!actions.is_empty(), "quorum met → must proceed");
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                SyncAction::SendToPeer {
+                    message: SyncMessage::SnapshotMetadataRequest { height: 200 },
+                    ..
+                }
+            )),
+            "must request snapshot metadata"
+        );
+        assert!(sync.light_client.is_some());
+    }
+
+    #[test]
+    fn t1_20_download_progress_verifying_header_and_snapshot_phases() {
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        assert_eq!(sync.download_progress(), 0.0, "VerifyingHeader → 0.0");
+        sync.phase = SyncPhase::VerifyingSnapshot;
+        assert_eq!(sync.download_progress(), 0.0, "VerifyingSnapshot → 0.0");
+    }
+
+    #[test]
+    fn t1_20_request_next_chunks_skips_already_received_and_pending() {
+        // With a 3-chunk snapshot where chunk 0 is already received and
+        // chunk 2 is pending, request_next_chunks must only request chunk 1.
+        let mut provider = SnapshotProvider::new();
+        let data = vec![0xCC; CHUNK_SIZE * 3];
+        let state_root = blake3_hash(&data);
+        let meta = provider.create_snapshot(50, 1, state_root, &data);
+
+        let mut sync = StateSyncManager::new(0);
+        sync.peer_tips.insert(7, (50, [50u8; 32]));
+        sync.target_height = Some(50);
+        sync.snapshot_meta = Some(meta);
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 50,
+            total_chunks: 3,
+            received_chunks: 1,
+        };
+        sync.received_chunks.insert(0, vec![0xCC; CHUNK_SIZE]); // already received
+        sync.pending_requests.insert(2);                         // already in-flight
+
+        let actions = sync.request_next_chunks(7);
+        // Only chunk 1 should be requested
+        assert_eq!(actions.len(), 1);
+        assert!(
+            matches!(
+                &actions[0],
+                SyncAction::SendToPeer {
+                    message: SyncMessage::ChunkRequest { height: 50, chunk_index: 1 },
+                    ..
+                }
+            ),
+            "only unreceived/non-pending chunk should be requested"
+        );
+    }
+
+    #[test]
+    fn t1_20_chunk_response_no_peer_after_partial_download_returns_empty() {
+        // Partial download (chunk 0 of 2 received). No peer is registered
+        // at the target height → request_next_chunks returns empty, so the
+        // overall result is also empty (no request can be made).
+        let mut provider = SnapshotProvider::new();
+        let data = vec![0xDD; CHUNK_SIZE * 2];
+        let state_root = blake3_hash(&data);
+        let meta = provider.create_snapshot(75, 1, state_root, &data);
+
+        let mut sync = StateSyncManager::new(0);
+        // No peer_tips entries → any_peer_at_height returns None
+        sync.target_height = Some(75);
+        sync.snapshot_meta = Some(meta.clone());
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 75,
+            total_chunks: 2,
+            received_chunks: 0,
+        };
+
+        // Deliver chunk 0 with a valid hash
+        let chunk_data: Vec<u8> = data[..CHUNK_SIZE].to_vec();
+        let actions = sync.on_message(
+            99,
+            SyncMessage::ChunkResponse {
+                chunk: SnapshotChunk {
+                    height: 75,
+                    index: 0,
+                    total: 2,
+                    data: chunk_data,
+                    hash: meta.chunk_hashes[0],
+                },
+            },
+        );
+        // No peer → empty (can't request chunk 1)
+        assert!(
+            actions.is_empty(),
+            "no known peer at target height → no further requests"
+        );
+    }
+
+    #[test]
+    fn t1_20_handle_snapshot_metadata_no_target_height_returns_empty() {
+        // target_height = None → early return from handle_snapshot_metadata.
+        let mut sync = StateSyncManager::new(0);
+        // Leave target_height as None (default)
+        let meta = SnapshotMetadata {
+            height: 100,
+            epoch: 1,
+            state_root: [0u8; 32],
+            total_chunks: 1,
+            chunk_hashes: vec![[0u8; 32]],
+            total_size: 64,
+        };
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: meta });
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn t1_20_tip_response_same_peer_updates_and_builds_consensus() {
+        // Peer 1 first reports height 50, then updates to height 200.
+        // Peer 2 also reports 200. Agreement should fire at height 200, not 50.
+        let mut sync = StateSyncManager::new(0);
+        let _ = sync.start();
+
+        // Peer 1 first report
+        sync.on_message(1, SyncMessage::TipResponse { height: 50, block_hash: [50u8; 32] });
+        // Peer 1 updates to 200
+        sync.on_message(1, SyncMessage::TipResponse { height: 200, block_hash: [200u8; 32] });
+        // Peer 2 agrees at 200 → agreement
+        let actions = sync.on_message(2, SyncMessage::TipResponse { height: 200, block_hash: [200u8; 32] });
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                SyncAction::Broadcast {
+                    message: SyncMessage::SnapshotMetadataRequest { height: 200 }
+                }
+            )),
+            "consensus at 200, not stale 50"
+        );
+    }
 }
