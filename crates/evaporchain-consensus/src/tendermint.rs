@@ -9472,7 +9472,7 @@ mod tests {
         tc.mev_missing_refund_violations.insert(1, 100);
         let slashed = tc.apply_mev_missing_refund_slashes();
         // Counter reset.
-        assert!(tc.mev_missing_refund_violations.get(&1).is_none());
+        assert!(!tc.mev_missing_refund_violations.contains_key(&1));
         // The result should report at least the validator we
         // configured (real slash amount depends on entropy math).
         let entry_for_1 = slashed.iter().find(|(v, _)| *v == 1);
@@ -9494,7 +9494,7 @@ mod tests {
         // Validator 99 doesn't exist → no slash entry.
         assert!(slashed.iter().all(|(v, _)| *v != 99));
         // Counter reset regardless — operator tooling expects it.
-        assert!(tc.mev_missing_refund_violations.get(&99).is_none());
+        assert!(!tc.mev_missing_refund_violations.contains_key(&99));
     }
 
     /// Phase 4.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
