@@ -4,12 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
 description = "T0.10 Path A — bridge between chain-side Nova RecursiveSNARK and L1 Groth16-on-BN254 verifier"
 
-# This crate is Phase 2.1 of the T0.10 Path A pivot (Nova-based bridge
-# architecture). See `DESIGN.md` next to this Cargo.toml for the full
-# rationale + open research questions. Scaffold-only at this commit —
-# no working verifier yet.
+# T0.10 Path A (Nova-based bridge architecture). See `DESIGN.md` for
+# the architecture rationale + milestone table, and `README.md` for
+# the module/binary navigation guide.
+#
+# Current scaffold version: `phase-2.2-section-2-constants`. Section 2's
+# constants layer is byte-correct vs neptune (PR #103); residual sponge-
+# framing gap + Section 3 RelaxedR1CS remain BESPOKE.
 
 [dependencies]
 # Arkworks side: the wrapper circuit + Groth16 prover live here.
