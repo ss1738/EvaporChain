@@ -3259,9 +3259,9 @@ impl TendermintConsensus {
     ///      as `RestoreFailed`.
     ///   3. For each `block_id in plan.forward_path`:
     ///      a. `block_lookup(block_id)` — fetch the block. Errors
-    ///         as `BlockNotFound`.
+    ///     as `BlockNotFound`.
     ///      b. `block_apply(db, &block)` — execute. Errors as
-    ///         `ApplyFailed { block, msg }`.
+    ///     `ApplyFailed { block, msg }`.
     ///
     /// **Atomicity caveat (Phase B.4 follow-up):** if step 3 fails
     /// midway, the StateDB is in a partial state — at the LCA plus
