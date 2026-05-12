@@ -521,7 +521,7 @@ impl BlsVerifier {
     pub fn verify(msg: &[u8], sig: &BlsSignature, pk: &BlsPublicKey) -> bool {
         #[cfg(feature = "bls-native")]
         {
-            return Self::verify_native(msg, sig, pk, BLS_DST);
+            Self::verify_native(msg, sig, pk, BLS_DST)
         }
         #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
         {
@@ -559,7 +559,7 @@ impl BlsVerifier {
     pub fn verify_proof_of_possession(pk: &BlsPublicKey, pop: &BlsSignature) -> bool {
         #[cfg(feature = "bls-native")]
         {
-            return Self::verify_native(&pk.0, pop, pk, BLS_POP_DST);
+            Self::verify_native(&pk.0, pop, pk, BLS_POP_DST)
         }
         #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
         {
@@ -580,7 +580,7 @@ impl BlsVerifier {
     ) -> bool {
         #[cfg(feature = "bls-native")]
         {
-            return Self::verify_native(new_pk_bytes, sig, old_pk, BLS_ROTATION_DST);
+            Self::verify_native(new_pk_bytes, sig, old_pk, BLS_ROTATION_DST)
         }
         #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
         {
@@ -613,8 +613,8 @@ impl BlsVerifier {
                 return false;
             }
             let pk_refs: Vec<&BlstPublicKey> = parsed_pks.iter().collect();
-            return sig.fast_aggregate_verify(true, msg, BLS_DST, &pk_refs)
-                == blst::BLST_ERROR::BLST_SUCCESS;
+            sig.fast_aggregate_verify(true, msg, BLS_DST, &pk_refs)
+                == blst::BLST_ERROR::BLST_SUCCESS
         }
         #[cfg(all(not(feature = "bls-native"), feature = "bls-portable"))]
         {
