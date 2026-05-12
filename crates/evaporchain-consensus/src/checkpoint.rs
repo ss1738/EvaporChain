@@ -295,4 +295,42 @@ mod tests {
         // state_root still enforced.
         assert!(!cp.matches_header(100, &[0xCC; 32], &[0xCC; 32]));
     }
+
+    /// T1.20 — CheckpointStore accessors: len, is_empty,
+    /// latest_trusted_height, get, iter (lines 120-145).
+    #[test]
+    fn t1_20_checkpoint_store_accessors() {
+        let mut store = CheckpointStore::default();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+        assert!(store.latest_trusted_height().is_none());
+        assert!(store.get(0).is_none());
+        assert_eq!(store.iter().count(), 0);
+
+        let cp1 = Checkpoint::from_operator(100, [0xAA; 32]);
+        let cp2 = Checkpoint::from_operator(200, [0xBB; 32]);
+        store.insert(cp1);
+        store.insert(cp2);
+
+        assert!(!store.is_empty());
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.latest_trusted_height(), Some(200));
+        assert!(store.get(100).is_some());
+        assert!(store.get(150).is_none());
+        assert_eq!(store.iter().count(), 2);
+    }
+
+    /// T1.20 — Checkpoint::matches_header when mmr_root is set
+    /// (non-sentinel) enforces the mmr_root match. Covers line 77.
+    #[test]
+    fn t1_20_checkpoint_matches_header_with_mmr() {
+        let cp = Checkpoint {
+            height: 100,
+            state_root: [0xAA; 32],
+            mmr_root: [0xCC; 32],
+            commit_certificate: None,
+        };
+        assert!(cp.matches_header(100, &[0xAA; 32], &[0xCC; 32]));
+        assert!(!cp.matches_header(100, &[0xAA; 32], &[0xDD; 32]));
+    }
 }
