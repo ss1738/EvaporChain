@@ -426,34 +426,39 @@ mod tests {
         eprintln!("neptune  bytes LE: {neptune_bytes_le:?}");
         eprintln!("arkworks bytes LE: {ark_bytes_le:?}");
 
-        // **Updated as of PR #97 (sbox_type fix):**
+        // **Updated as of PR #100 (domain_tag ruled out):**
         //
-        // The LFSR is now byte-correct — plain ARK round 0 matches
-        // neptune crc[0..25] exactly (see grain_lfsr's
-        // `lfsr_first_25_plain_round_0_parity` test, which now
-        // passes with `assert!(mismatches.is_empty())`).
-        //
-        // Yet the FULL HASH still diverges:
+        // LFSR is byte-correct — plain ARK round 0 matches neptune
+        // crc[0..25] exactly (PR #97). Yet the FULL HASH still
+        // diverges:
         //   neptune  = [119, 216, 133,  86, ...]
         //   arkworks = [ 56, 235,  73,  76, ...]
         //
-        // The remaining gap is no longer in the constants — it's
-        // in the SPONGE FRAMING:
+        // Remaining gap candidates after source review of
+        // `neptune/.../hash_type.rs`:
         //
-        //   (a) Neptune's `Sponge` includes a `domain_tag` absorbed
-        //       into state[0] before any user input. Arkworks
-        //       `PoseidonSponge` doesn't.
+        //   (a) ~~domain_tag absorbed first~~ RULED OUT — for
+        //       `HashType::Sponge`, `domain_tag() = F::ZERO`
+        //       (`hash_type.rs:62`). Absorbing zero into a
+        //       zero-initialized state is a no-op.
+        //
         //   (b) Neptune uses Strobe-style `Simplex` framing with
         //       explicit IOPattern (Absorb(len), Squeeze(1)).
         //       Arkworks uses generic absorb/squeeze.
-        //   (c) Partial rounds in neptune are SBOX-trick-fused so
-        //       the per-round operation isn't `MDS·(state+ARK)^5`
-        //       uniformly. Arkworks PoseidonSponge applies the
-        //       canonical Poseidon-128 per-round operation.
         //
-        // Bridging this requires either a full port of neptune's
-        // sponge into arkworks (multi-day) OR a vendored
-        // permutation that we drive directly from R1CS.
+        //   (c) Neptune's `hash_optimized_static` uses SBOX-trick-
+        //       preprocessed constants (`compressed_round_constants`)
+        //       with a modified per-round operation that the canonical
+        //       Poseidon-128 in arkworks `PoseidonSponge` doesn't
+        //       replicate. **Most likely culprit.**
+        //
+        //   (d) Possible: row-major vs column-major MDS, or
+        //       ARK-then-SBOX vs SBOX-then-ARK ordering inside the
+        //       round.
+        //
+        // Closing the gap: port `compress_round_constants` into
+        // the arkworks `PoseidonConfig.ark` field, OR vendor
+        // neptune's permutation and drive directly from R1CS.
         assert_ne!(
             ark_bytes_le, neptune_bytes_le,
             "DIVERGENT (sponge framing) — when this fires, the sponge port \
