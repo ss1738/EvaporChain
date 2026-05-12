@@ -48,6 +48,11 @@ use std::time::Duration;
 use evaporchain_da::commitments::CellProof;
 use evaporchain_da::light_client::{CellSource, CellSourceError, PeerFaultReason};
 
+/// Callback that forwards fault reports to the host's peer-reputation system.
+/// Boxed because the consumer chooses the concrete sink; Send + Sync because
+/// the source is shared across the worker thread + the trait impl.
+type FaultCallback = Box<dyn Fn(&str, PeerFaultReason) + Send + Sync>;
+
 /// Configuration for `HttpCellSource`.
 #[derive(Debug, Clone)]
 pub struct HttpCellSourceConfig {
@@ -81,7 +86,7 @@ pub struct HttpCellSource {
     /// Optional callback to forward fault reports to the host's peer
     /// reputation system. Wrapped in RefCell so the trait method (which
     /// takes `&self`) can mutate state if the host wants it to.
-    on_fault: Mutex<Option<Box<dyn Fn(&str, PeerFaultReason) + Send + Sync>>>,
+    on_fault: Mutex<Option<FaultCallback>>,
     /// Per-process counter of faults reported, mainly for tests + metrics.
     fault_count: RefCell<u64>,
 }
