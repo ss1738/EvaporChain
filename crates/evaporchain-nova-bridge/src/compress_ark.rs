@@ -38,7 +38,7 @@
 //! Rounds 4..7 (the SECOND half-full set) + 59 partial rounds get
 //! the backward-fold preprocessing in a follow-up PR.
 
-use crate::mds_linalg::left_apply_matrix;
+use crate::mds_linalg::{left_apply_matrix, vec_add};
 use ark_bn254::Fr;
 
 /// Compress the first 4 full rounds per neptune's
@@ -96,6 +96,100 @@ pub fn compress_first_full_rounds(
     res
 }
 
+/// Full port of neptune's `compress_round_constants` for the
+/// `partial_preprocessed = partial_rounds` case (the only one
+/// nova-snark uses). Returns the complete compressed-ARK vector
+/// of length `full_rounds * width + partial_rounds`.
+///
+/// Algorithm (from neptune `preprocessing.rs:30-170`):
+///
+/// 1. **First-half-full-rounds slice**: round 0 plain, rounds 1..3
+///    inverse-MDS-transformed. (Already implemented in
+///    `compress_first_full_rounds`.)
+/// 2. **Backward partial-round fold**: walk partial rounds from
+///    last to first, accumulating an `acc` state; each step
+///    inverts via MDS_inv, captures the top entry as a partial
+///    constant, zeros the top, then adds the previous round's
+///    plain ARK.
+/// 3. **Append `inverse_mds * round_acc`** (width entries).
+/// 4. **Pop partial_keys in reverse** (one entry per partial round).
+/// 5. **Second-half-full-rounds slice**: rounds (last 3 of the
+///    8 full rounds), inverse-MDS-transformed.
+///
+/// For our parameters (BN254 / arity-24 / Standard):
+///   full_rounds = 8, partial_rounds = 59, half_full = 4
+///   output length = 8*25 + 59 = 259 (= neptune's `crc.len()`)
+pub fn compress_full(
+    plain_ark: &[Fr],
+    inverse_mds: &[Vec<Fr>],
+    width: usize,
+    full_rounds: usize,
+    partial_rounds: usize,
+) -> Vec<Fr> {
+    let half_full = full_rounds / 2;
+    let total_rounds = full_rounds + partial_rounds;
+    let expected_len = full_rounds * width + partial_rounds;
+    assert!(
+        plain_ark.len() >= total_rounds * width,
+        "plain_ark too short: have {}, need ≥ {}",
+        plain_ark.len(),
+        total_rounds * width
+    );
+    assert_eq!(inverse_mds.len(), width, "inverse_mds must be width×width");
+
+    // Helper: extract one row's worth of plain ARK as &[Fr].
+    let round_keys = |r: usize| -> &[Fr] {
+        &plain_ark[r * width..(r + 1) * width]
+    };
+
+    // ── Slice 1: first half-full rounds ────────────────────
+    let mut res: Vec<Fr> = Vec::with_capacity(expected_len);
+    res.extend_from_slice(round_keys(0));
+    let end = half_full.saturating_sub(1); // 3 for our params
+    for i in 0..end {
+        let inverted = left_apply_matrix(inverse_mds, round_keys(i + 1));
+        res.extend_from_slice(&inverted);
+    }
+
+    // ── Slice 2: backward partial fold ─────────────────────
+    let mut partial_keys: Vec<Fr> = Vec::new();
+    let final_round = half_full + partial_rounds; // 4 + 59 = 63
+    let final_round_key: Vec<Fr> = round_keys(final_round).to_vec();
+    let round_acc = (0..partial_rounds)
+        .map(|i| round_keys(final_round - i - 1).to_vec())
+        .fold(final_round_key, |acc, previous_round_keys| {
+            let mut inverted = left_apply_matrix(inverse_mds, &acc);
+            partial_keys.push(inverted[0]);
+            inverted[0] = Fr::from(0u64);
+            vec_add(&previous_round_keys, &inverted)
+        });
+
+    // ── Slice 3: extend with inverse_mds * round_acc ───────
+    res.extend_from_slice(&left_apply_matrix(inverse_mds, &round_acc));
+
+    // ── Slice 4: partial keys popped in reverse ────────────
+    while let Some(x) = partial_keys.pop() {
+        res.push(x);
+    }
+
+    // ── Slice 5: second half-full rounds ───────────────────
+    // start = half_full + partial_rounds = 63 = final_round (already used)
+    // Rounds processed: (1..half_full) = 1, 2, 3 → round indices
+    //   start + 1, start + 2, start + 3 = 64, 65, 66
+    let start = half_full + partial_rounds;
+    for i in 1..half_full {
+        let inverted = left_apply_matrix(inverse_mds, round_keys(i + start));
+        res.extend_from_slice(&inverted);
+    }
+
+    debug_assert_eq!(
+        res.len(),
+        expected_len,
+        "compress_full output length must equal full_rounds*width + partial_rounds"
+    );
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,6 +235,50 @@ mod tests {
         assert!(
             mismatches.is_empty(),
             "first-half compression must match neptune crc[0..100]"
+        );
+    }
+
+    /// **THE final parity test.** Run `compress_full` on our
+    /// LFSR-generated plain ARK + neptune's real `mds.m_inv` and
+    /// compare to neptune's full `crc[0..259]` byte-for-byte.
+    ///
+    /// If MATCHES: neptune's compressed ARK is now reproducible
+    /// from our LFSR + matrix primitives, and the constants
+    /// half of Section 2 is BYTE-COMPLETE. Plug into arkworks
+    /// PoseidonSponge and the hash parity canary
+    /// (PR #98) flips.
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json"]
+    fn full_compressed_match_neptune_crc() {
+        let plain_ark = generate_round_constants_bn254_arity_24_standard();
+        let m_inv = extract_mds_inverse_matrix("/tmp/neptune-bn256-standard.json")
+            .expect("load m_inv");
+        let crc = extract_compressed_round_constants("/tmp/neptune-bn256-standard.json")
+            .expect("load crc");
+
+        let ours = compress_full(&plain_ark, &m_inv, 25, 8, 59);
+        assert_eq!(ours.len(), 259, "expected length 8*25 + 59 = 259");
+        assert_eq!(crc.len(), 259, "neptune crc must also be 259");
+
+        let mut mismatches: Vec<usize> = Vec::new();
+        for i in 0..259 {
+            if ours[i] != crc[i] {
+                mismatches.push(i);
+            }
+        }
+        eprintln!(
+            "FULL compressed parity: {} of 259 mismatches",
+            mismatches.len()
+        );
+        if !mismatches.is_empty() {
+            eprintln!(
+                "  first 20 mismatches: {:?}",
+                &mismatches[..mismatches.len().min(20)]
+            );
+        }
+        assert!(
+            mismatches.is_empty(),
+            "compress_full must reproduce neptune crc byte-for-byte"
         );
     }
 
