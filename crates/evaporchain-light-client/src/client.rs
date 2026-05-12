@@ -30,6 +30,7 @@ pub struct LightClient {
     /// flag only gates whether the actual SNARK verification path
     /// is compiled in. Keeping the field unconditional keeps
     /// constructor signatures uniform across feature flavours.
+    #[cfg_attr(not(feature = "nova"), allow(dead_code))]
     vk_bytes: Option<Vec<u8>>,
 
     /// Most-recently-trusted block header. Updated on each
@@ -91,17 +92,20 @@ impl LightClient {
 
     /// Mutable handle to the BFT verifier. Crate-private so the
     /// `nova` module can drive the same BFT verification path.
+    #[cfg(feature = "nova")]
     pub(crate) fn bft_verifier_mut(&mut self) -> &mut LightClientVerifier {
         &mut self.bft
     }
 
     /// Read-only access to vk_bytes for the Nova path.
+    #[cfg(feature = "nova")]
     pub(crate) fn vk_bytes_ref(&self) -> Option<&[u8]> {
         self.vk_bytes.as_deref()
     }
 
     /// Promote a header to the trusted tip after both BFT and
     /// Nova verification have succeeded.
+    #[cfg(feature = "nova")]
     pub(crate) fn set_trusted_tip(&mut self, header: LightBlockHeader) {
         self.trusted_tip = header;
     }
