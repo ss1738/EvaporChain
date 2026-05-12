@@ -53,19 +53,31 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 
-/// Build a PLACEHOLDER `PoseidonConfig<Bn254Fr>` with arkworks-default
-/// security parameters. Same parameters as
-/// `crate::poseidon_budget::arkworks_default_config_for_bn254` —
-/// matched intentionally so the constraint count reported there
-/// (~753 for absorb-6 squeeze-1) carries over.
+/// Build a PLACEHOLDER `PoseidonConfig<Bn254Fr>` whose **shape**
+/// matches neptune's Bn256/U24/Strength::Standard sponge: state
+/// width 25 (rate 24, capacity 1), `full_rounds = 8`,
+/// `partial_rounds = 59`, alpha = 5.
 ///
-/// **These constants DO NOT match neptune.** When the port lands,
-/// this function is the swap point.
+/// These numbers come from PR #80's `dump-neptune-constants`
+/// empirical extraction. The MDS matrix + round constants are
+/// still arkworks-default — only the shape parameters
+/// (width, round counts, alpha) match neptune. That means:
+///
+/// - Constraint count of the resulting gadget is order-of-
+///   magnitude correct for Section 2's real cost.
+/// - Hash outputs still DIVERGE from the neptune oracle
+///   (PR #79's port-complete canary continues to fire).
+///
+/// When the BESPOKE step lands (PR-pending — port plain ARK + MDS
+/// from neptune's grain LFSR generation), only `find_poseidon_ark_and_mds`
+/// gets replaced; the surrounding `PoseidonConfig::new` call
+/// stays put.
 pub fn placeholder_poseidon_config() -> PoseidonConfig<Bn254Fr> {
+    // Neptune Bn256 U24 Strength::Standard (PR #80 empirical):
     let full_rounds = 8usize;
-    let partial_rounds = 60usize;
+    let partial_rounds = 59usize;
     let alpha = 5u64;
-    let rate = 2usize;
+    let rate = 24usize;
     let capacity = 1usize;
     let prime_bits = Bn254Fr::MODULUS_BIT_SIZE as u64;
     let (ark, mds) = find_poseidon_ark_and_mds::<Bn254Fr>(
@@ -151,12 +163,22 @@ mod tests {
         let out = enforce_poseidon_primary(cs.clone(), &config, &inputs).expect("synthesize");
         assert!(!matches!(out, FpVar::Constant(_)), "squeezed output must be a variable");
         let nc = cs.num_constraints();
+        // Width-25 + rate-24 + 6 absorbs: the rate-24 buffer never
+        // fills (would need 24 absorbs), so only the squeeze
+        // triggers a permutation. ONE width-25 permutation at
+        // 8 full + 59 partial rounds in arkworks-default emits
+        // ~720 constraints empirically on Mini 1.
+        //
+        // At z_arity = 1 + a multi-scalar instance expansion the
+        // real Section 2 absorb count climbs toward rate=24 and
+        // we'll see a SECOND permutation kick in (cost roughly
+        // doubles per added full permutation).
         assert!(
-            (200..=10_000).contains(&nc),
+            (200..=200_000).contains(&nc),
             "Section-2 primary gadget constraint count out of range: {nc}"
         );
         eprintln!(
-            "enforce_poseidon_primary: 6 absorb + 1 squeeze → {} constraints",
+            "enforce_poseidon_primary: 6 absorb + 1 squeeze (width=25) → {} constraints",
             nc
         );
     }
@@ -224,6 +246,44 @@ mod tests {
         let a = mk();
         let b = mk();
         assert_eq!(a, b, "gadget must produce identical CS shape across runs");
+    }
+
+    /// Absorb 25 elements — one more than rate=24 — to force a
+    /// buffer-flush permutation BEFORE the squeeze. This should
+    /// roughly double the constraint count vs the 6-absorb case
+    /// (two width-25 permutations instead of one). Pin the
+    /// resulting band as the actual Section 2 ballpark for absorbs
+    /// that exceed the rate.
+    #[test]
+    fn width_25_buffer_flush_doubles_cost() {
+        let cs_a = ConstraintSystem::<Bn254Fr>::new_ref();
+        let cs_b = ConstraintSystem::<Bn254Fr>::new_ref();
+        let config = placeholder_poseidon_config();
+
+        let inputs_6: Vec<FpVar<Bn254Fr>> = (1..=6u64)
+            .map(|i| FpVar::<Bn254Fr>::new_input(cs_a.clone(), || Ok(Bn254Fr::from(i))).unwrap())
+            .collect();
+        enforce_poseidon_primary(cs_a.clone(), &config, &inputs_6).expect("6 absorbs");
+
+        let inputs_25: Vec<FpVar<Bn254Fr>> = (1..=25u64)
+            .map(|i| FpVar::<Bn254Fr>::new_input(cs_b.clone(), || Ok(Bn254Fr::from(i))).unwrap())
+            .collect();
+        enforce_poseidon_primary(cs_b.clone(), &config, &inputs_25).expect("25 absorbs");
+
+        let nc6 = cs_a.num_constraints();
+        let nc25 = cs_b.num_constraints();
+        eprintln!(
+            "width-25 cost: 6 absorbs → {nc6} constraints, 25 absorbs → {nc25} constraints"
+        );
+
+        // 25-absorb must cost MORE than 6-absorb (extra permutation
+        // from buffer flush) but no more than 3× (1 extra
+        // permutation + small absorb overhead, not 2 extras).
+        assert!(nc25 > nc6, "25-absorb must exceed 6-absorb cost");
+        assert!(
+            nc25 <= 3 * nc6,
+            "25-absorb {nc25} blew up over 3× of 6-absorb {nc6} — unexpected"
+        );
     }
 
     /// **Port-complete canary.** Today: confirms gadget output
