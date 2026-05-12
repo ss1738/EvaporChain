@@ -1,39 +1,30 @@
-//! Phase 2.2-section-2: neptune-Poseidon reference oracle.
+//! Neptune-Poseidon ground-truth oracle.
 //!
-//! Uses nova-snark's public [`PoseidonRO`] API (which wraps the
-//! neptune Poseidon implementation that
-//! `RecursiveSNARK::verify` itself uses) to compute hashes. The
-//! outputs are the **ground truth** that any future arkworks-side
-//! in-circuit gadget MUST reproduce byte-for-byte.
+//! Wraps nova-snark's public [`PoseidonRO`] API (which uses the same
+//! neptune Poseidon implementation `RecursiveSNARK::verify` consumes
+//! internally) into a single function `neptune_hash_primary`. Pinned
+//! test vectors in this module are the byte-level reference for any
+//! Section-2 hash output port.
 //!
-//! # Why this is the first concrete BESPOKE step
+//! # Role within the constants-port chain
 //!
-//! The Section 2 in-circuit gadget needs to re-hash nova-snark's
-//! transcript and prove equality against the committed hashes.
-//! Arkworks' generic Poseidon won't match neptune's hashes (different
-//! MDS, different round constants — see PR #65 `poseidon_transcript`
-//! for the spec). The port goes: arkworks gadget → arkworks PoseidonSponge
-//! configured with neptune-equivalent parameters → SAME output as this
-//! oracle.
-//!
-//! Without an oracle, the port has no test target. With one:
-//!
-//! 1. Pin a test vector here (input sequence → expected output).
-//! 2. Write the arkworks gadget.
-//! 3. Test the arkworks gadget against the same input sequence and
-//!    assert it produces the same output bytes.
-//! 4. If equal, the port is byte-correct. If not, fix arkworks params
-//!    until it matches.
+//! - **Constants layer**: byte-correct vs neptune
+//!   (`crate::grain_lfsr` + `crate::compress_ark`, PR #103).
+//! - **Hash output**: still diverges from this oracle's output
+//!   because arkworks `PoseidonSpongeVar`'s per-round operation
+//!   differs from neptune's `Poseidon::hash_optimized_static`
+//!   (the residual sponge framing gap). See
+//!   `crate::section2_gadget::fully_aligned_gadget_byte_parity_with_neptune`.
 //!
 //! # Why pin specific values
 //!
 //! Hardcoded test vectors are the only way to detect a silent
 //! constant drift between this oracle and a future arkworks gadget.
 //! If both sides change in the same wrong way, no test catches it.
-//! Pinning a fixed expected scalar means: if THIS module's output
-//! changes (e.g. nova-snark bumps its neptune fork's strength
-//! parameter), the test fires loudly and forces a regen of test
-//! vectors that the arkworks gadget then needs to match.
+//! Pinning fixed scalars means: if THIS module's output changes
+//! (e.g. nova-snark bumps its neptune fork), the test fires loudly
+//! and forces a regen of test vectors that downstream gadgets need
+//! to match.
 
 use nova_snark::{
     provider::poseidon::{PoseidonConstantsCircuit, PoseidonRO},

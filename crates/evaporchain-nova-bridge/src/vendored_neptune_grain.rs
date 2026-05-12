@@ -1,19 +1,27 @@
-//! Phase 2.2-section-2 BESPOKE debug: vendored neptune Grain
-//! implementation for direct side-by-side comparison.
+//! Vendored neptune Grain — verbatim copy of neptune's algorithm
+//! for direct side-by-side comparison against `crate::grain_lfsr`.
 //!
 //! Copy-pasted from `nova-snark-0.68/src/frontend/gadgets/poseidon/
-//! round_constants.rs:38-168` with `pub` fields so we can run the
-//! same algorithm from outside the nova-snark crate.
+//! round_constants.rs:38-168` with `pub` accessors so the same
+//! algorithm runs from outside the nova-snark crate.
 //!
-//! Why: the `crate::grain_lfsr` impl follows the documented
-//! Poseidon algorithm but produces output that diverges from
-//! neptune's `crc[0]`. Possibilities:
-//!   (a) Subtle Rust impl bug in `crate::grain_lfsr`
-//!   (b) Misunderstanding of the algorithm
+//! # Historical role
 //!
-//! Side-by-side: if this vendored impl AGREES with our
-//! `grain_lfsr` impl → both wrong → misunderstanding.
-//! If they DISAGREE → our impl has a bug.
+//! Used in PRs #96/#97 to triage the LFSR byte-parity question.
+//! At that point both impls produced the same output but BOTH
+//! disagreed with neptune's actual `crc[0]` — proof that the bug
+//! was upstream of the algorithm (in the seed-parameter binding).
+//! Specifically, neptune's `mod.rs::round_constants` wrapper
+//! passes `SBOX = 1` (x^5) but our impl had `sbox_type = 0`.
+//! PR #97 fixed that, and from that point both impls agree with
+//! neptune `crc[0]` byte-for-byte.
+//!
+//! # Current role
+//!
+//! Regression net + algorithmic reference. If
+//! `crate::grain_lfsr` ever diverges from this vendored impl,
+//! the bug is in our Rust translation (not in our understanding
+//! of the algorithm).
 
 /// Vendored from neptune `round_constants.rs`. Returns `Vec<bool>`
 /// representing the 80-bit initial seed (state[0] = first pushed).
