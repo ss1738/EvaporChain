@@ -3507,4 +3507,240 @@ mod tests {
         assert_eq!(result.txs_failed, 1);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
     }
+
+    // ── T1.20 gap-closure ─────────────────────────────────────────────────
+
+    // ── estimate_gas direct tests ─────────────────────────────────────────
+
+    #[test]
+    fn t1_20_estimate_gas_transfer() {
+        let tx = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 1, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        });
+        assert_eq!(estimate_gas(&tx), GAS_TRANSFER);
+    }
+
+    #[test]
+    fn t1_20_estimate_gas_refresh() {
+        let tx = Transaction::Refresh(RefreshTx {
+            object_id: obj_id(1), energy_deposit: 100,
+            signature: None, public_key: None,
+        });
+        assert_eq!(estimate_gas(&tx), GAS_REFRESH);
+    }
+
+    #[test]
+    fn t1_20_estimate_gas_validator_stake() {
+        let tx = Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1), stake_amount: 1000, validator_id: 1,
+            nonce: 0, bls_public_key: None, vrf_public_key: None,
+            signature: None, public_key: None,
+        });
+        assert_eq!(estimate_gas(&tx), GAS_VALIDATOR_STAKE);
+    }
+
+    #[test]
+    fn t1_20_estimate_gas_validator_exit() {
+        let tx = Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(1), validator_id: 1, nonce: 0,
+            signature: None, public_key: None,
+        });
+        assert_eq!(estimate_gas(&tx), GAS_VALIDATOR_EXIT);
+    }
+
+    #[test]
+    fn t1_20_estimate_gas_create_object_scales_with_data() {
+        let empty = Transaction::CreateObject(CreateObjectTx {
+            creator: addr(1), object_id: obj_id(1), energy: 1000,
+            half_life: 10, data: vec![], decay_curve: None, lad_mode: None,
+            signature: None, public_key: None,
+        });
+        let with_data = Transaction::CreateObject(CreateObjectTx {
+            creator: addr(1), object_id: obj_id(1), energy: 1000,
+            half_life: 10, data: vec![0u8; 50], decay_curve: None, lad_mode: None,
+            signature: None, public_key: None,
+        });
+        assert_eq!(estimate_gas(&empty), GAS_CREATE_OBJECT_BASE);
+        assert_eq!(
+            estimate_gas(&with_data),
+            GAS_CREATE_OBJECT_BASE + GAS_CREATE_OBJECT_PER_BYTE * 50
+        );
+    }
+
+    // ── exec_transfer error paths via execute_block ───────────────────────
+
+    #[test]
+    fn t1_20_transfer_self_transfer_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(1), // same address
+            amount: 100, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "self-transfer must fail");
+        assert_eq!(result.txs_executed, 0);
+    }
+
+    #[test]
+    fn t1_20_transfer_zero_amount_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2),
+            amount: 0, // zero amount
+            nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "zero-amount transfer must fail");
+    }
+
+    #[test]
+    fn t1_20_transfer_invalid_nonce_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2),
+            amount: 100,
+            nonce: 99, // wrong nonce (account starts at 0)
+            signature: None, public_key: None, mev_refund_eligible: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "wrong nonce must fail");
+    }
+
+    // ── exec_create_object error paths ────────────────────────────────────
+
+    #[test]
+    fn t1_20_create_object_already_exists_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 100_000);
+        // Pre-insert the object so the second create sees it already exists.
+        db.put_object(StateObject {
+            id: obj_id(5), owner: addr(1), energy: 500, half_life: 10,
+            created_at: 0, last_refreshed: 0, state: ObjectState::Active,
+            grace_epoch: None, data: vec![], decay_curve: None, lad_mode: None,
+        });
+        let txs = vec![Transaction::CreateObject(CreateObjectTx {
+            creator: addr(1), object_id: obj_id(5), energy: 1000,
+            half_life: 10, data: vec![], decay_curve: None, lad_mode: None,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "create on existing object must fail");
+    }
+
+    #[test]
+    fn t1_20_create_object_insufficient_balance_fails() {
+        let mut db = InMemoryStateDB::new();
+        // Balance below MIN_STORAGE_DEPOSIT (1000) → rejected.
+        fund_account(&mut db, 1, 10);
+        let txs = vec![Transaction::CreateObject(CreateObjectTx {
+            creator: addr(1), object_id: obj_id(7), energy: 500,
+            half_life: 10, data: vec![], decay_curve: None, lad_mode: None,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "insufficient balance for storage deposit must fail");
+    }
+
+    // ── exec_refresh paths ────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_refresh_active_object_increases_energy() {
+        let mut db = InMemoryStateDB::new();
+        db.put_object(StateObject {
+            id: obj_id(3), owner: addr(1), energy: 500, half_life: 10,
+            created_at: 0, last_refreshed: 0, state: ObjectState::Active,
+            grace_epoch: None, data: vec![], decay_curve: None, lad_mode: None,
+        });
+        let txs = vec![Transaction::Refresh(RefreshTx {
+            object_id: obj_id(3), energy_deposit: 200,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        let obj = db.get_object(&obj_id(3)).expect("object must still exist");
+        assert_eq!(obj.energy, 700, "energy must be 500 + 200");
+        assert_eq!(obj.state, ObjectState::Active);
+    }
+
+    #[test]
+    fn t1_20_refresh_grace_object_transitions_to_active() {
+        let mut db = InMemoryStateDB::new();
+        db.put_object(StateObject {
+            id: obj_id(4), owner: addr(1), energy: 100, half_life: 10,
+            created_at: 0, last_refreshed: 0, state: ObjectState::Grace,
+            grace_epoch: Some(5), data: vec![], decay_curve: None, lad_mode: None,
+        });
+        let txs = vec![Transaction::Refresh(RefreshTx {
+            object_id: obj_id(4), energy_deposit: 50,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        let obj = db.get_object(&obj_id(4)).expect("object must exist after refresh");
+        assert_eq!(obj.state, ObjectState::Active, "Grace object must become Active after refresh");
+        assert!(obj.grace_epoch.is_none(), "grace_epoch must be cleared");
+    }
+
+    #[test]
+    fn t1_20_refresh_missing_object_fails() {
+        let mut db = InMemoryStateDB::new();
+        // No object or ghost at obj_id(9) — exec_refresh returns ObjectNotFound.
+        let txs = vec![Transaction::Refresh(RefreshTx {
+            object_id: obj_id(9), energy_deposit: 100,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "refresh on missing object/ghost must fail with ObjectNotFound");
+        assert_eq!(result.txs_executed, 0);
+    }
+
+    // ── exec_validator_stake error path ───────────────────────────────────
+
+    #[test]
+    fn t1_20_validator_stake_zero_amount_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        let txs = vec![Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1), stake_amount: 0, // zero
+            validator_id: 1, nonce: 0,
+            bls_public_key: None, vrf_public_key: None,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 0;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "zero-stake must fail");
+    }
+
 }
