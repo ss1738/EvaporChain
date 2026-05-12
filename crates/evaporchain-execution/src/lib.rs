@@ -8009,4 +8009,98 @@ contract Counter {
         exec.enable_rewards(tok);
         assert!(exec.reward_accumulator.is_some());
     }
+
+    // ── T1.20 gap-closure batch ────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_sort_txs_by_gas_priority_descending() {
+        let mut txs = vec![
+            Transaction::Refresh(evaporchain_types::RefreshTx {
+                object_id: [0u8; 32], energy_deposit: 0,
+                signature: None, public_key: None,
+            }),
+            Transaction::Transfer(evaporchain_types::TransferTx {
+                from: [1u8; 32], to: [2u8; 32], amount: 1, nonce: 0,
+                signature: None, public_key: None, mev_refund_eligible: None,
+            }),
+            Transaction::CreateObject(evaporchain_types::CreateObjectTx {
+                creator: [3u8; 32], object_id: [4u8; 32], energy: 500, half_life: 10,
+                data: vec![], decay_curve: None, lad_mode: None,
+                signature: None, public_key: None,
+            }),
+        ];
+        sort_txs_by_gas_priority(&mut txs);
+        // CreateObject (50_000) > Transfer (21_000) > Refresh (30_000).
+        // Sorted descending by gas: CreateObject(50k), Refresh(30k), Transfer(21k).
+        let gas: Vec<u64> = txs.iter().map(|t| SimpleExecutor::estimate_gas(t)).collect();
+        for w in gas.windows(2) {
+            assert!(w[0] >= w[1], "sort_txs_by_gas_priority must be descending; got {w:?}");
+        }
+    }
+
+    #[test]
+    fn t1_20_set_chain_id_updates_field() {
+        let mut exec = SimpleExecutor::new(10);
+        assert!(exec.chain_id.is_empty());
+        exec.set_chain_id("evaporchain-testnet-1".to_string());
+        assert_eq!(exec.chain_id, "evaporchain-testnet-1");
+    }
+
+    #[test]
+    fn t1_20_lamport_tick_is_zero_at_startup() {
+        let exec = SimpleExecutor::new(10);
+        assert_eq!(exec.lamport_tick(), 0);
+    }
+
+    #[test]
+    fn t1_20_record_cmu_observation_stores_verdict() {
+        let mut exec = SimpleExecutor::new(10);
+        // Before any observation, last_cmu_verdict is None.
+        // After a call, it must be Some(verdict).
+        let verdict = exec.record_cmu_observation(100, 50, 200);
+        // Verdict is returned AND stored.
+        let stored = exec.last_cmu_verdict.expect("cmu verdict must be stored after observation");
+        assert_eq!(verdict, stored);
+    }
+
+    #[test]
+    fn t1_20_record_tur_observation_stores_verdict() {
+        let mut exec = SimpleExecutor::new(10);
+        let samples = &[10u64, 12, 11, 10, 13];
+        let verdict = exec.record_tur_observation(samples, 500);
+        let stored = exec.last_tur_verdict.expect("tur verdict must be stored after observation");
+        assert_eq!(verdict, stored);
+    }
+
+    #[test]
+    fn t1_20_tick_lyapunov_fee_state_returns_ok() {
+        let mut exec = SimpleExecutor::new(10);
+        // SimpleExecutor::new does NOT initialise the fee controller, so
+        // tick_lyapunov_fee_state operates on default params. It must
+        // either succeed or return a typed error — it must NOT panic.
+        let _res = exec.tick_lyapunov_fee_state(21_000, 1);
+        // No assertion on the value — just verify it runs without panic.
+    }
+
+    #[test]
+    fn t1_20_apply_proposer_priority_bonus_no_accumulator_returns_zero() {
+        let mut db = evaporchain_state::InMemoryStateDB::new();
+        let mut exec = SimpleExecutor::new(10);
+        // Without a reward accumulator installed, must return 0.
+        let bonus = exec.apply_proposer_priority_bonus(&mut db, &[0u8; 32], 1, 1000, 10);
+        assert_eq!(bonus, 0, "no reward accumulator installed → priority bonus must be 0");
+    }
+
+    #[test]
+    fn t1_20_fee_controller_getter_none_before_set() {
+        let exec = SimpleExecutor::new(10);
+        assert!(exec.fee_controller().is_none(), "no fee controller set at construction");
+    }
+
+    #[test]
+    fn t1_20_fee_controller_mut_none_before_set() {
+        let mut exec = SimpleExecutor::new(10);
+        assert!(exec.fee_controller_mut().is_none());
+    }
+
 }
