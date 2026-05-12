@@ -70,6 +70,7 @@ pub mod compress_ark;
 pub mod eip197;
 pub mod grain_lfsr;
 pub mod groth16_wrapper;
+pub mod l_u_secondary_extract;
 pub mod mds_linalg;
 pub mod neptune_dump_parser;
 pub mod neptune_reference;
