@@ -1,4 +1,4 @@
-//! Phase 2.2-section-2 step 3: arkworks-side Poseidon gadget shape.
+//! Section 2 in-circuit Poseidon gadget.
 //!
 //! # What this module ships
 //!
@@ -10,19 +10,29 @@
 //! `z0[..]`, `zi[..]`, instance expansion, `ri_primary`) and
 //! emits the Poseidon hash with the documented order from PR #65.
 //!
-//! # CRITICAL caveat
+//! # Config functions
 //!
-//! Uses **arkworks-default Poseidon constants** (8 full + 60 partial
-//! rounds, alpha=5, generic Cauchy MDS via
-//! `find_poseidon_ark_and_mds`). These DO NOT match nova-snark's
-//! neptune Poseidon constants — outputs will diverge from the
-//! `neptune_reference` oracle. This gadget therefore validates the
-//! GADGET SHAPE (correct absorb order, correct squeeze, correct
-//! public-input-vs-witness allocation) but NOT byte parity.
+//! Three `PoseidonConfig<Bn254Fr>` builders:
 //!
-//! Step 4 of the port plan replaces the `PoseidonConfig` argument
-//! with neptune-equivalent constants. The gadget structure stays
-//! put. That's the BESPOKE wedge.
+//!   - [`placeholder_poseidon_config`] — arkworks-default
+//!     constants. **DOES NOT** match neptune; shape-only.
+//!   - [`neptune_aligned_poseidon_config`] — REAL neptune MDS
+//!     (loaded from JSON dump) + arkworks-default ARK. Partial
+//!     parity; used for constraint-budget measurement under
+//!     neptune-matching state width.
+//!   - [`fully_aligned_poseidon_config`] — REAL neptune MDS + ARK
+//!     from `crate::compress_ark::compress_full`'s reshaped output.
+//!     **Constants are now byte-correct vs neptune** per PR #103.
+//!
+//! # Residual divergence
+//!
+//! Even with `fully_aligned_poseidon_config`, hash outputs diverge
+//! from `neptune_hash_primary` because arkworks `PoseidonSpongeVar`'s
+//! per-round operation differs from neptune's
+//! `Poseidon::hash_optimized_static` (SBOX-trick-fused partial
+//! rounds). Tracked by the `assert_ne!`-style canary
+//! `fully_aligned_gadget_byte_parity_with_neptune`. Closing this gap
+//! is the remaining BESPOKE wedge for full hash parity.
 //!
 //! # Why ship the gadget shape before the constants
 //!
