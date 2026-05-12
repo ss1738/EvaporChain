@@ -3743,4 +3743,209 @@ mod tests {
         assert_eq!(result.txs_failed, 1, "zero-stake must fail");
     }
 
+
+    // -- T1.20 gap-closure: exec_transfer insufficient balance --
+
+    #[test]
+    fn t1_20_transfer_insufficient_balance_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 500);   // only 500
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 1_000, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = 0;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "insufficient balance must fail");
+    }
+
+    // -- T1.20 gap-closure: exec_transfer mint-bypass (from=[0u8;32]) --
+
+    #[test]
+    fn t1_20_transfer_mint_bypass_creates_recipient() {
+        let mut db = InMemoryStateDB::new();
+        // The mint-bypass (from=[0u8;32]) skips the nonce check/increment.
+        // Balance IS still checked, so seed the zero address with enough balance.
+        db.put_account(evaporchain_types::Account {
+            address: [0u8; 32], balance: 10_000, nonce: 0,
+            storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0, vesting: None,
+        });
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: [0u8; 32], to: addr(5), amount: 1_000, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = 0;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "mint-bypass must succeed");
+        assert_eq!(db.get_account(&addr(5)).unwrap().balance, 1_000);
+    }
+
+    // -- T1.20 gap-closure: exec_refresh ghost resurrection --
+
+    #[test]
+    fn t1_20_refresh_ghost_resurrection_succeeds() {
+        use evaporchain_types::GhostRecord;
+        let mut db = InMemoryStateDB::new();
+        // Plant a ghost record for object 77.
+        let ghost = GhostRecord {
+            object_id: obj_id(77),
+            owner: addr(10),
+            evaporated_at: 5,
+            data_hash: [0u8; 32],
+            original_data: Some(vec![0xDE, 0xAD]),
+            mmr_position: None,
+            original_half_life: None,
+        };
+        db.put_ghost(ghost);
+        // RefreshTx on a ghost object_id should resurrect it.
+        let txs = vec![Transaction::Refresh(evaporchain_types::RefreshTx {
+            object_id: obj_id(77),
+            energy_deposit: 2_000,
+            signature: None,
+            public_key: None,
+        })];
+        let block = make_block(2, 2, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = 0;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "ghost resurrection must succeed");
+        // Ghost must be gone, object must now exist.
+        assert!(db.get_ghost(&obj_id(77)).is_none(), "ghost must be cleared after resurrection");
+        let obj = db.get_object(&obj_id(77)).expect("resurrected object must exist");
+        assert_eq!(obj.energy, 2_000);
+    }
+
+    // -- T1.20 gap-closure: exec_validator_exit normal success --
+
+    #[test]
+    fn t1_20_validator_exit_success() {
+        use evaporchain_types::StakeRecord;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 20, 50_000);
+        // ValidatorExit requires an existing stake record for the validator.
+        db.put_stake(StakeRecord {
+            validator_id: 1,
+            validator_address: addr(20),
+            staked_amount: 10_000,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+        let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(20), validator_id: 1, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = 0;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "validator exit must succeed");
+        let acct = db.get_account(&addr(20)).unwrap();
+        assert_eq!(acct.nonce, 1, "nonce must be incremented");
+    }
+
+    // -- T1.20 gap-closure: exec_validator_exit invalid nonce --
+
+    #[test]
+    fn t1_20_validator_exit_invalid_nonce_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 21, 50_000);
+        let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(21), validator_id: 2, nonce: 99, // wrong
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = 0;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "wrong nonce on validator exit must fail");
+    }
+
+    // -- T1.20 gap-closure: exec_validator_stake insufficient balance --
+
+    #[test]
+    fn t1_20_validator_stake_insufficient_balance_fails() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 30, 100); // only 100
+        let txs = vec![Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(30), stake_amount: 50_000,
+            validator_id: 1, nonce: 0,
+            bls_public_key: None, vrf_public_key: None,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = 0;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "insufficient balance for stake must fail");
+    }
+
+    // -- T1.20 gap-closure: exec_validator_stake valid success --
+
+    #[test]
+    fn t1_20_validator_stake_success() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 31, 100_000);
+        let txs = vec![Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(31), stake_amount: 50_000,
+            validator_id: 3, nonce: 0,
+            bls_public_key: None, vrf_public_key: None,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = 0;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "valid stake must succeed");
+        let acct = db.get_account(&addr(31)).unwrap();
+        assert_eq!(acct.balance, 50_000, "stake amount must be deducted");
+        assert_eq!(acct.nonce, 1);
+    }
+
+    // -- T1.20 gap-closure: new_with_sig_verification flag --
+
+    #[test]
+    fn t1_20_new_with_sig_verification_sets_flag() {
+        let ex = BlockStmExecutor::new_with_sig_verification(7);
+        assert!(ex.verify_signatures, "new_with_sig_verification must set flag=true");
+    }
+
+    // -- T1.20 gap-closure: fee_controller accessors --
+
+    #[test]
+    fn t1_20_fee_controller_none_by_default() {
+        let ex = BlockStmExecutor::new_for_test(7);
+        assert!(ex.fee_controller().is_none());
+    }
+
+    #[test]
+    fn t1_20_fee_controller_mut_none_by_default() {
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        assert!(ex.fee_controller_mut().is_none());
+    }
+
+    // -- T1.20 gap-closure: execute_sequential path (parallel_threshold high) --
+
+    #[test]
+    fn t1_20_sequential_path_via_high_threshold() {
+        // With parallel_threshold = usize::MAX, ALL tx counts fall below
+        // threshold -> execute_sequential is always chosen.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 40, 50_000);
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(40), to: addr(41), amount: 1_000, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = BlockStmExecutor::new_for_test(7);
+        ex.parallel_threshold = usize::MAX;
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "sequential path must also succeed");
+        assert_eq!(db.get_account(&addr(41)).unwrap().balance, 1_000);
+    }
+
 }
