@@ -311,6 +311,32 @@ mod tests {
         );
     }
 
+    /// Empirical pin: `dummy()` must produce a *satisfied* constraint
+    /// system, not just one that synthesizes without panicking.
+    ///
+    /// This is the contract trusted setup depends on — if dummy()
+    /// were Unsatisfiable, Groth16's `Groth16::setup(dummy, rng)` call
+    /// would silently produce a prover key that no real witness could
+    /// later satisfy.
+    ///
+    /// Catches future regressions where Section 2 / Section 3 wire-in
+    /// code accidentally enforces a constraint on dummy()'s zero
+    /// witness values (e.g. a Poseidon-hash equality check that fails
+    /// when committed_hash_primary == 0 and the re-hashed value != 0).
+    #[test]
+    fn dummy_circuit_is_satisfied_under_section_1_gate() {
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        NovaVerifierCircuit::dummy()
+            .generate_constraints(cs.clone())
+            .expect("dummy synthesize");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied check"),
+            "dummy() must produce a satisfied CS — Section 1 gate accepts dummy \
+             (num_steps=1, |z0|=|zi|=1) and no later section adds an unsatisfied \
+             constraint on dummy's zero witness"
+        );
+    }
+
     /// Pin that a circuit with non-trivial state-vector arity
     /// produces matching public-input count. Real chain `z` vectors
     /// will be larger (e.g., 4-entry state hash); this catches any
