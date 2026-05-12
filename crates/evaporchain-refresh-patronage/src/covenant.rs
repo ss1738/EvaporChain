@@ -37,3 +37,41 @@ impl PatronageCovenant {
         epoch < self.expires_epoch
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pc(created: u64, expires: u64) -> PatronageCovenant {
+        PatronageCovenant {
+            object_id: vec![1, 2, 3],
+            namespace_id: vec![],
+            donation_per_epoch: 10,
+            created_epoch: created,
+            expires_epoch: expires,
+            pre_funded: 100,
+            patronage_score: 0,
+            last_honoured_epoch: None,
+        }
+    }
+
+    /// T1.20 — remaining_epochs saturates at zero past expiry.
+    #[test]
+    fn t1_20_remaining_epochs_saturates() {
+        let c = pc(0, 100);
+        assert_eq!(c.remaining_epochs(50), 50);
+        assert_eq!(c.remaining_epochs(99), 1);
+        assert_eq!(c.remaining_epochs(100), 0);
+        assert_eq!(c.remaining_epochs(99999), 0);
+    }
+
+    /// T1.20 — is_active true before expires, false at/after.
+    #[test]
+    fn t1_20_is_active() {
+        let c = pc(0, 100);
+        assert!(c.is_active(0));
+        assert!(c.is_active(99));
+        assert!(!c.is_active(100));
+        assert!(!c.is_active(200));
+    }
+}
