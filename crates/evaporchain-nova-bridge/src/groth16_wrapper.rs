@@ -35,8 +35,8 @@
 //! point is the same function signature with the ceremony-derived
 //! parameters substituted.
 
-use ark_bn254::Bn254;
-use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
+use ark_bn254::{Bn254, Fr as Bn254Fr};
+use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_snark::SNARK;
 use ark_std::rand::{CryptoRng, RngCore};
 
@@ -52,6 +52,54 @@ pub fn setup<R: RngCore + CryptoRng>(
 ) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::r1cs::SynthesisError> {
     let dummy = NovaVerifierCircuit::dummy();
     Groth16::<Bn254>::circuit_specific_setup(dummy, rng)
+}
+
+/// Generate a Groth16 proof for a concrete `NovaVerifierCircuit`
+/// witness, using the provided proving key.
+///
+/// The circuit can be any `NovaVerifierCircuit` that synthesises
+/// a satisfied CS — `NovaVerifierCircuit::dummy()` works today;
+/// `circuit_builder::build_circuit_from_fixture(&rs)` will work
+/// once Sections 2/3 wire up.
+pub fn prove<R: RngCore + CryptoRng>(
+    pk: &ProvingKey<Bn254>,
+    circuit: NovaVerifierCircuit,
+    rng: &mut R,
+) -> Result<Proof<Bn254>, ark_relations::r1cs::SynthesisError> {
+    Groth16::<Bn254>::prove(pk, circuit, rng)
+}
+
+/// Verify a Groth16 proof against the verifying key + public
+/// inputs.
+///
+/// `public_inputs` must be supplied in the same order as the
+/// circuit allocates them via `new_input`:
+///
+///   `[committed_hash_primary, committed_hash_secondary, z0[..], zi[..]]`
+///
+/// (The Groth16 const-1 input is added implicitly by arkworks
+/// and is not part of this slice.)
+pub fn verify(
+    vk: &VerifyingKey<Bn254>,
+    public_inputs: &[Bn254Fr],
+    proof: &Proof<Bn254>,
+) -> Result<bool, ark_relations::r1cs::SynthesisError> {
+    Groth16::<Bn254>::verify(vk, public_inputs, proof)
+}
+
+/// Convenience: derive the public-inputs slice for a given
+/// `NovaVerifierCircuit` in the order [`verify`] expects.
+///
+/// Useful when the same `NovaVerifierCircuit` is fed to [`prove`]
+/// — both sides must agree on the slice, and writing the order
+/// out twice at call sites invites drift.
+pub fn public_inputs_for(circuit: &NovaVerifierCircuit) -> Vec<Bn254Fr> {
+    let mut out = Vec::with_capacity(2 + circuit.z0.len() + circuit.zi.len());
+    out.push(circuit.committed_hash_primary);
+    out.push(circuit.committed_hash_secondary);
+    out.extend_from_slice(&circuit.z0);
+    out.extend_from_slice(&circuit.zi);
+    out
 }
 
 #[cfg(test)]
@@ -144,5 +192,79 @@ mod tests {
         pk_a.serialize_compressed(&mut pa).unwrap();
         pk_b.serialize_compressed(&mut pb).unwrap();
         assert_eq!(pa, pb, "pk must be deterministic for fixed seed");
+    }
+
+    /// End-to-end Groth16 round-trip on the dummy circuit:
+    /// setup → prove → verify(true). Pins that all three wrappers
+    /// agree on the circuit shape.
+    ///
+    /// The dummy witness has zero hash placeholders, but Section
+    /// 2/3 are still TODO in `generate_constraints`, so no
+    /// constraint actually consumes those values — the proof is
+    /// valid today. When Section 2/3 wire up, this test will
+    /// either still pass (if the in-circuit re-hash agrees on
+    /// `committed_hash_* == 0`) or fail (and the swap-in point
+    /// is `circuit_builder::build_circuit_from_fixture(&rs)` with
+    /// real values).
+    #[test]
+    fn prove_and_verify_dummy_round_trip_accepts() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(101);
+        let (pk, vk) = setup(&mut rng).expect("setup");
+
+        let dummy = NovaVerifierCircuit::dummy();
+        let public_inputs = public_inputs_for(&dummy);
+        let proof = prove(&pk, dummy, &mut rng).expect("prove");
+
+        let accepted = verify(&vk, &public_inputs, &proof).expect("verify");
+        assert!(accepted, "dummy proof must verify against dummy public inputs");
+    }
+
+    /// Tampered public input must be rejected by verify. Catches
+    /// a regression where verify accidentally short-circuits to
+    /// `Ok(true)` regardless of input.
+    #[test]
+    fn verify_rejects_tampered_public_input() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(202);
+        let (pk, vk) = setup(&mut rng).expect("setup");
+
+        let dummy = NovaVerifierCircuit::dummy();
+        let mut public_inputs = public_inputs_for(&dummy);
+        let proof = prove(&pk, dummy, &mut rng).expect("prove");
+
+        // Sanity: untouched verify accepts.
+        assert!(verify(&vk, &public_inputs, &proof).expect("verify clean"));
+
+        // Tamper: bump the first public input (committed_hash_primary
+        // was 0 for the dummy; make it 1).
+        public_inputs[0] = Bn254Fr::from(1u64);
+        let rejected = verify(&vk, &public_inputs, &proof).expect("verify tampered");
+        assert!(!rejected, "verify must reject a proof against tampered public inputs");
+    }
+
+    /// `public_inputs_for` honours the circuit's allocation order:
+    /// [hash_primary, hash_secondary, z0[..], zi[..]]. Pin the
+    /// exact layout for a circuit with non-trivial arity so future
+    /// refactors don't silently shift the public-input slice.
+    #[test]
+    fn public_inputs_for_honours_circuit_allocation_order() {
+        let circuit = NovaVerifierCircuit::new(
+            7,
+            vec![Bn254Fr::from(11u64), Bn254Fr::from(13u64)],
+            vec![Bn254Fr::from(17u64), Bn254Fr::from(19u64)],
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(3u64),
+        );
+        let pi = public_inputs_for(&circuit);
+        assert_eq!(
+            pi,
+            vec![
+                Bn254Fr::from(2u64),  // committed_hash_primary
+                Bn254Fr::from(3u64),  // committed_hash_secondary
+                Bn254Fr::from(11u64), // z0[0]
+                Bn254Fr::from(13u64), // z0[1]
+                Bn254Fr::from(17u64), // zi[0]
+                Bn254Fr::from(19u64), // zi[1]
+            ],
+        );
     }
 }
