@@ -36,6 +36,7 @@
 //!
 //! **Theorem (proposed):** Under honest-validator + LightCone causality
 //! + EvaporChain's single-λ decay, `S ≤ 2`.
+//!
 //! **Violation `S > 2` ⇒ hidden cross-validator coordination.**
 //!
 //! Where Bell's theorem gave physics quantum-entanglement detection,
