@@ -1198,11 +1198,12 @@ mod tests {
     // works in prod; in-memory was the gap.
 
     fn make_account(addr_byte: u8, balance: u64, nonce: u64) -> Account {
-        let mut a = Account::default();
-        a.address = [addr_byte; 32];
-        a.balance = balance;
-        a.nonce = nonce;
-        a
+        Account {
+            address: [addr_byte; 32],
+            balance,
+            nonce,
+            ..Account::default()
+        }
     }
 
     #[test]
@@ -1348,16 +1349,12 @@ mod tests {
         assert!(db.latest_snapshot_height().is_none());
 
         // Snapshot at height 10 with balance 100.
-        let mut acc = Account::default();
-        acc.address = addr;
-        acc.balance = 100;
+        let acc = Account { address: addr, balance: 100, ..Account::default() };
         db.put_account(acc);
         db.commit_state_snapshot(10);
 
         // Snapshot at height 20 after balance bump.
-        let mut acc2 = Account::default();
-        acc2.address = addr;
-        acc2.balance = 200;
+        let acc2 = Account { address: addr, balance: 200, ..Account::default() };
         db.put_account(acc2);
         db.commit_state_snapshot(20);
 
