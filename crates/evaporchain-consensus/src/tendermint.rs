@@ -17859,4 +17859,286 @@ mod phase2_round_trip_tests {
             "clean block must advance the chain"
         );
     }
+
+    // ═══ T1.20 batch — accessor/utility function coverage ═══════════════
+
+    fn make_tc3() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        TendermintConsensus::new_for_test(1, 5, vs)
+    }
+
+    #[test]
+    fn t1_20_settle_slash_zero_amount_is_noop() {
+        let mut tc = make_tc3();
+        tc.settle_slash(0, 1);
+        // No credit accrued — pool should be empty.
+        assert!(tc.refresh_pool_credits().is_empty());
+    }
+
+    #[test]
+    fn t1_20_settle_slash_nonzero_accrues_to_slsh_namespace() {
+        let mut tc = make_tc3();
+        tc.settle_slash(5000, 10);
+        let credits = tc.refresh_pool_credits();
+        assert!(!credits.is_empty(), "SLSH credit must be recorded");
+        // The SLSH namespace is [0x53, 0x4c, 0x53, 0x48].
+        assert!(credits.iter().any(|(ns, amt, _)| ns == "534c5348" && *amt == 5000));
+    }
+
+    #[test]
+    fn t1_20_settle_slash_accumulates_across_calls() {
+        let mut tc = make_tc3();
+        tc.settle_slash(1000, 1);
+        tc.settle_slash(2000, 1);
+        let credits = tc.refresh_pool_credits();
+        let total: u64 = credits.iter().map(|(_, a, _)| a).sum();
+        assert_eq!(total, 3000);
+    }
+
+    #[test]
+    fn t1_20_last_bell_reading_none_before_first_measurement() {
+        let tc = make_tc3();
+        assert!(tc.last_bell_reading().is_none());
+    }
+
+    #[test]
+    fn t1_20_last_bell_reading_some_after_s_milli_set() {
+        let mut tc = make_tc3();
+        // Directly set the private field (accessible from this module).
+        tc.last_bell_s_milli = Some(2828);
+        tc.last_bell_block_height = 42;
+        tc.last_bell_epoch = 7;
+        tc.last_bell_certified = true;
+        let r = tc.last_bell_reading().expect("must be Some");
+        assert_eq!(r.s_value_milli, 2828);
+        assert_eq!(r.block_height, 42);
+        assert_eq!(r.epoch, 7);
+        assert!(r.bell_certified);
+    }
+
+    #[test]
+    fn t1_20_tombstone_for_unknown_address_returns_none() {
+        let tc = make_tc3();
+        assert!(tc.tombstone_for(&[0xDE; 32]).is_none());
+    }
+
+    #[test]
+    fn t1_20_decay_all_boltzmann_stakes_seeds_all_validators() {
+        let mut tc = make_tc3();
+        assert!(tc.boltzmann_stakes.is_empty(), "fresh TC has no Boltzmann stakes");
+        tc.decay_all_boltzmann_stakes(100);
+        // All 3 validators must now have entries.
+        assert_eq!(tc.boltzmann_stakes.len(), 3);
+    }
+
+    #[test]
+    fn t1_20_decay_all_boltzmann_stakes_runs_on_existing_entries() {
+        let mut tc = make_tc3();
+        // Seed + initial decay
+        tc.decay_all_boltzmann_stakes(10);
+        let stakes_at_10: Vec<u64> = tc.boltzmann_stakes.values().map(|s| s.active).collect();
+        // A second decay at a later epoch must produce values ≤ the first (energy only falls).
+        tc.decay_all_boltzmann_stakes(20);
+        for (s, orig) in tc.boltzmann_stakes.values().zip(stakes_at_10.iter()) {
+            assert!(s.active <= *orig, "Boltzmann stake must not increase from decay alone");
+        }
+    }
+
+    #[test]
+    fn t1_20_refresh_proposer_boltzmann_stake_known_validator() {
+        let mut tc = make_tc3();
+        tc.decay_all_boltzmann_stakes(0);
+        let before = tc.boltzmann_stakes.get(&1).map(|s| s.active).unwrap_or(0);
+        // Credit a large refresh — active stake must rise.
+        tc.refresh_proposer_boltzmann_stake(1, 0, 100_000);
+        let after = tc.boltzmann_stakes.get(&1).map(|s| s.active).unwrap_or(0);
+        assert!(after > before, "refresh must increase Boltzmann stake");
+    }
+
+    #[test]
+    fn t1_20_refresh_proposer_boltzmann_stake_unknown_validator_no_panic() {
+        let mut tc = make_tc3();
+        // Validator 99 doesn't exist — must not panic. ensure_boltzmann_stake seeds
+        // a zero-stake entry for any id (validator-set membership not checked there),
+        // so refresh_on_block runs against the zero-stake record harmlessly.
+        tc.refresh_proposer_boltzmann_stake(99, 0, 50_000);
+        // Entry was created (zero-stake), but we just care that there was no panic.
+        let stake = tc.boltzmann_stakes.get(&99).map(|s| s.active).unwrap_or(0);
+        let _ = stake; // non-zero or zero depending on refresh formula; both valid
+    }
+
+    #[test]
+    fn t1_20_boltzmann_proposer_weights_returns_sorted_list() {
+        let mut tc = make_tc3();
+        tc.decay_all_boltzmann_stakes(0);
+        let weights = tc.boltzmann_proposer_weights(1_000);
+        assert_eq!(weights.len(), 3, "one weight per validator");
+        // Must be sorted descending by weight.
+        for w in weights.windows(2) {
+            assert!(w[0].1 >= w[1].1, "weights must be descending");
+        }
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_equivocation_unknown_validator_returns_zero() {
+        let mut tc = make_tc3();
+        let slashed = tc.sanov_slash_equivocation(99, 100);
+        assert_eq!(slashed, 0);
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_equivocation_known_validator_produces_slash() {
+        let mut tc = make_tc3();
+        let slashed = tc.sanov_slash_equivocation(1, 100);
+        assert!(slashed > 0, "equivocation should produce non-zero slash");
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_downtime_below_jail_threshold_does_not_jail() {
+        let mut tc = make_tc3();
+        // 2 missed blocks — below the jail threshold of 3. Slash applied but no jail.
+        let slash = tc.sanov_slash_downtime(1, 2, 100);
+        // The formula may or may not slash a small amount; the validator must NOT be jailed.
+        let _ = slash;
+        if let Some(v) = tc.validator_set().get(1) {
+            assert!(!v.jailed, "2 missed blocks must not jail the validator");
+        }
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_mcc_mode_empty_candidates() {
+        let tc = make_tc3();
+        // Default mode is "mcc" — no candidates → None.
+        assert!(tc.authoritative_head(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_singh_attractor_mode_empty_candidates() {
+        let mut tc = make_tc3();
+        let att = evaporchain_singh_attractor::Attractor::new(500, 100);
+        tc.fork_choice_attractors = vec![att];
+        tc.governance_params
+            .insert("fork_choice_mode".to_string(), "singh_attractor".to_string());
+        // Singh attractor mode, no candidates → None.
+        assert!(tc.authoritative_head(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_singh_attractor_mode_falls_back_to_mcc_if_no_attractors() {
+        let mut tc = make_tc3();
+        // Mode is singh_attractor but fork_choice_attractors is empty → falls back to MCC.
+        tc.governance_params
+            .insert("fork_choice_mode".to_string(), "singh_attractor".to_string());
+        // empty fork_choice_attractors → MCC path → no candidates → None
+        assert!(tc.authoritative_head(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_singh_attractor_fork_choice_empty_attractors_returns_none() {
+        let tc = make_tc3();
+        let result = tc.singh_attractor_fork_choice(&[[0xAA; 32]], &[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_mcc_choose_fork_empty_candidates_returns_none() {
+        let tc = make_tc3();
+        let result = tc.mcc_choose_fork(&[], 10_000);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_mcc_choose_fork_all_tainted_returns_none() {
+        let mut tc = make_tc3();
+        let head = [0xAA; 32];
+        tc.slashed_equivocator_blocks.insert(head);
+        // All candidates are tainted → no trajectories → None.
+        let result = tc.mcc_choose_fork(&[head], 10_000);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_causal_cone_summary_head_not_in_dag_returns_none() {
+        let tc = make_tc3();
+        // Head not in light_cone_dag → summarize_cone returns Err → None.
+        let result = tc.causal_cone_summary([0xDE; 32], 200, 10);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_cartel_alarm_accessors_initial_state() {
+        let tc = make_tc3();
+        assert_eq!(tc.cartel_alarm_buffer_len(), 0);
+        assert_eq!(tc.cartel_alarm_records_seen(), 0);
+        assert_eq!(tc.pending_cartel_alarms_count(), 0);
+        assert!(tc.cartel_alarm_status().is_none());
+    }
+
+    #[test]
+    fn t1_20_take_pending_cartel_alarms_drains_queue() {
+        let mut tc = make_tc3();
+        assert!(tc.take_pending_cartel_alarms().is_empty());
+        // Queue stays empty after drain.
+        assert_eq!(tc.pending_cartel_alarms_count(), 0);
+    }
+
+    #[test]
+    fn t1_20_mev_observations_and_digest_initial_state() {
+        let tc = make_tc3();
+        assert!(tc.mev_observations().is_empty());
+        // Digest of empty state is deterministic (not a panic).
+        let d = tc.mev_state_digest();
+        assert_ne!(d, [0u8; 32], "even empty digest is non-trivial BLAKE3 output");
+    }
+
+    #[test]
+    fn t1_20_state_branches_empty_at_init() {
+        let tc = make_tc3();
+        assert!(tc.state_branches().is_empty());
+        assert_eq!(tc.dag_round_states_count(), 0);
+        assert!(tc.dag_round_state_counts(&[0xAB; 32]).is_none());
+    }
+
+    #[test]
+    fn t1_20_cross_fork_equivocations_empty_at_init() {
+        let tc = make_tc3();
+        assert!(tc.cross_fork_equivocations().is_empty());
+    }
+
+    #[test]
+    fn t1_20_lambda_fold_instance_returns_without_panic() {
+        let tc = make_tc3();
+        let _ = tc.lambda_fold_instance();
+    }
+
+    #[test]
+    fn t1_20_due_refund_txs_empty_on_fresh_state() {
+        let tc = make_tc3();
+        assert!(tc.due_refund_txs(100).is_empty());
+    }
+
+    #[test]
+    fn t1_20_record_state_branch_idempotent_update() {
+        let mut tc = make_tc3();
+        let tip = [0x55; 32];
+        tc.record_state_branch(tip, 10, 500);
+        tc.record_state_branch(tip, 20, 800); // update: higher block, higher caliber
+        let branches = tc.state_branches();
+        let meta = branches.get(&tip).expect("branch must exist");
+        assert_eq!(meta.last_touched_block, 20);
+        assert_eq!(meta.caliber, 800);
+    }
+
+    #[test]
+    fn t1_20_record_state_branch_does_not_decrease_last_touched() {
+        let mut tc = make_tc3();
+        let tip = [0x66; 32];
+        tc.record_state_branch(tip, 100, 1000);
+        tc.record_state_branch(tip, 50, 2000); // lower block height — must not regress
+        let meta = tc.state_branches().get(&tip).expect("must exist");
+        assert_eq!(meta.last_touched_block, 100, "must keep the max block height");
+    }
 }
