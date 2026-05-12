@@ -51,10 +51,14 @@
 #![warn(missing_docs)]
 
 pub mod recursive_snark_fixture;
+pub mod scalar_adapter;
 pub mod verifier_circuit;
 
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
+};
+pub use scalar_adapter::{
+    bn254_fq_to_nova_grumpkin, bn254_fr_to_nova, nova_grumpkin_to_bn254_fq, nova_to_bn254_fr,
 };
 pub use verifier_circuit::NovaVerifierCircuit;
 
