@@ -140,36 +140,65 @@ mod tests {
         assert_eq!(two, PrimaryScalar::from(2u64));
     }
 
-    /// Reference vector for the arkworks port to match.
+    /// Reference vector for the arkworks port to match: `[42, 7, 99]`.
+    /// Bytes captured from a prior Mini-1 run of this test and locked
+    /// in here as `[u8; 32]` little-endian (the `to_repr()` form).
     ///
-    /// Input: `[42, 7, 99]` (chosen arbitrarily; the values don't
-    /// matter, only the pinning does). Output: whatever neptune
-    /// produces.
-    ///
-    /// When Section 2's arkworks gadget lands, it runs the same
-    /// absorb sequence and must produce the same scalar bytes. If
-    /// THIS test ever changes its expected value, the port needs
-    /// re-verifying because nova's neptune behaviour shifted.
+    /// When Section 2's arkworks gadget lands, it absorbs the same
+    /// sequence and must `.to_repr() == EXPECTED`. If THIS test ever
+    /// fires, nova-snark's neptune fork has changed its parameters
+    /// and the arkworks port needs re-verifying.
     #[test]
-    fn pinned_reference_vector() {
+    fn pinned_reference_vector_42_7_99() {
         let inputs = vec![
             PrimaryScalar::from(42u64),
             PrimaryScalar::from(7u64),
             PrimaryScalar::from(99u64),
         ];
         let h = neptune_hash_primary(&inputs);
-        // Print for the future arkworks port author to copy into
-        // their gadget test.
-        eprintln!(
-            "PINNED neptune_hash_primary([42, 7, 99]) = {:?}",
-            h.to_repr()
+        const EXPECTED_LE: [u8; 32] = [
+            131, 47, 215, 132, 108, 127, 155, 157, 242, 38, 202, 31, 128, 130, 76, 218, 237, 255,
+            134, 244, 210, 204, 231, 79, 221, 11, 190, 164, 69, 163, 134, 1,
+        ];
+        let repr: [u8; 32] = h.to_repr().into();
+        assert_eq!(
+            repr, EXPECTED_LE,
+            "neptune_hash_primary([42, 7, 99]) drifted from pinned reference"
         );
-        // Not asserting a specific value — neptune's exact output
-        // is implementation-defined and we want to document it,
-        // not freeze it before the port. Once the port lands, the
-        // arkworks gadget's test asserts the matching scalar.
-        // For now, just confirm it's non-zero (catches a totally
-        // broken hash).
-        assert_ne!(h, PrimaryScalar::ZERO, "real input must not hash to zero");
+    }
+
+    /// Reference vector for Section 2's PRIMARY-side absorb sequence
+    /// at `z_arity = 1` with placeholder values:
+    ///   `[pp.digest=0, num_steps=1, z0[0]=0, zi[0]=1, ri_primary=0]`
+    ///
+    /// This is the *exact shape* (but with zero / trivial values) of
+    /// what nova-snark's `RecursiveSNARK::verify` absorbs to produce
+    /// `hash_primary` — minus the cross-side `r_U_secondary` instance
+    /// absorb which expands to multiple scalars at adapter time. The
+    /// Section 2 gadget at `z_arity = 1` will absorb the same shape
+    /// (with real values) and must produce the matching output for
+    /// these placeholders.
+    ///
+    /// The byte vector is pinned from a prior Mini-1 run; if it ever
+    /// changes, future Section 2 gadgets need re-verifying.
+    #[test]
+    fn pinned_section_2_primary_minimal_absorb_sequence() {
+        let inputs = vec![
+            PrimaryScalar::ZERO,         // pp.digest (placeholder)
+            PrimaryScalar::from(1u64),   // num_steps
+            PrimaryScalar::ZERO,         // z0[0]
+            PrimaryScalar::from(1u64),   // zi[0]
+            PrimaryScalar::ZERO,         // ri_primary
+        ];
+        let h = neptune_hash_primary(&inputs);
+        const EXPECTED_LE: [u8; 32] = [
+            119, 216, 133, 86, 248, 52, 238, 11, 170, 80, 203, 180, 56, 189, 50, 158, 37, 224, 8,
+            145, 66, 66, 174, 238, 128, 144, 18, 209, 173, 117, 250, 2,
+        ];
+        let repr: [u8; 32] = h.to_repr().into();
+        assert_eq!(
+            repr, EXPECTED_LE,
+            "Section-2 primary minimal absorb output drifted from pinned reference"
+        );
     }
 }
