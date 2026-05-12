@@ -75,6 +75,9 @@ pub struct NovaVerifierCircuit {
     /// The two committed hashes from `l_u_secondary.X[..2]`.
     /// Section-2 check: re-hash everything and compare.
     pub committed_hash_primary: Bn254Fr,
+    /// Companion to `committed_hash_primary` — `l_u_secondary.X[1]`.
+    /// Pre-converted from `<E2 as Engine>::Scalar` to `Bn254Fr` via
+    /// PR #66's scalar adapter at adapter-time.
     pub committed_hash_secondary: Bn254Fr,
     // Section-3 witnesses (RelaxedR1CS instances + their R1CS
     // satisfying assignments) are intentionally NOT field members

@@ -50,6 +50,9 @@ pub struct VendoredGrain {
 }
 
 impl VendoredGrain {
+    /// Initialize from the 80-bit seed produced by
+    /// `neptune_init_sequence`. Runs the 160-round warmup
+    /// (matches neptune `Grain::new`).
     pub fn new(init_sequence: Vec<bool>) -> Self {
         assert_eq!(80, init_sequence.len());
         let mut g = VendoredGrain { state: init_sequence };
@@ -76,6 +79,9 @@ impl VendoredGrain {
         self.state[index]
     }
 
+    /// Emit one filtered output bit using neptune's `Iterator::next`
+    /// semantics: clock for cond, if cond=0 discard one and try
+    /// again, on cond=1 clock once more and return that bit.
     pub fn next_filtered_bit(&mut self) -> bool {
         let mut new_bit = self.generate_new_bit();
         while !new_bit {

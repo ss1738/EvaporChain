@@ -35,7 +35,6 @@
 //! parameter), the test fires loudly and forces a regen of test
 //! vectors that the arkworks gadget then needs to match.
 
-use ff::{Field, PrimeField};
 use nova_snark::{
     provider::poseidon::{PoseidonConstantsCircuit, PoseidonRO},
     traits::ROTrait,
@@ -71,6 +70,7 @@ pub const NUM_HASH_BITS: usize = 250;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ff::{Field, PrimeField};
 
     /// Reproducibility: a fixed absorb sequence must always produce
     /// the same scalar across runs. If this ever fires, a non-
