@@ -40,7 +40,7 @@ mod press_claim_tests {
     /// a structural test.
     ///
     /// Press claim: "EvaporChain DA encodes block bytes into N data
-    /// + M parity Reed-Solomon shards. Any subset of N shards
+    /// plus M parity Reed-Solomon shards. Any subset of N shards
     /// reconstructs the original payload exactly. Each shard carries
     /// a domain-tagged BLAKE3 hash that detects single-byte tampering.
     /// Empty input fails closed; insufficient-shard reconstruction
@@ -66,8 +66,8 @@ mod press_claim_tests {
         // Drop 4 shards (the parity ones); the remaining 4 data
         // shards reconstruct the original payload byte-for-byte.
         let mut subset: Vec<Option<Vec<u8>>> = (0..8).map(|_| None).collect();
-        for i in 0..4 {
-            subset[i] = Some(encoded.shards[i].data.clone());
+        for (i, slot) in subset.iter_mut().take(4).enumerate() {
+            *slot = Some(encoded.shards[i].data.clone());
         }
         let reconstructed = enc.reconstruct(subset).unwrap();
         assert_eq!(&reconstructed[..payload.len()], &payload[..]);
@@ -79,8 +79,8 @@ mod press_claim_tests {
 
         // Insufficient shards (only 3 of 4 needed) → fail closed.
         let mut too_few: Vec<Option<Vec<u8>>> = (0..8).map(|_| None).collect();
-        for i in 0..3 {
-            too_few[i] = Some(encoded.shards[i].data.clone());
+        for (i, slot) in too_few.iter_mut().take(3).enumerate() {
+            *slot = Some(encoded.shards[i].data.clone());
         }
         assert!(enc.reconstruct(too_few).is_err());
 
