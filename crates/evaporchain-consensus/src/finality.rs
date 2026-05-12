@@ -857,4 +857,44 @@ mod tests {
             ft.on_block_finalized(7, [7u8; 32], [0xAAu8; 32], 0, gap_cert, 3000, 4000, 700);
         assert!(admitted, "legitimate gap-fill above watermark must succeed");
     }
+
+    /// T1.20 — FinalityRecord::participation_rate returns 0.0 when
+    /// total_stake is zero (line 50 — the early-return branch).
+    #[test]
+    fn t1_20_finality_record_participation_zero_stake() {
+        let cert = make_cert(1, [1u8; 32], vec![0]);
+        let rec = FinalityRecord {
+            height: 1,
+            block_hash: [1u8; 32],
+            state_root: [0xAA; 32],
+            epoch: 0,
+            finalized_at: 0,
+            certificate: cert,
+            signer_count: 1,
+            signing_stake: 0,
+            total_stake: 0,
+            da_confirmed: false,
+        };
+        assert_eq!(rec.participation_rate(), 0.0);
+    }
+
+    /// T1.20 — FinalityRecord::participation_rate on nontrivial
+    /// stake returns the right fraction.
+    #[test]
+    fn t1_20_finality_record_participation_nontrivial() {
+        let cert = make_cert(1, [1u8; 32], vec![0, 1]);
+        let rec = FinalityRecord {
+            height: 1,
+            block_hash: [1u8; 32],
+            state_root: [0xAA; 32],
+            epoch: 0,
+            finalized_at: 0,
+            certificate: cert,
+            signer_count: 2,
+            signing_stake: 1500,
+            total_stake: 2000,
+            da_confirmed: false,
+        };
+        assert!((rec.participation_rate() - 0.75).abs() < 1e-9);
+    }
 }
