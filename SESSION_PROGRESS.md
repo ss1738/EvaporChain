@@ -48,6 +48,41 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-12 (evening) — T1.15: paymaster idempotency double-allocate race closed
+
+**Focus:** Close the documented concurrent-retry race in `sponsor_idempotent` — between `cache.get` and `cache.insert`, two retries with the same `Idempotency-Key` could both miss + both allocate a paymaster nonce.
+
+**Commits shipped:** 1 (`1f8c50a2`). Branched off `origin/main` as `pr/t1-15-paymaster-inflight-lock`. PR #156 open.
+
+**Deliverables:**
+- New `inflight_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>` field on `Paymaster`. Per-key `Arc<Mutex<()>>` serialises concurrent retries by idempotency key only — different keys remain fully parallel.
+- `sponsor_idempotent` rewritten as a 6-phase flow: optimistic cache check → per-key lock acquire → cache re-check (covers the racy Phase 1 window) → sponsor_inner → cache insert (BEFORE releasing the per-key lock, so waiters see it on their Phase 3) → conservative cleanup (Arc strong_count ≤ 2 ⇒ remove from map).
+- `concurrent_same_key_retries_dont_double_allocate` test: 16 threads barrier-wait then race on the same key. Asserts all 16 agree on the same nonce; `next_paymaster_nonce()` = 1; replay metric = 15; ok metric = 1.
+
+**Empirical results:**
+- 67/67 paymaster lib tests pass / 0 fail (was 66 pre-T1.15; +1 new).
+- Race-reproduction sanity check: with the per-key lock temporarily disabled, the new test fails with `assertion left == right failed: thread 1 got divergent nonce, left: 14, right: 11` — 14 of 16 threads allocated divergent nonces. Restoring the fix → all green.
+- `cargo clippy -p evaporchain-paymaster --all-targets` — no new warnings (one pre-existing `needless_borrows_for_generic_args` at line 2886, unrelated to this lane).
+
+**Decisions made:**
+- Per-key lock map over `Arc<Notify>` / `Condvar` machinery: simpler, sync-mutex-compatible with the rest of the paymaster crate, and the cache itself is the synchronisation primitive (waiters get woken via the cache hit on Phase 3 re-check, not via an explicit notify).
+- Cleanup is conservative (strong_count ≤ 2 means only us + map): keeps the lock alive while other waiters are queued, so they don't fragment into separate lock instances. Memory growth is bounded by the cache's LRU horizon in steady state.
+
+**What's next:**
+- T0.1 (Layer 4 hot-path consensus surgery C.1-C.6) and T0.6 (slashing-at-scale empirical tests) are next-largest OPEN lanes.
+- T1.20 coverage push continues in the parallel session (tendermint + parallel.rs).
+
+**Blockers / open questions:**
+- None for T1.15 itself — PR #156 is review-ready.
+
+**Cross-references:**
+- PR https://github.com/ss1738/EvaporChain/pull/156
+- Commit `1f8c50a2`
+- Lane spec: `MAINNET_READINESS.md:497` (T1.15)
+- Pre-fix race documented in `docs/runbooks/paymaster.md` §Idempotency → "Limitations the cache does NOT cover" → bullet 2
+
+---
+
 ## 2026-05-12 (late evening) — T1.20 parallel.rs batch 7: +57 tests, 78.89%→83.46%
 
 **Focus:** T1.20 coverage batch for execution/parallel.rs — all uncovered gas/partitioning/execute_partition arms.
