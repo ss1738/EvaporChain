@@ -4,24 +4,30 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
 description = "T0.10 Path A — bridge between chain-side Nova RecursiveSNARK and L1 Groth16-on-BN254 verifier"
 
-# This crate is Phase 2.1 of the T0.10 Path A pivot (Nova-based bridge
-# architecture). See `DESIGN.md` next to this Cargo.toml for the full
-# rationale + open research questions. Scaffold-only at this commit —
-# no working verifier yet.
+# T0.10 Path A (Nova-based bridge architecture). See `DESIGN.md` for
+# the architecture rationale + milestone table, and `README.md` for
+# the module/binary navigation guide.
+#
+# Current SCAFFOLD_VERSION: `phase-2.2-section-1`. Section 1 is done
+# (off-circuit `validate_structurally` gate); Section 2 constants
+# layer is byte-correct vs neptune end-to-end; residual sponge-
+# framing gap + Section 3 RelaxedR1CS remain BESPOKE.
 
 [dependencies]
 # Arkworks side: the wrapper circuit + Groth16 prover live here.
 # Same versions as `ethereum-bridge/wrapper/Cargo.toml` so a future
 # merge / shared-dep refactor stays straightforward.
-ark-bn254       = "0.5"
-ark-ec          = "0.5"
-ark-ff          = "0.5"
-ark-r1cs-std    = { version = "0.5", default-features = false }
-ark-relations   = "0.5"
-ark-serialize   = "0.5"
-ark-std         = "0.5"
+ark-bn254              = "0.5"
+ark-crypto-primitives  = { version = "0.5", features = ["sponge", "r1cs"] }
+ark-ec                 = "0.5"
+ark-ff                 = "0.5"
+ark-r1cs-std           = { version = "0.5", default-features = false }
+ark-relations          = "0.5"
+ark-serialize          = "0.5"
+ark-std                = "0.5"
 
 # Nova side: the chain's existing nova-snark v0.68 (same major as
 # `evaporchain-proving`). Phase 2.1 only consumes RecursiveSNARK +

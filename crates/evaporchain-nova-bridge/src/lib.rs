@@ -28,12 +28,14 @@
 //! accumulation *outside* the Groth16 circuit; the wrapper only needs to
 //! verify the final accumulator state, which is constraint-cheap.
 //!
-//! A `DESIGN.md` companion (on a parallel docstring-refresh stack,
-//! not yet merged into `main`) covers:
+//! See `DESIGN.md` next to this `lib.rs` for:
 //!   - The three sub-paths considered (A1 = raw RecursiveSNARK, A2 = CompressedSNARK,
 //!     A3 = re-prove via relayer) and why A3 is the recommended path.
 //!   - The open research questions for Phase 2.2 onward.
 //!   - The Phase 2 milestone breakdown.
+//!
+//! See `README.md` next to this `lib.rs` for the module-by-module
+//! navigation guide + operator binary cheatsheet.
 //!
 //! # Status (as of `SCAFFOLD_VERSION = "phase-2.2-section-1"`)
 //!
