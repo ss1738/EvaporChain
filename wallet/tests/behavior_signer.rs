@@ -65,8 +65,8 @@ fn sign_and_verify_all_transaction_types() {
             name
         );
 
-        // Sign
-        let signed = signer.sign(&tx);
+        // Sign (chain-id bound — the only form the chain accepts)
+        let signed = signer.sign_for_chain(&tx, "evaporchain-testnet");
 
         // Signature and pubkey are set
         let sig = signed
@@ -78,8 +78,8 @@ fn sign_and_verify_all_transaction_types() {
         assert!(!sig.is_empty(), "{} signature empty", name);
         assert!(!pk.is_empty(), "{} pubkey empty", name);
 
-        // Verify signature
-        let msg = signed.signable_bytes();
+        // Verify signature against the chain-id-bound signing message
+        let msg = signed.signing_message("evaporchain-testnet");
         assert!(
             MlDsaVerifier::verify(&msg, sig, pk),
             "{} signature verification failed",
@@ -102,11 +102,11 @@ fn sign_transaction_mutates_in_place() {
     let mut tx = builder.transfer([1u8; 32], 500, 1);
 
     assert!(tx.signature().is_none());
-    signer.sign_transaction(&mut tx);
+    signer.sign_transaction_for_chain(&mut tx, "evaporchain-testnet");
     assert!(tx.signature().is_some());
 
-    // Verify the in-place signature
-    let msg = tx.signable_bytes();
+    // Verify the in-place signature against the chain-id-bound signing message
+    let msg = tx.signing_message("evaporchain-testnet");
     let sig = tx.signature().unwrap();
     let pk = tx.public_key().unwrap();
     assert!(MlDsaVerifier::verify(&msg, sig, pk));
@@ -124,8 +124,8 @@ fn different_signers_different_signatures() {
     let tx1 = TxBuilder::new(*s1.address()).transfer([1u8; 32], 1000, 0);
     let tx2 = TxBuilder::new(*s2.address()).transfer([1u8; 32], 1000, 0);
 
-    let signed1 = s1.sign(&tx1);
-    let signed2 = s2.sign(&tx2);
+    let signed1 = s1.sign_for_chain(&tx1, "evaporchain-testnet");
+    let signed2 = s2.sign_for_chain(&tx2, "evaporchain-testnet");
 
     // Different signatures
     assert_ne!(signed1.signature().unwrap(), signed2.signature().unwrap());
@@ -134,8 +134,8 @@ fn different_signers_different_signatures() {
     assert_ne!(signed1.public_key().unwrap(), signed2.public_key().unwrap());
 
     // Both verify with their own keys
-    let msg1 = signed1.signable_bytes();
-    let msg2 = signed2.signable_bytes();
+    let msg1 = signed1.signing_message("evaporchain-testnet");
+    let msg2 = signed2.signing_message("evaporchain-testnet");
     assert!(MlDsaVerifier::verify(
         &msg1,
         signed1.signature().unwrap(),
@@ -157,9 +157,9 @@ fn cross_signer_verification_fails() {
     let (s1, s2) = make_two_signers();
     let builder = TxBuilder::new(*s1.address());
     let tx = builder.transfer([1u8; 32], 1000, 0);
-    let signed = s1.sign(&tx);
+    let signed = s1.sign_for_chain(&tx, "evaporchain-testnet");
 
-    let msg = signed.signable_bytes();
+    let msg = signed.signing_message("evaporchain-testnet");
     let sig = signed.signature().unwrap();
 
     // Verify with s1's key passes
@@ -190,7 +190,7 @@ fn signer_from_keystore() {
     // Sign a transaction
     let builder = TxBuilder::new(addr);
     let tx = builder.transfer([2u8; 32], 500, 0);
-    let signed = signer.sign(&tx);
+    let signed = signer.sign_for_chain(&tx, "evaporchain-testnet");
     assert!(signed.signature().is_some());
 }
 

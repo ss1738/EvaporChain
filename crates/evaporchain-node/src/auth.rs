@@ -146,8 +146,7 @@ fn encrypt_secret_key(sk_hex: &str) -> Result<String, String> {
 }
 
 /// Decrypt a hex-encoded encrypted secret key. Returns the plaintext hex SK.
-#[allow(dead_code)]
-fn decrypt_secret_key(encrypted_hex: &str) -> Result<String, String> {
+pub fn decrypt_secret_key(encrypted_hex: &str) -> Result<String, String> {
     let data = hex::decode(encrypted_hex).map_err(|e| format!("hex decode: {e}"))?;
     if data.len() < 24 {
         return Err("encrypted key too short".into());

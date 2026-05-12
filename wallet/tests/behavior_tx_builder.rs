@@ -54,9 +54,9 @@ fn build_then_sign_all_types() {
         assert!(tx.signature().is_none());
         assert!(!tx.signable_bytes().is_empty());
 
-        // Sign
-        let signed = signer.sign(tx);
-        let msg = signed.signable_bytes();
+        // Sign (chain-id bound)
+        let signed = signer.sign_for_chain(tx, "evaporchain-testnet");
+        let msg = signed.signing_message("evaporchain-testnet");
         let sig = signed.signature().unwrap();
         let pk = signed.public_key().unwrap();
         assert!(MlDsaVerifier::verify(&msg, sig, pk));

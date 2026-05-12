@@ -315,19 +315,35 @@ impl ApiState {
     }
 
     /// Submit a transaction to the correct mempool and broadcast over P2P.
-    /// API transactions use priority insertion (front of queue) to avoid being
-    /// buried behind demo transactions.
-    pub fn submit_tx(&self, tx: Transaction) {
+    /// API transactions use priority insertion (front of queue) to
+    /// avoid being buried behind demo transactions.
+    ///
+    /// Returns `true` if the local mempool admitted the tx, `false`
+    /// if rejected (mempool full at `MAX_MEMPOOL_SIZE` = 10K,
+    /// per-account cap at `MAX_TXS_PER_ACCOUNT` = 64, duplicate,
+    /// oversized, etc. — per `Mempool::submit_priority`).
+    ///
+    /// API endpoints SHOULD honour the bool and surface a 503 to the
+    /// client when rejected; silent-accept defeats client-side
+    /// back-pressure (T0.7 vector 3 / vector 4 doctrine). Existing
+    /// callers that ignore the return continue to work — Rust drops
+    /// it at the semicolon (non-breaking signature change).
+    ///
+    /// Note: P2P broadcast is unconditional. If the local mempool
+    /// rejects (e.g., per-account cap saturated), peers may still
+    /// accept (their pools may have headroom) and the tx still
+    /// reaches inclusion via them.
+    pub fn submit_tx(&self, tx: Transaction) -> bool {
         // Broadcast to other validators via P2P
         if let Some(ref sender) = self.tx_broadcast {
             let _ = sender.try_send(tx.clone());
         }
         if let Some(ref tc) = self.tendermint {
             let mut c = safe_lock(tc);
-            c.mempool.submit_priority(tx);
+            c.mempool.submit_priority(tx)
         } else {
             let mut c = safe_lock(&self.consensus);
-            c.mempool.submit_priority(tx);
+            c.mempool.submit_priority(tx)
         }
     }
 
@@ -1427,18 +1443,23 @@ fn sign_transaction(tx: &mut Transaction, state: &ApiState, sender_address: Opti
         // Dummy/short signature — replace with node signing below
     }
 
-    // Try wallet-specific keys first
+    // Try wallet-specific keys first. The stored SK is XChaCha20-Poly1305
+    // encrypted — decrypt before decoding to raw bytes.
     if let (Some(ref user_db), Some(addr)) = (&state.user_db, sender_address) {
-        if let Ok(Some((pk_hex, sk_hex))) = user_db.get_wallet_keys(addr) {
+        if let Ok(Some((pk_hex, enc_sk_hex))) = user_db.get_wallet_keys(addr) {
             // Real ML-DSA public keys are 1952 bytes (3904 hex chars)
             if pk_hex.len() > 1000 {
-                if let (Ok(pk_bytes), Ok(sk_bytes)) = (hex::decode(&pk_hex), hex::decode(&sk_hex)) {
-                    if let Ok(kp) = MlDsaKeypair::from_bytes(&pk_bytes, &sk_bytes) {
-                        let msg = tx.signing_message(&state.chain_id);
-                        let sig = kp.sign(&msg);
-                        let pk = kp.public_key_bytes();
-                        set_tx_signature(tx, sig, pk);
-                        return;
+                if let Ok(sk_hex) = crate::auth::decrypt_secret_key(&enc_sk_hex) {
+                    if let (Ok(pk_bytes), Ok(sk_bytes)) =
+                        (hex::decode(&pk_hex), hex::decode(&sk_hex))
+                    {
+                        if let Ok(kp) = MlDsaKeypair::from_bytes(&pk_bytes, &sk_bytes) {
+                            let msg = tx.signing_message(&state.chain_id);
+                            let sig = kp.sign(&msg);
+                            let pk = kp.public_key_bytes();
+                            set_tx_signature(tx, sig, pk);
+                            return;
+                        }
                     }
                 }
             }
@@ -10410,7 +10431,23 @@ async fn post_transfer(
         // is the same canonical input used by
         // tx_records_from_block_with_outcomes in this file.
         hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-        state.submit_tx(tx);
+        // Honour the mempool's admission outcome — surface a 503 to
+        // the client when rejected so flooding clients back off.
+        // T0.7 vector-3/4 doctrine: silent-accept defeats client-side
+        // back-pressure.
+        if !state.submit_tx(tx) {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!(
+                    "Transfer rejected: mempool full or per-account cap reached. \
+                     {} -> {} amount={}",
+                    account_name(&from),
+                    account_name(&to),
+                    req.amount
+                ),
+                tx_hash: None,
+            });
+        }
     }
     Json(TxResultResponse {
         success: true,
@@ -10520,7 +10557,13 @@ async fn post_user_op(
 
     let tx = Transaction::UserOp(req.user_op);
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "UserOp rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
 
     Json(TxResultResponse {
         success: true,
@@ -10642,7 +10685,13 @@ async fn post_delegate(
     // Canonical tx hash matches what the executor records — see
     // post_transfer for the same fix shape and rationale.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Delegate rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -10772,7 +10821,13 @@ async fn post_undelegate(
     sign_transaction(&mut tx, &state, Some(&sender_addr));
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Undelegate rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -10887,7 +10942,13 @@ async fn post_claim_delegation(
     sign_transaction(&mut tx, &state, Some(&sender_addr));
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "ClaimDelegation rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11016,7 +11077,13 @@ async fn post_create_object(
     sign_transaction(&mut tx, &state, Some(&creator_addr));
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "CreateObject rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11054,7 +11121,13 @@ async fn post_refresh(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Refresh rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11093,7 +11166,13 @@ async fn post_resurrect(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Resurrect rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11171,12 +11250,20 @@ async fn post_batch(
                     sign_transaction(&mut tx, &state, None);
                     // Canonical tx hash — see post_transfer.
                     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                    state.submit_tx(tx);
-                    BatchItemResult {
-                        index: i,
-                        success: true,
-                        message: "Transfer queued".into(),
-                        tx_hash: Some(hash),
+                    if state.submit_tx(tx) {
+                        BatchItemResult {
+                            index: i,
+                            success: true,
+                            message: "Transfer queued".into(),
+                            tx_hash: Some(hash),
+                        }
+                    } else {
+                        BatchItemResult {
+                            index: i,
+                            success: false,
+                            message: "Transfer rejected: mempool full or per-account cap reached".into(),
+                            tx_hash: None,
+                        }
                     }
                 }
                 (Err(e), _) | (_, Err(e)) => BatchItemResult {
@@ -11217,12 +11304,20 @@ async fn post_batch(
                         sign_transaction(&mut tx, &state, None);
                         // Canonical tx hash — see post_transfer.
                         let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                        state.submit_tx(tx);
-                        BatchItemResult {
-                            index: i,
-                            success: true,
-                            message: "CreateObject queued".into(),
-                            tx_hash: Some(hash),
+                        if state.submit_tx(tx) {
+                            BatchItemResult {
+                                index: i,
+                                success: true,
+                                message: "CreateObject queued".into(),
+                                tx_hash: Some(hash),
+                            }
+                        } else {
+                            BatchItemResult {
+                                index: i,
+                                success: false,
+                                message: "CreateObject rejected: mempool full or per-account cap reached".into(),
+                                tx_hash: None,
+                            }
                         }
                     }
                     (Err(e), _) | (_, Err(e)) => BatchItemResult {
@@ -11247,12 +11342,20 @@ async fn post_batch(
                     sign_transaction(&mut tx, &state, None);
                     // Canonical tx hash — see post_transfer.
                     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                    state.submit_tx(tx);
-                    BatchItemResult {
-                        index: i,
-                        success: true,
-                        message: "Refresh queued".into(),
-                        tx_hash: Some(hash),
+                    if state.submit_tx(tx) {
+                        BatchItemResult {
+                            index: i,
+                            success: true,
+                            message: "Refresh queued".into(),
+                            tx_hash: Some(hash),
+                        }
+                    } else {
+                        BatchItemResult {
+                            index: i,
+                            success: false,
+                            message: "Refresh rejected: mempool full or per-account cap reached".into(),
+                            tx_hash: None,
+                        }
                     }
                 }
                 Err(e) => BatchItemResult {
@@ -11276,12 +11379,20 @@ async fn post_batch(
                     sign_transaction(&mut tx, &state, None);
                     // Canonical tx hash — see post_transfer.
                     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-                    state.submit_tx(tx);
-                    BatchItemResult {
-                        index: i,
-                        success: true,
-                        message: "Resurrect queued".into(),
-                        tx_hash: Some(hash),
+                    if state.submit_tx(tx) {
+                        BatchItemResult {
+                            index: i,
+                            success: true,
+                            message: "Resurrect queued".into(),
+                            tx_hash: Some(hash),
+                        }
+                    } else {
+                        BatchItemResult {
+                            index: i,
+                            success: false,
+                            message: "Resurrect rejected: mempool full or per-account cap reached".into(),
+                            tx_hash: None,
+                        }
                     }
                 }
                 Err(e) => BatchItemResult {
@@ -11387,7 +11498,13 @@ async fn post_deploy_contract(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Deploy rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11421,7 +11538,13 @@ async fn post_call_contract(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Call rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11553,7 +11676,13 @@ async fn post_deploy_script(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Script deploy rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11587,7 +11716,13 @@ async fn post_call_script(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Script call rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11756,7 +11891,13 @@ async fn post_upgrade_contract(
         )),
         _ => unreachable!(),
     };
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "UpgradeContract rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -12176,6 +12317,198 @@ async fn wallet_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/wallet.html"))
 }
 
+// ── Wallet sign / submit (Branch D: chain-id-bound signing) ─────────────────
+
+#[derive(Deserialize)]
+struct WalletSignTxReq {
+    /// Hex address of the signing wallet (with or without 0x prefix).
+    from: String,
+    /// Unsigned transaction as JSON (evaporchain_types::Transaction shape).
+    tx: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct WalletSignTxResp {
+    success: bool,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signed_tx: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tx_hash: Option<String>,
+}
+
+/// Sign `tx` in-place using the wallet key stored for `addr_full`.
+/// Returns Err(message) if no key is found or decryption fails.
+fn try_sign_with_wallet_key(
+    state: &ApiState,
+    addr_full: &str,
+    tx: &mut Transaction,
+) -> Result<(), String> {
+    let user_db = state
+        .user_db
+        .as_ref()
+        .ok_or("No user database configured")?;
+    let (pk_hex, enc_sk_hex) = user_db
+        .get_wallet_keys(addr_full)
+        .map_err(|e| format!("Key lookup error: {e}"))?
+        .ok_or("No signing key found for this address — create a wallet first")?;
+    if pk_hex.len() <= 1000 {
+        return Err("Stored key too short — not a valid ML-DSA public key".into());
+    }
+    let sk_hex = crate::auth::decrypt_secret_key(&enc_sk_hex)
+        .map_err(|e| format!("Key decryption failed: {e}"))?;
+    let pk_bytes = hex::decode(&pk_hex).map_err(|_| "public key hex decode error".to_string())?;
+    let sk_bytes = hex::decode(&sk_hex).map_err(|_| "secret key hex decode error".to_string())?;
+    let kp = MlDsaKeypair::from_bytes(&pk_bytes, &sk_bytes)
+        .map_err(|_| "Failed to reconstruct keypair from stored bytes".to_string())?;
+    let msg = tx.signing_message(&state.chain_id);
+    let sig = kp.sign(&msg);
+    let pk = kp.public_key_bytes();
+    set_tx_signature(tx, sig, pk);
+    Ok(())
+}
+
+/// `POST /api/wallet/sign-tx` — sign an unsigned transaction with the
+/// caller's stored ML-DSA wallet key.  Returns the signed transaction as
+/// JSON.  The signature is chain-id-bound so it satisfies the executor's
+/// `verify_signatures = true` enforcement.
+async fn wallet_sign_tx(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<WalletSignTxReq>,
+) -> Json<WalletSignTxResp> {
+    // Require session token (can be relaxed to signature-bypass later)
+    if let Some(ref sessions) = state.auth_sessions {
+        if let Err(e) = crate::auth::authenticate(&headers, sessions) {
+            return Json(WalletSignTxResp {
+                success: false,
+                message: format!("Authentication required: {e}"),
+                signed_tx: None,
+                tx_hash: None,
+            });
+        }
+    }
+
+    let from_addr = match parse_hex_address(&req.from) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(WalletSignTxResp {
+                success: false,
+                message: format!("Invalid from address: {e}"),
+                signed_tx: None,
+                tx_hash: None,
+            });
+        }
+    };
+    let from_full = account_full(&from_addr);
+
+    let mut tx: Transaction = match serde_json::from_value(req.tx) {
+        Ok(t) => t,
+        Err(e) => {
+            return Json(WalletSignTxResp {
+                success: false,
+                message: format!("Invalid transaction JSON: {e}"),
+                signed_tx: None,
+                tx_hash: None,
+            });
+        }
+    };
+
+    if let Err(e) = try_sign_with_wallet_key(&state, &from_full, &mut tx) {
+        return Json(WalletSignTxResp {
+            success: false,
+            message: e,
+            signed_tx: None,
+            tx_hash: None,
+        });
+    }
+
+    let tx_hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+    let signed_json = match serde_json::to_value(&tx) {
+        Ok(v) => v,
+        Err(e) => {
+            return Json(WalletSignTxResp {
+                success: false,
+                message: format!("Serialization error: {e}"),
+                signed_tx: None,
+                tx_hash: None,
+            });
+        }
+    };
+
+    Json(WalletSignTxResp {
+        success: true,
+        message: "Transaction signed".into(),
+        signed_tx: Some(signed_json),
+        tx_hash: Some(tx_hash),
+    })
+}
+
+/// `POST /api/wallet/submit` — sign an unsigned transaction with the
+/// caller's stored ML-DSA wallet key and immediately submit it to the
+/// mempool.  One-shot alternative to `sign-tx` + `POST /api/tx/transfer`.
+async fn wallet_submit_tx(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<WalletSignTxReq>,
+) -> Json<TxResultResponse> {
+    if let Some(ref sessions) = state.auth_sessions {
+        if let Err(e) = crate::auth::authenticate(&headers, sessions) {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!("Authentication required: {e}"),
+                tx_hash: None,
+            });
+        }
+    }
+
+    let from_addr = match parse_hex_address(&req.from) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!("Invalid from address: {e}"),
+                tx_hash: None,
+            });
+        }
+    };
+    let from_full = account_full(&from_addr);
+
+    let mut tx: Transaction = match serde_json::from_value(req.tx) {
+        Ok(t) => t,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!("Invalid transaction JSON: {e}"),
+                tx_hash: None,
+            });
+        }
+    };
+
+    if let Err(e) = try_sign_with_wallet_key(&state, &from_full, &mut tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: e,
+            tx_hash: None,
+        });
+    }
+
+    let tx_hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Mempool full or transaction rejected".into(),
+            tx_hash: Some(tx_hash),
+        });
+    }
+
+    Json(TxResultResponse {
+        success: true,
+        message: "Transaction signed and submitted".into(),
+        tx_hash: Some(tx_hash),
+    })
+}
+
 async fn faucet_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/faucet.html"))
 }
@@ -12283,7 +12616,16 @@ async fn post_faucet(
         mev_refund_eligible: None,
     });
     sign_transaction(&mut tx, &state, None);
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(FaucetResponse {
+                success: false,
+                balance: 0,
+                message: Some("faucet rejected: mempool full; retry shortly".into()),
+            }),
+        );
+    }
 
     // Return expected balance (may not be applied yet until next block)
     let balance = {
@@ -12459,7 +12801,18 @@ async fn post_faucet_bundle(
         mev_refund_eligible: None,
     });
     sign_transaction(&mut tx, &state, None);
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(FaucetBundleResponse {
+                success: false,
+                recipient: holder_key,
+                evp_credited: 0,
+                tokens_credited: vec![],
+                message: Some("faucet bundle rejected: EVP mempool at capacity".into()),
+            }),
+        );
+    }
 
     // Per-token: credit every non-EVAP deployed token's balance map.
     let tokens_credited: Vec<(String, u64)> = {
@@ -12575,7 +12928,13 @@ async fn post_oracle_ingest(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Oracle data rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
 
     Json(TxResultResponse {
         success: true,
@@ -18077,6 +18436,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/network/unban", post(post_network_unban))
         // Block-explorer view: full validator list
         .route("/api/validators", get(get_validators))
+        // Wallet sign / submit (chain-id-bound, no node-keypair fallback)
+        .route("/api/wallet/sign-tx", post(wallet_sign_tx))
+        .route("/api/wallet/submit", post(wallet_submit_tx))
         // Wallet / Transactions
         .route("/api/tx/transfer", post(post_transfer))
         .route("/api/tx/user_op", post(post_user_op))
