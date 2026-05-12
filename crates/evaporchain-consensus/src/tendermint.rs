@@ -14848,6 +14848,245 @@ mod tests {
         );
     }
 
+    // -- T1.20 gap-closure: get_governance_param / governance_set_param --
+
+    #[test]
+    fn t1_20_get_governance_param_missing_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.get_governance_param("nonexistent_key").is_none());
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_round_trip() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        tc.governance_set_param("conservation_enforcement", "enforce")
+            .expect("valid param must be accepted");
+        assert_eq!(
+            tc.get_governance_param("conservation_enforcement"),
+            Some("enforce")
+        );
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_invalid_value_rejected() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let result = tc.governance_set_param("conservation_enforcement", "turbo");
+        assert!(result.is_err(), "unknown value must be rejected");
+    }
+
+    // -- T1.20 gap-closure: da_confirmed_height / is_da_finalized --
+
+    #[test]
+    fn t1_20_da_confirmed_height_zero_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.da_confirmed_height(), 0);
+    }
+
+    #[test]
+    fn t1_20_is_da_finalized_height_zero_is_true() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.is_da_finalized(0), "height 0 <= da_confirmed_height 0");
+    }
+
+    #[test]
+    fn t1_20_is_da_finalized_future_height_is_false() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(!tc.is_da_finalized(1), "future height must not be finalized");
+    }
+
+    // -- T1.20 gap-closure: set_chain_id / chain_id --
+
+    #[test]
+    fn t1_20_chain_id_empty_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.chain_id(), "");
+    }
+
+    #[test]
+    fn t1_20_set_chain_id_round_trip() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        tc.set_chain_id("evaporchain-devnet-1".to_string());
+        assert_eq!(tc.chain_id(), "evaporchain-devnet-1");
+        // Must also propagate to the executor.
+        assert_eq!(tc.executor.chain_id, "evaporchain-devnet-1");
+    }
+
+    // -- T1.20 gap-closure: enforce_validator_tombstones --
+
+    #[test]
+    fn t1_20_enforce_validator_tombstones_zero_when_no_tombstones() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.enforce_validator_tombstones(), 0);
+    }
+
+    // -- T1.20 gap-closure: mortis_certificate / mortis_cert_preview --
+
+    #[test]
+    fn t1_20_mortis_certificate_none_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.mortis_certificate().is_none());
+    }
+
+    #[test]
+    fn t1_20_mortis_cert_preview_some_before_trigger() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        // Mortis has not triggered yet -> preview returns Some.
+        assert!(tc.mortis_cert_preview().is_some());
+    }
+
+    // -- T1.20 gap-closure: settle_slash / refresh_pool_credits --
+
+    #[test]
+    fn t1_20_settle_slash_zero_is_noop() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        tc.settle_slash(0, 1);   // must not panic
+        assert!(tc.refresh_pool_credits().is_empty(), "zero slash leaves pool empty");
+    }
+
+    #[test]
+    fn t1_20_settle_slash_nonzero_appears_in_refresh_pool() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        tc.settle_slash(5_000, 10);
+        let credits = tc.refresh_pool_credits();
+        assert!(!credits.is_empty(), "slash credit must appear in pool");
+        let total: u64 = credits.iter().map(|(_, amt, _)| *amt).sum();
+        assert_eq!(total, 5_000, "slash amount must be fully credited");
+    }
+
+    // -- T1.20 gap-closure: last_bell_reading --
+
+    #[test]
+    fn t1_20_last_bell_reading_none_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.last_bell_reading().is_none(), "no bell reading before first block");
+    }
+
+    // -- T1.20 gap-closure: tombstone_for --
+
+    #[test]
+    fn t1_20_tombstone_for_unknown_address_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.tombstone_for(&addr(99)).is_none());
+    }
+
+    // -- T1.20 gap-closure: governance_flags_snapshot --
+
+    #[test]
+    fn t1_20_governance_flags_snapshot_has_default_keys() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let snap = tc.governance_flags_snapshot();
+        assert!(snap.contains_key("fork_choice_mode"), "must have fork_choice_mode");
+        assert!(snap.contains_key("conservation_enforcement"), "must have conservation_enforcement");
+        assert!(snap.contains_key("lambda_fold_mode"), "must have lambda_fold_mode");
+    }
+
+    // -- T1.20 gap-closure: cartel alarm getters --
+
+    #[test]
+    fn t1_20_cartel_alarm_status_none_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.cartel_alarm_status().is_none());
+    }
+
+    #[test]
+    fn t1_20_cartel_alarm_buffer_len_zero_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.cartel_alarm_buffer_len(), 0);
+    }
+
+    #[test]
+    fn t1_20_cartel_alarm_records_seen_zero_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.cartel_alarm_records_seen(), 0);
+    }
+
+    #[test]
+    fn t1_20_pending_cartel_alarms_count_zero_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.pending_cartel_alarms_count(), 0);
+    }
+
+    #[test]
+    fn t1_20_take_pending_cartel_alarms_empty_at_startup() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        let alarms = tc.take_pending_cartel_alarms();
+        assert!(alarms.is_empty(), "no alarms before any block");
+    }
+
+    // -- T1.20 gap-closure: state_branches / dag_round_states_count --
+
+    #[test]
+    fn t1_20_state_branches_empty_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.state_branches().is_empty());
+    }
+
+    #[test]
+    fn t1_20_dag_round_states_count_zero_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.dag_round_states_count(), 0);
+    }
+
+    #[test]
+    fn t1_20_cross_fork_equivocations_empty_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.cross_fork_equivocations().is_empty());
+    }
+
+    #[test]
+    fn t1_20_committed_at_block_empty_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.committed_at_block().is_empty());
+    }
+
+    // -- T1.20 gap-closure: mev_observations / mev_state_digest / due_refund_txs --
+
+    #[test]
+    fn t1_20_mev_observations_empty_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.mev_observations().is_empty());
+    }
+
+    #[test]
+    fn t1_20_mev_state_digest_is_32_bytes() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let digest = tc.mev_state_digest();
+        assert_eq!(digest.len(), 32);
+    }
+
+    #[test]
+    fn t1_20_due_refund_txs_empty_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.due_refund_txs(0).is_empty());
+    }
+
+    // -- T1.20 gap-closure: tur_window_len --
+
+    #[test]
+    fn t1_20_tur_window_len_zero_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert_eq!(tc.tur_window_len(), 0);
+    }
+
+    // -- T1.20 gap-closure: try_finalize_antichain --
+
+    #[test]
+    fn t1_20_try_finalize_antichain_empty_at_startup() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let finalized = tc.try_finalize_antichain();
+        assert!(finalized.is_empty(), "no antichain to finalize at startup");
+    }
+
+    // -- T1.20 gap-closure: new_with_gas_limit constructor --
+
+    #[test]
+    fn t1_20_new_with_gas_limit_sets_block_gas_limit() {
+        let vs = make_validator_set(&[1, 2, 3]);
+        let tc = TendermintConsensus::new_with_gas_limit(1, 5, vs, 1_000_000);
+        assert_eq!(tc.executor.block_gas_limit, 1_000_000);
+    }
+
+
 
 }
 
