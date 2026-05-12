@@ -392,6 +392,7 @@ mod tests {
     ///     then A to be re-inserted (which trips
     ///     `AlreadyInserted`).
     ///   - Same for any longer cycle.
+    ///
     /// This test locks the implicit guarantee with explicit
     /// adversarial inserts.
     #[test]
