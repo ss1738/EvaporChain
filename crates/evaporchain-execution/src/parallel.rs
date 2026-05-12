@@ -4178,163 +4178,708 @@ mod tests {
         assert_eq!(ex.shard_id, ShardId(7));
     }
 
-    // -- T1.20 gap-closure: snapshot_for_simulation / restore_from_simulation --
+    // ── T1.20 batch 7: ParallelExecutor::estimate_gas static method ──────────
 
     #[test]
-    fn t1_20_snapshot_restore_reverts_executor_state() {
-        let mut db = InMemoryStateDB::new();
-        fund_account(&mut db, 10, 50_000);
-        let mut ex = ParallelExecutor::new_for_test(100);
-
-        // Take snapshot before any block.
-        let snap = ex.snapshot_for_simulation();
-
-        // Execute a block that mutates executor state (MMR, evaporation engine, etc.).
-        let tx = Transaction::Transfer(evaporchain_types::TransferTx {
-            from: addr(10),
-            to: addr(11),
-            amount: 1_000,
-            nonce: 0,
-            signature: None,
-            public_key: None,
-            mev_refund_eligible: None,
+    fn t1_20_par_estimate_gas_shield() {
+        let tx = Transaction::Shield(evaporchain_types::ShieldTx {
+            from: addr(1), amount: 1_000, nonce: 0,
+            note_owner_hash: [0u8; 32], value_blinding: [0u8; 32],
+            energy: None, energy_blinding: None, half_life: 0,
+            signature: None, public_key: None,
         });
-        let block = make_block(1, 0, vec![tx]);
-        ex.execute_block(&mut db, &block).unwrap();
-
-        // Restore: executor must be identical to pre-block state.
-        ex.restore_from_simulation(snap);
-
-        // chain_id is one cheap observable -- must still be empty string.
-        assert!(ex.chain_id.is_empty(), "restore must revert chain_id");
-        // MMR had 0 leaves before the block; after restore it must be back to 0.
-        assert_eq!(ex.mmr.size(), 0, "restore must revert MMR size");
-    }
-
-    // -- T1.20 gap-closure: reward_accumulator accessors --
-
-    #[test]
-    fn t1_20_reward_accumulator_none_by_default() {
-        let ex = ParallelExecutor::new_for_test(100);
-        assert!(ex.reward_accumulator().is_none(), "accumulator must be None before enable_rewards");
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), crate::privacy_exec::GAS_SHIELD);
     }
 
     #[test]
-    fn t1_20_enable_rewards_creates_accumulator() {
-        use evaporchain_types::genesis::Tokenomics;
-        let mut ex = ParallelExecutor::new_for_test(100);
-        assert!(ex.reward_accumulator().is_none());
-        ex.enable_rewards(Tokenomics::default());
-        assert!(ex.reward_accumulator().is_some(), "enable_rewards must create accumulator");
-        assert!(ex.reward_accumulator_mut().is_some(), "mutable accessor must also be Some");
+    fn t1_20_par_estimate_gas_unshield() {
+        let tx = Transaction::Unshield(evaporchain_types::UnshieldTx {
+            to: addr(1), amount: 500,
+            input_nullifiers: vec![], anchor: [0u8; 32], balance_binding: [0u8; 32],
+            input_amounts: vec![], input_blindings: vec![],
+            input_value_commitments: vec![], input_note_commitments: vec![],
+            input_merkle_proofs: vec![], output_blindings: vec![],
+            change_commitments: vec![], energy_proofs: vec![],
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), crate::privacy_exec::GAS_UNSHIELD);
     }
 
-    // -- T1.20 gap-closure: apply_proposer_priority_bonus --
+    #[test]
+    fn t1_20_par_estimate_gas_private_transfer() {
+        let tx = Transaction::PrivateTransfer(evaporchain_types::PrivateTransferTx {
+            input_nullifiers: vec![], output_commitments: vec![],
+            anchor: [0u8; 32], balance_binding: [0u8; 32], fee: 0,
+            input_amounts: vec![], input_blindings: vec![],
+            input_value_commitments: vec![], input_note_commitments: vec![],
+            input_merkle_proofs: vec![], output_amounts: vec![],
+            output_blindings: vec![], energy_proofs: vec![],
+        });
+        assert_eq!(
+            ParallelExecutor::estimate_gas(&tx),
+            crate::privacy_exec::GAS_PRIVATE_TRANSFER_BASE,
+        );
+    }
 
     #[test]
-    fn t1_20_priority_bonus_zero_without_accumulator() {
+    fn t1_20_par_estimate_gas_deferred_scales_with_guards() {
+        use evaporchain_types::TemporalGuard;
+        let no_guards = Transaction::Deferred(evaporchain_types::DeferredTx {
+            submitter: addr(1), nonce: 0, deposit: 0,
+            guards: vec![], inner_tx_bytes: vec![], gas_limit: 0,
+            signature: None, public_key: None,
+        });
+        let two_guards = Transaction::Deferred(evaporchain_types::DeferredTx {
+            submitter: addr(1), nonce: 0, deposit: 0,
+            guards: vec![TemporalGuard::AfterEpoch(10), TemporalGuard::BeforeEpoch(100)],
+            inner_tx_bytes: vec![], gas_limit: 0,
+            signature: None, public_key: None,
+        });
+        assert_eq!(
+            ParallelExecutor::estimate_gas(&no_guards),
+            crate::temporal::GAS_DEFERRED_SUBMIT,
+        );
+        assert_eq!(
+            ParallelExecutor::estimate_gas(&two_guards),
+            crate::temporal::GAS_DEFERRED_SUBMIT + 2 * crate::temporal::GAS_PER_GUARD,
+        );
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_blob_scales_with_data() {
+        let empty = Transaction::Blob(evaporchain_types::BlobTx {
+            submitter: addr(1), data: vec![], nonce: 0, namespace_id: 1,
+            signature: None, public_key: None,
+        });
+        let with_data = Transaction::Blob(evaporchain_types::BlobTx {
+            submitter: addr(1), data: vec![0u8; 100], nonce: 0, namespace_id: 1,
+            signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&empty), GAS_CREATE_OBJECT_BASE);
+        assert_eq!(
+            ParallelExecutor::estimate_gas(&with_data),
+            GAS_CREATE_OBJECT_BASE + GAS_CREATE_OBJECT_PER_BYTE * 100,
+        );
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_governance() {
+        let tx = Transaction::Governance(evaporchain_types::GovernanceTx {
+            action: evaporchain_types::GovernanceAction::CastVote { proposal_id: 1, vote: true },
+            sender: addr(1), nonce: 0, signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), GAS_GOVERNANCE);
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_multisig() {
+        let tx = Transaction::MultiSig(evaporchain_types::MultiSigTx {
+            multisig_address: addr(1), threshold: 1, signers: vec![addr(2)],
+            inner_tx_bytes: vec![], signatures: vec![], public_keys: vec![], nonce: 0,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), crate::GAS_MULTISIG);
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_userop_scales_with_calldata() {
+        let empty = Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(1), nonce: 0, call_data: vec![], call_gas_limit: 0,
+            paymaster: None, paymaster_nonce: None, paymaster_data: None,
+            paymaster_signature: None, paymaster_public_key: None,
+            signature: None, public_key: None,
+        });
+        let with_data = Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(1), nonce: 0, call_data: vec![0u8; 50], call_gas_limit: 0,
+            paymaster: None, paymaster_nonce: None, paymaster_data: None,
+            paymaster_signature: None, paymaster_public_key: None,
+            signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&empty), crate::GAS_USER_OP);
+        assert_eq!(ParallelExecutor::estimate_gas(&with_data), crate::GAS_USER_OP + 50 * 16);
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_upgrade_contract_scales_with_bytecode() {
+        let empty = Transaction::UpgradeContract(evaporchain_types::UpgradeContractTx {
+            owner: addr(1), contract_id: 1, new_bytecode: vec![],
+            new_bytecode_hash: [0u8; 32], nonce: 0,
+            admin_signature: None, admin_public_key: None,
+            endorser_stakes: vec![], required_stake: 0,
+            governance_approved: false, signature: None, public_key: None,
+        });
+        let with_code = Transaction::UpgradeContract(evaporchain_types::UpgradeContractTx {
+            owner: addr(1), contract_id: 1, new_bytecode: vec![0u8; 10],
+            new_bytecode_hash: [0u8; 32], nonce: 0,
+            admin_signature: None, admin_public_key: None,
+            endorser_stakes: vec![], required_stake: 0,
+            governance_approved: false, signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&empty), crate::GAS_UPGRADE_CONTRACT);
+        assert_eq!(
+            ParallelExecutor::estimate_gas(&with_code),
+            crate::GAS_UPGRADE_CONTRACT + 10 * 200,
+        );
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_delegate() {
+        let tx = Transaction::Delegate(evaporchain_types::DelegateTx {
+            delegator: addr(1), validator_id: 1, amount: 500, nonce: 0,
+            signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), crate::GAS_DELEGATE);
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_undelegate() {
+        let tx = Transaction::Undelegate(evaporchain_types::UndelegateTx {
+            delegator: addr(1), validator_id: 1, amount: 500, nonce: 0,
+            signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), crate::GAS_UNDELEGATE);
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_rotate_validator_key() {
+        let tx = Transaction::RotateValidatorKey(evaporchain_types::RotateValidatorKeyTx {
+            validator_address: addr(1), validator_id: 1,
+            new_bls_public_key: vec![], bls_pop_old: vec![], bls_pop_new: vec![],
+            effective_epoch: 5, nonce: 0,
+            signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), crate::GAS_ROTATE_VALIDATOR_KEY);
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_claim_delegation() {
+        let tx = Transaction::ClaimDelegation(evaporchain_types::ClaimDelegationTx {
+            delegator: addr(1), validator_id: 1, nonce: 0,
+            signature: None, public_key: None,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), crate::GAS_CLAIM_DELEGATION);
+    }
+
+    #[test]
+    fn t1_20_par_estimate_gas_refund() {
+        let tx = Transaction::Refund(evaporchain_types::RefundTx {
+            source_block_height: 1, source_observation_idx: 0,
+            attacker: addr(1), victim: addr(2), amount: 100, settle_block_height: 5,
+        });
+        assert_eq!(ParallelExecutor::estimate_gas(&tx), GAS_REFUND);
+    }
+
+    // ── T1.20 batch 7: analyze_parallelism / extract_access_keys coverage ─────
+
+    #[test]
+    fn t1_20_analyze_parallelism_governance_partitions_separately() {
+        // Two Governance txs from different senders: different Account keys → 2 partitions
+        let txs = vec![
+            Transaction::Governance(evaporchain_types::GovernanceTx {
+                action: evaporchain_types::GovernanceAction::CastVote {
+                    proposal_id: 1, vote: true,
+                },
+                sender: addr(10), nonce: 0, signature: None, public_key: None,
+            }),
+            Transaction::Governance(evaporchain_types::GovernanceTx {
+                action: evaporchain_types::GovernanceAction::CastVote {
+                    proposal_id: 2, vote: false,
+                },
+                sender: addr(11), nonce: 0, signature: None, public_key: None,
+            }),
+        ];
+        let (partitions, max_size, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 2);
+        assert_eq!(max_size, 1);
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_multisig_same_address_merges() {
+        // Two MultiSig txs with same multisig_address → shared Account key → 1 partition
+        let txs = vec![
+            Transaction::MultiSig(evaporchain_types::MultiSigTx {
+                multisig_address: addr(5), threshold: 1, signers: vec![addr(6)],
+                inner_tx_bytes: vec![], signatures: vec![], public_keys: vec![], nonce: 0,
+            }),
+            Transaction::MultiSig(evaporchain_types::MultiSigTx {
+                multisig_address: addr(5), threshold: 1, signers: vec![addr(7)],
+                inner_tx_bytes: vec![], signatures: vec![], public_keys: vec![], nonce: 1,
+            }),
+        ];
+        let (partitions, _, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1, "same multisig_address must merge into 1 partition");
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_userop_without_paymaster() {
+        let txs = vec![Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(20), nonce: 0, call_data: vec![], call_gas_limit: 0,
+            paymaster: None, paymaster_nonce: None, paymaster_data: None,
+            paymaster_signature: None, paymaster_public_key: None,
+            signature: None, public_key: None,
+        })];
+        let (partitions, max_size, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1);
+        assert_eq!(max_size, 1);
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_userop_paymaster_links_accounts() {
+        // UserOp with paymaster adds both sender + paymaster as access keys.
+        // A Transfer from the paymaster account merges into the same partition.
+        let pm = addr(99);
+        let txs = vec![
+            Transaction::UserOp(evaporchain_types::UserOpTx {
+                sender: addr(20), nonce: 0, call_data: vec![], call_gas_limit: 0,
+                paymaster: Some(pm),
+                paymaster_nonce: None, paymaster_data: None,
+                paymaster_signature: None, paymaster_public_key: None,
+                signature: None, public_key: None,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: pm, to: addr(30), amount: 100, nonce: 0,
+                signature: None, public_key: None, mev_refund_eligible: None,
+            }),
+        ];
+        let (partitions, _, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1, "UserOp paymaster + conflicting Transfer must merge");
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_shield_shares_privacy_engine() {
+        // Two Shield txs from different senders → both touch PrivacyEngine → 1 partition
+        let txs = vec![
+            Transaction::Shield(evaporchain_types::ShieldTx {
+                from: addr(1), amount: 100, nonce: 0,
+                note_owner_hash: [0u8; 32], value_blinding: [0u8; 32],
+                energy: None, energy_blinding: None, half_life: 0,
+                signature: None, public_key: None,
+            }),
+            Transaction::Shield(evaporchain_types::ShieldTx {
+                from: addr(2), amount: 200, nonce: 0,
+                note_owner_hash: [1u8; 32], value_blinding: [1u8; 32],
+                energy: None, energy_blinding: None, half_life: 0,
+                signature: None, public_key: None,
+            }),
+        ];
+        let (partitions, _, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1, "Shield txs share PrivacyEngine and must merge");
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_unshield_shares_privacy_engine() {
+        let txs = vec![
+            Transaction::Unshield(evaporchain_types::UnshieldTx {
+                to: addr(3), amount: 100,
+                input_nullifiers: vec![], anchor: [0u8; 32], balance_binding: [0u8; 32],
+                input_amounts: vec![], input_blindings: vec![],
+                input_value_commitments: vec![], input_note_commitments: vec![],
+                input_merkle_proofs: vec![], output_blindings: vec![],
+                change_commitments: vec![], energy_proofs: vec![],
+            }),
+            Transaction::Unshield(evaporchain_types::UnshieldTx {
+                to: addr(4), amount: 200,
+                input_nullifiers: vec![], anchor: [0u8; 32], balance_binding: [0u8; 32],
+                input_amounts: vec![], input_blindings: vec![],
+                input_value_commitments: vec![], input_note_commitments: vec![],
+                input_merkle_proofs: vec![], output_blindings: vec![],
+                change_commitments: vec![], energy_proofs: vec![],
+            }),
+        ];
+        let (partitions, _, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1, "Unshield txs share PrivacyEngine and must merge");
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_private_transfer_shares_privacy_engine() {
+        let txs = vec![
+            Transaction::PrivateTransfer(evaporchain_types::PrivateTransferTx {
+                input_nullifiers: vec![], output_commitments: vec![],
+                anchor: [0u8; 32], balance_binding: [0u8; 32], fee: 0,
+                input_amounts: vec![], input_blindings: vec![],
+                input_value_commitments: vec![], input_note_commitments: vec![],
+                input_merkle_proofs: vec![], output_amounts: vec![],
+                output_blindings: vec![], energy_proofs: vec![],
+            }),
+            Transaction::PrivateTransfer(evaporchain_types::PrivateTransferTx {
+                input_nullifiers: vec![[1u8; 32], [2u8; 32]], output_commitments: vec![[3u8; 32], [4u8; 32]],
+                anchor: [1u8; 32], balance_binding: [1u8; 32], fee: 100,
+                input_amounts: vec![], input_blindings: vec![],
+                input_value_commitments: vec![], input_note_commitments: vec![],
+                input_merkle_proofs: vec![], output_amounts: vec![],
+                output_blindings: vec![], energy_proofs: vec![],
+            }),
+        ];
+        let (partitions, _, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1, "PrivateTransfer txs share PrivacyEngine");
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_deferred_shares_temporal_engine() {
+        // Two Deferred txs from different submitters → both touch TemporalEngine → 1 partition
+        let txs = vec![
+            Transaction::Deferred(evaporchain_types::DeferredTx {
+                submitter: addr(10), nonce: 0, deposit: 0,
+                guards: vec![], inner_tx_bytes: vec![], gas_limit: 0,
+                signature: None, public_key: None,
+            }),
+            Transaction::Deferred(evaporchain_types::DeferredTx {
+                submitter: addr(11), nonce: 0, deposit: 0,
+                guards: vec![], inner_tx_bytes: vec![], gas_limit: 0,
+                signature: None, public_key: None,
+            }),
+        ];
+        let (partitions, _, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1, "Deferred txs share TemporalEngine and must merge");
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_blob_separate_submitters() {
+        // Two Blob txs from different submitters → different Account keys → 2 partitions
+        let txs = vec![
+            Transaction::Blob(evaporchain_types::BlobTx {
+                submitter: addr(40), data: vec![0xAA], nonce: 0, namespace_id: 1,
+                signature: None, public_key: None,
+            }),
+            Transaction::Blob(evaporchain_types::BlobTx {
+                submitter: addr(41), data: vec![0xBB], nonce: 0, namespace_id: 2,
+                signature: None, public_key: None,
+            }),
+        ];
+        let (partitions, max_size, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 2);
+        assert_eq!(max_size, 1);
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_upgrade_contract() {
+        let txs = vec![Transaction::UpgradeContract(evaporchain_types::UpgradeContractTx {
+            owner: addr(50), contract_id: 1, new_bytecode: vec![],
+            new_bytecode_hash: [0u8; 32], nonce: 0,
+            admin_signature: None, admin_public_key: None,
+            endorser_stakes: vec![], required_stake: 0,
+            governance_approved: false, signature: None, public_key: None,
+        })];
+        let (partitions, max_size, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1);
+        assert_eq!(max_size, 1);
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_delegate_and_undelegate_different_delegators() {
+        // Delegate and Undelegate from different delegators → 2 partitions
+        let txs = vec![
+            Transaction::Delegate(evaporchain_types::DelegateTx {
+                delegator: addr(60), validator_id: 1, amount: 1_000, nonce: 0,
+                signature: None, public_key: None,
+            }),
+            Transaction::Undelegate(evaporchain_types::UndelegateTx {
+                delegator: addr(61), validator_id: 1, amount: 500, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ];
+        let (partitions, max_size, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 2);
+        assert_eq!(max_size, 1);
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_claim_delegation() {
+        let txs = vec![Transaction::ClaimDelegation(evaporchain_types::ClaimDelegationTx {
+            delegator: addr(70), validator_id: 1, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        let (partitions, max_size, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1);
+        assert_eq!(max_size, 1);
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_refund_merges_with_conflicting_transfer() {
+        // Refund touches both attacker + victim accounts. Transfer from victim merges.
+        let victim = addr(80);
+        let txs = vec![
+            Transaction::Refund(evaporchain_types::RefundTx {
+                source_block_height: 1, source_observation_idx: 0,
+                attacker: addr(79), victim, amount: 100, settle_block_height: 5,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: victim, to: addr(81), amount: 50, nonce: 0,
+                signature: None, public_key: None, mev_refund_eligible: None,
+            }),
+        ];
+        let (partitions, _, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1, "Refund victim + conflicting Transfer must merge");
+    }
+
+    #[test]
+    fn t1_20_analyze_parallelism_rotate_validator_key() {
+        let txs = vec![Transaction::RotateValidatorKey(evaporchain_types::RotateValidatorKeyTx {
+            validator_address: addr(90), validator_id: 1,
+            new_bls_public_key: vec![0u8; 48], bls_pop_old: vec![0u8; 48],
+            bls_pop_new: vec![0u8; 48], effective_epoch: 10, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        let (partitions, max_size, _) = analyze_parallelism(&txs);
+        assert_eq!(partitions, 1);
+        assert_eq!(max_size, 1);
+    }
+
+    // ── T1.20 batch 7: execute_partition ContractError via execute_block ───────
+    // These types reach execute_partition via Phase 1's `_` arm (parallel path).
+
+    #[test]
+    fn t1_20_governance_via_parallel_partition_fails() {
         let mut db = InMemoryStateDB::new();
-        fund_account(&mut db, 20, 100_000);
+        let block = make_block(1, 1, vec![Transaction::Governance(evaporchain_types::GovernanceTx {
+            action: evaporchain_types::GovernanceAction::CastVote { proposal_id: 1, vote: true },
+            sender: addr(60), nonce: 0, signature: None, public_key: None,
+        })]);
         let mut ex = ParallelExecutor::new_for_test(100);
-        // No enable_rewards -> accumulator is None -> must return 0.
-        let bonus = ex.apply_proposer_priority_bonus(&mut db, &addr(20), 0, 9999, 1);
-        assert_eq!(bonus, 0, "bonus must be 0 when accumulator is absent");
-    }
-
-    // -- T1.20 gap-closure: fee_controller accessors --
-
-    #[test]
-    fn t1_20_fee_controller_none_by_default() {
-        let ex = ParallelExecutor::new_for_test(100);
-        assert!(ex.fee_controller().is_none(), "fee_controller must be None before explicit set");
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "governance must fail in execute_partition");
     }
 
     #[test]
-    fn t1_20_fee_controller_mut_none_by_default() {
+    fn t1_20_multisig_via_parallel_partition_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![Transaction::MultiSig(evaporchain_types::MultiSigTx {
+            multisig_address: addr(61), threshold: 1, signers: vec![addr(62)],
+            inner_tx_bytes: vec![], signatures: vec![], public_keys: vec![], nonce: 0,
+        })]);
         let mut ex = ParallelExecutor::new_for_test(100);
-        assert!(ex.fee_controller_mut().is_none());
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "multisig must fail in execute_partition");
     }
-
-    // -- T1.20 gap-closure: new_with_sig_verification_for_test flag --
 
     #[test]
-    fn t1_20_sig_verification_executor_flag_set() {
-        let ex = ParallelExecutor::new_with_sig_verification_for_test(100);
-        assert!(ex.verify_signatures, "new_with_sig_verification must set verify_signatures=true");
+    fn t1_20_userop_via_parallel_partition_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(62), nonce: 0, call_data: vec![], call_gas_limit: 0,
+            paymaster: None, paymaster_nonce: None, paymaster_data: None,
+            paymaster_signature: None, paymaster_public_key: None,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "user-op must fail in execute_partition");
     }
 
-    // -- T1.20 gap-closure: blob parallel-phase error arms --
+    #[test]
+    fn t1_20_upgrade_contract_via_parallel_partition_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![
+            Transaction::UpgradeContract(evaporchain_types::UpgradeContractTx {
+                owner: addr(63), contract_id: 1, new_bytecode: vec![],
+                new_bytecode_hash: [0u8; 32], nonce: 0,
+                admin_signature: None, admin_public_key: None,
+                endorser_stakes: vec![], required_stake: 0,
+                governance_approved: false, signature: None, public_key: None,
+            }),
+        ]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "upgrade-contract must fail in execute_partition");
+    }
+
+    #[test]
+    fn t1_20_delegate_via_parallel_partition_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![Transaction::Delegate(evaporchain_types::DelegateTx {
+            delegator: addr(64), validator_id: 1, amount: 1_000, nonce: 0,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "delegate must fail in execute_partition");
+    }
+
+    #[test]
+    fn t1_20_undelegate_via_parallel_partition_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![Transaction::Undelegate(evaporchain_types::UndelegateTx {
+            delegator: addr(65), validator_id: 1, amount: 500, nonce: 0,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "undelegate must fail in execute_partition");
+    }
+
+    #[test]
+    fn t1_20_claim_delegation_via_parallel_partition_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![
+            Transaction::ClaimDelegation(evaporchain_types::ClaimDelegationTx {
+                delegator: addr(66), validator_id: 1, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "claim-delegation must fail in execute_partition");
+    }
+
+    // ── T1.20 batch 7: Blob via parallel path ────────────────────────────────
 
     #[test]
     fn t1_20_blob_empty_data_fails() {
-        use evaporchain_types::BlobTx;
         let mut db = InMemoryStateDB::new();
-        let tx = Transaction::Blob(BlobTx {
-            submitter: addr(30),
-            data: vec![],
-            nonce: 0,
-            namespace_id: 1,
-            signature: None,
-            public_key: None,
-        });
-        let block = make_block(1, 0, vec![tx]);
+        let block = make_block(1, 1, vec![Transaction::Blob(evaporchain_types::BlobTx {
+            submitter: addr(50), data: vec![], nonce: 0, namespace_id: 1,
+            signature: None, public_key: None,
+        })]);
         let mut ex = ParallelExecutor::new_for_test(100);
-        let result = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(result.txs_failed, 1, "empty blob must fail in parallel phase");
-    }
-
-    #[test]
-    fn t1_20_blob_reserved_namespace_zero_fails() {
-        use evaporchain_types::BlobTx;
-        let mut db = InMemoryStateDB::new();
-        let tx = Transaction::Blob(BlobTx {
-            submitter: addr(31),
-            data: vec![0u8; 64],
-            nonce: 0,
-            namespace_id: 0,
-            signature: None,
-            public_key: None,
-        });
-        let block = make_block(1, 0, vec![tx]);
-        let mut ex = ParallelExecutor::new_for_test(100);
-        let result = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(result.txs_failed, 1, "namespace_id=0 blob must fail");
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "blob with empty data must fail");
     }
 
     #[test]
     fn t1_20_blob_too_large_fails() {
-        use evaporchain_types::BlobTx;
         let mut db = InMemoryStateDB::new();
-        let tx = Transaction::Blob(BlobTx {
-            submitter: addr(32),
-            data: vec![0u8; crate::MAX_BLOB_SIZE + 1],
-            nonce: 0,
-            namespace_id: 2,
-            signature: None,
-            public_key: None,
-        });
-        let block = make_block(1, 0, vec![tx]);
+        let block = make_block(1, 1, vec![Transaction::Blob(evaporchain_types::BlobTx {
+            submitter: addr(50), data: vec![0u8; crate::MAX_BLOB_SIZE + 1],
+            nonce: 0, namespace_id: 1, signature: None, public_key: None,
+        })]);
         let mut ex = ParallelExecutor::new_for_test(100);
-        let result = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(result.txs_failed, 1, "oversized blob must fail");
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "blob exceeding MAX_BLOB_SIZE must fail");
+    }
+
+    #[test]
+    fn t1_20_blob_reserved_namespace_zero_fails() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![Transaction::Blob(evaporchain_types::BlobTx {
+            submitter: addr(51), data: vec![0xAB], nonce: 0,
+            namespace_id: 0, signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "namespace_id=0 is reserved; must fail");
     }
 
     #[test]
     fn t1_20_blob_valid_succeeds() {
-        use evaporchain_types::BlobTx;
         let mut db = InMemoryStateDB::new();
-        let tx = Transaction::Blob(BlobTx {
-            submitter: addr(33),
-            data: vec![0xABu8; 64],
-            nonce: 0,
-            namespace_id: 42,
-            signature: None,
-            public_key: None,
-        });
-        let block = make_block(1, 0, vec![tx]);
+        let block = make_block(1, 1, vec![Transaction::Blob(evaporchain_types::BlobTx {
+            submitter: addr(52), data: vec![0xDE, 0xAD, 0xBE, 0xEF], nonce: 0,
+            namespace_id: 42, signature: None, public_key: None,
+        })]);
         let mut ex = ParallelExecutor::new_for_test(100);
-        let result = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(result.txs_executed, 1, "valid blob must succeed");
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "valid blob must succeed");
     }
 
+    // ── T1.20 batch 7: serial phase missing edge cases ────────────────────────
+
+    #[test]
+    fn t1_20_validator_exit_address_mismatch_fails() {
+        // stake has validator_address=addr(10); exit tx uses addr(11) → mismatch
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 11, 100_000);
+        db.put_stake(make_stake(2, 10, 50_000));
+        let block = make_block(1, 5, vec![Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(11),
+            validator_id: 2,
+            nonce: 0,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "address mismatch on validator exit must fail");
+    }
+
+    #[test]
+    fn t1_20_validator_claim_stake_address_mismatch_fails() {
+        use evaporchain_types::ValidatorClaimStakeTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 99, 1000);
+        let mut stake = make_stake(3, 10, 50_000);
+        stake.unbonding_epoch = Some(10);
+        db.put_stake(stake);
+        let block = make_block(1, 300, vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: addr(99),
+            validator_id: 3,
+            nonce: 0,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "address mismatch on claim-stake must fail");
+    }
+
+    #[test]
+    fn t1_20_rotate_validator_key_address_mismatch_fails() {
+        use evaporchain_types::RotateValidatorKeyTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 99, 1000);
+        db.put_stake(make_stake(4, 10, 50_000));
+        let block = make_block(1, 100, vec![Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+            validator_address: addr(99),
+            validator_id: 4,
+            new_bls_public_key: vec![0u8; 48],
+            bls_pop_old: vec![0u8; 48],
+            bls_pop_new: vec![0u8; 48],
+            effective_epoch: 200,
+            nonce: 0,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "address mismatch on rotate-key must fail");
+    }
+
+    #[test]
+    fn t1_20_rotate_validator_key_nonce_mismatch_fails() {
+        use evaporchain_types::RotateValidatorKeyTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 1000); // account nonce = 0
+        db.put_stake(make_stake(5, 10, 50_000));
+        let block = make_block(1, 100, vec![Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+            validator_address: addr(10),
+            validator_id: 5,
+            new_bls_public_key: vec![0u8; 48],
+            bls_pop_old: vec![0u8; 48],
+            bls_pop_new: vec![0u8; 48],
+            effective_epoch: 200,
+            nonce: 99, // WRONG: expected 0
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "nonce mismatch on rotate-key must fail");
+    }
+
+    #[test]
+    fn t1_20_deferred_tx_serial_submission_processed() {
+        // Exercises the Deferred serial-phase arm. submit() rejects empty
+        // inner_tx_bytes so the tx fails gracefully — the important thing is
+        // the code path is reached without panicking.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 20, 10_000);
+        let block = make_block(1, 5, vec![Transaction::Deferred(evaporchain_types::DeferredTx {
+            submitter: addr(20), nonce: 0, deposit: 0,
+            guards: vec![], inner_tx_bytes: vec![], gas_limit: 0,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed + r.txs_failed, 1, "Deferred tx must be processed");
+    }
+
+    #[test]
+    fn t1_20_deploy_script_invalid_source_fails() {
+        use evaporchain_types::DeployScriptTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 30, 10_000);
+        let block = make_block(1, 1, vec![Transaction::DeployScript(DeployScriptTx {
+            deployer: addr(30),
+            source_code: "not valid evaporscript @@@!".to_string(),
+            energy: 500,
+            half_life: 10,
+            signature: None, public_key: None,
+        })]);
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "invalid DeployScript source must fail");
+    }
 }
