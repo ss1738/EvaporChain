@@ -641,6 +641,60 @@ mod tests {
             "LFSR matches neptune ARK byte-for-byte — flip this to `assert_eq!(mismatches, 0)`.");
     }
 
+    /// Tightened LFSR parity check: compare only `ours[0..25]`
+    /// vs `theirs[0..25]`.
+    ///
+    /// Per neptune's `preprocessing.rs:33-34` (`res.extend(round_keys(0))`),
+    /// `crc[0..width]` = plain ARK for round 0. So this 25-entry
+    /// window is the ONLY clean comparison we get (rounds 1+ get
+    /// matrix-multiplied transformations in the compressed form).
+    ///
+    /// If even index 0 differs: the LFSR itself has a bug (the
+    /// very first emitted field element is wrong).
+    /// If only index >=1 differ: subtle ordering / packing bug.
+    /// If all match: LFSR is correct; remaining sponge-level
+    /// divergence is downstream.
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json"]
+    fn lfsr_first_25_plain_round_0_parity() {
+        use crate::neptune_dump_parser::extract_compressed_round_constants;
+        use ark_ff::{BigInteger, PrimeField};
+
+        let ours = generate_round_constants_bn254_arity_24_standard();
+        let theirs = extract_compressed_round_constants("/tmp/neptune-bn256-standard.json")
+            .expect("load dump");
+
+        let mut mismatches: Vec<usize> = Vec::new();
+        for i in 0..25 {
+            if ours[i] != theirs[i] {
+                mismatches.push(i);
+            }
+        }
+        eprintln!("First 25 plain-round-0 entries: {} mismatches", mismatches.len());
+        if !mismatches.is_empty() {
+            eprintln!("  Mismatch indices: {mismatches:?}");
+            // Show byte diff for index 0
+            let ours_0_le = ours[0].into_bigint().to_bytes_le();
+            let theirs_0_le = theirs[0].into_bigint().to_bytes_le();
+            eprintln!("  ours[0]   LE: {ours_0_le:?}");
+            eprintln!("  theirs[0] LE: {theirs_0_le:?}");
+            // Common prefix length
+            let mut common = 0;
+            while common < ours_0_le.len()
+                && common < theirs_0_le.len()
+                && ours_0_le[common] == theirs_0_le[common]
+            {
+                common += 1;
+            }
+            eprintln!("  common LE-prefix bytes: {common} / 32");
+        }
+        // Current state: differs. Flip to assert_eq when LFSR is fixed.
+        assert!(
+            !mismatches.is_empty(),
+            "LFSR matches neptune crc[0..25] — flip this to `assert!(mismatches.is_empty())`."
+        );
+    }
+
     /// Generating twice yields the same vector — pure
     /// determinism check on the full pipeline.
     #[test]
