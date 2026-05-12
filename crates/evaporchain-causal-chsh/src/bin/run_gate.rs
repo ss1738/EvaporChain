@@ -27,7 +27,7 @@
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use evaporchain_causal_chsh::{
     chsh::compute_chsh_s,
@@ -196,7 +196,7 @@ fn format_verdict(v: &GateVerdict) -> (String, String) {
 }
 
 fn render_report(
-    csv_path: &PathBuf,
+    csv_path: &Path,
     window_secs: u64,
     n_blocks: usize,
     n_samples_total: usize,
