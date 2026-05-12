@@ -45,12 +45,12 @@
 //! ## What this crate does NOT do
 //!
 //! - Does NOT implement the full quantum-tensor-network
-//!    machinery. V1 ships the *classical* analog (Shamir-style
-//!    threshold sharing) with the energy-decay gate.
+//!   machinery. V1 ships the *classical* analog (Shamir-style
+//!   threshold sharing) with the energy-decay gate.
 //! - Does NOT implement multi-bulk codes (multiple bulk values
-//!    per boundary). V1 is one bulk byte per boundary set.
+//!   per boundary). V1 is one bulk byte per boundary set.
 //! - Does NOT model the full HaPPY locality structure. V1 is
-//!    flat (any-k-of-N).
+//!   flat (any-k-of-N).
 //!
 //! ## Module map
 //!
