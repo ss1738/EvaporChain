@@ -14392,6 +14392,181 @@ mod tests {
         let tc = make_consensus(1, &[1, 2, 3]);
         assert!(tc.disputed_observations().is_empty());
     }
+
+    #[test]
+    fn t1_20_bls_vote_message_deterministic() {
+        let msg1 = TendermintConsensus::bls_vote_message(42, 3, &Some([0xABu8; 32]), "prevote");
+        let msg2 = TendermintConsensus::bls_vote_message(42, 3, &Some([0xABu8; 32]), "prevote");
+        assert_eq!(msg1, msg2, "bls_vote_message must be deterministic");
+    }
+
+    #[test]
+    fn t1_20_bls_vote_message_none_hash_shorter_than_some() {
+        let msg_none = TendermintConsensus::bls_vote_message(1, 0, &None, "prevote");
+        let msg_some =
+            TendermintConsensus::bls_vote_message(1, 0, &Some([0x11u8; 32]), "prevote");
+        assert!(
+            msg_none.len() < msg_some.len(),
+            "nil-vote message must be shorter than hash-present message"
+        );
+        assert_eq!(
+            msg_some.len() - msg_none.len(),
+            32,
+            "the only difference should be the 32-byte hash"
+        );
+    }
+
+    #[test]
+    fn t1_20_bls_vote_message_phase_prefix_is_phase_bytes() {
+        let phase = "precommit";
+        let msg = TendermintConsensus::bls_vote_message(10, 1, &None, phase);
+        assert!(
+            msg.starts_with(phase.as_bytes()),
+            "bls_vote_message must start with the phase string bytes"
+        );
+    }
+
+    #[test]
+    fn t1_20_bls_vote_message_different_phases_differ() {
+        let a = TendermintConsensus::bls_vote_message(1, 0, &None, "prevote");
+        let b = TendermintConsensus::bls_vote_message(1, 0, &None, "precommit");
+        assert_ne!(a, b, "different phase strings must produce different messages");
+    }
+
+    #[test]
+    fn t1_20_current_proposer_is_some_for_new_consensus() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        // At height=1, round=0 there must be an elected proposer.
+        assert!(
+            tc.current_proposer().is_some(),
+            "current_proposer() must return Some at startup with validators"
+        );
+    }
+
+    #[test]
+    fn t1_20_current_proposer_id_is_in_validator_set() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let proposer = tc.current_proposer().expect("proposer exists");
+        let id = proposer.id;
+        assert!(
+            tc.validator_set.get(id).is_some(),
+            "current_proposer id={id} must exist in the validator set"
+        );
+    }
+
+    #[test]
+    fn t1_20_boltzmann_proposer_weights_len_matches_validator_count() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let weights = tc.boltzmann_proposer_weights(1_000);
+        assert_eq!(
+            weights.len(),
+            3,
+            "boltzmann_proposer_weights must return one entry per validator"
+        );
+    }
+
+    #[test]
+    fn t1_20_boltzmann_proposer_weights_sorted_descending() {
+        let tc = make_consensus(1, &[1, 2, 3, 4, 5]);
+        let weights = tc.boltzmann_proposer_weights(1_000);
+        for w in weights.windows(2) {
+            assert!(
+                w[0].1 >= w[1].1,
+                "boltzmann_proposer_weights must be sorted descending;                  got {} < {}" ,
+                w[0].1,
+                w[1].1
+            );
+        }
+    }
+
+    #[test]
+    fn t1_20_boltzmann_proposer_weights_empty_validator_set() {
+        let tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::with_validators(vec![]));
+        let weights = tc.boltzmann_proposer_weights(1_000);
+        assert!(weights.is_empty(), "empty validator set → empty weights");
+    }
+
+    #[test]
+    fn t1_20_refresh_proposer_boltzmann_stake_initialises_entry() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        // Before refresh, boltzmann_stakes may be empty.
+        let before = tc.boltzmann_stakes.contains_key(&1);
+        tc.refresh_proposer_boltzmann_stake(1, 1, 50);
+        // After refresh the entry must exist regardless of whether it
+        // was seeded before.
+        assert!(
+            tc.boltzmann_stakes.contains_key(&1),
+            "refresh must initialise a boltzmann stake entry for the proposer;              was_present_before={before}"
+        );
+    }
+
+    #[test]
+    fn t1_20_refresh_proposer_boltzmann_stake_unknown_id_no_panic() {
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        // ID 99 is not in the validator set.  ensure_boltzmann_stake will
+        // seed it with stake=0 from the fallback path, then get_mut
+        // returns Some.  Either way this must NOT panic.
+        tc.refresh_proposer_boltzmann_stake(99, 1, 100);
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_empty_candidates_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        // Default MCC mode, no candidates → None (no trajectories built).
+        let result = tc.authoritative_head(&[], 10_000);
+        assert!(result.is_none(), "empty candidate list must yield None");
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_candidates_not_in_dag_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        // These hashes are not in the Light-Cone DAG.
+        let candidates = [[1u8; 32], [2u8; 32]];
+        let result = tc.authoritative_head(&candidates, 10_000);
+        assert!(
+            result.is_none(),
+            "candidates absent from DAG must yield None via MCC trajectory filter"
+        );
+    }
+
+    #[test]
+    fn t1_20_mcc_choose_fork_empty_candidates_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        assert!(tc.mcc_choose_fork(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_singh_attractor_fork_choice_empty_attractors_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let candidates = [[1u8; 32]];
+        // Empty attractors → immediate None per guard.
+        assert!(tc
+            .singh_attractor_fork_choice(&candidates, &[])
+            .is_none());
+    }
+
+    #[test]
+    fn t1_20_singh_attractor_fork_choice_empty_candidates_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        let attractor =
+            evaporchain_singh_attractor::Attractor::new(5_000, 1_000);
+        // Non-empty attractors, but no candidates to iterate → None.
+        assert!(tc
+            .singh_attractor_fork_choice(&[], &[attractor])
+            .is_none());
+    }
+
+    #[test]
+    fn t1_20_causal_cone_summary_unknown_head_returns_none() {
+        let tc = make_consensus(1, &[1, 2, 3]);
+        // Head not in the Light-Cone DAG → summarize_cone returns Err → None.
+        let result = tc.causal_cone_summary([0xFFu8; 32], 100, 10);
+        assert!(
+            result.is_none(),
+            "head absent from DAG must return None from causal_cone_summary"
+        );
+    }
+
 }
 
 // ─────────────────────────── Integration Tests ─────────────────────────────
