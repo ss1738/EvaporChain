@@ -50,9 +50,14 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod poseidon_transcript;
 pub mod recursive_snark_fixture;
 pub mod verifier_circuit;
 
+pub use poseidon_transcript::{
+    absorb_order, HasherSide, NeptuneSpongeSpec, RelaxedR1csSide, RunningInputSide,
+    TranscriptSlot, NOVA_SPONGE_SPEC, NUM_HASH_BITS, TRANSCRIPT_VERSION,
+};
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
 };
