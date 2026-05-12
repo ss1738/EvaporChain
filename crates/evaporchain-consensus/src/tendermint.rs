@@ -21329,3 +21329,276 @@ mod t1_20_batch17 {
         assert!(result.is_err());
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch18 {
+    use super::*;
+    use evaporchain_crypto::signatures::BlsKeypair;
+    use evaporchain_mev_detect::MevObservation;
+    use evaporchain_types::{Block, CommitCertificate};
+
+    fn make_vs1() -> ValidatorSet {
+        // Single validator so proposer_for_round(1,0) is always validator 1.
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs
+    }
+
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_vs4() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        for id in 1u64..=4 {
+            let mut addr = [0u8; 32];
+            addr[0] = id as u8;
+            vs.add_validator(ValidatorInfo::new(id, 1000, addr));
+        }
+        vs
+    }
+
+    fn make_tc1() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs1())
+    }
+
+    fn make_tc3() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs3())
+    }
+
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: 0, parent_hash: [0u8; 32],
+            state_root: [0u8; 32], transactions: vec![],
+            producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    fn dummy_mev_obs(block_height: u64, idx: usize, refund: u64) -> MevObservation {
+        MevObservation {
+            block_height,
+            attacker_pre_idx: idx,
+            victim_idx: idx + 1,
+            attacker_post_idx: idx + 2,
+            attacker: [0xAAu8; 32],
+            victim: [0xBBu8; 32],
+            target: [0xCCu8; 32],
+            work_estimate: 500,
+            confidence_score_ppm: 1_000_000,
+            refund_amount: Some(refund),
+        }
+    }
+
+    // ── Test 1: MEV MissingRefund counter incremented via Proposal (lines 5100-5108) ──
+    #[test]
+    fn t1_20_mev_missing_refund_counter_via_proposal() {
+        let mut tc = make_tc1();
+        tc.governance_params.insert(
+            "crooks_mev_settlement_mode".to_string(),
+            "enforce".to_string(),
+        );
+        // Add observation at height=0 with refund_amount=1; from height=1
+        // youngest_settleable = 1 - 5 = 0 (saturating) → block_height=0 qualifies.
+        tc.mev_observations.push_back(dummy_mev_obs(0, 0, 1));
+
+        // Proposer for (height=1, round=0) with single validator = validator 1.
+        let block = make_block(1);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id: 1,
+        });
+        // Refund missing → MissingRefund → counter for validator 1 bumped
+        assert_eq!(
+            tc.mev_missing_refund_violations.get(&1).copied().unwrap_or(0),
+            1,
+            "MissingRefund should have incremented violation counter for proposer"
+        );
+        // No commit action (proposal was rejected)
+        assert!(!actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(_))));
+    }
+
+    // ── Test 2: apply_mev_missing_refund_slashes with flag disabled → empty ──
+    #[test]
+    fn t1_20_mev_refund_slash_disabled_returns_empty() {
+        let mut tc = make_tc3();
+        tc.mev_missing_refund_violations.insert(1, 3);
+        let result = tc.apply_mev_missing_refund_slashes();
+        assert!(result.is_empty(), "flag disabled → no slashes applied");
+        // Violations remain untouched
+        assert_eq!(tc.mev_missing_refund_violations.get(&1).copied(), Some(3));
+    }
+
+    // ── Test 3: apply_mev_missing_refund_slashes with enabled flag clears counter ──
+    #[test]
+    fn t1_20_mev_refund_slash_enabled_clears_counter() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "crooks_mev_missing_refund_slash_enabled".to_string(),
+            "true".to_string(),
+        );
+        tc.mev_missing_refund_violations.insert(1, 2);
+        let _result = tc.apply_mev_missing_refund_slashes();
+        // Counter must be cleared regardless of slash amount
+        assert!(
+            !tc.mev_missing_refund_violations.contains_key(&1),
+            "counter must be removed after apply"
+        );
+    }
+
+    // ── Test 4: apply_mev_missing_refund_slashes zero-stake (non-existent) validator ──
+    #[test]
+    fn t1_20_mev_refund_slash_zero_stake_validator_removed() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "crooks_mev_missing_refund_slash_enabled".to_string(),
+            "true".to_string(),
+        );
+        // Validator 99 doesn't exist → stake=0 → removed from map, nothing slashed
+        tc.mev_missing_refund_violations.insert(99, 5);
+        let result = tc.apply_mev_missing_refund_slashes();
+        assert!(result.is_empty(), "zero-stake validator → nothing slashed");
+        assert!(
+            !tc.mev_missing_refund_violations.contains_key(&99),
+            "zero-stake entry must be removed from violations map"
+        );
+    }
+
+    // ── Test 5: cross_fork_equivocation_count in linear mode → 0 ──
+    #[test]
+    fn t1_20_cross_fork_equivocation_count_linear_zero() {
+        let mut tc = make_tc3();
+        tc.cross_fork_equivocations.insert(1, 7);
+        // Default mode is "linear" → always returns 0
+        assert_eq!(tc.cross_fork_equivocation_count(1), 0);
+    }
+
+    // ── Test 6: cross_fork_equivocation_count in mcc_full returns stored value ──
+    #[test]
+    fn t1_20_cross_fork_equivocation_count_mcc_full_returns_value() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        tc.cross_fork_equivocations.insert(2, 5);
+        assert_eq!(tc.cross_fork_equivocation_count(2), 5);
+    }
+
+    // ── Test 7: all_cross_fork_equivocations in linear mode → empty map ──
+    #[test]
+    fn t1_20_all_cross_fork_equivocations_linear_empty() {
+        let mut tc = make_tc3();
+        tc.cross_fork_equivocations.insert(1, 3);
+        let result = tc.all_cross_fork_equivocations();
+        assert!(result.is_empty(), "linear mode must return empty map");
+    }
+
+    // ── Test 8: all_cross_fork_equivocations in mcc_full returns full map ──
+    #[test]
+    fn t1_20_all_cross_fork_equivocations_mcc_full_returns_map() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc_full".to_string(),
+        );
+        tc.cross_fork_equivocations.insert(1, 2);
+        tc.cross_fork_equivocations.insert(3, 9);
+        let result = tc.all_cross_fork_equivocations();
+        assert_eq!(result.get(&1).copied(), Some(2));
+        assert_eq!(result.get(&3).copied(), Some(9));
+    }
+
+    // ── Test 9: record_dag_prevote flag disabled → dag_round_states stays empty ──
+    #[test]
+    fn t1_20_record_dag_prevote_flag_disabled_noop() {
+        let mut tc = make_tc3();
+        let tip = [0xAAu8; 32];
+        tc.record_dag_prevote(tip, 1, Some([0xBBu8; 32]), vec![0x01, 0x02]);
+        assert!(tc.dag_round_states.is_empty(), "flag disabled → no entry stored");
+    }
+
+    // ── Test 10: record_dag_prevote flag enabled → stores prevote and bls sig ──
+    #[test]
+    fn t1_20_record_dag_prevote_flag_enabled_stores() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        let tip = [0xAAu8; 32];
+        let bh = Some([0xBBu8; 32]);
+        let sig = vec![0x01, 0x02, 0x03];
+        tc.record_dag_prevote(tip, 2, bh, sig.clone());
+        let rs = tc.dag_round_states.get(&tip).expect("round state must exist");
+        assert_eq!(rs.prevotes.get(&2), Some(&bh));
+        assert_eq!(rs.prevote_bls_sigs.get(&2), Some(&sig));
+    }
+
+    // ── Test 11: verify_commit_certificate_for_sync stake fallback above floor (7141-7165) ──
+    #[test]
+    fn t1_20_cert_sync_stake_fallback_above_floor() {
+        // 3 validators (total=3000, threshold=2000, min_floor=1000).
+        // Cert with signer 1 only (stake=1000 < 2000 = threshold) → fallback.
+        // 1000 >= 1000 (min_floor) → does NOT reject at floor check, proceeds to BLS.
+        let mut vs = ValidatorSet::new();
+        for id in 1u64..=3 {
+            let kp = BlsKeypair::generate();
+            let mut info = ValidatorInfo::new(id, 1000, {
+                let mut a = [0u8; 32]; a[0] = id as u8; a
+            });
+            info.bls_public_key = Some(kp.public_key_bytes().0.clone());
+            info.pop_verified = true;
+            vs.add_validator(info);
+        }
+        let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
+        let cert = CommitCertificate {
+            height: 1, round: 0, block_hash: [0u8; 32],
+            signer_ids: vec![1],
+            aggregate_signature: vec![0u8; 96], // fake sig → BLS fails
+        };
+        // Covers lines 7141-7165 (fallback path above floor) then returns false at BLS fail
+        let result = tc.verify_commit_certificate_for_sync(&cert);
+        assert!(!result, "fake sig must not verify");
+    }
+
+    // ── Test 12: verify_commit_certificate_for_sync stake fallback below floor (7148-7155) ──
+    #[test]
+    fn t1_20_cert_sync_stake_fallback_below_floor() {
+        // 4 validators (total=4000, threshold=2667, min_floor=1333).
+        // Cert with signer 1 only (stake=1000 < min_floor=1333) → rejected at floor check.
+        let mut vs = ValidatorSet::new();
+        for id in 1u64..=4 {
+            let kp = BlsKeypair::generate();
+            let mut info = ValidatorInfo::new(id, 1000, {
+                let mut a = [0u8; 32]; a[0] = id as u8; a
+            });
+            info.bls_public_key = Some(kp.public_key_bytes().0.clone());
+            info.pop_verified = true;
+            vs.add_validator(info);
+        }
+        let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
+        let cert = CommitCertificate {
+            height: 1, round: 0, block_hash: [0u8; 32],
+            signer_ids: vec![1],
+            aggregate_signature: vec![0u8; 96],
+        };
+        // Covers lines 7148-7155 (below-floor rejection)
+        let result = tc.verify_commit_certificate_for_sync(&cert);
+        assert!(!result, "signer_stake below 1/3 floor must be rejected");
+    }
+}
