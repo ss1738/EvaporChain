@@ -935,7 +935,6 @@ mod tests {
 
     #[test]
     fn test_take_deterministic_order() {
-        let mut pool = Mempool::new();
         let tx_a = Transaction::Transfer(TransferTx {
             from: [1u8; 32],
             to: [2u8; 32],

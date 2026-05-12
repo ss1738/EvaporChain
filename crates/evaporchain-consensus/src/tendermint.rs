@@ -11029,7 +11029,7 @@ mod tests {
     /// (replay protection).
     #[test]
     fn test_due_refund_txs_grace_window_and_replay_protection() {
-        use evaporchain_types::{Block, RefundTx, TransferTx};
+        use evaporchain_types::{Block, TransferTx};
 
         fn addr_local(seed: u8) -> [u8; 32] {
             let mut a = [0u8; 32];
@@ -12315,26 +12315,26 @@ mod tests {
         assert!(tc.propose_parents().is_empty());
     }
 
-    /// MCC Phase C.5 — validator-determinism property test (256
-    /// random DAG shapes).
-    ///
-    /// **The contract:** every honest validator with the same DAG
-    /// state must produce the same MCC fork-choice outputs:
-    ///   1. `candidate_heads()` returns the same `BTreeSet` of leaves
-    ///   2. `enumerate_candidate_heads()` returns the same sorted
-    ///      `Vec<(BlockId, caliber)>` (same order, same scores)
-    ///   3. `light_cone_antichain_digest()` matches
-    ///   4. `plan_replay_to_head` produces the same `ReplayWalk` for
-    ///      every (from, to) pair drawn from the candidate heads
-    ///
-    /// **Why this is a proptest, not a unit test:** the manual
-    /// `mcc_phase_a_candidate_heads_converges_across_validators`
-    /// test (already shipped) covers a 6-block hand-picked sequence.
-    /// This proptest sweeps 256 randomly-generated DAG shapes (linear
-    /// chains, branching, multi-parent merges) at sizes 1..=20
-    /// blocks, catching any non-determinism that depends on a
-    /// specific topology — HashMap iteration order leaking into
-    /// scoring, time-based tie-breaks, etc.
+    // MCC Phase C.5 — validator-determinism property test (256
+    // random DAG shapes).
+    //
+    // **The contract:** every honest validator with the same DAG
+    // state must produce the same MCC fork-choice outputs:
+    //   1. `candidate_heads()` returns the same `BTreeSet` of leaves
+    //   2. `enumerate_candidate_heads()` returns the same sorted
+    //      `Vec<(BlockId, caliber)>` (same order, same scores)
+    //   3. `light_cone_antichain_digest()` matches
+    //   4. `plan_replay_to_head` produces the same `ReplayWalk` for
+    //      every (from, to) pair drawn from the candidate heads
+    //
+    // **Why this is a proptest, not a unit test:** the manual
+    // `mcc_phase_a_candidate_heads_converges_across_validators`
+    // test (already shipped) covers a 6-block hand-picked sequence.
+    // This proptest sweeps 256 randomly-generated DAG shapes (linear
+    // chains, branching, multi-parent merges) at sizes 1..=20
+    // blocks, catching any non-determinism that depends on a
+    // specific topology — HashMap iteration order leaking into
+    // scoring, time-based tie-breaks, etc.
     proptest::proptest! {
         #[test]
         fn mcc_phase_c5_validator_determinism_under_random_dags(
@@ -13652,11 +13652,11 @@ mod tests {
             // Random "key" string for unknown-key cases.
             junk_key in "[a-z]{3,18}",
         ) {
-            use proptest::prelude::*;
+            // (removed: prelude was unused in this proptest body)
             // Some toolchains don't surface proptest's assertion
             // macros via the prelude glob; explicit imports below
             // make them available unconditionally.
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            use proptest::prop_assert;
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
             let (key, value, expected): (&str, String, &str) = match bucket {
                 0 => ("parent_acceptance_mode", "mcc".to_string(), "ok"),
@@ -13739,8 +13739,8 @@ mod tests {
             s_honest_milli in -2000i64..4001,
             last_run_at_height in 0u64..1_000_001,
         ) {
-            use proptest::prelude::*;
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            // (removed: unused proptest prelude — fully-qualified prop_assert_eq! used below)
+            // (removed: unused proptest macro imports — fully-qualified below)
             use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
 
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);

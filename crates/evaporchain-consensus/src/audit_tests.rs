@@ -180,7 +180,7 @@ mod adversarial_tests {
                     let _ = nodes[1].on_message(msg.clone());
                 }
             }
-            let equivocation_actions = nodes[1].on_message(equivocating_proposal);
+            let _ = nodes[1].on_message(equivocating_proposal);
 
             // The equivocating proposer should be penalized (health score decreased)
             let proposer_health = nodes[1]

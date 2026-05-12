@@ -477,7 +477,7 @@ mod tests {
 
         // New validator set: keep validators 0,1 (2000 stake overlap out of 4000 total)
         // Add new validators 4,5
-        let (mut vs2, mut kps2) = make_validator_set_with_bls(4, 1000);
+        let (vs2, kps2) = make_validator_set_with_bls(4, 1000);
         // vs2 has ids 0,1,2,3 with DIFFERENT BLS keys than vs1
         // For overlap to work, we need signers from vs1 that are also in vs2
         // Since vs2 has the same IDs (0-3), the overlap check passes on ID basis
