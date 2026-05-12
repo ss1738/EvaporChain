@@ -8103,4 +8103,237 @@ contract Counter {
         assert!(exec.fee_controller_mut().is_none());
     }
 
+
+    // -- T1.20 gap-closure: execute_validator_exit (no stake record) --
+
+    #[test]
+    fn t1_20_validator_exit_no_stake_record_fails() {
+        use evaporchain_types::ValidatorExitTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 10, 50_000);
+        let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(10), validator_id: 99, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "exit with no stake record must fail");
+    }
+
+    // -- T1.20 gap-closure: execute_validator_exit success path --
+
+    #[test]
+    fn t1_20_validator_exit_success() {
+        use evaporchain_types::{StakeRecord, ValidatorExitTx};
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 11, 50_000);
+        db.put_stake(StakeRecord {
+            validator_id: 5,
+            validator_address: addr(11),
+            staked_amount: 20_000,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+        let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(11), validator_id: 5, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "validator exit must succeed");
+        let stake = db.get_stake(5).unwrap();
+        assert!(stake.unbonding_epoch.is_some(), "unbonding_epoch must be set after exit");
+    }
+
+    // -- T1.20 gap-closure: execute_validator_exit already exiting --
+
+    #[test]
+    fn t1_20_validator_exit_already_exiting_fails() {
+        use evaporchain_types::{StakeRecord, ValidatorExitTx};
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 12, 50_000);
+        db.put_stake(StakeRecord {
+            validator_id: 6,
+            validator_address: addr(12),
+            staked_amount: 20_000,
+            staked_at_epoch: 0,
+            unbonding_epoch: Some(300),  // already exiting
+            slashed_amount: 0,
+        });
+        let txs = vec![Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(12), validator_id: 6, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "double-exit must fail");
+    }
+
+    // -- T1.20 gap-closure: execute_validator_claim_stake not exited --
+
+    #[test]
+    fn t1_20_validator_claim_stake_not_exited_fails() {
+        use evaporchain_types::{StakeRecord, ValidatorClaimStakeTx};
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 20, 0);
+        db.put_stake(StakeRecord {
+            validator_id: 7,
+            validator_address: addr(20),
+            staked_amount: 10_000,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,  // not exited yet
+            slashed_amount: 0,
+        });
+        let txs = vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: addr(20), validator_id: 7, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "claim without prior exit must fail");
+    }
+
+    // -- T1.20 gap-closure: execute_validator_claim_stake too early --
+
+    #[test]
+    fn t1_20_validator_claim_stake_unbonding_not_complete_fails() {
+        use evaporchain_types::{StakeRecord, ValidatorClaimStakeTx};
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 21, 0);
+        db.put_stake(StakeRecord {
+            validator_id: 8,
+            validator_address: addr(21),
+            staked_amount: 10_000,
+            staked_at_epoch: 0,
+            unbonding_epoch: Some(1000),  // unbonding done at epoch 1000
+            slashed_amount: 0,
+        });
+        let txs = vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: addr(21), validator_id: 8, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        // block.epoch=1 < unbonding_epoch=1000 -> too early
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "claim before unbonding period ends must fail");
+    }
+
+    // -- T1.20 gap-closure: execute_validator_claim_stake valid success --
+
+    #[test]
+    fn t1_20_validator_claim_stake_success() {
+        use evaporchain_types::{StakeRecord, ValidatorClaimStakeTx};
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 22, 0);
+        db.put_stake(StakeRecord {
+            validator_id: 9,
+            validator_address: addr(22),
+            staked_amount: 50_000,
+            staked_at_epoch: 0,
+            unbonding_epoch: Some(1),  // unbonding started at epoch 1
+            slashed_amount: 0,
+        });
+        let txs = vec![Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: addr(22), validator_id: 9, nonce: 0,
+            signature: None, public_key: None,
+        })];
+        // block.epoch=1001 >= unbonding_epoch=1 -> claim succeeds
+        let block = make_block(1, 1001, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "claim after unbonding must succeed");
+        let bal = db.get_account(&addr(22)).unwrap().balance;
+        assert_eq!(bal, 50_000, "stake must be returned to validator");
+        // Stake record must be removed after full claim.
+        assert!(db.get_stake(9).is_none(), "stake record removed after claim");
+    }
+
+    // -- T1.20 gap-closure: execute_validator_stake valid success --
+
+    #[test]
+    fn t1_20_validator_stake_success() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 30, 100_000);
+        let txs = vec![Transaction::ValidatorStake(evaporchain_types::ValidatorStakeTx {
+            validator_address: addr(30), stake_amount: 30_000,
+            validator_id: 10, nonce: 0,
+            bls_public_key: None, vrf_public_key: None,
+            signature: None, public_key: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "validator stake must succeed");
+        let bal = db.get_account(&addr(30)).unwrap().balance;
+        assert_eq!(bal, 70_000, "stake deducted from balance");
+        let stake = db.get_stake(10).unwrap();
+        assert_eq!(stake.staked_amount, 30_000);
+    }
+
+    // -- T1.20 gap-closure: execute_refund zero amount --
+
+    #[test]
+    fn t1_20_refund_zero_amount_fails() {
+        use evaporchain_types::RefundTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 40, 10_000);
+        let txs = vec![Transaction::Refund(RefundTx {
+            attacker: addr(40), victim: addr(41), amount: 0,
+            source_block_height: 1, source_observation_idx: 0, settle_block_height: 1,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "zero-amount refund must fail");
+    }
+
+    // -- T1.20 gap-closure: execute_refund success path --
+
+    #[test]
+    fn t1_20_refund_success() {
+        use evaporchain_types::RefundTx;
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 50, 5_000);
+        let txs = vec![Transaction::Refund(RefundTx {
+            attacker: addr(50), victim: addr(51), amount: 2_000,
+            source_block_height: 1, source_observation_idx: 0, settle_block_height: 1,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "valid refund must succeed");
+        assert_eq!(db.get_account(&addr(50)).unwrap().balance, 3_000);
+        assert_eq!(db.get_account(&addr(51)).unwrap().balance, 2_000);
+    }
+
+    // -- T1.20 gap-closure: execute_transfer mint-bypass (from=[0u8;32]) --
+
+    #[test]
+    fn t1_20_transfer_mint_bypass_nonce_not_incremented() {
+        // The mint-bypass path skips nonce increment; seed zero-address with balance.
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: [0u8; 32], balance: 10_000, nonce: 5,
+            storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0, vesting: None,
+        });
+        let txs = vec![Transaction::Transfer(evaporchain_types::TransferTx {
+            from: [0u8; 32], to: addr(60), amount: 1_000, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        })];
+        let block = make_block(1, 1, txs);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "mint-bypass must succeed");
+        // Nonce must NOT have been incremented.
+        let z = db.get_account(&[0u8;32]).unwrap();
+        assert_eq!(z.nonce, 5, "mint-bypass must not increment nonce");
+        assert_eq!(db.get_account(&addr(60)).unwrap().balance, 1_000);
+    }
+
 }
