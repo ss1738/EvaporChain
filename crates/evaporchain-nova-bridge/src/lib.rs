@@ -68,6 +68,7 @@
 pub mod circuit_builder;
 pub mod compress_ark;
 pub mod grain_lfsr;
+pub mod groth16_wrapper;
 pub mod mds_linalg;
 pub mod neptune_dump_parser;
 pub mod neptune_reference;
