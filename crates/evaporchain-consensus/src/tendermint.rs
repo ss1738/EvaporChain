@@ -16410,7 +16410,7 @@ mod da_tests {
         // Dropped (same-sender) txs returned to mempool — should still
         // be there for the next proposal.
         assert!(
-            tc.mempool.len() >= 1,
+            !tc.mempool.is_empty(),
             "dropped same-sender txs must remain in pool — got {} pending",
             tc.mempool.len()
         );
