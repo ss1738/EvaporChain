@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 
 /**
@@ -55,7 +56,7 @@ export function DemurrageBadge() {
         } transition`}
         title="Demurrage owed on idle balance"
       >
-        <span>⚠</span>
+        <span><AlertTriangle className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
         <span className="font-semibold tabular-nums">
           {demurrageOwed.toLocaleString()} EVAP owed
         </span>
@@ -116,7 +117,7 @@ function DemurrageModal({
         <div className="flex items-start justify-between">
           <div>
             <h3 className="text-sm font-semibold text-zinc-100">Demurrage owed</h3>
-            <p className="text-[10px] text-zinc-500 mt-0.5">
+            <p className="text-xs text-zinc-500 mt-0.5">
               Idle-balance fee on the EvaporChain substrate.
             </p>
           </div>
@@ -159,7 +160,7 @@ function DemurrageModal({
         <button
           onClick={onSettle}
           disabled={settling}
-          className="w-full py-2 rounded-lg bg-evap-cyan/15 border border-evap-cyan/40 text-[11px] font-semibold text-evap-cyan hover:bg-evap-cyan/25 transition disabled:opacity-50"
+          className="w-full py-2 rounded-lg bg-evap-cyan/15 border border-evap-cyan/40 text-xs font-semibold text-evap-cyan hover:bg-evap-cyan/25 transition disabled:opacity-50"
         >
           {settling ? "Settling…" : "Settle now"}
         </button>
@@ -172,7 +173,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return (
     <div>
       <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{label}</p>
-      <p className="text-[11px] font-semibold mt-0.5">{children}</p>
+      <p className="text-xs font-semibold mt-0.5">{children}</p>
     </div>
   );
 }

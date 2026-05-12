@@ -99,14 +99,14 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
           <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40">
             LAD-VM
           </span>
-          <span className="text-[10px] font-medium text-zinc-300 uppercase tracking-wide">
+          <span className="text-xs font-medium text-zinc-300 uppercase tracking-wide">
             Resource preview
           </span>
         </div>
         <span className="text-[8px] text-zinc-600 uppercase tracking-wider">LAD-typed</span>
       </div>
 
-      <p className="text-[10px] text-zinc-500 leading-snug mb-3">
+      <p className="text-xs text-zinc-500 leading-snug mb-3">
         Probe substructural-resource lifecycle. Linear must be used once,
         affine can drop, decaying evaporates past its window.
       </p>
@@ -116,7 +116,7 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
           <select
             value={mode}
             onChange={(e) => setMode(e.target.value as LadMode)}
-            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:border-evap-purple/60"
+            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-purple/60"
           >
             <option value="linear">linear</option>
             <option value="affine">affine</option>
@@ -127,7 +127,7 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
           <select
             value={action}
             onChange={(e) => setAction(e.target.value as LadAction)}
-            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:border-evap-purple/60"
+            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-purple/60"
           >
             <option value="use">use</option>
             <option value="drop">drop</option>
@@ -140,7 +140,7 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
             min="0"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:border-evap-purple/60"
+            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-purple/60"
           />
         </Field>
         <Field label="Created at epoch">
@@ -149,7 +149,7 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
             min="0"
             value={createdAtEpoch}
             onChange={(e) => setCreatedAtEpoch(e.target.value)}
-            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:border-evap-purple/60"
+            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-purple/60"
           />
         </Field>
         {mode === "decaying" && (
@@ -159,7 +159,7 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
               min="1"
               value={decayWindow}
               onChange={(e) => setDecayWindow(e.target.value)}
-              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:border-evap-purple/60"
+              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-purple/60"
             />
           </Field>
         )}
@@ -169,21 +169,21 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
             min="0"
             value={currentEpochInput}
             onChange={(e) => setCurrentEpochInput(e.target.value)}
-            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:border-evap-purple/60"
+            className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-purple/60"
           />
         </Field>
       </div>
 
       {error && (
         <div className="rounded-md bg-evap-red/10 border border-evap-red/30 px-2 py-1.5 mb-2">
-          <p className="text-[10px] text-evap-red">{error}</p>
+          <p className="text-xs text-evap-red">{error}</p>
         </div>
       )}
 
       <button
         onClick={handleSimulate}
         disabled={busy}
-        className="w-full py-1.5 rounded bg-evap-purple/15 border border-evap-purple/40 text-[10px] font-semibold text-evap-purple hover:bg-evap-purple/25 transition disabled:opacity-50"
+        className="w-full py-1.5 rounded bg-evap-purple/15 border border-evap-purple/40 text-xs font-semibold text-evap-purple hover:bg-evap-purple/25 transition disabled:opacity-50"
       >
         {busy ? "Simulating…" : "Simulate"}
       </button>
@@ -192,19 +192,19 @@ function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
         <div className="mt-2 rounded-md bg-evap-bg border border-evap-border p-2 space-y-1">
           <div className="flex items-center justify-between">
             <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Outcome</span>
-            <span className={`text-[10px] font-semibold ${outcomeColor}`}>
+            <span className={`text-xs font-semibold ${outcomeColor}`}>
               {result.outcome}
             </span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Returned value</span>
-            <span className="text-[10px] text-zinc-300 font-mono">
+            <span className="text-xs text-zinc-300 font-mono">
               {result.returned_value ?? "—"}
             </span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Evaporated</span>
-            <span className={`text-[10px] font-mono ${result.is_evaporated_at_query ? "text-evap-red" : "text-evap-green"}`}>
+            <span className={`text-xs font-mono ${result.is_evaporated_at_query ? "text-evap-red" : "text-evap-green"}`}>
               {result.is_evaporated_at_query ? "yes" : "no"}
             </span>
           </div>

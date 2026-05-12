@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { ArrowLeft, Check, ChevronDown, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { api, type TokenInfo, type SwapQuote } from "@/utils/api";
@@ -175,7 +176,7 @@ export function SwapScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-evap-green/20 flex items-center justify-center mb-4">
-            <span className="text-3xl">✓</span>
+            <span className="text-3xl"><Check className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
           </div>
           <p className="text-sm font-semibold text-zinc-200">Swap Successful</p>
           <p className="text-xs text-zinc-500 mt-1">
@@ -200,7 +201,7 @@ export function SwapScreen() {
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-evap-red/20 flex items-center justify-center mb-4">
-            <span className="text-3xl">✕</span>
+            <span className="text-3xl"><X className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
           </div>
           <p className="text-sm font-semibold text-zinc-200">Swap Failed</p>
           <p className="text-xs text-zinc-500 mt-1 text-center">{error ?? "Something went wrong"}</p>
@@ -228,7 +229,7 @@ export function SwapScreen() {
             onClick={() => { setShowFromPicker(false); setShowToPicker(false); }}
             className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
           >
-            ← Back
+            <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
           </button>
           <h2 className="text-lg font-semibold text-zinc-100 mb-3">Select Token</h2>
         </div>
@@ -240,12 +241,12 @@ export function SwapScreen() {
               disabled={token.symbol === excludeSymbol}
               className="w-full flex items-center gap-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border hover:border-evap-cyan/40 transition disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-evap-cyan to-evap-purple flex items-center justify-center text-[10px] font-bold text-black shrink-0">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-evap-cyan to-evap-purple flex items-center justify-center text-xs font-bold text-black shrink-0">
                 {token.symbol.slice(0, 2)}
               </div>
               <div className="flex-1 text-left">
                 <p className="text-xs font-semibold text-zinc-200">{token.name}</p>
-                <p className="text-[10px] text-zinc-500">{token.symbol}</p>
+                <p className="text-xs text-zinc-500">{token.symbol}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs text-zinc-300">{formatBalance(token.symbol === "EVAP" ? balance : token.balance)}</p>
@@ -271,7 +272,7 @@ export function SwapScreen() {
           onClick={() => setView("home")}
           className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
         >
-          ← Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
         <h2 className="text-lg font-semibold text-zinc-100 mb-1">Swap Tokens</h2>
         <p className="text-xs text-zinc-500 mb-4">Trade tokens on EvaporChain DEX</p>
@@ -281,8 +282,8 @@ export function SwapScreen() {
         {/* From token */}
         <div className="rounded-lg bg-evap-surface border border-evap-border p-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-zinc-500">From</span>
-            <span className="text-[10px] text-zinc-500">
+            <span className="text-xs text-zinc-500">From</span>
+            <span className="text-xs text-zinc-500">
               Balance: {formatBalance(fromBalance)}
             </span>
           </div>
@@ -295,7 +296,7 @@ export function SwapScreen() {
                 {fromToken?.symbol.slice(0, 2) ?? "?"}
               </div>
               <span className="text-xs font-semibold text-zinc-200">{fromToken?.symbol ?? "Select"}</span>
-              <span className="text-[10px] text-zinc-500">▼</span>
+              <span className="text-xs text-zinc-500"><ChevronDown className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
             </button>
             <input
               type="number"
@@ -309,7 +310,7 @@ export function SwapScreen() {
           <div className="flex justify-end mt-1">
             <button
               onClick={handleMax}
-              className="text-[10px] text-evap-cyan hover:underline"
+              className="text-xs text-evap-cyan hover:underline"
             >
               MAX
             </button>
@@ -329,8 +330,8 @@ export function SwapScreen() {
         {/* To token */}
         <div className="rounded-lg bg-evap-surface border border-evap-border p-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-zinc-500">To</span>
-            <span className="text-[10px] text-zinc-500">
+            <span className="text-xs text-zinc-500">To</span>
+            <span className="text-xs text-zinc-500">
               Balance: {formatBalance(toToken?.symbol === "EVAP" ? balance : (toToken?.balance ?? 0))}
             </span>
           </div>
@@ -343,7 +344,7 @@ export function SwapScreen() {
                 {toToken?.symbol.slice(0, 2) ?? "?"}
               </div>
               <span className="text-xs font-semibold text-zinc-200">{toToken?.symbol ?? "Select"}</span>
-              <span className="text-[10px] text-zinc-500">▼</span>
+              <span className="text-xs text-zinc-500"><ChevronDown className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
             </button>
             <div className="flex-1 text-right text-lg font-semibold text-zinc-400 min-w-0">
               {quoteLoading ? (
@@ -361,26 +362,26 @@ export function SwapScreen() {
         {quote && (
           <div className="rounded-lg bg-evap-surface border border-evap-border p-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-500">Rate</span>
-              <span className="text-[10px] text-zinc-300">
+              <span className="text-xs text-zinc-500">Rate</span>
+              <span className="text-xs text-zinc-300">
                 1 {fromToken?.symbol} = {quote.rate.toFixed(6)} {toToken?.symbol}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-500">Price Impact</span>
-              <span className={`text-[10px] ${priceImpactHigh ? "text-evap-red font-semibold" : "text-zinc-300"}`}>
+              <span className="text-xs text-zinc-500">Price Impact</span>
+              <span className={`text-xs ${priceImpactHigh ? "text-evap-red font-semibold" : "text-zinc-300"}`}>
                 {quote.price_impact.toFixed(2)}%
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-500">Energy Cost</span>
-              <span className="text-[10px] text-evap-amber">
+              <span className="text-xs text-zinc-500">Energy Cost</span>
+              <span className="text-xs text-evap-amber">
                 {quote.energy_cost} energy
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-500">Fee</span>
-              <span className="text-[10px] text-zinc-300">
+              <span className="text-xs text-zinc-500">Fee</span>
+              <span className="text-xs text-zinc-300">
                 {quote.estimated_fee} {fromToken?.symbol}
               </span>
             </div>
@@ -390,7 +391,7 @@ export function SwapScreen() {
         {/* Price impact warning */}
         {priceImpactHigh && quote && (
           <div className="px-3 py-2 rounded-lg bg-evap-red/10 border border-evap-red/30">
-            <p className="text-[10px] text-evap-red text-center">
+            <p className="text-xs text-evap-red text-center">
               High price impact ({quote.price_impact.toFixed(2)}%). You may receive significantly less than expected.
             </p>
           </div>
@@ -399,7 +400,7 @@ export function SwapScreen() {
         {/* Energy cost callout */}
         {quote && (
           <div className="px-3 py-2 rounded-lg bg-evap-amber/10 border border-evap-amber/20">
-            <p className="text-[10px] text-evap-amber text-center">
+            <p className="text-xs text-evap-amber text-center">
               This swap costs {quote.energy_cost} energy
             </p>
           </div>
@@ -411,8 +412,8 @@ export function SwapScreen() {
             onClick={() => setShowSlippage(!showSlippage)}
             className="w-full flex items-center justify-between"
           >
-            <span className="text-[10px] text-zinc-500">Slippage Tolerance</span>
-            <span className="text-[10px] text-zinc-300">{slippage}% ▼</span>
+            <span className="text-xs text-zinc-500">Slippage Tolerance</span>
+            <span className="text-xs text-zinc-300">{slippage}% ▼</span>
           </button>
           {showSlippage && (
             <div className="flex items-center gap-2 mt-2">
@@ -420,7 +421,7 @@ export function SwapScreen() {
                 <button
                   key={opt}
                   onClick={() => handleSlippageChange(opt)}
-                  className={`flex-1 py-1.5 rounded text-[10px] font-medium transition ${
+                  className={`flex-1 py-1.5 rounded text-xs font-medium transition ${
                     slippage === opt && !customSlippage
                       ? "bg-evap-cyan/20 text-evap-cyan border border-evap-cyan/40"
                       : "bg-evap-border/50 text-zinc-400 hover:text-zinc-300"
@@ -434,7 +435,7 @@ export function SwapScreen() {
                 placeholder="Custom"
                 value={customSlippage}
                 onChange={e => handleCustomSlippage(e.target.value)}
-                className="flex-1 px-2 py-1.5 rounded bg-evap-border/50 text-[10px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-evap-cyan/40 text-center min-w-0"
+                className="flex-1 px-2 py-1.5 rounded bg-evap-border/50 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-evap-cyan/40 text-center min-w-0"
               />
             </div>
           )}
@@ -442,7 +443,7 @@ export function SwapScreen() {
 
         {/* Amount exceeds balance warning */}
         {amount && parseFloat(amount) > fromBalance && (
-          <p className="text-[10px] text-evap-red text-center">Insufficient {fromToken?.symbol} balance</p>
+          <p className="text-xs text-evap-red text-center">Insufficient {fromToken?.symbol} balance</p>
         )}
 
         {/* Error */}

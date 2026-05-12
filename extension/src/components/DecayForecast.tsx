@@ -98,7 +98,7 @@ export function DecayForecast({ data, compact = false }: DecayForecastProps) {
     return (
       <div className={`flex items-center gap-2 px-2 py-1.5 rounded ${colors.bg}`}>
         <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
-        <span className={`text-[10px] ${colors.text}`}>
+        <span className={`text-xs ${colors.text}`}>
           {forecast.epochsToZero > 0
             ? `~${formatDuration(forecast.epochsToZero, epochDurationMs)} remaining`
             : "Evaporated"}
@@ -110,10 +110,10 @@ export function DecayForecast({ data, compact = false }: DecayForecastProps) {
   return (
     <div className={`rounded-lg border p-3 ${colors.bg} ${colors.border}`}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide">Decay Forecast</span>
+        <span className="text-xs font-medium text-zinc-400 uppercase tracking-wide">Decay Forecast</span>
         <div className="flex items-center gap-1">
           <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
-          <span className={`text-[10px] font-medium ${colors.text}`}>
+          <span className={`text-xs font-medium ${colors.text}`}>
             {forecast.percent}% energy
           </span>
         </div>
@@ -152,8 +152,8 @@ export function DecayForecast({ data, compact = false }: DecayForecastProps) {
 
       {/* Evaporation prediction */}
       <div className="flex items-center justify-between pt-2 border-t border-evap-border">
-        <span className="text-[10px] text-zinc-500">Evaporates on</span>
-        <span className={`text-[10px] font-medium ${colors.text}`}>
+        <span className="text-xs text-zinc-500">Evaporates on</span>
+        <span className={`text-xs font-medium ${colors.text}`}>
           {forecast.epochsToZero > 0
             ? formatDate(forecast.evaporationDate)
             : "Already evaporated"}
@@ -163,8 +163,8 @@ export function DecayForecast({ data, compact = false }: DecayForecastProps) {
       {/* Time remaining */}
       {forecast.epochsToZero > 0 && (
         <div className="flex items-center justify-between mt-1">
-          <span className="text-[10px] text-zinc-500">Time remaining</span>
-          <span className="text-[10px] text-zinc-300">
+          <span className="text-xs text-zinc-500">Time remaining</span>
+          <span className="text-xs text-zinc-300">
             ~{formatDuration(forecast.epochsToZero, epochDurationMs)} ({forecast.epochsToZero} epochs)
           </span>
         </div>

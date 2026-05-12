@@ -135,7 +135,7 @@ export function BackupRestoreScreen() {
 
         {/* Warning */}
         <div className="px-4 py-3 rounded-xl bg-yellow-500/5 border border-yellow-500/20">
-          <p className="text-[10px] text-yellow-400/80">
+          <p className="text-xs text-yellow-400/80">
             Never share your backup file unencrypted. Anyone with your backup and password can access your funds.
           </p>
         </div>

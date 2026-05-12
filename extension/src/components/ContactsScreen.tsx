@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { RotateCw } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import type { Contact } from "@/utils/contacts";
 
@@ -95,16 +96,14 @@ export function ContactsScreen() {
         </button>
         <div className="flex-1">
           <h1 className="text-sm font-semibold text-zinc-200">Contacts</h1>
-          <p className="text-[10px] text-zinc-500">
+          <p className="text-xs text-zinc-500">
             Saved recipient addresses with labels and notes.
           </p>
         </div>
         <button
           onClick={() => refreshContacts()}
-          className="text-[10px] px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
-        >
-          ↻
-        </button>
+          className="text-xs px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
+        ><RotateCw className="w-3.5 h-3.5" strokeWidth={1.5} /></button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -114,7 +113,7 @@ export function ContactsScreen() {
           onSubmit={handleSave}
           className="mx-4 mt-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border space-y-2"
         >
-          <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold uppercase tracking-wider">
             {editingAddr ? "Edit contact" : "Add contact"}
           </p>
           <input
@@ -123,27 +122,27 @@ export function ContactsScreen() {
             value={draftAddr}
             onChange={(e) => setDraftAddr(e.target.value)}
             disabled={editingAddr != null}
-            className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition font-mono disabled:opacity-60"
+            className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition font-mono disabled:opacity-60"
           />
           <input
             type="text"
             placeholder="Label, e.g. Alice's hot wallet"
             value={draftLabel}
             onChange={(e) => setDraftLabel(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition"
+            className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition"
           />
           <input
             type="text"
             placeholder="Note (optional)"
             value={draftNote}
             onChange={(e) => setDraftNote(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition"
+            className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition"
           />
-          {error && <p className="text-[10px] text-evap-red">{error}</p>}
+          {error && <p className="text-xs text-evap-red">{error}</p>}
           <div className="flex items-center gap-2">
             <button
               type="submit"
-              className="flex-1 py-2 rounded-md bg-gradient-to-r from-evap-cyan to-evap-purple text-[11px] font-semibold text-black hover:opacity-90 transition"
+              className="flex-1 py-2 rounded-md bg-gradient-to-r from-evap-cyan to-evap-purple text-xs font-semibold text-black hover:opacity-90 transition"
             >
               {editingAddr ? "Save changes" : "Add contact"}
             </button>
@@ -151,7 +150,7 @@ export function ContactsScreen() {
               <button
                 type="button"
                 onClick={resetForm}
-                className="px-3 py-2 rounded-md bg-evap-surface border border-evap-border text-[11px] text-zinc-300 hover:border-evap-cyan/40 transition"
+                className="px-3 py-2 rounded-md bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition"
               >
                 Cancel
               </button>
@@ -161,11 +160,11 @@ export function ContactsScreen() {
 
         {/* Contact list */}
         <div className="mx-4 mt-4 mb-4">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Saved contacts ({contacts.length})
           </p>
           {contacts.length === 0 ? (
-            <p className="text-[11px] text-zinc-600 text-center py-8">
+            <p className="text-xs text-zinc-600 text-center py-8">
               No contacts saved yet.
             </p>
           ) : (
@@ -177,17 +176,17 @@ export function ContactsScreen() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-semibold text-zinc-200 truncate">
+                      <p className="text-xs font-semibold text-zinc-200 truncate">
                         {c.label}
                       </p>
                       <p
-                        className="text-[10px] font-mono text-zinc-500 truncate"
+                        className="text-xs font-mono text-zinc-500 truncate"
                         title={c.address}
                       >
                         {c.address}
                       </p>
                       {c.note && (
-                        <p className="text-[10px] text-zinc-500 mt-0.5 truncate">
+                        <p className="text-xs text-zinc-500 mt-0.5 truncate">
                           {c.note}
                         </p>
                       )}
@@ -195,13 +194,13 @@ export function ContactsScreen() {
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => startEdit(c)}
-                        className="text-[10px] px-2 py-1 rounded border border-evap-border text-zinc-400 hover:text-zinc-200 hover:border-evap-cyan/40 transition"
+                        className="text-xs px-2 py-1 rounded border border-evap-border text-zinc-400 hover:text-zinc-200 hover:border-evap-cyan/40 transition"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => handleDelete(c.address)}
-                        className="text-[10px] px-2 py-1 rounded border border-evap-red/30 text-evap-red hover:bg-evap-red/10 transition"
+                        className="text-xs px-2 py-1 rounded border border-evap-red/30 text-evap-red hover:bg-evap-red/10 transition"
                       >
                         Delete
                       </button>

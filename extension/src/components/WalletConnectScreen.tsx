@@ -141,7 +141,7 @@ export function WalletConnectScreen() {
 
       {/* QR / URI input */}
       <div className="px-4 pt-4 pb-3">
-        <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">
+        <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
           Scan QR to connect
         </p>
         <div className="flex gap-2">
@@ -161,7 +161,7 @@ export function WalletConnectScreen() {
           </button>
         </div>
         {error && (
-          <p className="text-[10px] text-red-400 mt-1">{error}</p>
+          <p className="text-xs text-red-400 mt-1">{error}</p>
         )}
       </div>
 
@@ -245,7 +245,7 @@ function SessionCard({ session, onDisconnect }: { session: WcSession; onDisconne
         <p className="text-xs font-medium text-zinc-200 truncate">
           {session.peer.name}
         </p>
-        <p className="text-[10px] text-zinc-500 truncate">{session.peer.url}</p>
+        <p className="text-xs text-zinc-500 truncate">{session.peer.url}</p>
         <div className="flex items-center gap-2 mt-1">
           {chains.map((chain) => (
             <span
@@ -264,7 +264,7 @@ function SessionCard({ session, onDisconnect }: { session: WcSession; onDisconne
       {/* Disconnect */}
       <button
         onClick={onDisconnect}
-        className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-red-900/30 border border-evap-border hover:border-red-800/40 text-[10px] text-zinc-400 hover:text-red-400 transition flex-shrink-0"
+        className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-red-900/30 border border-evap-border hover:border-red-800/40 text-xs text-zinc-400 hover:text-red-400 transition flex-shrink-0"
       >
         Disconnect
       </button>

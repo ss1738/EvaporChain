@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { KeyRound, ShieldCheck } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { ledgerManager, type LedgerAccount, type LedgerDeviceInfo, type LedgerConnectionStatus } from "@/utils/ledger";
 
@@ -130,7 +131,7 @@ export function LedgerConnect() {
         {connectionStatus === "connected" && (
           <div className="ml-auto flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full bg-blue-500" />
-            <span className="text-[10px] text-blue-600 font-medium">Connected</span>
+            <span className="text-xs text-blue-600 font-medium">Connected</span>
           </div>
         )}
       </div>
@@ -142,7 +143,7 @@ export function LedgerConnect() {
             <p className="text-xs text-red-700">{errorMsg}</p>
             <button
               onClick={() => setErrorMsg(null)}
-              className="text-[10px] text-red-500 underline mt-1"
+              className="text-xs text-red-500 underline mt-1"
             >
               Dismiss
             </button>
@@ -154,7 +155,7 @@ export function LedgerConnect() {
           <div className="text-center space-y-4 pt-8">
             {/* Ledger icon placeholder */}
             <div className="mx-auto w-16 h-16 rounded-2xl bg-blue-50 border-2 border-blue-200 flex items-center justify-center">
-              <span className="text-2xl text-blue-500">🔐</span>
+              <span className="text-2xl text-blue-500"><KeyRound className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
             </div>
             <div>
               <h2 className="text-sm font-semibold text-zinc-800">Connect Your Ledger</h2>
@@ -177,7 +178,7 @@ export function LedgerConnect() {
               Connect Ledger
             </button>
 
-            <p className="text-[10px] text-zinc-400">
+            <p className="text-xs text-zinc-400">
               Requires a browser that supports WebHID (Chrome, Edge, Opera)
             </p>
           </div>
@@ -204,11 +205,11 @@ export function LedgerConnect() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-blue-800">{deviceInfo.model}</p>
-                  <p className="text-[10px] text-blue-600">Firmware: {deviceInfo.firmware}</p>
+                  <p className="text-xs text-blue-600">Firmware: {deviceInfo.firmware}</p>
                 </div>
                 <button
                   onClick={handleDisconnect}
-                  className="text-[10px] text-red-500 hover:text-red-700 font-medium transition"
+                  className="text-xs text-red-500 hover:text-red-700 font-medium transition"
                 >
                   Disconnect
                 </button>
@@ -218,8 +219,8 @@ export function LedgerConnect() {
             {/* Multi-sig indicator */}
             <div className="px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200">
               <div className="flex items-center gap-2">
-                <span className="text-xs">🛡️</span>
-                <span className="text-[10px] text-emerald-700 font-medium">
+                <span className="text-xs"><ShieldCheck className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
+                <span className="text-xs text-emerald-700 font-medium">
                   Hardware + Software co-signing enabled
                 </span>
               </div>
@@ -248,13 +249,13 @@ export function LedgerConnect() {
                       <p className="text-xs font-mono text-zinc-700 truncate">
                         {shortAddr(acct.address)}
                       </p>
-                      <p className="text-[10px] text-zinc-400">{acct.path}</p>
+                      <p className="text-xs text-zinc-400">{acct.path}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-xs font-semibold text-zinc-800">
                         {(balances[acct.path] ?? 0).toFixed(2)}
                       </p>
-                      <p className="text-[10px] text-zinc-400">EVAP</p>
+                      <p className="text-xs text-zinc-400">EVAP</p>
                     </div>
                   </label>
                 ))}
@@ -291,7 +292,7 @@ export function LedgerConnect() {
                 <TxDetailRow label="Fee" value={`${txPreview.fee} EVAP`} />
               </div>
 
-              <p className="text-[10px] text-zinc-400 text-center">
+              <p className="text-xs text-zinc-400 text-center">
                 Waiting for hardware confirmation...
               </p>
             </div>
@@ -364,7 +365,7 @@ export function LedgerConnect() {
 
       {/* Post-quantum signature note */}
       <div className="px-4 py-2 border-t border-zinc-200">
-        <p className="text-[10px] text-zinc-400 text-center">
+        <p className="text-xs text-zinc-400 text-center">
           ML-DSA (FIPS 204) post-quantum signatures via hardware
         </p>
       </div>
@@ -376,7 +377,7 @@ function InstructionStep({ number, text }: { number: number; text: string }) {
   return (
     <div className="flex items-center gap-3">
       <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-        <span className="text-[10px] font-bold text-blue-600">{number}</span>
+        <span className="text-xs font-bold text-blue-600">{number}</span>
       </div>
       <p className="text-xs text-zinc-600">{text}</p>
     </div>
@@ -386,8 +387,8 @@ function InstructionStep({ number, text }: { number: number; text: string }) {
 function TxDetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between">
-      <span className="text-[10px] text-zinc-500">{label}</span>
-      <span className="text-[10px] font-mono text-zinc-700">{value}</span>
+      <span className="text-xs text-zinc-500">{label}</span>
+      <span className="text-xs font-mono text-zinc-700">{value}</span>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ArrowLeft, ChevronRight } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { Header } from "./Header";
 import { formatBalance, shortAddress } from "@/utils/format";
@@ -46,7 +47,7 @@ export function SettingsScreen() {
           onClick={() => setView("home")}
           className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
         >
-          ← Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
         <h2 className="text-lg font-semibold text-zinc-100">Settings</h2>
       </div>
@@ -58,7 +59,7 @@ export function SettingsScreen() {
             <h3 className="text-xs font-semibold text-zinc-400">Accounts</h3>
             <button
               onClick={() => refreshAllBalances()}
-              className="text-[10px] px-2 py-0.5 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
+              className="text-xs px-2 py-0.5 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
               title="Refresh all balances"
             >
               ↻ All
@@ -81,12 +82,12 @@ export function SettingsScreen() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-xs font-medium text-zinc-200 truncate">{acc.name}</p>
-                      <p className="text-[10px] text-zinc-500 font-mono truncate">
+                      <p className="text-xs text-zinc-500 font-mono truncate">
                         {shortAddress(acc.address)}
                       </p>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-[11px] font-semibold text-zinc-200 tabular-nums">
+                      <p className="text-xs font-semibold text-zinc-200 tabular-nums">
                         {entry ? `${formatBalance(entry.balance)} EVAP` : "—"}
                       </p>
                       {entry && !isActive && (
@@ -119,7 +120,7 @@ export function SettingsScreen() {
                   <button
                     key={n}
                     onClick={() => handleNetworkChange(n)}
-                    className={`px-2 py-2 rounded-lg text-[11px] font-semibold capitalize transition border ${
+                    className={`px-2 py-2 rounded-lg text-xs font-semibold capitalize transition border ${
                       selected
                         ? `bg-evap-surface ${palette}`
                         : "bg-evap-surface border-evap-border text-zinc-400 hover:border-evap-cyan/40"
@@ -265,42 +266,16 @@ export function SettingsScreen() {
           <h3 className="text-xs font-semibold text-zinc-400 mb-2">About</h3>
           <div className="px-3 py-3 rounded-lg bg-evap-surface border border-evap-border space-y-1">
             <p className="text-xs text-zinc-300">EvaporChain Wallet v0.1.0</p>
-            <p className="text-[10px] text-zinc-500">Post-quantum (ML-DSA) · Self-custodial</p>
-            <p className="text-[10px] text-zinc-500">Keys never leave your browser</p>
+            <p className="text-xs text-zinc-500">Post-quantum (ML-DSA) · Self-custodial</p>
+            <p className="text-xs text-zinc-500">Keys never leave your browser</p>
           </div>
         </div>
 
-        {/* Backup */}
-        <button
-          onClick={() => setView("backup")}
-          className="w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition text-left px-3"
-        >
-          Backup &amp; Restore →
-        </button>
-
-        {/* Contacts */}
-        <button
-          onClick={() => setView("contacts")}
-          className="w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition text-left px-3"
-        >
-          Contacts ↗
-        </button>
-
-        {/* Chain governance */}
-        <button
-          onClick={() => setView("governance")}
-          className="w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition text-left px-3"
-        >
-          Chain governance ↗
-        </button>
-
-        {/* DA verify — verify the active node is serving real block data. */}
-        <button
-          onClick={() => setView("da-verify")}
-          className="w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition text-left px-3"
-        >
-          Verify node honesty (DA sampling) ↗
-        </button>
+        {/* Settings rows — consistent list-item pattern. */}
+        <SettingsRow label="Backup & Restore" onClick={() => setView("backup")} />
+        <SettingsRow label="Contacts"          onClick={() => setView("contacts")} />
+        <SettingsRow label="Chain governance"  onClick={() => setView("governance")} />
+        <SettingsRow label="Verify node honesty (DA sampling)" onClick={() => setView("da-verify")} />
 
         {/* Lock */}
         <button
@@ -311,5 +286,17 @@ export function SettingsScreen() {
         </button>
       </div>
     </div>
+  );
+}
+
+function SettingsRow({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-evap-surface border border-evap-border text-sm text-zinc-300 hover:border-evap-cyan/40 hover:bg-zinc-800/40 transition text-left"
+    >
+      <span>{label}</span>
+      <ChevronRight className="w-4 h-4 text-zinc-500" strokeWidth={1.5} />
+    </button>
   );
 }

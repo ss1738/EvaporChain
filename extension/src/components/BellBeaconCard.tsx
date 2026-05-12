@@ -62,7 +62,7 @@ export function BellBeaconCard() {
           <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-evap-cyan/15 text-evap-cyan border border-evap-cyan/40">
             Bell
           </span>
-          <span className="text-[10px] font-medium text-zinc-300 uppercase tracking-wide">
+          <span className="text-xs font-medium text-zinc-300 uppercase tracking-wide">
             Beacon health
           </span>
         </div>
@@ -84,7 +84,7 @@ export function BellBeaconCard() {
         <span className="text-2xl font-bold text-zinc-100">
           {bellSValue === null ? "—" : sDecimal}
         </span>
-        <span className="text-[10px] text-zinc-500">S-value</span>
+        <span className="text-xs text-zinc-500">S-value</span>
       </div>
 
       {/* Threshold bar */}
@@ -106,7 +106,7 @@ export function BellBeaconCard() {
         <span>2.83</span>
       </div>
 
-      <p className="text-[10px] text-zinc-500 leading-snug">
+      <p className="text-xs text-zinc-500 leading-snug">
         CHSH bound: <span className="font-mono">|S| ≤ 2</span> for any
         local-realist source. <span className="font-mono">S &gt; 2</span>{" "}
         certifies quantum-mechanical correlation in the beacon.

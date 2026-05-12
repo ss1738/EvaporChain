@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ShieldCheck, Check, X, Star, ChevronDown, ArrowRight } from "lucide-react";
 
 interface QuantumBadgeProps {
   variant?: "full" | "inline";
@@ -18,9 +19,9 @@ export function QuantumBadge({ variant = "full" }: QuantumBadgeProps) {
     return (
       <button
         onClick={() => setExpanded(!expanded)}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-evap-cyan bg-evap-cyan/10 border border-evap-cyan/20 hover:border-evap-cyan/40 transition"
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium text-evap-cyan bg-evap-cyan/10 border border-evap-cyan/20 hover:border-evap-cyan/40 transition"
       >
-        <span>🛡️</span>
+        <ShieldCheck className="w-3.5 h-3.5" strokeWidth={1.5} />
         <span>Quantum-Safe</span>
       </button>
     );
@@ -37,24 +38,23 @@ export function QuantumBadge({ variant = "full" }: QuantumBadgeProps) {
       >
         <div className="w-full rounded-[11px] bg-evap-surface px-4 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">🛡️</span>
+            <div className="flex items-center gap-2.5">
+              <ShieldCheck className="w-5 h-5 text-evap-cyan" strokeWidth={1.5} />
               <div className="text-left">
-                <p className="text-xs font-semibold text-zinc-200">
+                <p className="text-sm font-semibold text-zinc-100">
                   Post-Quantum Secured
                 </p>
-                <p className="text-[10px] text-zinc-500">
+                <p className="text-xs text-zinc-500 mt-0.5">
                   ML-DSA (FIPS 204)
                 </p>
               </div>
             </div>
-            <span
-              className={`text-zinc-500 text-xs transition-transform duration-200 ${
+            <ChevronDown
+              className={`w-4 h-4 text-zinc-500 transition-transform duration-200 ${
                 expanded ? "rotate-180" : ""
               }`}
-            >
-              ▼
-            </span>
+              strokeWidth={1.5}
+            />
           </div>
         </div>
       </button>
@@ -70,22 +70,22 @@ export function QuantumBadge({ variant = "full" }: QuantumBadgeProps) {
             {/* Explanation bullets */}
             <div className="space-y-2">
               <ExplainRow
-                icon="✓"
+                icon={Check}
                 iconColor="text-evap-green"
                 text="Your keys use ML-DSA (FIPS 204) — safe against quantum computers"
               />
               <ExplainRow
-                icon="✗"
+                icon={X}
                 iconColor="text-evap-red"
                 text="MetaMask uses ECDSA — vulnerable to quantum attacks"
               />
               <ExplainRow
-                icon="✗"
+                icon={X}
                 iconColor="text-evap-red"
                 text="Trust Wallet uses ECDSA — vulnerable to quantum attacks"
               />
               <ExplainRow
-                icon="★"
+                icon={Star}
                 iconColor="text-evap-cyan"
                 text="EvaporChain is the only L1 with built-in quantum resistance"
               />
@@ -94,13 +94,13 @@ export function QuantumBadge({ variant = "full" }: QuantumBadgeProps) {
             {/* Comparison table */}
             <div className="rounded-lg border border-evap-border overflow-hidden">
               <div className="grid grid-cols-3 bg-evap-bg px-3 py-2 border-b border-evap-border">
-                <span className="text-[10px] font-semibold text-zinc-400">
+                <span className="text-xs font-semibold text-zinc-400">
                   Wallet
                 </span>
-                <span className="text-[10px] font-semibold text-zinc-400">
+                <span className="text-xs font-semibold text-zinc-400">
                   Algorithm
                 </span>
-                <span className="text-[10px] font-semibold text-zinc-400 text-right">
+                <span className="text-xs font-semibold text-zinc-400 text-right">
                   Quantum-Safe
                 </span>
               </div>
@@ -112,27 +112,28 @@ export function QuantumBadge({ variant = "full" }: QuantumBadgeProps) {
                   }`}
                 >
                   <span
-                    className={`text-[10px] font-medium ${
+                    className={`text-xs font-medium ${
                       c.safe ? "text-evap-cyan" : "text-zinc-400"
                     }`}
                   >
                     {c.name}
                   </span>
-                  <span className="text-[10px] text-zinc-500">{c.algo}</span>
+                  <span className="text-xs text-zinc-500">{c.algo}</span>
                   <span
-                    className={`text-[10px] text-right font-semibold ${
+                    className={`inline-flex items-center justify-end gap-1 text-xs font-semibold ${
                       c.safe ? "text-evap-green" : "text-evap-red"
                     }`}
                   >
-                    {c.safe ? "✓ Safe" : "✗ Vulnerable"}
+                    {c.safe ? <Check className="w-3.5 h-3.5" strokeWidth={2} /> : <X className="w-3.5 h-3.5" strokeWidth={2} />}
+                    {c.safe ? "Safe" : "Vulnerable"}
                   </span>
                 </div>
               ))}
             </div>
 
             {/* Learn more */}
-            <button className="w-full text-center text-[10px] text-evap-purple hover:text-evap-cyan transition py-1">
-              Learn More →
+            <button className="w-full inline-flex items-center justify-center gap-1 text-xs text-evap-purple hover:text-evap-cyan transition py-1">
+              Learn more <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.5} />
             </button>
           </div>
         </div>
@@ -142,20 +143,18 @@ export function QuantumBadge({ variant = "full" }: QuantumBadgeProps) {
 }
 
 function ExplainRow({
-  icon,
+  icon: Icon,
   iconColor,
   text,
 }: {
-  icon: string;
+  icon: typeof Check;
   iconColor: string;
   text: string;
 }) {
   return (
     <div className="flex items-start gap-2">
-      <span className={`text-xs font-bold ${iconColor} mt-0.5 shrink-0`}>
-        {icon}
-      </span>
-      <p className="text-[11px] text-zinc-300 leading-tight">{text}</p>
+      <Icon className={`w-4 h-4 ${iconColor} mt-0.5 shrink-0`} strokeWidth={2} />
+      <p className="text-xs text-zinc-300 leading-relaxed">{text}</p>
     </div>
   );
 }

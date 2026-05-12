@@ -66,7 +66,7 @@ export function OnboardingTutorial({ onComplete }: { onComplete: () => void }) {
         {!isLast && (
           <button
             onClick={skip}
-            className="text-[11px] text-zinc-500 hover:text-zinc-300 transition"
+            className="text-xs text-zinc-500 hover:text-zinc-300 transition"
           >
             Skip
           </button>

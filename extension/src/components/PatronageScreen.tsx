@@ -77,7 +77,7 @@ export function PatronageScreen() {
         </button>
         <div className="flex-1">
           <h1 className="text-sm font-semibold text-zinc-200">Patronage Covenants</h1>
-          <p className="text-[10px] text-zinc-500">Pre-fund eviction immunity for your objects.</p>
+          <p className="text-xs text-zinc-500">Pre-fund eviction immunity for your objects.</p>
         </div>
       </div>
 
@@ -85,20 +85,20 @@ export function PatronageScreen() {
         {/* Notification / error banners */}
         {notification && (
           <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-evap-green/10 border border-evap-green/30 flex items-start justify-between gap-2">
-            <p className="text-[11px] text-evap-green">{notification}</p>
-            <button onClick={() => setNotification(null)} className="text-[10px] text-evap-green/60 hover:text-evap-green">×</button>
+            <p className="text-xs text-evap-green">{notification}</p>
+            <button onClick={() => setNotification(null)} className="text-xs text-evap-green/60 hover:text-evap-green">×</button>
           </div>
         )}
         {error && (
           <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-evap-red/10 border border-evap-red/30 flex items-start justify-between gap-2">
-            <p className="text-[11px] text-evap-red">{error}</p>
-            <button onClick={() => setError(null)} className="text-[10px] text-evap-red/60 hover:text-evap-red">×</button>
+            <p className="text-xs text-evap-red">{error}</p>
+            <button onClick={() => setError(null)} className="text-xs text-evap-red/60 hover:text-evap-red">×</button>
           </div>
         )}
 
         {/* Pool status card */}
         <div className="mx-4 mt-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Patronage Pool — Epoch {currentEpoch}
           </p>
           {patronageStatus ? (
@@ -108,7 +108,7 @@ export function PatronageScreen() {
               <PoolStat label="Total score" value={patronageStatus.total_active_score.toLocaleString()} />
             </div>
           ) : (
-            <p className="text-[11px] text-zinc-500">Loading pool status…</p>
+            <p className="text-xs text-zinc-500">Loading pool status…</p>
           )}
           {patronageStatus?.patronage_ns_hex && (
             <p className="text-[9px] text-zinc-600 font-mono mt-2 truncate" title={patronageStatus.patronage_ns_hex}>
@@ -119,11 +119,11 @@ export function PatronageScreen() {
 
         {/* Object list */}
         <div className="mx-4 mt-4 mb-4">
-          <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
+          <p className="text-xs text-zinc-400 font-semibold mb-2 uppercase tracking-wider">
             Your objects
           </p>
           {objects.length === 0 ? (
-            <p className="text-[11px] text-zinc-600 text-center py-8">
+            <p className="text-xs text-zinc-600 text-center py-8">
               No objects to patronise.
             </p>
           ) : (
@@ -228,7 +228,7 @@ function PatronageObjectRow({
       <div className="flex items-center gap-2 px-3 py-2.5">
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-zinc-200 truncate">
+            <span className="text-xs font-medium text-zinc-200 truncate">
               {obj.name || obj.id.slice(0, 12)}
             </span>
             {isImmune ? (
@@ -248,7 +248,7 @@ function PatronageObjectRow({
         <button
           onClick={onTogglePledge}
           disabled={busy}
-          className="flex-1 px-2 py-1 rounded text-[10px] font-medium bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition disabled:opacity-50"
+          className="flex-1 px-2 py-1 rounded text-xs font-medium bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition disabled:opacity-50"
         >
           {isPledgeOpen ? "Close" : isImmune ? "Renew pledge" : "Pledge"}
         </button>
@@ -257,14 +257,14 @@ function PatronageObjectRow({
             <button
               onClick={onHonour}
               disabled={busy}
-              className="flex-1 px-2 py-1 rounded text-[10px] font-medium bg-evap-purple/10 text-evap-purple border border-evap-purple/30 hover:border-evap-purple/60 transition disabled:opacity-50"
+              className="flex-1 px-2 py-1 rounded text-xs font-medium bg-evap-purple/10 text-evap-purple border border-evap-purple/30 hover:border-evap-purple/60 transition disabled:opacity-50"
             >
               Honour
             </button>
             <button
               onClick={onRevoke}
               disabled={busy}
-              className="flex-1 px-2 py-1 rounded text-[10px] font-medium bg-evap-red/10 text-evap-red border border-evap-red/30 hover:border-evap-red/60 transition disabled:opacity-50"
+              className="flex-1 px-2 py-1 rounded text-xs font-medium bg-evap-red/10 text-evap-red border border-evap-red/30 hover:border-evap-red/60 transition disabled:opacity-50"
             >
               Revoke
             </button>
@@ -280,7 +280,7 @@ function PatronageObjectRow({
               min="1"
               value={donationPerEpoch}
               onChange={(e) => setDonationPerEpoch(e.target.value)}
-              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[11px] text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
+              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
             />
           </FormField>
           <FormField label="Epochs">
@@ -289,7 +289,7 @@ function PatronageObjectRow({
               min="1"
               value={epochs}
               onChange={(e) => setEpochs(e.target.value)}
-              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[11px] text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
+              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-evap-cyan/60"
             />
           </FormField>
           <FormField label="Current epoch (auto)">
@@ -297,7 +297,7 @@ function PatronageObjectRow({
               type="number"
               value={currentEpoch}
               readOnly
-              className="w-full bg-evap-bg/50 border border-evap-border rounded px-2 py-1 text-[11px] text-zinc-500 font-mono"
+              className="w-full bg-evap-bg/50 border border-evap-border rounded px-2 py-1 text-xs text-zinc-500 font-mono"
             />
           </FormField>
           <FormField label="Namespace (hex)">
@@ -306,11 +306,11 @@ function PatronageObjectRow({
               value={namespaceHex}
               onChange={(e) => setNamespaceHex(e.target.value.replace(/^0x/, ""))}
               placeholder={defaultNamespaceHex || "namespace_id_hex"}
-              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-[11px] text-zinc-200 font-mono focus:outline-none focus:border-evap-cyan/60"
+              className="w-full bg-evap-bg border border-evap-border rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none focus:border-evap-cyan/60"
             />
           </FormField>
           <div className="flex justify-between items-center pt-1">
-            <span className="text-[10px] text-zinc-500">
+            <span className="text-xs text-zinc-500">
               Total pre-fund: <span className="text-zinc-300 font-semibold">
                 {(Math.max(parseInt(donationPerEpoch) || 0, 0) * Math.max(parseInt(epochs) || 0, 0)).toLocaleString()}
               </span> EVAP
@@ -325,7 +325,7 @@ function PatronageObjectRow({
                 onPledge(dpe, ep, namespaceHex);
               }}
               disabled={busy || !namespaceHex || !donationPerEpoch || !epochs}
-              className="px-3 py-1 rounded text-[10px] font-semibold bg-evap-cyan text-black hover:bg-evap-cyan/90 transition disabled:opacity-50"
+              className="px-3 py-1 rounded text-xs font-semibold bg-evap-cyan text-black hover:bg-evap-cyan/90 transition disabled:opacity-50"
             >
               {busy ? "…" : "Confirm pledge"}
             </button>

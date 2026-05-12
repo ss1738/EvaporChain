@@ -38,11 +38,6 @@ export function LockScreen() {
         </button>
       </form>
 
-      <div className="mt-8 px-4 py-2 rounded-md bg-evap-surface border border-evap-border">
-        <p className="text-[10px] text-zinc-500 text-center">
-          🛡️ Post-Quantum Secured · ML-DSA (FIPS 204)
-        </p>
-      </div>
     </div>
   );
 }

@@ -160,10 +160,10 @@ export function SendScreen() {
 
           {saveContactOpen && (
             <div className="mt-6 w-full max-w-sm px-4 py-3 rounded-lg bg-evap-surface border border-evap-cyan/30 space-y-2">
-              <p className="text-[11px] text-zinc-300 font-semibold">
+              <p className="text-xs text-zinc-300 font-semibold">
                 Save as contact?
               </p>
-              <p className="text-[10px] text-zinc-500 font-mono truncate">
+              <p className="text-xs text-zinc-500 font-mono truncate">
                 {resolvedTo}
               </p>
               <input
@@ -172,19 +172,19 @@ export function SendScreen() {
                 value={saveContactLabel}
                 onChange={(e) => setSaveContactLabel(e.target.value)}
                 autoFocus
-                className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition"
+                className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition"
               />
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleSaveContact}
                   disabled={!saveContactLabel.trim()}
-                  className="flex-1 py-2 rounded-md bg-gradient-to-r from-evap-cyan to-evap-purple text-[11px] font-semibold text-black hover:opacity-90 transition disabled:opacity-50"
+                  className="flex-1 py-2 rounded-md bg-gradient-to-r from-evap-cyan to-evap-purple text-xs font-semibold text-black hover:opacity-90 transition disabled:opacity-50"
                 >
                   Save contact
                 </button>
                 <button
                   onClick={handleDismissSaveContact}
-                  className="px-3 py-2 rounded-md bg-evap-surface border border-evap-border text-[11px] text-zinc-300 hover:border-evap-cyan/40 transition"
+                  className="px-3 py-2 rounded-md bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition"
                 >
                   Skip
                 </button>
@@ -222,7 +222,7 @@ export function SendScreen() {
         <div className="px-4 flex-1 overflow-y-auto pb-4">
           {error && (
             <div className="mb-3 rounded-md bg-evap-red/10 border border-evap-red/30 px-3 py-2">
-              <p className="text-[10px] text-evap-red">{error}</p>
+              <p className="text-xs text-evap-red">{error}</p>
             </div>
           )}
 
@@ -248,7 +248,7 @@ export function SendScreen() {
           {loading && (
             <div className="mt-3 flex items-center justify-center gap-2">
               <div className="w-4 h-4 border-2 border-evap-cyan border-t-transparent rounded-full animate-spin" />
-              <span className="text-[11px] text-zinc-400">Sending transaction...</span>
+              <span className="text-xs text-zinc-400">Sending transaction...</span>
             </div>
           )}
         </div>
@@ -277,7 +277,7 @@ export function SendScreen() {
         {/* Mode toggle: address vs object. Object mode pulls a target
             from the user's owned-objects list and, when LAD-typed,
             unlocks the LadVmPreview surface in the preview step. */}
-        <div className="flex items-center gap-3 text-[10px] text-zinc-400">
+        <div className="flex items-center gap-3 text-xs text-zinc-400">
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input
               type="radio"
@@ -304,7 +304,7 @@ export function SendScreen() {
 
         {mode === "address" ? (
           <div className="relative">
-            <label className="text-[10px] text-zinc-500 mb-1 block">
+            <label className="text-xs text-zinc-500 mb-1 block">
               Recipient Address
               {knownContact && (
                 <span className="ml-2 text-evap-cyan font-semibold">
@@ -344,10 +344,10 @@ export function SendScreen() {
                     }}
                     className="w-full text-left px-3 py-2 hover:bg-evap-bg transition"
                   >
-                    <p className="text-[11px] font-semibold text-zinc-200 truncate">
+                    <p className="text-xs font-semibold text-zinc-200 truncate">
                       {c.label}
                     </p>
-                    <p className="text-[10px] font-mono text-zinc-500 truncate">
+                    <p className="text-xs font-mono text-zinc-500 truncate">
                       {c.address}
                     </p>
                   </button>
@@ -357,7 +357,7 @@ export function SendScreen() {
           </div>
         ) : (
           <div>
-            <label className="text-[10px] text-zinc-500 mb-1 block">Target Object</label>
+            <label className="text-xs text-zinc-500 mb-1 block">Target Object</label>
             <select
               value={objectId}
               onChange={e => setObjectId(e.target.value)}
@@ -372,7 +372,7 @@ export function SendScreen() {
               ))}
             </select>
             {targetObject && (
-              <p className="text-[10px] text-zinc-500 mt-1 font-mono truncate">
+              <p className="text-xs text-zinc-500 mt-1 font-mono truncate">
                 Owner: {targetObject.owner}
               </p>
             )}
@@ -381,14 +381,14 @@ export function SendScreen() {
 
         {crossShardInfo && (
           <div className="px-3 py-2 rounded-lg bg-evap-cyan/5 border border-evap-cyan/30">
-            <p className="text-[11px] text-evap-cyan">
+            <p className="text-xs text-evap-cyan">
               Cross-shard transfer: shard {crossShardInfo.sender} → shard {crossShardInfo.recipient}. May take longer to finalise.
             </p>
           </div>
         )}
 
         <div>
-          <label className="text-[10px] text-zinc-500 mb-1 block">Amount</label>
+          <label className="text-xs text-zinc-500 mb-1 block">Amount</label>
           <div className="relative">
             <input
               type="number"
@@ -402,7 +402,7 @@ export function SendScreen() {
             <button
               type="button"
               onClick={() => setAmount(String(balance))}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-evap-cyan hover:underline"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-evap-cyan hover:underline"
             >
               MAX
             </button>

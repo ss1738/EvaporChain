@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import { ArrowDownLeft, ArrowLeft, ArrowUpRight, Box, Check, Circle, ClipboardList, Droplet, FileCode, Lock, RotateCw, Unlock, X, Zap } from "lucide-react";
 import { useWallet, type PendingTx } from "@/hooks/useWallet";
 import { Header } from "./Header";
 import { shortAddress, timeAgo } from "@/utils/format";
@@ -48,18 +50,18 @@ export function ActivityScreen() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [activeAccount]);
 
-  const txIcon = (type: string) => {
+  const txIcon = (type: string): LucideIcon => {
     switch (type.toLowerCase()) {
-      case "transfer": return "↗";
-      case "receive": return "↙";
-      case "refresh": return "⟳";
-      case "createobject": return "◈";
-      case "faucet": return "💧";
-      case "deploycontract": return "📄";
-      case "callcontract": return "⚡";
-      case "validatorstake": return "🔒";
-      case "validatorexit": return "🔓";
-      default: return "•";
+      case "transfer": return ArrowUpRight;
+      case "receive": return ArrowDownLeft;
+      case "refresh": return RotateCw;
+      case "createobject": return Box;
+      case "faucet": return Droplet;
+      case "deploycontract": return FileCode;
+      case "callcontract": return Zap;
+      case "validatorstake": return Lock;
+      case "validatorexit": return Unlock;
+      default: return Circle;
     }
   };
 
@@ -88,14 +90,14 @@ export function ActivityScreen() {
           onClick={() => setView("home")}
           className="text-xs text-zinc-500 hover:text-zinc-300"
         >
-          ← Back
+          <><ArrowLeft className="inline w-3.5 h-3.5 mr-1 -mt-0.5" strokeWidth={1.5} />Back</>
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {pendingTxs.length > 0 && (
           <div className="mb-3">
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 px-1">
+            <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 px-1">
               Live transactions
             </p>
             <div className="space-y-1">
@@ -111,7 +113,7 @@ export function ActivityScreen() {
           </div>
         ) : transactions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
-            <span className="text-3xl mb-3">📋</span>
+            <span className="text-3xl mb-3"><ClipboardList className="w-3.5 h-3.5" strokeWidth={1.5} /></span>
             <p className="text-sm text-zinc-500">No transactions yet</p>
             <p className="text-xs text-zinc-600 mt-1">Send EVAP or claim from faucet to get started</p>
           </div>
@@ -123,8 +125,11 @@ export function ActivityScreen() {
                 className="flex items-center gap-3 px-3 py-3 rounded-lg bg-evap-surface border border-evap-border hover:border-evap-border/80 transition"
               >
                 {/* Icon */}
-                <div className={`w-8 h-8 rounded-full bg-evap-bg flex items-center justify-center text-base ${txColor(tx.type)}`}>
-                  {txIcon(tx.type)}
+                <div className={`w-8 h-8 rounded-full bg-evap-bg flex items-center justify-center ${txColor(tx.type)}`}>
+                  {(() => {
+                    const Icon = txIcon(tx.type);
+                    return <Icon className="w-4 h-4" strokeWidth={1.5} />;
+                  })()}
                 </div>
 
                 {/* Details */}
@@ -132,12 +137,12 @@ export function ActivityScreen() {
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-medium text-zinc-200 capitalize">{tx.type}</p>
                     {tx.timestamp && (
-                      <span className="text-[10px] text-zinc-600">{timeAgo(tx.timestamp)}</span>
+                      <span className="text-xs text-zinc-600">{timeAgo(tx.timestamp)}</span>
                     )}
                   </div>
-                  <p className="text-[10px] text-zinc-500 truncate mt-0.5">{tx.detail}</p>
+                  <p className="text-xs text-zinc-500 truncate mt-0.5">{tx.detail}</p>
                   {tx.hash && (
-                    <p className="text-[10px] text-zinc-600 font-mono mt-0.5">
+                    <p className="text-xs text-zinc-600 font-mono mt-0.5">
                       {shortAddress(tx.hash)}
                     </p>
                   )}
@@ -163,7 +168,7 @@ function NavBtn({ label, active, onClick }: { label: string; active?: boolean; o
   return (
     <button
       onClick={onClick}
-      className={`flex-1 py-3 text-[10px] font-medium transition ${
+      className={`flex-1 py-3 text-xs font-medium transition ${
         active ? "text-evap-cyan" : "text-zinc-500 hover:text-zinc-300"
       }`}
     >
@@ -189,15 +194,15 @@ function PendingTxRow({ tx, onClear }: { tx: PendingTx; onClear: () => void }) {
         {showSpinner ? (
           <div className="w-3 h-3 border-2 border-evap-cyan/30 border-t-evap-cyan rounded-full animate-spin" />
         ) : tx.status === "finalised" ? (
-          <span className="text-evap-green text-sm">✓</span>
+          <Check className="w-4 h-4 text-evap-green" strokeWidth={2} />
         ) : (
-          <span className="text-evap-red text-sm">✗</span>
+          <X className="w-4 h-4 text-evap-red" strokeWidth={2} />
         )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-medium text-zinc-200 truncate">{tx.summary}</span>
-          <span className={`text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${badge.cls}`}>{badge.label}</span>
+          <span className="text-xs font-medium text-zinc-200 truncate">{tx.summary}</span>
+          <span className={`text-xs px-1.5 py-0.5 rounded-md border shrink-0 ${badge.cls}`}>{badge.label}</span>
         </div>
         <div className="flex items-center justify-between mt-0.5 gap-2">
           <span className="text-[9px] text-zinc-600 font-mono truncate">{shortAddress(tx.hash)}</span>
