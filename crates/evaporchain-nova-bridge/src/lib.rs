@@ -50,11 +50,13 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod neptune_dump_parser;
 pub mod neptune_reference;
 pub mod recursive_snark_fixture;
 pub mod section2_gadget;
 pub mod verifier_circuit;
 
+pub use neptune_dump_parser::{parse_dump, NeptuneDumpShape};
 pub use neptune_reference::{neptune_hash_primary, PrimaryScalar};
 pub use section2_gadget::{
     enforce_poseidon_primary, enforce_section_2_primary, placeholder_poseidon_config,
