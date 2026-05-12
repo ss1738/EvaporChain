@@ -51,6 +51,7 @@
 #![warn(missing_docs)]
 
 pub mod grain_lfsr;
+pub mod compress_ark;
 pub mod mds_linalg;
 pub mod vendored_neptune_grain;
 pub mod neptune_dump_parser;

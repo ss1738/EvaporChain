@@ -247,6 +247,42 @@ pub fn extract_mds_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, Strin
     Ok(out)
 }
 
+/// Parse a neptune dump JSON and extract the INVERSE MDS matrix
+/// `mds.m_inv` as `Vec<Vec<ark_bn254::Fr>>`. Same shape as
+/// [`extract_mds_matrix`] but reads the `m_inv` sub-field of
+/// `mds`. Used by `compress_round_constants`-style preprocessing
+/// to invert subsequent full-round ARK.
+pub fn extract_mds_inverse_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
+    let bytes =
+        fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
+    let v: Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+
+    let m = v
+        .get("mds")
+        .and_then(|m| m.get("m_inv"))
+        .and_then(Value::as_array)
+        .ok_or("missing `mds.m_inv` as array")?;
+
+    let mut out: Vec<Vec<Fr>> = Vec::with_capacity(m.len());
+    for (row_idx, row) in m.iter().enumerate() {
+        let cells = row
+            .as_array()
+            .ok_or_else(|| format!("mds.m_inv[{row_idx}] not an array"))?;
+        let mut row_frs: Vec<Fr> = Vec::with_capacity(cells.len());
+        for (col_idx, cell) in cells.iter().enumerate() {
+            let hex = cell
+                .as_str()
+                .ok_or_else(|| format!("mds.m_inv[{row_idx}][{col_idx}] not a string"))?;
+            let fr = decode_hex_scalar(hex)
+                .map_err(|e| format!("decode mds.m_inv[{row_idx}][{col_idx}]: {e}"))?;
+            row_frs.push(fr);
+        }
+        out.push(row_frs);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
