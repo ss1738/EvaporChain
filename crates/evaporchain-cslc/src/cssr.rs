@@ -634,7 +634,7 @@ fn chi2_critical_value(df: usize, alpha: f64) -> f64 {
         // df=5
         [20.51, 16.75, 15.09, 11.07],
     ];
-    if df >= 1 && df <= 5 {
+    if (1..=5).contains(&df) {
         table[df - 1][bucket]
     } else {
         // Conservative fallback for larger df.

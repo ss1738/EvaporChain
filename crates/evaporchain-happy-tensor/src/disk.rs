@@ -54,7 +54,7 @@ impl HaPPYDisk {
                 is_bulk,
             },
         );
-        self.adj.entry(id).or_insert_with(BTreeSet::new);
+        self.adj.entry(id).or_default();
     }
 
     pub fn add_edge(&mut self, u: CellId, v: CellId) -> Result<(), HaPPYDiskError> {

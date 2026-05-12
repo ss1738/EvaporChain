@@ -145,7 +145,7 @@ impl Intent {
         h.update(b"evaporchain:counsel-intent:v1\0");
         h.update(&self.id.0);
         h.update(&self.holder);
-        h.update(&[self.verb as u8 as u8]);
+        h.update(&[(self.verb as u8)]);
         h.update(&(self.object.len() as u32).to_le_bytes());
         h.update(&self.object);
         h.update(&(self.constraint.len() as u32).to_le_bytes());

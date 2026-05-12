@@ -135,8 +135,7 @@ impl StepReporter {
         let took = self.overall_started.elapsed();
         println!();
         println!(
-            "{} Ceremony rehearsal complete ({:.1}s)",
-            "\u{1F389}",
+            "\u{1F389} Ceremony rehearsal complete ({:.1}s)",
             took.as_secs_f64()
         );
     }
