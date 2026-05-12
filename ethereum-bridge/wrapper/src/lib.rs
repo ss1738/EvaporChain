@@ -72,6 +72,7 @@ pub mod inputs;
 pub mod nonnative_fq;
 pub mod pallas_g1;
 pub mod pallas_g1_double;
+pub mod pallas_scalar_mul;
 pub mod prover;
 
 pub use circuit::WrapperCircuit;
@@ -87,4 +88,5 @@ pub use nonnative_fq::{
 };
 pub use pallas_g1::{enforce_g1_add, NonNativePallasPoint};
 pub use pallas_g1_double::enforce_g1_doubling;
+pub use pallas_scalar_mul::enforce_scalar_mul;
 pub use prover::{prove, setup, verify, ProveError, SetupError, VerifyError};
