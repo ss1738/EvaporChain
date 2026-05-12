@@ -26,9 +26,28 @@
 //! writes them all out (see `nova-snark/src/frontend/gadgets/
 //! poseidon/serde_impl.rs:14-32`).
 //!
-//! This binary is the inspection artifact: dump to JSON, then a
-//! follow-up PR parses + ports the values into an arkworks
-//! `PoseidonConfig`.
+//! This binary is the inspection artifact: dump to JSON, then
+//! port the values into an arkworks `PoseidonConfig` (PR #103 did
+//! exactly that — `compress_full` reproduces the JSON's `crc`
+//! field byte-for-byte).
+//!
+//! # Section-2 verification toolchain (post-PR #103)
+//!
+//!   1. `dump-neptune-constants` (this binary) — extract neptune's
+//!      constants via serde to JSON.
+//!   2. `dump-our-compressed-ark` — emit our `compress_full` output
+//!      in the same `{ "crc": [...] }` shape for `diff` audit.
+//!   3. `check-neptune-parity` — one-shot CI gate; exits 0 on
+//!      `259/259 crc entries match byte-for-byte`.
+//!
+//! Quick check:
+//! ```bash
+//! cargo run -p evaporchain-nova-bridge --bin dump-neptune-constants -- \
+//!     --out /tmp/neptune.json
+//! cargo run -p evaporchain-nova-bridge --bin check-neptune-parity -- \
+//!     --neptune /tmp/neptune.json
+//! # → PASS — 259 of 259 crc entries match byte-for-byte
+//! ```
 //!
 //! # Usage
 //!
