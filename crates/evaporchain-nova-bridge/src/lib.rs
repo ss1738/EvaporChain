@@ -57,7 +57,8 @@ pub mod section2_gadget;
 pub mod verifier_circuit;
 
 pub use neptune_dump_parser::{
-    decode_hex_scalar, extract_mds_matrix, parse_dump, NeptuneDumpShape,
+    decode_hex_scalar, expected_crc_len, extract_compressed_round_constants, extract_mds_matrix,
+    parse_dump, NeptuneDumpShape,
 };
 pub use neptune_reference::{neptune_hash_primary, PrimaryScalar};
 pub use section2_gadget::{

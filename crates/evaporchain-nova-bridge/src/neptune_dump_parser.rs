@@ -153,6 +153,59 @@ pub fn decode_hex_scalar(hex: &str) -> Result<Fr, String> {
     Ok(Fr::from_le_bytes_mod_order(&bytes_le))
 }
 
+/// Parse a neptune dump JSON and extract the COMPRESSED round
+/// constants `crc` as `Vec<ark_bn254::Fr>`.
+///
+/// Neptune's `crc` is the SBOX-trick-optimized form, not plain
+/// per-round constants. The expected layout (inferred from
+/// neptune's `preprocessing.rs`):
+///
+/// ```text
+///   crc[0..full_rounds * width]                 — plain ARK for the
+///                                                  full rounds (first
+///                                                  half + last half,
+///                                                  width entries each)
+///   crc[full_rounds * width
+///       .. full_rounds * width + partial_rounds]
+///                                              — one compressed scalar
+///                                                  per partial round
+///                                                  (folded SBOX trick)
+/// ```
+///
+/// For arity-24 standard strength:
+///   crc.len() = (8 × 25) + 59 = 200 + 59 = 259
+///
+/// Verified empirically against PR #80's Mini-1 dump.
+pub fn extract_compressed_round_constants<P: AsRef<Path>>(path: P) -> Result<Vec<Fr>, String> {
+    let bytes =
+        fs::read(path.as_ref()).map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
+    let v: Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse JSON: {e}"))?;
+
+    let crc = v
+        .get("crc")
+        .and_then(Value::as_array)
+        .ok_or("missing `crc` array")?;
+
+    let mut out: Vec<Fr> = Vec::with_capacity(crc.len());
+    for (i, cell) in crc.iter().enumerate() {
+        let hex = cell.as_str().ok_or_else(|| format!("crc[{i}] not a string"))?;
+        let fr =
+            decode_hex_scalar(hex).map_err(|e| format!("decode crc[{i}]: {e}"))?;
+        out.push(fr);
+    }
+    Ok(out)
+}
+
+/// Predict the expected `crc` length given Poseidon parameters.
+///
+/// Returns `full_rounds * width + partial_rounds` per neptune's
+/// SBOX-trick-optimized layout (the full-round ARK is plain;
+/// partial-round ARK is compressed to one scalar per round).
+pub fn expected_crc_len(full_rounds: usize, partial_rounds: usize, width: usize) -> usize {
+    full_rounds.saturating_mul(width).saturating_add(partial_rounds)
+}
+
 /// Parse a neptune dump JSON and extract the PLAIN MDS matrix `m`
 /// as `Vec<Vec<ark_bn254::Fr>>`.
 ///
@@ -286,6 +339,32 @@ mod tests {
         assert_eq!(mds[0].len(), 2);
         assert_eq!(mds[0][0], Fr::from(1u64));
         assert_eq!(mds[1][1], Fr::from(2u64));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn expected_crc_len_arity_24_standard() {
+        // Empirically verified against PR #80's real dump.
+        assert_eq!(expected_crc_len(8, 59, 25), 259);
+    }
+
+    #[test]
+    fn extract_compressed_round_constants_from_fixture() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-crc-fixture.json");
+        // 3-element crc: [1, 2, 3] as LE scalars
+        let one_hex = format!("01{}", "0".repeat(62));
+        let two_hex = format!("02{}", "0".repeat(62));
+        let three_hex = format!("03{}", "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{one_hex}\"]],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\"crc\":[\"{one_hex}\",\"{two_hex}\",\"{three_hex}\"],\"psm\":[],\"sm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        fs::write(&path, json).unwrap();
+        let crc = extract_compressed_round_constants(&path).expect("extract");
+        assert_eq!(crc.len(), 3);
+        assert_eq!(crc[0], Fr::from(1u64));
+        assert_eq!(crc[1], Fr::from(2u64));
+        assert_eq!(crc[2], Fr::from(3u64));
         let _ = fs::remove_file(&path);
     }
 
