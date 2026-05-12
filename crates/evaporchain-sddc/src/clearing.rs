@@ -267,6 +267,30 @@ mod tests {
         let b = Bid::new(aid(0xAA), 100, 50, 0).unwrap(); // price too low at open
         assert_eq!(would_clear_at(&a, &b).unwrap(), None);
     }
+
+    /// T1.20 — would_clear_at returns None when the auction is not
+    /// open (line 106). Caller submitted past expiry / before open.
+    #[test]
+    fn t1_20_would_clear_at_returns_none_when_closed() {
+        let mut a = open_auction();
+        // Walk the auction past expiry by clearing on empty bids
+        // beyond the close epoch.
+        let _ = try_clear(&mut a, &[], 9999).unwrap();
+        assert!(!a.is_open());
+
+        let b = Bid::new(aid(0xAB), 1000, 50, 50).unwrap();
+        assert_eq!(would_clear_at(&a, &b).unwrap(), None);
+    }
+
+    /// T1.20 — would_clear_at returns None when the bid was
+    /// submitted outside the open→close window. Covers line 109.
+    #[test]
+    fn t1_20_would_clear_at_returns_none_when_bid_out_of_window() {
+        let a = open_auction();
+        // Bid submitted_at = 9999, past the 100-epoch close.
+        let b = Bid::new(aid(0xAC), 1000, 50, 9999).unwrap();
+        assert_eq!(would_clear_at(&a, &b).unwrap(), None);
+    }
 }
 
 #[cfg(test)]
