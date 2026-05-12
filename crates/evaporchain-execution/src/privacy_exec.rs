@@ -1173,6 +1173,83 @@ mod tests {
 
     // ── Unshield Tests (100% real) ──
 
+    /// Regression test for PR #9 (shield-side persistence). Confirms
+    /// `execute_shield` calls `db.append_note_commitment` with the
+    /// new note's leaf index + commitment bytes, so a node restart's
+    /// `restore_from_db` can rebuild the tree.
+    #[test]
+    fn shield_commitment_persists_to_db_via_append_note_commitment() {
+        let sender = test_addr(1);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let pre_count = db.get_all_note_commitments().len();
+        let n1 = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        let post = db.get_all_note_commitments();
+        assert_eq!(
+            post.len() - pre_count,
+            1,
+            "shield must persist exactly one new commitment"
+        );
+        assert!(
+            post.contains(&n1.note_commitment),
+            "the persisted commitment must equal ShieldResult.commitment"
+        );
+    }
+
+    /// Regression test for PR #9 (private_transfer output side).
+    /// With 2 output_commitments in the tx, both must be persisted
+    /// via `db.append_note_commitment`.
+    #[test]
+    fn private_transfer_outputs_persist_to_db_via_append_note_commitment() {
+        let addr = test_addr(1);
+        let mut db = setup_db_with_balance(&addr, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        let pre_count = db.get_all_note_commitments().len();
+        let out_blinds = [test_blinding(30), test_blinding(31)];
+        let tx = build_real_transfer(&executor, &note, &[3_000, 1_900], &out_blinds, 100);
+        executor
+            .execute_private_transfer(&mut db, &tx)
+            .expect("private transfer must succeed");
+
+        let post = db.get_all_note_commitments();
+        assert_eq!(
+            post.len() - pre_count,
+            2,
+            "private_transfer with 2 outputs must persist 2 commitments"
+        );
+        for output_commitment in &tx.output_commitments {
+            assert!(
+                post.contains(output_commitment),
+                "every output_commitment must be persisted to db"
+            );
+        }
+    }
+
     #[test]
     fn test_unshield_real_full_amount() {
         let sender = test_addr(1);
