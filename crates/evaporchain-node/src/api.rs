@@ -10552,7 +10552,13 @@ async fn post_user_op(
 
     let tx = Transaction::UserOp(req.user_op);
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "UserOp rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
 
     Json(TxResultResponse {
         success: true,
@@ -10674,7 +10680,13 @@ async fn post_delegate(
     // Canonical tx hash matches what the executor records — see
     // post_transfer for the same fix shape and rationale.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Delegate rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -10804,7 +10816,13 @@ async fn post_undelegate(
     sign_transaction(&mut tx, &state, Some(&sender_addr));
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Undelegate rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -10919,7 +10937,13 @@ async fn post_claim_delegation(
     sign_transaction(&mut tx, &state, Some(&sender_addr));
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "ClaimDelegation rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11048,7 +11072,13 @@ async fn post_create_object(
     sign_transaction(&mut tx, &state, Some(&creator_addr));
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "CreateObject rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11086,7 +11116,13 @@ async fn post_refresh(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Refresh rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -11125,7 +11161,13 @@ async fn post_resurrect(
     sign_transaction(&mut tx, &state, None);
     // Canonical tx hash — see post_transfer.
     let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
-    state.submit_tx(tx);
+    if !state.submit_tx(tx) {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Resurrect rejected: mempool full or per-account cap reached".into(),
+            tx_hash: None,
+        });
+    }
     Json(TxResultResponse {
         success: true,
         message: format!(
