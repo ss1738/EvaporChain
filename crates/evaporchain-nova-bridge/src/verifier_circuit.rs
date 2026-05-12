@@ -1,48 +1,51 @@
-//! Phase 2.2 finish step 1 of N — arkworks R1CS skeleton for the
-//! in-circuit `RecursiveSNARK<E1, E2, C>::verify` algorithm.
+//! arkworks R1CS skeleton for the in-circuit
+//! `RecursiveSNARK<E1, E2, C>::verify` algorithm.
 //!
-//! # What this module ships (Phase 2.2 partial — ~15% complete)
+//! # Section status (post-PR #103 + #114)
 //!
 //! The arkworks-side `ConstraintSynthesizer` type ([`NovaVerifierCircuit`])
-//! that the Groth16 wrapper eventually proves. Carries the witness
-//! values (z0, zi, num_steps, R1CS instances) and the three
-//! verification sections sketched but not implemented:
+//! carries the witness values (z0, zi, num_steps, R1CS instances). The
+//! three verification sections evolve as follows:
 //!
-//!   - **Section 1: structural checks** — `num_steps != 0`,
-//!     `self.i == num_steps`, `self.z0 == z0`, instances have 2
-//!     public outputs. Cheap. **TODO in synthesize() — straightforward;
-//!     ~10 lines per check.**
+//!   - **Section 1: structural checks** — `num_steps != 0`, z0 non-empty,
+//!     z0/zi arity match. **DONE** as off-circuit precondition gate
+//!     ([`NovaVerifierCircuit::validate_structurally`], PR #64). Maps
+//!     failures to `SynthesisError::Unsatisfiable` in
+//!     `generate_constraints`. Field-level checks against
+//!     `RecursiveSNARK` private fields (`self.i == num_steps`,
+//!     `instance.X.len() == 2`) are deferred to the Phase 2.3 adapter.
 //!
-//!   - **Section 2: Poseidon transcript hash** — re-hash
+//!   - **Section 2 — constants layer**: re-hash
 //!     `(pp.digest, num_steps, z0, zi, R1CS-instance, ri)` with
-//!     Poseidon and compare against the two committed hashes on
-//!     `l_u_secondary.X[..2]`. Uses arkworks Poseidon gadget (already
-//!     available in `ark-r1cs-std`). **TODO in synthesize() — ~1 day
-//!     work using existing Poseidon gadgets; the open question is
-//!     parameter alignment with nova-snark's Poseidon (which uses
-//!     bellman-style sponge constants).**
+//!     neptune-aligned Poseidon and compare against the two committed
+//!     hashes on `l_u_secondary.X[..2]`. **Constants byte-complete**
+//!     against neptune's `crc[0..259]` per PR #103 — see
+//!     `crate::compress_ark::compress_full` + `crate::grain_lfsr::
+//!     generate_round_constants_bn254_arity_24_standard`. Verified via 4
+//!     paths: unit test, operator dump+diff, CI-gate binary, integration
+//!     test.
+//!
+//!   - **Section 2 — sponge framing**: residual gap between arkworks
+//!     `PoseidonSpongeVar` per-round operation and neptune's
+//!     `Poseidon::hash_optimized_static` SBOX-trick-fused partial
+//!     rounds. Tracked by PR #98's parity canary
+//!     (`fully_aligned_gadget_byte_parity_with_neptune`, currently
+//!     `assert_ne!`). Closing this requires either porting the SBOX
+//!     trick into arkworks's `PoseidonConfig.ark` shape or vendoring
+//!     neptune's permutation. Multi-day BESPOKE.
 //!
 //!   - **Section 3: RelaxedR1CS satisfiability** — verify the three
 //!     R1CS instances are satisfied by their witnesses
-//!     (`is_sat_relaxed` × 2 + `is_sat` × 1). **TODO in synthesize()
-//!     — this is the BESPOKE part. ~3 days work + research into
-//!     Nova's sparse-R1CS encoding. The verifier needs to encode
-//!     `<a, z> · <b, z> = <c, z>` for each row of the constraint
-//!     system, OR use a sumcheck-style protocol-replay (smaller).
-//!     Open Q4 in `DESIGN.md`.**
+//!     (`is_sat_relaxed` × 2 + `is_sat` × 1). **OPEN** — 3-5 days
+//!     BESPOKE research. Open Q4 in `DESIGN.md`.
 //!
-//! # Type-conversion note (open architecture question)
+//! # Type-conversion note
 //!
 //! `RecursiveSNARK<E1=Bn256EngineKZG, E2=GrumpkinEngine, C>` carries
-//! nova-snark's native field types (its own `bn256::Scalar`,
-//! `grumpkin::Scalar`). The arkworks circuit operates on
-//! `ark_bn254::Fr`. These are the SAME mathematical fields but
-//! DIFFERENT Rust types.
-//!
-//! Phase 2.2's adapter (next milestone, separate file) will bridge
-//! them via byte serialization: `nova-snark scalar → 32 LE bytes →
-//! ark_bn254::Fr`. This skeleton uses `ark_bn254::Fr` directly for
-//! the witness slots and assumes the adapter pre-converts.
+//! nova-snark's native field types (`halo2curves::bn256::Fr`,
+//! `halo2curves::grumpkin::Fr`). The arkworks circuit operates on
+//! `ark_bn254::Fr`. Same mathematical fields, different Rust types.
+//! Conversion lives in [`crate::scalar_adapter`] (PR #66).
 //!
 //! See `DESIGN.md` for the full Phase 2 milestone breakdown.
 
