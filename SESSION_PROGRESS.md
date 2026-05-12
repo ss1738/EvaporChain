@@ -177,11 +177,31 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
-## 2026-05-11 (T1.20 continuation) — temporal / state_sync / mempool / paymaster / db / banlist + 10 more crates
+## 2026-05-11 (T1.20 continuation) — 20+ crates, 80+ tests across one continuous coverage arc
 
 **Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.
 
-**Commits shipped this arc:** 16 (`47774f25` → `16e2577a`). All on `origin/main`.
+**Commits shipped this arc:** 30 (`47774f25` → `4c860d4a`). All on `origin/main`. Parallel session also pushed `efd4c4c3` (state/execution fixes + 35 tests) and `f17f72b1`/`d5949045` (state_sync + rocksdb backend) interleaved.
+
+**Third-batch T1.20 closures (post-`16e2577a`):**
+
+| Crate / file | Tests added | Targeted gap |
+|---|---|---|
+| `evaporchain-mortis::condition.rs` (80.00% → ↑) | 1 | `Default::default()` routes through `default_genesis` |
+| `evaporchain-cli::onboarding.rs` (81.24% → ↑) | 6 | `parse_hex_strict` wrong-length/0x-prefix/non-hex; `address_from_hex` round-trip; `cmd_verify` missing-genesis + malformed-JSON errors |
+| `evaporchain-consensus::encrypted_mempool.rs` (95.77% → ↑) | 3 | MevPool trait default `len`/`is_empty` via `Box<dyn MevPool>`; `EncryptedMempool::default` delay-2; `verify_and_decrypt` CommitmentMismatch |
+| `evaporchain-cl-amm::pool.rs` (93.03% → ↑) | 4 | `SinghPool::new` fee_bp>10_000 rejected; accessors; `mint_initial` zero-amount + double-call delegation |
+| `evaporchain-wsbf::params.rs` (0% → 100%) | 1 | Net-new `mod tests` for `RgFlowParams::default` |
+| `evaporchain-consensus::lib.rs` (80% → ↑) | 5 | `MockConsensus::new` + `new_with_gas_limit` + `new_with_mev_protection`; `compute_block_da` empty sentinel + with-tx success |
+| `evaporchain-total-evaporscript::term.rs` (89.74% → ↑) | 2 | `Expr::is_positive_literal` + `as_strict_decrement` (ranking-function shape for BoundedWhile) |
+| `evaporchain-script::lib.rs` (75.14% → ↑) | 2 | `Value::Display` Map arm + `to_map_key` all 7 variants |
+| `evaporchain-app-templates-engine::init_singh_resonance/triage/ssm/witnessfit` (71.43% each → ↑) | 8 (2 per file) | Parse-success on canonical JSON + parse-error on malformed input |
+| `evaporchain-sgb::ty.rs` (90% → ↑) | 2 | `Type::with` + `Type::plus` connective constructors |
+| `evaporchain-singh-inequality-v2::bound.rs/compare.rs` | 3 | `max_range` empty + InvalidRange; `bernstein_strictly_tighter` -> `map_v1_err` propagation |
+| `evaporchain-cap-decay-vm::registry.rs` (97.21% → ↑) | 1 | `CapRegistry::new` + `len` + `is_empty` on fresh registry |
+| `evaporchain-sddc::clearing.rs` (99% → ↑) | 2 | `would_clear_at` not-open + bid-out-of-window → Ok(None) arms |
+
+Cumulative T1.20 this session arc: ~33 (first batch) + ~29 (second batch) + ~40 (third batch) ≈ ~100 new tests across 22 files. Plus the parallel session's 35 execution/parallel tests + state_sync + rocksdb backend tests on top.
 
 **Additional T1.20 file-level closures (post-`2157bce4`):**
 
