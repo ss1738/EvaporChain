@@ -268,4 +268,23 @@ mod tests {
         let back: EpaMmr = serde_json::from_str(&s).unwrap();
         assert_eq!(m.root().unwrap(), back.root().unwrap());
     }
+
+    /// T1.20 — EpaMmr accessors: new, default, leaf_count,
+    /// is_empty, append, get (lines 49-77).
+    #[test]
+    fn t1_20_mmr_accessors() {
+        let mut m = EpaMmr::new();
+        assert!(m.is_empty());
+        assert_eq!(m.leaf_count(), 0);
+        let n: EpaMmr = Default::default();
+        assert!(n.is_empty());
+
+        let leaf = EnergyLeaf::new([1u8; 32], 1000, 0);
+        let idx = m.append(leaf.clone());
+        assert_eq!(idx, 0);
+        assert_eq!(m.leaf_count(), 1);
+        assert!(!m.is_empty());
+        assert_eq!(m.get(0).unwrap().energy, 1000);
+        assert!(m.get(99).is_none());
+    }
 }
