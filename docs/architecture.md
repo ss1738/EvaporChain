@@ -61,7 +61,7 @@ Cryptographic primitives: BLAKE3 hashing, ML-DSA post-quantum digital signatures
 State management layer. Contains the `StateDB` trait (with `InMemoryStateDB` implementation), the **Evaporation Engine** (processes energy decay each epoch, transitions objects through Active → Grace → Ghost lifecycle), and the **Refresh Engine** (handles energy deposits and ghost resurrection). This is where thermodynamic decay is enforced.
 
 ### evaporchain-contracts
-Template-based smart contract system. Provides 7 pre-built contract templates (DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, Temporal) with a rule engine for custom behavior (triggers, conditions, actions). Each contract instance has its own energy and half-life — contracts themselves evaporate when unused.
+Template-based smart contract system. Provides 8 pre-built contract templates (DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, DecayingDAO, TemporalContract) with a rule engine for custom behavior (triggers, conditions, actions). Each contract instance has its own energy and half-life — contracts themselves evaporate when unused.
 
 ### evaporchain-script
 The EvaporScript scripting language. A non-Turing-complete language with three components: **Parser** (lexer + recursive descent parser → AST), **Compiler** (AST → stack-based bytecode with method table), and **VM** (executes bytecode with gas metering, built-in functions, state management). Includes the `ScriptEngine` for deploying and managing script contracts with full lifecycle hook support.
