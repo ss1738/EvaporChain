@@ -194,7 +194,7 @@ impl ForkChoice for MccForkChoice {
         let local_traj = self.first_parent_trajectory(local_tip);
         let cand_traj = self.first_parent_trajectory(candidate_parent);
         let trajectories = vec![&local_traj, &cand_traj];
-        match mcc_choose(trajectories.into_iter(), &self.lc, self.beta_mb) {
+        match mcc_choose(trajectories, &self.lc, self.beta_mb) {
             Ok(winner) => {
                 let score = evaporchain_mcc::path_caliber(winner, &self.lc, self.beta_mb);
                 ForkChoiceVerdict {
