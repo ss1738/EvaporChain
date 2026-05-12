@@ -11,58 +11,87 @@ approach the `ethereum-bridge/circuits` crate uses).
 | Module | Purpose |
 |---|---|
 | `verifier_circuit` | `NovaVerifierCircuit: ConstraintSynthesizer<Bn254Fr>` + `StructuralValidationError` (off-circuit precondition gate). Phase 2.2 skeleton + Section 1. |
-| `recursive_snark_fixture` | `generate_fixture(num_steps)` produces a real `RecursiveSNARK<Bn256EngineKZG, GrumpkinEngine, TrivialIncrementCircuit>` for the verifier circuit to consume. |
-| `groth16_wrapper` | `setup` / `prove` / `verify` / `prepare_vk` / `verify_prepared` against `NovaVerifierCircuit`. Plus `public_inputs_in_alloc_order` (the load-bearing public-input ordering contract). |
-| `canonical_io` | Canonical `ark-serialize` compressed bytes for `pk`, `vk`, `proof`. Persistence layer for operator pipelines. |
-| `eip197` | 256-byte EIP-197 wire-format conversion of `Proof<Bn254>` for the L1 pairing precompile. **Includes the `Fq2 (c1, c0)` swap.** |
-| `scalar_adapter` | `nova↔arkworks` scalar conversion (`bn256::Fr ↔ ark_bn254::Fr`, `grumpkin::Fr ↔ ark_bn254::Fq`). Used by all downstream gadget paths. |
-| `poseidon_transcript` | Typed `TranscriptSlot` + `absorb_order(side, z_arity)` builder pinning nova-snark's exact absorb sequence from `RecursiveSNARK::verify`. |
-| `poseidon_budget` | Empirical Poseidon constraint-cost probe (arkworks-default). |
-| `section2_gadget` | Section 2 (in-circuit Poseidon) gadget. `placeholder_poseidon_config` + `neptune_aligned_poseidon_config` + `fully_aligned_poseidon_config`. |
-| `neptune_reference` | `neptune_hash_primary(&[Scalar]) -> Scalar` — calls nova-snark's `PoseidonRO` directly for ground-truth oracle hashes. |
+| `recursive_snark_fixture` | `generate_fixture(num_steps)` produces a real `RecursiveSNARK<Bn256EngineKZG, GrumpkinEngine, TrivialIncrementCircuit>`. |
+| `scalar_adapter` | nova↔arkworks scalar conversion: `bn256::Fr ↔ ark_bn254::Fr` (same field, byte-lossless) + `grumpkin::Fr ↔ ark_bn254::Fr` (lossy cross-field LE-bytes-mod-order). |
+| `l_u_secondary_extract` | Extracts the two committed hashes `l_u_secondary.X[..2]` from a `RecursiveSNARK` via `serde_json` reflection (nova-snark v0.68's `l_u_secondary` field is private; the JSON path is brittle but pinned by `debug_dump_l_u_secondary_json_shape`). |
+| `circuit_builder` | `build_circuit_from_fixture(rs)` — full witness orchestration. Combines `scalar_adapter` + `l_u_secondary_extract` into a populated `NovaVerifierCircuit`. |
+| `groth16_wrapper` | `setup` / `prove` / `verify` + `public_inputs_for` (load-bearing slice ordering: hash_primary, hash_secondary, z0[..], zi[..]). |
+| `eip197` | 256-byte EIP-197 wire-format conversion of `Proof<Bn254>` for the L1 pairing precompile. **Includes the Fq2 (c1, c0) swap.** |
+| `section2_gadget` | Section 2 (in-circuit Poseidon) gadget. `placeholder_poseidon_config` + `neptune_aligned_poseidon_config` + `fully_aligned_poseidon_config`. Sponge-framing canary `assert_ne!` documents the residual BESPOKE gap. |
+| `neptune_reference` | `neptune_hash_primary(&[Scalar]) -> Scalar` — calls nova-snark's `PoseidonRO` for ground-truth oracle hashes + pinned reference vectors. |
 | `neptune_dump_parser` | JSON parser for `dump-neptune-constants`'s output. Extracts `mds.{m, m_inv, m_hat, m_hat_inv, m_prime, m_double_prime}`, `crc`, `rf`, `rp`. |
-| `grain_lfsr` | Port of neptune's Grain-80 LFSR for Poseidon round-constant generation. **Byte-correct against neptune `round_keys(0)` per PR #97.** |
-| `vendored_neptune_grain` | Verbatim copy of neptune's `round_constants.rs` algorithm. Used for differential debugging. |
+| `grain_lfsr` | Port of neptune's Grain-80 LFSR for Poseidon round-constant generation. **Byte-correct against neptune `round_keys(0)`.** |
+| `vendored_neptune_grain` | Verbatim copy of neptune's `round_constants.rs` algorithm — regression net for `grain_lfsr` (differential debugging). |
 | `mds_linalg` | `left_apply_matrix`, `vec_add`, `matrix_mul`, `identity_matrix` over `ark_bn254::Fr`. |
-| `compress_ark` | Port of neptune's `compress_round_constants`. **Byte-correct against neptune `crc[0..259]` per PR #103.** |
+| `compress_ark` | Port of neptune's `compress_round_constants` SBOX-trick. **Byte-correct against neptune `crc[0..259]`.** |
 
 ## Binaries
 
 | Binary | Purpose |
 |---|---|
-| `setup-keys` | Trusted-setup CLI: runs `Groth16::circuit_specific_setup` with OS randomness; writes `pk.bin` (~1.4 KB) + `vk.bin` (~400 B); smoke-tests by verifying a fresh proof. |
-| `prove-and-verify` | Companion: loads pk + vk, builds a circuit, proves under fresh randomness, verifies, writes `proof.bin` (128 B canonical compressed). Optional `--fixture-out path.json` emits Solidity-test-vector JSON. |
-| `dump-neptune-constants` | Extracts neptune's `PoseidonConstants::<bn256::Scalar>::default()` to JSON via serde (PR #80). |
+| `dump-neptune-constants` | Extracts neptune's `PoseidonConstants::<bn256::Scalar>::default()` to `/tmp/neptune-bn256-standard.json` via serde. Unblocks 8 `#[ignore]`-gated real-data tests. |
 | `dump-our-compressed-ark` | Emits our `compress_full` output in `{ "crc": [...] }` JSON shape (matches neptune dump for `diff`-based audit). |
 | `check-neptune-parity` | Single-shot CI gate: exit 0 on `259/259 crc entries match byte-for-byte`, exit 1 with diagnostic on mismatch. |
+| `dummy-proof-emit` | Full pipeline as CLI on the **dummy** witness — setup → prove → eip197 encode. Stdout: 512 hex chars; stderr: timing diagnostics. |
+| `fixture-proof-emit` | Full pipeline on a **real** Nova fixture (`--steps N`) — produces a proof bound to a specific accumulator state via real `l_u_secondary.X[..2]`. Optional `--vk-out` + `--public-inputs-out`. |
 
-## Section 2 byte-parity quick-check
+## Integration tests
+
+| File | Purpose |
+|---|---|
+| `tests/section2_parity.rs` | Section 2 constants byte-parity against neptune (requires `/tmp/neptune-bn256-standard.json`). |
+| `tests/full_pipeline.rs` | Dummy-witness pipeline: setup → prove → encode → decode → verify. |
+| `tests/real_fixture_pipeline.rs` | Real-fixture pipeline + binding pin: a proof from fixture A rejects fixture B's public inputs. |
+
+## Operator quick-checks
+
+### Section 2 byte-parity
 
 ```bash
 # 1. Extract neptune's actual constants
-cargo run -p evaporchain-nova-bridge --bin dump-neptune-constants -- \
-    --out /tmp/neptune.json
+cargo run -p evaporchain-nova-bridge --bin dump-neptune-constants
+#   wrote ./neptune-bn256-standard.json (568 KB)
+ln -sf "$PWD/neptune-bn256-standard.json" /tmp/neptune-bn256-standard.json
 
 # 2. Verify our impl matches
 cargo run -p evaporchain-nova-bridge --bin check-neptune-parity -- \
-    --neptune /tmp/neptune.json
-# → PASS — 259 of 259 crc entries match byte-for-byte
+    --neptune /tmp/neptune-bn256-standard.json
+# → check-neptune-parity: PASS — 259 of 259 crc entries match byte-for-byte
 ```
+
+### Emit an L1-paste-ready proof
+
+```bash
+# Dummy witness (fast)
+cargo run -p evaporchain-nova-bridge --bin dummy-proof-emit -- --seed 0
+# → 512 hex chars on stdout
+
+# Real fixture (binds to a specific Nova accumulator state)
+cargo run -p evaporchain-nova-bridge --bin fixture-proof-emit -- \
+    --steps 3 --seed 7 \
+    --vk-out /tmp/fixture-vk.bin \
+    --public-inputs-out /tmp/fixture-pi.txt
+# → real committed hashes printed on stderr; 512 hex chars on stdout
+```
+
+The stdout hex is `verifyProof`'s first argument in Solidity; `/tmp/fixture-pi.txt` (newline-separated hex, 4 entries) is the public-inputs second argument.
 
 ## Current scaffold status
 
-`SCAFFOLD_VERSION = "phase-2.2-section-2-constants"` (PR #104).
+`SCAFFOLD_VERSION = "phase-2.5-operational"` — proof emission is operationally complete on `main`.
 
-- ✅ `phase-2.2-starter` — fixture generator (PR #55)
-- ✅ `phase-2.2-skeleton` — verifier circuit skeleton + public-input wiring (PR #56)
-- ✅ `phase-2.2-section-1` — off-circuit structural-validation gate (PR #64)
-- ✅ `phase-2.2-section-2-constants` — neptune compressed-ARK byte-complete (PR #103)
-- ⬜ `phase-2.2-section-2` — full hash byte-parity (residual sponge framing port)
-- ⬜ `phase-2.2-section-3` — RelaxedR1CS in-circuit (BESPOKE)
-- ⬜ `phase-2.2-complete` — all sections wired through
+- ✅ `phase-2.2-starter` — fixture generator
+- ✅ `phase-2.2-skeleton` — verifier circuit skeleton + public-input wiring
+- ✅ `phase-2.2-section-1` — off-circuit `validate_structurally` gate
+- ✅ `phase-2.2-section-2-constants` — neptune compressed-ARK byte-correct end-to-end
+- ✅ `phase-2.3-operational` — scalar adapter + circuit_builder + real `l_u_secondary` extraction
+- ✅ `phase-2.4-operational` — Groth16 setup / prove / verify wrappers
+- ✅ `phase-2.5-operational` — EIP-197 codec + real-fixture pipeline + operator binaries
+- ⬜ `phase-2-complete` — Section 2 sponge framing + Section 3 RelaxedR1CS
 
-The remaining gap to `phase-2.2-section-2` is the per-round operation
-in arkworks `PoseidonSpongeVar` vs neptune's `Poseidon::hash_optimized_static`
-(which uses SBOX-trick-fused partial rounds). PR #98's parity canary
-captures the residual hash divergence; PR #100's analysis narrows it to
-sponge framing.
+What's left for **cryptographic soundness** (vs operational completeness):
+
+- **Section 2 sponge framing** — close the `assert_ne!` canary in `section2_gadget::tests::fully_aligned_gadget_byte_parity_with_neptune` by porting neptune's SBOX-trick partial-round fusion into arkworks's `PoseidonConfig` (or vendoring neptune's permutation). Multi-day BESPOKE.
+- **Section 3 RelaxedR1CS satisfiability** — in-circuit `is_sat_relaxed × 2 + is_sat × 1`. 3-5 day BESPOKE research deliverable.
+
+Until those close, `fixture-proof-emit` produces a proof that BINDS to a specific accumulator state (verifiable on L1) but does not yet enforce Nova-soundness in circuit.
