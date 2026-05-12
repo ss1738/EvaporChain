@@ -25,7 +25,7 @@ mod tests {
     use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
     use evaporchain_crypto::hash::blake3_hash;
     use evaporchain_crypto::signatures::{
-        BlsKeypair, BlsSignature, BlsVerifier, MlDsaKeypair, MlDsaVerifier, Signer, Verifier,
+        BlsKeypair, MlDsaKeypair, Signer, Verifier,
     };
     use evaporchain_crypto::vrf::VrfKeypair;
     use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
@@ -34,7 +34,7 @@ mod tests {
     use evaporchain_execution::{parallel::ParallelExecutor, ExecutionEngine};
     use evaporchain_state::{InMemoryStateDB, StateDB};
     use evaporchain_types::{
-        Account, BlobTx, Block, CommitCertificate, Transaction, TransferTx, ValidatorExitTx,
+        Account, BlobTx, Block, Transaction, TransferTx,
         ValidatorStakeTx,
     };
     use std::sync::OnceLock;
@@ -867,7 +867,7 @@ mod tests {
 
         // Execute with sig verification — should skip the bad tx
         let mut executor = ParallelExecutor::new_with_sig_verification(0);
-        let result = executor.execute_block(&mut db, &block).unwrap();
+        let _result = executor.execute_block(&mut db, &block).unwrap();
 
         // Transfer should NOT have executed (bad sig)
         let recipient = db.get_account(&[2u8; 32]);
@@ -4474,7 +4474,7 @@ mod mcc_integration {
         let fork_b = Trajectory::new(vec![bid(0), bid(2)]);
 
         // At very high beta (100_000 millibits), low-energy fork wins.
-        let chosen = mcc_choose([&fork_a, &fork_b].into_iter(), &lc, 100_000).unwrap();
+        let chosen = mcc_choose([&fork_a, &fork_b], &lc, 100_000).unwrap();
         let chosen_energy = path_energy(chosen, &lc);
         let fork_b_energy = path_energy(&fork_b, &lc);
         assert_eq!(
@@ -5348,7 +5348,7 @@ mod oracle_consensus_integration {
         // Weighted average over the two integration intervals:
         // (60_000 * 100 + 62_000 * 100) / 200 = 61_000.
         let twap = t.twap().unwrap();
-        assert!(twap >= 60_000.0 && twap <= 64_000.0);
+        assert!((60_000.0..=64_000.0).contains(&twap));
         assert!(
             (twap - 61_000.0).abs() < 1.0,
             "expected ≈61_000, got {twap}"
@@ -7550,7 +7550,7 @@ mod mera_synthetic_workloads {
 
     #[test]
     fn gate_log_correlated_does_not_pick_verkle() {
-        use evaporchain_mera::gate::{run_gate, GateDecision};
+        use evaporchain_mera::gate::run_gate;
         use evaporchain_mera::synthetic::{log_correlated_matrix, LogCorrelatedParams};
         // Empirical note: the Python gate uses 256 × 512 to clear the
         // R²=0.85 power-law threshold reliably. At 128 × 256 this

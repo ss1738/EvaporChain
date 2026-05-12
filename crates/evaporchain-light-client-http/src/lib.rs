@@ -254,7 +254,7 @@ fn nibble_hex(n: u8) -> char {
 #[cfg(any(feature = "nova", test))]
 fn hex_to_bytes(s: &str) -> Result<Vec<u8>, &'static str> {
     let bytes = s.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err("hex string has odd length");
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);

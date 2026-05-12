@@ -391,7 +391,7 @@ mod tests {
         assert!(!term.is_empty());
         // Terminal uses half-block chars, so roughly half the lines
         let lines: Vec<&str> = term.lines().collect();
-        assert!(lines.len() > 0);
+        assert!(!lines.is_empty());
     }
 
     #[test]

@@ -435,7 +435,7 @@ mod tests {
         let tx = sample_tx("tx1", 500, 50000);
         let result = sim.simulate_tx(tx);
         assert_eq!(result.status, SimStatus::Completed);
-        assert_eq!(result.gas_used, 21000 + (500 % 1000));
+        assert_eq!(result.gas_used, 21000 + 500);
         assert!(result.revert_reason.is_none());
         assert!(!result.state_changes.is_empty());
     }

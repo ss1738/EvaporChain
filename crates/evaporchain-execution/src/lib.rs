@@ -7918,7 +7918,7 @@ contract Counter {
     }
 
     #[test]
-    fn t1_20_execution_cache_key_binds_tx_hash_AND_pre_root() {
+    fn t1_20_execution_cache_key_binds_tx_hash_and_pre_root() {
         let mut c = ExecutionCache::new(10);
         let tx_h = [1u8; 32];
         c.put(&tx_h, &[2u8; 32], 21_000, true, 100);
@@ -8032,7 +8032,7 @@ contract Counter {
         sort_txs_by_gas_priority(&mut txs);
         // CreateObject (50_000) > Transfer (21_000) > Refresh (30_000).
         // Sorted descending by gas: CreateObject(50k), Refresh(30k), Transfer(21k).
-        let gas: Vec<u64> = txs.iter().map(|t| SimpleExecutor::estimate_gas(t)).collect();
+        let gas: Vec<u64> = txs.iter().map(SimpleExecutor::estimate_gas).collect();
         for w in gas.windows(2) {
             assert!(w[0] >= w[1], "sort_txs_by_gas_priority must be descending; got {w:?}");
         }

@@ -29,7 +29,6 @@
 use evaporchain_consensus::light_client::LightBlockHeader;
 use evaporchain_consensus::validator_set::ValidatorSet;
 use evaporchain_crypto::energy_verkle::EnergyVerkleTrie;
-use evaporchain_light_client::transport::RpcTransport;
 use evaporchain_light_client::LightClient;
 use evaporchain_light_client_http::HttpTransport;
 use evaporchain_types::CommitCertificate;

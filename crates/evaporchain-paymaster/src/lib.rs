@@ -2764,7 +2764,7 @@ mod tests {
         let pm = Paymaster::new_with_config(
             kp,
             "test",
-            &tmp.path().join("paymaster_nonce_4"),
+            tmp.path().join("paymaster_nonce_4"),
             PaymasterConfig {
                 require_user_sig: false,
                 per_sender_rps: 0.0,

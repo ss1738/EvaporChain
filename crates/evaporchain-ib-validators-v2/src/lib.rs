@@ -57,7 +57,7 @@ mod press_claim_tests {
         let id2: jail::ValidatorId = [2u8; 32];
 
         // High-KL local vs. uniform prior → V1 commits.
-        let local = StateSignature::from_energies(&vec![0u64; 16], 1024);
+        let local = StateSignature::from_energies(&[0u64; 16], 1024);
         let prior_energies: Vec<u64> = (0..16).map(|i| i as u64 * 64).collect();
         let prior = StateSignature::from_energies(&prior_energies, 1024);
         let params = IbParams { lambda_mb: 100 };

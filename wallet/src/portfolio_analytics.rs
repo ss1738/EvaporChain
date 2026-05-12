@@ -663,7 +663,7 @@ mod tests {
     fn test_correlation() {
         let pa = make_analytics();
         let corr = pa.correlation("EVP", "SOL").unwrap();
-        assert!(corr >= -1.0 && corr <= 1.0);
+        assert!((-1.0..=1.0).contains(&corr));
     }
 
     #[test]

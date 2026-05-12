@@ -664,7 +664,7 @@ mod tests {
     fn test_check_spending_limit_no_limit() {
         let mut mgr = SharedVaultManager::new();
         mgr.create_vault(make_vault("v1", 2)).unwrap();
-        assert_eq!(mgr.check_spending_limit("v1", 999999).unwrap(), true);
+        assert!(mgr.check_spending_limit("v1", 999999).unwrap());
     }
 
     #[test]
@@ -674,8 +674,8 @@ mod tests {
         vault.spending_limit_daily = Some(500);
         vault.spent_today = 200;
         mgr.create_vault(vault).unwrap();
-        assert_eq!(mgr.check_spending_limit("v1", 300).unwrap(), true);
-        assert_eq!(mgr.check_spending_limit("v1", 301).unwrap(), false);
+        assert!(mgr.check_spending_limit("v1", 300).unwrap());
+        assert!(!mgr.check_spending_limit("v1", 301).unwrap());
     }
 
     #[test]

@@ -494,7 +494,7 @@ mod tests {
         mgr.create_stream(sample_stream("s1")).unwrap();
         // Stream started 1 hour ago with rate 1/sec => ~3600 available
         let available = mgr.withdrawable_amount("s1").unwrap();
-        assert!(available >= 3500 && available <= 3700);
+        assert!((3500..=3700).contains(&available));
     }
 
     #[test]

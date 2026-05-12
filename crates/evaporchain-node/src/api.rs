@@ -20954,8 +20954,8 @@ mod canonical_tx_hash_regression {
         // Reproduce the pre-fix format-string hash shape.
         let legacy_format_hash = tx_hash(&format!(
             "transfer:{}:{}:{}",
-            hex::encode(&[0x01u8; 20]),
-            hex::encode(&[0x02u8; 20]),
+            hex::encode([0x01u8; 20]),
+            hex::encode([0x02u8; 20]),
             1000
         ));
         assert_ne!(

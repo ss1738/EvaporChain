@@ -149,7 +149,7 @@ fn adversarial_t08_forged_integrity_hash_rejected_via_missing_quorum_cert() {
 /// a different snapshot's signing event.
 #[test]
 fn adversarial_t08_stale_quorum_cert_from_different_snapshot_rejected() {
-    use evaporchain_crypto::signatures::{BlsKeypair, BlsSignature, BlsVerifier};
+    use evaporchain_crypto::signatures::{BlsKeypair, BlsVerifier};
     use evaporchain_state::snapshot::SnapshotQuorumCert;
 
     // Build a snapshot with real BLS validators so we can construct
@@ -367,7 +367,7 @@ fn adversarial_t08_truncated_zstd_payload_rejects() {
 
 #[test]
 fn adversarial_t08_partial_state_withhold_nullifier_rejected_via_cert() {
-    use evaporchain_crypto::signatures::{BlsKeypair, BlsSignature, BlsVerifier};
+    use evaporchain_crypto::signatures::{BlsKeypair, BlsVerifier};
     use evaporchain_state::snapshot::SnapshotQuorumCert;
 
     let kp1 = BlsKeypair::generate();

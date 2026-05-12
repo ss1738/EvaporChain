@@ -466,7 +466,7 @@ mod tests {
     fn test_dead_man_switch_days_remaining() {
         let dms = DeadManSwitch::new("evap1x", 30).unwrap();
         let remaining = dms.days_remaining();
-        assert!(remaining >= 29 && remaining <= 30);
+        assert!((29..=30).contains(&remaining));
     }
 
     #[test]
