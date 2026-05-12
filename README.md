@@ -123,7 +123,7 @@ evaporchain-energy-kernel     Coq-verified canonical energy_at_epoch
 
 ## Test Coverage
 
-**12,500+ test functions** across 147 workspace crates. Coverage spans the core pipeline (consensus → execution → DA → proving → contracts → frontier primitives) plus substrate-module tests and top-level "press-claim" tests that assert each crate's doctrine headline as a structural invariant — so the press claim breaks loudly if the implementation drifts.
+**25,435+ test functions** across 147 workspace crates. Coverage spans the core pipeline (consensus → execution → DA → proving → contracts → frontier primitives) plus substrate-module tests and top-level "press-claim" tests that assert each crate's doctrine headline as a structural invariant — so the press claim breaks loudly if the implementation drifts.
 
 ```bash
 cargo test --workspace
