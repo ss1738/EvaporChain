@@ -628,13 +628,18 @@ impl PrivacyExecutor {
             let _ = self.pnt.insert_nullifier(*nf);
         }
 
-        // 8. Add change outputs to tree (if any)
+        // 8. Add change outputs to tree + persist their commitments
+        // to db so `restore_from_db` can rebuild the tree on restart
+        // (T0.5 follow-up — third call site, symmetric to the shield
+        // + private_transfer paths fixed in the previous commit).
         for commitment_bytes in &tx.change_commitments {
             let commitment = Commitment(*commitment_bytes);
-            self.engine
+            let leaf_index = self
+                .engine
                 .note_tree
                 .insert(&commitment)
                 .ok_or(PrivacyExecError::TreeFull)?;
+            db.append_note_commitment(leaf_index as u64, *commitment_bytes);
         }
 
         // 9. Credit transparent balance
