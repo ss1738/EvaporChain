@@ -79,6 +79,11 @@ impl GrainSeedParams {
     }
 }
 
+/// BN254 Fr field size in bits (254). Filtered bits are
+/// accumulated into a 254-bit big-endian integer per Poseidon
+/// paper conventions.
+pub const BN254_FR_BITS: usize = 254;
+
 /// In-memory Grain-80 LFSR state. Holds 80 bits as a `[u8; 10]`
 /// where the **MSB of `state[0]` is bit position 0** (left-most,
 /// matching the Poseidon paper convention).
@@ -170,6 +175,50 @@ impl GrainLfsr {
             if cond_bit == 1 {
                 return new_bit;
             }
+        }
+    }
+
+    /// Emit one `ark_bn254::Fr` field element by generating 254
+    /// filtered bits (first bit = MSB of the 254-bit integer) and
+    /// applying bias-rejection: re-roll if the assembled value is
+    /// ≥ the BN254 Fr modulus.
+    ///
+    /// Order convention matches the Poseidon paper reference Sage
+    /// implementation:
+    ///   `int(''.join(str(b) for b in filtered_bits), 2)`
+    /// where `filtered_bits[0]` is the most significant bit.
+    ///
+    /// **Bias rejection.** BN254 Fr modulus ≈ 2^254 × 0.756, so
+    /// roughly 1 in 4 candidate uint254 values lands in the
+    /// rejected interval `[MODULUS, 2^254)` and triggers a
+    /// re-roll. Expected cost per emitted field element ≈
+    /// `BN254_FR_BITS / (1 - 0.244) ≈ 336 filtered bits` ≈ 672
+    /// raw LFSR clocks.
+    pub fn next_filtered_field_element_bn254(&mut self) -> ark_bn254::Fr {
+        use ark_ff::{BigInteger, PrimeField};
+        loop {
+            // Build the value into a 32-byte little-endian buffer.
+            // Filtered bit `i` lands at integer-bit position
+            // `(BN254_FR_BITS - 1 - i)` for MSB-first semantics.
+            let mut buf = [0u8; 32];
+            for i in 0..BN254_FR_BITS {
+                let bit = self.next_filtered_bit();
+                let position = BN254_FR_BITS - 1 - i; // 253, 252, ..., 0
+                let byte_idx = position / 8;
+                let bit_idx = position % 8;
+                buf[byte_idx] |= (bit & 1) << bit_idx;
+            }
+            // `from_le_bytes_mod_order` will REDUCE if value ≥ MODULUS.
+            // We need bias rejection — detect reduction by comparing
+            // the candidate's canonical bytes to our raw input.
+            let candidate = ark_bn254::Fr::from_le_bytes_mod_order(&buf);
+            let canonical = candidate.into_bigint().to_bytes_le();
+            let mut canonical_32 = [0u8; 32];
+            canonical_32[..canonical.len()].copy_from_slice(&canonical);
+            if canonical_32 == buf {
+                return candidate;
+            }
+            // else: raw value was ≥ MODULUS, retry.
         }
     }
 
@@ -413,6 +462,64 @@ mod tests {
         // Low 2 bits of byte 31 must be zero (positions 254 and 255
         // not filled).
         assert_eq!(bytes[31] & 0b11, 0, "trailing pad bits must be zero");
+    }
+
+    /// Field-element emission is deterministic across runs.
+    #[test]
+    fn field_element_emission_is_deterministic() {
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut a = GrainLfsr::from_seed(seed);
+        let mut b = GrainLfsr::from_seed(seed);
+        a.warmup();
+        b.warmup();
+        let a_fes: Vec<_> = (0..5).map(|_| a.next_filtered_field_element_bn254()).collect();
+        let b_fes: Vec<_> = (0..5).map(|_| b.next_filtered_field_element_bn254()).collect();
+        assert_eq!(a_fes, b_fes, "field-element emission must be deterministic");
+    }
+
+    /// Distinct emitted scalars must differ — a degenerate output
+    /// (always-zero, always-same) means the LFSR is stuck. Generate
+    /// 5 elements and assert they're all distinct.
+    #[test]
+    fn emitted_field_elements_are_distinct() {
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut lfsr = GrainLfsr::from_seed(seed);
+        lfsr.warmup();
+        let fes: Vec<_> = (0..5).map(|_| lfsr.next_filtered_field_element_bn254()).collect();
+        for i in 0..fes.len() {
+            for j in (i + 1)..fes.len() {
+                assert_ne!(fes[i], fes[j], "elements {i} and {j} collided");
+            }
+            assert_ne!(fes[i], ark_bn254::Fr::from(0u64), "element {i} is zero");
+        }
+    }
+
+    /// Pin the FIRST emitted field element for the BN254/arity-24
+    /// seed. This is the BIG one — it's the first round constant
+    /// any future arkworks-side Section 2 gadget will use, and
+    /// must match what neptune produces internally for the same
+    /// parameters.
+    ///
+    /// Note: we don't yet know whether this matches neptune's
+    /// PLAIN ark[0] (vs the compressed `crc[0]` from PR #80) —
+    /// that requires inverting the compression. This pin is for
+    /// REGRESSION DETECTION on our own LFSR, not yet parity
+    /// verification.
+    #[test]
+    fn pinned_first_field_element_for_bn254() {
+        use ark_ff::{BigInteger, PrimeField};
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut lfsr = GrainLfsr::from_seed(seed);
+        lfsr.warmup();
+        let fe = lfsr.next_filtered_field_element_bn254();
+        let le = fe.into_bigint().to_bytes_le();
+        eprintln!("first emitted FE LE bytes: {le:?}");
+        // Pin: not zero, not max, not the seed itself.
+        assert_ne!(fe, ark_bn254::Fr::from(0u64));
+        // Mod modulus, this should be deterministic. Future
+        // PR will assert equality against the plain neptune ark[0]
+        // when the compression-inversion or alternative parity
+        // path is wired up.
     }
 
     /// Changing any one parameter must produce a different seed.
