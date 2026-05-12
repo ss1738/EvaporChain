@@ -182,8 +182,7 @@ pub fn scan_block(txs: &[Transaction], block_height: u64) -> Vec<MevObservation>
                 continue;
             }
             // Find a victim slot between ai and ak.
-            for aj in (ai + 1)..ak {
-                let (idx_j, from_j, to_j, _amt_j, opt_j) = transfers[aj];
+            for &(idx_j, from_j, to_j, _amt_j, opt_j) in &transfers[(ai + 1)..ak] {
                 if from_j == from_i {
                     // Self-MEV — skip per Phase 4.3 anti-gaming.
                     continue;
