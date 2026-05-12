@@ -50,21 +50,32 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Marker constant that downstream tooling (CI, doc-drift audit) can
-/// grep for to confirm the scaffold landed. Will be replaced with the
-/// real verifier-circuit module once Phase 2.2 ships.
-pub const SCAFFOLD_VERSION: &str = "phase-2.1-scaffold";
+pub mod recursive_snark_fixture;
+pub mod verifier_circuit;
+
+pub use recursive_snark_fixture::{
+    fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
+};
+pub use verifier_circuit::NovaVerifierCircuit;
+
+/// Marker constant. Phase 2.2-finish is multi-step:
+///   - `phase-2.2-starter`    — fixture generator (PR #55)
+///   - `phase-2.2-skeleton`   — verifier circuit skeleton + ConstraintSynthesizer + public-input wiring (this commit)
+///   - `phase-2.2-section-1`  — Section 1 structural checks filled in
+///   - `phase-2.2-section-2`  — Section 2 Poseidon transcript filled in
+///   - `phase-2.2-section-3`  — Section 3 RelaxedR1CS satisfiability filled in (BESPOKE)
+///   - `phase-2.2-complete`   — all three sections + empirical constraint count
+pub const SCAFFOLD_VERSION: &str = "phase-2.2-skeleton";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Pin that the crate compiles and the scaffold marker survives
-    /// any future refactor. Replace with the real PoC test (in-circuit
-    /// `RecursiveSNARK::verify` returns satisfied) when Phase 2.2
-    /// lands.
+    /// Pin that the crate compiles and the milestone marker survives
+    /// any future refactor. Replaced with the in-circuit
+    /// `RecursiveSNARK::verify` PoC test when Phase 2.2 finish ships.
     #[test]
     fn scaffold_compiles_and_marker_present() {
-        assert_eq!(SCAFFOLD_VERSION, "phase-2.1-scaffold");
+        assert_eq!(SCAFFOLD_VERSION, "phase-2.2-skeleton");
     }
 }
