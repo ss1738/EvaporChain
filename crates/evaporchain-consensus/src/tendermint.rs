@@ -69,6 +69,14 @@ pub trait ProofVerifier: Send + Sync {
 /// Default timeout for each consensus phase.
 /// Window size (in slots) for Sanov equivocation slash. KL divergence is
 /// computed as 1 double-sign in 100 honest proposals → near-full slash.
+/// Maximum number of pending (commitment, nonce) reveal pairs the
+/// consensus engine will hold between block productions. Anti-DoS
+/// cap — without this, an attacker could submit arbitrary reveal
+/// nonces (each 64 bytes) and exhaust validator memory before the
+/// next proposal drains them. Companion to PR #17's
+/// `MAX_ENCRYPTED_PENDING`; same threshold (10K).
+const MAX_PENDING_REVEALS: usize = 10_000;
+
 const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
 /// Window size (in rounds) for Sanov downtime slash. Honest = miss 1 in 20.
 const SANOV_DOWNTIME_WINDOW: u64 = 20;
@@ -3492,14 +3500,30 @@ impl TendermintConsensus {
         self.encrypted_mempool.submit_encrypted(encrypted_tx);
     }
 
-    /// Submit a reveal nonce for a previously committed encrypted transaction.
-    /// The nonce will be used at the next block production to decrypt and include the tx.
-    pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) {
+    /// Submit a reveal nonce for a previously committed encrypted
+    /// transaction. The nonce will be used at the next block
+    /// production to decrypt and include the tx.
+    ///
+    /// Returns `true` if accepted, `false` if rejected because the
+    /// pending-reveals queue is at `MAX_PENDING_REVEALS`. T0.7
+    /// vector 4 companion: bounds the reveal queue alongside the
+    /// encrypted-mempool capacity cap (PR #17).
+    pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) -> bool {
+        if self.pending_reveals.len() >= MAX_PENDING_REVEALS {
+            debug!(
+                commitment = hex::encode(commitment),
+                pending = self.pending_reveals.len(),
+                cap = MAX_PENDING_REVEALS,
+                "Reveal nonce rejected — pending-reveals queue at capacity"
+            );
+            return false;
+        }
         debug!(
             commitment = hex::encode(commitment),
             "Reveal nonce submitted for encrypted tx"
         );
         self.pending_reveals.push((commitment, nonce));
+        true
     }
 
     /// Get pending counts: (plain_mempool, encrypted_pending, reveals_pending).
@@ -16041,10 +16065,48 @@ mod mev_tests {
         let commitment = enc.commitment;
 
         tc.submit_encrypted_tx(enc);
-        tc.submit_reveal(commitment, nonce);
+        assert!(
+            tc.submit_reveal(commitment, nonce),
+            "below cap must accept"
+        );
 
         let (_, _, reveals) = tc.mempool_stats();
         assert_eq!(reveals, 1);
+    }
+
+    /// T0.7 vector 4 companion — pending_reveals queue capacity.
+    /// Without a cap, an attacker could flood arbitrary
+    /// `(commitment, nonce)` pairs (64 bytes each); validator memory
+    /// exhausts before the next proposal drains the queue.
+    #[test]
+    fn submit_reveal_rejects_when_pending_queue_at_capacity() {
+        let mut tc = make_test_tc();
+
+        // Fill to MAX_PENDING_REVEALS with synthetic pairs. The
+        // commitments don't need to match real encrypted submissions —
+        // the cap fires at admission time, before any commitment
+        // lookup.
+        for i in 0..MAX_PENDING_REVEALS as u32 {
+            let mut commitment = [0u8; 32];
+            commitment[..4].copy_from_slice(&i.to_le_bytes());
+            let nonce = [0u8; 32];
+            assert!(
+                tc.submit_reveal(commitment, nonce),
+                "submit {} must accept (below cap)",
+                i + 1
+            );
+        }
+        assert_eq!(tc.mempool_stats().2, MAX_PENDING_REVEALS);
+
+        // The (cap+1)-th submission is rejected.
+        let over = [0xFFu8; 32];
+        let nonce = [0u8; 32];
+        assert!(
+            !tc.submit_reveal(over, nonce),
+            "at-cap submit_reveal must be rejected (T0.7 vector 4 — reveal queue DoS)"
+        );
+        // Queue size unchanged.
+        assert_eq!(tc.mempool_stats().2, MAX_PENDING_REVEALS);
     }
 
     #[test]
