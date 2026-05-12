@@ -34,18 +34,35 @@
 //!   - The open research questions for Phase 2.2 onward.
 //!   - The Phase 2 milestone breakdown.
 //!
-//! # Status — Phase 2.1 scaffold
+//! # Status — `phase-2.2-section-2-constants` (per [`SCAFFOLD_VERSION`])
 //!
-//! This crate ships:
-//!   - Cargo.toml with nova-snark + arkworks deps pinned to the chain's
-//!     existing versions (no new dependency drift).
-//!   - This module-level doc + the design rationale doc next to it.
-//!   - No working verifier yet. The verifier circuit is the multi-day
-//!     research deliverable for Phase 2.2-2.3.
+//! What ships today:
+//!   - **`NovaVerifierCircuit`** with public-input wiring (PR #56) +
+//!     off-circuit structural-validation gate (PR #64).
+//!   - **Full Groth16-on-BN254 pipeline** — setup / prove / verify
+//!     (PR #67) + canonical I/O (PR #72) + EIP-197 layout (PR #71)
+//!     + operator CLIs `setup-keys` / `prove-and-verify`. Compressed
+//!     proof = 128 B, EIP-197 uncompressed = 256 B.
+//!   - **Section 2 constants byte-complete vs neptune** —
+//!     `grain_lfsr::generate_round_constants_bn254_arity_24_standard`
+//!     + `compress_ark::compress_full` reproduce neptune's
+//!     `compressed_round_constants` byte-for-byte across all 259
+//!     entries (PR #103). Verified via 4 independent paths.
 //!
-//! Phase 2.1's goal is to give the *next* session a clean starting
-//! point with the surrounding plumbing in place, so the research
-//! attention can stay on the verifier algorithm itself.
+//! Remaining BESPOKE work (multi-day each):
+//!   - **Section 2 sponge framing** — port neptune's SBOX-trick-fused
+//!     `Poseidon::hash_optimized_static` into the arkworks
+//!     `PoseidonSpongeVar` per-round op. Tracked by PR #98's
+//!     `assert_ne!` parity canary.
+//!   - **Section 3** — in-circuit RelaxedR1CS satisfiability.
+//!   - **Phase 2.3 adapter** — `CompressedProof` bytes →
+//!     `RecursiveSNARK<E1, E2, RealBlockCircuit>`. Blocked on
+//!     `RecursiveSNARK` private-field access.
+//!   - **Phase 2.5 Solidity Foundry test** — consume the wrapper's
+//!     EIP-197 bytes on-chain via `BN254_PAIRING` precompile.
+//!
+//! See `DESIGN.md` for the milestone table + `README.md` for the
+//! module/binary navigation guide.
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
