@@ -69,6 +69,7 @@ pub mod mds_linalg;
 pub mod neptune_dump_parser;
 pub mod neptune_reference;
 pub mod recursive_snark_fixture;
+pub mod section2_gadget;
 pub mod vendored_neptune_grain;
 pub mod verifier_circuit;
 
