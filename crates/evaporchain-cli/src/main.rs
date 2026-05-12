@@ -3294,6 +3294,7 @@ impl HttpCellSource {
     ///   - `BlockLookup::NoDataRoot` — block exists but its `data_root`
     ///     field is null (sentinel/no-DA-enforcement).
     ///   - `BlockLookup::Root(r)` — block exists with a 32-byte root.
+    ///
     /// Other transport / parse failures bubble up via `Err`.
     fn fetch_block_data_root(&self, block: u64) -> anyhow::Result<BlockLookup> {
         let url = format!("{}/api/block/{}", self.primary_base(), block);
