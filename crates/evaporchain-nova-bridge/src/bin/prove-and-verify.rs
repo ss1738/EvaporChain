@@ -41,6 +41,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use ark_bn254::Fr;
+use ark_ff::{BigInteger, PrimeField};
 use evaporchain_nova_bridge::canonical_io::{pk_from_bytes, proof_to_bytes, vk_from_bytes};
 use evaporchain_nova_bridge::groth16_wrapper::{
     prove, public_inputs_in_alloc_order, verify,
@@ -56,6 +57,7 @@ struct Args {
     zi: u64,
     hash_primary: u64,
     hash_secondary: u64,
+    fixture_out: Option<PathBuf>,
 }
 
 impl Default for Args {
@@ -67,6 +69,7 @@ impl Default for Args {
             zi: 1,
             hash_primary: 0,
             hash_secondary: 0,
+            fixture_out: None,
         }
     }
 }
@@ -82,6 +85,14 @@ fn main() -> ExitCode {
     }
 }
 
+fn parse_u64(s: &str) -> Option<u64> {
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse().ok()
+    }
+}
+
 fn parse_args(args: impl Iterator<Item = String>) -> Args {
     let mut out = Args::default();
     let mut iter = args.peekable();
@@ -92,11 +103,16 @@ fn parse_args(args: impl Iterator<Item = String>) -> Args {
                     out.keys_dir = PathBuf::from(v);
                 }
             }
-            "--num-steps" => out.num_steps = iter.next().and_then(|s| s.parse().ok()).unwrap_or(out.num_steps),
-            "--z0" => out.z0 = iter.next().and_then(|s| s.parse().ok()).unwrap_or(out.z0),
-            "--zi" => out.zi = iter.next().and_then(|s| s.parse().ok()).unwrap_or(out.zi),
-            "--hash-primary" => out.hash_primary = iter.next().and_then(|s| s.parse().ok()).unwrap_or(out.hash_primary),
-            "--hash-secondary" => out.hash_secondary = iter.next().and_then(|s| s.parse().ok()).unwrap_or(out.hash_secondary),
+            "--num-steps" => out.num_steps = iter.next().and_then(|s| parse_u64(&s)).unwrap_or(out.num_steps),
+            "--z0" => out.z0 = iter.next().and_then(|s| parse_u64(&s)).unwrap_or(out.z0),
+            "--zi" => out.zi = iter.next().and_then(|s| parse_u64(&s)).unwrap_or(out.zi),
+            "--hash-primary" => out.hash_primary = iter.next().and_then(|s| parse_u64(&s)).unwrap_or(out.hash_primary),
+            "--hash-secondary" => out.hash_secondary = iter.next().and_then(|s| parse_u64(&s)).unwrap_or(out.hash_secondary),
+            "--fixture-out" => {
+                if let Some(v) = iter.next() {
+                    out.fixture_out = Some(PathBuf::from(v));
+                }
+            }
             _ => {}
         }
     }
@@ -156,6 +172,61 @@ fn run(args: Args) -> Result<(), String> {
         proof_path.display(),
         proof_bytes.len()
     );
+
+    if let Some(fixture_path) = args.fixture_out {
+        let fixture_json = build_fixture_json(&proof_bytes, &public_inputs);
+        fs::write(&fixture_path, &fixture_json)
+            .map_err(|e| format!("write {}: {e}", fixture_path.display()))?;
+        println!(
+            "prove-and-verify: wrote {} ({} bytes, test-vector JSON)",
+            fixture_path.display(),
+            fixture_json.len()
+        );
+    }
+
     println!("prove-and-verify: done.");
     Ok(())
+}
+
+/// Build a JSON test-vector blob for the future Solidity Foundry
+/// test. Hand-rolled — no serde_json::Value indirection so we
+/// keep the dep tree narrow. Format:
+///
+/// ```json
+/// {
+///   "proof_compressed_hex": "0x...",
+///   "public_inputs_hex": ["0x...", ...]
+/// }
+/// ```
+///
+/// The Solidity test reads `vk.bin` separately (it's bigger and
+/// stays in the keys-dir).
+fn build_fixture_json(proof_bytes: &[u8], public_inputs: &[Fr]) -> String {
+    let mut out = String::new();
+    out.push_str("{\n");
+    out.push_str("  \"proof_compressed_hex\": \"0x");
+    for b in proof_bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out.push_str("\",\n");
+    out.push_str("  \"public_inputs_hex\": [\n");
+    for (i, fr) in public_inputs.iter().enumerate() {
+        let bigint = fr.into_bigint();
+        let bytes_be = bigint.to_bytes_be();
+        let mut padded = [0u8; 32];
+        let pad = 32 - bytes_be.len();
+        padded[pad..].copy_from_slice(&bytes_be);
+        out.push_str("    \"0x");
+        for b in &padded {
+            out.push_str(&format!("{b:02x}"));
+        }
+        if i + 1 < public_inputs.len() {
+            out.push_str("\",\n");
+        } else {
+            out.push_str("\"\n");
+        }
+    }
+    out.push_str("  ]\n");
+    out.push_str("}\n");
+    out
 }
