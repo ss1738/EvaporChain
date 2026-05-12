@@ -70,6 +70,7 @@ pub mod eip197;
 pub mod fixture;
 pub mod inputs;
 pub mod nonnative_fq;
+pub mod pallas_g1;
 pub mod prover;
 
 pub use circuit::WrapperCircuit;
@@ -83,4 +84,5 @@ pub use nonnative_fq::{
     alloc_nonnative_fq_input, alloc_nonnative_fq_witness, enforce_nonnative_fq_add,
     NonNativeFqVar,
 };
+pub use pallas_g1::{enforce_g1_add, NonNativePallasPoint};
 pub use prover::{prove, setup, verify, ProveError, SetupError, VerifyError};
