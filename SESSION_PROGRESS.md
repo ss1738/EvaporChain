@@ -48,6 +48,27 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-12 (late evening) — T1.20 parallel.rs batch 7: +57 tests, 78.89%→83.46%
+
+**Focus:** T1.20 coverage batch for execution/parallel.rs — all uncovered gas/partitioning/execute_partition arms.
+
+**Commits shipped:** 1 (cb6420b1)
+
+**Deliverables:**
+-  — 57 new tests in parallel.rs: ParallelExecutor::estimate_gas (14 arms), analyze_parallelism/extract_access_keys (12 tx types incl. UserOp paymaster branch), execute_partition ContractError arms (Governance/MultiSig/UserOp/UpgradeContract/Delegate/Undelegate/ClaimDelegation), Blob success/error paths, serial edge cases (ValidatorExit addr-mismatch, ClaimStake addr-mismatch, RotateKey addr-mismatch + nonce-mismatch), Deferred serial submit, DeployScript invalid source
+
+**Empirical results:**
+-  region coverage 78.89% → 83.46% (+4.57 pp)
+- Execution crate TOTAL 87.65% → 88.58% region
+- 110 lib tests pass / 0 fail
+
+**What is next:**
+- T1.20  — 85.81% (~900 missed regions)
+- T1.20  — 90.60% (1566 missed regions — most absolute missed)
+
+**Cross-references:**
+- commit cb6420b1 on main
+
 ## 2026-05-12 (morning) — T1.20 coverage push: 5-node fork fix + 90 new tests across execution/state/consensus
 
 **Focus:** Restore 5-node cluster lockstep after BatchUndoLog fork, then drive T1.20 coverage across execution/parallel, state/rocksdb_backend, and consensus/state_sync + lib.
