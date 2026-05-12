@@ -11,13 +11,14 @@
 //! addition / multiplication / equality are R1CS-checked over the
 //! limbs.
 //!
-//! arkworks ships this emulation as `NonNativeFieldVar<TargetField,
-//! BaseField>`. Each non-native multiplication is ~3,000 R1CS
-//! constraints (CRT decomposition into ~5 Fr-multiplications per
-//! Fq-multiplication). The Halo2 IPA verifier inside the wrapper will
-//! issue ~10 IPA challenge rounds × ~3 Fq operations per round, so
-//! ~150-200k constraints total — feasible inside a Powers-of-Tau
-//! ceremony at 2^18 (260k constraints).
+//! arkworks 0.5 ships this emulation as `EmulatedFpVar<TargetField,
+//! BaseField>` (renamed from 0.4's `NonNativeFieldVar`). Each
+//! non-native multiplication is ~3,000 R1CS constraints (CRT
+//! decomposition into ~5 Fr-multiplications per Fq-multiplication).
+//! The Halo2 IPA verifier inside the wrapper will issue ~10 IPA
+//! challenge rounds × ~3 Fq operations per round, so ~150-200k
+//! constraints total — feasible inside a Powers-of-Tau ceremony at
+//! 2^18 (260k constraints).
 //!
 //! # Why `ark_pallas::Fq`, not `pasta_curves::pallas::Base`?
 //!
@@ -59,14 +60,18 @@ use ark_bn254::Fr as Bn254Fr;
 use ark_pallas::Fq as PallasFq;
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::eq::EqGadget;
-use ark_r1cs_std::fields::nonnative::NonNativeFieldVar;
+use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 
 /// Non-native Pallas-Fq variable allocated inside a BN254-Fr
 /// constraint system. Each `NonNativeFqVar` decomposes into multiple
 /// BN254-Fr limbs internally — arkworks handles the limb arithmetic
 /// transparently.
-pub type NonNativeFqVar = NonNativeFieldVar<PallasFq, Bn254Fr>;
+///
+/// arkworks 0.5 renamed `NonNativeFieldVar` to `EmulatedFpVar` and
+/// reportedly tightened limb-bound handling — the upgrade is the
+/// resolution path #1 from PR #31's completeness diagnosis.
+pub type NonNativeFqVar = EmulatedFpVar<PallasFq, Bn254Fr>;
 
 /// Allocate a Pallas-Fq value as a **witness** variable in the
 /// constraint system. Witness variables aren't visible to the verifier
