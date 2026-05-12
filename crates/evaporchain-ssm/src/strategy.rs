@@ -293,4 +293,29 @@ mod tests {
     // Note: Strategy uses HashMap<Vec<MoveId>, MoveId>; JSON can't
     // serialize Vec-of-byte-array map keys directly. Same caveat as
     // `Residual`: bincode works, JSON would need a hex-string wrapper.
+
+    /// T1.20 — Strategy accessors: new + lookup + len + is_empty
+    /// (lines 37-39, 49-58).
+    #[test]
+    fn t1_20_strategy_new_accessors() {
+        let s = Strategy::new();
+        assert!(s.is_empty());
+        assert_eq!(s.len(), 0);
+        let empty_view: &[MoveId] = &[];
+        assert!(s.lookup(empty_view).is_none());
+
+        let mut s = Strategy::new();
+        let view = vec![[1u8; 32]];
+        let resp = [2u8; 32];
+        let prior = s.record(view.clone(), resp);
+        assert!(prior.is_none());
+        assert_eq!(s.len(), 1);
+        assert!(!s.is_empty());
+        assert_eq!(s.lookup(&view), Some(resp));
+
+        // Re-record same view returns prior response.
+        let resp2 = [3u8; 32];
+        let prior2 = s.record(view, resp2);
+        assert_eq!(prior2, Some(resp));
+    }
 }
