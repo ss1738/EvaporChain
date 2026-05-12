@@ -48,6 +48,91 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-12 (morning) — T1.20 coverage push: 5-node fork fix + 90 new tests across execution/state/consensus
+
+**Focus:** Restore 5-node cluster lockstep after BatchUndoLog fork, then drive T1.20 coverage across execution/parallel, state/rocksdb_backend, and consensus/state_sync + lib.
+
+**Commits shipped:** 4 (`efd4c4c3` → `555151c0`)
+
+**Deliverables:**
+- `fix(state,execution)` — BatchUndoLog missing `last_rent_epoch`; `persist_privacy_metadata` pending_batch bypass; `ValidatorExit`/`ValidatorClaimStake` serial arms used `?` operator that aborted entire block; 35 new T1.20 execution/parallel tests
+- `test(state,t1.20)` — 25 RocksDB backend gap tests: sentinel, note commitment, flush, has_data, rollback paths. `rocksdb_backend.rs` 61.42% → 77.10%
+- `test(consensus,t1.20)` — 17 state_sync tests: tip-agreement edge cases, chunk validation, server pass-throughs. `state_sync.rs` 74.57% → 78.89%
+- `test(consensus,t1.20)` — 12 lib.rs tests: accessors, restore_state, apply_block errors, produce_with_reveals, rotating leader. `lib.rs` 82.04% → 89.67%
+
+**Empirical results:**
+- All 5 nodes confirmed identical state root `044d185fed4fc807` at h=1664 before session — fork fully resolved
+- `parallel.rs` region coverage 63.60% → 73.78% (35 new tests, production bug fixed)
+- Workspace TOTAL lib coverage: ~90.83% on consensus crate
+
+**What's next:**
+- Continue T1.20 on `tendermint.rs` (87.68%, 1938 missed regions)
+- Look at `evaporchain-execution` `block_stm.rs` coverage
+- Update MAINNET_READINESS.md T1.20 lane claim with new baseline numbers
+
+**Cross-references:**
+- Commits `efd4c4c3`, `d5949045`, `f17f72b1`, `555151c0` on main
+
+---
+
+## 2026-05-11 (late evening, sprint audit-pass) — 7 lane audit-miss closures + doc/crate hygiene + 3 audit findings closed
+
+**Focus:** End-to-end mainnet-readiness audit driven by operator request. Discovered the lane spec was lagging the code by 1-3 days on 7 separate Tier-0/Tier-1 lanes; flipped each one against re-verified Mini-1 evidence. Plus archived 11 obsolete docs + dropped 21 dead-weight crates from the workspace.
+
+**Commits shipped:** 8 (`b58326a` → `7a94303`) on `pr/t0-substrate-memento-contracts`. See `CHANGELOG.md` if/when these reach main.
+
+**Deliverables:**
+
+| Commit | What landed |
+|---|---|
+| `b58326a` | Doc + crate hygiene — 11 docs archived (5 obsolete audits / 4 completed plans / 2 deprecated punch-lists), 21 dead-weight crates dropped from workspace (154→133 members), CLAUDE.md preamble updated to point at the 5 canonical docs only |
+| `8c59fad` | AUDIT-2026-05-11-1/2/3 closed — ShardSample handler gets per-peer rate-limit + `MAX_SHARD_QUERIES_PER_REQUEST = 256` cap, symmetric to BlockSync; private-tx gas estimator switched to saturating arithmetic |
+| `b10fc4b` | T0.7 + T0.8 lane statuses reconciled to PARTIAL with explicit commit refs (V5 DAG fork-spam, ShardSample defenses, partial-withhold, structural-validation) |
+| `c2e5936` | T0.9 Bridge Phase 4 V2 → ✅ DONE, T0.10 unblocked — `prove_v2_and_verify_v2_round_trip` re-verified 77.40s on Mini 1 release (k=11 IPA params) |
+| `8b9e10d` | T0.5 PNT → CODE-COMPLETE — sub-task 5 adversarial tests already at `privacy_exec.rs:2168`+`:2296`; both green on Mini 1 |
+| `12b7309` | DoS runbook fold-in — Vector 6 ShardSample request flood added to `docs/runbooks/dos-resistance.md` regression-suite table |
+| `9cec905` | T0.8 → ✅ DONE — all 5 lane-spec adversarial fixtures already in tree (`crates/evaporchain-state/tests/adversarial_snapshots.rs`); 5 passed in 0.04s on Mini 1 |
+| `7a94303` | `scripts/dos-flood.sh` harness created (was referenced by the runbook but didn't exist); runbook references updated to use `--target` arg; Vector 6 ShardSample flagged as needing a Rust libp2p harness (bash can't drive libp2p binary protocol) |
+
+**Plus this session also produced:**
+- `AUDIT_2026_05_11.md` — code-only audit (3 findings: 2 HIGH ShardSample DoS + 1 MEDIUM saturating gas; all closed today in `8c59fad`)
+- `MAINNET_SPRINT_PLAN_2026_05_11.md` — consolidated sprint plan that synthesizes today's audits
+
+**Empirical results:**
+- Mini 1 release run of T0.9 V2 IPA round-trip: 77.40s (was previously thought blocked; resolution comment already in tree at `circuit_v2.rs:997-1011`)
+- Mini 1 cargo check workspace after 21-crate removal: clean in 30.87s (131 members)
+- Mini 1 T0.8 5-fixture adversarial run: 5/5 ok in 0.04s
+- Mini 1 T0.5 PNT v1 respend tests: 2/2 ok, instant
+- Workspace test count unchanged because the 21 dropped crates were leaf scaffolds with no consumers
+
+**Decisions made:**
+- Mid-session: **deferred T0.10 stack consolidation** when discovering 6 unmerged feature branches + open g1_add completeness gap; chose to drive faster-yielding lanes instead.
+- **Did NOT touch tendermint.rs** — parallel session has live 216-line `+` diff on `byzantine_adversarial.rs` + 68-line diff on `tendermint.rs` adding C.5/C.6 tests; CONSENSUS group lock respected.
+- ShardSample flood harness: **Rust binary, not bash** — the protocol is libp2p binary not HTTP. Runbook updated to flag the implementation shape.
+
+**Audit-miss tally (7 lanes whose spec lagged the code):** T0.7 V5, T0.8 partial-withhold + structural-validation, T1.X1 (already-flipped false-positive), T0.9 D-finish, T0.10 (unblocked by T0.9), T0.5 sub-task 5, T0.8 5-fixture suite. The lane board itself is now the bottleneck more than the engineering — recommend a periodic "lane re-verify" cadence.
+
+**What's next:**
+1. Push the 8 commits to remote (operator authorization needed).
+2. Operator chokepoints — T3.1 Hetzner SSH auth (unblocks 9 lanes) + T0.12 auditor selection.
+3. Rust libp2p harness for Vector 6 ShardSample flood (concrete + small follow-up).
+4. T0.10 stack consolidation — 6 sub-branches need a merge plan + g1_add completeness gap debugging.
+
+**Blockers / open questions:**
+- T3.1 SSH auth from operator — blocks T0.2, T0.6, T1.17, T1.18, T1.19, T1.21, T1.22, T1.23, T3.2.
+- T0.12 auditor selection from operator — calendar pressure for V1 gate.
+- T0.1 has an active parallel session committing C.5/C.6 byzantine adversarial tests; coordinate before any future tendermint.rs work.
+
+**Cross-references:**
+- `MAINNET_SPRINT_PLAN_2026_05_11.md` — full audit + sprint plan from this session
+- `AUDIT_2026_05_11.md` — code-only audit findings (now all closed)
+- `MAINNET_READINESS.md` — lane board flipped for T0.5, T0.7, T0.8, T0.9
+- `docs/archive/{obsolete-audits,completed-plans,deprecated}/` — new archive layout
+- `docs/runbooks/dos-resistance.md` — Vector 6 added
+- `scripts/dos-flood.sh` — new operator-side flood harness
+
+---
+
 ## 2026-05-11 (evening) — 5-node cluster fork root-cause + fix (BatchUndoLog last_rent_epoch)
 
 **Focus:** Identify and fix the BFT fork at h=1 that persisted across all 5 nodes even after binary synchronization; restore full cluster consensus.
