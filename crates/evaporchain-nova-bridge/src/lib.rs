@@ -50,10 +50,12 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod eip197;
 pub mod groth16_wrapper;
 pub mod recursive_snark_fixture;
 pub mod verifier_circuit;
 
+pub use eip197::{g1_to_eip197, g2_to_eip197, proof_to_eip197};
 pub use groth16_wrapper::{
     prepare_vk, prove, public_inputs_in_alloc_order, setup, verify, verify_prepared, WrapperKeys,
 };
