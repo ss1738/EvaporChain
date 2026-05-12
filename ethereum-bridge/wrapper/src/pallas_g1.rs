@@ -1,7 +1,7 @@
 //! Non-native Pallas G1 affine point addition gadget — second layer
 //! of the sub-B-finish foundation.
 //!
-//! # Known issue (2026-05-11) — completeness gap, NOT soundness
+//! # Known issue (2026-05-12 update) — completeness gap, NOT soundness
 //!
 //! The gadget math is correct (off-circuit verification holds for
 //! every constraint), and the gadget correctly **rejects** invalid
@@ -12,10 +12,34 @@
 //! arkworks 0.5 (`EmulatedFpVar`) for the same-bit-size field pair
 //! `PallasFq (254-bit)` ↔ `Bn254Fr (254-bit)`.
 //!
-//! **Resolution path #1 (arkworks 0.5 upgrade) was attempted and did
-//! NOT close the gap.** The dependency bump is still in place
-//! (modern API, future-proofing), but the underlying limb-decomposition
-//! issue is structural — not a 0.4-specific bug.
+//! **Empirically tested resolutions (none yet close the gap):**
+//!
+//!   ~~1. arkworks 0.5 `EmulatedFpVar` upgrade~~ — `a1d8ac9` 2026-05-11.
+//!      Does not fix; same panic as on 0.4.
+//!   ~~2. Constraint-shape rewrite (additive form on both sides)~~ —
+//!      `2c2cddf` 2026-05-11. Made it worse: each `enforce_equal`
+//!      compared `num_additions = 2` vs `num_additions = 2`, doubling
+//!      the headroom drain.
+//!   ~~3. Canonical form on arkworks 0.5~~ — 2026-05-12.
+//!      Reverted shape 2 → canonical; constraint count halved
+//!      (~9-10k → ~4037), satisfaction still fails. The gap is
+//!      structurally at the limb-decomposition layer, not the
+//!      constraint shape. **Kept anyway — strict improvement.**
+//!
+//! **Untested remaining options (all multi-day-to-week deep work):**
+//!
+//!   4. **`r1cs-bitcoin`'s non-native gadget** — different limb strategy
+//!      (~6 × 64-bit limbs with explicit reduction barriers). Est. 3-5
+//!      days. Adds external-dep / less-audited risk.
+//!   5. **Custom limb decomposition** tuned for the 254↔254 same-bit-size
+//!      pair: pick limb_size such that `num_of_additions × num_limbs ×
+//!      2^limb_size < BaseField::MODULUS` with enough headroom for
+//!      chained mult-then-add sequences. Est. 1-2 weeks. Most maintainable
+//!      long-term.
+//!   6. **CycleFold / kateholdem-style folding** — instead of emulating
+//!      Pallas Fq inside Bn254 Fr, fold over a curve cycle where one
+//!      side IS native and pair with the other via accumulation.
+//!      Est. 4-6 weeks. Biggest scope; rethinks the entire wrapper.
 //!
 //! Symptoms: in both the canonical sub-form and the rewritten additive
 //! form, an arkworks-internal range/equality constraint deep in the
@@ -23,21 +47,9 @@
 //! BigInt off-circuit. The bug is unrelated to the affine-add formula
 //! itself.
 //!
-//! Sub-B-finish remaining options:
-//!
-//!   ~~1. arkworks 0.5 `EmulatedFpVar`~~ — tried, does not fix
-//!   2. **`r1cs-bitcoin`'s non-native gadget** — different limb strategy
-//!      (~6 × 64-bit limbs with explicit reduction barriers)
-//!   3. **Custom limb decomposition** tuned for the 254↔254 same-bit-size
-//!      pair: pick limb_size such that `num_of_additions × num_limbs ×
-//!      2^limb_size < BaseField::MODULUS` with enough headroom for
-//!      chained mult-then-add sequences
-//!   4. **CycleFold / kateholdem-style folding** — instead of emulating
-//!      Pallas Fq inside Bn254 Fr, fold over a curve cycle where one
-//!      side IS native and pair with the other via accumulation
-//!
-//! The two completeness-dependent tests are `#[ignore]`'d below with
-//! the diagnostic preserved in-source. The soundness test stays active.
+//! The satisfied-triple test is `#[ignore]`'d below with the diagnostic
+//! preserved in-source. The soundness test + constraint-count test stay
+//! active (the count test inspects shape, not satisfaction).
 //!
 //! # What this gadget proves
 //!
@@ -148,29 +160,33 @@ pub fn enforce_g1_add(
     let lambda_val = compute_lambda(p1, p2)?;
     let lambda = alloc_nonnative_fq_witness(cs.clone(), lambda_val)?;
 
-    // Rewrite the affine-add constraints into purely additive forms so
-    // every equality compares two "post-mult-plus-adds" representations
-    // with matching `num_of_additions` counters. This avoids the
-    // arkworks 0.4 NonNativeFieldVar issue where chained sub→mult
-    // leaves the limb representation in a state that `enforce_equal`
-    // can't reduce-and-compare against a post-mult LHS.
+    // Canonical-form constraints (each `enforce_equal` compares one
+    // post-mult side with one sum-of-witnesses side). The earlier
+    // "additive rewrite" attempted to balance shapes by adding a
+    // constant to BOTH sides, but that made each side carry
+    // num_of_additions = 2; the combined `enforce_equal` then had to
+    // reduce a `num_additions = 4` delta — past the headroom for the
+    // same-bit-size PallasFq↔Bn254Fr pair under arkworks 0.5
+    // `EmulatedFpVar`. The canonical form keeps each enforce_equal at
+    // num_additions ≤ 1 on both sides, so the in-circuit reduction
+    // chain has the headroom it needs.
     //
-    // (1) λ·(x₂ − x₁) = (y₂ − y₁)  →  λ·x₂ + y₁ = λ·x₁ + y₂
-    let lambda_x2 = &lambda * &p2.x;
-    let lambda_x1 = &lambda * &p1.x;
-    let lhs1 = &lambda_x2 + &p1.y;
-    let rhs1 = &lambda_x1 + &p2.y;
-    lhs1.enforce_equal(&rhs1)?;
+    // (1) Slope definition: λ · (x₂ − x₁) = (y₂ − y₁)
+    let dx = &p2.x - &p1.x;
+    let dy = &p2.y - &p1.y;
+    let lambda_dx = &lambda * &dx;
+    lambda_dx.enforce_equal(&dy)?;
 
-    // (2) λ² = x₃ + x₁ + x₂  →  already additive on the RHS
+    // (2) x-coord: λ² = x₃ + x₁ + x₂
     let lambda_sq = &lambda * &lambda;
     let x_sum = &p3.x + &p1.x + &p2.x;
     lambda_sq.enforce_equal(&x_sum)?;
 
-    // (3) λ·(x₁ − x₃) = y₃ + y₁  →  λ·x₁ = λ·x₃ + y₃ + y₁
-    let lambda_x3 = &lambda * &p3.x;
-    let rhs3 = &lambda_x3 + &p3.y + &p1.y;
-    lambda_x1.enforce_equal(&rhs3)?;
+    // (3) y-coord: λ · (x₁ − x₃) = y₃ + y₁
+    let x_diff = &p1.x - &p3.x;
+    let lambda_xdiff = &lambda * &x_diff;
+    let y_sum = &p3.y + &p1.y;
+    lambda_xdiff.enforce_equal(&y_sum)?;
 
     Ok(())
 }
@@ -330,13 +346,14 @@ mod tests {
     /// ~3k constraints). Pins the baseline cost for sub-B-finish
     /// capacity planning.
     ///
-    /// `#[ignore]`'d because the underlying enforce_g1_add reports
-    /// unsatisfied constraints due to the arkworks-0.4 completeness
-    /// gap (see module doc). The constraint COUNT is still valid even
-    /// though satisfaction fails — re-enable this test once sub-B-finish
-    /// addresses the gap.
+    /// Constraint count is independent of the `is_satisfied()`
+    /// completeness gap — this test only inspects the synthesised
+    /// constraint system shape, not whether a valid triple satisfies
+    /// it. As of the canonical-form revert (2026-05-12) the count is
+    /// ~4037 on arkworks 0.5; previously the additive-rewrite form
+    /// produced ~9-10k. Test runs unconditionally so any future
+    /// arkworks-limb-decomposition change is caught loudly.
     #[test]
-    #[ignore = "arkworks 0.4 + 0.5 completeness gap — see module doc"]
     fn g1_add_constraint_count_in_expected_range() {
         let mut rng = seeded_rng();
         let (p1, p2, p3) = random_distinct_pallas_triple(&mut rng);
@@ -348,11 +365,17 @@ mod tests {
         enforce_g1_add(cs.clone(), &p1_var, &p2_var, &p3_var).expect("enforce");
 
         let n = cs.num_constraints();
-        // 3 Fq mults × ~3k each + overhead = expect 10k-20k. Tight
-        // bracketing here means an arkworks version bump that changes
-        // limb decomposition will be caught loudly.
+        // Canonical-form constraints (post-2026-05-12 revert from the
+        // additive-rewrite): each `enforce_equal` compares a single
+        // post-mult side with a single sum-of-witnesses side, so we
+        // get 3 non-native Fq mults + the inversion-via-witness path
+        // — empirically ~4k constraints on arkworks 0.5. (The
+        // additive-rewrite form was ~9-10k; reverting halved the
+        // constraint count.) Tight bracketing here means an arkworks
+        // version bump that changes limb decomposition will be caught
+        // loudly.
         assert!(
-            n > 5_000 && n < 30_000,
+            n > 2_000 && n < 8_000,
             "G1 add constraint count out of expected range: {}",
             n
         );
