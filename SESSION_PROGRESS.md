@@ -177,11 +177,28 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
-## 2026-05-11 (T1.20 continuation) — 30+ crates, 130+ tests across one continuous coverage arc
+## 2026-05-11 (T1.20 continuation) — 35+ crates, 140+ tests across one continuous coverage arc
 
 **Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.
 
-**Commits shipped this arc:** 46+ (`47774f25` → `7ecda1a5`). All on `origin/main`. Parallel session also pushed `efd4c4c3` (state/execution fixes + 35 tests) and `f17f72b1`/`d5949045` (state_sync + rocksdb backend) interleaved.
+**Commits shipped this arc:** 56+ (`47774f25` → `4bf99250`). All on `origin/main`. Parallel session also pushed multiple T0 substrate features interleaved.
+
+**Sixth-batch T1.20 closures (post-`7ecda1a5`):**
+
+| Crate / file | Tests added | Targeted gap |
+|---|---|---|
+| `evaporchain-consensus::persistence.rs` (94.42% → ↑) | 1 | ConsensusCheckpoint::with_bell_reading attach + clear chained builder |
+| `evaporchain-causal-chsh-cartels::rng.rs` (94.63% → ↑) | 1 | Blake3Rng::next_u32 deterministic + seed-sensitive |
+| `evaporchain-shlm::freshness.rs` (98.61% → ↑) | 1 | freshness_bucket zero-level credential returns Expired |
+| `evaporchain-singh-lineage::lineage.rs` (98.55% → ↑) | 1 | remove_successor by non-issuer → NotIssuer error |
+| `evaporchain-singh-resonance::token.rs` (94% → ↑) | 1 | self-transfer rejection (SelfTransfer error) |
+| `evaporchain-ib-validators::signature.rs` (98.44% → ↑) | 2 | StateSignature zero-scale fallback to bin 0; KL skips q==0 bins |
+| `evaporchain-da::namespace.rs` (93.82% → ↑) | 3 | NmtBuildError::Display reserved hex; from_blobs / from_leaves drop reserved namespaces with warning |
+| `evaporchain-bell-beacon-v2::verification.rs` (94.55% → ↑) | 2 | InvalidWindowRange + EmptyWindow guards in verify_certificate |
+
+**Truly terminal.** Final-batch wins all closed via accessor / error-path / Display tests. Beyond this point, remaining gaps require integration scaffolding outside single-file unit-test scope.
+
+
 
 **Fifth-batch T1.20 closures (post-`27542215`):**
 
