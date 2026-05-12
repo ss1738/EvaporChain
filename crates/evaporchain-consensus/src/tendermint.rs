@@ -11640,6 +11640,9 @@ mod tests {
         }
 
         let stub = StubSnapshotNoRestore;
+        // Exercise the trait methods that the default impl delegates (lines 11633-11638).
+        assert_eq!(stub.tip(), [0u8; 32]);
+        assert_eq!(stub.created_at_height(), 0);
         let mut db = InMemoryStateDB::new();
         let result = stub.restore(&mut db as &mut dyn evaporchain_state::db::StateDB);
         assert!(result.is_err());
@@ -21352,16 +21355,6 @@ mod t1_20_batch18 {
         vs
     }
 
-    fn make_vs4() -> ValidatorSet {
-        let mut vs = ValidatorSet::new();
-        for id in 1u64..=4 {
-            let mut addr = [0u8; 32];
-            addr[0] = id as u8;
-            vs.add_validator(ValidatorInfo::new(id, 1000, addr));
-        }
-        vs
-    }
-
     fn make_tc1() -> TendermintConsensus {
         TendermintConsensus::new_for_test(1, 5, make_vs1())
     }
@@ -21600,5 +21593,188 @@ mod t1_20_batch18 {
         // Covers lines 7148-7155 (below-floor rejection)
         let result = tc.verify_commit_certificate_for_sync(&cert);
         assert!(!result, "signer_stake below 1/3 floor must be rejected");
+    }
+}
+
+#[cfg(test)]
+mod t1_20_batch19 {
+    use super::*;
+    use evaporchain_types::Block;
+
+    fn make_vs1() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs
+    }
+
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc1() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs1())
+    }
+
+    fn make_tc3() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs3())
+    }
+
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: 0, parent_hash: [0u8; 32],
+            state_root: [0u8; 32], transactions: vec![],
+            producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: Precommit from unknown validator (lines 5341-5342) ──
+    #[test]
+    fn t1_20_precommit_unknown_validator() {
+        let mut tc = make_tc3();
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some([0u8; 32]),
+            validator_id: 99,
+            bls_signature: None,
+        });
+        assert!(actions.is_empty());
+    }
+
+    // ── Test 2: Prevote from unknown validator (lines 5215-5218) ──
+    #[test]
+    fn t1_20_prevote_unknown_validator() {
+        let mut tc = make_tc3();
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some([0u8; 32]),
+            validator_id: 99,
+            bls_signature: None,
+        });
+        assert!(actions.is_empty());
+    }
+
+    // ── Test 3: on_block_committed with block.number=100, epoch=2000 → LightCone prune cutoff>0 ──
+    #[test]
+    fn t1_20_on_block_committed_prune_cutoff_positive() {
+        let mut tc = make_tc1();
+        let mut block = make_block(100);
+        block.epoch = 2000;
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // Height advanced past 100 → LightCone prune path taken (cutoff = 2000-1000 = 1000 > 0)
+        assert_eq!(tc.height, 2);
+    }
+
+    // ── Test 4: vote_target_head mcc_full mode, no head → fallback to parent_hash (lines 3101-3102) ──
+    #[test]
+    fn t1_20_vote_target_head_mcc_full_no_head() {
+        let mut tc = make_tc3();
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
+        tc.current_authoritative_head = None;
+        tc.parent_hash = [42u8; 32];
+        assert_eq!(tc.vote_target_head(), [42u8; 32]);
+    }
+
+    // ── Test 5: vote_target_head mcc_full mode, Some head → returns it (line 3102) ──
+    #[test]
+    fn t1_20_vote_target_head_mcc_full_with_head() {
+        let mut tc = make_tc3();
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
+        tc.current_authoritative_head = Some([7u8; 32]);
+        assert_eq!(tc.vote_target_head(), [7u8; 32]);
+    }
+
+    // ── Test 6: update_authoritative_head mcc_full empty DAG → None (lines 3134-3140) ──
+    #[test]
+    fn t1_20_update_authoritative_head_mcc_full_empty_dag() {
+        let mut tc = make_tc3();
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
+        let result = tc.update_authoritative_head();
+        assert!(result.is_none());
+        assert!(tc.current_authoritative_head.is_none());
+    }
+
+    // ── Test 7: record_dag_precommit flag disabled → noop, dag_round_states stays empty ──
+    #[test]
+    fn t1_20_record_dag_precommit_flag_disabled_noop() {
+        let mut tc = make_tc3();
+        let tip = [1u8; 32];
+        tc.record_dag_precommit(tip, 1, Some([0u8; 32]), vec![]);
+        assert!(tc.dag_round_states.is_empty());
+    }
+
+    // ── Test 8: record_dag_precommit flag enabled → stores precommit in dag_round_states (lines 2479-2513) ──
+    #[test]
+    fn t1_20_record_dag_precommit_flag_enabled_stores() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        let tip = [1u8; 32];
+        tc.record_dag_precommit(tip, 2, Some([0u8; 32]), vec![0xABu8; 16]);
+        let rs = tc.dag_round_states.get(&tip).expect("entry must exist");
+        assert_eq!(rs.precommits.get(&2), Some(&Some([0u8; 32])));
+        assert!(!rs.precommit_bls_sigs.is_empty());
+    }
+
+    // ── Test 9: record_dag_precommit equivocation detection (lines 2492-2504) ──
+    #[test]
+    fn t1_20_record_dag_precommit_equivocation() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        tc.governance_params
+            .insert("parent_acceptance_mode".to_string(), "mcc_full".to_string());
+        let tip_a = [1u8; 32];
+        let tip_b = [2u8; 32];
+        // Validator 1 precommits tip_a → block_hash [3;32]
+        tc.record_dag_precommit(tip_a, 1, Some([3u8; 32]), vec![]);
+        // Validator 1 precommits tip_b → different block_hash [4;32] → equivocation
+        tc.record_dag_precommit(tip_b, 1, Some([4u8; 32]), vec![]);
+        assert_eq!(tc.cross_fork_equivocation_count(1), 1);
+    }
+
+    // ── Test 10: try_finalize_antichain flag enabled, n>0, empty DAG → empty vec (lines 2430-2449) ──
+    #[test]
+    fn t1_20_try_finalize_antichain_enabled_empty_dag() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        let finalized = tc.try_finalize_antichain();
+        assert!(finalized.is_empty());
+    }
+
+    // ── Test 11: try_finalize_antichain flag enabled, empty validator set → n=0 early return ──
+    #[test]
+    fn t1_20_try_finalize_antichain_enabled_empty_validator_set() {
+        let mut tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::new());
+        tc.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        let finalized = tc.try_finalize_antichain();
+        assert!(finalized.is_empty());
     }
 }
