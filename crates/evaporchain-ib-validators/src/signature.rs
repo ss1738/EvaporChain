@@ -117,4 +117,28 @@ mod tests {
         let b = StateSignature::from_energies(&[3, 2, 1, 0], 4);
         assert_eq!(a.l1_distance(&b), b.l1_distance(&a));
     }
+
+    /// T1.20 — from_energies with scale==0 routes every value to
+    /// bin 0 (line 32 — defensive zero-scale fallback).
+    #[test]
+    fn t1_20_from_energies_zero_scale_falls_to_bin_zero() {
+        let energies = vec![100, 200, 300, 400];
+        let sig = StateSignature::from_energies(&energies, 0);
+        // All routed to bin 0 → bin[0] = 1000 (parts-per-thousand).
+        assert_eq!(sig.bins[0], 1_000);
+        for &b in &sig.bins[1..] {
+            assert_eq!(b, 0);
+        }
+    }
+
+    /// T1.20 — kl_millibits skips bins where q==0 even when p>0
+    /// (line 67). Returns kl=0 when no bin has both nonzero.
+    #[test]
+    fn t1_20_kl_millibits_skips_q_zero_bins() {
+        // p: all weight in bin 0; q: all weight in bin 1.
+        // Every bin pair has either p=0 or q=0 → kl skips all.
+        let p_sig = StateSignature::from_energies(&[0u64; 10], 1_000);
+        let q_sig = StateSignature::from_energies(&[500u64; 10], 1_000);
+        assert_eq!(p_sig.kl_millibits(&q_sig), 0);
+    }
 }
