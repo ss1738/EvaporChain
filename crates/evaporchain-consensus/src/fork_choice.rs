@@ -565,4 +565,17 @@ mod tests {
             prop_assert_eq!(fc.name(), dyn_fc.name());
         }
     }
+
+    /// T1.20 — MccForkChoice::set_lc swaps the underlying LightCone.
+    /// Covers lines 145-147 (the setter body).
+    #[test]
+    fn t1_20_mcc_set_lc_swaps_snapshot() {
+        let mut fc = MccForkChoice::new(LightCone::new(), 10_000);
+        // Empty DAG → select_tip is None.
+        assert_eq!(fc.select_tip(), None);
+        // Swap to a populated DAG.
+        fc.set_lc(lc_two_forks());
+        // Now select_tip returns the lower-energy leaf.
+        assert!(fc.select_tip().is_some());
+    }
 }
