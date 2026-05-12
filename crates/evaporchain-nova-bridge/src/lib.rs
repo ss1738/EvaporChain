@@ -50,12 +50,14 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod grain_lfsr;
 pub mod neptune_dump_parser;
 pub mod neptune_reference;
 pub mod recursive_snark_fixture;
 pub mod section2_gadget;
 pub mod verifier_circuit;
 
+pub use grain_lfsr::{grain_seed_state, GrainSeedParams};
 pub use neptune_dump_parser::{
     decode_hex_scalar, expected_crc_len, extract_compressed_round_constants, extract_mds_matrix,
     parse_dump, NeptuneDumpShape,
