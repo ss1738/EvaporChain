@@ -50,9 +50,11 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod neptune_reference;
 pub mod recursive_snark_fixture;
 pub mod verifier_circuit;
 
+pub use neptune_reference::{neptune_hash_primary, PrimaryScalar};
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
 };
