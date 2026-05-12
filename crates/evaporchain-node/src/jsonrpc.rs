@@ -749,13 +749,13 @@ fn format_patronage_status_response(
 /// `evap_getPatronageStatus()` — Refresh-Pool Patronage book + pool
 /// aggregate state. Operators watch:
 ///  - `active_covenants` (those whose `expires_epoch` is still in
-///     the future) versus `covenant_count` (everything in the book
-///     including expired-but-not-pruned).
+///    the future) versus `covenant_count` (everything in the book
+///    including expired-but-not-pruned).
 ///  - `total_pre_funded` (energy locked in covenants).
 ///  - `total_patronage_score` (cumulative donation already drained
-///     to the pool).
+///    to the pool).
 ///  - `refresh_pool.total_accrued` + `credit_count` (the protocol-
-///     owned RefreshPool's namespace-keyed credits).
+///    owned RefreshPool's namespace-keyed credits).
 fn rpc_get_patronage_status(state: &ApiState, id: Value) -> JsonRpcResponse {
     let book_lock = state.patronage_book.lock();
     let pool_lock = state.patronage_pool.lock();
