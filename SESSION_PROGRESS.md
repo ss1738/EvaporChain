@@ -177,11 +177,29 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
-## 2026-05-11 (T1.20 continuation) — 20+ crates, 80+ tests across one continuous coverage arc
+## 2026-05-11 (T1.20 continuation) — 25+ crates, 110+ tests across one continuous coverage arc
 
 **Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.
 
-**Commits shipped this arc:** 30 (`47774f25` → `4c860d4a`). All on `origin/main`. Parallel session also pushed `efd4c4c3` (state/execution fixes + 35 tests) and `f17f72b1`/`d5949045` (state_sync + rocksdb backend) interleaved.
+**Commits shipped this arc:** 36 (`47774f25` → `27542215`). All on `origin/main`. Parallel session also pushed `efd4c4c3` (state/execution fixes + 35 tests) and `f17f72b1`/`d5949045` (state_sync + rocksdb backend) interleaved.
+
+**Fourth-batch T1.20 closures (post-`4c860d4a`):**
+
+| Crate / file | Tests added | Targeted gap |
+|---|---|---|
+| `evaporchain-singh-resonance::coupling.rs` (95.41% → ↑) | 3 | `CouplingParams::new` ZeroSaturation/ZeroMinScale/InvertedMidMin/InvertedMaxMid all 4 guard branches |
+| `evaporchain-ssm::strategy.rs` (94.92% → ↑) | 1 | Strategy `new`/`lookup`/`len`/`is_empty` + record re-insertion returning prior value |
+| `evaporchain-tombstone::eulogy_trie.rs` (99% → ↑) | 1 | EulogyTrie `len`/`is_empty`/`iter` accessors |
+| `evaporchain-epa-mmr::mmr.rs` (97% → ↑) | 1 | EpaMmr `new`/`Default`/`leaf_count`/`is_empty`/`append`/`get` |
+| `evaporchain-lambda-fold::folded.rs` (84.21% → ↑) | 1 | FoldedInstance `Default` routes through `identity()` |
+
+**Arc summary:** 110+ T1.20 tests across 25+ files. Major themes:
+- **Default/identity ctor delegation tests** — pattern: 1-test fixes for `impl Default` arms that route through a named genesis ctor (fee-controller, mortis, wsbf, lambda-fold, mcp resources/validation)
+- **Accessor coverage** — getters like `len`/`is_empty`/`iter` that are present in every Substrate but not always exercised
+- **Error-path validation** — submit-error / constructor-validation / parser-error arms (singh-inequality, singh-resonance, cl-amm, sgb, decaying-dao, paymaster)
+- **One covert dead-test fixed** — missing `#[test]` on `test_refund_tx_roundtrip_and_sender` (28 lines silently unreached since variant was added)
+
+**Diminishing returns reached.** The remaining gaps are all in: (a) `consensus::tendermint.rs` (8000-LOC state machine — needs integration scenarios), (b) `execution::parallel.rs` (Block-STM — needs concurrent harness), (c) `state::rocksdb_backend.rs` (needs real RocksDB temp dir scaffolding), (d) `mcp::tools/prompts.rs` (needs HTTP mock). Beyond reach of single-file accessor tests.
 
 **Third-batch T1.20 closures (post-`16e2577a`):**
 
