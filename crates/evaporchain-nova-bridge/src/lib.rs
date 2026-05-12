@@ -65,6 +65,7 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod circuit_builder;
 pub mod compress_ark;
 pub mod grain_lfsr;
 pub mod mds_linalg;
