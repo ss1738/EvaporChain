@@ -930,7 +930,7 @@ mod tests {
         for i in 0..p.len() {
             let a = p[i];
             let b = q[i];
-            diff = diff.saturating_add(if a > b { a - b } else { b - a });
+            diff = diff.saturating_add(a.abs_diff(b));
         }
         diff / 2 // TV = (1/2) * Σ |p_i - q_i|
     }
@@ -948,7 +948,7 @@ mod tests {
     /// first half; this test closes the second.
     #[test]
     fn cssr_golden_mean_50k_pmf_within_tv_epsilon() {
-        let stream = golden_mean_stream(50_000, 0xC0FFEE_BEEF);
+        let stream = golden_mean_stream(50_000, 0x00C0_FFEE_BEEF);
         let m = reconstruct_cssr(&stream, 2, DEFAULT_L_MAX, DEFAULT_ALPHA).unwrap();
         assert_eq!(m.state_count(), 2, "50k golden-mean must recover 2 states");
 
