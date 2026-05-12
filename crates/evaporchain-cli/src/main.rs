@@ -6245,7 +6245,7 @@ mod tests {
         // the threshold passes. The label reflects the opt-out.
         let server = spawn_server(7, pkg, DaServerMode::ChainRootMismatch).await;
         let outcome = da_verify_inner(
-            &[server.addr.clone()],
+            std::slice::from_ref(&server.addr),
             7,
             8,
             0.99,

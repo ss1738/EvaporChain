@@ -3295,6 +3295,7 @@ mod lambda_fold_integration {
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_lambda_fold::{fold, verify_folded, FoldError, FoldedInstance, StepWitness};
 
+    #[allow(dead_code)] // helper held for future tests
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(1_000))
     }
@@ -3373,6 +3374,7 @@ mod antichain_mempool_integration {
         [b; 32]
     }
 
+    #[allow(dead_code)] // helper held for future tests
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(1_000))
     }
@@ -3516,6 +3518,7 @@ mod causal_cone_integration {
         [b; 32]
     }
 
+    #[allow(dead_code)] // helper held for future tests
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(1_000))
     }
@@ -3896,6 +3899,7 @@ mod cfm_integration {
     use evaporchain_cfm::{boltzmann_weight, cfm_equilibrium, FIXED_POINT_SCALE};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
 
+    #[allow(dead_code)] // helper held for future tests
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(1_000))
     }
@@ -4836,6 +4840,7 @@ mod ib_validators_integration {
     /// Signature identical to `uniform_sig` — used by the zero-KL test.
     /// Kept separate so a future refactor of `uniform_sig` doesn't
     /// silently break the abstain-on-equality contract.
+    #[allow(dead_code)] // kept for the abstain-on-equality contract test
     fn flat_zero_sig() -> StateSignature {
         let energies: Vec<u64> = vec![0u64; 100];
         StateSignature::from_energies(&energies, 1_000)
@@ -6723,7 +6728,7 @@ mod shard_stress_harness {
 
         let config = ShardConfig::new(num_shards);
         let mut router = CrossShardRouter::new();
-        let mut rng = Xs64::new(0x5EED_E2E_5DAD);
+        let mut rng = Xs64::new(0x05EE_DE2E_5DAD);
 
         // Track what we sent so we can compare against what's drained.
         // `sent_ids` is the cumulative all-time set; `outstanding` mirrors

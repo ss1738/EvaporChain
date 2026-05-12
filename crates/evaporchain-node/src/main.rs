@@ -3880,7 +3880,6 @@ async fn main() -> Result<()> {
     // ── Helper: apply a single block (follower path) ──
     // Returns (obj_count, ghost_count) on success
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn apply_follower_block(
         node_tag: &str,
         block: &evaporchain_types::Block,
