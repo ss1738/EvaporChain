@@ -7918,7 +7918,7 @@ contract Counter {
     }
 
     #[test]
-    fn t1_20_execution_cache_key_binds_tx_hash_and_pre_root() {
+    fn t1_20_execution_cache_key_binds_tx_hash_AND_pre_root() {
         let mut c = ExecutionCache::new(10);
         let tx_h = [1u8; 32];
         c.put(&tx_h, &[2u8; 32], 21_000, true, 100);
@@ -8334,6 +8334,411 @@ contract Counter {
         let z = db.get_account(&[0u8;32]).unwrap();
         assert_eq!(z.nonce, 5, "mint-bypass must not increment nonce");
         assert_eq!(db.get_account(&addr(60)).unwrap().balance, 1_000);
+    }
+
+    // ─── T1.20: execute_governance via execute_block ──────────────────────
+
+    fn gov_tx(sender_byte: u8, nonce: u64, action: GovernanceAction) -> Transaction {
+        Transaction::Governance(GovernanceTx {
+            action,
+            sender: addr(sender_byte),
+            nonce,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    fn create_proposal_action(voting_epochs: u64) -> GovernanceAction {
+        GovernanceAction::CreateProposal {
+            title: "Test proposal".to_string(),
+            param_key: "block_gas_limit".to_string(),
+            param_value: "1000000".to_string(),
+            voting_epochs,
+        }
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_success() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS))]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "valid CreateProposal must succeed");
+        assert_eq!(db.all_proposals().len(), 1, "proposal must be stored");
+        assert_eq!(db.get_proposal(0).unwrap().param_key, "block_gas_limit");
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_title_too_long() {
+        let mut db = InMemoryStateDB::new();
+        let long_title = "x".repeat(MAX_PROPOSAL_TITLE_BYTES + 1);
+        let action = GovernanceAction::CreateProposal {
+            title: long_title,
+            param_key: "block_gas_limit".to_string(),
+            param_value: "1000000".to_string(),
+            voting_epochs: MIN_VOTING_EPOCHS,
+        };
+        let block = make_block(1, 1, vec![gov_tx(1, 0, action)]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "title too long must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_param_key_too_long() {
+        let mut db = InMemoryStateDB::new();
+        let long_key = "k".repeat(MAX_PARAM_KEY_BYTES + 1);
+        let action = GovernanceAction::CreateProposal {
+            title: "T".to_string(),
+            param_key: long_key,
+            param_value: "1000000".to_string(),
+            voting_epochs: MIN_VOTING_EPOCHS,
+        };
+        let block = make_block(1, 1, vec![gov_tx(1, 0, action)]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "param_key too long must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_param_value_too_long() {
+        let mut db = InMemoryStateDB::new();
+        let long_val = "v".repeat(MAX_PARAM_VALUE_BYTES + 1);
+        let action = GovernanceAction::CreateProposal {
+            title: "T".to_string(),
+            param_key: "block_gas_limit".to_string(),
+            param_value: long_val,
+            voting_epochs: MIN_VOTING_EPOCHS,
+        };
+        let block = make_block(1, 1, vec![gov_tx(1, 0, action)]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "param_value too long must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_voting_epochs_too_low() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS - 1))]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "voting_epochs below MIN must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_voting_epochs_too_high() {
+        let mut db = InMemoryStateDB::new();
+        let block = make_block(1, 1, vec![gov_tx(1, 0, create_proposal_action(MAX_VOTING_EPOCHS + 1))]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "voting_epochs above MAX must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_non_governable_key() {
+        let mut db = InMemoryStateDB::new();
+        let action = GovernanceAction::CreateProposal {
+            title: "T".to_string(),
+            param_key: "chain_id".to_string(), // not on allowlist
+            param_value: "evil".to_string(),
+            voting_epochs: MIN_VOTING_EPOCHS,
+        };
+        let block = make_block(1, 1, vec![gov_tx(1, 0, action)]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "non-governable param_key must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_create_proposal_invalid_param_value() {
+        let mut db = InMemoryStateDB::new();
+        // block_gas_limit requires numeric value in [1_000, 10_000_000_000]; "999" is below range.
+        let action = GovernanceAction::CreateProposal {
+            title: "T".to_string(),
+            param_key: "block_gas_limit".to_string(),
+            param_value: "999".to_string(),
+            voting_epochs: MIN_VOTING_EPOCHS,
+        };
+        let block = make_block(1, 1, vec![gov_tx(1, 0, action)]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "invalid param_value must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_cast_vote_success() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 2, 50_000); // voter needs balance for weight
+        let mut ex = SimpleExecutor::new(10);
+
+        // Create proposal at epoch 1.
+        let create = gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS));
+        ex.execute_block(&mut db, &make_block(1, 1, vec![create])).unwrap();
+
+        // Vote on it at epoch 2 (still within voting window).
+        let vote = gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true });
+        let r = ex.execute_block(&mut db, &make_block(2, 2, vec![vote])).unwrap();
+        assert_eq!(r.txs_executed, 1, "CastVote must succeed");
+        let p = db.get_proposal(0).unwrap();
+        assert!(p.votes_for > 0, "votes_for must be incremented");
+    }
+
+    #[test]
+    fn t1_20_governance_cast_vote_proposal_not_found() {
+        let mut db = InMemoryStateDB::new();
+        let vote = gov_tx(1, 0, GovernanceAction::CastVote { proposal_id: 99, vote: true });
+        let block = make_block(1, 1, vec![vote]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "vote on missing proposal must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_cast_vote_proposal_not_active() {
+        let mut db = InMemoryStateDB::new();
+        // Insert a Rejected proposal directly.
+        db.put_proposal(GovernanceProposal {
+            proposal_id: 0,
+            proposer: addr(1),
+            title: "T".to_string(),
+            param_key: "block_gas_limit".to_string(),
+            param_value: "1000000".to_string(),
+            start_epoch: 1,
+            end_epoch: 5,
+            votes_for: 0,
+            votes_against: 0,
+            status: ProposalStatus::Rejected,
+            created_at: 1,
+            voters: Default::default(),
+        });
+        let vote = gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true });
+        let block = make_block(1, 1, vec![vote]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "vote on non-active proposal must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_cast_vote_voting_ended() {
+        let mut db = InMemoryStateDB::new();
+        // Proposal whose end_epoch=2 is in the past when block.epoch=10.
+        db.put_proposal(GovernanceProposal {
+            proposal_id: 0,
+            proposer: addr(1),
+            title: "T".to_string(),
+            param_key: "block_gas_limit".to_string(),
+            param_value: "1000000".to_string(),
+            start_epoch: 1,
+            end_epoch: 2,
+            votes_for: 0,
+            votes_against: 0,
+            status: ProposalStatus::Active,
+            created_at: 1,
+            voters: Default::default(),
+        });
+        // block.epoch=10 > end_epoch=2, but finalize_expired_proposals runs first at epoch 10
+        // and transitions to Rejected, so the vote lands on a now-Rejected proposal.
+        // Either way the CastVote path must fail.
+        let vote = gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true });
+        let block = make_block(1, 10, vec![vote]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "vote after window ends must fail");
+    }
+
+    #[test]
+    fn t1_20_governance_cast_vote_duplicate() {
+        let mut db = InMemoryStateDB::new();
+        let mut ex = SimpleExecutor::new(10);
+
+        // Create proposal.
+        ex.execute_block(&mut db, &make_block(1, 1, vec![
+            gov_tx(1, 0, create_proposal_action(MIN_VOTING_EPOCHS)),
+        ])).unwrap();
+
+        // First vote (epoch 2, within window 1..=11).
+        ex.execute_block(&mut db, &make_block(2, 2, vec![
+            gov_tx(2, 0, GovernanceAction::CastVote { proposal_id: 0, vote: true }),
+        ])).unwrap();
+
+        // Same sender tries to vote again.
+        let r = ex.execute_block(&mut db, &make_block(3, 3, vec![
+            gov_tx(2, 1, GovernanceAction::CastVote { proposal_id: 0, vote: false }),
+        ])).unwrap();
+        assert_eq!(r.txs_failed, 1, "duplicate vote must fail");
+    }
+
+    // ─── T1.20: finalize_expired_proposals paths ─────────────────────────
+
+    #[test]
+    fn t1_20_finalize_active_proposal_becomes_rejected_no_quorum() {
+        let mut db = InMemoryStateDB::new();
+        // Insert Active proposal expired at epoch 5 with zero votes.
+        db.put_proposal(GovernanceProposal {
+            proposal_id: 0,
+            proposer: addr(1),
+            title: "T".to_string(),
+            param_key: "block_gas_limit".to_string(),
+            param_value: "1000000".to_string(),
+            start_epoch: 1,
+            end_epoch: 5,
+            votes_for: 0,
+            votes_against: 0,
+            status: ProposalStatus::Active,
+            created_at: 1,
+            voters: Default::default(),
+        });
+        // execute_block at epoch 10 > 5 triggers finalize_expired_proposals first.
+        let mut ex = SimpleExecutor::new(10);
+        ex.execute_block(&mut db, &make_block(1, 10, vec![])).unwrap();
+        assert_eq!(
+            db.get_proposal(0).unwrap().status,
+            ProposalStatus::Rejected,
+            "expired proposal with no quorum must be Rejected"
+        );
+    }
+
+    #[test]
+    fn t1_20_finalize_passed_proposal_becomes_executed_after_timelock() {
+        let mut db = InMemoryStateDB::new();
+        // Insert Passed proposal; end_epoch=5, timelock=5, so executes at epoch >= 10.
+        db.put_proposal(GovernanceProposal {
+            proposal_id: 0,
+            proposer: addr(1),
+            title: "T".to_string(),
+            param_key: "block_gas_limit".to_string(),
+            param_value: "2000000".to_string(),
+            start_epoch: 1,
+            end_epoch: 5,
+            votes_for: QUORUM_MIN_TOTAL_WEIGHT,
+            votes_against: 0,
+            status: ProposalStatus::Passed,
+            created_at: 1,
+            voters: Default::default(),
+        });
+        let mut ex = SimpleExecutor::new(10);
+        // Epoch 10 == end_epoch(5) + GOVERNANCE_TIMELOCK_EPOCHS(5) → executes.
+        ex.execute_block(&mut db, &make_block(1, 10, vec![])).unwrap();
+        assert_eq!(
+            db.get_proposal(0).unwrap().status,
+            ProposalStatus::Executed,
+            "Passed proposal must become Executed after timelock"
+        );
+        // Governance param must have been applied.
+        assert_eq!(
+            db.get_governance_param("block_gas_limit"),
+            Some("2000000"),
+            "param must be written to governance store"
+        );
+    }
+
+    // ─── T1.20: execute_multisig via execute_block ────────────────────────
+
+    fn msig_tx(
+        ms_addr: u8,
+        threshold: u8,
+        signers: Vec<[u8; 32]>,
+        signatures: Vec<([u8; 32], Vec<u8>)>,
+        nonce: u64,
+    ) -> Transaction {
+        Transaction::MultiSig(MultiSigTx {
+            multisig_address: addr(ms_addr),
+            threshold,
+            signers,
+            inner_tx_bytes: vec![],
+            signatures,
+            public_keys: vec![],
+            nonce,
+        })
+    }
+
+    #[test]
+    fn t1_20_multisig_insufficient_threshold() {
+        let mut db = InMemoryStateDB::new();
+        // threshold=2 but 0 signatures provided.
+        let tx = msig_tx(100, 2, vec![addr(10), addr(11)], vec![], 0);
+        let block = make_block(1, 1, vec![tx]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "below-threshold multisig must fail");
+    }
+
+    #[test]
+    fn t1_20_multisig_duplicate_signer() {
+        let mut db = InMemoryStateDB::new();
+        // Both entries use addr(10) as the signer key.
+        let tx = msig_tx(
+            100,
+            2,
+            vec![addr(10), addr(11)],
+            vec![(addr(10), vec![]), (addr(10), vec![])],
+            0,
+        );
+        let block = make_block(1, 1, vec![tx]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "duplicate signer must fail");
+    }
+
+    #[test]
+    fn t1_20_multisig_unauthorized_signer() {
+        let mut db = InMemoryStateDB::new();
+        // signers list only has addr(10); signature from addr(99) is unauthorized.
+        let tx = msig_tx(
+            100,
+            1,
+            vec![addr(10)],
+            vec![(addr(99), vec![])],
+            0,
+        );
+        let block = make_block(1, 1, vec![tx]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "unauthorized signer must fail");
+    }
+
+    #[test]
+    fn t1_20_multisig_happy_path() {
+        let mut db = InMemoryStateDB::new();
+        // threshold=2, two distinct authorized signers present.
+        let tx = msig_tx(
+            100,
+            2,
+            vec![addr(10), addr(11)],
+            vec![(addr(10), vec![]), (addr(11), vec![])],
+            0,
+        );
+        let block = make_block(1, 1, vec![tx]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1, "valid multisig must succeed");
+        assert_eq!(db.get_account(&addr(100)).unwrap().nonce, 1, "nonce must increment");
+    }
+
+    #[test]
+    fn t1_20_multisig_invalid_nonce() {
+        let mut db = InMemoryStateDB::new();
+        // Pre-set multisig_address nonce to 5; tx carries nonce=0.
+        db.put_account(Account {
+            address: addr(100),
+            balance: 0,
+            nonce: 5,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        let tx = msig_tx(
+            100,
+            1,
+            vec![addr(10)],
+            vec![(addr(10), vec![])],
+            0, // wrong nonce
+        );
+        let block = make_block(1, 1, vec![tx]);
+        let mut ex = SimpleExecutor::new(10);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "wrong nonce on multisig must fail");
     }
 
 }
