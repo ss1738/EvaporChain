@@ -167,8 +167,8 @@ pub fn coordinated_subset_cartel(
 
 fn derive_seed(rng: &mut Blake3Rng) -> [u8; 32] {
     let mut s = [0u8; 32];
-    for i in 0..32 {
-        s[i] = rng.next_u8();
+    for byte in &mut s {
+        *byte = rng.next_u8();
     }
     s
 }
