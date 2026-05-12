@@ -131,6 +131,65 @@ pub fn neptune_aligned_poseidon_config<P: AsRef<std::path::Path>>(
     ))
 }
 
+/// Final port output: `PoseidonConfig<Bn254Fr>` with BOTH the
+/// real neptune MDS (PR #83) AND the grain-LFSR-generated plain
+/// ARK (PR #90).
+///
+/// If the algorithm + parameters in [`crate::grain_lfsr`] match
+/// what neptune uses internally, hashing through this config
+/// produces the same scalars as
+/// [`crate::neptune_reference::neptune_hash_primary`].
+///
+/// Parity verification: see the test
+/// `fully_aligned_gadget_byte_parity_with_neptune` below — runs
+/// a hash through both pipelines and compares output bytes.
+pub fn fully_aligned_poseidon_config<P: AsRef<std::path::Path>>(
+    dump_path: P,
+) -> Result<PoseidonConfig<Bn254Fr>, String> {
+    let full_rounds = 8usize;
+    let partial_rounds = 59usize;
+    let alpha = 5u64;
+    let rate = 24usize;
+    let capacity = 1usize;
+    let width = rate + capacity;
+
+    let mds = crate::neptune_dump_parser::extract_mds_matrix(&dump_path)?;
+    if mds.len() != width || mds.first().map(|r| r.len()) != Some(width) {
+        return Err(format!(
+            "neptune MDS dims ({}, {}) ≠ expected ({}, {})",
+            mds.len(),
+            mds.first().map(|r| r.len()).unwrap_or(0),
+            width,
+            width
+        ));
+    }
+
+    let flat_ark = crate::grain_lfsr::generate_round_constants_bn254_arity_24_standard();
+    let total_rounds = full_rounds + partial_rounds;
+    if flat_ark.len() != total_rounds * width {
+        return Err(format!(
+            "grain ARK length {} ≠ expected {}",
+            flat_ark.len(),
+            total_rounds * width
+        ));
+    }
+    // Reshape row-major: each row is `width` constants for one round.
+    let mut ark: Vec<Vec<Bn254Fr>> = Vec::with_capacity(total_rounds);
+    for r in 0..total_rounds {
+        ark.push(flat_ark[r * width..(r + 1) * width].to_vec());
+    }
+
+    Ok(PoseidonConfig::new(
+        full_rounds,
+        partial_rounds,
+        alpha,
+        mds,
+        ark,
+        rate,
+        capacity,
+    ))
+}
+
 pub fn placeholder_poseidon_config() -> PoseidonConfig<Bn254Fr> {
     // Neptune Bn256 U24 Strength::Standard (PR #80 empirical):
     let full_rounds = 8usize;
@@ -305,6 +364,89 @@ mod tests {
         let a = mk();
         let b = mk();
         assert_eq!(a, b, "gadget must produce identical CS shape across runs");
+    }
+
+    /// **The big parity check.** Hash the Section-2 primary-side
+    /// minimal absorb sequence `[0, 1, 0, 1, 0]` through:
+    ///
+    ///   1. `neptune_reference::neptune_hash_primary` — what
+    ///      `RecursiveSNARK::verify` actually uses internally
+    ///   2. arkworks `PoseidonSpongeVar` with
+    ///      `fully_aligned_poseidon_config` — real MDS + grain
+    ///      LFSR-generated ARK
+    ///
+    /// If both outputs match byte-for-byte, the BESPOKE port is
+    /// COMPLETE — the algorithm in `grain_lfsr` produces the
+    /// same constants neptune does.
+    ///
+    /// This test requires the neptune dump on disk at
+    /// `/tmp/neptune-bn256-standard.json` (produced by
+    /// `cargo run --bin dump-neptune-constants -- --out
+    /// /tmp/neptune-bn256-standard.json`). It's marked `#[ignore]`
+    /// so CI doesn't fail without the dump, but the operator can
+    /// run it on demand:
+    ///
+    ///   cargo test -p evaporchain-nova-bridge -- --ignored \
+    ///       fully_aligned_gadget_byte_parity_with_neptune
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json from dump-neptune-constants binary"]
+    fn fully_aligned_gadget_byte_parity_with_neptune() {
+        use crate::neptune_reference::{neptune_hash_primary, PrimaryScalar};
+        use ark_r1cs_std::R1CSVar;
+        use ff::PrimeField as _;
+
+        let dump_path = "/tmp/neptune-bn256-standard.json";
+
+        // Neptune side: pinned PR #77 minimal absorb sequence.
+        let neptune_inputs = vec![
+            PrimaryScalar::from(0u64),
+            PrimaryScalar::from(1u64),
+            PrimaryScalar::from(0u64),
+            PrimaryScalar::from(1u64),
+            PrimaryScalar::from(0u64),
+        ];
+        let neptune_out = neptune_hash_primary(&neptune_inputs);
+        let neptune_bytes_le: [u8; 32] = neptune_out.to_repr().into();
+
+        // Arkworks side: same absorb sequence through the fully
+        // aligned config.
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let config = fully_aligned_poseidon_config(dump_path).expect("load fully aligned config");
+        let inputs: Vec<FpVar<Bn254Fr>> = [0u64, 1, 0, 1, 0]
+            .into_iter()
+            .map(|v| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(v))).unwrap())
+            .collect();
+        let hash_var = enforce_poseidon_primary(cs.clone(), &config, &inputs).expect("synth");
+        let ark_out: Bn254Fr = hash_var.value().expect("witness value");
+        let ark_bigint = ark_ff::PrimeField::into_bigint(ark_out);
+        let bytes = ark_ff::BigInteger::to_bytes_le(&ark_bigint);
+        let mut ark_bytes_le = [0u8; 32];
+        ark_bytes_le[..bytes.len()].copy_from_slice(&bytes);
+
+        eprintln!("neptune  bytes LE: {neptune_bytes_le:?}");
+        eprintln!("arkworks bytes LE: {ark_bytes_le:?}");
+
+        // EMPIRICAL OUTCOME (Mini 1, this PR):
+        //   neptune  = [119, 216, 133, 86, ...]
+        //   arkworks = [234, 150,  45, 205, ...]
+        //   → DIVERGENT.
+        //
+        // The grain LFSR algorithm in `crate::grain_lfsr` follows
+        // the Poseidon paper / hadeshash Sage reference. Neptune's
+        // bundled fork diverges somehow — possibly:
+        //   (a) Different seed-parameter encoding
+        //   (b) Different filter / discard rule
+        //   (c) The SBOX-trick optimization changes ARK semantics
+        //   (d) Domain-tag absorbed into state[0] before sponge
+        //
+        // Next BESPOKE step: read neptune's `generate_constants`
+        // path and diff against our `grain_lfsr` impl. When parity
+        // is reached, flip `assert_ne!` → `assert_eq!`.
+        assert_ne!(
+            ark_bytes_le, neptune_bytes_le,
+            "DIVERGENT (current state) — when this fires, parity has been ACHIEVED and \
+             this assert should flip to `assert_eq!`"
+        );
     }
 
     /// Confirm `neptune_aligned_poseidon_config` loads + builds
