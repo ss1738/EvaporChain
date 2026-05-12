@@ -15,13 +15,14 @@ description = "T0.10 Path A — bridge between chain-side Nova RecursiveSNARK an
 # Arkworks side: the wrapper circuit + Groth16 prover live here.
 # Same versions as `ethereum-bridge/wrapper/Cargo.toml` so a future
 # merge / shared-dep refactor stays straightforward.
-ark-bn254       = "0.5"
-ark-ec          = "0.5"
-ark-ff          = "0.5"
-ark-r1cs-std    = { version = "0.5", default-features = false }
-ark-relations   = "0.5"
-ark-serialize   = "0.5"
-ark-std         = "0.5"
+ark-bn254              = "0.5"
+ark-crypto-primitives  = { version = "0.5", features = ["sponge", "r1cs"] }
+ark-ec                 = "0.5"
+ark-ff                 = "0.5"
+ark-r1cs-std           = { version = "0.5", default-features = false }
+ark-relations          = "0.5"
+ark-serialize          = "0.5"
+ark-std                = "0.5"
 
 # Nova side: the chain's existing nova-snark v0.68 (same major as
 # `evaporchain-proving`). Phase 2.1 only consumes RecursiveSNARK +
