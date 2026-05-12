@@ -79,13 +79,14 @@ pub use recursive_snark_fixture::{
 pub use verifier_circuit::NovaVerifierCircuit;
 
 /// Marker constant. Phase 2.2-finish is multi-step:
-///   - `phase-2.2-starter`    — fixture generator (PR #55)
-///   - `phase-2.2-skeleton`   — verifier circuit skeleton + ConstraintSynthesizer + public-input wiring (this commit)
-///   - `phase-2.2-section-1`  — Section 1 structural checks filled in
-///   - `phase-2.2-section-2`  — Section 2 Poseidon transcript filled in
-///   - `phase-2.2-section-3`  — Section 3 RelaxedR1CS satisfiability filled in (BESPOKE)
-///   - `phase-2.2-complete`   — all three sections + empirical constraint count
-pub const SCAFFOLD_VERSION: &str = "phase-2.2-skeleton";
+///   - `phase-2.2-starter`              — fixture generator (PR #55)
+///   - `phase-2.2-skeleton`             — verifier circuit skeleton + ConstraintSynthesizer + public-input wiring (PR #56)
+///   - `phase-2.2-section-1`            — Section 1 structural checks filled in (PR #64)
+///   - `phase-2.2-section-2-constants`  — Section 2 Poseidon CONSTANTS byte-complete (PR #103)
+///   - `phase-2.2-section-2`            — Section 2 Poseidon hash byte-complete (sponge port — TBD)
+///   - `phase-2.2-section-3`            — Section 3 RelaxedR1CS satisfiability filled in (BESPOKE)
+///   - `phase-2.2-complete`             — all three sections + empirical constraint count
+pub const SCAFFOLD_VERSION: &str = "phase-2.2-section-2-constants";
 
 #[cfg(test)]
 mod tests {
@@ -96,6 +97,6 @@ mod tests {
     /// `RecursiveSNARK::verify` PoC test when Phase 2.2 finish ships.
     #[test]
     fn scaffold_compiles_and_marker_present() {
-        assert_eq!(SCAFFOLD_VERSION, "phase-2.2-skeleton");
+        assert_eq!(SCAFFOLD_VERSION, "phase-2.2-section-2-constants");
     }
 }
