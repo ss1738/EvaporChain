@@ -339,4 +339,13 @@ mod tests {
         let back: ResonanceToken = serde_json::from_str(&s).unwrap();
         assert_eq!(t, back);
     }
+
+    /// T1.20 — transfer to self (caller == owner == new_owner) is
+    /// rejected with SelfTransfer (line 170).
+    #[test]
+    fn t1_20_self_transfer_rejected() {
+        let mut t = fresh(0xAA);
+        let err = t.transfer(addr(0xAA), addr(0xAA), 10).unwrap_err();
+        assert_eq!(err, TokenError::SelfTransfer);
+    }
 }
