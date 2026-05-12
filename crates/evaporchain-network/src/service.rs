@@ -558,7 +558,7 @@ pub fn load_or_generate_identity(data_dir: &Path) -> std::io::Result<identity::K
     }
     let kp = identity::Keypair::generate_ed25519();
     let bytes = kp.to_protobuf_encoding().map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("encode keypair: {e}"))
+        std::io::Error::other(format!("encode keypair: {e}"))
     })?;
     std::fs::write(&key_path, &bytes)?;
     #[cfg(unix)]

@@ -189,7 +189,7 @@ impl BanList {
             bans: self.bans.values().cloned().collect(),
         };
         let json = serde_json::to_vec_pretty(&file)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         let tmp_path = path.with_extension("json.tmp");
         {
             use std::io::Write;
