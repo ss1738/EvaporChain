@@ -115,6 +115,42 @@ impl NovaVerifierCircuit {
     }
 }
 
+/// Empirical shape report for a synthesized [`NovaVerifierCircuit`].
+///
+/// Used to track how many constraints each Phase 2.2 sub-step adds.
+/// Once Sections 2 and 3 land, the constraint count must stay below
+/// the trusted-setup `2^N` budget (currently planned at 2^18 or 2^20
+/// depending on the Powers-of-Tau ceremony selection — see
+/// `DESIGN.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CircuitShape {
+    /// Number of public inputs allocated, including the constant `1`
+    /// wire that arkworks-style Groth16 inserts at index 0. Matches
+    /// `cs.num_instance_variables()`.
+    pub num_instance_variables: usize,
+    /// Number of private witness variables. Matches
+    /// `cs.num_witness_variables()`.
+    pub num_witness_variables: usize,
+    /// Total R1CS constraint count. Matches `cs.num_constraints()`.
+    pub num_constraints: usize,
+}
+
+/// Synthesize the given circuit on a fresh `ConstraintSystem` and
+/// return its [`CircuitShape`]. Useful as a constraint-count probe
+/// during Phase 2.2 development.
+///
+/// Errors propagate as `SynthesisError` (returns `Err` if
+/// synthesis itself fails, not just if constraints are unsatisfied).
+pub fn report_shape(circuit: NovaVerifierCircuit) -> Result<CircuitShape, SynthesisError> {
+    let cs = ark_relations::r1cs::ConstraintSystem::<Bn254Fr>::new_ref();
+    circuit.generate_constraints(cs.clone())?;
+    Ok(CircuitShape {
+        num_instance_variables: cs.num_instance_variables(),
+        num_witness_variables: cs.num_witness_variables(),
+        num_constraints: cs.num_constraints(),
+    })
+}
+
 impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
     fn generate_constraints(
         self,
@@ -241,5 +277,57 @@ mod tests {
         circuit.generate_constraints(cs.clone()).expect("synthesize");
         // 2 hashes + 4 z0 + 4 zi + 1 const = 11
         assert_eq!(cs.num_instance_variables(), 11);
+    }
+
+    /// Pin the baseline circuit shape for the dummy. Phase 2.2's
+    /// later sub-steps add witness variables and constraints; this
+    /// test is the canary that fires when Section 2 or 3 lands so
+    /// the PR description can quote empirical "added X constraints"
+    /// numbers against this baseline.
+    ///
+    /// Current baseline (skeleton, pre-Section-1, pre-Section-2,
+    /// pre-Section-3):
+    /// - 5 instance variables (4 public inputs + the implicit const)
+    /// - 0 witness variables
+    /// - 0 constraints
+    ///
+    /// When Section 1 (structural-validation gate) lands as a
+    /// separate PR, the baseline stays unchanged because the check
+    /// runs OFF-circuit before any allocation.
+    #[test]
+    fn baseline_circuit_shape_for_dummy() {
+        let shape = report_shape(NovaVerifierCircuit::dummy()).expect("synthesize");
+        assert_eq!(shape.num_instance_variables, 5, "skeleton public-input arity");
+        assert_eq!(shape.num_witness_variables, 0, "skeleton has no witnesses yet");
+        assert_eq!(shape.num_constraints, 0, "skeleton emits zero R1CS rows");
+    }
+
+    /// Pin that the shape report scales with state-vector arity in
+    /// the obvious way: each extra z0/zi entry adds exactly two
+    /// instance variables (one each side), no witness or constraints.
+    #[test]
+    fn shape_report_scales_with_z_arity() {
+        let mk = |z_arity: usize| {
+            NovaVerifierCircuit::new(
+                1,
+                vec![Bn254Fr::from(0u64); z_arity],
+                vec![Bn254Fr::from(0u64); z_arity],
+                Bn254Fr::from(0u64),
+                Bn254Fr::from(0u64),
+            )
+        };
+        let arity_1 = report_shape(mk(1)).expect("synthesize 1");
+        let arity_4 = report_shape(mk(4)).expect("synthesize 4");
+        let arity_8 = report_shape(mk(8)).expect("synthesize 8");
+
+        assert_eq!(arity_1.num_instance_variables, 5);
+        assert_eq!(arity_4.num_instance_variables, 11);
+        assert_eq!(arity_8.num_instance_variables, 19);
+
+        // No witness / constraint growth from z-arity in the skeleton.
+        for shape in [arity_1, arity_4, arity_8] {
+            assert_eq!(shape.num_witness_variables, 0);
+            assert_eq!(shape.num_constraints, 0);
+        }
     }
 }

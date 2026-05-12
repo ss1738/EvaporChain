@@ -56,7 +56,7 @@ pub mod verifier_circuit;
 pub use recursive_snark_fixture::{
     fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
 };
-pub use verifier_circuit::NovaVerifierCircuit;
+pub use verifier_circuit::{report_shape, CircuitShape, NovaVerifierCircuit};
 
 /// Marker constant. Phase 2.2-finish is multi-step:
 ///   - `phase-2.2-starter`    — fixture generator (PR #55)
