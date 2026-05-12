@@ -195,6 +195,7 @@ fn format_verdict(v: &GateVerdict) -> (String, String) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_report(
     csv_path: &Path,
     window_secs: u64,

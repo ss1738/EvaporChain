@@ -31,6 +31,7 @@ pub enum VoteV2Error {
 ///   `apply_energy_jail` first to write the entry.
 /// - Otherwise: V1 `ib_vote(local, prior, params)`'s `Commit` or
 ///   `Abstain` lifted into `VoteV2::Commit` / `VoteV2::Abstain`.
+#[allow(clippy::too_many_arguments)]
 pub fn ib_vote_v2(
     local_sig: &StateSignature,
     prior_sig: &StateSignature,

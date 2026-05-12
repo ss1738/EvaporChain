@@ -67,6 +67,7 @@ impl RewardAccumulator {
     /// passing 0 disables the bonus entirely (no-op).
     ///
     /// Returns the bonus actually credited (zero on no-op or empty pool).
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_priority_bonus(
         &mut self,
         db: &mut dyn StateDB,

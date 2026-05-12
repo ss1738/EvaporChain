@@ -45,6 +45,7 @@ pub enum MarketError {
 ///
 /// `lot_lambda` is the listing's published "patience required" rating.
 /// Bidders compare their `lambda_tolerance` against it.
+#[allow(clippy::too_many_arguments)]
 pub fn list_for_sale(
     vault: &Vault,
     caller: AccountAddress,
