@@ -59,25 +59,44 @@
 #![cfg(feature = "v2-ecc")]
 
 use ff::PrimeField;
+use halo2_proofs::arithmetic::CurveAffine;
+use halo2_proofs::circuit::Value;
 
 /// Witness for one EccVerkleStepCircuit level. Same shape as
 /// `VerkleStepWitness` but the validation path is EC-MSM-bound, not
 /// Poseidon-bound.
 ///
 /// Fields are the per-level witness: the sibling-commitment point's
-/// coordinates (instead of just its Poseidon hash), the path index,
-/// and the per-level basis scalars. Sub-task B fills out the actual
-/// field set — this skeleton uses the V1 shape so the API is
-/// recognisable.
+/// coordinates (instead of just its Poseidon hash) and the path index.
+///
+/// Fields are `Value<F>` (Halo2 idiom) so the prover can mark them
+/// `Value::unknown()` during keygen — `circuit.without_witnesses()`
+/// returns a `dummy()` whose values are unknown, so synthesize's
+/// on-curve / non-identity checks at point-witnessing don't fire on
+/// placeholder data. During real proving, callers use
+/// `EccVerkleStepWitness::from_known(...)` to wrap concrete values.
 #[derive(Clone, Debug)]
 pub struct EccVerkleStepWitness<F: PrimeField + Clone> {
     /// Sibling-commitment x-coordinate (Pasta `pallas` base field).
-    pub sibling_x: F,
+    pub sibling_x: Value<F>,
     /// Sibling-commitment y-coordinate.
-    pub sibling_y: F,
+    pub sibling_y: Value<F>,
     /// Path index at this level (0 or 1 for binary, in `[0, k)` for
     /// k-ary). Same semantics as V1's `path_index`.
-    pub path_index: F,
+    pub path_index: Value<F>,
+}
+
+impl<F: PrimeField + Clone> EccVerkleStepWitness<F> {
+    /// Build a witness from concrete values. Wraps each field in
+    /// `Value::known(...)`. Use this from prover-side code where
+    /// the path's coords + index are known.
+    pub fn from_known(sibling_x: F, sibling_y: F, path_index: F) -> Self {
+        Self {
+            sibling_x: Value::known(sibling_x),
+            sibling_y: Value::known(sibling_y),
+            path_index: Value::known(path_index),
+        }
+    }
 }
 
 /// V2 step circuit — EC MSM-bound IVC step.
@@ -108,9 +127,9 @@ impl<F: PrimeField + Clone> EccVerkleStepCircuit<F> {
     pub fn dummy() -> Self {
         Self {
             witness: EccVerkleStepWitness {
-                sibling_x: F::ZERO,
-                sibling_y: F::ZERO,
-                path_index: F::ZERO,
+                sibling_x: Value::unknown(),
+                sibling_y: Value::unknown(),
+                path_index: Value::unknown(),
             },
         }
     }
@@ -565,32 +584,34 @@ impl Circuit<halo2_pallas::Base> for EccVerkleStepCircuit<halo2_pallas::Base> {
         // the high-level FixedPoint<Affine, EccChip>, witness
         // path_index as ScalarFixed, then mul.
         //
-        // Use `Point` (not `NonIdentityPoint`) for the expected
-        // sibling so synthesis accepts the dummy() witness with
-        // path_index = 0 (g·0 = identity, which NonIdentityPoint
-        // rejects). `keygen_vk` synthesizes with the dummy circuit
-        // and would fail at NonIdentityPoint::new(identity);
-        // switching to Point allows it. Constraint correctness is
-        // preserved — `constrain_equal` checks point equality
-        // identically across Point/NonIdentityPoint witnesses.
-        use halo2_gadgets::ecc::{FixedPoint as HighFixedPoint, Point, ScalarFixed};
+        // `NonIdentityPoint` is the right type for the EXPECTED sibling
+        // because real Verkle siblings are non-identity by construction.
+        // The keygen-safety hazard (NonIdentityPoint rejects identity at
+        // assignment time, breaking dummy() during keygen_vk) is
+        // resolved upstream by `EccVerkleStepWitness` fields being
+        // `Value<F>`: `dummy()` returns `Value::unknown()` everywhere,
+        // and NonIdentityPoint::new(Value::unknown()) skips the
+        // on-curve / non-identity check.
+        use halo2_gadgets::ecc::{FixedPoint as HighFixedPoint, NonIdentityPoint, ScalarFixed};
         let base = HighFixedPoint::<halo2_pallas::Affine, _>::from_inner(
             chip.clone(),
             VerkleFullWidth,
         );
 
-        // Convert the witness path_index (a base-field element) to a
-        // pallas::Scalar. For canonical conversions this is just a
-        // bytewise re-encode through the 32-byte repr.
-        let scalar_value: Value<pasta_curves::pallas::Scalar> = {
-            let bytes = self.witness.path_index.to_repr();
-            let opt: Option<pasta_curves::pallas::Scalar> =
-                pasta_curves::pallas::Scalar::from_repr(bytes).into();
-            match opt {
-                Some(s) => Value::known(s),
-                None => Value::unknown(),
-            }
-        };
+        // Convert the witness path_index (a base-field Value) to a
+        // pallas::Scalar Value. Canonical bytewise re-encode through
+        // the 32-byte repr; if path_index is Value::unknown() (keygen)
+        // we propagate unknown.
+        let scalar_value: Value<pasta_curves::pallas::Scalar> =
+            self.witness.path_index.and_then(|f| {
+                let bytes = f.to_repr();
+                let opt: Option<pasta_curves::pallas::Scalar> =
+                    pasta_curves::pallas::Scalar::from_repr(bytes).into();
+                match opt {
+                    Some(s) => Value::known(s),
+                    None => Value::unknown(),
+                }
+            });
         let by = ScalarFixed::new(
             chip.clone(),
             layouter.namespace(|| "path_index as scalar"),
@@ -600,17 +621,31 @@ impl Circuit<halo2_pallas::Base> for EccVerkleStepCircuit<halo2_pallas::Base> {
             base.mul(layouter.namespace(|| "g · path_index"), by)?;
 
         // Step 3: constrain the in-circuit result equals the witness
-        // sibling. We compute the expected affine from the same
-        // path_index — circular self-witness — so MockProver passes
-        // when in-circuit g·k == native g·k. Sub-task D's prover-side
-        // path replaces this with real (sibling_x, sibling_y).
-        let _ = (self.witness.sibling_x, self.witness.sibling_y); // sub-D wires real coords
-        let expected_value: Value<halo2_pallas::Affine> = scalar_value.map(|s| {
-            (pasta_curves::pallas::Point::generator() * s).to_affine()
-        });
-        let expected_sibling = Point::new(
+        // sibling — which is supplied independently as
+        // (witness.sibling_x, witness.sibling_y), NOT recomputed from
+        // path_index. The cryptographic claim becomes:
+        //
+        //   "I know a path_index k such that g·k equals the supplied
+        //    sibling commitment (sibling_x, sibling_y)."
+        //
+        // Real Verkle workflows: the sibling comes from the tree
+        // structure (the verifier-side data); the prover demonstrates
+        // that the chosen path_index opens to that sibling.
+        let expected_value: Value<halo2_pallas::Affine> = self
+            .witness
+            .sibling_x
+            .zip(self.witness.sibling_y)
+            .and_then(|(x, y)| {
+                let opt: Option<halo2_pallas::Affine> =
+                    halo2_pallas::Affine::from_xy(x, y).into();
+                match opt {
+                    Some(p) => Value::known(p),
+                    None => Value::unknown(),
+                }
+            });
+        let expected_sibling = NonIdentityPoint::new(
             chip,
-            layouter.namespace(|| "expected sibling = g · path_index (native)"),
+            layouter.namespace(|| "expected sibling = (witness.x, witness.y)"),
             expected_value,
         )?;
         result.constrain_equal(
@@ -668,38 +703,46 @@ impl Circuit<halo2_pallas::Base> for EccVerkleStepCircuit<halo2_pallas::Base> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::Field;
     use pasta_curves::Fp;
 
     #[test]
     fn ecc_step_witness_constructs() {
-        let w = EccVerkleStepWitness::<Fp> {
-            sibling_x: Fp::from(1u64),
-            sibling_y: Fp::from(2u64),
-            path_index: Fp::from(0u64),
-        };
-        assert_eq!(w.path_index, Fp::from(0u64));
+        let w = EccVerkleStepWitness::<Fp>::from_known(
+            Fp::from(1u64),
+            Fp::from(2u64),
+            Fp::from(0u64),
+        );
+        // Value's `assert_if_known` panics if the captured closure
+        // returns false on a known value, and is a no-op on unknown.
+        // Since from_known always produces known values, this pins
+        // the wrapped value.
+        w.path_index.assert_if_known(|f| *f == Fp::from(0u64));
     }
 
     #[test]
     fn ecc_step_circuit_dummy_constructs() {
+        // Witness fields are Value::unknown() — they don't compare
+        // equal to any concrete value. We just assert the dummy
+        // builds without panicking; its purpose is to stand in
+        // during keygen, where unknown values let the
+        // NonIdentityPoint / on-curve checks short-circuit.
         let c = EccVerkleStepCircuit::<Fp>::dummy();
-        assert_eq!(c.witness.sibling_x, Fp::ZERO);
-        assert_eq!(c.witness.sibling_y, Fp::ZERO);
-        assert_eq!(c.witness.path_index, Fp::ZERO);
+        // Touch the fields so a future regression that drops them
+        // shows up as a compile error here.
+        let _ = (c.witness.sibling_x, c.witness.sibling_y, c.witness.path_index);
     }
 
     #[test]
     fn ecc_step_circuit_new_preserves_witness() {
-        let w = EccVerkleStepWitness::<Fp> {
-            sibling_x: Fp::from(7u64),
-            sibling_y: Fp::from(11u64),
-            path_index: Fp::from(13u64),
-        };
+        let w = EccVerkleStepWitness::<Fp>::from_known(
+            Fp::from(7u64),
+            Fp::from(11u64),
+            Fp::from(13u64),
+        );
         let c = EccVerkleStepCircuit::<Fp>::new(w.clone());
-        assert_eq!(c.witness.sibling_x, w.sibling_x);
-        assert_eq!(c.witness.sibling_y, w.sibling_y);
-        assert_eq!(c.witness.path_index, w.path_index);
+        c.witness.sibling_x.assert_if_known(|f| *f == Fp::from(7u64));
+        c.witness.sibling_y.assert_if_known(|f| *f == Fp::from(11u64));
+        c.witness.path_index.assert_if_known(|f| *f == Fp::from(13u64));
     }
 
     // ─── Sub-task C — native Pedersen commit reference ──────────────
@@ -863,21 +906,41 @@ mod tests {
     /// The `k` parameter (10) is `2^k` rows of the constraint
     /// system. EccChip with our small witness fits comfortably in
     /// 1024 rows.
+    /// Build a witness whose sibling commitment is the native
+    /// computation of `g · path_index`. The MockProver / IPA tests
+    /// then check that the in-circuit MSM matches.
+    ///
+    /// k_value must be > 0 so g·k is non-identity (NonIdentityPoint
+    /// rejects the identity at assignment time). For real Verkle
+    /// paths where a step's path_index is 0, the sibling is the
+    /// identity and a different witness representation is required —
+    /// deferred to a future iteration.
+    fn make_real_witness(
+        k_value: u64,
+    ) -> EccVerkleStepWitness<halo2_proofs::pasta::pallas::Base> {
+        use halo2_proofs::pasta::pallas as halo2_pallas;
+        let k_scalar = pasta_curves::pallas::Scalar::from(k_value);
+        let p = (pasta_curves::pallas::Point::generator() * k_scalar).to_affine();
+        let coords: pasta_curves::arithmetic::Coordinates<halo2_pallas::Affine> =
+            Option::from(p.coordinates())
+                .expect("k > 0 so g·k must be non-identity");
+        EccVerkleStepWitness::<halo2_pallas::Base>::from_known(
+            *coords.x(),
+            *coords.y(),
+            halo2_pallas::Base::from(k_value),
+        )
+    }
+
     #[test]
     fn synthesize_witnesses_sibling_point_via_mock_prover() {
         use halo2_proofs::dev::MockProver;
         use halo2_proofs::pasta::pallas as halo2_pallas;
 
-        // Use a non-zero path_index so g · path_index is a non-identity
-        // point (NonIdentityPoint::new rejects the identity, which is
-        // what would happen if we used dummy()'s F::ZERO witness).
-        // path_index = 7: g·7 is well within the curve, definitely
-        // non-identity.
-        let witness = EccVerkleStepWitness::<halo2_pallas::Base> {
-            sibling_x: halo2_pallas::Base::from(0u64),  // unused; sub-D wires real coords
-            sibling_y: halo2_pallas::Base::from(0u64),  // unused
-            path_index: halo2_pallas::Base::from(7u64),
-        };
+        // Real witness: path_index = 7, sibling = g·7 (computed
+        // natively). The cryptographic claim being tested is that
+        // the in-circuit MSM produces the same result as the
+        // off-circuit Pedersen / scalar-mul.
+        let witness = make_real_witness(7);
         let circuit = EccVerkleStepCircuit::<halo2_pallas::Base>::new(witness);
 
         // k = 11 → 2048 rows; EccChip + lookup table at K=10 needs ~1024+
@@ -911,11 +974,7 @@ mod tests {
         use halo2_proofs::pasta::pallas as halo2_pallas;
 
         for k_value in [1u64, 7, 100, 12345] {
-            let witness = EccVerkleStepWitness::<halo2_pallas::Base> {
-                sibling_x: halo2_pallas::Base::from(0u64),
-                sibling_y: halo2_pallas::Base::from(0u64),
-                path_index: halo2_pallas::Base::from(k_value),
-            };
+            let witness = make_real_witness(k_value);
             let circuit = EccVerkleStepCircuit::<halo2_pallas::Base>::new(witness);
             let prover = MockProver::run(11, &circuit, vec![])
                 .expect("MockProver setup must not fail");
@@ -1161,11 +1220,18 @@ mod prover_tests {
     #[ignore]
     fn prove_v2_and_verify_v2_round_trip() {
         let prover = VerkleProverV2::setup(11).expect("setup must succeed");
-        let witness = EccVerkleStepWitness::<halo2_pallas::Base> {
-            sibling_x: halo2_pallas::Base::from(0u64),
-            sibling_y: halo2_pallas::Base::from(0u64),
-            path_index: halo2_pallas::Base::from(7u64),
-        };
+        // Real witness: path_index = 7, sibling = g·7 (native).
+        // Sub-D follow-up replaced the circular self-witness here.
+        let k_value = 7u64;
+        let k_scalar = pasta_curves::pallas::Scalar::from(k_value);
+        let p = (pasta_curves::pallas::Point::generator() * k_scalar).to_affine();
+        let coords: pasta_curves::arithmetic::Coordinates<halo2_pallas::Affine> =
+            Option::from(p.coordinates()).expect("non-identity for k > 0");
+        let witness = EccVerkleStepWitness::<halo2_pallas::Base>::from_known(
+            *coords.x(),
+            *coords.y(),
+            halo2_pallas::Base::from(k_value),
+        );
         let proof = prover
             .prove_v2(witness)
             .expect("prove_v2 must succeed");

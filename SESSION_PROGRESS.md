@@ -425,6 +425,59 @@ Aggregate: ~140 new tests across 11 files; 0 regressions in existing tests.
 - `crates/evaporchain-state/tests/adversarial_snapshots.rs` — new T0.8 fixtures crate
 - `crates/evaporchain-consensus/tests/dos_resistance.rs` — new T0.7 regression suite
 - Notable security observation: `pnt_v1_no_intermediate_shield_respend_blocked_by_engine_nullifier_set` (commit `6a7452e`) — Stage 1 vs Stage 2 boundary for PNT v1.
+---
+
+## 2026-05-09 (evening) — EvaporScript stdlib + Total-Programming V1 admission gate
+
+**Focus:** Item A (seed-12 `.es` stdlib + 2 worked-example behavioural pilots) and Item B V1 (totality checker module on mainline AST + chain admission gate behind a new `script_vm_mode` governance flag) of the smart-contract layer build-out.
+
+**Commits shipped this arc:** 3 (`cdc33b7` → `d38bf17` → `45a37d0`). See `CHANGELOG.md` for the formal commit-by-commit detail.
+- `cdc33b7` feat(stdlib): seed-12 EvaporScript stdlib + parser-roundtrip + dead_man_switch pilot
+- `d38bf17` feat(script/totality): structural-totality checker on mainline AST + stdlib regression
+- `45a37d0` test(stdlib): payment_split behavioural pilot — math + auth + lifecycle (12 cases)
+
+**Deliverables:**
+
+| Surface | File | Purpose |
+|---|---|---|
+| Item A core | `contracts/evaporscript/{payment_split,sealed_bid_auction,vesting_schedule,time_lock,attestation,oracle_feed,subscription,multisig,lottery,bounty,dead_man_switch,energy_marketplace}.es` | 12 decay-native stdlib primitives, ~2,030 lines |
+| Item A index | `contracts/evaporscript/README.md` | One-liner decay-thesis hook per contract + deploy curl + half-life sizing table |
+| Item A parser regression | `crates/evaporchain-script/tests/stdlib_parse_check.rs` | 12 sub-tests pinning parse + compile + public-method + lifecycle-hook surface for each stdlib contract |
+| Item A behavioural | `crates/evaporchain-script/tests/dead_man_switch_pilot.rs` | 12 cases — the canonical decay-native dApp (the contract EvaporChain was made for) |
+| Item A behavioural | `crates/evaporchain-script/tests/payment_split_pilot.rs` | 12 cases — math regression for the only stdlib contract using `/` and `*` on the hot path |
+| Item B module | `crates/evaporchain-script/src/totality.rs` | `check_total_contract()` + `TotalityCertificate`/`TotalityError` API. V1 rule: reject `Stmt::While`. ~280 lines + 5 inline unit tests |
+| Item B regression | `crates/evaporchain-script/tests/stdlib_totality_check.rs` | 15 sub-tests asserting every seed-15 stdlib contract (3 pilots + 12 stdlib) is total-clean — flag can flip on without porting work |
+
+**In-flight (uncommitted, working-tree contaminated by parallel session's bridge-circuits work):**
+- `crates/evaporchain-consensus/src/tendermint.rs` — adds `script_vm_mode ∈ {permissive, total}` to the governance soft-fork allowlist + updates the unknown-key error-message tail.
+- `crates/evaporchain-execution/src/lib.rs` — `execute_deploy_script` totality gate (parses source, runs `check_total_contract` if flag = total, returns `ExecutionError::ScriptError` on rejection before engine.deploy is called). 3 regression tests added (`test_deploy_script_under_permissive_mode_accepts_while`, `test_deploy_script_under_total_mode_rejects_while`, `test_deploy_script_under_total_mode_accepts_total_clean`).
+
+**Empirical results:** none yet — all 47 new tests pending Mini SSH verification (cluster `cargo build/test` runs there only).
+
+**Decisions made:**
+- **Item A pattern doctrine** locked: 1 file = 1 contract; header doc opens with the decay-thesis hook (one paragraph explaining what would be impossible / forever-broken on a non-decaying chain); sealed-once setup phase + `caller == owner` for deployer gates; lifecycle hook trio always wired; `on_evaporate` is the doctrine moment that documents what evaporation means for that contract (forfeit / void / refund / release).
+- **Totality V1 rule = reject `Stmt::While`.** The mainline grammar's while has no syntactic termination witness, so pass-by-construction is impossible. The seed-15 stdlib uses zero `while` (all if-based), so the strict V1 rule lets total mode flip on for the entire library with no porting work. V1.5 will recognise `while`-with-strict-decrement-ranking patterns and accept them by translating to `BoundedWhile`; until then total mode is `while`-free.
+- **`script_vm_mode` follows the existing soft-fork knob pattern** — allowlist in `governance_set_param` + `db.get/put_governance_param` for runtime read/write. Default unset = permissive (bit-compat with current clusters).
+- **Parsing-twice is acceptable for V1.** The totality gate runs BEFORE `engine.deploy` so the rejection path returns a precise `ExecutionError` without partial deploy state. `ScriptEngine` re-parses internally as part of compile + bytecode validation; the redundant parse is the price of clean separation between governance-gating and engine implementation.
+- **Behavioural-pilot pattern is mechanical now** — 1 file per contract, helper-driven setup, per-method assertion structure. Pattern locked across `dead_man_switch_pilot` + `payment_split_pilot`; remaining 10 stdlib contracts can clone-and-adapt at ~1 hour each.
+
+**What's next:**
+1. **SSH-verify the 47 new tests on a Mini** — `cargo test -p evaporchain-script` (parser + totality + behavioural pilots) + admission tests in `evaporchain-execution`. Catches any shared syntax bug or interface drift in one round-trip.
+2. **Land Item B chain wiring cleanly** — `tendermint.rs` + `execution/lib.rs` hunks need `git add -p` to separate from parallel session's contamination, then commit + push.
+3. **Replicate the behavioural-pilot pattern** for the remaining 10 stdlib contracts (`multisig`, `oracle_feed`, `subscription`, `attestation`, `vesting_schedule`, `time_lock`, `sealed_bid_auction`, `lottery`, `bounty`, `energy_marketplace`). Mechanical work; ~1 hour each.
+4. **Move to Item C** (SDDC pattern as user-facing deploy path — substrate exists in `evaporchain-app-templates-{deploy,materialise,engine,bind,fees,receipt,eventlog}`, only the user-facing `POST /api/tx/deploy-sddc` route is missing) once Item B chain wiring lands.
+
+**Blockers / open questions:**
+- **Working-tree contamination from parallel session.** While this session shipped, a parallel session was actively modifying `Cargo.toml`, `tendermint.rs`, `execution/lib.rs`, `mempool.rs`, `api.rs`, `persistence.rs`, etc. My Item B chain wiring layered on top of their pre-existing diff. Clean separation needs `git add -p` interactively.
+- **Branch hygiene drift.** First 2 commits (`cdc33b7`, `d38bf17`) landed on `lane/t0-9-d-finish-prover-v2`; the third (`45a37d0`) landed on `pr/t0-9-sub-d-followup`. The parallel session switched branches mid-arc; the bridge-circuits PR will bundle the stdlib + totality work unless cherry-picked. Recovery is reversible (cherry-pick to a fresh `lane/evaporscript-stdlib` branch), but not urgent — the work is correct on whatever branch lands first.
+- **Cluster still wedged at h=0** (per the `latest+2` entry below) — Item B can't be soaked under observe mode until the cluster advances. SSH auth still pending.
+
+**Cross-references:**
+- Sister entries below: `(cleanup)`, `(audit-arc)`, `(latest+2)` — all 2026-05-09.
+- `contracts/evaporscript/README.md` — stdlib index page.
+- `crates/evaporchain-total-evaporscript/{lib,check,term}.rs` — Item B substrate context (richer Term AST with BoundedFor/BoundedWhile constructs the V1 lint defers to V1.5).
+- `crates/evaporchain-script/tests/mortal_nft_pilot.rs` — pre-existing pilot pattern this session's pilots model on.
+- `CHANGELOG.md` 2026-05-09 entry for the formal commit-by-commit log.
 
 ---
 
