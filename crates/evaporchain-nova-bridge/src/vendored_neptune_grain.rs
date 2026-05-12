@@ -112,7 +112,8 @@ impl VendoredGrain {
 pub fn vendored_first_ark_bn254() -> ark_bn254::Fr {
     use ark_ff::PrimeField;
 
-    let init = neptune_init_sequence(1, 0, 254, 25, 8, 59);
+    // sbox=1 per neptune `mod.rs:46`: `const SBOX: u8 = 1;` for x^5.
+    let init = neptune_init_sequence(1, 1, 254, 25, 8, 59);
     let mut g = VendoredGrain::new(init);
 
     loop {
@@ -138,7 +139,8 @@ mod tests {
 
     #[test]
     fn vendored_seed_matches_our_seed_bytewise() {
-        let neptune_init = neptune_init_sequence(1, 0, 254, 25, 8, 59);
+        // sbox=1 per neptune `mod.rs:46`.
+        let neptune_init = neptune_init_sequence(1, 1, 254, 25, 8, 59);
         let our_seed_bytes = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
 
         // Convert neptune's bool vec to bytes for comparison.

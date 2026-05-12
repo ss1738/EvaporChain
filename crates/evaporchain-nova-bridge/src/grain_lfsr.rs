@@ -69,10 +69,16 @@ impl GrainSeedParams {
     /// BN254 Fr, Poseidon-128 (α = 5), arity-24 standard strength.
     /// Matches the parameters PR #80's `dump-neptune-constants`
     /// extracted from nova-snark's neptune.
+    ///
+    /// **`sbox_type = 1`** for the x^5 S-Box, per neptune's
+    /// `mod.rs:46`: `const SBOX: u8 = 1; // x^5`. (Earlier PRs
+    /// used 0 here, which was a real bug — caught by reading
+    /// neptune's mod.rs after the vendored algorithm matched our
+    /// impl but neither matched neptune's actual `crc[0]`.)
     pub const fn bn254_arity_24_standard() -> Self {
         Self {
             field_type: 1,
-            sbox_type: 0,
+            sbox_type: 1,
             field_size: 254,
             sbox_count: 25,
             full_rounds: 8,
@@ -333,7 +339,7 @@ mod tests {
     fn bn254_arity_24_standard_params_match_pr80() {
         let p = GrainSeedParams::bn254_arity_24_standard();
         assert_eq!(p.field_type, 1);
-        assert_eq!(p.sbox_type, 0);
+        assert_eq!(p.sbox_type, 1, "x^5 SBOX, per neptune mod.rs:46");
         assert_eq!(p.field_size, 254);
         assert_eq!(p.sbox_count, 25);
         assert_eq!(p.full_rounds, 8);
@@ -371,17 +377,18 @@ mod tests {
     #[test]
     fn pinned_seed_for_bn254_arity_24_standard() {
         let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
-        // Matches neptune's `Grain::new` seed layout. Decomposed:
+        // Matches neptune's `Grain::new` seed layout with the
+        // CORRECT sbox_type=1 (per neptune `mod.rs:46`):
         //   bits  0..2   = 01            (field_type=1)
-        //   bits  2..6   = 0000          (sbox_type=0)
+        //   bits  2..6   = 0001          (sbox_type=1 for x^5)
         //   bits  6..18  = 000011111110  (field_size=254)
         //   bits 18..30  = 000000011001  (sbox_count=25)
         //   bits 30..40  = 0000001000    (full_rounds=8)
         //   bits 40..50  = 0000111011    (partial_rounds=59)
         //   bits 50..80  = 30 × 1        (padding)
         //
-        //   = 0x40 3F 80 64 08 0E FF FF FF FF
-        let expected: [u8; 10] = [0x40, 0x3F, 0x80, 0x64, 0x08, 0x0E, 0xFF, 0xFF, 0xFF, 0xFF];
+        //   = 0x44 3F 80 64 08 0E FF FF FF FF
+        let expected: [u8; 10] = [0x44, 0x3F, 0x80, 0x64, 0x08, 0x0E, 0xFF, 0xFF, 0xFF, 0xFF];
         assert_eq!(seed, expected, "seed bits for bn254/arity-24/standard");
     }
 
@@ -688,10 +695,11 @@ mod tests {
             }
             eprintln!("  common LE-prefix bytes: {common} / 32");
         }
-        // Current state: differs. Flip to assert_eq when LFSR is fixed.
+        // PORT COMPLETE (post PR #97 sbox_type=1 fix): LFSR
+        // output matches neptune crc[0..25] byte-for-byte.
         assert!(
-            !mismatches.is_empty(),
-            "LFSR matches neptune crc[0..25] — flip this to `assert!(mismatches.is_empty())`."
+            mismatches.is_empty(),
+            "LFSR plain ARK round 0 must match neptune crc[0..25] byte-for-byte"
         );
     }
 
