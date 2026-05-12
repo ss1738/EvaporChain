@@ -147,6 +147,48 @@ impl GrainLfsr {
     pub fn state_bytes(&self) -> [u8; 10] {
         self.state
     }
+
+    /// Emit one filtered output bit per the Poseidon paper's
+    /// discard-zeros rejection scheme:
+    ///
+    /// ```text
+    /// loop {
+    ///   new_bit  = clock()
+    ///   cond_bit = clock()
+    ///   if cond_bit == 1 { return new_bit }
+    ///   // else discard `new_bit` and try again
+    /// }
+    /// ```
+    ///
+    /// Half the LFSR output is consumed by the conditional gate;
+    /// the rest passes through. This is the standard CSPRNG
+    /// debiasing for grain-based round-constant generation.
+    pub fn next_filtered_bit(&mut self) -> u8 {
+        loop {
+            let new_bit = self.clock();
+            let cond_bit = self.clock();
+            if cond_bit == 1 {
+                return new_bit;
+            }
+        }
+    }
+
+    /// Emit `n` filtered bits as a big-endian byte vector, MSB
+    /// first in the first byte. Trailing bits (if `n` is not a
+    /// multiple of 8) sit in the high bits of the last byte —
+    /// matches the convention `from_be_bytes` would expect.
+    pub fn next_filtered_bits_be_bytes(&mut self, n: usize) -> Vec<u8> {
+        let mut out = vec![0u8; n.div_ceil(8)];
+        for i in 0..n {
+            let bit = self.next_filtered_bit();
+            // MSB-first packing: bit i goes into byte (i/8),
+            // bit position (7 - i%8) within that byte.
+            let byte_idx = i / 8;
+            let bit_idx = 7 - (i % 8);
+            out[byte_idx] |= (bit & 1) << bit_idx;
+        }
+        out
+    }
 }
 
 /// Construct the 80-bit grain LFSR initial state for the given
@@ -295,6 +337,82 @@ mod tests {
         assert_eq!(a.state_bytes(), b.state_bytes(), "warmup deterministic");
         assert_ne!(a.state_bytes(), seed, "warmup must change the state");
         assert_ne!(a.state_bytes(), [0u8; 10], "warmup must not zero the state");
+    }
+
+    /// Filter loop emits BOTH 0 and 1 bits — confirms the
+    /// discard-zeros logic isn't accidentally producing a
+    /// degenerate stream. Running 200 filtered bits should give
+    /// a non-trivial mix.
+    #[test]
+    fn filter_loop_emits_mixed_bits() {
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut lfsr = GrainLfsr::from_seed(seed);
+        lfsr.warmup();
+        let mut zeros = 0;
+        let mut ones = 0;
+        for _ in 0..200 {
+            match lfsr.next_filtered_bit() {
+                0 => zeros += 1,
+                1 => ones += 1,
+                b => panic!("non-binary bit: {b}"),
+            }
+        }
+        // For a healthy CSPRNG, expect ~100 zeros and ~100 ones.
+        // Conservative bound: at least 30 of each (catches the
+        // pathological "always 0" or "always 1" regression).
+        assert!(zeros >= 30, "filter produced too few zeros: {zeros}");
+        assert!(ones >= 30, "filter produced too few ones: {ones}");
+        eprintln!("filter sample 200 bits: zeros={zeros} ones={ones}");
+    }
+
+    /// Filter is deterministic: same seed yields the same
+    /// filtered stream.
+    #[test]
+    fn filter_is_deterministic() {
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut a = GrainLfsr::from_seed(seed);
+        let mut b = GrainLfsr::from_seed(seed);
+        a.warmup();
+        b.warmup();
+        let a_bits: Vec<u8> = (0..64).map(|_| a.next_filtered_bit()).collect();
+        let b_bits: Vec<u8> = (0..64).map(|_| b.next_filtered_bit()).collect();
+        assert_eq!(a_bits, b_bits, "filter must be deterministic");
+    }
+
+    /// `next_filtered_bits_be_bytes` packs MSB-first. For an
+    /// 8-bit fixture where the first filtered bit happens to be
+    /// `b`, byte[0] must have `b` at bit position 7 (MSB).
+    #[test]
+    fn filtered_bits_pack_msb_first() {
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut lfsr = GrainLfsr::from_seed(seed);
+        lfsr.warmup();
+        let mut probe = lfsr.clone();
+        let first_bit = probe.next_filtered_bit();
+        let bytes = lfsr.next_filtered_bits_be_bytes(8);
+        assert_eq!(bytes.len(), 1);
+        assert_eq!(
+            (bytes[0] >> 7) & 1,
+            first_bit,
+            "MSB of byte 0 must equal first filtered bit"
+        );
+    }
+
+    /// `next_filtered_bits_be_bytes(254)` produces 32 bytes (the
+    /// shape we need for BN254 Fr packing). Last byte's low 2 bits
+    /// are zero-padded (since 254 isn't a multiple of 8 — but the
+    /// 254 emitted bits land in bit positions 7..down through 0
+    /// across 32 bytes; the LAST 2 bits of byte 31 remain zero).
+    #[test]
+    fn filtered_bits_254_produces_32_bytes() {
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut lfsr = GrainLfsr::from_seed(seed);
+        lfsr.warmup();
+        let bytes = lfsr.next_filtered_bits_be_bytes(254);
+        assert_eq!(bytes.len(), 32, "254 bits → 32 bytes (with 2 trailing pad bits)");
+        // Low 2 bits of byte 31 must be zero (positions 254 and 255
+        // not filled).
+        assert_eq!(bytes[31] & 0b11, 0, "trailing pad bits must be zero");
     }
 
     /// Changing any one parameter must produce a different seed.
