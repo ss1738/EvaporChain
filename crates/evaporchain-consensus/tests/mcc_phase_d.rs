@@ -1084,12 +1084,12 @@ fn mcc_phase_d5_antichain_digest_convergence_across_4_validators() {
     }
 
     let mut tip_ids: [[u8; 32]; D5_FORKS] = [id(0); D5_FORKS];
-    for i in 0..D5_FORKS {
+    for (i, tip) in tip_ids.iter_mut().enumerate() {
         let bid = [(i + 1) as u8; 32];
         for tc in validators.iter_mut() {
             lc_insert(tc, bid, vec![id(0)], 1);
         }
-        tip_ids[i] = bid;
+        *tip = bid;
     }
 
     let mut next_byte: u8 = (D5_FORKS + 1) as u8;
