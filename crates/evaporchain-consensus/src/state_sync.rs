@@ -1677,4 +1677,195 @@ mod tests {
         let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: bad_meta });
         assert!(actions.is_empty(), "hash count mismatch must be rejected");
     }
+
+    // ── T1.20 state_sync gap-closure ──────────────────────────────────────
+
+    #[test]
+    fn t1_20_snapshot_provider_tip_request_returns_tip_response() {
+        let p = SnapshotProvider::new();
+        let result = p.handle_request(&SyncMessage::TipRequest, 500, [0xBBu8; 32]);
+        match result {
+            Some(SyncMessage::TipResponse { height, block_hash }) => {
+                assert_eq!(height, 500);
+                assert_eq!(block_hash, [0xBBu8; 32]);
+            }
+            other => panic!("expected TipResponse; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn t1_20_download_progress_partial_chunks() {
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::DownloadingSnapshot {
+            target_height: 100,
+            total_chunks: 4,
+            received_chunks: 1,
+        };
+        let prog = sync.download_progress();
+        assert!(
+            (prog - 0.25).abs() < 1e-9,
+            "1/4 chunks must be 0.25 progress; got {prog}"
+        );
+    }
+
+    #[test]
+    fn t1_20_handle_snapshot_metadata_valid_issues_chunk_requests() {
+        // Two peers agree on tip → target_height is set.
+        let mut sync = StateSyncManager::new(0);
+        sync.start();
+        sync.on_message(1, SyncMessage::TipResponse { height: 100, block_hash: [10u8; 32] });
+        sync.on_message(2, SyncMessage::TipResponse { height: 100, block_hash: [10u8; 32] });
+        // Phase is now DownloadingSnapshot{target_height=100, total_chunks=0, ...}
+
+        let data = vec![0xABu8; 64];
+        let chunk_hash = blake3_hash(&data);
+        let meta = SnapshotMetadata {
+            height: 100,
+            epoch: 1,
+            state_root: [0u8; 32],
+            total_chunks: 1,
+            chunk_hashes: vec![chunk_hash],
+            total_size: 64,
+        };
+
+        let actions = sync.on_message(
+            1,
+            SyncMessage::SnapshotMetadataResponse { metadata: meta },
+        );
+        assert!(
+            !actions.is_empty(),
+            "valid metadata must emit chunk-request actions"
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, SyncAction::SendToPeer { .. })),
+            "must include a SendToPeer chunk-request"
+        );
+    }
+
+    #[test]
+    fn t1_20_full_sync_flow_single_chunk_reaches_complete() {
+        // Full happy path: tip discovery → metadata → chunk → Complete.
+        let data = vec![0xCDu8; 100];
+        let chunk_hash = blake3_hash(&data);
+
+        let mut sync = StateSyncManager::new(0);
+        sync.start();
+
+        // Two peers agree on height=200.
+        sync.on_message(1, SyncMessage::TipResponse { height: 200, block_hash: [1u8; 32] });
+        sync.on_message(2, SyncMessage::TipResponse { height: 200, block_hash: [1u8; 32] });
+        // Phase = DownloadingSnapshot{target=200, total=0, received=0}
+
+        // Valid 1-chunk metadata.
+        let meta = SnapshotMetadata {
+            height: 200,
+            epoch: 2,
+            state_root: [0x77u8; 32],
+            total_chunks: 1,
+            chunk_hashes: vec![chunk_hash],
+            total_size: 100,
+        };
+        sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: meta });
+
+        // Valid chunk (hash matches).
+        let chunk = SnapshotChunk {
+            height: 200,
+            index: 0,
+            total: 1,
+            data: data.clone(),
+            hash: chunk_hash,
+        };
+        let actions = sync.on_message(1, SyncMessage::ChunkResponse { chunk });
+
+        assert!(
+            sync.is_complete(),
+            "after all chunks received sync must be Complete"
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, SyncAction::ApplySnapshot { .. })),
+            "Complete path must emit ApplySnapshot"
+        );
+        assert_eq!(
+            sync.download_progress(),
+            1.0,
+            "complete sync must report 100% progress"
+        );
+    }
+
+    #[test]
+    fn t1_20_snapshot_metadata_no_target_height_ignored() {
+        // handle_snapshot_metadata returns vec![] if target_height is None.
+        // Reach this by sending metadata without ever setting target_height.
+        let mut sync = StateSyncManager::new(0);
+        // Phase stays Idle; target_height = None.
+        let meta = SnapshotMetadata {
+            height: 50,
+            epoch: 1,
+            state_root: [0u8; 32],
+            total_chunks: 1,
+            chunk_hashes: vec![[0u8; 32]],
+            total_size: 64,
+        };
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: meta });
+        assert!(
+            actions.is_empty(),
+            "metadata without target_height must be ignored"
+        );
+    }
+
+    #[test]
+    fn t1_20_prune_removes_chunk_data_entries() {
+        let mut p = SnapshotProvider::new();
+        // Create 3 small snapshots.
+        for h in 1..=3u64 {
+            p.create_snapshot(h, 0, [0u8; 32], &vec![0u8; 128]);
+        }
+        assert_eq!(p.snapshot_count(), 3);
+        // Prune to 1: heights 1 and 2 should be removed including their chunks.
+        p.prune(1);
+        assert_eq!(p.snapshot_count(), 1, "only 1 snapshot must remain after prune");
+        // The remaining snapshot must serve a ChunkRequest.
+        let resp = p.handle_request(
+            &SyncMessage::ChunkRequest { height: 3, chunk_index: 0 },
+            3,
+            [0u8; 32],
+        );
+        assert!(resp.is_some(), "surviving snapshot must still serve chunks");
+        // Pruned snapshots must not serve chunks.
+        let resp_old = p.handle_request(
+            &SyncMessage::ChunkRequest { height: 1, chunk_index: 0 },
+            1,
+            [0u8; 32],
+        );
+        assert!(resp_old.is_none(), "pruned snapshot chunk must return None");
+    }
+
+    #[test]
+    fn t1_20_snapshot_metadata_height_mismatch_from_discovered_target() {
+        // Metadata height ≠ target_height → ignored even after tip agreement.
+        let mut sync = StateSyncManager::new(0);
+        sync.start();
+        sync.on_message(1, SyncMessage::TipResponse { height: 100, block_hash: [5u8; 32] });
+        sync.on_message(2, SyncMessage::TipResponse { height: 100, block_hash: [5u8; 32] });
+        // target_height = Some(100)
+
+        let meta = SnapshotMetadata {
+            height: 999, // wrong height
+            epoch: 1,
+            state_root: [0u8; 32],
+            total_chunks: 1,
+            chunk_hashes: vec![[0u8; 32]],
+            total_size: 64,
+        };
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: meta });
+        assert!(
+            actions.is_empty(),
+            "metadata with mismatched height must be ignored"
+        );
+    }
+
 }
