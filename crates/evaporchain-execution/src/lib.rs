@@ -3630,7 +3630,7 @@ impl ExecutionEngine for SimpleExecutor {
         // Credit newly-minted supply into the pre-block snapshot so the audit
         // compares like-for-like: minting raises total legitimately and must not
         // be counted as a DecayIncreasedTotal violation.
-        let mut conservation_before_adjusted = conservation_before.clone();
+        let mut conservation_before_adjusted = conservation_before;
         if minted_this_block > 0 {
             conservation_before_adjusted.credit(
                 evaporchain_energy_kernel::Compartment::Accounts,

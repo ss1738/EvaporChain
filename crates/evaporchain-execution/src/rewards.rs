@@ -200,7 +200,7 @@ impl RewardAccumulator {
                     acct.balance = acct.balance.saturating_add(dist.to_producer);
                     acct.last_touched_epoch = epoch;
                     producer_credit += dist.to_producer;
-                } else if let Some(pool) = redirect_pool.as_deref_mut() {
+                } else if let Some(pool) = redirect_pool {
                     pool.accrue(
                         DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
                         dist.to_producer,
@@ -343,7 +343,7 @@ impl RewardAccumulator {
                         acct.balance = acct.balance.saturating_add(commission);
                         acct.last_touched_epoch = epoch;
                         producer_credit += commission;
-                    } else if let Some(pool) = redirect_pool.as_deref_mut() {
+                    } else if let Some(pool) = redirect_pool {
                         pool.accrue(
                             DEAD_PRODUCER_REFRESH_NAMESPACE.to_vec(),
                             commission,
