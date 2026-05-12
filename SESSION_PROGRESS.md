@@ -114,6 +114,35 @@ The reverse-chronological layout means the most recent session is always at the 
 - Reading-the-source artifacts: neptune `round_constants.rs`, `preprocessing.rs`, `poseidon_inner.rs`, `mod.rs`, `sponge/vanilla.rs`
 - 53.5 GiB cleared from Mini 1 mid-session (recurring disk-pressure issue per `evaporchain_reaudit_round_3_2026_05_02.md`)
 
+### Addendum (PRs #100–#111) — full compressed-ARK port + operator tooling
+
+Session continued past the PR #98 LFSR breakthrough to complete the **compressed-ARK port**:
+
+| PR | What landed |
+|---|---|
+| #100 | Ruled out `domain_tag` as parity-divergence source (`HashType::Sponge → F::ZERO`) |
+| #101 | `mds_linalg` primitives: `left_apply_matrix`, `vec_add` |
+| #102 | `compress_first_full_rounds` → `crc[0..100]` byte parity (75 entries beyond plain) |
+| #103 | **`compress_full` → `crc[0..259]` BYTE PARITY** — entire neptune compressed ARK reproducible from our crate |
+| #104 | `SCAFFOLD_VERSION` bumped → `phase-2.2-section-2-constants` |
+| #105 | First emitted Fr LE bytes pinned against `neptune crc[0]` (strict regression net) |
+| #106 | Extractors for the 4 remaining MDS sub-matrices (`m_hat`, `m_hat_inv`, `m_prime`, `m_double_prime`) |
+| #107 | `matrix_mul` + `identity_matrix` + real-data invariants (`m · m_inv = I₂₅`, `m_hat · m_hat_inv = I₂₄`) |
+| #108 | `dump-our-compressed-ark` operator binary (mirrors PR #80's JSON shape for `diff` audit) |
+| #109 | `check-neptune-parity` CI-gate binary (exit 0 on 259/259 match, exit 1 on regression) |
+| #110 | Bridge crate README — 14-module + 5-binary navigation guide |
+| #111 | Integration test in `tests/section2_parity.rs` (4th independent verification path) |
+
+**Section 2 constants are now byte-correct via 4 independent paths:**
+- Unit test (PR #103)
+- Operator dump → `diff` (PR #108)
+- CI-gate binary (PR #109)
+- Integration test (PR #111)
+
+**Total session count: 48 PRs (PRs #64 → #111).**
+
+The residual hash-byte divergence (PR #98's canary, still `assert_ne!`) is narrowed to the arkworks `PoseidonSpongeVar` per-round operation vs neptune's `Poseidon::hash_optimized_static` SBOX-trick-fused partial rounds. That's the next BESPOKE wedge — outside this session's scope.
+
 ---
 
 ## 2026-05-12 (late evening) — T1.20 parallel.rs batch 7: +57 tests, 78.89%→83.46%
