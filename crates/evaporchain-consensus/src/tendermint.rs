@@ -67,25 +67,8 @@ pub trait ProofVerifier: Send + Sync {
 // ─────────────────────── Configuration ───────────────────────────────────
 
 /// Default timeout for each consensus phase.
-/// Maximum number of pending Causal-CHSH cartel-alarm events the
-/// chain will retain awaiting operator drain via
-/// `/api/cartel_alarm/pending_events`. Per-height de-duplication
-/// (see `maybe_emit_cartel_alarm_event`) already keeps the queue
-/// sparse, but a never-draining operator + long uptime could still
-/// grow it unbounded. Generous default since events are rare and
-/// reaching the cap signals a long-standing un-monitored alarm.
-const MAX_PENDING_CARTEL_ALARMS: usize = 1024;
-
 /// Window size (in slots) for Sanov equivocation slash. KL divergence is
 /// computed as 1 double-sign in 100 honest proposals → near-full slash.
-/// Maximum number of pending (commitment, nonce) reveal pairs the
-/// consensus engine will hold between block productions. Anti-DoS
-/// cap — without this, an attacker could submit arbitrary reveal
-/// nonces (each 64 bytes) and exhaust validator memory before the
-/// next proposal drains them. Companion to PR #17's
-/// `MAX_ENCRYPTED_PENDING`; same threshold (10K).
-const MAX_PENDING_REVEALS: usize = 10_000;
-
 const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
 /// Window size (in rounds) for Sanov downtime slash. Honest = miss 1 in 20.
 const SANOV_DOWNTIME_WINDOW: u64 = 20;
@@ -1941,25 +1924,6 @@ impl TendermintConsensus {
             samples_per_bucket = ?event.samples_per_bucket,
             "Causal-CHSH cartel alarm fired (chain self-monitor crossed doctrine ceiling)"
         );
-        // Capacity cap. If the operator hasn't drained
-        // /api/cartel_alarm/pending_events for ~1024 distinct alarm
-        // heights, reaching the cap means a long-standing un-monitored
-        // alarm — at that point dropping the newest event in favour
-        // of preserving the oldest (which gave the earliest warning)
-        // is the right policy. The WARN log above still fires on
-        // every drop so operators tailing structured logs don't lose
-        // observability when the queue is full.
-        if self.pending_cartel_alarms.len() >= MAX_PENDING_CARTEL_ALARMS {
-            warn!(
-                target: "cartel_alarm",
-                at_height = event.at_height,
-                queue_size = self.pending_cartel_alarms.len(),
-                cap = MAX_PENDING_CARTEL_ALARMS,
-                "Dropping cartel alarm event — pending queue at cap; \
-                 oldest events preserved for early-warning posterity"
-            );
-            return;
-        }
         self.pending_cartel_alarms.push(event);
     }
 
@@ -2378,7 +2342,10 @@ impl TendermintConsensus {
             // multiple violation buckets to get non-trivial entropy.
             // Phase 3.5d ships the wiring; entropy-based amount
             // tuning is operator follow-up.
-            let amount = evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]).unwrap_or_default();
+            let amount = match evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]) {
+                Ok(v) => v,
+                Err(_) => 0,
+            };
             if amount > 0 {
                 let actual = self
                     .validator_set
@@ -3525,30 +3492,14 @@ impl TendermintConsensus {
         self.encrypted_mempool.submit_encrypted(encrypted_tx);
     }
 
-    /// Submit a reveal nonce for a previously committed encrypted
-    /// transaction. The nonce will be used at the next block
-    /// production to decrypt and include the tx.
-    ///
-    /// Returns `true` if accepted, `false` if rejected because the
-    /// pending-reveals queue is at `MAX_PENDING_REVEALS`. T0.7
-    /// vector 4 companion: bounds the reveal queue alongside the
-    /// encrypted-mempool capacity cap (PR #17).
-    pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) -> bool {
-        if self.pending_reveals.len() >= MAX_PENDING_REVEALS {
-            debug!(
-                commitment = hex::encode(commitment),
-                pending = self.pending_reveals.len(),
-                cap = MAX_PENDING_REVEALS,
-                "Reveal nonce rejected — pending-reveals queue at capacity"
-            );
-            return false;
-        }
+    /// Submit a reveal nonce for a previously committed encrypted transaction.
+    /// The nonce will be used at the next block production to decrypt and include the tx.
+    pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) {
         debug!(
             commitment = hex::encode(commitment),
             "Reveal nonce submitted for encrypted tx"
         );
         self.pending_reveals.push((commitment, nonce));
-        true
     }
 
     /// Get pending counts: (plain_mempool, encrypted_pending, reveals_pending).
@@ -6004,7 +5955,7 @@ impl TendermintConsensus {
             // the node-side block-record prune at main.rs ~line 4357.
             const LIGHT_CONE_PRUNE_INTERVAL: u64 = 100;
             const LIGHT_CONE_RETENTION_EPOCHS: u64 = 1_000;
-            if block.number > 0 && block.number.is_multiple_of(LIGHT_CONE_PRUNE_INTERVAL) {
+            if block.number > 0 && block.number % LIGHT_CONE_PRUNE_INTERVAL == 0 {
                 let cutoff = block.epoch.saturating_sub(LIGHT_CONE_RETENTION_EPOCHS);
                 if cutoff > 0 {
                     let pruned = self.light_cone_dag.prune_before_epoch(cutoff);
@@ -9001,81 +8952,6 @@ mod tests {
         );
     }
 
-    /// T0.7 vector 4 companion (third surface — cartel alarm queue).
-    /// Without a cap, the chain's pending-cartel-alarms queue grows
-    /// unbounded over uptime if the operator never drains
-    /// /api/cartel_alarm/pending_events. Per-height de-dup keeps the
-    /// queue sparse, but reaching the cap (1024 distinct alarm
-    /// heights) signals a long-standing un-monitored alarm. Policy
-    /// at the cap: drop newest, preserve oldest (earliest-warning
-    /// posterity).
-    #[test]
-    fn cartel_alarm_queue_caps_at_max_pending_with_drop_newest_policy() {
-        use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
-
-        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
-        tc.governance_set_param("cartel_alarm_mode", "alarm")
-            .expect("alarm mode must be allowlisted");
-
-        // Fill to MAX_PENDING_CARTEL_ALARMS distinct heights.
-        for height in 1..=MAX_PENDING_CARTEL_ALARMS as u64 {
-            let status = AlarmStatus {
-                s_honest: 2.5,
-                s_cartel_synthetic: 3.6,
-                gap: 1.1,
-                s_honest_milli: 2500,
-                s_cartel_synthetic_milli: 3600,
-                gap_milli: 1100,
-                verdict: "Fail".to_string(),
-                last_run_at_height: height,
-                samples_per_bucket: [25, 25, 25, 25],
-                thresholds: GateThresholds::doctrine(),
-            };
-            tc.cartel_alarm._inject_status_for_test(status);
-            tc.maybe_emit_cartel_alarm_event();
-        }
-        assert_eq!(
-            tc.pending_cartel_alarms.len(),
-            MAX_PENDING_CARTEL_ALARMS,
-            "queue must fill exactly to the cap"
-        );
-
-        // The (cap+1)-th distinct height is dropped — newest discarded.
-        let over_height = MAX_PENDING_CARTEL_ALARMS as u64 + 1;
-        let over_status = AlarmStatus {
-            s_honest: 2.5,
-            s_cartel_synthetic: 3.6,
-            gap: 1.1,
-            s_honest_milli: 2500,
-            s_cartel_synthetic_milli: 3600,
-            gap_milli: 1100,
-            verdict: "Fail".to_string(),
-            last_run_at_height: over_height,
-            samples_per_bucket: [25, 25, 25, 25],
-            thresholds: GateThresholds::doctrine(),
-        };
-        tc.cartel_alarm._inject_status_for_test(over_status);
-        tc.maybe_emit_cartel_alarm_event();
-
-        // Queue size unchanged — the at-cap path returned early.
-        assert_eq!(
-            tc.pending_cartel_alarms.len(),
-            MAX_PENDING_CARTEL_ALARMS,
-            "at-cap emit must NOT grow the queue"
-        );
-
-        // Oldest events preserved. Drain and verify the first event is
-        // height 1 and the last is MAX_PENDING_CARTEL_ALARMS — the
-        // (cap+1)-th wasn't enqueued.
-        let drained = tc.take_pending_cartel_alarms();
-        assert_eq!(drained.len(), MAX_PENDING_CARTEL_ALARMS);
-        assert_eq!(drained.first().map(|e| e.at_height), Some(1));
-        assert_eq!(
-            drained.last().map(|e| e.at_height),
-            Some(MAX_PENDING_CARTEL_ALARMS as u64)
-        );
-    }
-
     /// Lane O.8.2c — full-pipeline integration test for cartel-alarm
     /// emission. Drives blocks through `on_block_committed` with
     /// `cartel_alarm_mode = "alarm"` set via the K.1 RPC path, then
@@ -11026,7 +10902,7 @@ mod tests {
     /// (replay protection).
     #[test]
     fn test_due_refund_txs_grace_window_and_replay_protection() {
-        use evaporchain_types::{Block, TransferTx};
+        use evaporchain_types::{Block, RefundTx, TransferTx};
 
         fn addr_local(seed: u8) -> [u8; 32] {
             let mut a = [0u8; 32];
@@ -12312,26 +12188,26 @@ mod tests {
         assert!(tc.propose_parents().is_empty());
     }
 
-    // MCC Phase C.5 — validator-determinism property test (256
-    // random DAG shapes).
-    //
-    // **The contract:** every honest validator with the same DAG
-    // state must produce the same MCC fork-choice outputs:
-    //   1. `candidate_heads()` returns the same `BTreeSet` of leaves
-    //   2. `enumerate_candidate_heads()` returns the same sorted
-    //      `Vec<(BlockId, caliber)>` (same order, same scores)
-    //   3. `light_cone_antichain_digest()` matches
-    //   4. `plan_replay_to_head` produces the same `ReplayWalk` for
-    //      every (from, to) pair drawn from the candidate heads
-    //
-    // **Why this is a proptest, not a unit test:** the manual
-    // `mcc_phase_a_candidate_heads_converges_across_validators`
-    // test (already shipped) covers a 6-block hand-picked sequence.
-    // This proptest sweeps 256 randomly-generated DAG shapes (linear
-    // chains, branching, multi-parent merges) at sizes 1..=20
-    // blocks, catching any non-determinism that depends on a
-    // specific topology — HashMap iteration order leaking into
-    // scoring, time-based tie-breaks, etc.
+    /// MCC Phase C.5 — validator-determinism property test (256
+    /// random DAG shapes).
+    ///
+    /// **The contract:** every honest validator with the same DAG
+    /// state must produce the same MCC fork-choice outputs:
+    ///   1. `candidate_heads()` returns the same `BTreeSet` of leaves
+    ///   2. `enumerate_candidate_heads()` returns the same sorted
+    ///      `Vec<(BlockId, caliber)>` (same order, same scores)
+    ///   3. `light_cone_antichain_digest()` matches
+    ///   4. `plan_replay_to_head` produces the same `ReplayWalk` for
+    ///      every (from, to) pair drawn from the candidate heads
+    ///
+    /// **Why this is a proptest, not a unit test:** the manual
+    /// `mcc_phase_a_candidate_heads_converges_across_validators`
+    /// test (already shipped) covers a 6-block hand-picked sequence.
+    /// This proptest sweeps 256 randomly-generated DAG shapes (linear
+    /// chains, branching, multi-parent merges) at sizes 1..=20
+    /// blocks, catching any non-determinism that depends on a
+    /// specific topology — HashMap iteration order leaking into
+    /// scoring, time-based tie-breaks, etc.
     proptest::proptest! {
         #[test]
         fn mcc_phase_c5_validator_determinism_under_random_dags(
@@ -13649,11 +13525,11 @@ mod tests {
             // Random "key" string for unknown-key cases.
             junk_key in "[a-z]{3,18}",
         ) {
-            // (removed: prelude was unused in this proptest body)
+            use proptest::prelude::*;
             // Some toolchains don't surface proptest's assertion
             // macros via the prelude glob; explicit imports below
             // make them available unconditionally.
-            use proptest::prop_assert;
+            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
             let (key, value, expected): (&str, String, &str) = match bucket {
                 0 => ("parent_acceptance_mode", "mcc".to_string(), "ok"),
@@ -13736,8 +13612,8 @@ mod tests {
             s_honest_milli in -2000i64..4001,
             last_run_at_height in 0u64..1_000_001,
         ) {
-            // (removed: unused proptest prelude — fully-qualified prop_assert_eq! used below)
-            // (removed: unused proptest macro imports — fully-qualified below)
+            use proptest::prelude::*;
+            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
             use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
 
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
@@ -14516,575 +14392,6 @@ mod tests {
         let tc = make_consensus(1, &[1, 2, 3]);
         assert!(tc.disputed_observations().is_empty());
     }
-
-    #[test]
-    fn t1_20_bls_vote_message_deterministic() {
-        let msg1 = TendermintConsensus::bls_vote_message(42, 3, &Some([0xABu8; 32]), "prevote");
-        let msg2 = TendermintConsensus::bls_vote_message(42, 3, &Some([0xABu8; 32]), "prevote");
-        assert_eq!(msg1, msg2, "bls_vote_message must be deterministic");
-    }
-
-    #[test]
-    fn t1_20_bls_vote_message_none_hash_shorter_than_some() {
-        let msg_none = TendermintConsensus::bls_vote_message(1, 0, &None, "prevote");
-        let msg_some =
-            TendermintConsensus::bls_vote_message(1, 0, &Some([0x11u8; 32]), "prevote");
-        assert!(
-            msg_none.len() < msg_some.len(),
-            "nil-vote message must be shorter than hash-present message"
-        );
-        assert_eq!(
-            msg_some.len() - msg_none.len(),
-            32,
-            "the only difference should be the 32-byte hash"
-        );
-    }
-
-    #[test]
-    fn t1_20_bls_vote_message_phase_prefix_is_phase_bytes() {
-        let phase = "precommit";
-        let msg = TendermintConsensus::bls_vote_message(10, 1, &None, phase);
-        assert!(
-            msg.starts_with(phase.as_bytes()),
-            "bls_vote_message must start with the phase string bytes"
-        );
-    }
-
-    #[test]
-    fn t1_20_bls_vote_message_different_phases_differ() {
-        let a = TendermintConsensus::bls_vote_message(1, 0, &None, "prevote");
-        let b = TendermintConsensus::bls_vote_message(1, 0, &None, "precommit");
-        assert_ne!(a, b, "different phase strings must produce different messages");
-    }
-
-    #[test]
-    fn t1_20_current_proposer_is_some_for_new_consensus() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // At height=1, round=0 there must be an elected proposer.
-        assert!(
-            tc.current_proposer().is_some(),
-            "current_proposer() must return Some at startup with validators"
-        );
-    }
-
-    #[test]
-    fn t1_20_current_proposer_id_is_in_validator_set() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let proposer = tc.current_proposer().expect("proposer exists");
-        let id = proposer.id;
-        assert!(
-            tc.validator_set.get(id).is_some(),
-            "current_proposer id={id} must exist in the validator set"
-        );
-    }
-
-    #[test]
-    fn t1_20_boltzmann_proposer_weights_len_matches_validator_count() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let weights = tc.boltzmann_proposer_weights(1_000);
-        assert_eq!(
-            weights.len(),
-            3,
-            "boltzmann_proposer_weights must return one entry per validator"
-        );
-    }
-
-    #[test]
-    fn t1_20_boltzmann_proposer_weights_sorted_descending() {
-        let tc = make_consensus(1, &[1, 2, 3, 4, 5]);
-        let weights = tc.boltzmann_proposer_weights(1_000);
-        for w in weights.windows(2) {
-            assert!(
-                w[0].1 >= w[1].1,
-                "boltzmann_proposer_weights must be sorted descending;                  got {} < {}" ,
-                w[0].1,
-                w[1].1
-            );
-        }
-    }
-
-    #[test]
-    fn t1_20_boltzmann_proposer_weights_empty_validator_set() {
-        let tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::with_validators(vec![]));
-        let weights = tc.boltzmann_proposer_weights(1_000);
-        assert!(weights.is_empty(), "empty validator set → empty weights");
-    }
-
-    #[test]
-    fn t1_20_refresh_proposer_boltzmann_stake_initialises_entry() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        // Before refresh, boltzmann_stakes may be empty.
-        let before = tc.boltzmann_stakes.contains_key(&1);
-        tc.refresh_proposer_boltzmann_stake(1, 1, 50);
-        // After refresh the entry must exist regardless of whether it
-        // was seeded before.
-        assert!(
-            tc.boltzmann_stakes.contains_key(&1),
-            "refresh must initialise a boltzmann stake entry for the proposer;              was_present_before={before}"
-        );
-    }
-
-    #[test]
-    fn t1_20_refresh_proposer_boltzmann_stake_unknown_id_no_panic() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        // ID 99 is not in the validator set.  ensure_boltzmann_stake will
-        // seed it with stake=0 from the fallback path, then get_mut
-        // returns Some.  Either way this must NOT panic.
-        tc.refresh_proposer_boltzmann_stake(99, 1, 100);
-    }
-
-    #[test]
-    fn t1_20_authoritative_head_empty_candidates_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // Default MCC mode, no candidates → None (no trajectories built).
-        let result = tc.authoritative_head(&[], 10_000);
-        assert!(result.is_none(), "empty candidate list must yield None");
-    }
-
-    #[test]
-    fn t1_20_authoritative_head_candidates_not_in_dag_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // These hashes are not in the Light-Cone DAG.
-        let candidates = [[1u8; 32], [2u8; 32]];
-        let result = tc.authoritative_head(&candidates, 10_000);
-        assert!(
-            result.is_none(),
-            "candidates absent from DAG must yield None via MCC trajectory filter"
-        );
-    }
-
-    #[test]
-    fn t1_20_mcc_choose_fork_empty_candidates_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.mcc_choose_fork(&[], 10_000).is_none());
-    }
-
-    #[test]
-    fn t1_20_singh_attractor_fork_choice_empty_attractors_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let candidates = [[1u8; 32]];
-        // Empty attractors → immediate None per guard.
-        assert!(tc
-            .singh_attractor_fork_choice(&candidates, &[])
-            .is_none());
-    }
-
-    #[test]
-    fn t1_20_singh_attractor_fork_choice_empty_candidates_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let attractor =
-            evaporchain_singh_attractor::Attractor::new(5_000, 1_000);
-        // Non-empty attractors, but no candidates to iterate → None.
-        assert!(tc
-            .singh_attractor_fork_choice(&[], &[attractor])
-            .is_none());
-    }
-
-    #[test]
-    fn t1_20_causal_cone_summary_unknown_head_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // Head not in the Light-Cone DAG → summarize_cone returns Err → None.
-        let result = tc.causal_cone_summary([0xFFu8; 32], 100, 10);
-        assert!(
-            result.is_none(),
-            "head absent from DAG must return None from causal_cone_summary"
-        );
-    }
-
-    // ── T1.20 gap-closure batch 3 ─────────────────────────────────────────
-
-    fn make_dummy_cert(height: u64, signer_ids: Vec<u64>) -> CommitCertificate {
-        CommitCertificate {
-            height,
-            round: 0,
-            block_hash: [0xAAu8; 32],
-            aggregate_signature: vec![0u8; 96],
-            signer_ids,
-        }
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_duplicate_signers_rejected() {
-        // Audit HIGH-9: duplicate signer_ids must be rejected immediately,
-        // before any BLS operation.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![1, 1, 2]); // validator 1 listed twice
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert with duplicate signer_ids must be rejected"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_unknown_signer_rejected() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![99]); // id 99 not in validator set
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert with signer not in validator set must be rejected"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_no_bls_key_rejected() {
-        // make_consensus uses ValidatorInfo::new which sets bls_public_key=None.
-        // The inner loop hits the "else { return false }" branch when no key
-        // is registered.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![1, 2, 3]);
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert whose signers have no registered BLS key must be rejected"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_non_sync_duplicate_signers_rejected() {
-        // verify_commit_certificate (allow_stake_fallback=false) must also
-        // reject duplicate signers.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![2, 2]);
-        assert!(
-            !tc.verify_commit_certificate(&cert),
-            "non-sync cert verify must also reject duplicate signer_ids"
-        );
-    }
-
-    #[test]
-    fn t1_20_verify_cert_empty_signer_ids_rejected() {
-        // An empty signer list means signer_stake=0 < threshold → false.
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(1, vec![]);
-        // No duplicates, but zero signers → below quorum.
-        assert!(
-            !tc.verify_commit_certificate_for_sync(&cert),
-            "cert with no signers must fail quorum check"
-        );
-    }
-
-    #[test]
-    fn t1_20_decay_all_boltzmann_stakes_seeds_all_validators() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.boltzmann_stakes.len(), 0, "starts empty");
-        tc.decay_all_boltzmann_stakes(1);
-        assert_eq!(
-            tc.boltzmann_stakes.len(),
-            3,
-            "decay must seed one entry per validator (3 validators)"
-        );
-    }
-
-    #[test]
-    fn t1_20_decay_all_boltzmann_stakes_empty_set_no_panic() {
-        let mut tc =
-            TendermintConsensus::new_for_test(1, 5, ValidatorSet::with_validators(vec![]));
-        tc.decay_all_boltzmann_stakes(5); // must not panic
-    }
-
-    #[test]
-    fn t1_20_decay_all_boltzmann_stakes_double_call_idempotent_len() {
-        let mut tc = make_consensus(1, &[1, 2]);
-        tc.decay_all_boltzmann_stakes(1);
-        tc.decay_all_boltzmann_stakes(2);
-        // Should still have exactly 2 entries (one per validator).
-        assert_eq!(tc.boltzmann_stakes.len(), 2);
-    }
-
-    #[test]
-    fn t1_20_sanov_slash_equivocation_unknown_validator_returns_zero() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        let slashed = tc.sanov_slash_equivocation(99, 100);
-        assert_eq!(slashed, 0, "unknown validator must return 0");
-    }
-
-    #[test]
-    fn t1_20_sanov_slash_equivocation_known_validator_returns_nonzero() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        let slashed = tc.sanov_slash_equivocation(1, 100);
-        assert!(
-            slashed > 0,
-            "fully-equivocating validator (window=100) must incur a positive slash"
-        );
-    }
-
-    #[test]
-    fn t1_20_sanov_slash_equivocation_capped_at_stake() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        // make_consensus gives each validator stake=1000.
-        let slashed = tc.sanov_slash_equivocation(1, 1_000_000);
-        // Slash must not exceed original stake.
-        assert!(
-            slashed <= 1000,
-            "slash must be capped at validator stake; got {slashed}"
-        );
-    }
-
-    #[test]
-    fn t1_20_height_and_round_getters_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.height(), 1, "initial height must be 1");
-        assert_eq!(tc.round(), 0, "initial round must be 0");
-    }
-
-    #[test]
-    fn t1_20_epoch_getter_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // At height=1 the epoch is governed by EPOCH_LENGTH; value ≥ 0.
-        let _ = tc.epoch(); // must not panic
-    }
-
-    #[test]
-    fn t1_20_verify_cert_for_sync_and_non_sync_agree_on_duplicate_rejection() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let cert = make_dummy_cert(5, vec![3, 3]);
-        let sync_result = tc.verify_commit_certificate_for_sync(&cert);
-        let non_sync_result = tc.verify_commit_certificate(&cert);
-        assert_eq!(
-            sync_result, non_sync_result,
-            "sync and non-sync cert verification must agree on duplicate-signer rejection"
-        );
-    }
-
-    // -- T1.20 gap-closure: get_governance_param / governance_set_param --
-
-    #[test]
-    fn t1_20_get_governance_param_missing_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.get_governance_param("nonexistent_key").is_none());
-    }
-
-    #[test]
-    fn t1_20_governance_set_param_round_trip() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        tc.governance_set_param("conservation_enforcement", "enforce")
-            .expect("valid param must be accepted");
-        assert_eq!(
-            tc.get_governance_param("conservation_enforcement"),
-            Some("enforce")
-        );
-    }
-
-    #[test]
-    fn t1_20_governance_set_param_invalid_value_rejected() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        let result = tc.governance_set_param("conservation_enforcement", "turbo");
-        assert!(result.is_err(), "unknown value must be rejected");
-    }
-
-    // -- T1.20 gap-closure: da_confirmed_height / is_da_finalized --
-
-    #[test]
-    fn t1_20_da_confirmed_height_zero_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.da_confirmed_height(), 0);
-    }
-
-    #[test]
-    fn t1_20_is_da_finalized_height_zero_is_true() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.is_da_finalized(0), "height 0 <= da_confirmed_height 0");
-    }
-
-    #[test]
-    fn t1_20_is_da_finalized_future_height_is_false() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(!tc.is_da_finalized(1), "future height must not be finalized");
-    }
-
-    // -- T1.20 gap-closure: set_chain_id / chain_id --
-
-    #[test]
-    fn t1_20_chain_id_empty_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.chain_id(), "");
-    }
-
-    #[test]
-    fn t1_20_set_chain_id_round_trip() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        tc.set_chain_id("evaporchain-devnet-1".to_string());
-        assert_eq!(tc.chain_id(), "evaporchain-devnet-1");
-        // Must also propagate to the executor.
-        assert_eq!(tc.executor.chain_id, "evaporchain-devnet-1");
-    }
-
-    // -- T1.20 gap-closure: enforce_validator_tombstones --
-
-    #[test]
-    fn t1_20_enforce_validator_tombstones_zero_when_no_tombstones() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.enforce_validator_tombstones(), 0);
-    }
-
-    // -- T1.20 gap-closure: mortis_certificate / mortis_cert_preview --
-
-    #[test]
-    fn t1_20_mortis_certificate_none_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.mortis_certificate().is_none());
-    }
-
-    #[test]
-    fn t1_20_mortis_cert_preview_some_before_trigger() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        // Mortis has not triggered yet -> preview returns Some.
-        assert!(tc.mortis_cert_preview().is_some());
-    }
-
-    // -- T1.20 gap-closure: settle_slash / refresh_pool_credits --
-
-    #[test]
-    fn t1_20_settle_slash_zero_is_noop() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        tc.settle_slash(0, 1);   // must not panic
-        assert!(tc.refresh_pool_credits().is_empty(), "zero slash leaves pool empty");
-    }
-
-    #[test]
-    fn t1_20_settle_slash_nonzero_appears_in_refresh_pool() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        tc.settle_slash(5_000, 10);
-        let credits = tc.refresh_pool_credits();
-        assert!(!credits.is_empty(), "slash credit must appear in pool");
-        let total: u64 = credits.iter().map(|(_, amt, _)| *amt).sum();
-        assert_eq!(total, 5_000, "slash amount must be fully credited");
-    }
-
-    // -- T1.20 gap-closure: last_bell_reading --
-
-    #[test]
-    fn t1_20_last_bell_reading_none_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.last_bell_reading().is_none(), "no bell reading before first block");
-    }
-
-    // -- T1.20 gap-closure: tombstone_for --
-
-    #[test]
-    fn t1_20_tombstone_for_unknown_address_returns_none() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.tombstone_for(&addr(99)).is_none());
-    }
-
-    // -- T1.20 gap-closure: governance_flags_snapshot --
-
-    #[test]
-    fn t1_20_governance_flags_snapshot_has_default_keys() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let snap = tc.governance_flags_snapshot();
-        assert!(snap.contains_key("fork_choice_mode"), "must have fork_choice_mode");
-        assert!(snap.contains_key("conservation_enforcement"), "must have conservation_enforcement");
-        assert!(snap.contains_key("lambda_fold_mode"), "must have lambda_fold_mode");
-    }
-
-    // -- T1.20 gap-closure: cartel alarm getters --
-
-    #[test]
-    fn t1_20_cartel_alarm_status_none_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.cartel_alarm_status().is_none());
-    }
-
-    #[test]
-    fn t1_20_cartel_alarm_buffer_len_zero_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.cartel_alarm_buffer_len(), 0);
-    }
-
-    #[test]
-    fn t1_20_cartel_alarm_records_seen_zero_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.cartel_alarm_records_seen(), 0);
-    }
-
-    #[test]
-    fn t1_20_pending_cartel_alarms_count_zero_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.pending_cartel_alarms_count(), 0);
-    }
-
-    #[test]
-    fn t1_20_take_pending_cartel_alarms_empty_at_startup() {
-        let mut tc = make_consensus(1, &[1, 2, 3]);
-        let alarms = tc.take_pending_cartel_alarms();
-        assert!(alarms.is_empty(), "no alarms before any block");
-    }
-
-    // -- T1.20 gap-closure: state_branches / dag_round_states_count --
-
-    #[test]
-    fn t1_20_state_branches_empty_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.state_branches().is_empty());
-    }
-
-    #[test]
-    fn t1_20_dag_round_states_count_zero_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.dag_round_states_count(), 0);
-    }
-
-    #[test]
-    fn t1_20_cross_fork_equivocations_empty_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.cross_fork_equivocations().is_empty());
-    }
-
-    #[test]
-    fn t1_20_committed_at_block_empty_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.committed_at_block().is_empty());
-    }
-
-    // -- T1.20 gap-closure: mev_observations / mev_state_digest / due_refund_txs --
-
-    #[test]
-    fn t1_20_mev_observations_empty_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.mev_observations().is_empty());
-    }
-
-    #[test]
-    fn t1_20_mev_state_digest_is_32_bytes() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let digest = tc.mev_state_digest();
-        assert_eq!(digest.len(), 32);
-    }
-
-    #[test]
-    fn t1_20_due_refund_txs_empty_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert!(tc.due_refund_txs(0).is_empty());
-    }
-
-    // -- T1.20 gap-closure: tur_window_len --
-
-    #[test]
-    fn t1_20_tur_window_len_zero_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.tur_window_len(), 0);
-    }
-
-    // -- T1.20 gap-closure: try_finalize_antichain --
-
-    #[test]
-    fn t1_20_try_finalize_antichain_empty_at_startup() {
-        let tc = make_consensus(1, &[1, 2, 3]);
-        let finalized = tc.try_finalize_antichain();
-        assert!(finalized.is_empty(), "no antichain to finalize at startup");
-    }
-
-    // -- T1.20 gap-closure: new_with_gas_limit constructor --
-
-    #[test]
-    fn t1_20_new_with_gas_limit_sets_block_gas_limit() {
-        let vs = make_validator_set(&[1, 2, 3]);
-        let tc = TendermintConsensus::new_with_gas_limit(1, 5, vs, 1_000_000);
-        assert_eq!(tc.executor.block_gas_limit, 1_000_000);
-    }
-
-
-
 }
 
 // ─────────────────────────── Integration Tests ─────────────────────────────
@@ -16404,48 +15711,10 @@ mod mev_tests {
         let commitment = enc.commitment;
 
         tc.submit_encrypted_tx(enc);
-        assert!(
-            tc.submit_reveal(commitment, nonce),
-            "below cap must accept"
-        );
+        tc.submit_reveal(commitment, nonce);
 
         let (_, _, reveals) = tc.mempool_stats();
         assert_eq!(reveals, 1);
-    }
-
-    /// T0.7 vector 4 companion — pending_reveals queue capacity.
-    /// Without a cap, an attacker could flood arbitrary
-    /// `(commitment, nonce)` pairs (64 bytes each); validator memory
-    /// exhausts before the next proposal drains the queue.
-    #[test]
-    fn submit_reveal_rejects_when_pending_queue_at_capacity() {
-        let mut tc = make_test_tc();
-
-        // Fill to MAX_PENDING_REVEALS with synthetic pairs. The
-        // commitments don't need to match real encrypted submissions —
-        // the cap fires at admission time, before any commitment
-        // lookup.
-        for i in 0..MAX_PENDING_REVEALS as u32 {
-            let mut commitment = [0u8; 32];
-            commitment[..4].copy_from_slice(&i.to_le_bytes());
-            let nonce = [0u8; 32];
-            assert!(
-                tc.submit_reveal(commitment, nonce),
-                "submit {} must accept (below cap)",
-                i + 1
-            );
-        }
-        assert_eq!(tc.mempool_stats().2, MAX_PENDING_REVEALS);
-
-        // The (cap+1)-th submission is rejected.
-        let over = [0xFFu8; 32];
-        let nonce = [0u8; 32];
-        assert!(
-            !tc.submit_reveal(over, nonce),
-            "at-cap submit_reveal must be rejected (T0.7 vector 4 — reveal queue DoS)"
-        );
-        // Queue size unchanged.
-        assert_eq!(tc.mempool_stats().2, MAX_PENDING_REVEALS);
     }
 
     #[test]
@@ -18589,5 +17858,823 @@ mod phase2_round_trip_tests {
             tc.block_number() > height_before,
             "clean block must advance the chain"
         );
+    }
+
+    // ═══ T1.20 batch — accessor/utility function coverage ═══════════════
+
+    fn make_tc3() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        TendermintConsensus::new_for_test(1, 5, vs)
+    }
+
+    #[test]
+    fn t1_20_settle_slash_zero_amount_is_noop() {
+        let mut tc = make_tc3();
+        tc.settle_slash(0, 1);
+        // No credit accrued — pool should be empty.
+        assert!(tc.refresh_pool_credits().is_empty());
+    }
+
+    #[test]
+    fn t1_20_settle_slash_nonzero_accrues_to_slsh_namespace() {
+        let mut tc = make_tc3();
+        tc.settle_slash(5000, 10);
+        let credits = tc.refresh_pool_credits();
+        assert!(!credits.is_empty(), "SLSH credit must be recorded");
+        // The SLSH namespace is [0x53, 0x4c, 0x53, 0x48].
+        assert!(credits.iter().any(|(ns, amt, _)| ns == "534c5348" && *amt == 5000));
+    }
+
+    #[test]
+    fn t1_20_settle_slash_accumulates_across_calls() {
+        let mut tc = make_tc3();
+        tc.settle_slash(1000, 1);
+        tc.settle_slash(2000, 1);
+        let credits = tc.refresh_pool_credits();
+        let total: u64 = credits.iter().map(|(_, a, _)| a).sum();
+        assert_eq!(total, 3000);
+    }
+
+    #[test]
+    fn t1_20_last_bell_reading_none_before_first_measurement() {
+        let tc = make_tc3();
+        assert!(tc.last_bell_reading().is_none());
+    }
+
+    #[test]
+    fn t1_20_last_bell_reading_some_after_s_milli_set() {
+        let mut tc = make_tc3();
+        // Directly set the private field (accessible from this module).
+        tc.last_bell_s_milli = Some(2828);
+        tc.last_bell_block_height = 42;
+        tc.last_bell_epoch = 7;
+        tc.last_bell_certified = true;
+        let r = tc.last_bell_reading().expect("must be Some");
+        assert_eq!(r.s_value_milli, 2828);
+        assert_eq!(r.block_height, 42);
+        assert_eq!(r.epoch, 7);
+        assert!(r.bell_certified);
+    }
+
+    #[test]
+    fn t1_20_tombstone_for_unknown_address_returns_none() {
+        let tc = make_tc3();
+        assert!(tc.tombstone_for(&[0xDE; 32]).is_none());
+    }
+
+    #[test]
+    fn t1_20_decay_all_boltzmann_stakes_seeds_all_validators() {
+        let mut tc = make_tc3();
+        assert!(tc.boltzmann_stakes.is_empty(), "fresh TC has no Boltzmann stakes");
+        tc.decay_all_boltzmann_stakes(100);
+        // All 3 validators must now have entries.
+        assert_eq!(tc.boltzmann_stakes.len(), 3);
+    }
+
+    #[test]
+    fn t1_20_decay_all_boltzmann_stakes_runs_on_existing_entries() {
+        let mut tc = make_tc3();
+        // Seed + initial decay
+        tc.decay_all_boltzmann_stakes(10);
+        let stakes_at_10: Vec<u64> = tc.boltzmann_stakes.values().map(|s| s.active).collect();
+        // A second decay at a later epoch must produce values ≤ the first (energy only falls).
+        tc.decay_all_boltzmann_stakes(20);
+        for (s, orig) in tc.boltzmann_stakes.values().zip(stakes_at_10.iter()) {
+            assert!(s.active <= *orig, "Boltzmann stake must not increase from decay alone");
+        }
+    }
+
+    #[test]
+    fn t1_20_refresh_proposer_boltzmann_stake_known_validator() {
+        let mut tc = make_tc3();
+        tc.decay_all_boltzmann_stakes(0);
+        let before = tc.boltzmann_stakes.get(&1).map(|s| s.active).unwrap_or(0);
+        // Credit a large refresh — active stake must rise.
+        tc.refresh_proposer_boltzmann_stake(1, 0, 100_000);
+        let after = tc.boltzmann_stakes.get(&1).map(|s| s.active).unwrap_or(0);
+        assert!(after > before, "refresh must increase Boltzmann stake");
+    }
+
+    #[test]
+    fn t1_20_refresh_proposer_boltzmann_stake_unknown_validator_no_panic() {
+        let mut tc = make_tc3();
+        // Validator 99 doesn't exist — must not panic. ensure_boltzmann_stake seeds
+        // a zero-stake entry for any id (validator-set membership not checked there),
+        // so refresh_on_block runs against the zero-stake record harmlessly.
+        tc.refresh_proposer_boltzmann_stake(99, 0, 50_000);
+        // Entry was created (zero-stake), but we just care that there was no panic.
+        let stake = tc.boltzmann_stakes.get(&99).map(|s| s.active).unwrap_or(0);
+        let _ = stake; // non-zero or zero depending on refresh formula; both valid
+    }
+
+    #[test]
+    fn t1_20_boltzmann_proposer_weights_returns_sorted_list() {
+        let mut tc = make_tc3();
+        tc.decay_all_boltzmann_stakes(0);
+        let weights = tc.boltzmann_proposer_weights(1_000);
+        assert_eq!(weights.len(), 3, "one weight per validator");
+        // Must be sorted descending by weight.
+        for w in weights.windows(2) {
+            assert!(w[0].1 >= w[1].1, "weights must be descending");
+        }
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_equivocation_unknown_validator_returns_zero() {
+        let mut tc = make_tc3();
+        let slashed = tc.sanov_slash_equivocation(99, 100);
+        assert_eq!(slashed, 0);
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_equivocation_known_validator_produces_slash() {
+        let mut tc = make_tc3();
+        let slashed = tc.sanov_slash_equivocation(1, 100);
+        assert!(slashed > 0, "equivocation should produce non-zero slash");
+    }
+
+    #[test]
+    fn t1_20_sanov_slash_downtime_below_jail_threshold_does_not_jail() {
+        let mut tc = make_tc3();
+        // 2 missed blocks — below the jail threshold of 3. Slash applied but no jail.
+        let slash = tc.sanov_slash_downtime(1, 2, 100);
+        // The formula may or may not slash a small amount; the validator must NOT be jailed.
+        let _ = slash;
+        if let Some(v) = tc.validator_set().get(1) {
+            assert!(!v.jailed, "2 missed blocks must not jail the validator");
+        }
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_mcc_mode_empty_candidates() {
+        let tc = make_tc3();
+        // Default mode is "mcc" — no candidates → None.
+        assert!(tc.authoritative_head(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_singh_attractor_mode_empty_candidates() {
+        let mut tc = make_tc3();
+        let att = evaporchain_singh_attractor::Attractor::new(500, 100);
+        tc.fork_choice_attractors = vec![att];
+        tc.governance_params
+            .insert("fork_choice_mode".to_string(), "singh_attractor".to_string());
+        // Singh attractor mode, no candidates → None.
+        assert!(tc.authoritative_head(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_authoritative_head_singh_attractor_mode_falls_back_to_mcc_if_no_attractors() {
+        let mut tc = make_tc3();
+        // Mode is singh_attractor but fork_choice_attractors is empty → falls back to MCC.
+        tc.governance_params
+            .insert("fork_choice_mode".to_string(), "singh_attractor".to_string());
+        // empty fork_choice_attractors → MCC path → no candidates → None
+        assert!(tc.authoritative_head(&[], 10_000).is_none());
+    }
+
+    #[test]
+    fn t1_20_singh_attractor_fork_choice_empty_attractors_returns_none() {
+        let tc = make_tc3();
+        let result = tc.singh_attractor_fork_choice(&[[0xAA; 32]], &[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_mcc_choose_fork_empty_candidates_returns_none() {
+        let tc = make_tc3();
+        let result = tc.mcc_choose_fork(&[], 10_000);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_mcc_choose_fork_all_tainted_returns_none() {
+        let mut tc = make_tc3();
+        let head = [0xAA; 32];
+        tc.slashed_equivocator_blocks.insert(head);
+        // All candidates are tainted → no trajectories → None.
+        let result = tc.mcc_choose_fork(&[head], 10_000);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_causal_cone_summary_head_not_in_dag_returns_none() {
+        let tc = make_tc3();
+        // Head not in light_cone_dag → summarize_cone returns Err → None.
+        let result = tc.causal_cone_summary([0xDE; 32], 200, 10);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn t1_20_cartel_alarm_accessors_initial_state() {
+        let tc = make_tc3();
+        assert_eq!(tc.cartel_alarm_buffer_len(), 0);
+        assert_eq!(tc.cartel_alarm_records_seen(), 0);
+        assert_eq!(tc.pending_cartel_alarms_count(), 0);
+        assert!(tc.cartel_alarm_status().is_none());
+    }
+
+    #[test]
+    fn t1_20_take_pending_cartel_alarms_drains_queue() {
+        let mut tc = make_tc3();
+        assert!(tc.take_pending_cartel_alarms().is_empty());
+        // Queue stays empty after drain.
+        assert_eq!(tc.pending_cartel_alarms_count(), 0);
+    }
+
+    #[test]
+    fn t1_20_mev_observations_and_digest_initial_state() {
+        let tc = make_tc3();
+        assert!(tc.mev_observations().is_empty());
+        // Digest of empty state is deterministic (not a panic).
+        let d = tc.mev_state_digest();
+        assert_ne!(d, [0u8; 32], "even empty digest is non-trivial BLAKE3 output");
+    }
+
+    #[test]
+    fn t1_20_state_branches_empty_at_init() {
+        let tc = make_tc3();
+        assert!(tc.state_branches().is_empty());
+        assert_eq!(tc.dag_round_states_count(), 0);
+        assert!(tc.dag_round_state_counts(&[0xAB; 32]).is_none());
+    }
+
+    #[test]
+    fn t1_20_cross_fork_equivocations_empty_at_init() {
+        let tc = make_tc3();
+        assert!(tc.cross_fork_equivocations().is_empty());
+    }
+
+    #[test]
+    fn t1_20_lambda_fold_instance_returns_without_panic() {
+        let tc = make_tc3();
+        let _ = tc.lambda_fold_instance();
+    }
+
+    #[test]
+    fn t1_20_due_refund_txs_empty_on_fresh_state() {
+        let tc = make_tc3();
+        assert!(tc.due_refund_txs(100).is_empty());
+    }
+
+    #[test]
+    fn t1_20_record_state_branch_idempotent_update() {
+        let mut tc = make_tc3();
+        let tip = [0x55; 32];
+        tc.record_state_branch(tip, 10, 500);
+        tc.record_state_branch(tip, 20, 800); // update: higher block, higher caliber
+        let branches = tc.state_branches();
+        let meta = branches.get(&tip).expect("branch must exist");
+        assert_eq!(meta.last_touched_block, 20);
+        assert_eq!(meta.caliber, 800);
+    }
+
+    #[test]
+    fn t1_20_record_state_branch_does_not_decrease_last_touched() {
+        let mut tc = make_tc3();
+        let tip = [0x66; 32];
+        tc.record_state_branch(tip, 100, 1000);
+        tc.record_state_branch(tip, 50, 2000); // lower block height — must not regress
+        let meta = tc.state_branches().get(&tip).expect("must exist");
+        assert_eq!(meta.last_touched_block, 100, "must keep the max block height");
+    }
+}
+
+// ─── T1.20 batch 5: accessor/state methods coverage ─────────────────────────
+
+#[cfg(test)]
+mod t1_20_batch5 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+
+    fn make_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        TendermintConsensus::new_for_test(1, 5, vs)
+    }
+
+    fn make_block_at(number: u64, epoch: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    // ── restore_state / restore_state_with_root ──────────────────────────────
+
+    #[test]
+    fn t1_20_restore_state_updates_height_epoch_parent() {
+        let mut tc = make_tc();
+        let ph = [0xAB; 32];
+        tc.restore_state(99, 7, ph);
+        assert_eq!(tc.height(), 100, "height must be block_number + 1");
+        assert_eq!(tc.epoch(), 7);
+        assert_eq!(tc.parent_hash(), ph);
+    }
+
+    #[test]
+    fn t1_20_restore_state_clears_locks() {
+        let mut tc = make_tc();
+        // Manually set locked/valid round + block to check they get cleared.
+        tc.locked_block = Some(make_block_at(1, 1));
+        tc.locked_round = Some(3);
+        tc.valid_block = Some(make_block_at(2, 1));
+        tc.valid_round = Some(2);
+        tc.restore_state(5, 1, [0u8; 32]);
+        assert!(tc.locked_block.is_none());
+        assert!(tc.locked_round.is_none());
+        assert!(tc.valid_block.is_none());
+        assert!(tc.valid_round.is_none());
+    }
+
+    #[test]
+    fn t1_20_restore_state_with_root_sets_state_root() {
+        let mut tc = make_tc();
+        let root = [0xCC; 32];
+        tc.restore_state_with_root(10, 2, [0u8; 32], root);
+        assert_eq!(tc.current_state_root(), root);
+        assert_eq!(tc.height(), 11);
+    }
+
+    // ── snapshot_validator_state / restore_validator_state ──────────────────
+
+    #[test]
+    fn t1_20_snapshot_restore_validator_state_round_trip() {
+        let mut tc = make_tc();
+        // Mutate validator 1's stake.
+        tc.validator_set.get_mut(1).unwrap().stake = 5000;
+        tc.validator_set.get_mut(1).unwrap().jailed = true;
+        let snap = tc.snapshot_validator_state();
+        assert_eq!(snap.len(), 3);
+        let v1 = snap.iter().find(|&&(id, _, _, _)| id == 1).unwrap();
+        assert_eq!(v1.1, 5000);
+        assert!(v1.3, "must be jailed");
+
+        // Restore into a fresh tc2.
+        let mut tc2 = make_tc();
+        tc2.restore_validator_state(&snap);
+        assert_eq!(tc2.validator_set.get(1).unwrap().stake, 5000);
+        assert!(tc2.validator_set.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn t1_20_restore_validator_state_unknown_id_is_noop() {
+        let mut tc = make_tc();
+        // id=99 is not in the set — must not panic.
+        tc.restore_validator_state(&[(99, 999, 0, false)]);
+        // Existing validators untouched.
+        assert_eq!(tc.validator_set.get(1).unwrap().stake, 1000);
+    }
+
+    // ── checkpoint_bell_reading / restore_bell_reading ───────────────────────
+
+    #[test]
+    fn t1_20_checkpoint_bell_reading_none_when_unset() {
+        let tc = make_tc();
+        assert!(tc.checkpoint_bell_reading().is_none());
+    }
+
+    #[test]
+    fn t1_20_checkpoint_bell_reading_some_when_set() {
+        let mut tc = make_tc();
+        tc.last_bell_s_milli = Some(1850);
+        tc.last_bell_block_height = 42;
+        tc.last_bell_epoch = 7;
+        tc.last_bell_certified = true;
+        let cbr = tc.checkpoint_bell_reading().expect("must be Some");
+        assert_eq!(cbr.s_value_milli, 1850);
+        assert_eq!(cbr.block_height, 42);
+        assert_eq!(cbr.epoch, 7);
+        assert!(cbr.certified);
+    }
+
+    #[test]
+    fn t1_20_restore_bell_reading_some_sets_fields() {
+        let mut tc = make_tc();
+        let reading = crate::persistence::CheckpointedBellReading {
+            s_value_milli: 1234,
+            block_height: 10,
+            epoch: 3,
+            certified: false,
+        };
+        tc.restore_bell_reading(Some(&reading));
+        assert_eq!(tc.last_bell_s_milli, Some(1234));
+        assert_eq!(tc.last_bell_block_height, 10);
+        assert_eq!(tc.last_bell_epoch, 3);
+        assert!(!tc.last_bell_certified);
+    }
+
+    #[test]
+    fn t1_20_restore_bell_reading_none_clears_fields() {
+        let mut tc = make_tc();
+        tc.last_bell_s_milli = Some(999);
+        tc.last_bell_block_height = 5;
+        tc.restore_bell_reading(None);
+        assert!(tc.last_bell_s_milli.is_none());
+        assert_eq!(tc.last_bell_block_height, 0);
+        assert_eq!(tc.last_bell_epoch, 0);
+        assert!(!tc.last_bell_certified);
+    }
+
+    // ── draining state ───────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_set_draining_marks_draining_true() {
+        let mut tc = make_tc();
+        assert!(!tc.is_draining());
+        tc.set_draining();
+        assert!(tc.is_draining());
+        let (draining, started) = tc.drain_state();
+        assert!(draining);
+        assert!(started.is_some());
+    }
+
+    #[test]
+    fn t1_20_clear_draining_returns_prev_state_and_clears() {
+        let mut tc = make_tc();
+        tc.set_draining();
+        let prev = tc.clear_draining();
+        assert!(prev, "previous state must be draining=true");
+        assert!(!tc.is_draining());
+        let (draining, started) = tc.drain_state();
+        assert!(!draining);
+        assert!(started.is_none());
+    }
+
+    #[test]
+    fn t1_20_clear_draining_when_not_draining_returns_false() {
+        let mut tc = make_tc();
+        let prev = tc.clear_draining();
+        assert!(!prev, "was not draining, must return false");
+    }
+
+    // ── basic accessors ──────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_block_number_is_height_minus_one() {
+        let mut tc = make_tc();
+        tc.height = 42;
+        assert_eq!(tc.block_number(), 41);
+    }
+
+    #[test]
+    fn t1_20_round_returns_round_state_round() {
+        let tc = make_tc();
+        assert_eq!(tc.round(), 0);
+    }
+
+    #[test]
+    fn t1_20_parent_hash_returns_field() {
+        let mut tc = make_tc();
+        tc.parent_hash = [0xDE; 32];
+        assert_eq!(tc.parent_hash(), [0xDE; 32]);
+    }
+
+    // ── block_production_history / record_block_production_timing ────────────
+
+    #[test]
+    fn t1_20_block_production_history_empty_at_init() {
+        let tc = make_tc();
+        assert!(tc.block_production_history().is_empty());
+    }
+
+    #[test]
+    fn t1_20_record_block_production_timing_appends() {
+        let mut tc = make_tc();
+        tc.record_block_production_timing(1, 500_000);
+        let h = tc.block_production_history();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].0, 1);
+        // 500_000 µs = 0.5 s
+        assert!((h[0].1 - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn t1_20_record_block_production_timing_evicts_oldest_at_cap() {
+        let mut tc = make_tc();
+        // Fill beyond cap — oldest entry (producer_id=0) must be evicted.
+        for i in 0..=BLOCK_PROD_HISTORY_CAP {
+            tc.record_block_production_timing(i as u64, 0);
+        }
+        let h = tc.block_production_history();
+        assert_eq!(h.len(), BLOCK_PROD_HISTORY_CAP);
+        // First entry must no longer be producer_id=0.
+        assert_ne!(h[0].0, 0, "oldest entry must have been evicted");
+    }
+
+    // ── reinstate_validator / unjail_validator ───────────────────────────────
+
+    #[test]
+    fn t1_20_reinstate_validator_unjails_jailed_validator() {
+        let mut tc = make_tc();
+        // Jail validator 2 manually.
+        tc.validator_set.get_mut(2).unwrap().jailed = true;
+        let mut info = ValidatorInfo::new(2, 2000, [2u8; 32]);
+        info.stake = 2000;
+        let reinstated = tc.reinstate_validator(info);
+        assert!(reinstated, "must return true for a jailed validator");
+        assert!(!tc.validator_set.get(2).unwrap().jailed);
+        assert_eq!(tc.validator_set.get(2).unwrap().stake, 2000);
+    }
+
+    #[test]
+    fn t1_20_reinstate_validator_active_returns_false() {
+        let mut tc = make_tc();
+        // Validator 1 is already active and not jailed.
+        let info = ValidatorInfo::new(1, 1000, [1u8; 32]);
+        let reinstated = tc.reinstate_validator(info);
+        assert!(!reinstated, "already-active validator must return false");
+    }
+
+    #[test]
+    fn t1_20_reinstate_validator_not_in_set_adds_it() {
+        let mut tc = make_tc();
+        let info = ValidatorInfo::new(99, 5000, [0x99u8; 32]);
+        let reinstated = tc.reinstate_validator(info);
+        assert!(reinstated, "brand-new validator must be added");
+        assert!(tc.validator_set.get(99).is_some());
+    }
+
+    #[test]
+    fn t1_20_unjail_validator_clears_jailed_flag() {
+        let mut tc = make_tc();
+        tc.validator_set.get_mut(2).unwrap().jailed = true;
+        let result = tc.unjail_validator(2);
+        assert!(result, "unjail of jailed validator must return true");
+        assert!(!tc.validator_set.get(2).unwrap().jailed);
+    }
+
+    // ── chain_id / set_chain_id ──────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_chain_id_empty_by_default() {
+        let tc = make_tc();
+        assert_eq!(tc.chain_id(), "");
+    }
+
+    #[test]
+    fn t1_20_set_chain_id_updates_field() {
+        let mut tc = make_tc();
+        tc.set_chain_id("evaporchain-testnet-1".to_string());
+        assert_eq!(tc.chain_id(), "evaporchain-testnet-1");
+        // Also mirrors onto executor.
+        assert_eq!(tc.executor.chain_id, "evaporchain-testnet-1");
+    }
+
+    // ── DA enforcement / small-cluster mode ─────────────────────────────────
+
+    #[test]
+    fn t1_20_da_enforcement_height_default_and_set() {
+        let mut tc = make_tc();
+        assert_eq!(tc.da_enforcement_height(), 100, "default enforcement height");
+        tc.set_da_enforcement_height(500);
+        assert_eq!(tc.da_enforcement_height(), 500);
+    }
+
+    #[test]
+    fn t1_20_da_confirmed_height_and_is_da_finalized() {
+        let mut tc = make_tc();
+        assert_eq!(tc.da_confirmed_height(), 0);
+        tc.da_confirmed_height = 50;
+        assert!(tc.is_da_finalized(50));
+        assert!(tc.is_da_finalized(30));
+        assert!(!tc.is_da_finalized(51));
+    }
+
+    #[test]
+    fn t1_20_small_cluster_da_mode_default_false() {
+        let tc = make_tc();
+        assert!(!tc.small_cluster_da_mode());
+    }
+
+    #[test]
+    fn t1_20_set_small_cluster_da_mode_on_and_off() {
+        let mut tc = make_tc();
+        tc.set_small_cluster_da_mode(true);
+        assert!(tc.small_cluster_da_mode());
+        tc.set_small_cluster_da_mode(false);
+        assert!(!tc.small_cluster_da_mode());
+    }
+
+    // ── mempool_stats ────────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_mempool_stats_initial_zeros() {
+        let tc = make_tc();
+        let (plain, enc, reveals) = tc.mempool_stats();
+        assert_eq!(plain, 0);
+        assert_eq!(enc, 0);
+        assert_eq!(reveals, 0);
+    }
+
+    // ── governance_set_param / get_governance_param / flags_snapshot ─────────
+
+    #[test]
+    fn t1_20_governance_set_param_valid_key_value() {
+        let mut tc = make_tc();
+        assert!(tc.governance_set_param("conservation_enforcement", "enforce").is_ok());
+        assert_eq!(tc.get_governance_param("conservation_enforcement"), Some("enforce"));
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_unknown_key_rejected() {
+        let mut tc = make_tc();
+        assert!(tc.governance_set_param("total_supply", "999").is_err());
+    }
+
+    #[test]
+    fn t1_20_governance_set_param_bad_value_rejected() {
+        let mut tc = make_tc();
+        assert!(tc.governance_set_param("block_source_mode", "random").is_err());
+    }
+
+    #[test]
+    fn t1_20_governance_flags_snapshot_includes_defaults() {
+        let tc = make_tc();
+        let snap = tc.governance_flags_snapshot();
+        // All doc-listed defaults must be present.
+        assert_eq!(snap.get("fork_choice_mode").map(|s| s.as_str()), Some("mcc"));
+        assert_eq!(snap.get("parent_acceptance_mode").map(|s| s.as_str()), Some("linear"));
+        assert_eq!(snap.get("block_source_mode").map(|s| s.as_str()), Some("fifo"));
+        assert_eq!(snap.get("conservation_enforcement").map(|s| s.as_str()), Some("observe"));
+        assert_eq!(snap.get("lambda_fold_mode").map(|s| s.as_str()), Some("hash_chain"));
+    }
+
+    #[test]
+    fn t1_20_governance_flags_snapshot_override_wins_over_default() {
+        let mut tc = make_tc();
+        tc.governance_set_param("conservation_enforcement", "enforce").unwrap();
+        let snap = tc.governance_flags_snapshot();
+        assert_eq!(snap.get("conservation_enforcement").map(|s| s.as_str()), Some("enforce"));
+    }
+
+    #[test]
+    fn t1_20_fork_choice_mode_default_mcc() {
+        let tc = make_tc();
+        assert_eq!(tc.fork_choice_mode(), "mcc");
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_unrecognised_rejected() {
+        let mut tc = make_tc();
+        let result = tc.governance_set_fork_choice_mode("random", vec![], &[1000], 100);
+        assert!(result.is_err(), "unrecognised mode must be rejected");
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_insufficient_stake_rejected() {
+        let mut tc = make_tc();
+        let result = tc.governance_set_fork_choice_mode("mcc", vec![], &[50], 1000);
+        assert!(result.is_err(), "insufficient endorser stake must be rejected");
+    }
+
+    #[test]
+    fn t1_20_governance_set_fork_choice_mode_mcc_accepted() {
+        let mut tc = make_tc();
+        let result = tc.governance_set_fork_choice_mode("mcc", vec![], &[1000], 500);
+        assert!(result.is_ok(), "mcc with sufficient stake must succeed");
+        assert_eq!(tc.fork_choice_mode(), "mcc");
+    }
+
+    // ── weak subjectivity / checkpoints ─────────────────────────────────────
+
+    #[test]
+    fn t1_20_check_weak_subjectivity_no_checkpoints_always_true() {
+        let tc = make_tc();
+        let block = make_block_at(100, 1);
+        assert!(tc.check_weak_subjectivity(&block));
+    }
+
+    #[test]
+    fn t1_20_set_trusted_checkpoint_and_read_back() {
+        let mut tc = make_tc();
+        let sr = [0xAA; 32];
+        let bh = [0xBB; 32];
+        tc.set_trusted_checkpoint(50, sr, bh);
+        let cp = tc.trusted_checkpoint().expect("must be Some");
+        assert_eq!(cp.0, 50);
+        assert_eq!(cp.1, sr);
+        assert_eq!(cp.2, bh);
+    }
+
+    #[test]
+    fn t1_20_check_weak_subjectivity_below_trusted_checkpoint_rejected() {
+        let mut tc = make_tc();
+        tc.set_trusted_checkpoint(100, [0xAA; 32], [0xBB; 32]);
+        let block = make_block_at(99, 1); // below checkpoint
+        assert!(!tc.check_weak_subjectivity(&block));
+    }
+
+    #[test]
+    fn t1_20_check_weak_subjectivity_at_trusted_checkpoint_wrong_root_rejected() {
+        let mut tc = make_tc();
+        tc.set_trusted_checkpoint(100, [0xAA; 32], [0xBB; 32]);
+        let mut block = make_block_at(100, 1);
+        block.state_root = [0xCC; 32]; // wrong root
+        assert!(!tc.check_weak_subjectivity(&block));
+    }
+
+    #[test]
+    fn t1_20_check_weak_subjectivity_at_trusted_checkpoint_correct_root_passes() {
+        let mut tc = make_tc();
+        let sr = [0xAA; 32];
+        tc.set_trusted_checkpoint(100, sr, [0xBB; 32]);
+        let mut block = make_block_at(100, 1);
+        block.state_root = sr;
+        assert!(tc.check_weak_subjectivity(&block));
+    }
+
+    #[test]
+    fn t1_20_load_checkpoints_and_latest_checkpoint() {
+        let mut tc = make_tc();
+        tc.load_checkpoints(vec![(10, [0x10; 32]), (20, [0x20; 32])]);
+        assert_eq!(tc.checkpoints().len(), 2);
+        let (h, _) = tc.latest_checkpoint().expect("must have a latest");
+        assert_eq!(h, 20);
+    }
+
+    #[test]
+    fn t1_20_weak_subjectivity_period_positive() {
+        let tc = make_tc();
+        // Period must be > 0; structural formula: finality_depth + unbonding_blocks + churn + buffer.
+        assert!(tc.weak_subjectivity_period() > 0);
+    }
+
+    #[test]
+    fn t1_20_prune_old_checkpoints_keeps_at_least_one() {
+        let mut tc = make_tc();
+        // Inject many checkpoints all far below the current height.
+        tc.weak_subjectivity_checkpoints = (0u64..10).map(|i| (i, [0u8; 32])).collect();
+        tc.height = 1_000_000; // far ahead
+        tc.prune_old_checkpoints();
+        // Must keep at least one.
+        assert!(!tc.checkpoints().is_empty());
+    }
+
+    // ── verify_da_certificate (no-cert soft/hard) ────────────────────────────
+
+    #[test]
+    fn t1_20_verify_da_certificate_no_cert_before_enforcement_soft_accept() {
+        let mut tc = make_tc();
+        tc.set_da_enforcement_height(1000);
+        let block = make_block_at(50, 1); // block.number=50 < 1000 → soft accept
+        assert!(tc.verify_da_certificate(&block));
+    }
+
+    #[test]
+    fn t1_20_verify_da_certificate_no_cert_at_enforcement_hard_reject() {
+        let mut tc = make_tc();
+        tc.set_da_enforcement_height(100);
+        let block = make_block_at(100, 1); // block.number=100 >= 100 → hard reject
+        assert!(!tc.verify_da_certificate(&block));
+    }
+
+    // ── detect_orphan_branches ───────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_detect_orphan_branches_empty_branches_returns_empty() {
+        let tc = make_tc();
+        let orphans = tc.detect_orphan_branches(1000);
+        assert!(orphans.is_empty());
+    }
+
+    #[test]
+    fn t1_20_detect_orphan_branches_fresh_branch_not_stale() {
+        let mut tc = make_tc();
+        let tip = [0x77; 32];
+        // caliber=0 (below any threshold) but last_touched_block=990 within recency window of 1000.
+        tc.record_state_branch(tip, 990, 0);
+        let orphans = tc.detect_orphan_branches(1000);
+        // staleness_horizon = 1000 - 32 = 968; 990 > 968 → NOT stale → not an orphan.
+        assert!(orphans.is_empty(), "fresh branch must not be orphaned");
     }
 }
