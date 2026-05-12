@@ -981,14 +981,14 @@ fn mcc_phase_d5_substrate_soak_no_drift_under_sustained_load() {
     let mut next_byte: u8 = 1;
 
     // Initial 4 forks off genesis.
-    for i in 0..D5_FORKS {
+    for tip in tip_ids.iter_mut() {
         let bid = [next_byte; 32];
         next_byte = next_byte.wrapping_add(1);
         if next_byte == 0 {
             next_byte = 1;
         } // skip genesis byte
         lc_insert(&mut tc, bid, vec![id(0)], 1);
-        tip_ids[i] = Some(bid);
+        *tip = Some(bid);
     }
 
     let mut prev_digest: Option<u64> = None;
@@ -1116,8 +1116,8 @@ fn mcc_phase_d5_antichain_digest_convergence_across_4_validators() {
         // All 4 validators must have identical antichain digests
         // at every step.
         let d0 = validators[0].light_cone_antichain_digest();
-        for i in 1..4 {
-            let di = validators[i].light_cone_antichain_digest();
+        for v in &validators[1..4] {
+            let di = v.light_cone_antichain_digest();
             if di != d0 {
                 divergence_count += 1;
             }
