@@ -223,9 +223,55 @@ mod tests {
         }
     }
 
-    // Real-data invariant tests against neptune's dumped MDS
-    // (`m · m_inv = I`, `m_hat · m_hat_inv = I`, column-pick by
-    // unit-vector left-apply) live on a parallel docstring-refresh
-    // stack alongside `neptune_dump_parser`. They will be cherry-
-    // picked onto main together once the parser lands here.
+    /// **Mathematical invariant on real neptune data.**
+    /// `m · m_inv = I` and `m_hat · m_hat_inv = I` for the
+    /// matrices extracted in PR #80's dump.
+    ///
+    /// If this fires, either:
+    /// - Our matrix-mul impl has a bug, OR
+    /// - The extracted matrices have been corrupted somewhere
+    /// - OR neptune's `m_inv` field doesn't actually hold the
+    ///   matrix inverse (unlikely but worth catching)
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json"]
+    fn real_neptune_mds_inverse_invariants_hold() {
+        use crate::neptune_dump_parser::{
+            extract_mds_inverse_matrix, extract_mds_m_hat, extract_mds_m_hat_inv,
+            extract_mds_matrix,
+        };
+        let dump_path = "/tmp/neptune-bn256-standard.json";
+
+        // m · m_inv == I (25×25)
+        let m = extract_mds_matrix(dump_path).expect("m");
+        let m_inv = extract_mds_inverse_matrix(dump_path).expect("m_inv");
+        let product = matrix_mul(&m, &m_inv);
+        assert_eq!(product, identity_matrix(25), "m · m_inv must be I");
+
+        // m_hat · m_hat_inv == I (24×24)
+        let m_hat = extract_mds_m_hat(dump_path).expect("m_hat");
+        let m_hat_inv = extract_mds_m_hat_inv(dump_path).expect("m_hat_inv");
+        let product_hat = matrix_mul(&m_hat, &m_hat_inv);
+        assert_eq!(product_hat, identity_matrix(24), "m_hat · m_hat_inv must be I");
+    }
+
+    /// **Real-data test.** Multiply the extracted neptune MDS by
+    /// a unit vector and confirm the result equals the
+    /// corresponding column of the MDS. Catches any indexing
+    /// drift between our row/col convention and neptune's.
+    ///
+    /// Marked `#[ignore]` — requires the JSON dump on disk.
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json"]
+    fn left_apply_real_neptune_mds_picks_column() {
+        use crate::neptune_dump_parser::extract_mds_matrix;
+        let mds = extract_mds_matrix("/tmp/neptune-bn256-standard.json").expect("load");
+        // Unit vector at index 3: [0, 0, 0, 1, 0, ..., 0] (length 25).
+        let mut e3 = vec![Fr::from(0u64); 25];
+        e3[3] = Fr::from(1u64);
+        let result = left_apply_matrix(&mds, &e3);
+        // result[i] should equal mds[i][3] for all i (the 3rd column).
+        for i in 0..25 {
+            assert_eq!(result[i], mds[i][3], "result[{i}] != mds[{i}][3]");
+        }
+    }
 }
