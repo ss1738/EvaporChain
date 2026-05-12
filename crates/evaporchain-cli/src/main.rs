@@ -1532,8 +1532,7 @@ fn cmd_testnet_init(
         }
         per_validator_ips.to_vec()
     } else {
-        std::iter::repeat(listen_ip.to_string())
-            .take(validators as usize)
+        std::iter::repeat_n(listen_ip.to_string(), validators as usize)
             .collect()
     };
 
@@ -1586,7 +1585,7 @@ fn cmd_testnet_init(
         // Devnet is fine without this gate; mainnet requires it.
         let bls_pop_hex = hex::encode(&kp.proof_of_possession().0);
         let bls_path = v_data_dir.join("bls_key.bin");
-        std::fs::write(&bls_path, &sk)
+        std::fs::write(&bls_path, sk)
             .with_context(|| format!("Failed to write {}", bls_path.display()))?;
         #[cfg(unix)]
         {

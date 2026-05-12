@@ -549,7 +549,7 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
     // 7. Resolve --validators count: prefer explicit, else genesis size.
     let validator_count = args
         .validators
-        .unwrap_or_else(|| config.validators.len() as u64);
+        .unwrap_or(config.validators.len() as u64);
 
     // 8. Emit run.sh — the canonical start command. Quoting is conservative
     // (no shell expansion of bootstrap multiaddrs).

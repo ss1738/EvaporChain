@@ -7358,7 +7358,7 @@ async fn await_confirmation(pipeline: &TxPipeline, tx_hash: &str) {
         print!(".");
         if let Ok(Some(tx)) = pipeline.confirm_tx(tx_hash, 1, 0).await {
             first_block = tx.block_height;
-            first_state = Some(tx.state.clone());
+            first_state = Some(tx.state);
             println!();
             match tx.state {
                 TxState::Rejected => {

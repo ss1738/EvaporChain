@@ -136,7 +136,7 @@ impl StepReporter {
         println!();
         println!(
             "{} Ceremony rehearsal complete ({:.1}s)",
-            "\u{1F389}".to_string(),
+            "\u{1F389}",
             took.as_secs_f64()
         );
     }

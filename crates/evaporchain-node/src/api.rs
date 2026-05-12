@@ -5707,7 +5707,7 @@ async fn post_fee_controller_step(
     use evaporchain_fee_controller::{base_fee, FeeController, FeeControllerParams};
     let params = FeeControllerParams::default_genesis();
     let mut fs = safe_lock(&state.fee_state);
-    match FeeController::step(&params, &*fs, req.gas_used, req.epochs_elapsed) {
+    match FeeController::step(&params, &fs, req.gas_used, req.epochs_elapsed) {
         Ok((new_state, drift)) => {
             let fee = base_fee(&new_state, &params);
             *fs = new_state;
@@ -5729,7 +5729,7 @@ async fn get_fee_controller_status(State(state): State<Arc<ApiState>>) -> Json<s
     use evaporchain_fee_controller::{base_fee, FeeControllerParams};
     let params = FeeControllerParams::default_genesis();
     let fs = safe_lock(&state.fee_state);
-    let fee = base_fee(&*fs, &params);
+    let fee = base_fee(&fs, &params);
     Json(serde_json::json!({
         "status": "ok",
         "energy": fs.energy,
@@ -6935,7 +6935,7 @@ async fn post_antichain_compute(Json(req): Json<AntichainComputeReq>) -> Json<se
     let member_ids: Vec<String> = antichain
         .members()
         .iter()
-        .map(|id| hex::encode(id))
+        .map(hex::encode)
         .collect();
     Json(serde_json::json!({
         "status": "ok",
@@ -7693,7 +7693,7 @@ async fn post_mera_commit(Json(req): Json<MeraCommitReq>) -> Json<serde_json::Va
     let layer_hashes_hex: Vec<String> = commitment
         .layer_hashes
         .iter()
-        .map(|h| hex::encode(h))
+        .map(hex::encode)
         .collect();
     Json(serde_json::json!({
         "status": "ok",
@@ -12623,7 +12623,7 @@ async fn post_faucet_bundle(
         store
             .tokens
             .iter_mut()
-            .filter(|t| t.symbol.to_ascii_uppercase() != "EVAP")
+            .filter(|t| !t.symbol.eq_ignore_ascii_case("EVAP"))
             .map(|t| {
                 let bal = t.balances.entry(holder_key.clone()).or_insert(0);
                 *bal = bal.saturating_add(per_token_amount);
@@ -17555,7 +17555,7 @@ async fn get_bridge_commit_cert(
     // Build the LSB-first bitmap: bit i is set when validators[i].id is in signer_ids.
     let signer_set: std::collections::HashSet<u64> = cert.signer_ids.iter().copied().collect();
     let n = validators.len();
-    let bitmap_bytes = (n + 7) / 8;
+    let bitmap_bytes = n.div_ceil(8);
     let mut bitmap = vec![0u8; bitmap_bytes.max(1)];
     for (i, (id, _)) in validators.iter().enumerate() {
         if signer_set.contains(id) {
