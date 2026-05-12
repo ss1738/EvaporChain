@@ -285,6 +285,41 @@ pub fn grain_seed_state(params: GrainSeedParams) -> [u8; 10] {
     out
 }
 
+/// Generate the full plain-ARK round-constants vector for
+/// Poseidon-128 BN254 arity-24 Strength::Standard. Returns
+/// `(full_rounds + partial_rounds) × width = (8 + 59) × 25 =
+/// 1,675` field elements emitted in order.
+///
+/// **Caller note.** This is the PLAIN ARK — one constant per
+/// (round, lane). The output is what arkworks `PoseidonConfig::new`
+/// expects (`ark: Vec<Vec<Fr>>` shape with `full_rounds +
+/// partial_rounds` rows of `width` entries each). The Vec
+/// returned here is FLAT (`Vec<Fr>` of length 1,675); reshape
+/// at the call site.
+///
+/// Cost: ~`1,675 × 672 ≈ 1.1M raw LFSR clocks`. On Mini 1 this
+/// runs in ~tens of milliseconds.
+///
+/// **NOT YET VERIFIED** against neptune's plain ARK. The
+/// algorithm matches the Poseidon paper / hadeshash Sage
+/// reference; whether neptune uses the SAME algorithm with the
+/// SAME parameters needs separate byte-parity verification.
+pub fn generate_round_constants_bn254_arity_24_standard() -> Vec<ark_bn254::Fr> {
+    let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+    let mut lfsr = GrainLfsr::from_seed(seed);
+    lfsr.warmup();
+
+    let params = GrainSeedParams::bn254_arity_24_standard();
+    let rounds = (params.full_rounds + params.partial_rounds) as usize;
+    let width = params.sbox_count as usize;
+    let total = rounds * width;
+    let mut out: Vec<ark_bn254::Fr> = Vec::with_capacity(total);
+    for _ in 0..total {
+        out.push(lfsr.next_filtered_field_element_bn254());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,6 +555,53 @@ mod tests {
         // PR will assert equality against the plain neptune ark[0]
         // when the compression-inversion or alternative parity
         // path is wired up.
+    }
+
+    /// The full ARK vector has the expected length for our
+    /// parameters: `(8 + 59) × 25 = 1,675` entries.
+    #[test]
+    fn full_ark_has_expected_length() {
+        let ark = generate_round_constants_bn254_arity_24_standard();
+        assert_eq!(ark.len(), 1675, "(8 + 59) × 25");
+    }
+
+    /// First entry of the full ARK matches the pinned-first-Fr
+    /// canary from PR #89 — confirms the full-generation routine
+    /// uses the same warmup + emission path as the single-element
+    /// test.
+    #[test]
+    fn full_ark_first_entry_matches_pinned_single() {
+        let ark = generate_round_constants_bn254_arity_24_standard();
+
+        let seed = grain_seed_state(GrainSeedParams::bn254_arity_24_standard());
+        let mut lfsr = GrainLfsr::from_seed(seed);
+        lfsr.warmup();
+        let expected_first = lfsr.next_filtered_field_element_bn254();
+
+        assert_eq!(ark[0], expected_first);
+    }
+
+    /// All 1,675 entries are distinct (no degenerate collisions).
+    /// The bias-rejected uniform sampler should give effectively
+    /// zero collision probability at this scale.
+    #[test]
+    fn full_ark_entries_are_unique() {
+        let ark = generate_round_constants_bn254_arity_24_standard();
+        let unique: std::collections::HashSet<_> = ark.iter().collect();
+        assert_eq!(
+            unique.len(),
+            ark.len(),
+            "duplicate ARK entries detected — sampler is broken"
+        );
+    }
+
+    /// Generating twice yields the same vector — pure
+    /// determinism check on the full pipeline.
+    #[test]
+    fn full_ark_is_deterministic() {
+        let a = generate_round_constants_bn254_arity_24_standard();
+        let b = generate_round_constants_bn254_arity_24_standard();
+        assert_eq!(a, b);
     }
 
     /// Changing any one parameter must produce a different seed.
