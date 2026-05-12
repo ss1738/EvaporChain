@@ -2342,7 +2342,10 @@ impl TendermintConsensus {
             // multiple violation buckets to get non-trivial entropy.
             // Phase 3.5d ships the wiring; entropy-based amount
             // tuning is operator follow-up.
-            let amount = evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]).unwrap_or_default();
+            let amount = match evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]) {
+                Ok(v) => v,
+                Err(_) => 0,
+            };
             if amount > 0 {
                 let actual = self
                     .validator_set
@@ -5952,7 +5955,7 @@ impl TendermintConsensus {
             // the node-side block-record prune at main.rs ~line 4357.
             const LIGHT_CONE_PRUNE_INTERVAL: u64 = 100;
             const LIGHT_CONE_RETENTION_EPOCHS: u64 = 1_000;
-            if block.number > 0 && block.number.is_multiple_of(LIGHT_CONE_PRUNE_INTERVAL) {
+            if block.number > 0 && block.number % LIGHT_CONE_PRUNE_INTERVAL == 0 {
                 let cutoff = block.epoch.saturating_sub(LIGHT_CONE_RETENTION_EPOCHS);
                 if cutoff > 0 {
                     let pruned = self.light_cone_dag.prune_before_epoch(cutoff);
@@ -19675,6 +19678,189 @@ mod t1_20_batch9 {
     }
 }
 
+// ── T1.20 batch 11 — prune-trigger · advance-round-txs · tick-bls · orphan-param ──
+#[cfg(test)]
+mod t1_20_batch11 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Transaction, TransferTx};
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block_at(number: u64, epoch: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    fn transfer() -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        })
+    }
+
+    // ── on_block_committed: LightCone prune trigger ───────────────────────────
+    // block.number=100 (% LIGHT_CONE_PRUNE_INTERVAL) + epoch=1001 (> 1000)
+    // → cutoff = 1 > 0 → prune_before_epoch called (lines 5956-5960)
+
+    #[test]
+    fn t1_20_on_block_committed_prune_trigger_no_panic() {
+        let mut tc = make_tc();
+        let mut block = make_block_at(100, 1001);
+        block.chain_id = "evaporchain-testnet".to_string();
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // No panic + block count accessible
+        let _ = tc.light_cone_block_count();
+    }
+
+    #[test]
+    fn t1_20_on_block_committed_prune_trigger_cutoff_zero_no_prune() {
+        // epoch=0 → cutoff = 0.saturating_sub(1000) = 0 → if cutoff > 0 NOT entered
+        let mut tc = make_tc();
+        let mut block = make_block_at(100, 0);
+        block.chain_id = "evaporchain-testnet".to_string();
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        let _ = tc.light_cone_block_count();
+    }
+
+    // ── advance_round: uncommitted transactions returned to mempool ───────────
+    // Exercises lines 6853-6857
+
+    #[test]
+    fn t1_20_advance_round_with_uncommitted_txs_returns_to_mempool() {
+        let mut tc = make_tc();
+        let (before, _, _) = tc.mempool_stats();
+        // Place a block with one transfer in round_state.proposed_block
+        let mut block = make_block_at(1, 1);
+        block.transactions = vec![transfer()];
+        tc.round_state.proposed_block = Some(block);
+        tc.advance_round();
+        let (after, _, _) = tc.mempool_stats();
+        assert!(
+            after > before,
+            "uncommitted tx must be returned to mempool; before={before} after={after}"
+        );
+    }
+
+    #[test]
+    fn t1_20_advance_round_empty_proposed_block_no_mempool_change() {
+        let mut tc = make_tc();
+        // proposed_block with empty transactions: the inner if is not entered
+        let block = make_block_at(1, 1); // transactions=vec![]
+        tc.round_state.proposed_block = Some(block);
+        let (before, _, _) = tc.mempool_stats();
+        tc.advance_round();
+        let (after, _, _) = tc.mempool_stats();
+        assert_eq!(after, before, "empty proposed_block must not change mempool");
+    }
+
+    // ── tick at height=50: BLS re-broadcast condition (lines 4227-4232) ───────
+
+    #[test]
+    fn t1_20_tick_at_height_50_bls_rebroadcast_condition_evaluated() {
+        let mut tc = make_tc();
+        tc.height = 50;
+        // round=0 and phase=Propose are default in new_for_test, matching condition.
+        let mut db = InMemoryStateDB::new();
+        let actions = tc.tick(&mut db);
+        // With no BLS keypair, make_key_announce returns None so no BroadcastMessage.
+        // The condition IS evaluated; no panic is the coverage goal.
+        let has_key_announce = actions.iter().any(|a| {
+            matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::KeyAnnounce { .. }))
+        });
+        assert!(!has_key_announce, "no BLS keypair → no KeyAnnounce re-broadcast");
+    }
+
+    // ── governance_set_param: light_cone_orphan_caliber_threshold ────────────
+
+    #[test]
+    fn t1_20_governance_orphan_caliber_threshold_non_numeric_rejected() {
+        let mut tc = make_tc();
+        let r = tc.governance_set_param("light_cone_orphan_caliber_threshold", "not_a_number");
+        assert!(r.is_err(), "non-numeric value must be rejected");
+    }
+
+    #[test]
+    fn t1_20_governance_orphan_caliber_threshold_valid_accepted() {
+        let mut tc = make_tc();
+        let r = tc.governance_set_param("light_cone_orphan_caliber_threshold", "42");
+        assert!(r.is_ok(), "valid u64 must be accepted");
+    }
+
+    #[test]
+    fn t1_20_governance_orphan_caliber_threshold_zero_accepted() {
+        let mut tc = make_tc();
+        // 0 is valid (default = no orphans by caliber alone)
+        let r = tc.governance_set_param("light_cone_orphan_caliber_threshold", "0");
+        assert!(r.is_ok(), "zero must be accepted");
+    }
+
+    // ── advance_round: no proposed_block → no mempool change ─────────────────
+
+    #[test]
+    fn t1_20_advance_round_no_proposed_block_no_mempool_change() {
+        let mut tc = make_tc();
+        assert!(tc.round_state.proposed_block.is_none());
+        let (before, _, _) = tc.mempool_stats();
+        tc.advance_round();
+        let (after, _, _) = tc.mempool_stats();
+        assert_eq!(after, before, "no proposed_block → no mempool change");
+    }
+
+    // ── on_block_committed: non-multiple of 100 skips prune ──────────────────
+
+    #[test]
+    fn t1_20_on_block_committed_non_multiple_skips_prune() {
+        let mut tc = make_tc();
+        let mut block = make_block_at(99, 2000); // 99 % 100 != 0 → prune skipped
+        block.chain_id = "evaporchain-testnet".to_string();
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        let _ = tc.light_cone_block_count();
+    }
+}
+
 // ── T1.20 batch 10 — restore_privacy · prune_da · mcc_choose_fork · validate_refunds ──
 #[cfg(test)]
 mod t1_20_batch10 {
@@ -19828,5 +20014,302 @@ mod t1_20_batch10 {
     fn t1_20_due_refund_txs_fresh_is_empty() {
         let tc = make_tc();
         assert!(tc.due_refund_txs(1).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod t1_20_batch12 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+    use evaporchain_light_cone::Block as LcBlock;
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::CommitCertificate;
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block_at(number: u64, epoch: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    #[test]
+    fn t1_20_set_height_resets_round_state() {
+        let mut tc = make_tc();
+        tc.round_state.round = 3;
+        tc.set_height(42);
+        assert_eq!(tc.height, 42);
+        assert_eq!(tc.round_state.round, 0);
+    }
+
+    #[test]
+    fn t1_20_make_key_announce_with_bls_keypair() {
+        let mut tc = make_tc();
+        let kp = BlsKeypair::generate();
+        let my_id = tc.my_id;
+        tc.set_bls_keypair(kp);
+        let msg = tc.make_key_announce();
+        assert!(msg.is_some());
+        if let Some(ConsensusMessage::KeyAnnounce { validator_id, bls_public_key, .. }) = msg {
+            assert_eq!(validator_id, my_id);
+            assert!(!bls_public_key.is_empty());
+        }
+    }
+
+    #[test]
+    fn t1_20_precommit_hash_mismatch_tick_requests_sync() {
+        let mut tc = make_tc();
+        let block = make_block_at(1, 1);
+        tc.round_state.proposed_block = Some(block);
+        tc.round_state.phase = Phase::Precommit;
+        let wrong_hash = [0xABu8; 32];
+        tc.round_state.precommits.insert(1, Some(wrong_hash));
+        tc.round_state.precommits.insert(2, Some(wrong_hash));
+        let mut db = InMemoryStateDB::new();
+        let actions = tc.tick(&mut db);
+        assert!(
+            actions.iter().any(|a| matches!(a, ConsensusAction::RequestSync(..))),
+            "expected RequestSync on tick-path precommit hash mismatch"
+        );
+    }
+
+    #[test]
+    fn t1_20_p2_04_da_supermajority_warn_tick_path() {
+        let mut tc = make_tc();
+        let mut block = make_block_at(1, 1);
+        block.data_root = Some([0xDEu8; 32]);
+        block.chain_id = "mainnet-test".to_string();
+        let bh = TendermintConsensus::block_hash(&block);
+        tc.round_state.proposed_block = Some(block);
+        tc.round_state.phase = Phase::Precommit;
+        tc.round_state.precommits.insert(1, Some(bh));
+        tc.round_state.precommits.insert(2, Some(bh));
+        let mut db = InMemoryStateDB::new();
+        let actions = tc.tick(&mut db);
+        assert!(!actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(..))));
+        assert_eq!(tc.p2_04_last_warned, Some((1u64, 0u32)));
+    }
+
+    #[test]
+    fn t1_20_precommit_hash_mismatch_msg_path_requests_sync() {
+        let mut tc = make_tc();
+        tc.round_state.proposed_block = Some(make_block_at(1, 1));
+        let wrong_hash = [0xCDu8; 32];
+        tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(wrong_hash),
+            validator_id: 1,
+            bls_signature: None,
+        });
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(wrong_hash),
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert!(
+            actions.iter().any(|a| matches!(a, ConsensusAction::RequestSync(..))),
+            "expected RequestSync on msg-path precommit hash mismatch"
+        );
+    }
+
+    #[test]
+    fn t1_20_locked_block_different_proposal_prevote_nil() {
+        let mut tc = make_tc();
+        let block_a = make_block_at(1, 1);
+        tc.locked_block = Some(block_a);
+        tc.locked_round = Some(0);
+        let mut block_b = make_block_at(1, 2); // different epoch → different hash
+        block_b.state_root = [0xFFu8; 32];
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block: block_b,
+            proposer_id,
+        });
+        let has_nil_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
+                    block_hash: None,
+                    ..
+                })
+            )
+        });
+        assert!(has_nil_prevote, "locked on different block must produce nil prevote");
+    }
+
+    #[test]
+    fn t1_20_lightcone_prune_pruned_gt_zero_debug() {
+        let mut tc = make_tc();
+        let old_id = [0x42u8; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(old_id, vec![], 100, 0))
+            .expect("insert old-epoch block");
+        let mut block = make_block_at(100, 1001);
+        block.chain_id = "evaporchain-testnet".to_string();
+        // Prune code runs only inside `if let Some(ref cert) = block.commit_certificate`
+        block.commit_certificate = Some(CommitCertificate {
+            height: 100,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![0u8; 96],
+            signer_ids: vec![1],
+        });
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // epoch-0 block pruned by cutoff = 1001 - 1000 = 1
+        assert!(
+            !tc.light_cone_dag.contains(&old_id),
+            "epoch-0 block must be pruned when cutoff=1"
+        );
+    }
+
+    #[test]
+    fn t1_20_apply_block_sync_weak_subjectivity_violation() {
+        let mut tc = make_tc();
+        tc.set_trusted_checkpoint(10, [0xAAu8; 32], [0u8; 32]);
+        let mut block = make_block_at(10, 1);
+        block.state_root = [0xBBu8; 32];
+        let mut db = InMemoryStateDB::new();
+        let result = tc.apply_block(&mut db, &block);
+        assert!(result.is_err(), "block with wrong state_root must violate trusted checkpoint");
+    }
+
+    #[test]
+    fn t1_20_anchor_hash_mismatch_nonfatal_proposal_accepted() {
+        struct ConstantAnchor {
+            hash: [u8; 32],
+        }
+        impl AnchorHashProvider for ConstantAnchor {
+            fn anchor_hash_for_height(&self, _: u64) -> Option<[u8; 32]> {
+                Some(self.hash)
+            }
+        }
+        let mut tc = make_tc();
+        tc.set_anchor_provider(Box::new(ConstantAnchor { hash: [0x11u8; 32] }));
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+        let mut block = make_block_at(1, 1);
+        block.anchor_hash = Some([0x22u8; 32]);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id,
+        });
+        let has_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+            )
+        });
+        assert!(has_prevote, "anchor hash mismatch is non-fatal — proposal must be accepted");
+    }
+
+    #[test]
+    fn t1_20_verify_cert_for_sync_signer_below_one_third_floor() {
+        let mut vs = ValidatorSet::new();
+        let mut v1 = ValidatorInfo::new(10, 1, [10u8; 32]);
+        v1.bls_public_key = Some(vec![0u8; 48]);
+        v1.pop_verified = true;
+        vs.add_validator(v1);
+        vs.add_validator(ValidatorInfo::new(11, 100, [11u8; 32]));
+        vs.add_validator(ValidatorInfo::new(12, 100, [12u8; 32]));
+        // total=201, threshold=134, floor=67; V10 stake=1 < floor=67
+        let tc = TendermintConsensus::new_for_test(10, 5, vs);
+        let cert = CommitCertificate {
+            height: 1,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![0u8; 96],
+            signer_ids: vec![10],
+        };
+        assert!(!tc.verify_commit_certificate_for_sync(&cert));
+    }
+
+    #[test]
+    fn t1_20_p2_04_da_supermajority_missing_warn_msg_path() {
+        let mut tc = make_tc();
+        let mut block = make_block_at(1, 1);
+        block.data_root = Some([0xEFu8; 32]);
+        block.chain_id = "mainnet-test".to_string();
+        let bh = TendermintConsensus::block_hash(&block);
+        tc.round_state.proposed_block = Some(block);
+        tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(bh),
+            validator_id: 1,
+            bls_signature: None,
+        });
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(bh),
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert!(!actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(..))));
+        assert_eq!(tc.p2_04_last_warned, Some((1u64, 0u32)));
+    }
+
+    #[test]
+    fn t1_20_verify_cert_for_sync_stake_fallback_between_floor_and_threshold() {
+        let mut vs = ValidatorSet::new();
+        let mut v20 = ValidatorInfo::new(20, 1200, [20u8; 32]);
+        v20.bls_public_key = Some(vec![0u8; 48]);
+        v20.pop_verified = true;
+        vs.add_validator(v20);
+        vs.add_validator(ValidatorInfo::new(21, 1000, [21u8; 32]));
+        vs.add_validator(ValidatorInfo::new(22, 1000, [22u8; 32]));
+        // total=3200, threshold=ceil(3200*2/3)=2134, floor=3200/3=1066
+        // V20 stake=1200: >= floor(1066) but < threshold(2134) → fallback accepted
+        let tc = TendermintConsensus::new_for_test(20, 5, vs);
+        let cert = CommitCertificate {
+            height: 1,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![0u8; 96],
+            signer_ids: vec![20],
+        };
+        // Fallback path fires (7157+), then BLS verify fails (invalid sig) → false
+        assert!(!tc.verify_commit_certificate_for_sync(&cert));
     }
 }
