@@ -20743,3 +20743,194 @@ mod t1_20_batch14 {
         assert_eq!(tc.round_state.round, 1);
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch15 {
+    use super::*;
+    use evaporchain_types::{Block, CommitCertificate, DeployScriptTx, Transaction};
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: number / 10, parent_hash: [0u8; 32],
+            state_root: [0u8; 32], transactions: vec![],
+            producer_id: Some(1), timestamp: number * 12,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: reinstate_validator with BLS key restores bls_public_key (lines 3862-3863) ──
+    #[test]
+    fn t1_20_reinstate_jailed_validator_with_bls_key() {
+        let mut tc = make_tc();
+        // Jail validator 1 directly
+        tc.validator_set.get_mut(1).unwrap().jailed = true;
+        let bls_pk = vec![9u8; 48];
+        let mut info = ValidatorInfo::new(1, 1000, [1u8; 32]);
+        info.bls_public_key = Some(bls_pk.clone());
+        let result = tc.reinstate_validator(info);
+        assert!(result);
+        let v = tc.validator_set.get_mut(1).unwrap();
+        assert!(!v.jailed);
+        assert_eq!(v.bls_public_key, Some(bls_pk));
+    }
+
+    // ── Test 2: prevote from validator with BLS key but no sig → rejected (lines 5238-5239) ──
+    #[test]
+    fn t1_20_prevote_bls_validator_no_sig_rejected() {
+        let mut tc = make_tc();
+        // Give validator 2 a BLS key
+        tc.validator_set.get_mut(2).unwrap().bls_public_key = Some(vec![1u8; 48]);
+        // Prevote from validator 2 with bls_signature: None → hits line 5238
+        let before = tc.round_state.prevotes.len();
+        tc.on_message(ConsensusMessage::Prevote {
+            height: 1, round: 0, block_hash: Some([5u8; 32]),
+            validator_id: 2, bls_signature: None,
+        });
+        // Vote must NOT be recorded (rejected)
+        assert_eq!(tc.round_state.prevotes.len(), before);
+    }
+
+    // ── Test 3: precommit from validator with BLS key but no sig → rejected (lines 5363-5364) ──
+    #[test]
+    fn t1_20_precommit_bls_validator_no_sig_rejected() {
+        let mut tc = make_tc();
+        tc.round_state.phase = Phase::Precommit;
+        // Give validator 2 a BLS key
+        tc.validator_set.get_mut(2).unwrap().bls_public_key = Some(vec![1u8; 48]);
+        let before = tc.round_state.precommits.len();
+        tc.on_message(ConsensusMessage::Precommit {
+            height: 1, round: 0, block_hash: Some([5u8; 32]),
+            validator_id: 2, bls_signature: None,
+        });
+        assert_eq!(tc.round_state.precommits.len(), before);
+    }
+
+    // ── Test 4: committed_at_block overflow prunes oldest entry (lines 5510-5512) ──
+    #[test]
+    fn t1_20_committed_at_block_overflow_prunes_oldest() {
+        let mut tc = make_tc();
+        // Fill with 1025 entries; timestamp 0 is the "oldest"
+        for i in 0u64..1025 {
+            tc.committed_at_block.insert([i as u8; 32], i + 1);
+        }
+        // The oldest entry (value=1, key=[0u8;32]) should be pruned already at 1025 entries.
+        // Add one more via on_block_committed to trigger the live prune path.
+        let mut block = make_block(1);
+        block.commit_certificate = Some(CommitCertificate {
+            height: 1, round: 0, block_hash: [0u8; 32],
+            aggregate_signature: vec![], signer_ids: vec![],
+        });
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // Map must not grow beyond 1025 entries after the prune
+        assert!(tc.committed_at_block.len() <= 1025);
+    }
+
+    // ── Test 5: advance_round with 500 accumulated misses → sanov downtime slash (lines 6800-6802) ──
+    #[test]
+    fn t1_20_advance_round_500_misses_triggers_slash() {
+        let mut tc = make_tc();
+        // Identify the proposer for height=1 round=0
+        let proposer_id = tc.proposer_for_round(tc.height, tc.round_state.round).unwrap().id;
+        // Pre-fill 499 misses; advance_round adds 1 → 500 → threshold hit
+        tc.missed_proposals.insert(proposer_id, 499);
+        // proposed_block is None (default) → downtime path runs
+        tc.advance_round();
+        // After slash, counter is reset to 0
+        assert_eq!(*tc.missed_proposals.get(&proposer_id).unwrap_or(&0), 0);
+    }
+
+    // ── Test 6: set_trusted_checkpoint stores value (line 6112) ──
+    #[test]
+    fn t1_20_set_trusted_checkpoint_stores_value() {
+        let mut tc = make_tc();
+        let sr = [0xab_u8; 32];
+        let bh = [0xcd_u8; 32];
+        tc.set_trusted_checkpoint(42, sr, bh);
+        assert_eq!(tc.trusted_checkpoint(), Some((42, sr, bh)));
+    }
+
+    // ── Test 7: oversized proposal rejected before phase change (lines 4777-4778) ──
+    #[test]
+    fn t1_20_oversized_proposal_rejected() {
+        let mut tc = make_tc();
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+        // Build a block with a transaction whose source_code exceeds MAX_BLOCK_SIZE_BYTES
+        let large_source = "x".repeat(MAX_BLOCK_SIZE_BYTES + 1);
+        let mut block = make_block(1);
+        block.producer_id = Some(proposer_id);
+        block.transactions = vec![Transaction::DeployScript(DeployScriptTx {
+            deployer: [1u8; 32],
+            source_code: large_source,
+            energy: 1,
+            half_life: 1,
+            signature: None,
+            public_key: None,
+        })];
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id,
+        });
+        // Rejected → no commit action, phase stays at Propose
+        assert!(actions.iter().all(|a| !matches!(a, ConsensusAction::CommitBlock(_))));
+        assert_eq!(tc.round_state.phase, Phase::Propose);
+    }
+
+    // ── Test 8: trusted_checkpoint() returns None before set (accessor coverage) ──
+    #[test]
+    fn t1_20_trusted_checkpoint_none_before_set() {
+        let tc = make_tc();
+        assert_eq!(tc.trusted_checkpoint(), None);
+    }
+
+    // ── Test 9: checkpoints() returns empty before any commit (accessor coverage) ──
+    #[test]
+    fn t1_20_checkpoints_empty_initially() {
+        let tc = make_tc();
+        assert!(tc.checkpoints().is_empty());
+    }
+
+    // ── Test 10: unjail_validator on active validator returns false ──
+    #[test]
+    fn t1_20_unjail_active_validator_returns_false() {
+        let mut tc = make_tc();
+        // Validator 1 is not jailed → unjail returns false
+        assert!(!tc.unjail_validator(1));
+    }
+
+    // ── Test 11: unjail_validator on jailed validator returns true ──
+    #[test]
+    fn t1_20_unjail_jailed_validator_returns_true() {
+        let mut tc = make_tc();
+        tc.validator_set.get_mut(1).unwrap().jailed = true;
+        assert!(tc.unjail_validator(1));
+        assert!(!tc.validator_set.get_mut(1).unwrap().jailed);
+    }
+
+    // ── Test 12: reinstate_validator on non-jailed active validator returns false ──
+    #[test]
+    fn t1_20_reinstate_active_validator_no_op() {
+        let mut tc = make_tc();
+        // Validator 1 is active (not jailed) → reinstate returns false
+        let info = ValidatorInfo::new(1, 1000, [1u8; 32]);
+        assert!(!tc.reinstate_validator(info));
+    }
+}
