@@ -875,7 +875,7 @@ mod tests {
     }
 
     fn make_header(height: u64, vs: &ValidatorSet, kps: &[BlsKeypair]) -> LightBlockHeader {
-        make_header_with_state_root(height, vs, kps, blake3_hash(&vec![height as u8; 64]))
+        make_header_with_state_root(height, vs, kps, blake3_hash(&[height as u8; 64]))
     }
 
     fn make_header_with_state_root(
@@ -1392,7 +1392,7 @@ mod tests {
         let mut p = SnapshotProvider::new();
         // Stuff 5 snapshots at heights 1..=5.
         for h in 1..=5u64 {
-            p.create_snapshot(h, 0, [0u8; 32], &vec![0u8; 100]);
+            p.create_snapshot(h, 0, [0u8; 32], &[0u8; 100]);
         }
         assert_eq!(p.snapshot_count(), 5);
         // Keep only 2 newest.
@@ -1403,7 +1403,7 @@ mod tests {
     #[test]
     fn t1_20_snapshot_provider_prune_noop_when_under_cap() {
         let mut p = SnapshotProvider::new();
-        p.create_snapshot(1, 0, [0u8; 32], &vec![0u8; 100]);
+        p.create_snapshot(1, 0, [0u8; 32], &[0u8; 100]);
         p.prune(10);
         assert_eq!(p.snapshot_count(), 1, "no-op when keep > count");
     }
@@ -1504,7 +1504,7 @@ mod tests {
     fn t1_20_handle_chunk_response_out_of_bounds_index_rejected() {
         let mut p = SnapshotProvider::new();
         // 1-chunk snapshot
-        let meta = p.create_snapshot(100, 1, [0xAAu8; 32], &vec![1u8; 100]);
+        let meta = p.create_snapshot(100, 1, [0xAAu8; 32], &[1u8; 100]);
 
         // Serve the real chunk to a sync manager up to the metadata stage.
         let mut sync = StateSyncManager::new(0);
@@ -1535,7 +1535,7 @@ mod tests {
     #[test]
     fn t1_20_handle_chunk_response_hash_mismatch_rejected() {
         let mut p = SnapshotProvider::new();
-        let meta = p.create_snapshot(200, 2, [0xBBu8; 32], &vec![2u8; 200]);
+        let meta = p.create_snapshot(200, 2, [0xBBu8; 32], &[2u8; 200]);
 
         let mut sync = StateSyncManager::new(0);
         sync.target_height = Some(200);
@@ -1625,7 +1625,7 @@ mod tests {
     #[test]
     fn t1_20_snapshot_provider_handle_chunk_request_out_of_bounds() {
         let mut p = SnapshotProvider::new();
-        p.create_snapshot(100, 1, [0u8; 32], &vec![0u8; 100]);
+        p.create_snapshot(100, 1, [0u8; 32], &[0u8; 100]);
         // chunk_index = 99 is past chunk_hashes.len() — must return None (not panic).
         let result = p.handle_request(
             &SyncMessage::ChunkRequest { height: 100, chunk_index: 99 },
@@ -1822,7 +1822,7 @@ mod tests {
         let mut p = SnapshotProvider::new();
         // Create 3 small snapshots.
         for h in 1..=3u64 {
-            p.create_snapshot(h, 0, [0u8; 32], &vec![0u8; 128]);
+            p.create_snapshot(h, 0, [0u8; 32], &[0u8; 128]);
         }
         assert_eq!(p.snapshot_count(), 3);
         // Prune to 1: heights 1 and 2 should be removed including their chunks.

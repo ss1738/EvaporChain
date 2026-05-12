@@ -1207,7 +1207,7 @@ mod tests {
             let mut input_iter = pre_hints.iter();
             for kh in kept_hints_iter {
                 let mut found = false;
-                while let Some(ih) = input_iter.next() {
+                for ih in input_iter.by_ref() {
                     if ih == kh {
                         found = true;
                         break;

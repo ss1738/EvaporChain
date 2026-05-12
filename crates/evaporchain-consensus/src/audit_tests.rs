@@ -52,7 +52,7 @@ mod adversarial_tests {
             if !committed.is_empty() {
                 break;
             }
-            let current: Vec<_> = messages.drain(..).collect();
+            let current: Vec<_> = std::mem::take(&mut messages);
             for msg in &current {
                 for v in nodes.iter_mut() {
                     for a in v.on_message(msg.clone()) {
@@ -326,7 +326,7 @@ mod adversarial_tests {
         }
 
         for _ in 0..50 {
-            let current: Vec<_> = messages.drain(..).collect();
+            let current: Vec<_> = std::mem::take(&mut messages);
             for msg in &current {
                 for v in nodes.iter_mut() {
                     for a in v.on_message(msg.clone()) {

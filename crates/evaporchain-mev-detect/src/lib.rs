@@ -1112,7 +1112,7 @@ mod tests {
             evaporchain_types::Transaction::Refund(r) => r.clone(),
             _ => unreachable!(),
         };
-        tampered.amount = tampered.amount + 1;
+        tampered.amount += 1;
         let block_txs = vec![evaporchain_types::Transaction::Refund(tampered)];
         let block_refunds = extract_refunds(&block_txs);
         let err = validate_block_refunds(&expected, &block_refunds).unwrap_err();

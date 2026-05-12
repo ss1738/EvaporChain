@@ -537,8 +537,8 @@ mod tests {
         // Real Nova-sized all-zero is a degenerate case but still
         // not the MockProver fingerprint. Length must be exactly 32.
         assert!(!is_mock_prover_proof_bytes(&vec![0u8; 1024]));
-        assert!(!is_mock_prover_proof_bytes(&vec![0u8; 31]));
-        assert!(!is_mock_prover_proof_bytes(&vec![0u8; 33]));
+        assert!(!is_mock_prover_proof_bytes(&[0u8; 31]));
+        assert!(!is_mock_prover_proof_bytes(&[0u8; 33]));
         assert!(!is_mock_prover_proof_bytes(&[]));
     }
 }

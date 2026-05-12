@@ -519,7 +519,7 @@ mod tests {
         // With equal stake, each should get roughly 25% (allow 10-40% range)
         for (&id, &count) in &counts {
             assert!(
-                count >= 100 && count <= 400,
+                (100..=400).contains(&count),
                 "Validator {} got {} turns out of 1000 (expected ~250)",
                 id,
                 count
@@ -714,7 +714,7 @@ mod tests {
         for id in 1..=4u64 {
             let count = counts.get(&id).copied().unwrap_or(0);
             assert!(
-                count >= 10 && count <= 50,
+                (10..=50).contains(&count),
                 "Validator {} produced {} blocks out of 100 (expected ~25)",
                 id,
                 count
@@ -1140,7 +1140,7 @@ mod tests {
             info.bls_public_key = Some(kp.public_key_bytes().0.clone());
             info.bls_public_key_prev = Some(vec![0u8; 48]);
             // Give each validator a different expiry to exercise the boundary.
-            info.bls_prev_key_expiry_epoch = Some((vid * 10) as u64);
+            info.bls_prev_key_expiry_epoch = Some(vid * 10);
             info.pop_verified = true;
             vs.add_validator(info);
         }

@@ -700,12 +700,12 @@ fn test_byzantine_proposer_diverging_parent_hash_rejected_5_validators() {
     // through 4..=1 until a non-proposer is found.
     let (mut tc, proposer_id) = (1u64..=5)
         .find_map(|candidate| {
-            let mut tc = TendermintConsensus::new_for_test(candidate, 10, vs.clone());
+            let tc = TendermintConsensus::new_for_test(candidate, 10, vs.clone());
             if !tc.am_i_proposer() {
                 // Find SOME id we can use as the wrong-head proposer.
                 // Loop again to identify the actual proposer id.
                 for proposer_candidate in 1u64..=5 {
-                    let mut probe =
+                    let probe =
                         TendermintConsensus::new_for_test(proposer_candidate, 10, vs.clone());
                     if probe.am_i_proposer() {
                         return Some((tc, proposer_candidate));

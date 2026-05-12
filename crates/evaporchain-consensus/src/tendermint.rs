@@ -10899,7 +10899,7 @@ mod tests {
     /// (replay protection).
     #[test]
     fn test_due_refund_txs_grace_window_and_replay_protection() {
-        use evaporchain_types::{Block, RefundTx, TransferTx};
+        use evaporchain_types::{Block, TransferTx};
 
         fn addr_local(seed: u8) -> [u8; 32] {
             let mut a = [0u8; 32];
@@ -13522,11 +13522,11 @@ mod tests {
             // Random "key" string for unknown-key cases.
             junk_key in "[a-z]{3,18}",
         ) {
-            use proptest::prelude::*;
+            
             // Some toolchains don't surface proptest's assertion
             // macros via the prelude glob; explicit imports below
             // make them available unconditionally.
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            use proptest::prop_assert;
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
             let (key, value, expected): (&str, String, &str) = match bucket {
                 0 => ("parent_acceptance_mode", "mcc".to_string(), "ok"),
@@ -13609,8 +13609,8 @@ mod tests {
             s_honest_milli in -2000i64..4001,
             last_run_at_height in 0u64..1_000_001,
         ) {
-            use proptest::prelude::*;
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            
+            
             use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
 
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
@@ -16404,7 +16404,7 @@ mod da_tests {
         // Dropped (same-sender) txs returned to mempool — should still
         // be there for the next proposal.
         assert!(
-            tc.mempool.len() >= 1,
+            !tc.mempool.is_empty(),
             "dropped same-sender txs must remain in pool — got {} pending",
             tc.mempool.len()
         );
@@ -18673,5 +18673,292 @@ mod t1_20_batch5 {
         let orphans = tc.detect_orphan_branches(1000);
         // staleness_horizon = 1000 - 32 = 968; 990 > 968 → NOT stale → not an orphan.
         assert!(orphans.is_empty(), "fresh branch must not be orphaned");
+    }
+}
+
+// ─── T1.20 batch 6: on_message early-returns + uncovered accessors ──────────
+
+#[cfg(test)]
+mod t1_20_batch6 {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet};
+
+    fn make_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        TendermintConsensus::new_for_test(1, 5, vs)
+    }
+
+    fn make_block_at(number: u64, epoch: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    // ── on_message: KeyAnnounce with bad BLS key length ──────────────────────
+
+    #[test]
+    fn t1_20_on_msg_key_announce_bad_bls_length_returns_empty() {
+        let mut tc = make_tc();
+        let actions = tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: vec![0u8; 10], // must be 48 — length check fires
+            proof_of_possession: vec![],
+        });
+        assert!(actions.is_empty());
+    }
+
+    // ── on_message: OracleVote is silently discarded ─────────────────────────
+
+    #[test]
+    fn t1_20_on_msg_oracle_vote_returns_empty() {
+        let mut tc = make_tc();
+        let actions = tc.on_message(ConsensusMessage::OracleVote { payload: vec![] });
+        assert!(actions.is_empty());
+    }
+
+    // ── on_message: stale height (< self.height) ─────────────────────────────
+
+    #[test]
+    fn t1_20_on_msg_stale_height_returns_empty() {
+        let mut tc = make_tc(); // height = 1
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 0, // 0 < 1 → stale
+            round: 0,
+            block_hash: None,
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert!(actions.is_empty());
+    }
+
+    // ── on_message: future height gap > 1 → RequestSync ─────────────────────
+
+    #[test]
+    fn t1_20_on_msg_future_height_gap_requests_sync() {
+        let mut tc = make_tc(); // height = 1
+        // height=5 > 1+1=2  →  RequestSync(1, 4)
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 5,
+            round: 0,
+            block_hash: None,
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert_eq!(actions.len(), 1);
+        assert!(
+            matches!(actions[0], ConsensusAction::RequestSync(1, 4)),
+            "expected RequestSync(1,4), got {:?}",
+            actions[0]
+        );
+    }
+
+    // ── on_message: future height gap == 1 → no RequestSync ─────────────────
+
+    #[test]
+    fn t1_20_on_msg_future_height_gap1_no_sync() {
+        let mut tc = make_tc(); // height = 1
+        // height=2 == 1+1 → guard skips RequestSync push, returns empty
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 2,
+            round: 0,
+            block_hash: None,
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert!(actions.is_empty());
+    }
+
+    // ── on_message: stale round (< self.round_state.round) ───────────────────
+
+    #[test]
+    fn t1_20_on_msg_stale_round_returns_empty() {
+        let mut tc = make_tc(); // height=1, round=0
+        tc.round_state = RoundState::new(3); // advance local round to 3
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 1, // 1 < 3 → stale
+            block_hash: None,
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert!(actions.is_empty());
+    }
+
+    // ── on_message: future round → round-skip ────────────────────────────────
+
+    #[test]
+    fn t1_20_on_msg_future_round_advances_round_state() {
+        let mut tc = make_tc(); // height=1, round=0
+        // Prevote with round=4 — triggers round-skip to 4
+        let _ = tc.on_message(ConsensusMessage::Prevote {
+            height: 1,
+            round: 4,
+            block_hash: None,
+            validator_id: 2,
+            bls_signature: None,
+        });
+        assert_eq!(tc.round_state.round, 4, "round must have been skipped to 4");
+    }
+
+    // ── on_message: Proposal from wrong proposer ─────────────────────────────
+
+    #[test]
+    fn t1_20_on_msg_wrong_proposer_returns_empty() {
+        let mut tc = make_tc(); // height=1, round=0
+        // proposer_id=99 not in validator set → expected_proposer != Some(99)
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block: make_block_at(1, 1),
+            proposer_id: 99,
+        });
+        assert!(actions.is_empty());
+    }
+
+    // ── precommit_diagnostics ────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_precommit_diagnostics_fresh_returns_zero_zero() {
+        let tc = make_tc();
+        assert_eq!(tc.precommit_diagnostics(), (0, 0));
+    }
+
+    // ── am_i_proposer ────────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_am_i_proposer_callable_without_panic() {
+        let tc = make_tc();
+        let _ = tc.am_i_proposer(); // bool; just ensure it doesn't panic
+    }
+
+    // ── mmr_root / mmr_size ──────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_mmr_root_empty_is_zero_hash() {
+        let tc = make_tc();
+        assert_eq!(tc.mmr_root(), [0u8; 32]);
+    }
+
+    #[test]
+    fn t1_20_mmr_size_empty_is_zero() {
+        let tc = make_tc();
+        assert_eq!(tc.mmr_size(), 0);
+    }
+
+    // ── script_engine / contract_engine ──────────────────────────────────────
+
+    #[test]
+    fn t1_20_script_engine_accessible() {
+        let tc = make_tc();
+        let _ = tc.script_engine();
+    }
+
+    #[test]
+    fn t1_20_contract_engine_accessible() {
+        let tc = make_tc();
+        let _ = tc.contract_engine();
+    }
+
+    // ── mortis_certificate / mortis_cert_preview ──────────────────────────────
+
+    #[test]
+    fn t1_20_mortis_certificate_none_before_trigger() {
+        let tc = make_tc();
+        assert!(tc.mortis_certificate().is_none());
+    }
+
+    #[test]
+    fn t1_20_mortis_cert_preview_some_on_healthy_chain() {
+        let tc = make_tc();
+        // Not triggered → preview builds a speculative cert
+        assert!(tc.mortis_cert_preview().is_some());
+    }
+
+    // ── tick_mortis_on_executor ───────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_tick_mortis_returns_none_at_low_epoch() {
+        let mut tc = make_tc();
+        // Epoch 1, fresh chain — Mortis condition not met
+        let cert = tc.tick_mortis_on_executor(1, [0u8; 32]);
+        assert!(cert.is_none());
+    }
+
+    // ── enforce_validator_tombstones ──────────────────────────────────────────
+
+    #[test]
+    fn t1_20_enforce_validator_tombstones_empty_trie_returns_zero() {
+        let mut tc = make_tc();
+        assert_eq!(tc.enforce_validator_tombstones(), 0);
+    }
+
+    // ── make_key_announce / sign_with_bls ─────────────────────────────────────
+
+    #[test]
+    fn t1_20_make_key_announce_none_without_bls_keypair() {
+        let tc = make_tc(); // bls_keypair = None
+        assert!(tc.make_key_announce().is_none());
+    }
+
+    #[test]
+    fn t1_20_sign_with_bls_none_without_bls_keypair() {
+        let tc = make_tc();
+        assert!(tc.sign_with_bls(b"hello").is_none());
+    }
+
+    // ── randomness_beacon ─────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_randomness_beacon_accessible() {
+        let tc = make_tc();
+        let _ = tc.randomness_beacon();
+    }
+
+    // ── last_proposal_priority_sum ────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_last_proposal_priority_sum_zero_on_fresh_instance() {
+        let tc = make_tc();
+        assert_eq!(tc.last_proposal_priority_sum(), 0);
+    }
+
+    // ── four_act_state ────────────────────────────────────────────────────────
+
+    #[test]
+    fn t1_20_four_act_state_empty_chain() {
+        let tc = make_tc();
+        let s = tc.four_act_state();
+        assert_eq!(s.eulogy_count, 0);
+        assert!(s.eulogy_trie_root.is_none());
+        assert!(!s.mortis_triggered);
+        assert!(s.tombstone_addresses.is_empty());
     }
 }

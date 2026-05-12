@@ -860,7 +860,7 @@ mod tests {
             );
             // Wrong-value tampering also rejected at deep paths.
             let mut bad_proof = proof.clone();
-            bad_proof.value = Some(make_value(((val[0]).wrapping_add(1)) as u8));
+            bad_proof.value = Some(make_value(((val[0]).wrapping_add(1))));
             assert!(
                 !VerkleTrie::verify(&bad_proof, &root),
                 "tampered-value proof must reject at deep path"

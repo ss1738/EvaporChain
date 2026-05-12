@@ -1410,7 +1410,7 @@ fn mcc_phase_c6_byzantine_proposer_picks_wrong_head_is_detectable() {
     for &byzantine_first_parent in &non_argmax {
         // The Byzantine block claims to follow `byzantine_first_parent`
         // as its first parent — explicitly NOT the argmax.
-        let byzantine_parents = vec![byzantine_first_parent];
+        let byzantine_parents = [byzantine_first_parent];
 
         // Honest validators independently compute the expected head and
         // detect the disagreement.
