@@ -20934,3 +20934,189 @@ mod t1_20_batch15 {
         assert!(!tc.reinstate_validator(info));
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch16 {
+    use super::*;
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Block, CommitCertificate, DeployScriptTx, Transaction, TransferTx};
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+
+    fn make_tc() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs())
+    }
+
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: number / 10, parent_hash: [0u8; 32],
+            state_root: [0u8; 32], transactions: vec![],
+            producer_id: Some(1), timestamp: number * 12,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: check_weak_subjectivity → block below trusted checkpoint → false (line 6046) ──
+    #[test]
+    fn t1_20_ws_trusted_checkpoint_block_below_rejected() {
+        let mut tc = make_tc();
+        tc.set_trusted_checkpoint(10, [1u8; 32], [2u8; 32]);
+        let mut block = make_block(5); // 5 < 10
+        block.state_root = [0u8; 32];
+        assert!(!tc.check_weak_subjectivity(&block));
+    }
+
+    // ── Test 2: check_weak_subjectivity → same height as trusted checkpoint, wrong root → false (line 6055) ──
+    #[test]
+    fn t1_20_ws_trusted_checkpoint_same_height_wrong_root_rejected() {
+        let mut tc = make_tc();
+        tc.set_trusted_checkpoint(10, [1u8; 32], [2u8; 32]);
+        let mut block = make_block(10);
+        block.state_root = [9u8; 32]; // wrong root
+        assert!(!tc.check_weak_subjectivity(&block));
+    }
+
+    // ── Test 3: check_weak_subjectivity → block below rolling checkpoint → false (line 6067) ──
+    #[test]
+    fn t1_20_ws_rolling_checkpoint_block_below_rejected() {
+        let mut tc = make_tc();
+        tc.weak_subjectivity_checkpoints.push((20, [5u8; 32]));
+        let block = make_block(15); // 15 < 20
+        assert!(!tc.check_weak_subjectivity(&block));
+    }
+
+    // ── Test 4: check_weak_subjectivity → rolling checkpoint same height wrong root → false (line 6075) ──
+    #[test]
+    fn t1_20_ws_rolling_checkpoint_same_height_wrong_root_rejected() {
+        let mut tc = make_tc();
+        tc.weak_subjectivity_checkpoints.push((20, [5u8; 32]));
+        let mut block = make_block(20);
+        block.state_root = [6u8; 32]; // differs from checkpoint root [5u8;32]
+        assert!(!tc.check_weak_subjectivity(&block));
+    }
+
+    // ── Test 5: create_proposal trims block that exceeds MAX_BLOCK_SIZE_BYTES (lines 6549-6570) ──
+    #[test]
+    fn t1_20_create_proposal_trims_oversized_block() {
+        let mut tc = make_tc();
+        // Small tx first, then a tx with huge source_code
+        tc.mempool.submit(Transaction::Transfer(TransferTx {
+            from: [1u8; 32], to: [2u8; 32], amount: 1, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        }));
+        tc.mempool.submit(Transaction::DeployScript(DeployScriptTx {
+            deployer: [1u8; 32],
+            source_code: "x".repeat(MAX_BLOCK_SIZE_BYTES + 1),
+            energy: 1, half_life: 1,
+            signature: None, public_key: None,
+        }));
+        let mut db = InMemoryStateDB::new();
+        let block = tc.create_proposal(&mut db).expect("proposal must be produced");
+        // The oversized tx must have been trimmed — block fits within limit
+        let encoded = serde_json::to_vec(&block).unwrap();
+        assert!(
+            encoded.len() <= MAX_BLOCK_SIZE_BYTES || block.transactions.len() < 2,
+            "block should be trimmed"
+        );
+    }
+
+    // ── Test 6: try_build_commit_certificate → invalid BLS sigs → None (lines 7026-7032) ──
+    #[test]
+    fn t1_20_try_build_commit_cert_invalid_bls_agg_returns_none() {
+        let mut tc = make_tc();
+        let block_hash = [0xBBu8; 32];
+        // Both validators precommit for this hash
+        tc.round_state.precommits.insert(1, Some(block_hash));
+        tc.round_state.precommits.insert(2, Some(block_hash));
+        // Insert invalid (empty) BLS sig bytes — aggregation will fail
+        tc.round_state.precommit_bls_sigs.insert(1, vec![]);
+        tc.round_state.precommit_bls_sigs.insert(2, vec![]);
+        // Total stake = 2000 ≥ threshold 2000 → passes the stake check; fails at agg
+        let cert = tc.try_build_commit_certificate(block_hash);
+        assert!(cert.is_none(), "invalid BLS sigs must prevent cert assembly");
+    }
+
+    // ── Test 7: advance_round with 999 missed_votes → hits 1000 → slash (lines 6837-6845) ──
+    #[test]
+    fn t1_20_vote_liveness_1000_missed_votes_triggers_slash() {
+        let mut tc = make_tc();
+        // Pre-fill validator 2 at 999; advance_round adds 1 → 1000 → slash → reset
+        tc.missed_votes.insert(2, 999);
+        tc.advance_round();
+        assert_eq!(*tc.missed_votes.get(&2).unwrap_or(&0), 0);
+    }
+
+    // ── Test 8: missed_votes resets to 0 when validator cast a prevote (lines 6847-6848) ──
+    #[test]
+    fn t1_20_vote_liveness_resets_after_vote() {
+        let mut tc = make_tc();
+        tc.missed_votes.insert(2, 50);
+        // Validator 2 prevoted this round
+        tc.round_state.prevotes.insert(2, Some([0u8; 32]));
+        tc.advance_round();
+        // Voted → reset to 0
+        assert_eq!(*tc.missed_votes.get(&2).unwrap_or(&0), 0);
+    }
+
+    // ── Test 9: KeyAnnounce with 48-byte key registers BLS key on validator (lines 4588-4602) ──
+    #[test]
+    fn t1_20_key_announce_48byte_key_registers_on_validator() {
+        let mut tc = make_tc();
+        let bls_key = vec![0xAAu8; 48];
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: bls_key.clone(),
+            proof_of_possession: vec![],
+        });
+        assert_eq!(tc.validator_set.get(1).unwrap().bls_public_key.as_ref(), Some(&bls_key));
+    }
+
+    // ── Test 10: on_block_committed with mismatched cert block_hash still advances (line 5919) ──
+    #[test]
+    fn t1_20_block_committed_cert_hash_mismatch_still_advances() {
+        let mut tc = make_tc();
+        let mut block = make_block(1);
+        // Cert block_hash is all-zeros; actual block hash (BLAKE3) won't be all-zeros
+        block.commit_certificate = Some(CommitCertificate {
+            height: 1, round: 0, block_hash: [0u8; 32],
+            aggregate_signature: vec![], signer_ids: vec![],
+        });
+        let prev_height = tc.height;
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // Height advanced despite the cert hash mismatch
+        assert_eq!(tc.height, prev_height + 1);
+    }
+
+    // ── Test 11: check_weak_subjectivity passes when block is above all checkpoints → true ──
+    #[test]
+    fn t1_20_ws_block_above_trusted_checkpoint_passes() {
+        let mut tc = make_tc();
+        tc.set_trusted_checkpoint(5, [1u8; 32], [2u8; 32]);
+        tc.weak_subjectivity_checkpoints.push((5, [1u8; 32]));
+        let mut block = make_block(10); // above both checkpoints
+        block.state_root = [3u8; 32]; // different root is fine at a higher height
+        assert!(tc.check_weak_subjectivity(&block));
+    }
+
+    // ── Test 12: check_weak_subjectivity with no checkpoints set → always passes → true ──
+    #[test]
+    fn t1_20_ws_no_checkpoints_always_passes() {
+        let tc = make_tc();
+        let block = make_block(1);
+        assert!(tc.check_weak_subjectivity(&block));
+    }
+}
