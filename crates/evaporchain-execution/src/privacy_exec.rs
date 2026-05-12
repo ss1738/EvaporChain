@@ -1694,6 +1694,142 @@ mod tests {
         assert!(matches!(err, PrivacyExecError::DoubleSpend(_)));
     }
 
+    // ── Lane T0.5 sub-task 5 — adversarial spend-evict-respend ──
+    //
+    // Cryptographic claim: under PNT v1+ (bounded nullifier window),
+    // the bounded window's eventual eviction of a nullifier MUST NOT
+    // make a respend possible. Both defensive layers must hold:
+    //
+    //   1. Anchor enforcement (`tx.anchor == self.engine.merkle_root()`)
+    //      — replays of an old tx with the original (now-stale) anchor
+    //      are rejected with `StaleAnchor` BEFORE reaching the
+    //      bounded-window check.
+    //   2. Canonical in-memory nullifier set (`engine.nullifier_set`)
+    //      — sophisticated respends that rebuild a fresh merkle proof
+    //      against the CURRENT root and use the current anchor get
+    //      past anchor enforcement, but step 7's `nullifier_set.spend`
+    //      returns false (the nullifier is already in the unbounded
+    //      in-memory set) → `DoubleSpend`.
+    //
+    // The PNT bounded window is a memory-efficient FAST PATH (`is_double_spend`
+    // at step 3, line 503), not the authoritative source. Eviction
+    // there is acceptable iff at least one of the above two layers
+    // catches the respend.
+
+    #[test]
+    fn pnt_v1_respend_after_window_eviction_rejected_via_anchor_and_nullifier_set() {
+        // Set up: shield once, spend, then push enough new shields to
+        // advance the merkle root, AND advance enough PNT phases to
+        // age the original nullifier out of the bounded window.
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 100_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+        executor.set_protocol_version(1); // PNT v1+ authoritative
+
+        // (1) Shield N1 → root R0; (2) spend N1 → NF1 recorded
+        let n1 = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+        let r0 = executor.merkle_root();
+
+        let original_unshield = build_real_unshield(&executor, &n1, receiver, 5_000);
+        let nf1 = original_unshield.input_nullifiers[0];
+        executor
+            .execute_unshield(&mut db, &original_unshield)
+            .expect("first spend must succeed");
+        assert!(
+            executor.pnt.is_spent_in_window(&nf1),
+            "NF1 must be live in PNT immediately after the spend"
+        );
+
+        // (3) Push more shields → root advances away from R0.
+        for i in 0..5u8 {
+            do_shield(
+                &mut executor,
+                &mut db,
+                &sender,
+                5_000,
+                u64::from(i + 1),
+                test_blinding(50 + i),
+                test_blinding(60 + i),
+                test_blinding(70 + i),
+            );
+        }
+        let r_current = executor.merkle_root();
+        assert_ne!(r0, r_current, "merkle root must advance with new shields");
+
+        // (4) Rotate PNT phases past the bounded window. With
+        // PNT_WINDOW_DEPTH = 5, advancing 5 times drops the original
+        // phase that recorded NF1.
+        for _ in 0..5 {
+            executor.pnt_advance_phase();
+        }
+        assert!(
+            !executor.pnt.is_spent_in_window(&nf1),
+            "NF1 must have aged out of the bounded window after \
+             PNT_WINDOW_DEPTH (=5) rotations"
+        );
+        // Confirm the bounded-window check is now LOSSY for NF1:
+        // the fast-path is_double_spend says "not spent" even though
+        // it was definitely spent earlier.
+        assert!(
+            !executor.is_double_spend(&db, &nf1),
+            "v1+ is_double_spend must reflect bounded-window state — \
+             returns false post-eviction (this is the gap that the \
+             two defensive layers below must close)"
+        );
+
+        // ─── Attack 1 — replay original tx (anchor = stale R0) ───
+        // Defensive layer: anchor enforcement at line 494.
+        match executor.execute_unshield(&mut db, &original_unshield) {
+            Err(PrivacyExecError::StaleAnchor) => {
+                // ✓ Anchor enforcement caught the replay before any
+                // nullifier check ran.
+            }
+            other => panic!(
+                "expected StaleAnchor for old-anchor replay; got {:?}",
+                other
+            ),
+        }
+
+        // ─── Attack 2 — sophisticated respend with fresh proof ────
+        // The attacker rebuilds the merkle proof against the current
+        // root (the note_tree is append-only, so N1's commitment is
+        // still at tree_index 0 in the current tree) and uses the
+        // current anchor. This passes step 1 (StaleAnchor) and step 5
+        // (proof.root == anchor). The bounded-window check in step 3
+        // also passes (PNT evicted). Defensive layer: step 7's
+        // canonical engine.nullifier_set, which is unbounded and
+        // never evicts within a process lifetime.
+        let fresh_attack_tx = build_real_unshield(&executor, &n1, receiver, 5_000);
+        assert_eq!(
+            fresh_attack_tx.anchor,
+            executor.merkle_root(),
+            "the rebuild must use the current root so anchor enforcement passes"
+        );
+        match executor.execute_unshield(&mut db, &fresh_attack_tx) {
+            Err(PrivacyExecError::DoubleSpend(_)) => {
+                // ✓ Canonical engine.nullifier_set retained NF1 even
+                // though PNT bounded window evicted it. Joint security
+                // claim holds: the bounded window's eviction is safe
+                // because the unbounded set still has the nullifier.
+            }
+            other => panic!(
+                "expected DoubleSpend from canonical nullifier_set; got {:?}",
+                other
+            ),
+        }
+    }
+
     // ── Private Transfer Tests (100% real) ──
 
     #[test]
