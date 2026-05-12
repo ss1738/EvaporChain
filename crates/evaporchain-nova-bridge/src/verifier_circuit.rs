@@ -1,17 +1,21 @@
-//! Phase 2.2 finish step 1 of N — arkworks R1CS skeleton for the
+//! Phase 2.2-section-1 — arkworks R1CS skeleton for the
 //! in-circuit `RecursiveSNARK<E1, E2, C>::verify` algorithm.
 //!
-//! # What this module ships (Phase 2.2 partial — ~15% complete)
+//! # What this module ships (Phase 2.2 partial — ~25% complete)
 //!
 //! The arkworks-side `ConstraintSynthesizer` type ([`NovaVerifierCircuit`])
 //! that the Groth16 wrapper eventually proves. Carries the witness
 //! values (z0, zi, num_steps, R1CS instances) and the three
-//! verification sections sketched but not implemented:
+//! verification sections:
 //!
-//!   - **Section 1: structural checks** — `num_steps != 0`,
-//!     `self.i == num_steps`, `self.z0 == z0`, instances have 2
-//!     public outputs. Cheap. **TODO in synthesize() — straightforward;
-//!     ~10 lines per check.**
+//!   - **Section 1: structural checks** — `num_steps != 0`, `z0`
+//!     non-empty, `z0.len() == zi.len()`. **DONE** as an off-circuit
+//!     precondition gate ([`NovaVerifierCircuit::validate_structurally`])
+//!     called at the top of `generate_constraints`. Field-level
+//!     checks (`self.i == num_steps`, `instance.X.len() == 2`) belong
+//!     in the Phase 2.3 adapter — they need access to
+//!     `RecursiveSNARK` private fields that aren't witnessed in the
+//!     verifier circuit. See `StructuralValidationError`.
 //!
 //!   - **Section 2: Poseidon transcript hash** — re-hash
 //!     `(pp.digest, num_steps, z0, zi, R1CS-instance, ri)` with
@@ -50,6 +54,51 @@ use ark_bn254::Fr as Bn254Fr;
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+
+/// Structural-validation errors surfaced by [`NovaVerifierCircuit::validate_structurally`].
+///
+/// Returned BEFORE any constraint-system allocation, so a malformed
+/// circuit fails fast with a typed error rather than producing a
+/// satisfying proof for the wrong shape. The adapter (Phase 2.3) is
+/// expected to call `validate_structurally` immediately after
+/// constructing the circuit from raw `RecursiveSNARK` bytes — any
+/// failure there is a hard error before reaching the prover.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructuralValidationError {
+    /// `num_steps == 0` — the accumulator claims zero folds, which
+    /// is meaningless. Maps to `nova-snark/src/nova/mod.rs:575`
+    /// `is_num_steps_zero`.
+    NumStepsIsZero,
+    /// `z0.is_empty()` — the state vector has zero arity, which
+    /// cannot represent any chain state. Caught here because the
+    /// downstream circuit shape would degenerate.
+    Z0Empty,
+    /// `z0.len() != zi.len()` — initial-state arity must match
+    /// output-state arity (the step circuit preserves arity). Maps
+    /// to `nova-snark/src/nova/mod.rs:578` `is_inputs_not_match`
+    /// generalised to vector lengths.
+    StateVectorArityMismatch {
+        /// Length of the initial state vector `z0`.
+        z0_len: usize,
+        /// Length of the current state vector `zi` after `num_steps` folds.
+        zi_len: usize,
+    },
+}
+
+impl std::fmt::Display for StructuralValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NumStepsIsZero => write!(f, "num_steps is zero — accumulator must have ≥1 fold"),
+            Self::Z0Empty => write!(f, "z0 is empty — state vector arity must be ≥1"),
+            Self::StateVectorArityMismatch { z0_len, zi_len } => write!(
+                f,
+                "state vector arity mismatch: z0.len() = {z0_len}, zi.len() = {zi_len}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StructuralValidationError {}
 
 /// Phase 2.2 skeleton — verifier circuit for a `RecursiveSNARK<E1,
 /// E2, C>` where `E1 = Bn256EngineKZG`, `E2 = GrumpkinEngine`, and
@@ -104,14 +153,49 @@ impl NovaVerifierCircuit {
 
     /// Dummy instance for Groth16 setup. Shape-stable across the
     /// real call so the trusted-setup ceremony's IC[] table matches.
+    /// `num_steps = 1` (NOT 0) so the structural-validation pass
+    /// accepts this instance — without this, calling
+    /// `Groth16::circuit_specific_setup(NovaVerifierCircuit::dummy())`
+    /// would fail at the structural-validation stage.
     pub fn dummy() -> Self {
         Self {
-            num_steps: 0,
+            num_steps: 1,
             z0: vec![Bn254Fr::from(0u64)],
             zi: vec![Bn254Fr::from(0u64)],
             committed_hash_primary: Bn254Fr::from(0u64),
             committed_hash_secondary: Bn254Fr::from(0u64),
         }
+    }
+
+    /// Section-1 structural validation (Phase 2.2-section-1).
+    ///
+    /// Runs the off-circuit precondition checks corresponding to
+    /// `nova-snark::nova::RecursiveSNARK::verify` lines 574-595
+    /// that map cleanly to non-cryptographic shape-checks. The
+    /// remaining structural checks (`self.i == num_steps`, instance
+    /// `X.len() == 2`) require fields from a real `RecursiveSNARK`
+    /// value that this circuit struct does not yet carry; those move
+    /// to the adapter (Phase 2.3) which builds `NovaVerifierCircuit`
+    /// from a `RecursiveSNARK` and is the right layer to compare
+    /// `accumulator.i` against the claimed `num_steps`.
+    ///
+    /// Called from [`generate_constraints`] before any allocation,
+    /// so structural failures error out without polluting the
+    /// constraint system.
+    pub fn validate_structurally(&self) -> Result<(), StructuralValidationError> {
+        if self.num_steps == 0 {
+            return Err(StructuralValidationError::NumStepsIsZero);
+        }
+        if self.z0.is_empty() {
+            return Err(StructuralValidationError::Z0Empty);
+        }
+        if self.z0.len() != self.zi.len() {
+            return Err(StructuralValidationError::StateVectorArityMismatch {
+                z0_len: self.z0.len(),
+                zi_len: self.zi.len(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -120,6 +204,21 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
         self,
         cs: ConstraintSystemRef<Bn254Fr>,
     ) -> Result<(), SynthesisError> {
+        // ── Section 1: Structural validation (Phase 2.2-section-1) ──
+        //
+        // Run off-circuit precondition checks BEFORE any allocation.
+        // Maps to `nova-snark::nova::RecursiveSNARK::verify` lines
+        // 574-595. The arity / shape checks happen here; the
+        // accumulator-state checks (`self.i == num_steps`, instance
+        // `X.len() == 2`) belong in the adapter (Phase 2.3) which has
+        // access to the underlying `RecursiveSNARK` fields.
+        //
+        // A structural failure here is surfaced as
+        // `SynthesisError::Unsatisfiable` so callers get a typed
+        // error path without the prover producing a (wrongly-shaped)
+        // witness assignment.
+        self.validate_structurally().map_err(|_| SynthesisError::Unsatisfiable)?;
+
         // ── Public input wiring (stable across all Phase 2.2 sub-steps) ──
         //
         // The L1 verifier reads:
@@ -143,13 +242,29 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
 
         // ── Section 1: Structural checks ────────────────────────────
         //
-        // TODO (Phase 2.2 step 2 of N — ~half day work):
-        //   - assert num_steps != 0 (use `Boolean::is_zero` + enforce_false)
-        //   - assert self.i == num_steps (the .i field is an immediate
-        //     baked into the circuit; this comes via the adapter)
-        //   - assert z0 / zi shapes match expected arity
-        //   - assert instances each have X.len() == 2 (validated at
-        //     adapter-time before this circuit even sees them)
+        // **DONE** as off-circuit precondition gate (see the call to
+        // `validate_structurally()` at the top of this function):
+        //   - num_steps != 0
+        //   - z0 non-empty
+        //   - z0.len() == zi.len() (state-vector arity match)
+        //
+        // **Adapter-time** (Phase 2.3, off-circuit, with access to
+        // RecursiveSNARK private fields):
+        //   - self.i == num_steps (verifier check on the immediate
+        //     fold counter)
+        //   - instance.X.len() == 2 for the three R1CS instances
+        //   - z0 / zi shapes match the StepCircuit arity baked into
+        //     the public parameters digest
+        //
+        // Why split this way: the spec-listed checks that compare
+        // *fields of the proof object* (`.i`, instance lengths) can
+        // only be expressed once the bytes have been parsed into a
+        // `RecursiveSNARK`. The verifier circuit only sees the
+        // already-reduced public scalars (committed hashes, z0, zi).
+        // Putting field-level checks here would force the prover to
+        // re-allocate the entire RecursiveSNARK structure as witness
+        // — orders of magnitude wasted constraints for a check the
+        // adapter does in microseconds.
         //
         // Source: nova-snark/src/nova/mod.rs:574-595
 
@@ -241,5 +356,97 @@ mod tests {
         circuit.generate_constraints(cs.clone()).expect("synthesize");
         // 2 hashes + 4 z0 + 4 zi + 1 const = 11
         assert_eq!(cs.num_instance_variables(), 11);
+    }
+
+    // ── Section-1 structural-validation tests ──────────────────────
+    //
+    // Pin off-circuit precondition behaviour:
+    // 1. Well-formed circuit validates and synthesizes.
+    // 2. Each of the 3 documented failure shapes is caught by
+    //    `validate_structurally` AND propagates as
+    //    `SynthesisError::Unsatisfiable` through `generate_constraints`.
+
+    #[test]
+    fn validate_structurally_accepts_well_formed_circuit() {
+        let circuit = NovaVerifierCircuit::new(
+            1,
+            vec![Bn254Fr::from(7u64)],
+            vec![Bn254Fr::from(11u64)],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        assert_eq!(circuit.validate_structurally(), Ok(()));
+    }
+
+    #[test]
+    fn validate_structurally_rejects_zero_num_steps() {
+        let circuit = NovaVerifierCircuit::new(
+            0,
+            vec![Bn254Fr::from(1u64)],
+            vec![Bn254Fr::from(1u64)],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        assert_eq!(
+            circuit.validate_structurally(),
+            Err(StructuralValidationError::NumStepsIsZero)
+        );
+    }
+
+    #[test]
+    fn validate_structurally_rejects_empty_z0() {
+        let circuit = NovaVerifierCircuit::new(
+            1,
+            vec![],
+            vec![],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        assert_eq!(
+            circuit.validate_structurally(),
+            Err(StructuralValidationError::Z0Empty)
+        );
+    }
+
+    #[test]
+    fn validate_structurally_rejects_arity_mismatch() {
+        let circuit = NovaVerifierCircuit::new(
+            1,
+            vec![Bn254Fr::from(1u64); 3],
+            vec![Bn254Fr::from(2u64); 5],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        assert_eq!(
+            circuit.validate_structurally(),
+            Err(StructuralValidationError::StateVectorArityMismatch {
+                z0_len: 3,
+                zi_len: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn generate_constraints_surfaces_structural_failure_as_unsatisfiable() {
+        // num_steps = 0 → Section-1 gate must short-circuit before
+        // any public-input allocation runs.
+        let circuit = NovaVerifierCircuit::new(
+            0,
+            vec![Bn254Fr::from(1u64)],
+            vec![Bn254Fr::from(1u64)],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let err = circuit
+            .generate_constraints(cs.clone())
+            .expect_err("structurally-invalid circuit must not synthesize");
+        assert!(
+            matches!(err, SynthesisError::Unsatisfiable),
+            "expected Unsatisfiable, got {err:?}"
+        );
+        // No public inputs allocated when the precondition fails.
+        // (The Groth16-convention constant input is still present.)
+        assert_eq!(cs.num_instance_variables(), 1);
     }
 }
