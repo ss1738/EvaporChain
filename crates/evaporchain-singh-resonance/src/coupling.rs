@@ -259,6 +259,34 @@ mod tests {
             );
         }
     }
+
+    /// T1.20 — CouplingParams::new rejects zero saturation
+    /// (line 76).
+    #[test]
+    fn t1_20_coupling_new_rejects_zero_saturation() {
+        let r = CouplingParams::new(50, 100, 200, 0);
+        assert!(matches!(r, Err(CouplingError::ZeroSaturation)));
+    }
+
+    /// T1.20 — CouplingParams::new rejects zero min_scale_bp
+    /// (line 85). Also exercises the InvertedMidMin /
+    /// InvertedMaxMid guards as inputs slide.
+    #[test]
+    fn t1_20_coupling_new_rejects_zero_min_scale() {
+        let r = CouplingParams::new(0, 100, 200, 1000);
+        assert!(matches!(r, Err(CouplingError::ZeroMinScale)));
+    }
+
+    /// T1.20 — CouplingParams::new rejects inverted mid<min and
+    /// max<mid. Covers the remaining two ordering guards.
+    #[test]
+    fn t1_20_coupling_new_rejects_inverted_orderings() {
+        let r = CouplingParams::new(100, 50, 200, 1000);
+        assert!(matches!(r, Err(CouplingError::InvertedMidMin)));
+
+        let r2 = CouplingParams::new(50, 200, 100, 1000);
+        assert!(matches!(r2, Err(CouplingError::InvertedMaxMid)));
+    }
 }
 
 #[cfg(test)]
