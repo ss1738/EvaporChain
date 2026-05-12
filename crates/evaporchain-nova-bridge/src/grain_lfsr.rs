@@ -538,16 +538,15 @@ mod tests {
     }
 
     /// Pin the FIRST emitted field element for the BN254/arity-24
-    /// seed. This is the BIG one — it's the first round constant
-    /// any future arkworks-side Section 2 gadget will use, and
-    /// must match what neptune produces internally for the same
-    /// parameters.
+    /// seed. After PR #97's SBOX-type fix achieved byte-parity
+    /// with neptune's plain ARK, these bytes are KNOWN-EQUAL to
+    /// neptune's `crc[0]` (which IS plain `round_keys(0)[0]` per
+    /// `preprocessing.rs:33`'s `res.extend(round_keys(0))`).
     ///
-    /// Note: we don't yet know whether this matches neptune's
-    /// PLAIN ark[0] (vs the compressed `crc[0]` from PR #80) —
-    /// that requires inverting the compression. This pin is for
-    /// REGRESSION DETECTION on our own LFSR, not yet parity
-    /// verification.
+    /// The 32-byte LE representation is captured from a clean
+    /// Mini-1 run. If this test ever fires, the LFSR has drifted
+    /// from neptune's output and the downstream port
+    /// (PRs #102, #103) is invalidated.
     #[test]
     fn pinned_first_field_element_for_bn254() {
         use ark_ff::{BigInteger, PrimeField};
@@ -556,13 +555,19 @@ mod tests {
         lfsr.warmup();
         let fe = lfsr.next_filtered_field_element_bn254();
         let le = fe.into_bigint().to_bytes_le();
-        eprintln!("first emitted FE LE bytes: {le:?}");
-        // Pin: not zero, not max, not the seed itself.
-        assert_ne!(fe, ark_bn254::Fr::from(0u64));
-        // Mod modulus, this should be deterministic. Future
-        // PR will assert equality against the plain neptune ark[0]
-        // when the compression-inversion or alternative parity
-        // path is wired up.
+        // Pinned LE bytes = neptune crc[0] LE form (verified
+        // byte-for-byte against PR #80's JSON dump):
+        const EXPECTED_LE: [u8; 32] = [
+            128, 67, 230, 115, 239, 141, 250, 143, 246, 136, 232, 130, 13, 3, 223, 254,
+            112, 206, 1, 48, 121, 188, 29, 28, 9, 241, 131, 55, 224, 40, 65, 3,
+        ];
+        let mut le_32 = [0u8; 32];
+        let copy_len = le.len().min(32);
+        le_32[..copy_len].copy_from_slice(&le[..copy_len]);
+        assert_eq!(
+            le_32, EXPECTED_LE,
+            "LFSR's first emitted Fr drifted from pinned neptune crc[0]"
+        );
     }
 
     /// The full ARK vector has the expected length for our
