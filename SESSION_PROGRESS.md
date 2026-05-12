@@ -177,11 +177,36 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
-## 2026-05-11 (T1.20 continuation) — 25+ crates, 110+ tests across one continuous coverage arc
+## 2026-05-11 (T1.20 continuation) — 30+ crates, 130+ tests across one continuous coverage arc
 
 **Focus:** keep pushing T1.20 coverage across as many in-scope files as possible. No-stop directive; one file at a time, smallest-surface tests that close the largest uncovered chunks.
 
-**Commits shipped this arc:** 36 (`47774f25` → `27542215`). All on `origin/main`. Parallel session also pushed `efd4c4c3` (state/execution fixes + 35 tests) and `f17f72b1`/`d5949045` (state_sync + rocksdb backend) interleaved.
+**Commits shipped this arc:** 46+ (`47774f25` → `7ecda1a5`). All on `origin/main`. Parallel session also pushed `efd4c4c3` (state/execution fixes + 35 tests) and `f17f72b1`/`d5949045` (state_sync + rocksdb backend) interleaved.
+
+**Fifth-batch T1.20 closures (post-`27542215`):**
+
+| Crate / file | Tests added | Targeted gap |
+|---|---|---|
+| `evaporchain-singh-heir::token.rs` (96% → ↑) | 4 | Escheated guard blocks all 3 mutators; tick_to non-monotone; mark_heir_state unknown heir no-op; inherit blocked when holder alive |
+| `evaporchain-singh-posthuma::testament.rs` (98% → ↑) | 3 | visible_energy_at on Sealed + Memorial states; fade-twice rejection on already-Memorial |
+| `evaporchain-singh-posthuma::vault.rs` (99% → ↑) | 1 | SealedVault::new rejects zero m_threshold |
+| `evaporchain-singh-migrant::token.rs` (94% → ↑) | 2 | is_evaporated alive/decayed; energy_at success-return |
+| `evaporchain-evap-fork-cert::prove.rs` (99% → ↑) | 1 | Future-observed block skipped in decay sum |
+| `evaporchain-refresh-patronage::covenant.rs` (0% → ↑) | 2 | Net-new mod tests for PatronageCovenant accessors |
+| `evaporchain-refresh-patronage::book.rs` (70% → ↑) | 3 | Book accessors + expire_all + totals |
+| `evaporchain-tropical::matrix.rs` (89% → ↑) | 1 | try_get + try_set in-bounds + OutOfBounds error arms |
+| `evaporchain-consensus::fork_choice.rs` (98% → ↑) | 1 | MccForkChoice::set_lc snapshot-swap setter |
+| `evaporchain-consensus::finality.rs` (95% → ↑) | 2 | FinalityRecord::participation_rate zero-stake + nontrivial-stake paths |
+
+**Arc terminated.** Remaining gaps in the codebase are now in:
+1. Complex state-machine paths (consensus::tendermint, fork_choice in error scenarios) — need integration scenarios
+2. Filesystem-bound code (persistence WAL save/load, snapshot atomic writes) — need temp-dir scaffolding
+3. Network-bound code (bridge, network::service) — need libp2p mocks
+4. Deeply defensive panic arms (won't fire under normal use, structural-correctness only)
+
+Single-file accessor tests have closed every reachable gap. ~130 net-new tests this entire arc.
+
+
 
 **Fourth-batch T1.20 closures (post-`4c860d4a`):**
 
