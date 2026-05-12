@@ -1,18 +1,18 @@
-/// EIP-2537 point encoding helpers.
-///
-/// EIP-2537 pads each 48-byte BLS12-381 field element to 64 bytes
-/// (16 zero bytes on the left). G1 → 128 bytes; G2 → 256 bytes.
-///
-/// Both helpers accept the raw ZCash-serialised uncompressed bytes
-/// produced by blst's `serialize()`:
-///   G1: `[X || Y]`             (each 48 bytes, 96 total)
-///   G2: `[X.c1 || X.c0 || Y.c1 || Y.c0]`  (each 48 bytes, 192 total)
-///
-/// Mapping to EIP-2537 layout:
-///   G2[0..64]   = X.c0 (right-justified in 64 bytes)
-///   G2[64..128] = X.c1
-///   G2[128..192]= Y.c0
-///   G2[192..256]= Y.c1
+//! EIP-2537 point encoding helpers.
+//!
+//! EIP-2537 pads each 48-byte BLS12-381 field element to 64 bytes
+//! (16 zero bytes on the left). G1 → 128 bytes; G2 → 256 bytes.
+//!
+//! Both helpers accept the raw ZCash-serialised uncompressed bytes
+//! produced by blst's `serialize()`:
+//!   G1: `[X || Y]`             (each 48 bytes, 96 total)
+//!   G2: `[X.c1 || X.c0 || Y.c1 || Y.c0]`  (each 48 bytes, 192 total)
+//!
+//! Mapping to EIP-2537 layout:
+//!   G2[0..64]   = X.c0 (right-justified in 64 bytes)
+//!   G2[64..128] = X.c1
+//!   G2[128..192]= Y.c0
+//!   G2[192..256]= Y.c1
 
 /// Encode a raw uncompressed G1 point (96 bytes) into EIP-2537 format (128 bytes).
 ///
