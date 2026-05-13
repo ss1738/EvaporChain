@@ -221,6 +221,95 @@ mod tests {
         assert_eq!(lc.current_barcode(), &genesis);
     }
 
+    /// T1.20 — `ingest` rejects a strictly-lower height too, not
+    /// just equal. The existing `ingest_rejects_non_monotone_height`
+    /// uses `incoming == current`; this pins the strictly-less
+    /// boundary so a refactor to `<` (instead of `<=`) would trip.
+    #[test]
+    fn t1_20_ingest_rejects_strictly_lower_height() {
+        let genesis = Barcode::from_bars(vec![b(1, 10)]);
+        let mut lc = LightClient::new(10, genesis);
+        let next = Barcode::from_bars(vec![b(1, 11)]);
+        let header = make_header(7, &next, 1); // height < current
+        let err = lc.ingest(&header, next).unwrap_err();
+        match err {
+            LightClientError::NonMonotoneHeight { incoming, current } => {
+                assert_eq!(incoming, 7);
+                assert_eq!(current, 10);
+            }
+            other => panic!("expected NonMonotoneHeight, got {other:?}"),
+        }
+        // State unchanged.
+        assert_eq!(lc.current_height(), 10);
+    }
+
+    /// T1.20 — each error variant carries diagnostic values that
+    /// operators rely on for triage. The existing rejection tests
+    /// use `matches!` without checking field values; this pins
+    /// the values explicitly for all three variants.
+    #[test]
+    fn t1_20_error_variants_carry_diagnostic_values() {
+        // StabilityBoundViolated carries height + observed + bd_max.
+        let genesis = Barcode::from_bars(vec![b(10, 20)]);
+        let mut lc = LightClient::new(0, genesis);
+        let pathological = Barcode::from_bars(vec![b(10, 20), b(0, 1000)]);
+        let header = make_header(1, &pathological, 5);
+        let err = lc.ingest(&header, pathological).unwrap_err();
+        match err {
+            LightClientError::StabilityBoundViolated {
+                height,
+                observed,
+                bd_max,
+            } => {
+                assert_eq!(height, 1);
+                assert!(observed > 5, "observed={observed} must exceed bd_max=5");
+                assert_eq!(bd_max, 5);
+            }
+            other => panic!("expected StabilityBoundViolated, got {other:?}"),
+        }
+
+        // BarcodeHashMismatch carries expected + actual.
+        let mut lc = LightClient::new(0, Barcode::from_bars(vec![b(1, 10)]));
+        let claimed = Barcode::from_bars(vec![b(1, 11)]);
+        let mut header = make_header(1, &claimed, 5);
+        let real_hash = claimed.hash();
+        header.barcode_hash = [0xFFu8; 32];
+        let err = lc.ingest(&header, claimed).unwrap_err();
+        match err {
+            LightClientError::BarcodeHashMismatch { expected, actual } => {
+                assert_eq!(expected, [0xFFu8; 32], "expected = tampered header hash");
+                assert_eq!(actual, real_hash, "actual = real barcode hash");
+            }
+            other => panic!("expected BarcodeHashMismatch, got {other:?}"),
+        }
+    }
+
+    /// T1.20 — boundary: `bd_max = 0` permits ONLY a barcode
+    /// identical to the previous one (bottleneck distance = 0).
+    /// Any change, however small, must be rejected. Pins the
+    /// strictness of the EFH stability gate.
+    #[test]
+    fn t1_20_bd_max_zero_requires_identical_barcode() {
+        let genesis = Barcode::from_bars(vec![b(10, 20)]);
+        let mut lc = LightClient::new(0, genesis.clone());
+
+        // Identical barcode → must accept (d_B = 0).
+        let header_identical = make_header(1, &genesis, 0);
+        lc.ingest(&header_identical, genesis.clone()).unwrap();
+        assert_eq!(lc.current_height(), 1);
+
+        // Any change → must reject.
+        let changed = Barcode::from_bars(vec![b(10, 21)]);
+        let header = make_header(2, &changed, 0);
+        let err = lc.ingest(&header, changed).unwrap_err();
+        assert!(matches!(
+            err,
+            LightClientError::StabilityBoundViolated { .. }
+        ));
+        // State stuck at height 1.
+        assert_eq!(lc.current_height(), 1);
+    }
+
     #[test]
     fn the_press_claim_lives_as_a_test() {
         // Claim: "EvaporChain ships the first L1 with a
