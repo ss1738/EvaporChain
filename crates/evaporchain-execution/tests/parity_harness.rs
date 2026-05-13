@@ -23,8 +23,8 @@ use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_execution::{ExecutionEngine, SimpleExecutor};
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
 use evaporchain_types::{
-    Account, Block, ClaimDelegationTx, DelegateTx, Epoch, StakeRecord, Transaction, TransferTx,
-    UndelegateTx, ValidatorStakeTx,
+    Account, Block, ClaimDelegationTx, DelegateTx, Epoch, GovernanceAction, GovernanceTx,
+    MultiSigTx, StakeRecord, Transaction, TransferTx, UndelegateTx, ValidatorStakeTx,
 };
 
 // ─── Public harness types ──────────────────────────────────────────────
@@ -310,6 +310,74 @@ fn compare_delegations(
     }
 }
 
+fn compare_proposals(
+    simple: &InMemoryStateDB,
+    parallel: &InMemoryStateDB,
+    out: &mut Vec<Divergence>,
+) {
+    let mut all_ids: std::collections::BTreeSet<u64> = simple
+        .all_proposals()
+        .iter()
+        .map(|p| p.proposal_id)
+        .collect();
+    for p in parallel.all_proposals() {
+        all_ids.insert(p.proposal_id);
+    }
+
+    for id in all_ids {
+        let s = simple.get_proposal(id);
+        let p = parallel.get_proposal(id);
+        match (s, p) {
+            (None, None) => {}
+            (Some(sp), Some(pp)) => {
+                if sp.title != pp.title
+                    || sp.param_key != pp.param_key
+                    || sp.param_value != pp.param_value
+                    || sp.start_epoch != pp.start_epoch
+                    || sp.end_epoch != pp.end_epoch
+                    || sp.votes_for != pp.votes_for
+                    || sp.votes_against != pp.votes_against
+                    || sp.status != pp.status
+                    || sp.voters != pp.voters
+                {
+                    out.push(Divergence {
+                        domain: "governance.proposal_content",
+                        detail: format!("proposal_id={id}"),
+                        simple_value: format!(
+                            "title={:?} status={:?} for={} against={} voters={}",
+                            sp.title,
+                            sp.status,
+                            sp.votes_for,
+                            sp.votes_against,
+                            sp.voters.len()
+                        ),
+                        parallel_value: format!(
+                            "title={:?} status={:?} for={} against={} voters={}",
+                            pp.title,
+                            pp.status,
+                            pp.votes_for,
+                            pp.votes_against,
+                            pp.voters.len()
+                        ),
+                    });
+                }
+            }
+            (Some(_), None) => out.push(Divergence {
+                domain: "governance.proposal_presence",
+                detail: format!("proposal_id={id} exists only in SimpleExecutor DB"),
+                simple_value: "Some(_)".into(),
+                parallel_value: "None".into(),
+            }),
+            (None, Some(_)) => out.push(Divergence {
+                domain: "governance.proposal_presence",
+                detail: format!("proposal_id={id} exists only in ParallelExecutor DB"),
+                simple_value: "None".into(),
+                parallel_value: "Some(_)".into(),
+            }),
+        }
+    }
+}
+
 // ─── Harness entry point ───────────────────────────────────────────────
 
 /// Run a fixture through both executors, returning every divergence found.
@@ -383,6 +451,7 @@ pub fn run_parity(fixture: &ParityFixture) -> Vec<Divergence> {
     compare_accounts(&simple_db, &parallel_db, &mut divergences);
     compare_stakes(&simple_db, &parallel_db, &mut divergences);
     compare_delegations(&simple_db, &parallel_db, &mut divergences);
+    compare_proposals(&simple_db, &parallel_db, &mut divergences);
 
     divergences
 }
@@ -736,6 +805,189 @@ fn parity_claim_delegation_without_unbonding() {
             nonce: 0,
             signature: None,
             public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+// ─── Phase 3b: Governance + MultiSig fixtures (closes audit C4 — second cluster) ──
+
+#[test]
+fn parity_governance_create_proposal_happy_path() {
+    // Pre-fix divergence: Parallel errored "governance txs execute in
+    // serial phase" → no proposal stored. SimpleExecutor put_proposal.
+    // Post-fix both succeed identically.
+    let fixture = ParityFixture {
+        name: "governance-create-proposal-happy",
+        seed: |db| fund(db, 60, 1_000),
+        transaction: Transaction::Governance(GovernanceTx {
+            action: GovernanceAction::CreateProposal {
+                title: "raise block gas limit".into(),
+                param_key: "block_gas_limit".into(),
+                param_value: "5000000".into(),
+                voting_epochs: 50,
+            },
+            sender: addr(60),
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_governance_create_proposal_title_too_long() {
+    let huge_title: String = "x".repeat(300); // > MAX_PROPOSAL_TITLE_BYTES
+    let fixture = ParityFixture {
+        name: "governance-create-proposal-title-too-long",
+        seed: |db| fund(db, 60, 1_000),
+        transaction: Transaction::Governance(GovernanceTx {
+            action: GovernanceAction::CreateProposal {
+                title: huge_title,
+                param_key: "block_gas_limit".into(),
+                param_value: "5000000".into(),
+                voting_epochs: 50,
+            },
+            sender: addr(60),
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_governance_create_proposal_non_governable_key() {
+    let fixture = ParityFixture {
+        name: "governance-create-proposal-non-governable-key",
+        seed: |db| fund(db, 60, 1_000),
+        transaction: Transaction::Governance(GovernanceTx {
+            action: GovernanceAction::CreateProposal {
+                title: "sneak in a backdoor".into(),
+                param_key: "arbitrary_backdoor_key".into(),
+                param_value: "true".into(),
+                voting_epochs: 50,
+            },
+            sender: addr(60),
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_governance_cast_vote_against_missing_proposal() {
+    let fixture = ParityFixture {
+        name: "governance-cast-vote-against-missing-proposal",
+        seed: |db| fund(db, 60, 1_000),
+        transaction: Transaction::Governance(GovernanceTx {
+            action: GovernanceAction::CastVote {
+                proposal_id: 999,
+                vote: true,
+            },
+            sender: addr(60),
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_multisig_happy_path() {
+    // Pre-fix divergence: Parallel errored "multisig txs execute in
+    // serial phase". Post-fix both succeed identically: nonce bumped.
+    let fixture = ParityFixture {
+        name: "multisig-happy",
+        seed: |db| fund(db, 61, 1_000),
+        transaction: Transaction::MultiSig(MultiSigTx {
+            multisig_address: addr(61),
+            threshold: 1,
+            signers: vec![addr(62)],
+            inner_tx_bytes: vec![],
+            signatures: vec![(addr(62), vec![0u8; 64])],
+            public_keys: vec![],
+            nonce: 0,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_multisig_insufficient_signatures() {
+    let fixture = ParityFixture {
+        name: "multisig-insufficient-signatures",
+        seed: |db| fund(db, 61, 1_000),
+        transaction: Transaction::MultiSig(MultiSigTx {
+            multisig_address: addr(61),
+            threshold: 2,
+            signers: vec![addr(62), addr(63)],
+            inner_tx_bytes: vec![],
+            signatures: vec![(addr(62), vec![0u8; 64])], // only 1 < threshold 2
+            public_keys: vec![],
+            nonce: 0,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_multisig_unauthorized_signer() {
+    let fixture = ParityFixture {
+        name: "multisig-unauthorized-signer",
+        seed: |db| fund(db, 61, 1_000),
+        transaction: Transaction::MultiSig(MultiSigTx {
+            multisig_address: addr(61),
+            threshold: 1,
+            signers: vec![addr(62)],
+            inner_tx_bytes: vec![],
+            // addr(99) is NOT in signers list — must reject in both.
+            signatures: vec![(addr(99), vec![0u8; 64])],
+            public_keys: vec![],
+            nonce: 0,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_multisig_duplicate_signer() {
+    let fixture = ParityFixture {
+        name: "multisig-duplicate-signer",
+        seed: |db| fund(db, 61, 1_000),
+        transaction: Transaction::MultiSig(MultiSigTx {
+            multisig_address: addr(61),
+            threshold: 2,
+            signers: vec![addr(62), addr(63)],
+            inner_tx_bytes: vec![],
+            // Same signer twice — must reject identically.
+            signatures: vec![
+                (addr(62), vec![0u8; 64]),
+                (addr(62), vec![0u8; 64]),
+            ],
+            public_keys: vec![],
+            nonce: 0,
         }),
         block_number: 1,
         epoch: 1,

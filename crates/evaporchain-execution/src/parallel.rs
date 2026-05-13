@@ -1516,6 +1516,15 @@ impl ExecutionEngine for ParallelExecutor {
                 | Transaction::Delegate(_)
                 | Transaction::Undelegate(_)
                 | Transaction::ClaimDelegation(_)
+                // Governance + MultiSig mutate governance_proposals /
+                // account nonces respectively. Pre-AUDIT-C4 the parallel
+                // partition errored both with "executes in serial phase"
+                // while the filter never pushed them to the serial
+                // bucket — every governance vote and multisig tx on the
+                // production executor failed silently. T1.20 tests
+                // codified the failure as desired behaviour; PR inverts.
+                | Transaction::Governance(_)
+                | Transaction::MultiSig(_)
                 // Validator key rotation mutates ValidatorSet via the
                 // BlockExecutionResult.validator_key_rotations side
                 // channel, which only the serial path populates. Putting
@@ -1965,6 +1974,191 @@ impl ExecutionEngine for ParallelExecutor {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+                // ─── AUDIT_2026_05_13 C4 closure: Governance ────────────────
+                // Mirrors SimpleExecutor::execute_governance at lib.rs:2004.
+                Transaction::Governance(gtx) => {
+                    use evaporchain_types::{GovernanceAction, GovernanceProposal, ProposalStatus};
+                    let sender_view = db
+                        .get_account(&gtx.sender)
+                        .cloned()
+                        .unwrap_or_else(|| Account {
+                            address: gtx.sender,
+                            balance: 0,
+                            nonce: 0,
+                            storage_deposit: 0,
+                            storage_bytes: 0,
+                            last_touched_epoch: 0,
+                            vesting: None,
+                        });
+                    if sender_view.nonce != gtx.nonce {
+                        Err(ExecutionError::InvalidNonce {
+                            expected: sender_view.nonce,
+                            got: gtx.nonce,
+                        })
+                    } else {
+                        // Nonce bump + demurrage anchor stamp.
+                        let sender = db.get_or_create_account(&gtx.sender);
+                        sender.nonce += 1;
+                        sender.last_touched_epoch = block.epoch;
+
+                        match &gtx.action {
+                            GovernanceAction::CreateProposal {
+                                title,
+                                param_key,
+                                param_value,
+                                voting_epochs,
+                            } => {
+                                if title.len() > crate::MAX_PROPOSAL_TITLE_BYTES {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "proposal title exceeds {} bytes ({})",
+                                        crate::MAX_PROPOSAL_TITLE_BYTES,
+                                        title.len()
+                                    )))
+                                } else if param_key.len() > crate::MAX_PARAM_KEY_BYTES {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "param_key exceeds {} bytes ({})",
+                                        crate::MAX_PARAM_KEY_BYTES,
+                                        param_key.len()
+                                    )))
+                                } else if param_value.len() > crate::MAX_PARAM_VALUE_BYTES {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "param_value exceeds {} bytes ({})",
+                                        crate::MAX_PARAM_VALUE_BYTES,
+                                        param_value.len()
+                                    )))
+                                } else if !(crate::MIN_VOTING_EPOCHS
+                                    ..=crate::MAX_VOTING_EPOCHS)
+                                    .contains(voting_epochs)
+                                {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "voting_epochs out of range [{}, {}]: {}",
+                                        crate::MIN_VOTING_EPOCHS,
+                                        crate::MAX_VOTING_EPOCHS,
+                                        voting_epochs
+                                    )))
+                                } else if !crate::is_governable_param_key(param_key) {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "param_key '{}' is not on the governable allowlist",
+                                        param_key
+                                    )))
+                                } else if let Err(e) =
+                                    crate::validate_param_value(param_key, param_value)
+                                {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "invalid param_value: {}",
+                                        e
+                                    )))
+                                } else {
+                                    let proposal_id = db.all_proposals().len() as u64;
+                                    let proposal = GovernanceProposal {
+                                        proposal_id,
+                                        proposer: gtx.sender,
+                                        title: title.clone(),
+                                        param_key: param_key.clone(),
+                                        param_value: param_value.clone(),
+                                        start_epoch: block.epoch,
+                                        end_epoch: block.epoch + voting_epochs,
+                                        votes_for: 0,
+                                        votes_against: 0,
+                                        status: ProposalStatus::Active,
+                                        created_at: block.epoch,
+                                        voters: std::collections::HashSet::new(),
+                                    };
+                                    db.put_proposal(proposal);
+                                    Ok(())
+                                }
+                            }
+                            GovernanceAction::CastVote { proposal_id, vote } => {
+                                match db.get_proposal(*proposal_id).cloned() {
+                                    None => Err(ExecutionError::ContractError(format!(
+                                        "proposal {} not found",
+                                        proposal_id
+                                    ))),
+                                    Some(mut proposal) => {
+                                        if proposal.status != ProposalStatus::Active {
+                                            Err(ExecutionError::ContractError(
+                                                "proposal is not active".to_string(),
+                                            ))
+                                        } else if block.epoch > proposal.end_epoch {
+                                            proposal.status =
+                                                crate::decide_proposal_outcome(&proposal);
+                                            db.put_proposal(proposal);
+                                            Err(ExecutionError::ContractError(
+                                                "voting period has ended".to_string(),
+                                            ))
+                                        } else if proposal.voters.contains(&gtx.sender) {
+                                            Err(ExecutionError::ContractError(
+                                                "duplicate vote: account has already voted on this proposal".into(),
+                                            ))
+                                        } else {
+                                            proposal.voters.insert(gtx.sender);
+                                            let voter_balance = db
+                                                .get_account(&gtx.sender)
+                                                .map(|a| a.balance)
+                                                .unwrap_or(0);
+                                            let voter_weight =
+                                                voter_balance.min(crate::MAX_VOTE_WEIGHT);
+                                            if *vote {
+                                                proposal.votes_for = proposal
+                                                    .votes_for
+                                                    .saturating_add(voter_weight);
+                                            } else {
+                                                proposal.votes_against = proposal
+                                                    .votes_against
+                                                    .saturating_add(voter_weight);
+                                            }
+                                            db.put_proposal(proposal);
+                                            Ok(())
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // ─── AUDIT_2026_05_13 C4 closure: MultiSig ─────────────────
+                // Mirrors SimpleExecutor::execute_multisig at lib.rs:2133.
+                Transaction::MultiSig(mtx) => {
+                    if (mtx.signatures.len() as u8) < mtx.threshold {
+                        Err(ExecutionError::ContractError(format!(
+                            "multi-sig requires {} signatures, got {}",
+                            mtx.threshold,
+                            mtx.signatures.len()
+                        )))
+                    } else {
+                        let mut seen_signers = std::collections::HashSet::new();
+                        let mut signer_err: Option<ExecutionError> = None;
+                        for (signer_addr, _) in &mtx.signatures {
+                            if !seen_signers.insert(signer_addr) {
+                                signer_err = Some(ExecutionError::ContractError(
+                                    "duplicate signer in multisig transaction".into(),
+                                ));
+                                break;
+                            }
+                            if !mtx.signers.contains(signer_addr) {
+                                signer_err = Some(ExecutionError::ContractError(
+                                    "signer not in authorized signers list".to_string(),
+                                ));
+                                break;
+                            }
+                        }
+                        if let Some(e) = signer_err {
+                            Err(e)
+                        } else {
+                            let sender = db.get_or_create_account(&mtx.multisig_address);
+                            if sender.nonce != mtx.nonce {
+                                Err(ExecutionError::InvalidNonce {
+                                    expected: sender.nonce,
+                                    got: mtx.nonce,
+                                })
+                            } else {
+                                sender.nonce += 1;
+                                sender.last_touched_epoch = block.epoch;
+                                Ok(())
                             }
                         }
                     }
@@ -4852,28 +5046,70 @@ mod tests {
     // ── T1.20 batch 7: execute_partition ContractError via execute_block ───────
     // These types reach execute_partition via Phase 1's `_` arm (parallel path).
 
+    // AUDIT_2026_05_13 C4 closure: these tests previously asserted
+    // `txs_failed == 1` because Governance + MultiSig fell to the
+    // parallel partition's serial-phase error arm. Now they exercise
+    // the correct success path through the serial executor.
     #[test]
-    fn t1_20_governance_via_parallel_partition_fails() {
+    fn t1_20_governance_create_proposal_via_parallel_executor_succeeds() {
+        use evaporchain_types::{GovernanceAction, GovernanceTx};
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![Transaction::Governance(evaporchain_types::GovernanceTx {
-            action: evaporchain_types::GovernanceAction::CastVote { proposal_id: 1, vote: true },
-            sender: addr(60), nonce: 0, signature: None, public_key: None,
-        })]);
+        fund_account(&mut db, 60, 1_000);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Governance(GovernanceTx {
+                action: GovernanceAction::CreateProposal {
+                    title: "raise block gas limit".into(),
+                    param_key: "block_gas_limit".into(),
+                    param_value: "5000000".into(),
+                    voting_epochs: 50,
+                },
+                sender: addr(60),
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let mut ex = ParallelExecutor::new_for_test(100);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "governance must fail in execute_partition");
+        assert_eq!(r.txs_executed, 1, "governance must execute on serial path");
+        assert_eq!(r.txs_failed, 0);
+        // Proposal landed in the proposal store + nonce bumped.
+        assert_eq!(db.all_proposals().len(), 1);
+        let p = db.get_proposal(0).expect("proposal not stored");
+        assert_eq!(p.param_key, "block_gas_limit");
+        assert_eq!(p.param_value, "5000000");
+        assert_eq!(p.start_epoch, 1);
+        assert_eq!(p.end_epoch, 51);
+        assert_eq!(db.get_account(&addr(60)).unwrap().nonce, 1);
     }
 
     #[test]
-    fn t1_20_multisig_via_parallel_partition_fails() {
+    fn t1_20_multisig_via_parallel_executor_succeeds() {
+        use evaporchain_types::MultiSigTx;
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![Transaction::MultiSig(evaporchain_types::MultiSigTx {
-            multisig_address: addr(61), threshold: 1, signers: vec![addr(62)],
-            inner_tx_bytes: vec![], signatures: vec![], public_keys: vec![], nonce: 0,
-        })]);
+        fund_account(&mut db, 61, 1_000);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::MultiSig(MultiSigTx {
+                multisig_address: addr(61),
+                threshold: 1,
+                signers: vec![addr(62)],
+                inner_tx_bytes: vec![],
+                // One legitimate signature from an authorized signer.
+                signatures: vec![(addr(62), vec![0u8; 64])],
+                public_keys: vec![],
+                nonce: 0,
+            })],
+        );
         let mut ex = ParallelExecutor::new_for_test(100);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "multisig must fail in execute_partition");
+        assert_eq!(r.txs_executed, 1, "multisig must execute on serial path");
+        assert_eq!(r.txs_failed, 0);
+        // Nonce bumped at multisig_address.
+        assert_eq!(db.get_account(&addr(61)).unwrap().nonce, 1);
     }
 
     #[test]

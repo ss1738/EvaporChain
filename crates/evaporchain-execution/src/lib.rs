@@ -350,23 +350,25 @@ pub const KEY_ROTATION_GRACE_EPOCHS: u64 = 8;
 /// Per-voter vote-weight cap. Caps any single voter's contribution so a
 /// whale (e.g. the 35 % Foundation Treasury entry in genesis-mainnet.json)
 /// cannot pass proposals solo. Tuned for the 1B total-supply mainnet.
-const MAX_VOTE_WEIGHT: u64 = 10_000_000;
+// AUDIT_2026_05_13 C4 closure: promote to pub(crate) so ParallelExecutor's
+// serial loop can use the same constants as SimpleExecutor's governance arm.
+pub(crate) const MAX_VOTE_WEIGHT: u64 = 10_000_000;
 /// Minimum total weighted votes (for + against) for a proposal to be
 /// eligible to pass. Forces a proposal to be seen by the network.
-const QUORUM_MIN_TOTAL_WEIGHT: u64 = 30_000_000; // 3% of 1B mainnet supply
+pub(crate) const QUORUM_MIN_TOTAL_WEIGHT: u64 = 30_000_000; // 3% of 1B mainnet supply
 /// Minimum number of distinct voters for a proposal to be eligible to pass.
-const QUORUM_MIN_VOTERS: usize = 3;
+pub(crate) const QUORUM_MIN_VOTERS: usize = 3;
 /// Pass threshold: votes_for must exceed this multiple of votes_against.
-const PASS_THRESHOLD_MULTIPLIER: u64 = 2;
+pub(crate) const PASS_THRESHOLD_MULTIPLIER: u64 = 2;
 /// Minimum and maximum proposal voting window (in epochs).
-const MIN_VOTING_EPOCHS: u64 = 10;
-const MAX_VOTING_EPOCHS: u64 = 100_000;
+pub(crate) const MIN_VOTING_EPOCHS: u64 = 10;
+pub(crate) const MAX_VOTING_EPOCHS: u64 = 100_000;
 /// Maximum proposal title length (bytes). DoS guard.
-const MAX_PROPOSAL_TITLE_BYTES: usize = 200;
+pub(crate) const MAX_PROPOSAL_TITLE_BYTES: usize = 200;
 /// Maximum param_key length (bytes).
-const MAX_PARAM_KEY_BYTES: usize = 64;
+pub(crate) const MAX_PARAM_KEY_BYTES: usize = 64;
 /// Maximum param_value length (bytes).
-const MAX_PARAM_VALUE_BYTES: usize = 256;
+pub(crate) const MAX_PARAM_VALUE_BYTES: usize = 256;
 /// Timelock between a proposal reaching `Passed` and the parameter
 /// becoming effective. Gives stakeholders a window to react / exit.
 pub const GOVERNANCE_TIMELOCK_EPOCHS: u64 = 5;
@@ -382,7 +384,7 @@ const GOVERNABLE_PARAM_KEYS: &[&str] = &[
     "target_gas_utilization",
 ];
 
-fn is_governable_param_key(key: &str) -> bool {
+pub(crate) fn is_governable_param_key(key: &str) -> bool {
     GOVERNABLE_PARAM_KEYS.contains(&key) || key.starts_with("upgrade_contract:")
 }
 
@@ -390,7 +392,7 @@ fn is_governable_param_key(key: &str) -> bool {
 /// - Quorum: total weighted votes >= QUORUM_MIN_TOTAL_WEIGHT and at least
 ///   QUORUM_MIN_VOTERS distinct voters.
 /// - Super-majority: votes_for > votes_against * PASS_THRESHOLD_MULTIPLIER.
-fn decide_proposal_outcome(proposal: &GovernanceProposal) -> ProposalStatus {
+pub(crate) fn decide_proposal_outcome(proposal: &GovernanceProposal) -> ProposalStatus {
     let total_weight = proposal.votes_for.saturating_add(proposal.votes_against);
     if total_weight < QUORUM_MIN_TOTAL_WEIGHT || proposal.voters.len() < QUORUM_MIN_VOTERS {
         return ProposalStatus::Rejected;
@@ -407,7 +409,7 @@ fn decide_proposal_outcome(proposal: &GovernanceProposal) -> ProposalStatus {
 }
 
 /// Validate that `param_value` is parseable / in-range for `param_key`.
-fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
+pub(crate) fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
     match key {
         "block_gas_limit" => value
             .parse::<u64>()
