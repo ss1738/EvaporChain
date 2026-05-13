@@ -21945,3 +21945,166 @@ mod t1_20_batch20 {
         assert!(actions.is_empty());
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch21 {
+    use super::*;
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::Block;
+
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+    fn make_tc3() -> TendermintConsensus { TendermintConsensus::new_for_test(1, 5, make_vs3()) }
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: 0, parent_hash: [0u8; 32], state_root: [0u8; 32],
+            transactions: vec![], producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: Phase::Commit tick with proposed_block → CommitBlock action (line 4542) ──
+    #[test]
+    fn t1_20_phase_commit_tick_emits_commit_block() {
+        let mut tc = make_tc3();
+        tc.round_state.phase = Phase::Commit;
+        tc.round_state.proposed_block = Some(make_block(1));
+        let mut db = InMemoryStateDB::new();
+        let actions = tc.tick(&mut db);
+        assert!(actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(_))));
+    }
+
+    // ── Test 2: KeyAnnounce with non-empty invalid PoP → PoP check fails → return (line 4582) ──
+    #[test]
+    fn t1_20_key_announce_invalid_pop_returns_early() {
+        let mut tc = make_tc3();
+        let msg = ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: vec![0x11u8; 48],
+            proof_of_possession: vec![0u8; 96], // invalid BLS PoP → verify fails → line 4582
+        };
+        let actions = tc.on_message(msg);
+        assert!(actions.is_empty());
+        // BLS key must NOT be registered since we returned early.
+        assert!(tc.validator_set.get(1).unwrap().bls_public_key.is_none());
+    }
+
+    // ── Test 3: KeyAnnounce with 48-byte key and empty PoP → registers key (lines 4601-4602) ──
+    #[test]
+    fn t1_20_key_announce_registers_bls_key() {
+        let mut tc = make_tc3();
+        let pk = vec![0xAAu8; 48];
+        let msg = ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: pk.clone(),
+            proof_of_possession: vec![],
+        };
+        let _ = tc.on_message(msg);
+        // Closing braces 4601-4602 passed; key is now registered.
+        assert_eq!(tc.validator_set.get(1).unwrap().bls_public_key.as_deref(), Some(&pk[..]));
+    }
+
+    // ── Test 4: Prevote for past height → early return (line 5209) ──
+    #[test]
+    fn t1_20_prevote_past_height_returns_early() {
+        let mut tc = make_tc3(); // tc.height == 1; past height = 0
+        let msg = ConsensusMessage::Prevote {
+            height: 0, // height < tc.height (past) → falls into match, height != self.height → line 5209
+            round: 0,
+            block_hash: None,
+            validator_id: 1,
+            bls_signature: None,
+        };
+        assert!(tc.on_message(msg).is_empty());
+    }
+
+    // ── Test 5: Prevote with registered BLS key but invalid sig → return (line 5234) ──
+    #[test]
+    fn t1_20_prevote_invalid_bls_sig_returns_early() {
+        let mut tc = make_tc3();
+        tc.validator_set.get_mut(1).unwrap().bls_public_key = Some(vec![0xBBu8; 48]);
+        let msg = ConsensusMessage::Prevote {
+            height: tc.height,
+            round: tc.round_state.round,
+            block_hash: None,
+            validator_id: 1,
+            bls_signature: Some(vec![0u8; 96]), // invalid → BlsVerifier returns false → line 5234
+        };
+        assert!(tc.on_message(msg).is_empty());
+    }
+
+    // ── Test 6: Prevote from validator with no BLS key when set has BLS keys → return (line 5247) ──
+    #[test]
+    fn t1_20_prevote_no_key_in_keyed_set_returns_early() {
+        let mut tc = make_tc3();
+        // Validator 2 has a key; validator 1 does not → has_bls_keys() is true.
+        tc.validator_set.get_mut(2).unwrap().bls_public_key = Some(vec![0xCCu8; 48]);
+        let msg = ConsensusMessage::Prevote {
+            height: tc.height,
+            round: tc.round_state.round,
+            block_hash: None,
+            validator_id: 1, // no registered BLS key
+            bls_signature: None,
+        };
+        // Reaches line 5247 (return actions — validator missing BLS key in keyed set).
+        assert!(tc.on_message(msg).is_empty());
+    }
+
+    // ── Test 7: Precommit for past height → early return (line 5334) ──
+    #[test]
+    fn t1_20_precommit_past_height_returns_early() {
+        let mut tc = make_tc3(); // tc.height == 1; past height = 0
+        let msg = ConsensusMessage::Precommit {
+            height: 0, // height < tc.height → match arm check fires → line 5334
+            round: 0,
+            block_hash: None,
+            validator_id: 1,
+            bls_signature: None,
+        };
+        assert!(tc.on_message(msg).is_empty());
+    }
+
+    // ── Test 8: Precommit with registered BLS key but invalid sig → return (line 5359) ──
+    #[test]
+    fn t1_20_precommit_invalid_bls_sig_returns_early() {
+        let mut tc = make_tc3();
+        tc.validator_set.get_mut(1).unwrap().bls_public_key = Some(vec![0xDDu8; 48]);
+        let msg = ConsensusMessage::Precommit {
+            height: tc.height,
+            round: tc.round_state.round,
+            block_hash: None,
+            validator_id: 1,
+            bls_signature: Some(vec![0u8; 96]), // invalid BLS → verify fails → line 5359
+        };
+        assert!(tc.on_message(msg).is_empty());
+    }
+
+    // ── Test 9: Precommit from validator with no BLS key when set has BLS keys → return (line 5372) ──
+    #[test]
+    fn t1_20_precommit_no_key_in_keyed_set_returns_early() {
+        let mut tc = make_tc3();
+        tc.validator_set.get_mut(2).unwrap().bls_public_key = Some(vec![0xEEu8; 48]);
+        let msg = ConsensusMessage::Precommit {
+            height: tc.height,
+            round: tc.round_state.round,
+            block_hash: None,
+            validator_id: 1, // no registered BLS key
+            bls_signature: None,
+        };
+        // Reaches line 5372 (return actions — validator missing BLS key in keyed set).
+        assert!(tc.on_message(msg).is_empty());
+    }
+}
