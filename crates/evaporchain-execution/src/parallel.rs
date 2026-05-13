@@ -1521,6 +1521,19 @@ impl ExecutionEngine for ParallelExecutor {
             db,
             self.refresh_pool.total_accrued(),
         );
+        // AUDIT_2026_05_13 C5 Stage A. The conservation snapshot above
+        // tracks Accounts / Stake / RefreshPool / SlashedPool — but
+        // NOT the shielded-note pool. Pre-fix, every Shield / Unshield
+        // / PrivateTransfer tripped a conservation violation because
+        // funds appeared / disappeared from Accounts without an
+        // offsetting compartment. Under `conservation_enforcement =
+        // "enforce"` (the doctrine endgame), the privacy layer would
+        // halt the chain.
+        //
+        // Capture the shielded-pool total before the block runs; the
+        // post-block adjustment treats the delta as a known-legitimate
+        // redirect (same pattern as `minted_this_block` below).
+        let shielded_pool_before: u64 = db.get_shielded_pool_balance();
         let base_fee = self.fee_controller.as_ref().map_or(0, |fc| fc.base_fee);
         let mut total_txs_executed = 0usize;
         let mut total_txs_failed = 0usize;
@@ -2386,9 +2399,54 @@ impl ExecutionEngine for ParallelExecutor {
                 minted_this_block,
             );
         }
+        // AUDIT_2026_05_13 C5 Stage A. Shielded-note pool delta as a
+        // known-legitimate redirect — mirrors `minted_this_block`
+        // pattern above.
+        //
+        // - Shield(x):     accounts -x, shielded_pool +x → snapshot
+        //                  Accounts drops by x without a tracked
+        //                  destination. Credit `conservation_after`
+        //                  with +x so the comparison sees balanced
+        //                  totals.
+        // - Unshield(x):   accounts +x, shielded_pool -x → snapshot
+        //                  Accounts rises by x without a tracked
+        //                  source. Credit `conservation_before` with
+        //                  +x so the rise is pre-existing.
+        // - PrivateTransfer fee path debits the shielded_pool; that
+        //   amount is burned (no offsetting credit). Auditor will
+        //   see net pool decrease which IS legitimate decay —
+        //   already λ-bounded by the existing decay check.
+        //
+        // Stage B (separate design call): proper `Compartment::Shielded`
+        // variant in the energy kernel + per-compartment audit. Stage A
+        // is the minimal-blast-radius surgical fix that lets
+        // conservation_enforcement = "enforce" ship without halting
+        // privacy txs.
+        let shielded_pool_after: u64 = db.get_shielded_pool_balance();
+        let mut conservation_after_adjusted = conservation_after;
+        match shielded_pool_after.cmp(&shielded_pool_before) {
+            std::cmp::Ordering::Greater => {
+                // Net Shield (in > out): pretend Accounts didn't drop.
+                let delta = shielded_pool_after - shielded_pool_before;
+                conservation_after_adjusted.credit(
+                    evaporchain_energy_kernel::Compartment::Accounts,
+                    delta,
+                );
+            }
+            std::cmp::Ordering::Less => {
+                // Net Unshield (out > in): pretend Accounts always
+                // had it pre-block.
+                let delta = shielded_pool_before - shielded_pool_after;
+                conservation_before_adjusted.credit(
+                    evaporchain_energy_kernel::Compartment::Accounts,
+                    delta,
+                );
+            }
+            std::cmp::Ordering::Equal => {}
+        }
         let audit_verdict = crate::energy_audit::audit_block_step(
             &conservation_before_adjusted,
-            &conservation_after,
+            &conservation_after_adjusted,
             epochs_elapsed,
             lambda,
         );

@@ -2934,6 +2934,14 @@ impl ExecutionEngine for SimpleExecutor {
             db,
             self.refresh_pool.total_accrued(),
         );
+        // AUDIT_2026_05_13 C5 Stage A: capture shielded-pool total
+        // before the block runs. The post-block audit treats the
+        // delta as a known-legitimate redirect, mirroring the
+        // existing `minted_this_block` pattern. Without this, every
+        // Shield / Unshield / PrivateTransfer trips a conservation
+        // violation that would halt the chain under
+        // `conservation_enforcement = "enforce"`.
+        let shielded_pool_before: u64 = db.get_shielded_pool_balance();
         self.apply_governance_params(db);
         self.finalize_expired_proposals(db, block.epoch);
 
@@ -3637,9 +3645,31 @@ impl ExecutionEngine for SimpleExecutor {
                 minted_this_block,
             );
         }
+        // AUDIT_2026_05_13 C5 Stage A — shielded-pool delta as
+        // legitimate-redirect (mirrors `minted_this_block` shape).
+        // See parallel.rs analogous block for the full rationale.
+        let shielded_pool_after: u64 = db.get_shielded_pool_balance();
+        let mut conservation_after_adjusted = conservation_after;
+        match shielded_pool_after.cmp(&shielded_pool_before) {
+            std::cmp::Ordering::Greater => {
+                let delta = shielded_pool_after - shielded_pool_before;
+                conservation_after_adjusted.credit(
+                    evaporchain_energy_kernel::Compartment::Accounts,
+                    delta,
+                );
+            }
+            std::cmp::Ordering::Less => {
+                let delta = shielded_pool_before - shielded_pool_after;
+                conservation_before_adjusted.credit(
+                    evaporchain_energy_kernel::Compartment::Accounts,
+                    delta,
+                );
+            }
+            std::cmp::Ordering::Equal => {}
+        }
         let audit_verdict = crate::energy_audit::audit_block_step(
             &conservation_before_adjusted,
-            &conservation_after,
+            &conservation_after_adjusted,
             epochs_elapsed,
             lambda,
         );
