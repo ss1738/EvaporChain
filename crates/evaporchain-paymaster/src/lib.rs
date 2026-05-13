@@ -850,6 +850,12 @@ pub struct Paymaster {
     rate_limiter: Arc<Mutex<RateLimiter>>,
     audit_log: Option<Arc<Mutex<AuditLogger>>>,
     idempotency: Arc<Mutex<IdempotencyCache>>,
+    // T1.15 — per-idempotency-key lock map. Serialises concurrent
+    // retries with the same `Idempotency-Key` so the second arrival
+    // waits on the first's outcome instead of double-allocating a
+    // paymaster nonce. Entries are removed when the last holder
+    // releases (strong_count drops to 2: ourselves + the map).
+    inflight_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     metrics: Arc<PaymasterMetrics>,
 }
 
@@ -943,6 +949,7 @@ impl Paymaster {
             rate_limiter: Arc::new(Mutex::new(rate_limiter)),
             audit_log,
             idempotency: Arc::new(Mutex::new(idempotency)),
+            inflight_locks: Arc::new(Mutex::new(HashMap::new())),
             metrics: Arc::new(PaymasterMetrics::default()),
         })
     }
@@ -1004,46 +1011,104 @@ impl Paymaster {
         idempotency_key: Option<&str>,
         user_op: &mut UserOpTx,
     ) -> Result<SponsorOutcome, PaymasterError> {
-        // Cache lookup BEFORE any state mutation.
-        if let Some(key) = idempotency_key {
-            let mut cache = self.idempotency.lock().expect("idempotency mutex");
-            if let Some(cached) = cache.get(key) {
-                drop(cache);
-                let nonce = cached.paymaster_nonce;
-                *user_op = cached.user_op;
-                self.metrics
-                    .sponsorships_idempotent_replay
-                    .fetch_add(1, Ordering::Relaxed);
-                return Ok(SponsorOutcome::Replay {
-                    paymaster_nonce: nonce,
-                });
+        // No key — bypass the cache + inflight machinery entirely.
+        let Some(key) = idempotency_key else {
+            let result = self.sponsor_inner(user_op);
+            match &result {
+                Ok(_) => self.metrics.record(Ok(())),
+                Err(e) => self.metrics.record(Err(e)),
             }
+            return Ok(SponsorOutcome::Fresh {
+                paymaster_nonce: result?,
+            });
+        };
+
+        // Phase 1: optimistic cache check — common-case fast path.
+        if let Some(outcome) = self.try_replay_from_cache(user_op, key) {
+            return Ok(outcome);
         }
 
-        // Cache miss (or no key) — run the normal sponsor path.
+        // T1.15 — Phase 2: acquire the per-key lock. Concurrent
+        // retries with the same `Idempotency-Key` serialise here, so
+        // only ONE sponsor_inner call (and therefore one nonce
+        // allocation) happens per key.
+        let key_lock = {
+            let mut map = self.inflight_locks.lock().expect("inflight mutex");
+            map.entry(key.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let _key_guard = key_lock.lock().expect("per-key inflight lock");
+
+        // Phase 3: re-check the cache — another retry may have
+        // finished while we waited on the per-key lock.
+        if let Some(outcome) = self.try_replay_from_cache(user_op, key) {
+            self.try_cleanup_inflight(key, &key_lock);
+            return Ok(outcome);
+        }
+
+        // Phase 4: actually sponsor. Failures are NOT cached (matches
+        // the pre-T1.15 semantics — see `idempotent_failure_does_not_cache`).
         let result = self.sponsor_inner(user_op);
         match &result {
             Ok(_) => self.metrics.record(Ok(())),
             Err(e) => self.metrics.record(Err(e)),
         }
-        let nonce = result?;
+        let nonce = match result {
+            Ok(n) => n,
+            Err(e) => {
+                self.try_cleanup_inflight(key, &key_lock);
+                return Err(e);
+            }
+        };
 
-        // Cache the response for future retries under this key.
-        if let Some(key) = idempotency_key {
-            let response = SponsorshipResponse {
-                user_op: user_op.clone(),
-                paymaster_address_hex: hex::encode(self.address),
-                paymaster_nonce: nonce,
-            };
-            self.idempotency
-                .lock()
-                .expect("idempotency mutex")
-                .insert(key.to_string(), response);
-        }
+        // Phase 5: cache the response BEFORE releasing the per-key
+        // lock — so concurrent waiters' Phase 3 re-check sees it.
+        let response = SponsorshipResponse {
+            user_op: user_op.clone(),
+            paymaster_address_hex: hex::encode(self.address),
+            paymaster_nonce: nonce,
+        };
+        self.idempotency
+            .lock()
+            .expect("idempotency mutex")
+            .insert(key.to_string(), response);
+
+        // Phase 6: best-effort cleanup of the inflight map entry.
+        self.try_cleanup_inflight(key, &key_lock);
 
         Ok(SponsorOutcome::Fresh {
             paymaster_nonce: nonce,
         })
+    }
+
+    fn try_replay_from_cache(
+        &self,
+        user_op: &mut UserOpTx,
+        key: &str,
+    ) -> Option<SponsorOutcome> {
+        let mut cache = self.idempotency.lock().expect("idempotency mutex");
+        let cached = cache.get(key)?.clone();
+        drop(cache);
+        let nonce = cached.paymaster_nonce;
+        *user_op = cached.user_op;
+        self.metrics
+            .sponsorships_idempotent_replay
+            .fetch_add(1, Ordering::Relaxed);
+        Some(SponsorOutcome::Replay {
+            paymaster_nonce: nonce,
+        })
+    }
+
+    // Remove the inflight-locks entry iff we're the last holder
+    // (besides the map itself). Other waiters that have already
+    // cloned the Arc will keep the lock alive; they'll do their
+    // own cleanup on completion.
+    fn try_cleanup_inflight(&self, key: &str, key_lock: &Arc<Mutex<()>>) {
+        let mut map = self.inflight_locks.lock().expect("inflight mutex");
+        if Arc::strong_count(key_lock) <= 2 {
+            map.remove(key);
+        }
     }
 
     fn sponsor_inner(&self, user_op: &mut UserOpTx) -> Result<u64, PaymasterError> {
@@ -2398,6 +2463,60 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_same_key_retries_dont_double_allocate() {
+        // T1.15 — pin: N concurrent retries with the same Idempotency-Key
+        // must produce exactly ONE paymaster-nonce allocation. Pre-fix,
+        // the lock dropped between cache.get and cache.insert allowed
+        // every retry to miss + allocate + overwrite, advancing the
+        // nonce counter to N. With the per-key inflight lock, only the
+        // first arrival sponsors; the rest replay from cache.
+        const THREADS: usize = 16;
+        let tmp = TempDir::new().unwrap();
+        let pm = Arc::new(idempotent_paymaster(&tmp));
+        let key = "shared-key-from-retry-storm";
+
+        let barrier = Arc::new(std::sync::Barrier::new(THREADS));
+        let mut handles = Vec::with_capacity(THREADS);
+        for _ in 0..THREADS {
+            let pm = Arc::clone(&pm);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let mut op = blank_user_op();
+                barrier.wait();
+                let outcome = pm.sponsor_idempotent(Some(key), &mut op).unwrap();
+                (outcome.paymaster_nonce(), op.paymaster_nonce)
+            }));
+        }
+
+        let results: Vec<(u64, Option<u64>)> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // Every thread must agree on the same paymaster_nonce — the
+        // one allocated by the lone Fresh path.
+        let canonical = results[0].0;
+        for (i, (nonce, op_nonce)) in results.iter().enumerate() {
+            assert_eq!(*nonce, canonical, "thread {i} got divergent nonce");
+            assert_eq!(*op_nonce, Some(canonical), "thread {i} user_op not stamped");
+        }
+
+        // Counter advanced exactly once across the retry storm.
+        assert_eq!(
+            pm.next_paymaster_nonce(),
+            1,
+            "expected exactly one allocation; got {} (race fired)",
+            pm.next_paymaster_nonce()
+        );
+
+        // Metrics: 1 Fresh (sponsorships_ok) + (THREADS-1) Replays.
+        let m = pm.metrics();
+        assert_eq!(m.sponsorships_ok.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            m.sponsorships_idempotent_replay.load(Ordering::Relaxed),
+            (THREADS - 1) as u64
+        );
+    }
+
+    #[test]
     fn idempotent_disabled_when_max_keys_zero() {
         // Paymaster with idempotency_max_keys = 0: keys are silently
         // ignored; every call is Fresh.
@@ -2764,7 +2883,7 @@ mod tests {
         let pm = Paymaster::new_with_config(
             kp,
             "test",
-            tmp.path().join("paymaster_nonce_4"),
+            &tmp.path().join("paymaster_nonce_4"),
             PaymasterConfig {
                 require_user_sig: false,
                 per_sender_rps: 0.0,
