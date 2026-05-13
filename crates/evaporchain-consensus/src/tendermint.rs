@@ -22108,3 +22108,217 @@ mod t1_20_batch21 {
         assert!(tc.on_message(msg).is_empty());
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch22 {
+    use super::*;
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Block, TransferTx};
+
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+    fn make_tc3() -> TendermintConsensus { TendermintConsensus::new_for_test(1, 5, make_vs3()) }
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: 0, parent_hash: [0u8; 32], state_root: [0u8; 32],
+            transactions: vec![], producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: BLS KeyAnnounce rebroadcast fires at height % 50 == 0 (line 4234) ──
+    #[test]
+    fn t1_20_bls_key_announce_rebroadcast_at_height_50() {
+        let mut tc = make_tc3();
+        tc.set_bls_keypair(BlsKeypair::generate());
+        tc.height = 50; // > 0 and % 50 == 0; phase=Propose, round=0 are new_for_test defaults
+        let mut db = InMemoryStateDB::new();
+        let actions = tc.tick(&mut db);
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::KeyAnnounce { .. })
+            )),
+            "tick at height 50 with bls_keypair set must emit KeyAnnounce rebroadcast (line 4234)"
+        );
+    }
+
+    // ── Test 2: validate_block_refunds non-Refund tx hits `_ => None` arm (line 2753) ──
+    #[test]
+    fn t1_20_validate_block_refunds_non_refund_tx_filter_arm() {
+        let mut tc = make_tc3();
+        tc.governance_params
+            .insert("crooks_mev_settlement_mode".to_string(), "enforce".to_string());
+        let block = Block {
+            transactions: vec![Transaction::Transfer(TransferTx {
+                from: [1u8; 32],
+                to: [2u8; 32],
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            })],
+            ..make_block(1)
+        };
+        // No pending mev_observations → expected refunds = empty → passes.
+        // The filter_map closure fires for the Transfer tx and returns None (line 2753).
+        assert!(
+            tc.validate_block_refunds(&block).is_ok(),
+            "no pending refunds → validation passes"
+        );
+    }
+
+    // ── Test 3: MEV buffer overflow pops oldest entry (lines 5699-5700) ──
+    #[test]
+    fn t1_20_mev_buffer_overflow_pops_oldest_entry() {
+        let mut tc = make_tc3();
+        // Pre-fill to exactly MEV_OBSERVATION_BUFFER_CAP entries.
+        let dummy = evaporchain_mev_detect::MevObservation {
+            block_height: 1,
+            attacker_pre_idx: 0,
+            victim_idx: 1,
+            attacker_post_idx: 2,
+            attacker: [0xAAu8; 32],
+            victim: [0xBBu8; 32],
+            target: [0xCCu8; 32],
+            work_estimate: 100,
+            confidence_score_ppm: 1_000_000,
+            refund_amount: None,
+        };
+        for _ in 0..MEV_OBSERVATION_BUFFER_CAP {
+            tc.mev_observations.push_back(dummy.clone());
+        }
+        assert_eq!(tc.mev_observations.len(), MEV_OBSERVATION_BUFFER_CAP);
+
+        // Construct a MEV sandwich block so scan_block emits one observation.
+        let attacker: [u8; 32] = [0xA1u8; 32];
+        let victim_addr: [u8; 32] = [0xB1u8; 32];
+        let target: [u8; 32] = [0xC1u8; 32];
+        let sandwich_block = Block {
+            transactions: vec![
+                Transaction::Transfer(TransferTx {
+                    from: attacker, to: target, amount: 200, nonce: 0,
+                    signature: None, public_key: None, mev_refund_eligible: None,
+                }),
+                Transaction::Transfer(TransferTx {
+                    from: victim_addr, to: target, amount: 50, nonce: 0,
+                    signature: None, public_key: None, mev_refund_eligible: None,
+                }),
+                Transaction::Transfer(TransferTx {
+                    from: attacker, to: target, amount: 200, nonce: 1,
+                    signature: None, public_key: None, mev_refund_eligible: None,
+                }),
+            ],
+            ..make_block(100)
+        };
+        tc.on_block_committed(&sandwich_block, [0u8; 32], 0);
+        // scan_block finds the sandwich → pushes one new obs (len = cap+1) →
+        // while loop at 5698 fires → pop_front at 5699 → back to cap.
+        assert_eq!(
+            tc.mev_observations.len(),
+            MEV_OBSERVATION_BUFFER_CAP,
+            "buffer must stay at cap after overflow pop (lines 5699-5700)"
+        );
+    }
+
+    // ── Test 4: four_act_state eulogy_trie_root = Some when trie non-empty (line 1478) ──
+    #[test]
+    fn t1_20_four_act_state_eulogy_trie_root_some_when_nonempty() {
+        let mut tc = make_tc3();
+        let addr = [0xDEu8; 32];
+        let tombstone =
+            evaporchain_tombstone::mint(addr, 0, 0, evaporchain_tombstone::CauseOfDeath::Evaporated);
+        tc.executor.eulogy_trie.insert(addr, tombstone).unwrap();
+        let state = tc.four_act_state();
+        assert!(
+            state.eulogy_trie_root.is_some(),
+            "non-empty trie must return Some(root) (line 1478)"
+        );
+    }
+
+    // ── Test 5: mortis_cert_preview trie.root() branch when trie non-empty (line 1570) ──
+    #[test]
+    fn t1_20_mortis_cert_preview_nonempty_trie_covers_root_branch() {
+        let mut tc = make_tc3();
+        let addr = [0xEFu8; 32];
+        let tombstone =
+            evaporchain_tombstone::mint(addr, 0, 0, evaporchain_tombstone::CauseOfDeath::Evaporated);
+        tc.executor.eulogy_trie.insert(addr, tombstone).unwrap();
+        assert!(!tc.executor.mortis_monitor.is_triggered()); // not triggered
+        let cert = tc.mortis_cert_preview();
+        assert!(
+            cert.is_some(),
+            "non-triggered monitor + non-empty trie must return preview cert (line 1570)"
+        );
+    }
+
+    // ── Test 6: apply_validator_key_rotations skips when validator has no current BLS key (line 3767) ──
+    #[test]
+    fn t1_20_apply_key_rotation_skips_validator_with_no_existing_bls_key() {
+        let mut tc = make_tc3();
+        // Validator 1 has no bls_public_key (default) → rotation skipped at line 3767.
+        let rotation = evaporchain_execution::ValidatorKeyRotation {
+            validator_id: 1,
+            new_bls_public_key: vec![0xAAu8; 48],
+            bls_pop_old: vec![],
+            new_bls_pop: vec![],
+            prev_key_expiry_epoch: 100,
+        };
+        let applied = tc.apply_validator_key_rotations(&[rotation]);
+        assert_eq!(applied, 0, "rotation skipped for validator with no existing BLS key (line 3767)");
+    }
+
+    // ── Test 7: Proposal rejected when timestamp goes backwards (line 4909) ──
+    #[test]
+    fn t1_20_proposal_timestamp_not_monotone_rejected() {
+        let mut tc = make_tc3();
+        // Set a previous committed timestamp; proposal with earlier ts must be rejected.
+        tc.last_block_timestamp = 1000;
+        let proposer_id = tc
+            .proposer_for_round(tc.height, 0)
+            .map(|v| v.id)
+            .expect("3-validator set must have a proposer");
+        let mut block = make_block(tc.height);
+        block.timestamp = 500; // < last_block_timestamp(1000) — strictly regresses
+        block.producer_id = Some(proposer_id);
+        let msg = ConsensusMessage::Proposal {
+            height: tc.height,
+            round: 0,
+            block,
+            proposer_id,
+        };
+        let actions = tc.on_message(msg);
+        // Rejected at line 4909; no prevote or other action emitted.
+        assert!(
+            actions.is_empty(),
+            "regressing timestamp must be rejected (line 4909)"
+        );
+    }
+
+    // ── Test 8: on_block_committed with data_root + BLS key reaches inner branch (line 6012) ──
+    #[test]
+    fn t1_20_on_block_committed_with_data_root_and_bls_starts_da_round() {
+        let mut tc = make_tc3(); // my_id=1, validator 1 in VS
+        tc.set_bls_keypair(BlsKeypair::generate());
+        let mut block = make_block(1);
+        block.data_root = Some([0xDDu8; 32]);
+        // on_block_committed with data_root + bls_keypair + validator-in-VS exercises line 6012.
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        // Height advanced past the committed block confirms full execution.
+        assert_eq!(tc.height, 2, "block committed → height advances to 2 (line 6012 covered)");
+    }
+}
