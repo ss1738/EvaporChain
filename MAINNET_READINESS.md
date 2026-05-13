@@ -105,8 +105,8 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
-| T0.1 | Layer 4 hot-path consensus surgery (C.1-C.6) | 🟡 OPEN | CONSENSUS |
-| T0.2 | Layer 4 D-track adversarial + perf + 72hr soak | 🔴 BLOCKED on T0.1 + T3.1 | CONSENSUS |
+| T0.1 | Layer 4 hot-path consensus surgery (C.1-C.6) | ✅ DONE (32af53c/61c95cf) — C.1-C.4 substrate shipped 2026-05-05; C.5 (validator-determinism proptest) + C.6 (Byzantine adversarial) shipped 2026-05-11 | CONSENSUS |
+| T0.2 | Layer 4 D-track adversarial + perf + 72hr soak | 🔴 BLOCKED on T3.1 | CONSENSUS |
 | T0.3 | POST_EXEC Phase 4 enforce-mode (refuse-to-apply, not prevote-NIL — see spec note) | ✅ DONE (c191498) — flag + 4 tests; needs T0.4 fork-epoch + soak before flipping to enforce | CONSENSUS |
 | T0.4 | POST_EXEC Phase 5 block-hash inclusion | ✅ DONE (695c49c) — bit-compat fold (Some→include, None→skip); 3 hash tests | CONSENSUS |
 | T0.5 | PNT v1+ activation (privacy authoritative) | 🟡 **CODE-COMPLETE — OPS-ONLY** — sub-tasks 1, 3, 4-infra, **5** all ✅. Sub-task 5 adversarial tests live at `crates/evaporchain-execution/src/privacy_exec.rs:2168` (`pnt_v1_respend_after_window_eviction_rejected_via_anchor`) + line 2296 (Stage-1 companion); both green on Mini 1 release 2026-05-11. Remaining: operator step 2 (governance flip 0→1 at fork-epoch, needs T3.1 cluster) + operator step 6 (storage-growth telemetry post-flip, needs T3.1). No further code work for this lane. | PRIVACY |
@@ -123,7 +123,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
-| T1.13 | Promote conservation audit gating → mandatory | 🔴 BLOCKED on T0.1 | CONSENSUS |
+| T1.13 | Promote conservation audit gating → mandatory | 🟡 OPEN (T0.1 ✅; needs cluster governance flip — T3.1) | CONSENSUS |
 | T1.14 | Phase 2 round-trip test (proposer-stamp == validator-apply) | ✅ DONE (9191e87) — 3 tests appended end-of-file; build verification deferred | CONSENSUS |
 | T1.15 | Paymaster Finding 1 — per-key in-flight locking | 🟡 OPEN | PAYMASTER |
 | T1.16 | Internal audit findings reconciliation sweep | ✅ DONE (7f36b46) — `AUDIT_RECONCILIATION_2026-05-09.md` + opcode-count drift fix | AUDIT-SWEEP |
@@ -134,7 +134,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | ✅ DONE — false-positive from audit reconciliation; both EVR docs already carry detailed implementation-status tables ahead of the spec body | docs |
 | T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.22 | Network upgrade rehearsal (live flag-flip + rollback) | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
-| T1.23 | Mainnet genesis-amendment dry-run | 🔴 BLOCKED on T0.1 + T3.1 | OPS-RUNBOOK |
+| T1.23 | Mainnet genesis-amendment dry-run | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 
 ### Tier 2 — Defer to V1.5 (NOT blocking mainnet)
 
@@ -197,10 +197,9 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.1 — Layer 4 hot-path consensus surgery (C.1-C.6)
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE — all 6 sub-tasks shipped. cargo test -p evaporchain-consensus green on Mini 1.
 **Surface:** CONSENSUS
-**Depends on:** none (can start now; verifies on cluster after T3.1)
-**Effort:** 2-3 weeks focused work
+**done-as-of:** 61c95cf (2026-05-11)
 
 **Goal:** Promote `authoritative_head` from admin-RPC into the consensus hot path, route votes by head, multi-parent set proposer selection, validator-determinism gate. Source: `DOCTRINE_PUNCH_LIST.md` Layer 4.
 
@@ -226,9 +225,9 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.2 — Layer 4 D-track (adversarial + perf + 72hr soak)
 
-**Status:** 🔴 BLOCKED on T0.1 + T3.1
+**Status:** 🔴 BLOCKED on T3.1
 **Surface:** CONSENSUS
-**Depends on:** T0.1, T3.1
+**Depends on:** T3.1
 **Effort:** 1 week + 72hr wall-clock
 
 **Sub-tasks:**
@@ -586,7 +585,7 @@ These are runbook executions on the live cluster. Operator-driven; documented in
 
 ### T1.23 — Mainnet genesis-amendment dry-run
 
-**Status:** 🔴 BLOCKED on T0.1 + T3.1
+**Status:** 🔴 BLOCKED on T3.1
 **Surface:** OPS-RUNBOOK
 **Effort:** 3-5 days
 
