@@ -48,6 +48,53 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-13 (morning + afternoon) — post-T3.1 strategic arc: 5 doc/runbook PRs + 30+ T1.20 batches + 9 EvaporScript stdlib contracts
+
+**Focus:** Capitalise on T3.1 ✅ unblocking by closing every doc-side runbook gap that previously couldn't be authored, plus continue T1.20 coverage grind across substrate/DA/network/crypto.
+
+**PRs shipped:** ~50 (#150 → #215). All OPEN against `origin/main`. No direct main-pushes from this session.
+
+**Deliverables — strategic (doc/runbook):**
+- **#150** — 9 EvaporScript stdlib pilot contracts: `time_lock`, `oracle_feed`, `subscription`, `vesting_schedule`, `payment_split`, `bounty`, `lottery`, `multisig`, `sealed_bid_auction`. Each with passing pilot tests (10-15 each).
+- **#156** — T1.15 paymaster idempotency race fix: per-key `inflight_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>` + 6-phase double-checked pattern; 16-thread barrier-wait regression test.
+- **#209** — MAINNET_READINESS reconcile pass #1: T3.1 ✅ DONE, T3.2 OPEN (operator decision), T1.17/18/19/21/22/23 unblocked.
+- **#210** — T1.21 monitoring: `docs/runbooks/monitoring.md` (209 lines, 25 chain + 5 paymaster metrics), 10-panel Grafana dashboard JSON (schema v39), 5-node testnet-1 Prometheus scrape config example, 6 starter alert rules.
+- **#211** — T1.22 governance rehearsal: `docs/runbooks/governance-rehearsal.md` (177 lines) — flag-flip + rollback playbook, 7-item pre-flight, 6-step execution.
+- **#212** — T1.17 + T1.19 key/format runbooks: `docs/runbooks/bls-key-rotation.md` (200 lines, Transaction::RotateValidatorKey path) + `docs/runbooks/evpl-plaintext-migration.md` (201 lines, LegacyRaw → EVPL/EVK1 migration).
+- **#215** — MAINNET_READINESS reconcile pass #2: 9 more board↔spec drifts realigned (T0.3, T0.4, T0.7, T0.8, T0.9, T0.10, T0.11, T1.14, T1.16).
+
+**Deliverables — T1.20 coverage batches (~30 PRs):**
+- DA layer: namespace.rs, certificate.rs, poha.rs, block_da.rs, block_da_2d.rs, sampling.rs, erasure.rs, erasure2d.rs
+- Sharding: shard_assignment.rs, compaction.rs
+- Network: tls.rs, service.rs (RejectionReason::label + cache_block insert/evict)
+- Crypto: eip2537.rs, bls_key_store.rs, secret_file_store.rs
+- Substrate Tier-3: epa-mmr (mmr/proof/leaf), thermal-stm (scheduler/order/tx), plc (barcode/bottleneck/client), ew-twap (oracle), cap-decay-vm (registry/cap), total-evaporscript (check/term), dp-native-vm (budget/composition/noise)
+- Pattern: each PR added 3-5 tests (mix of happy-path + adversarial). ~136 net-new tests across batches, ~18 adversarial.
+- Surfaced finding (PR #180): NMT small-tree absence-proof verifier returns true on shape alone when `siblings.is_empty()`; documented in PR description, no fix attempted (out of T1.20 scope).
+
+**Decisions made:**
+- **T3.1 acceptance interpretation:** existing 5-node Tailscale cluster (h≈87K on `chain_id: testnet-1`, 6+ weeks lockstep) satisfies T3.1 under the spec's continuity option. T3.2 (fresh `genesis-tailscale-5node-1`) remains OPEN as an operator-pure decision.
+- **EvaporScript grammar reality:** no contract-internal method dispatch (`self.method()`). Vesting math inlined in 3 sites. Saved to memory `evaporchain_evaporscript_grammar_gotchas.md`.
+- **EvaporScript map default:** `U64(0)` regardless of declared value type. Bounty contract uses parallel `has_submitted: map[address -> u64]` for presence detection.
+- **Stdlib contracts ≠ app-templates catalogue:** stdlib contracts are pilot/reference examples, not deployable through the `app-templates-{deploy,materialise,engine,…}` pipeline which targets 20 specific templates (SDDC_AUCTION, Singh-Sabi, etc.). Caught a category error mid-arc.
+
+**What's next:**
+- Operator: decide T3.2 (continuity vs fresh genesis), execute T1.17 BLS rotation rehearsal once T0.1 lands, run T1.22 governance flag flip dry-run on testnet-1.
+- T1.20 has diminishing returns past this point; gaps that remain are integration-shim heavy (not unit-test reachable).
+
+**Blockers / open questions:**
+- T0.1 (Layer 4 consensus surgery) is parallel-session active; downstream T0.2/T1.23 remain BLOCKED.
+- T0.10 (Solidity Groth16 wrap) depends on in-progress nova-bridge work.
+- 50 PRs queued OPEN; merge order matters for any with MAINNET_READINESS conflicts (#209 then #215).
+
+**Cross-references:**
+- Runbooks: `docs/runbooks/monitoring.md`, `docs/runbooks/governance-rehearsal.md`, `docs/runbooks/bls-key-rotation.md`, `docs/runbooks/evpl-plaintext-migration.md`
+- Dashboard: `scripts/grafana-dashboards/evaporchain-chain.json`
+- Scrape config: `scripts/prometheus-scrape-config.example.yml`
+- Memory: `evaporchain_evaporscript_grammar_gotchas.md`
+
+---
+
 ## 2026-05-12 (late evening) — T1.20 parallel.rs batch 7: +57 tests, 78.89%→83.46%
 
 **Focus:** T1.20 coverage batch for execution/parallel.rs — all uncovered gas/partitioning/execute_partition arms.
