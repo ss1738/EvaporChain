@@ -137,8 +137,38 @@ impl Default for GhostBridgeBuilder {
 
 // ─── Verification ───────────────────────────────────────────────────────
 
-pub fn verify_ghost_bridge_proof(proof: &GhostBridgeProof) -> GhostBridgeVerification {
+/// Structure-only verification of a ghost-bridge proof. Verifies the
+/// non-cryptographic checks (ghost hash non-zero, MMR inclusion,
+/// state-root equality, nonce non-zero) AND the structural shape of
+/// the validator-signature payload, but **does NOT verify BLS
+/// signatures**. Always returns `attestation_valid = false` and
+/// therefore `overall_valid = false`.
+///
+/// Intended for structural-test fixtures and pre-flight checks. Any
+/// production callsite must use `verify_ghost_bridge_proof_with_keys`
+/// with the live validator pubkey set.
+///
+/// AUDIT_2026_05_13 H8 closure: this used to be `verify_ghost_bridge_
+/// proof` and unconditionally returned `attestation_valid = true` when
+/// no keys were supplied, accepting any structurally-valid forgery.
+/// The function is now explicit: structure ≠ attestation.
+pub fn verify_ghost_bridge_proof_structure_only(
+    proof: &GhostBridgeProof,
+) -> GhostBridgeVerification {
     verify_ghost_bridge_proof_with_keys(proof, None)
+}
+
+/// Backwards-compatible alias for `verify_ghost_bridge_proof_structure_only`.
+/// Production code MUST use `verify_ghost_bridge_proof_with_keys`; this
+/// shim is retained only to limit churn in older test fixtures.
+#[deprecated(
+    since = "0.2.0",
+    note = "AUDIT_2026_05_13 H8: this name was previously fail-OPEN — \
+            use verify_ghost_bridge_proof_with_keys for production and \
+            verify_ghost_bridge_proof_structure_only for structure tests"
+)]
+pub fn verify_ghost_bridge_proof(proof: &GhostBridgeProof) -> GhostBridgeVerification {
+    verify_ghost_bridge_proof_structure_only(proof)
 }
 
 #[allow(clippy::field_reassign_with_default)]
@@ -159,7 +189,17 @@ pub fn verify_ghost_bridge_proof_with_keys(
         &proof.mmr_inclusion.mmr_root,
     );
 
-    // Check 3: State root attestation — structural + cryptographic verification
+    // Check 3: State root attestation — structural + cryptographic verification.
+    //
+    // AUDIT_2026_05_13 H8: the `None` branch previously short-circuited
+    // to `attestation_valid = true`, accepting any structurally-shaped
+    // forgery. It now fails CLOSED — without validator pubkeys we
+    // cannot verify the BLS aggregate, so the attestation is treated
+    // as unproven. Production callers MUST supply keys via
+    // `_with_keys(proof, Some(&keys))`; structure-only consumers should
+    // call `verify_ghost_bridge_proof_structure_only` and consume
+    // ONLY the non-attestation fields (`ghost_valid`, `mmr_inclusion_valid`,
+    // `state_root_matches`, `nonce_valid`).
     let structural_valid = proof.state_root_proof.validator_signatures.len() >= 2
         && proof.state_root_proof.state_root == proof.state_root
         && has_unique_validator_ids(&proof.state_root_proof.validator_signatures)
@@ -182,7 +222,8 @@ pub fn verify_ghost_bridge_proof_with_keys(
                         BlsVerifier::verify(&proof.state_root, &bls_sig, &pk)
                     })
                 }),
-            None => true,
+            // No keys → cannot verify → fail CLOSED.
+            None => false,
         }
     } else {
         false
@@ -276,6 +317,15 @@ impl GhostBridgeRegistry {
         if self.processed_nonces.contains(&proof.bridge_nonce) {
             return Err("bridge nonce already processed (replay)");
         }
+        // AUDIT_2026_05_13 H8 closure: refuse registration before
+        // validator keys are configured. Pre-fix, `validator_pubkeys =
+        // None` produced `attestation_valid = true` for any structurally-
+        // valid forgery, accepting it into the active bridge set.
+        if self.validator_pubkeys.is_none() {
+            return Err(
+                "ghost bridge registry has no validator pubkeys — call set_validator_keys before register",
+            );
+        }
         let verification =
             verify_ghost_bridge_proof_with_keys(&proof, self.validator_pubkeys.as_ref());
         if !verification.overall_valid {
@@ -301,6 +351,7 @@ impl GhostBridgeRegistry {
 // ─── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(deprecated)] // exercising the deprecated `verify_ghost_bridge_proof` alias
 mod tests {
     use super::*;
 
@@ -355,16 +406,22 @@ mod tests {
     }
 
     #[test]
-    fn test_build_and_verify_bridge_proof() {
+    fn test_build_and_verify_bridge_proof_structure() {
+        // AUDIT_2026_05_13 H8: the keyless path is now structure-only.
+        // Non-attestation fields validate independently; attestation_valid
+        // is fail-CLOSED in the absence of validator pubkeys.
         let ghost = make_ghost(1, 50);
         let proof = make_bridge_proof(ghost, 42);
-        let result = verify_ghost_bridge_proof(&proof);
+        let result = verify_ghost_bridge_proof_structure_only(&proof);
         assert!(result.ghost_valid);
         assert!(result.mmr_inclusion_valid);
-        assert!(result.attestation_valid);
         assert!(result.state_root_matches);
         assert!(result.nonce_valid);
-        assert!(result.overall_valid);
+        // Without keys, attestation can never be verified — fail CLOSED.
+        assert!(!result.attestation_valid);
+        // Therefore overall_valid is false too. Pre-fix, this was true
+        // for any structurally-valid forgery — the H8 bug.
+        assert!(!result.overall_valid);
     }
 
     #[test]
@@ -408,35 +465,46 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_prevents_replay() {
+    fn test_registry_refuses_without_validator_keys() {
+        // AUDIT_2026_05_13 H8: pre-fix, an unconfigured registry would
+        // accept any structurally-valid forgery because the keyless
+        // verify path returned `attestation_valid = true`. Post-fix,
+        // register() rejects up-front with a clear configuration error.
         let mut registry = GhostBridgeRegistry::new();
         let ghost = make_ghost(1, 50);
         let proof = make_bridge_proof(ghost, 42);
-        assert!(registry.register(proof.clone()).is_ok());
-        assert_eq!(registry.bridge_count(), 1);
-        assert!(registry.register(proof).is_err());
+        let err = registry
+            .register(proof)
+            .expect_err("registry without validator pubkeys must refuse to register");
+        assert!(
+            err.contains("validator pubkeys"),
+            "expected pubkey-config error, got: {err}"
+        );
+        assert_eq!(registry.bridge_count(), 0);
     }
 
     #[test]
-    fn test_registry_filters_by_chain() {
+    fn test_registry_refuses_unverified_attestation_after_key_config() {
+        // Even with validator pubkeys configured, the placeholder
+        // signatures used in test fixtures cannot pass real BLS
+        // verification → register() rejects with the attestation-fail
+        // error. Replay prevention exercised separately above.
         let mut registry = GhostBridgeRegistry::new();
-        let p1 = {
-            let ghost = make_ghost(1, 50);
-            let mut p = make_bridge_proof(ghost, 42);
-            p.bridge_nonce = 1;
-            p
-        };
-        let p2 = {
-            let ghost = make_ghost(2, 60);
-            let mut p = make_bridge_proof(ghost, 99);
-            p.bridge_nonce = 2;
-            p
-        };
-        registry.register(p1).unwrap();
-        registry.register(p2).unwrap();
-        assert_eq!(registry.bridges_for_chain(42).len(), 1);
-        assert_eq!(registry.bridges_for_chain(99).len(), 1);
-        assert_eq!(registry.bridges_for_chain(0).len(), 0);
+        let mut keys = std::collections::BTreeMap::new();
+        // Placeholder pubkey — does not correspond to the fixture sigs.
+        keys.insert(0, vec![0xAA; 48]);
+        keys.insert(1, vec![0xBB; 48]);
+        registry.set_validator_keys(keys);
+        let ghost = make_ghost(1, 50);
+        let proof = make_bridge_proof(ghost, 42);
+        let err = registry
+            .register(proof)
+            .expect_err("placeholder signatures must not verify");
+        assert!(
+            err.contains("verification failed"),
+            "expected verification-fail error, got: {err}"
+        );
+        assert_eq!(registry.bridge_count(), 0);
     }
 
     #[test]
@@ -658,5 +726,48 @@ mod tests {
             target_chain_id: 10,
         };
         assert!(matches!(c.claim_type, GhostClaimType::Existence));
+    }
+
+    // ─── AUDIT_2026_05_13 H8 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_h8_forged_proof_rejected_by_structure_only_verifier() {
+        // The exact forgery shape the audit called out: a proof with
+        // 2+ structurally-valid (but cryptographically bogus) validator
+        // signatures, ghost data_hash non-zero, MMR root non-zero, nonce
+        // > 0. Pre-fix, the keyless verifier returned attestation_valid
+        // = true → overall_valid = true. Post-fix, the keyless variant
+        // is `verify_ghost_bridge_proof_structure_only` which fails
+        // CLOSED on attestation.
+        let ghost = make_ghost(1, 50);
+        let forgery = make_bridge_proof(ghost, 42);
+        let result = verify_ghost_bridge_proof_structure_only(&forgery);
+        assert!(!result.attestation_valid, "fail CLOSED without keys");
+        assert!(!result.overall_valid, "overall must follow attestation");
+    }
+
+    #[test]
+    fn audit_h8_forged_proof_rejected_by_with_keys_no_keys() {
+        // Same shape, called via the canonical entry point with None
+        // for keys. The fail-CLOSED branch must produce the same
+        // verdict as the structure-only helper.
+        let ghost = make_ghost(1, 50);
+        let forgery = make_bridge_proof(ghost, 42);
+        let result = verify_ghost_bridge_proof_with_keys(&forgery, None);
+        assert!(!result.attestation_valid);
+        assert!(!result.overall_valid);
+    }
+
+    #[test]
+    fn audit_h8_registry_refuses_forgery() {
+        // End-to-end: an unconfigured registry rejects a forged proof
+        // up-front. Pre-fix, the registry accepted forgeries via the
+        // fail-OPEN path and stored them in `active_bridges` forever
+        // (nonce-replay protection covered re-registration only).
+        let mut registry = GhostBridgeRegistry::new();
+        let ghost = make_ghost(1, 50);
+        let forgery = make_bridge_proof(ghost, 42);
+        assert!(registry.register(forgery).is_err());
+        assert_eq!(registry.bridge_count(), 0);
     }
 }
