@@ -724,13 +724,27 @@ impl EnergyVerkleTrie {
     }
 
     /// Verify a proof against a root commitment.
+    ///
+    /// Soundness note (AUDIT-2026-05-13 C1): the `hit_compressed` flag on the
+    /// proof was previously a free pass — `verify` returned `true` whenever it
+    /// was set, regardless of `expected_root`. That allowed any party to forge
+    /// an exclusion proof by setting one bit. The disjunction has been removed.
+    ///
+    /// Consequence: when `prove` walks the trie and immediately hits a
+    /// `Compressed` node at the root (no internal traversal), it currently
+    /// produces a proof with `depth == 0`, `value == None`,
+    /// `hit_compressed == true` and no commitment chain. Such proofs are NOT
+    /// independently verifiable today and are correctly rejected here. A
+    /// follow-up (see CompressedNode envelope work) must extend the proof
+    /// to carry the root Compressed node's stored commitment so `verify` can
+    /// reconstruct + compare against `expected_root`.
     pub fn verify(proof: &EnergyVerkleProof, expected_root: &[u8; 32]) -> bool {
         if proof.depth > MAX_DEPTH {
             return false;
         }
         if proof.depth == 0 {
             if proof.value.is_none() {
-                return *expected_root == [0u8; 32] || proof.hit_compressed;
+                return *expected_root == [0u8; 32];
             }
             let mut data = Vec::with_capacity(64);
             data.extend_from_slice(&proof.key);
@@ -1825,6 +1839,51 @@ mod tests {
         let count = trie.update_energy_batch(&updates);
         assert_eq!(count, 5);
         assert_eq!(trie.root_meta().max_energy, 0);
+    }
+
+    #[test]
+    fn audit_c1_hit_compressed_forgery_rejected_against_any_root() {
+        // AUDIT-2026-05-13 C1: prior to the fix, `verify` returned `true` for
+        // any proof with `hit_compressed = true` regardless of `expected_root`.
+        // Construct that exact forgery and assert it is now rejected against
+        // both the empty-trie sentinel root and an arbitrary non-zero root.
+        let forgery = EnergyVerkleProof {
+            key: [0xAB; 32],
+            value: None,
+            depth: 0,
+            commitments: Vec::new(),
+            path_indices: Vec::new(),
+            siblings: Vec::new(),
+            energy_path: Vec::new(),
+            hit_compressed: true,
+        };
+        let arbitrary_root = [0xDE; 32];
+        let empty_sentinel = [0u8; 32];
+        assert!(
+            !EnergyVerkleTrie::verify(&forgery, &arbitrary_root),
+            "hit_compressed=true must NOT short-circuit verify"
+        );
+        assert!(
+            !EnergyVerkleTrie::verify(&forgery, &empty_sentinel),
+            "hit_compressed=true must NOT short-circuit verify even vs zero root"
+        );
+    }
+
+    #[test]
+    fn audit_c1_empty_trie_absence_still_verifies_against_zero_root() {
+        // Soundness lower bound: the legitimate empty-trie absence proof
+        // (depth=0, value=None, hit_compressed=false) must continue to verify
+        // against the zero-sentinel root. Otherwise the C1 fix would have
+        // broken the canonical absence case.
+        let trie = EnergyVerkleTrie::new();
+        let key = make_key(99);
+        let proof = trie.prove(&key);
+        assert!(proof.value.is_none());
+        assert_eq!(proof.depth, 0);
+        assert!(!proof.hit_compressed);
+        let root = trie.root();
+        assert_eq!(root, [0u8; 32]);
+        assert!(EnergyVerkleTrie::verify(&proof, &root));
     }
 }
 
