@@ -24,15 +24,15 @@
 //!     from `crate::compress_ark::compress_full`'s reshaped output.
 //!     **Constants are now byte-correct vs neptune** per PR #103.
 //!
-//! # Residual divergence
+//! # Section 2 BESPOKE status: CLOSED
 //!
-//! Even with `fully_aligned_poseidon_config`, hash outputs diverge
-//! from `neptune_hash_primary` because arkworks `PoseidonSpongeVar`'s
-//! per-round operation differs from neptune's
-//! `Poseidon::hash_optimized_static` (SBOX-trick-fused partial
-//! rounds). Tracked by the `assert_ne!`-style canary
-//! `fully_aligned_gadget_byte_parity_with_neptune`. Closing this gap
-//! is the remaining BESPOKE wedge for full hash parity.
+//! `enforce_neptune_sponge_primary` produces byte-identical output to
+//! `neptune_hash_primary` for all tested inputs. Root cause of the former
+//! divergence was the `pre_sparse_mds` transpose: neptune's
+//! `product_mds_with_matrix` computes `matrix^T · elements`, so we store
+//! `psm^T` at load time in `params_from_dump_path`. Confirmed via
+//! `neptune_sponge::sponge_attempt_1_matches_neptune_hash_primary_on_pinned_42_7_99`
+//! and `fully_aligned_gadget_byte_parity_with_neptune`.
 //!
 //! # Why ship the gadget shape before the constants
 //!
@@ -245,6 +245,51 @@ pub fn enforce_poseidon_primary(
     Ok(out.into_iter().next().expect("squeezed 1 element"))
 }
 
+/// Neptune-aligned in-circuit sponge: mirrors
+/// `neptune_sponge::our_neptune_hash_primary_native` as an R1CS gadget.
+///
+/// Uses `neptune_permutation_gadget::enforce_neptune_permute` (CRC-based)
+/// instead of arkworks `PoseidonSpongeVar`, and correctly initialises
+/// `state[0]` with the IOPattern tag for `Absorb(n), Squeeze(1)`.
+///
+/// Returns `state[1]` (first rate slot) after the squeeze permutation.
+/// The caller should apply the 250-bit LE mask (`& 0x03` on byte 31)
+/// before byte-comparing with neptune's truncated output.
+pub fn enforce_neptune_sponge_primary(
+    cs: ConstraintSystemRef<Bn254Fr>,
+    params: &crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
+    inputs: &[FpVar<Bn254Fr>],
+) -> Result<FpVar<Bn254Fr>, SynthesisError> {
+    use crate::neptune_permutation_gadget::enforce_neptune_permute;
+    use crate::neptune_sponge::{iopattern_tag_as_fr, iopattern_value_absorb_then_squeeze};
+    use ark_r1cs_std::alloc::AllocVar;
+
+    let width = params.width;
+    let rate = width - 1;
+    let capacity = 1usize;
+
+    let tag = iopattern_value_absorb_then_squeeze(inputs.len() as u32, 1, 0);
+    let tag_fr = iopattern_tag_as_fr(tag);
+    let tag_var = FpVar::<Bn254Fr>::new_constant(cs.clone(), tag_fr)?;
+    let zero_var = FpVar::<Bn254Fr>::new_constant(cs.clone(), Bn254Fr::from(0u64))?;
+    let mut state: Vec<FpVar<Bn254Fr>> = std::iter::once(tag_var)
+        .chain(std::iter::repeat_with(|| zero_var.clone()).take(width - 1))
+        .collect();
+
+    let mut absorb_pos = 0usize;
+    for input in inputs {
+        if absorb_pos == rate {
+            enforce_neptune_permute(cs.clone(), &mut state, params)?;
+            absorb_pos = 0;
+        }
+        state[absorb_pos + capacity] = state[absorb_pos + capacity].clone() + input;
+        absorb_pos += 1;
+    }
+
+    enforce_neptune_permute(cs.clone(), &mut state, params)?;
+    Ok(state[capacity].clone())
+}
+
 /// Convenience wrapper: takes the named Section-2 primary-side
 /// slots in absorb order (matching PR #65's
 /// `poseidon_transcript::absorb_order(HasherSide::Primary, z_arity)`)
@@ -384,28 +429,19 @@ mod tests {
         assert_eq!(a, b, "gadget must produce identical CS shape across runs");
     }
 
-    /// **The big parity check.** Hash the Section-2 primary-side
+    /// **Section 2 BESPOKE CLOSED.** Hash the Section-2 primary-side
     /// minimal absorb sequence `[0, 1, 0, 1, 0]` through:
     ///
     ///   1. `neptune_reference::neptune_hash_primary` — what
-    ///      `RecursiveSNARK::verify` actually uses internally
-    ///   2. arkworks `PoseidonSpongeVar` with
-    ///      `fully_aligned_poseidon_config` — real MDS + grain
-    ///      LFSR-generated ARK
+    ///      `RecursiveSNARK::verify` actually uses internally (includes
+    ///      250-bit LE truncation)
+    ///   2. `enforce_neptune_sponge_primary` — CRC-based in-circuit
+    ///      permutation + IOPattern tag init; gadget value is masked
+    ///      to 250 bits before byte comparison
     ///
-    /// If both outputs match byte-for-byte, the BESPOKE port is
-    /// COMPLETE — the algorithm in `grain_lfsr` produces the
-    /// same constants neptune does.
+    /// Both must match byte-for-byte.
     ///
-    /// This test requires the neptune dump on disk at
-    /// `/tmp/neptune-bn256-standard.json` (produced by
-    /// `cargo run --bin dump-neptune-constants -- --out
-    /// /tmp/neptune-bn256-standard.json`). It's marked `#[ignore]`
-    /// so CI doesn't fail without the dump, but the operator can
-    /// run it on demand:
-    ///
-    ///   cargo test -p evaporchain-nova-bridge -- --ignored \
-    ///       fully_aligned_gadget_byte_parity_with_neptune
+    /// Requires `/tmp/neptune-bn256-standard.json`.
     #[test]
     #[ignore = "requires /tmp/neptune-bn256-standard.json from dump-neptune-constants binary"]
     fn fully_aligned_gadget_byte_parity_with_neptune() {
@@ -415,7 +451,7 @@ mod tests {
 
         let dump_path = "/tmp/neptune-bn256-standard.json";
 
-        // Neptune side: pinned PR #77 minimal absorb sequence.
+        // Neptune side: pinned PR #77 minimal absorb sequence (returns 250-bit-truncated value).
         let neptune_inputs = vec![
             PrimaryScalar::from(0u64),
             PrimaryScalar::from(1u64),
@@ -426,61 +462,35 @@ mod tests {
         let neptune_out = neptune_hash_primary(&neptune_inputs);
         let neptune_bytes_le: [u8; 32] = neptune_out.to_repr().into();
 
-        // Arkworks side: same absorb sequence through the fully
-        // aligned config.
+        // In-circuit side: neptune-aligned sponge gadget.
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(dump_path)
+            .expect("load neptune params");
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
-        let config = fully_aligned_poseidon_config(dump_path).expect("load fully aligned config");
         let inputs: Vec<FpVar<Bn254Fr>> = [0u64, 1, 0, 1, 0]
             .into_iter()
             .map(|v| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(v))).unwrap())
             .collect();
-        let hash_var = enforce_poseidon_primary(cs.clone(), &config, &inputs).expect("synth");
-        let ark_out: Bn254Fr = hash_var.value().expect("witness value");
-        let ark_bigint = ark_ff::PrimeField::into_bigint(ark_out);
-        let bytes = ark_ff::BigInteger::to_bytes_le(&ark_bigint);
-        let mut ark_bytes_le = [0u8; 32];
-        ark_bytes_le[..bytes.len()].copy_from_slice(&bytes);
+        let hash_var =
+            enforce_neptune_sponge_primary(cs.clone(), &params, &inputs).expect("synth");
+        let gadget_out: Bn254Fr = hash_var.value().expect("witness value");
+        let gadget_bigint = ark_ff::PrimeField::into_bigint(gadget_out);
+        let gadget_bytes = ark_ff::BigInteger::to_bytes_le(&gadget_bigint);
+        let mut gadget_bytes_le = [0u8; 32];
+        gadget_bytes_le[..gadget_bytes.len()].copy_from_slice(&gadget_bytes);
+        // Apply 250-bit LE truncation (NUM_HASH_BITS=250): zero bits 250-255 of byte 31.
+        // Byte 31 holds bits 248-255; bits 248-249 survive, bits 250-255 are zeroed.
+        gadget_bytes_le[31] &= 0x03;
 
         eprintln!("neptune  bytes LE: {neptune_bytes_le:?}");
-        eprintln!("arkworks bytes LE: {ark_bytes_le:?}");
+        eprintln!("gadget   bytes LE: {gadget_bytes_le:?}");
 
-        // **Updated as of PR #100 (domain_tag ruled out):**
-        //
-        // LFSR is byte-correct — plain ARK round 0 matches neptune
-        // crc[0..25] exactly (PR #97). Yet the FULL HASH still
-        // diverges:
-        //   neptune  = [119, 216, 133,  86, ...]
-        //   arkworks = [ 56, 235,  73,  76, ...]
-        //
-        // Remaining gap candidates after source review of
-        // `neptune/.../hash_type.rs`:
-        //
-        //   (a) ~~domain_tag absorbed first~~ RULED OUT — for
-        //       `HashType::Sponge`, `domain_tag() = F::ZERO`
-        //       (`hash_type.rs:62`). Absorbing zero into a
-        //       zero-initialized state is a no-op.
-        //
-        //   (b) Neptune uses Strobe-style `Simplex` framing with
-        //       explicit IOPattern (Absorb(len), Squeeze(1)).
-        //       Arkworks uses generic absorb/squeeze.
-        //
-        //   (c) Neptune's `hash_optimized_static` uses SBOX-trick-
-        //       preprocessed constants (`compressed_round_constants`)
-        //       with a modified per-round operation that the canonical
-        //       Poseidon-128 in arkworks `PoseidonSponge` doesn't
-        //       replicate. **Most likely culprit.**
-        //
-        //   (d) Possible: row-major vs column-major MDS, or
-        //       ARK-then-SBOX vs SBOX-then-ARK ordering inside the
-        //       round.
-        //
-        // Closing the gap: port `compress_round_constants` into
-        // the arkworks `PoseidonConfig.ark` field, OR vendor
-        // neptune's permutation and drive directly from R1CS.
-        assert_ne!(
-            ark_bytes_le, neptune_bytes_le,
-            "DIVERGENT (sponge framing) — when this fires, the sponge port \
-             has also landed; flip to `assert_eq!` to mark Section 2 byte-complete"
+        assert_eq!(
+            gadget_bytes_le, neptune_bytes_le,
+            "enforce_neptune_sponge_primary must match neptune byte-for-byte.\n\
+             If this fails: pre_sparse_mds transpose regression or CRC drift.\n\
+             gadget[0..8]={:?}  neptune[0..8]={:?}",
+            &gadget_bytes_le[..8],
+            &neptune_bytes_le[..8],
         );
     }
 
@@ -670,6 +680,65 @@ mod tests {
              (a) the BESPOKE neptune-constants port landed (flip to assert_eq), or \
              (b) by astronomical coincidence the placeholder Poseidon produced the \
              same hash on this input."
+        );
+    }
+
+    /// Pinned parity test for `enforce_neptune_sponge_primary` on
+    /// `[42, 7, 99]` — the same vector confirmed byte-correct in
+    /// `neptune_sponge::sponge_attempt_1_matches_neptune_hash_primary_on_pinned_42_7_99`.
+    ///
+    /// Compares in-circuit `.value()` (250-bit masked) against the native
+    /// `our_neptune_hash_primary_native` output. Since native == neptune
+    /// (confirmed by the sponge test), this transitively pins the gadget vs neptune.
+    ///
+    /// Requires `/tmp/neptune-bn256-standard.json`.
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json from dump-neptune-constants binary"]
+    fn neptune_sponge_gadget_pinned_42_7_99() {
+        use crate::neptune_permutation_gadget::params_from_dump_path;
+        use crate::neptune_sponge::our_neptune_hash_primary_native;
+        use ark_r1cs_std::R1CSVar;
+
+        let dump_path = "/tmp/neptune-bn256-standard.json";
+        let params = params_from_dump_path(dump_path).expect("load neptune params");
+
+        // Native reference (already 250-bit truncated by our_neptune_hash_primary_native).
+        let native_inputs = [
+            Bn254Fr::from(42u64),
+            Bn254Fr::from(7u64),
+            Bn254Fr::from(99u64),
+        ];
+        let native_out = our_neptune_hash_primary_native(&native_inputs, &params);
+        let native_bigint = ark_ff::PrimeField::into_bigint(native_out);
+        let native_bytes = ark_ff::BigInteger::to_bytes_le(&native_bigint);
+        let mut native_le = [0u8; 32];
+        native_le[..native_bytes.len()].copy_from_slice(&native_bytes);
+
+        // In-circuit side: gadget returns untruncated Fr; apply 250-bit mask before compare.
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let inputs: Vec<FpVar<Bn254Fr>> = [42u64, 7, 99]
+            .into_iter()
+            .map(|v| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(v))).unwrap())
+            .collect();
+        let hash_var =
+            enforce_neptune_sponge_primary(cs.clone(), &params, &inputs).expect("synth");
+        let gadget_out: Bn254Fr = hash_var.value().expect("witness value");
+        let gadget_bigint = ark_ff::PrimeField::into_bigint(gadget_out);
+        let gadget_bytes = ark_ff::BigInteger::to_bytes_le(&gadget_bigint);
+        let mut gadget_le = [0u8; 32];
+        gadget_le[..gadget_bytes.len()].copy_from_slice(&gadget_bytes);
+        // 250-bit LE truncation: zero bits 250-255 of byte 31 (mask 0x03).
+        gadget_le[31] &= 0x03;
+
+        eprintln!("native  LE: {native_le:?}");
+        eprintln!("gadget  LE: {gadget_le:?}");
+
+        assert_eq!(
+            gadget_le, native_le,
+            "in-circuit sponge must match native for [42,7,99] after 250-bit mask.\n\
+             gadget[0..8]={:?}  native[0..8]={:?}",
+            &gadget_le[..8],
+            &native_le[..8],
         );
     }
 }

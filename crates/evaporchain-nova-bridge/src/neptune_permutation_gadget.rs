@@ -618,8 +618,16 @@ pub fn params_from_dump_path<P: AsRef<std::path::Path>>(
 
     let path_ref = path.as_ref();
     let plain_mds = extract_mds_matrix(path_ref).map_err(|e| format!("plain_mds: {e}"))?;
-    let pre_sparse_mds =
+    // Neptune's `round_product_mds` applies pre_sparse via `product_mds_with_matrix`, which
+    // computes `matrix^T · elements` (column-sum over rows), not `matrix · elements`.
+    // The pre_sparse_matrix is NOT symmetric (verified empirically), so we must store psm^T
+    // so that our `apply_plain_mds(state, &pre_sparse_mds)` = psm^T · state = neptune's result.
+    let psm_raw =
         extract_pre_sparse_matrix(path_ref).map_err(|e| format!("pre_sparse_mds: {e}"))?;
+    let width = psm_raw.len();
+    let pre_sparse_mds: Vec<Vec<ark_bn254::Fr>> = (0..width)
+        .map(|j| (0..width).map(|i| psm_raw[i][j]).collect())
+        .collect();
     let parsed_sparse =
         extract_sparse_matrices(path_ref).map_err(|e| format!("sparse_matrices: {e}"))?;
     let compressed_ark =

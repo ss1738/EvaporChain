@@ -246,32 +246,16 @@ mod tests {
         eprintln!("neptune LE: {NEPTUNE_LE:?}");
         eprintln!("ours    LE: {our_le_padded:?}");
 
-        eprintln!(
-            "Empirically observed 2026-05-13: our_le DIFFERS from neptune_le.\n\
-             our_le[0..8]     = {:?}\n\
-             neptune_le[0..8] = {:?}\n\
-             Most-likely-wrong assumptions in attempt 1:\n\
-             - absorb operator (`state[pos] += input` vs `state[pos] = input`)\n\
-             - final-permute fence-post (always vs only-when-block-incomplete)\n\
-             - squeeze position (state[1] vs state[0])\n\
-             - missing IOPattern domain separation (neptune's `Sponge::start(IOPattern, ...)`\n\
-               injects absorb-count info; our impl doesn't yet)\n\
-             - state-init: maybe neptune sets state[0] to a non-zero domain_tag derived\n\
-               from arity (not just `HashType::Sponge => ZERO`).\n\
-             Slice 5d will iterate on these.",
+        eprintln!("neptune LE: {NEPTUNE_LE:?}");
+        eprintln!("ours    LE: {our_le_padded:?}");
+
+        assert_eq!(
+            our_le_padded, NEPTUNE_LE,
+            "Sponge output must be byte-equal to neptune reference.\n\
+             Root cause if this fails: pre_sparse_mds transpose fix regression or \
+             CRC drift. our_le[0..8]={:?}  neptune_le[0..8]={:?}",
             &our_le_padded[..8],
             &NEPTUNE_LE[..8],
-        );
-
-        // Canary pattern (same shape as `section2_gadget::tests::
-        // fully_aligned_gadget_byte_parity_with_neptune`): passes today
-        // by asserting INequality. Slice 5d flips this to `assert_eq!`
-        // once the framing is fixed.
-        assert_ne!(
-            our_le_padded, NEPTUNE_LE,
-            "If this fires, attempt-1's framing accidentally matches neptune. Either \
-             we got lucky and slice 5d's iteration is unnecessary, or some other change \
-             aligned the two. Flip to assert_eq! and update slice status."
         );
     }
 

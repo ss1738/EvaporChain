@@ -424,7 +424,8 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 **Progress (2026-05-13):**
 - Phase 2.1 ✅ — chain-side adapter (RecursiveSNARK fixture + pipeline), 119 tests passing
-- Phase 2.2 ✅ — Neptune sponge (grain_lfsr, mds_linalg, neptune_reference, neptune_permutation_gadget, neptune_sponge, neptune_dump_parser, section2_gadget; BN254 constants match)
+- Phase 2.2 ✅ — Neptune sponge constants byte-correct (grain_lfsr, mds_linalg, neptune_reference, neptune_permutation_gadget, neptune_sponge, neptune_dump_parser, section2_gadget)
+- Phase 2.2-sponge-framing ✅ — `enforce_neptune_sponge_primary` byte-correct vs neptune (2026-05-13). Root cause: pre_sparse_mds transpose. Both parity tests pass. SCAFFOLD_VERSION=phase-2.6-operational.
 - Phase 2.3-skeleton ✅ — chain adapter stub
 - Phase 2.4 ✅ — Groth16 wrapper (groth16_wrapper, compress_ark, eip197, scalar_adapter, l_u_secondary_extract)
 - Phase 2.2-section-3 🔴 OPEN — RelaxedR1CS in-circuit satisfiability

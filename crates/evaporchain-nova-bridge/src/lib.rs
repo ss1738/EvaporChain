@@ -71,11 +71,11 @@
 //!   [`section2_gadget`], [`vendored_neptune_grain`]) +
 //!   `dump-neptune-constants` / `dump-our-compressed-ark` /
 //!   `check-neptune-parity` operator binaries.
-//! - **Phase 2.2 Section 2 — sponge framing (OPEN, BESPOKE):**
-//!   residual gap between arkworks `PoseidonSpongeVar` and
-//!   neptune's `Poseidon::hash_optimized_static`. Documented by
-//!   the `assert_ne!` canary
-//!   [`section2_gadget::tests::fully_aligned_gadget_byte_parity_with_neptune`].
+//! - **Phase 2.2 Section 2 — sponge framing (DONE, 2026-05-13):**
+//!   [`section2_gadget::enforce_neptune_sponge_primary`] byte-correct vs neptune.
+//!   Root cause: `pre_sparse_mds` transpose; neptune `product_mds_with_matrix`
+//!   computes `matrix^T * elements`. Both parity tests pass:
+//!   `neptune_sponge_gadget_pinned_42_7_99` + `fully_aligned_gadget_byte_parity_with_neptune`.
 //! - **Phase 2.2 Section 3 — RelaxedR1CS satisfiability (OPEN,
 //!   BESPOKE):** 3-5 day research deliverable.
 //! - **Phase 2.3 — scalar adapter + circuit_builder (DONE):**
@@ -96,8 +96,8 @@
 //!   pipeline emitting L1-paste-ready hex.
 //!
 //! What's still required for **cryptographic soundness** (vs
-//! operational completeness): the two BESPOKE items above —
-//! Section 2 sponge framing + Section 3 RelaxedR1CS.
+//! operational completeness): Section 3 RelaxedR1CS only (Section 2
+//! sponge framing CLOSED 2026-05-13).
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -140,7 +140,7 @@ pub use verifier_circuit::NovaVerifierCircuit;
 ///                               Section 2 sponge framing + Section 3
 ///                               RelaxedR1CS, both BESPOKE.
 ///   - `phase-2-complete`     — sponge framing + RelaxedR1CS closed.
-pub const SCAFFOLD_VERSION: &str = "phase-2.5-operational";
+pub const SCAFFOLD_VERSION: &str = "phase-2.6-operational";
 
 #[cfg(test)]
 mod tests {
@@ -151,6 +151,6 @@ mod tests {
     /// `RecursiveSNARK::verify` PoC test when Phase 2.2 finish ships.
     #[test]
     fn scaffold_compiles_and_marker_present() {
-        assert_eq!(SCAFFOLD_VERSION, "phase-2.5-operational");
+        assert_eq!(SCAFFOLD_VERSION, "phase-2.6-operational");
     }
 }
