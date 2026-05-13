@@ -111,7 +111,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.4 | POST_EXEC Phase 5 block-hash inclusion | ✅ DONE (695c49c) — bit-compat fold (Some→include, None→skip); 3 hash tests | CONSENSUS |
 | T0.5 | PNT v1+ activation (privacy authoritative) | 🟡 **CODE-COMPLETE — OPS-ONLY** — sub-tasks 1, 3, 4-infra, **5** all ✅. Sub-task 5 adversarial tests live at `crates/evaporchain-execution/src/privacy_exec.rs:2168` (`pnt_v1_respend_after_window_eviction_rejected_via_anchor`) + line 2296 (Stage-1 companion); both green on Mini 1 release 2026-05-11. Remaining: operator step 2 (governance flip 0→1 at fork-epoch, needs T3.1 cluster) + operator step 6 (storage-growth telemetry post-flip, needs T3.1). No further code work for this lane. | PRIVACY |
 | T0.6 | Slashing-at-scale empirical tests | 🟡 OPEN | EXECUTION + STATE-DB |
-| T0.7 | Mempool + signature DoS hardening | 🟡 **PARTIAL** — V1-V4 ✅ shipped; V5 DAG fork-spam multi-validator convergence ✅ (`0e976f4`, 2026-05-11); AUDIT-2026-05-11-1/2 ShardSample rate-limit + queries cap ✅ (`8c59fad`, 2026-05-11). Remaining: comprehensive end-to-end DoS suite + `docs/runbooks/dos-resistance.md` (already-present runbook needs the new vectors folded in). | NETWORK + EXECUTION |
+| T0.7 | Mempool + signature DoS hardening | ✅ **DONE** — all 7 vectors: V1-V4 in `dos_resistance.rs`; V5 fork-spam (`0e976f4`/`mcc_phase_d.rs`); V6 ShardSample (`8c59fad`). Runbook V4+V5 ops sections added. `tests/dos/` harness committed. Cluster soak requires T3.1. done-as-of: 2026-05-13 | NETWORK + EXECUTION |
 | T0.8 | Light-client / fast-sync against malicious snapshots | ✅ **DONE** — all 5 lane-spec adversarial fixtures shipped in `crates/evaporchain-state/tests/adversarial_snapshots.rs` and green on Mini 1 release 2026-05-11 (`adversarial_t08_forged_integrity_hash_rejected_via_missing_quorum_cert`, `..._stale_quorum_cert_from_different_snapshot_rejected`, `..._duplicate_validator_ids_in_set_rejected`, `..._truncated_zstd_payload_rejects`, `..._partial_state_withhold_nullifier_rejected_via_cert`). Covers sub-tasks 1 (5 fixtures), 2 (quorum-cert verification), 3 (integrity-hash chain validation), 4 (partial-state-withhold). | NETWORK |
 | T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | ✅ **DONE** — all 8 sub-tasks shipped. D-finish resolved (`Params<halo2_proofs::pasta::EqAffine>` = vesta::Affine IS the right verifier curve for an Fp-circuit; resolution comment at `circuit_v2.rs:997-1011`). `VerkleProverV2::{setup, prove_v2, verify_v2}` (lines 1019-1104) wire `keygen_vk` + `keygen_pk` + `create_proof` + `verify_proof` over the EccVerkleStepCircuit. Headline test `prove_v2_and_verify_v2_round_trip` re-verified green on Mini 1 release 2026-05-11 (77.40s end-to-end, k=11 IPA params). Crate is gated behind `--features v2-ecc`; default build remains V1 Poseidon path until T0.10 pulls V2 through. Earlier 2026-05-09 green run preserved in memory `evaporchain_t0_9_d_finish_done.md`. | BRIDGE-RUST |
 | T0.10 | `VerkleProofVerifier.sol` Groth16 wrap | 🟡 OPEN (unblocked 2026-05-11 by T0.9 ✅) — wraps the V2 IPA proof in a Groth16 envelope so the on-chain Solidity verifier can pin-verify the same `VerkleProofV2` JSON the Rust side produces. | BRIDGE-SOL |
@@ -348,9 +348,9 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.7 — Mempool + signature DoS hardening
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE — all 7 vectors code-complete + runbook updated + `tests/dos/` harness committed. Cluster soak (≥1hr) requires T3.1. done-as-of: 2026-05-13
 **Surface:** NETWORK + EXECUTION
-**Depends on:** T3.1 (recommended)
+**Depends on:** T3.1 (cluster soak only)
 **Effort:** 1-2 weeks
 
 **Goal:** Comprehensive DoS surface audit + remediation. Past incident: per-(height,round) suppression bug fixed (`evaporchain_verification_track_2026_05_02.md`); this lane finds the rest.
