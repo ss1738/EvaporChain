@@ -10,6 +10,27 @@
 use crate::hash::blake3_hash;
 use serde::{Deserialize, Serialize};
 
+// ─── Domain-separation tags (AUDIT_2026_05_13 H4) ──────────────────────────
+//
+// Pre-fix the MMR nullifier leaves and internal nodes BOTH produced
+// 32-byte BLAKE3 outputs over un-tagged preimages. A 64-byte preimage
+// shaped like `(left || right)` could collide with a nullifier preimage
+// of identical 64-byte total (or under controlled-content attacks, an
+// attacker could engineer a nullifier whose 32-byte hash matched a
+// target internal-node hash, breaking the MMR's structural binding).
+// Classic second-preimage attack on un-tagged Merkle trees.
+//
+// Two distinct DSTs make the two hash types globally unique. Hard-fork
+// impactful: every MMR root computed post-fix differs from pre-fix; the
+// nullifier-set commitment changes across the whole chain. Coordinate
+// the cutover with the genesis ceremony.
+
+/// Domain tag for `EnergyStampedNullifier::to_bytes` (MMR leaves).
+pub const NULLIFIER_LEAF_DST: &[u8] = b"evaporchain:nullifier:v1\0";
+
+/// Domain tag for internal-node hash pairing (`hash_pair`).
+pub const MMR_NODE_DST: &[u8] = b"evaporchain:mmr:node:v1\0";
+
 // ─────────────────────── EnergyStampedNullifier ──────────────────────────
 
 /// A nullifier that cryptographically encodes an object's full lifecycle.
@@ -28,8 +49,14 @@ pub struct EnergyStampedNullifier {
 impl EnergyStampedNullifier {
     /// Compute the 32-byte nullifier hash.
     /// This is what gets appended to the MMR.
+    ///
+    /// AUDIT_2026_05_13 H4: prefixed with `NULLIFIER_LEAF_DST` so a
+    /// nullifier hash cannot collide with an MMR internal node (which
+    /// is tagged with `MMR_NODE_DST`) or with any other 112-byte
+    /// preimage hashed elsewhere in the chain.
     pub fn to_bytes(&self) -> [u8; 32] {
-        let mut data = Vec::with_capacity(32 + 32 + 8 + 8 + 32);
+        let mut data = Vec::with_capacity(NULLIFIER_LEAF_DST.len() + 32 + 32 + 8 + 8 + 32);
+        data.extend_from_slice(NULLIFIER_LEAF_DST);
         data.extend_from_slice(&self.object_id);
         data.extend_from_slice(&self.value_hash);
         data.extend_from_slice(&self.evaporation_epoch.to_le_bytes());
@@ -303,12 +330,18 @@ impl Default for MerkleMountainRange {
 
 // ─────────────────────── Helper Functions ─────────────────────────────────
 
-/// Hash two 32-byte values: H(left || right). NOT canonically ordered —
-/// MMR uses positional ordering (left child always first).
+/// Hash two 32-byte values: H(MMR_NODE_DST || left || right). NOT
+/// canonically ordered — MMR uses positional ordering (left child
+/// always first).
+///
+/// AUDIT_2026_05_13 H4: prefixed with `MMR_NODE_DST` so an internal
+/// node hash cannot collide with a nullifier-leaf preimage or with any
+/// other un-tagged 64-byte BLAKE3 over the workspace.
 fn hash_pair(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-    let mut combined = [0u8; 64];
-    combined[..32].copy_from_slice(left);
-    combined[32..].copy_from_slice(right);
+    let mut combined = Vec::with_capacity(MMR_NODE_DST.len() + 64);
+    combined.extend_from_slice(MMR_NODE_DST);
+    combined.extend_from_slice(left);
+    combined.extend_from_slice(right);
     blake3_hash(&combined)
 }
 
@@ -904,5 +937,106 @@ mod proptests {
             prop_assert_eq!(bytes1, bytes2);
             prop_assert_eq!(bytes1.len(), 32);
         }
+    }
+
+    // ─── AUDIT_2026_05_13 H4 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_h4_nullifier_leaf_has_dst_prefix() {
+        // Lock the DST: the nullifier hash must differ from a bare
+        // BLAKE3 of the same payload without the tag. If a future
+        // refactor drops the tag, this fails loudly.
+        let nullifier = EnergyStampedNullifier {
+            object_id: [0x11; 32],
+            value_hash: [0x22; 32],
+            evaporation_epoch: 50,
+            energy_at_death: 1000,
+            owner: [0x33; 32],
+        };
+        let with_tag = nullifier.to_bytes();
+
+        let mut bare = Vec::with_capacity(112);
+        bare.extend_from_slice(&nullifier.object_id);
+        bare.extend_from_slice(&nullifier.value_hash);
+        bare.extend_from_slice(&nullifier.evaporation_epoch.to_le_bytes());
+        bare.extend_from_slice(&nullifier.energy_at_death.to_le_bytes());
+        bare.extend_from_slice(&nullifier.owner);
+        let without_tag = blake3_hash(&bare);
+
+        assert_ne!(
+            with_tag, without_tag,
+            "nullifier hash must differ from bare BLAKE3 — DST drop regression"
+        );
+    }
+
+    #[test]
+    fn audit_h4_mmr_node_hash_has_dst_prefix() {
+        // Lock the node-pair DST: the internal-node hash must differ
+        // from a bare BLAKE3 of (left || right) without the tag.
+        let left = [0xAA; 32];
+        let right = [0xBB; 32];
+        let with_tag = hash_pair(&left, &right);
+
+        let mut bare = [0u8; 64];
+        bare[..32].copy_from_slice(&left);
+        bare[32..].copy_from_slice(&right);
+        let without_tag = blake3_hash(&bare);
+
+        assert_ne!(
+            with_tag, without_tag,
+            "MMR internal node hash must differ from bare BLAKE3"
+        );
+    }
+
+    #[test]
+    fn audit_h4_nullifier_and_node_dsts_distinct() {
+        // The two DSTs must be globally unique. Otherwise the entire
+        // separation is illusory: a 64-byte (left||right) preimage
+        // could still collide with a 112-byte nullifier preimage under
+        // the SAME tag.
+        assert_ne!(NULLIFIER_LEAF_DST, MMR_NODE_DST);
+        // And neither is a prefix of the other (BLAKE3 is not
+        // length-extension-vulnerable but distinct DSTs are the
+        // structural defence).
+        assert!(!NULLIFIER_LEAF_DST.starts_with(MMR_NODE_DST));
+        assert!(!MMR_NODE_DST.starts_with(NULLIFIER_LEAF_DST));
+    }
+
+    #[test]
+    fn audit_h4_dst_versioned_for_clean_cutover() {
+        // Lock the v1 versioning so a hypothetical v2 (future hash
+        // refactor) can clearly coexist during cutover.
+        assert!(NULLIFIER_LEAF_DST.ends_with(b":v1\0"));
+        assert!(MMR_NODE_DST.ends_with(b":v1\0"));
+    }
+
+    #[test]
+    fn audit_h4_mmr_root_differs_from_untagged() {
+        // Acceptance test: an MMR built post-fix must NOT equal what
+        // a hypothetical untagged MMR would produce. This is the
+        // hard-fork-impact signature — older roots are gone.
+        let mut mmr = MerkleMountainRange::new();
+        let n = EnergyStampedNullifier {
+            object_id: [0x44; 32],
+            value_hash: [0x55; 32],
+            evaporation_epoch: 1,
+            energy_at_death: 100,
+            owner: [0x66; 32],
+        };
+        mmr.append(n.to_bytes());
+        let with_tag_root = mmr.root();
+
+        // Synthesise what the pre-fix bare BLAKE3 leaf would have been.
+        let mut bare = Vec::with_capacity(112);
+        bare.extend_from_slice(&n.object_id);
+        bare.extend_from_slice(&n.value_hash);
+        bare.extend_from_slice(&n.evaporation_epoch.to_le_bytes());
+        bare.extend_from_slice(&n.energy_at_death.to_le_bytes());
+        bare.extend_from_slice(&n.owner);
+        let pre_fix_leaf = blake3_hash(&bare);
+        assert_ne!(
+            with_tag_root, pre_fix_leaf,
+            "post-fix MMR root must not equal pre-fix bare leaf hash"
+        );
     }
 }
