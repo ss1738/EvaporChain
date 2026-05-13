@@ -1534,7 +1534,12 @@ impl P2pNetworkService {
                                 warn!("Invalid sync range: from={from} > to={to}");
                                 continue;
                             }
-                            let capped_to = from + MAX_SYNC_BATCH.min(to - from);
+                            // AUDIT_2026_05_13 H6 closure (outbound mirror).
+                            // Operator-controlled here, but defense-in-depth
+                            // saturating math removes the overflow class
+                            // regardless. Matches inbound handler shape.
+                            let span = to.saturating_sub(from).min(MAX_SYNC_BATCH);
+                            let capped_to = from.saturating_add(span);
                             info!("Requesting blocks {from}..{capped_to} from peer {target}");
                             swarm.behaviour_mut().block_sync.send_request(
                                 &target,
@@ -1625,11 +1630,20 @@ impl P2pNetworkService {
                                     continue;
                                 }
                                 let from = request.from_height;
-                                if request.from_height > request.to_height {
-                                    warn!("Peer {peer} sent invalid sync range: {}..{}", request.from_height, request.to_height);
+                                let to_req = request.to_height;
+                                if from > to_req {
+                                    warn!("Peer {peer} sent invalid sync range: {from}..{to_req}");
                                     continue;
                                 }
-                                let to = request.to_height.min(from + MAX_SYNC_BATCH);
+                                // AUDIT_2026_05_13 H6 closure: peer-controlled
+                                // `from = u64::MAX - 50, to = u64::MAX` previously
+                                // overflowed `from + MAX_SYNC_BATCH` (49 in release)
+                                // → `to = 49` → `(to - from) as usize` underflowed
+                                // to ~2^64 → `Vec::with_capacity` OOM-kill. One
+                                // packet, every full node. saturating arithmetic
+                                // throughout closes the vector.
+                                let span = to_req.saturating_sub(from).min(MAX_SYNC_BATCH);
+                                let to = from.saturating_add(span);
                                 info!("Peer {peer} requested blocks {from}..{to}");
 
                                 let cache = safe_read(&block_cache_inner);
@@ -1643,7 +1657,9 @@ impl P2pNetworkService {
                                 // 2026-05-07.
                                 // `to` is exclusive: request covers [from, to).
                                 // MAX_SYNC_BATCH enforces the cap on serving side.
-                                let mut blocks: Vec<Block> = Vec::with_capacity((to - from) as usize);
+                                // `span` is bounded by MAX_SYNC_BATCH so the cast
+                                // is safe regardless of `from` / `to_req` values.
+                                let mut blocks: Vec<Block> = Vec::with_capacity(span as usize);
                                 let mut disk_misses = 0u64;
                                 for n in from..to {
                                     if let Some(b) = cache.get(&n).cloned() {
@@ -3281,5 +3297,69 @@ mod tests {
             c.contains_key(&(MAX_CACHE_SIZE as u64)),
             "newest must be retained"
         );
+    }
+
+    // ─── AUDIT_2026_05_13 H6 regression: BlockSync from_height overflow ───
+    //
+    // Pre-fix, the inbound BlockSync handler computed
+    //   `let to = request.to_height.min(from + MAX_SYNC_BATCH);`
+    // followed by `Vec::with_capacity((to - from) as usize)`. A peer
+    // sending `from = u64::MAX - 50, to = u64::MAX` would wrap the `+`
+    // to 49 in release, underflow `(to - from)` to ~2^64, and OOM-kill
+    // the node via `Vec::with_capacity`. Post-fix uses saturating
+    // arithmetic; these tests pin the exact shape against future
+    // regressions.
+
+    #[test]
+    fn audit_h6_blocksync_span_saturates_at_u64_max_minus_small_offset() {
+        // Mirror the inbound handler's `let span =
+        // to_req.saturating_sub(from).min(MAX_SYNC_BATCH);
+        // let to = from.saturating_add(span);` shape.
+        let from = u64::MAX - 50;
+        let to_req = u64::MAX;
+        let span = to_req.saturating_sub(from).min(MAX_SYNC_BATCH);
+        let to = from.saturating_add(span);
+        // span is 50 (the gap), capped by MAX_SYNC_BATCH=100. No overflow.
+        assert_eq!(span, 50);
+        assert_eq!(to, u64::MAX);
+        // `Vec::with_capacity(span as usize)` is now bounded by
+        // MAX_SYNC_BATCH=100 regardless of from / to_req. Sanity:
+        let v: Vec<u8> = Vec::with_capacity(span as usize);
+        assert!(v.capacity() <= MAX_SYNC_BATCH as usize);
+    }
+
+    #[test]
+    fn audit_h6_blocksync_span_saturates_at_u64_max() {
+        // The pathological case the audit called out: from == to_req == u64::MAX.
+        let from = u64::MAX;
+        let to_req = u64::MAX;
+        let span = to_req.saturating_sub(from).min(MAX_SYNC_BATCH);
+        let to = from.saturating_add(span);
+        assert_eq!(span, 0);
+        assert_eq!(to, u64::MAX);
+    }
+
+    #[test]
+    fn audit_h6_blocksync_span_caps_at_max_sync_batch() {
+        // Normal case: a huge gap clamps to MAX_SYNC_BATCH.
+        let from = 100;
+        let to_req = 1_000_000;
+        let span = to_req.saturating_sub(from).min(MAX_SYNC_BATCH);
+        let to = from.saturating_add(span);
+        assert_eq!(span, MAX_SYNC_BATCH);
+        assert_eq!(to, 100 + MAX_SYNC_BATCH);
+    }
+
+    #[test]
+    fn audit_h6_blocksync_outbound_mirror_saturates() {
+        // Outbound construction shape: `let span = to.saturating_sub(from).min(MAX_SYNC_BATCH);
+        // let capped_to = from.saturating_add(span);` Defense-in-depth
+        // for the operator-controlled outbound side.
+        let from = u64::MAX - 10;
+        let to = u64::MAX;
+        let span = to.saturating_sub(from).min(MAX_SYNC_BATCH);
+        let capped_to = from.saturating_add(span);
+        assert_eq!(span, 10);
+        assert_eq!(capped_to, u64::MAX);
     }
 }
