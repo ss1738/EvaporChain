@@ -209,6 +209,80 @@ mod tests {
     }
 
     #[test]
+    fn different_instance_ids_produce_different_event_ids() {
+        let mut a = r();
+        let mut b = r();
+        a.instance_id = [0xC1; 32];
+        b.instance_id = [0xC2; 32];
+        assert_ne!(a.event_id(), b.event_id());
+    }
+
+    #[test]
+    fn different_deployers_produce_different_event_ids() {
+        let mut a = r();
+        let mut b = r();
+        a.deployer = [0xD1; 32];
+        b.deployer = [0xD2; 32];
+        assert_ne!(a.event_id(), b.event_id());
+    }
+
+    #[test]
+    fn different_fee_paids_produce_different_event_ids() {
+        let mut a = r();
+        let mut b = r();
+        a.fee_paid = 1_000;
+        b.fee_paid = 1_001;
+        assert_ne!(a.event_id(), b.event_id());
+    }
+
+    #[test]
+    fn class_at_app_range_boundaries_accepted() {
+        use evaporchain_app_templates::class::{APP_TEMPLATE_RANGE_END, APP_TEMPLATE_RANGE_START};
+        let lo = DeployReceipt::new(
+            [0; 32],
+            [0; 32],
+            TemplateClass(APP_TEMPLATE_RANGE_START),
+            [0; 32],
+            0,
+            0,
+            0,
+        );
+        assert!(lo.is_ok());
+        let hi = DeployReceipt::new(
+            [0; 32],
+            [0; 32],
+            TemplateClass(APP_TEMPLATE_RANGE_END),
+            [0; 32],
+            0,
+            0,
+            0,
+        );
+        assert!(hi.is_ok());
+        // Off-by-one just below should reject.
+        let below = DeployReceipt::new(
+            [0; 32],
+            [0; 32],
+            TemplateClass(APP_TEMPLATE_RANGE_START - 1),
+            [0; 32],
+            0,
+            0,
+            0,
+        );
+        assert!(below.is_err());
+        // Off-by-one just above should reject.
+        let above = DeployReceipt::new(
+            [0; 32],
+            [0; 32],
+            TemplateClass(APP_TEMPLATE_RANGE_END + 1),
+            [0; 32],
+            0,
+            0,
+            0,
+        );
+        assert!(above.is_err());
+    }
+
+    #[test]
     fn domain_tag_actually_separates_from_naive_hash() {
         // Receipt event_id MUST differ from a naive BLAKE3 of the
         // body without the tag — otherwise some other layer hashing
