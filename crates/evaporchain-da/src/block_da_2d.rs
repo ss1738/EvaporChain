@@ -709,4 +709,118 @@ mod tests {
         let expected = 1.0 - 2.0_f64.powi(-2);
         assert!((metrics.confidence - expected).abs() < 1e-12);
     }
+
+    /// T1.20 — `AvailabilityMetrics::from_samples` boundary: empty
+    /// sample slice yields all-zeros + `recovery_possible = false` +
+    /// `confidence = 0.0` (lines 100-138). Without this the
+    /// `valid_samples == 0` branch (line 119) and the recovery
+    /// check on zeros were both unreached.
+    #[test]
+    fn t1_20_availability_empty_samples_yields_zero_confidence() {
+        let metrics = AvailabilityMetrics::from_samples(&[], 8);
+        assert_eq!(metrics.total_samples, 0);
+        assert_eq!(metrics.valid_samples, 0);
+        assert_eq!(metrics.unique_rows_hit, 0);
+        assert_eq!(metrics.unique_cols_hit, 0);
+        assert_eq!(metrics.extended_dim, 8);
+        assert!(
+            !metrics.recovery_possible,
+            "empty samples cannot enable recovery"
+        );
+        assert_eq!(
+            metrics.confidence, 0.0,
+            "empty samples must yield zero confidence"
+        );
+    }
+
+    /// T1.20 — `AvailabilityMetrics::recovery_possible` boundary at
+    /// exactly k. The doctrine: recovery requires AT LEAST k unique
+    /// rows OR k unique cols (line 117: `>= k`). Off-by-one in the
+    /// comparison would either falsely deny recovery (too tight) or
+    /// falsely promise it (too loose); both are catastrophic for
+    /// DAS soundness.
+    #[test]
+    fn t1_20_availability_recovery_at_exact_k_threshold() {
+        let extended_dim = 8; // k = 4
+        // Exactly k=4 unique rows (and 4 unique cols) — must be true.
+        let at_k: Vec<CellSampleResult> = (0..4)
+            .map(|i| CellSampleResult {
+                row: i,
+                col: i,
+                cell_hash: "h".into(),
+                row_root: "r".into(),
+                col_root: "c".into(),
+                valid: true,
+            })
+            .collect();
+        let m = AvailabilityMetrics::from_samples(&at_k, extended_dim);
+        assert_eq!(m.unique_rows_hit, 4);
+        assert!(
+            m.recovery_possible,
+            "exactly k=4 unique rows must enable recovery"
+        );
+
+        // k-1 = 3 unique rows AND k-1 = 3 unique cols — must be false.
+        let below_k: Vec<CellSampleResult> = (0..3)
+            .map(|i| CellSampleResult {
+                row: i,
+                col: i,
+                cell_hash: "h".into(),
+                row_root: "r".into(),
+                col_root: "c".into(),
+                valid: true,
+            })
+            .collect();
+        let m = AvailabilityMetrics::from_samples(&below_k, extended_dim);
+        assert_eq!(m.unique_rows_hit, 3);
+        assert_eq!(m.unique_cols_hit, 3);
+        assert!(
+            !m.recovery_possible,
+            "k-1=3 unique on BOTH axes must NOT enable recovery"
+        );
+    }
+
+    /// T1.20 — `BlockDA2D::new()` defaults to `cell_size = 64`
+    /// (line 152), and `Default::default()` delegates to `new()`
+    /// (lines 145-148). `with_cell_size` accepts a custom value
+    /// (line 156). Existing tests use `new()` but never inspect
+    /// the cell_size or exercise the Default delegate; this pins
+    /// both constructor paths.
+    #[test]
+    fn t1_20_block_da_2d_constructors() {
+        let a = BlockDA2D::new();
+        let b = BlockDA2D::default();
+        let c = BlockDA2D::with_cell_size(128);
+        // All three are usable encoders; round-trip via encode_block.
+        let pkg_a = a.encode_block(b"hello").unwrap();
+        let pkg_b = b.encode_block(b"hello").unwrap();
+        let pkg_c = c.encode_block(b"hello").unwrap();
+        // Default == new (same cell_size 64 → same header.cell_size).
+        assert_eq!(pkg_a.header.cell_size, 64);
+        assert_eq!(pkg_b.header.cell_size, 64);
+        // with_cell_size respected.
+        assert_eq!(pkg_c.header.cell_size, 128);
+    }
+
+    /// T1.20 — `prove_cell` on an out-of-bounds (row, col) returns
+    /// the `CellProofFailed(row, col)` error variant (line 219). The
+    /// commitments layer returns None for OOB; the wrapper here
+    /// translates that into the typed error.
+    #[test]
+    fn t1_20_prove_cell_out_of_bounds_returns_cell_proof_failed() {
+        let da = BlockDA2D::new();
+        let pkg = da.encode_block(&vec![0xCC; 256]).unwrap();
+        let dim = pkg.header.extended_dim;
+        let err = da.prove_cell(&pkg, dim, 0).unwrap_err();
+        match err {
+            BlockDA2DError::CellProofFailed(r, c) => {
+                assert_eq!(r, dim);
+                assert_eq!(c, 0);
+            }
+            other => panic!("expected CellProofFailed, got {other:?}"),
+        }
+        // Column OOB symmetric.
+        let err = da.prove_cell(&pkg, 0, dim + 7).unwrap_err();
+        assert!(matches!(err, BlockDA2DError::CellProofFailed(0, c) if c == dim + 7));
+    }
 }
