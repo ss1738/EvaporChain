@@ -95,4 +95,70 @@ mod tests {
         // High-energy first: 8 (1000), then 2/7 (500, lower id first), then 1/5 (100).
         assert_eq!(a_ids, vec![8, 2, 7, 1, 5]);
     }
+
+    /// T1.20 — identical txs (same id, same energy) compare as
+    /// `Equal`. Pins the irreflexive-via-equality contract: the
+    /// comparator never returns `Less` or `Greater` for a tx
+    /// against itself or an identical clone. Without this, a
+    /// future refactor that introduced a tie-break tail would
+    /// silently violate strict total-order semantics.
+    #[test]
+    fn t1_20_identical_txs_compare_equal() {
+        let a = tx(0x42, 777);
+        let b = a.clone();
+        assert_eq!(compare_thermal(&a, &b), Ordering::Equal);
+        assert_eq!(compare_thermal(&b, &a), Ordering::Equal);
+    }
+
+    /// T1.20 — energy extremes (`u64::MAX` vs `0`) order correctly.
+    /// The `b.energy.cmp(&a.energy)` reversal must not under/overflow
+    /// at the boundaries; this pins that the strict total order
+    /// survives all u64 values, not just small ones.
+    #[test]
+    fn t1_20_energy_extremes_compare_correctly() {
+        let zero = tx(1, 0);
+        let max = tx(2, u64::MAX);
+        // MAX has higher priority → MAX < zero in commit order.
+        assert_eq!(compare_thermal(&max, &zero), Ordering::Less);
+        assert_eq!(compare_thermal(&zero, &max), Ordering::Greater);
+        // MAX vs MAX with different ids: id breaks the tie.
+        let max_id_a = Tx::new(TxId([1; 32]), u64::MAX, vec![], BTreeMap::new());
+        let max_id_b = Tx::new(TxId([2; 32]), u64::MAX, vec![], BTreeMap::new());
+        assert_eq!(compare_thermal(&max_id_a, &max_id_b), Ordering::Less);
+    }
+
+    /// T1.20 — equal-energy tx_id tie-break uses the FULL 32-byte
+    /// array lexicographically, not just byte[0]. Existing
+    /// `equal_energy_breaks_on_tx_id` only varies byte[0] (via the
+    /// `tx(id_byte, ..)` helper). A refactor that mistakenly compared
+    /// only the first byte would silently violate strict-total-order
+    /// for tx_ids that collide on byte[0] — exactly the case where
+    /// id-byte tie-break matters most.
+    #[test]
+    fn t1_20_tx_id_full_byte_array_participates_in_tie_break() {
+        let mut id_a = [0u8; 32];
+        let mut id_b = [0u8; 32];
+        // byte[0] tied at 0x55; differ at byte[31].
+        id_a[0] = 0x55;
+        id_b[0] = 0x55;
+        id_a[31] = 0x01;
+        id_b[31] = 0x02;
+        let a = Tx::new(TxId(id_a), 1000, vec![], BTreeMap::new());
+        let b = Tx::new(TxId(id_b), 1000, vec![], BTreeMap::new());
+        assert_eq!(
+            compare_thermal(&a, &b),
+            Ordering::Less,
+            "byte[31] difference must break ties when byte[0] is equal"
+        );
+        // Symmetric.
+        assert_eq!(compare_thermal(&b, &a), Ordering::Greater);
+        // And the unused state-key trail does NOT affect ordering.
+        let unused_key = StateKey([0xFFu8; 32]);
+        let a_with_reads = Tx::new(TxId(id_a), 1000, vec![unused_key], BTreeMap::new());
+        assert_eq!(
+            compare_thermal(&a_with_reads, &b),
+            Ordering::Less,
+            "read_set must not feed into thermal priority"
+        );
+    }
 }
