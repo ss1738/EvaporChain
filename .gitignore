@@ -49,3 +49,6 @@ data-v1/
 # Python caches in research/
 __pycache__/
 *.pyc
+
+# Personal working files (operator brain, planning notes)
+OPERATOR_BRAIN.md
