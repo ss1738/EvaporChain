@@ -2426,23 +2426,43 @@ impl TendermintConsensus {
         {
             return Vec::new();
         }
-        let n = self.validator_set.len();
-        if n == 0 {
+
+        // AUDIT_2026_05_13 H11 closure. Pre-fix used count-based
+        // `precommit_count >= 2f+1` where `n = validator_set.len()`
+        // (includes jailed). Two correctness gaps:
+        //   1. Once stake distribution is unequal (real chain),
+        //      `2f+1` validator signatures can be ≪ 2/3 stake → the
+        //      DAG-path finality predicate fires below the safety
+        //      threshold.
+        //   2. Jailed validators inflate `n`, loosening `2f+1`
+        //      relative to honest voting power.
+        // Linear path uses `check_precommit_quorum` which sums
+        // `effective_stake()` over non-jailed signers and compares
+        // against `stake_quorum_threshold()`. This DAG-path mirror
+        // closes the parity gap.
+        let threshold = self.stake_quorum_threshold();
+        if threshold == u64::MAX {
+            // total_stake == 0 — no validators with stake.
             return Vec::new();
         }
-        let f = (n.saturating_sub(1)) / 3;
-        let threshold = 2 * f + 1;
 
         let candidates =
             evaporchain_light_cone::concurrency::closing_antichain(&self.light_cone_dag);
         let mut finalized = Vec::new();
         for tip in candidates {
-            let precommit_count = self
+            let stake_for: u64 = self
                 .dag_round_states
                 .get(&tip)
-                .map(|rs| rs.precommits.len())
+                .map(|rs| {
+                    rs.precommits
+                        .keys()
+                        .filter_map(|vid| self.validator_set.get_validator(*vid))
+                        .filter(|v| !v.jailed)
+                        .map(|v| v.effective_stake())
+                        .fold(0u64, |acc, s| acc.saturating_add(s))
+                })
                 .unwrap_or(0);
-            if precommit_count >= threshold {
+            if stake_for >= threshold {
                 finalized.push(tip);
             }
         }
