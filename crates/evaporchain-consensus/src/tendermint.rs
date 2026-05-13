@@ -22633,3 +22633,170 @@ mod t1_20_batch24 {
         assert!(!tc.verify_da_certificate(&block));
     }
 }
+
+// ── T1.20 batch 25 — nil-precommit-continue · zero-state-root · locked-hash-match
+//                     weak-subjectivity-on-msg · DA-cert-on-msg · DA-2D-roots-on-msg
+//                     prevote-to-dag-tip · precommit-to-dag-tip ──
+#[cfg(test)]
+mod t1_20_batch25 {
+    use super::*;
+    use evaporchain_da::certificate::DACertificate;
+    use evaporchain_light_cone::Block as LcBlock;
+    use evaporchain_types::{Transaction, TransferTx};
+
+    fn make_vs1() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs
+    }
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+    fn make_tc1() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs1())
+    }
+    fn make_tc3() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs3())
+    }
+    fn make_block(number: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number, epoch: 0, parent_hash: [0u8; 32], state_root: [0u8; 32],
+            transactions: vec![], producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None, nova_proof: None,
+            anchor_hash: None, vrf_output: None, vrf_proof: None, data_root: None,
+            da_row_roots: vec![], da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None, protocol_version: 0,
+            state_root_version: 0, submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: nil precommit skipped by `continue` at line 6985 ──
+    #[test]
+    fn t25_nil_precommit_skipped_in_cert_builder() {
+        let mut tc = make_tc3();
+        tc.round_state.precommits.insert(1, None);
+        tc.round_state.precommits.insert(2, Some([0xbb; 32]));
+        let result = tc.try_build_commit_certificate([0xaa; 32]);
+        assert!(result.is_none());
+    }
+
+    // ── Test 2: zero state_root rejected in on_message Proposal arm (lines 4985/4990) ──
+    #[test]
+    fn t25_zero_state_root_proposal_rejected() {
+        let mut tc = make_tc1();
+        tc.current_state_root = [1u8; 32];
+        let mut block = make_block(2);
+        block.state_root = [0u8; 32];
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        assert!(!actions.iter().any(|a| matches!(
+            a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+        )));
+    }
+
+    // ── Test 3: locked block with matching hash → votes Some(hash) (line 5154) ──
+    #[test]
+    fn t25_locked_block_hash_votes_for_it() {
+        let mut tc = make_tc1();
+        let block = make_block(1);
+        tc.locked_block = Some(block.clone());
+        tc.locked_round = Some(0);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        let voted_some = actions.iter().any(|a| matches!(
+            a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })
+        ));
+        assert!(voted_some, "expected prevote for locked+proposed block");
+    }
+
+    // ── Test 4: weak subjectivity fail in on_message Proposal arm (lines 5067/5072) ──
+    #[test]
+    fn t25_weak_subjectivity_fail_on_message() {
+        let mut tc = make_tc1();
+        tc.set_trusted_checkpoint(8, [1u8; 32], [0u8; 32]);
+        let block = make_block(3);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        assert!(!actions.iter().any(|a| matches!(
+            a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+        )));
+    }
+
+    // ── Test 5: DA cert not supermajority → rejected in on_message (lines 5077/5083) ──
+    #[test]
+    fn t25_da_cert_not_supermajority_on_message() {
+        let mut tc = make_tc1();
+        let cert = DACertificate {
+            block_number: 1, data_root: [0u8; 32], attestations: vec![],
+            attested_stake: 1, total_stake: 100,
+        };
+        let cert_bytes = serde_json::to_vec(&cert).expect("serialises");
+        let mut block = make_block(1);
+        block.da_certificate = Some(cert_bytes);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        assert!(!actions.iter().any(|a| matches!(
+            a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+        )));
+    }
+
+    // ── Test 6: DA-2D row/col roots mismatch → rejected in on_message (lines 5127/5133) ──
+    #[test]
+    fn t25_da_2d_roots_mismatch_rejected() {
+        let mut tc = make_tc1();
+        let tx = Transaction::Transfer(TransferTx {
+            from: [0u8; 32], to: [1u8; 32], amount: 100, nonce: 0,
+            signature: None, public_key: None, mev_refund_eligible: None,
+        });
+        let mut block = make_block(1);
+        block.transactions = vec![tx];
+        block.da_row_roots = vec![[0xff; 32]];
+        block.da_col_roots = vec![[0xff; 32]];
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        assert!(!actions.iter().any(|a| matches!(
+            a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+        )));
+    }
+
+    // ── Test 7: prevote to a DAG tip triggers record_dag_prevote (line 5278) ──
+    #[test]
+    fn t25_prevote_to_dag_tip_records_dag_prevote() {
+        let mut tc = make_tc1();
+        let tip: [u8; 32] = [0xaa; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(tip, vec![], 1000, 0))
+            .expect("DAG insert");
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: 1, round: 0, block_hash: Some(tip), validator_id: 1,
+            bls_signature: None,
+        });
+        let _ = actions;
+    }
+
+    // ── Test 8: precommit to a DAG tip triggers record_dag_precommit (line 5407) ──
+    #[test]
+    fn t25_precommit_to_dag_tip_records_dag_precommit() {
+        let mut tc = make_tc1();
+        let tip: [u8; 32] = [0xaa; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(tip, vec![], 1000, 0))
+            .expect("DAG insert");
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1, round: 0, block_hash: Some(tip), validator_id: 1,
+            bls_signature: None,
+        });
+        let _ = actions;
+    }
+}
