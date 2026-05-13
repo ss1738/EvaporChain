@@ -60,6 +60,13 @@ struct PendingSample {
     query_index: usize,
     sent_at: Instant,
     retries: u8,
+    /// Data-root that the original sample was bound to.
+    /// AUDIT_2026_05_13 H7: the seed is now derived from
+    /// `(block_number, data_root, validator_id)` instead of just
+    /// `(block_number, validator_id)`. Retries must reconstruct the
+    /// SAME seed to hit the same shards — stored here per-sample so
+    /// reorg / data_root churn doesn't desync the retry.
+    data_root: [u8; 32],
 }
 
 /// Maximum number of retry attempts for a DA sample request.
@@ -4625,10 +4632,15 @@ async fn main() -> Result<()> {
 
                                                 // Request shard samples from peers for DA verification
                                                 if let Some(data_root) = block.data_root {
-                                                    let mut da_seed = Vec::with_capacity(40);
-                                                    da_seed.extend_from_slice(b"da-sample");
-                                                    da_seed.extend_from_slice(&block.number.to_le_bytes());
-                                                    da_seed.extend_from_slice(&args.validator_id.to_le_bytes());
+                                                    // AUDIT H7: seed bound to data_root so the producer
+                                                    // cannot pre-compute which shards each validator
+                                                    // will sample.
+                                                    let da_seed =
+                                                        evaporchain_da::sampling::DASampler::build_da_sample_seed_v1(
+                                                            block.number,
+                                                            &data_root,
+                                                            args.validator_id,
+                                                        );
                                                     let queries = evaporchain_da::sampling::DASampler::generate_queries(
                                                         block.number, shard_count as usize, 4, &da_seed,
                                                     );
@@ -4643,6 +4655,7 @@ async fn main() -> Result<()> {
                                                             query_index: idx,
                                                             sent_at: Instant::now(),
                                                             retries: 0,
+                                                            data_root,
                                                         });
                                                     }
                                                     // Reset per-block sample counters
@@ -5652,10 +5665,13 @@ async fn main() -> Result<()> {
 
                                                     // Request peer shard samples + create DA attestation
                                                     if let Some(data_root) = block.data_root {
-                                                        let mut da_seed = Vec::with_capacity(40);
-                                                        da_seed.extend_from_slice(b"da-sample");
-                                                        da_seed.extend_from_slice(&block.number.to_le_bytes());
-                                                        da_seed.extend_from_slice(&args.validator_id.to_le_bytes());
+                                                        // AUDIT H7: seed bound to data_root.
+                                                        let da_seed =
+                                                            evaporchain_da::sampling::DASampler::build_da_sample_seed_v1(
+                                                                block.number,
+                                                                &data_root,
+                                                                args.validator_id,
+                                                            );
                                                         let queries = evaporchain_da::sampling::DASampler::generate_queries(
                                                             block.number, shard_count as usize, 4, &da_seed,
                                                         );
@@ -5670,6 +5686,7 @@ async fn main() -> Result<()> {
                                                                 query_index: idx,
                                                                 sent_at: Instant::now(),
                                                                 retries: 0,
+                                                                data_root,
                                                             });
                                                         }
                                                         // Reset per-block sample counters
@@ -7217,16 +7234,36 @@ async fn main() -> Result<()> {
 
                 // Re-send retry queries
                 if !retries_to_send.is_empty() {
-                    // Group retries by block number and regenerate queries
+                    // Group retries by block number and regenerate queries.
+                    // AUDIT H7: each block's seed is now data_root-bound. We
+                    // need the data_root of the original sample to reconstruct
+                    // the SAME seed; look it up from any surviving PendingSample
+                    // for that block (all share the same data_root).
                     let mut retry_blocks: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
                     for (bn, qi) in retries_to_send {
                         retry_blocks.entry(bn).or_default().push(qi);
                     }
                     for (block_num, indices) in retry_blocks {
-                        let mut da_seed = Vec::with_capacity(40);
-                        da_seed.extend_from_slice(b"da-sample");
-                        da_seed.extend_from_slice(&block_num.to_le_bytes());
-                        da_seed.extend_from_slice(&args.validator_id.to_le_bytes());
+                        let data_root = match pending_da_samples
+                            .iter()
+                            .find(|ps| ps.block_number == block_num)
+                            .map(|ps| ps.data_root)
+                        {
+                            Some(r) => r,
+                            None => {
+                                // No surviving pending sample for this block —
+                                // retry was scheduled but the original tracking
+                                // entries already drained. Skip silently rather
+                                // than synthesise a wrong seed.
+                                continue;
+                            }
+                        };
+                        let da_seed =
+                            evaporchain_da::sampling::DASampler::build_da_sample_seed_v1(
+                                block_num,
+                                &data_root,
+                                args.validator_id,
+                            );
                         // Re-generate queries for the specific indices we need to retry
                         let shard_count = {
                             let store = safe_lock(&da_store);
