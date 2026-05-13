@@ -4209,7 +4209,95 @@ impl TendermintConsensus {
             input.push(1);
             input.extend_from_slice(&post_root);
         }
+        // AUDIT_2026_05_13 H12 closure: commit block.parents into the
+        // digest so multi-parent extensions (mcc_full mode) become
+        // consensus-load-bearing. Pre-fix the hash excluded parents
+        // entirely — two validators receiving different `block.parents`
+        // for the same proposal hashed identically; light-client
+        // header verification of multi-parent claims was structurally
+        // impossible.
+        //
+        // Bit-compat shape (same asymmetric pattern as post_state_root):
+        // when `parents` is empty (the linear-mode default), append
+        // NOTHING. Pre-H12 blocks all have empty `parents` and keep
+        // their legacy hash. Only blocks with non-empty `parents`
+        // (mcc_full proposers) gain the new hash contribution.
+        if !block.parents.is_empty() {
+            input.push(1);
+            input.extend_from_slice(&(block.parents.len() as u32).to_le_bytes());
+            for parent in &block.parents {
+                input.extend_from_slice(parent);
+            }
+        }
         blake3_hash(&input)
+    }
+
+    /// AUDIT_2026_05_13 H12 closure: validate `block.parents` against
+    /// the local DAG view under `mcc_full` mode. Pre-fix, the receiver
+    /// only checked `block.parent_hash`; `block.parents` was read by
+    /// the proposer but never validated, allowing a proposer to claim
+    /// concurrent parents that don't exist in any validator's DAG.
+    ///
+    /// Returns Ok(()) if the parents pass all four gates:
+    /// 1. **Bounded** by `light_cone_max_concurrent_forks` (default 4).
+    /// 2. **Distinct** — no duplicate entries.
+    /// 3. **Present** in the local `light_cone_dag`.
+    /// 4. **Antichain** — no pair (including with `block.parent_hash`)
+    ///    is comparable in the DAG partial order.
+    ///
+    /// Empty `block.parents` is always Ok (legacy linear-mode blocks).
+    /// Validation runs unconditionally — when `parent_acceptance_mode`
+    /// is not `mcc_full`, an empty parents field is the spec; a
+    /// non-empty one is a protocol violation regardless of mode.
+    fn validate_block_parents(&self, block: &Block) -> Result<(), &'static str> {
+        if block.parents.is_empty() {
+            return Ok(());
+        }
+        // Gate (1): bounded.
+        let cap = self
+            .governance_params
+            .get("light_cone_max_concurrent_forks")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(4);
+        if block.parents.len() > cap {
+            return Err("block.parents exceeds light_cone_max_concurrent_forks");
+        }
+        // Gate (2): distinct.
+        let mut seen = std::collections::HashSet::with_capacity(block.parents.len());
+        for p in &block.parents {
+            if !seen.insert(*p) {
+                return Err("block.parents contains duplicate entry");
+            }
+        }
+        // Gate (3): each parent present in the local DAG view.
+        for p in &block.parents {
+            if !self.light_cone_dag.contains(p) {
+                return Err("block.parents references a hash not in local DAG");
+            }
+        }
+        // Gate (4): antichain — no pair comparable, no parent
+        // comparable to block.parent_hash.
+        for i in 0..block.parents.len() {
+            if evaporchain_light_cone::concurrency::comparable(
+                &self.light_cone_dag,
+                block.parents[i],
+                block.parent_hash,
+            ) {
+                return Err(
+                    "block.parents entry is comparable to block.parent_hash (not an antichain)",
+                );
+            }
+            for j in (i + 1)..block.parents.len() {
+                if evaporchain_light_cone::concurrency::comparable(
+                    &self.light_cone_dag,
+                    block.parents[i],
+                    block.parents[j],
+                ) {
+                    return Err("block.parents pair is comparable (not an antichain)");
+                }
+            }
+        }
+        Ok(())
     }
 
     // ──────────────── Core State Machine ────────────────────────────────
@@ -4845,8 +4933,24 @@ impl TendermintConsensus {
                         // Accept if block.parent_hash is any current DAG candidate
                         // head, OR matches our cached single head (normal path).
                         let candidates = self.candidate_heads();
-                        candidates.contains(&block.parent_hash)
-                            || block.parent_hash == self.parent_hash
+                        let parent_hash_ok = candidates.contains(&block.parent_hash)
+                            || block.parent_hash == self.parent_hash;
+                        // AUDIT_2026_05_13 H12: also validate block.parents
+                        // (bounded / distinct / DAG-present / antichain).
+                        // Empty parents is OK (legacy / single-parent blocks).
+                        let parents_ok = match self.validate_block_parents(block) {
+                            Ok(()) => true,
+                            Err(reason) => {
+                                warn!(
+                                    height = height,
+                                    round = round,
+                                    reason = reason,
+                                    "Rejecting mcc_full proposal: block.parents validation failed"
+                                );
+                                false
+                            }
+                        };
+                        parent_hash_ok && parents_ok
                     }
                     "mcc" => {
                         // Lane I.6: derive β from the chain's λ instead
