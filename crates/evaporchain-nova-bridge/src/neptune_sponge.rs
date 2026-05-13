@@ -60,6 +60,68 @@ use crate::neptune_permutation_gadget::{neptune_permute_native, NeptuneParams};
 /// Matches [`crate::neptune_reference::NUM_HASH_BITS`].
 pub const NUM_HASH_BITS: usize = 250;
 
+/// 128-bit prime base used by neptune's `Hasher` for the IOPattern
+/// value, per `nova-snark-0.68/src/frontend/gadgets/poseidon/sponge/api.rs:46`.
+const HASHER_BASE: u128 = 0u128.wrapping_sub(159);
+
+/// Compute the IOPattern hash for our specific use case: one
+/// `Absorb(absorb_count)` followed by one `Squeeze(squeeze_count)`,
+/// finalised with `domain_separator`.
+///
+/// Mirrors neptune's `IOPattern::value` for the pattern
+/// `[Absorb(n), Squeeze(m)]`. The hash is the `tag: u128` written
+/// into state[0]'s low 16 bytes by `initialize_capacity`.
+///
+/// neptune's SpongeOp::value encodings:
+///   Absorb(n)  → n + (1 << 31)
+///   Squeeze(n) → n
+///
+/// Hasher state update (per call to `update(a)`):
+///   x_i = x_i.wrapping_mul(HASHER_BASE)
+///   state = state.wrapping_add(x_i.wrapping_mul(a))
+///
+/// finalize calls `update(domain_separator)` at the end.
+pub fn iopattern_value_absorb_then_squeeze(
+    absorb_count: u32,
+    squeeze_count: u32,
+    domain_separator: u32,
+) -> u128 {
+    let x = HASHER_BASE;
+    let mut x_i: u128 = 1;
+    let mut state: u128 = 0;
+
+    let absorb_value = (absorb_count as u128).wrapping_add(1u128 << 31);
+    x_i = x_i.wrapping_mul(x);
+    state = state.wrapping_add(x_i.wrapping_mul(absorb_value));
+
+    let squeeze_value = squeeze_count as u128;
+    x_i = x_i.wrapping_mul(x);
+    state = state.wrapping_add(x_i.wrapping_mul(squeeze_value));
+
+    let ds_value = domain_separator as u128;
+    x_i = x_i.wrapping_mul(x);
+    state = state.wrapping_add(x_i.wrapping_mul(ds_value));
+
+    state
+}
+
+/// Convert the IOPattern u128 tag into an `Fr` exactly the way
+/// neptune's `initialize_capacity` does:
+///
+/// ```text
+/// let mut repr = F::Repr::default();              // 32 bytes of zero
+/// repr.as_mut()[..16].copy_from_slice(&tag.to_le_bytes());
+/// F::from_repr(repr).unwrap()
+/// ```
+///
+/// In LE byte form: low 16 bytes = tag LE, high 16 bytes = 0.
+/// This yields a small Fr in the range [0, 2^128).
+pub fn iopattern_tag_as_fr(tag: u128) -> Bn254Fr {
+    let mut bytes_le = [0u8; 32];
+    bytes_le[..16].copy_from_slice(&tag.to_le_bytes());
+    Bn254Fr::from_le_bytes_mod_order(&bytes_le)
+}
+
 /// Off-circuit reference for our Simplex-sponge hash, attempt 1.
 /// Mirrors what nova-snark's `PoseidonRO<Bn254Scalar>::squeeze(250,
 /// false)` does, but using our `neptune_permute_native` instead of
@@ -76,28 +138,37 @@ pub fn our_neptune_hash_primary_native(
 ) -> Bn254Fr {
     let width = params.width;
     let rate = width - 1; // capacity at index 0; rate at indices 1..width
+    let capacity = 1usize;
 
-    // 1. State init.
+    // 1. State init via initialize_capacity — write the IOPattern
+    //    hash into state[0]'s low 16 bytes. PoseidonRO::squeeze uses
+    //    `IOPattern([Absorb(state.len()), Squeeze(1)])` with
+    //    `domain_separator = Some(0).unwrap_or(0) = 0`.
+    let tag = iopattern_value_absorb_then_squeeze(inputs.len() as u32, 1, 0);
     let mut state: Vec<Bn254Fr> = vec![Bn254Fr::from(0u64); width];
+    state[0] = iopattern_tag_as_fr(tag);
 
-    // 2. Absorb.
-    let mut pos = 1usize;
+    // 2. Absorb. absorb_pos is 0-indexed within rate; physical state
+    //    index = absorb_pos + capacity.
+    let mut absorb_pos = 0usize;
     for input in inputs {
-        if pos == width {
+        if absorb_pos == rate {
             // Rate full: permute and reset.
             neptune_permute_native(&mut state, params);
-            pos = 1;
+            absorb_pos = 0;
         }
-        state[pos] += input;
-        pos += 1;
+        state[absorb_pos + capacity] += input;
+        absorb_pos += 1;
     }
 
-    // 3. Final permute (always, regardless of last-block padding).
-    let _ = rate; // rate value is documentation; pos already tracked
+    // 3. Squeeze: ensure_squeezing triggers one permute (squeeze_pos
+    //    starts at rate after absorb completes, hits the
+    //    `squeeze_pos == rate` branch at the top of squeeze and
+    //    permutes). Then read state[capacity] and return.
     neptune_permute_native(&mut state, params);
 
-    // 4. Squeeze + 250-bit truncation.
-    let digest_scalar = state[1];
+    // 4. Squeeze first rate slot + 250-bit truncation.
+    let digest_scalar = state[capacity]; // = state[1]
     truncate_to_n_le_bits(digest_scalar, NUM_HASH_BITS)
 }
 
@@ -235,6 +306,49 @@ mod tests {
         let a = our_neptune_hash_primary_native(&[Bn254Fr::from(1u64)], &params);
         let b = our_neptune_hash_primary_native(&[Bn254Fr::from(2u64)], &params);
         assert_ne!(a, b, "different inputs must produce different hashes");
+    }
+
+    /// IOPattern hasher: empty pattern + domain_separator=0 → 0.
+    /// (Mirrors neptune's `test(0, IOPattern(vec![]), 0)` test
+    /// in api.rs:276.)
+    ///
+    /// Note: our function `iopattern_value_absorb_then_squeeze`
+    /// always emits at least one absorb + one squeeze op, so the
+    /// empty-pattern case isn't directly testable. But we CAN test
+    /// it returns deterministic values for fixed inputs.
+    #[test]
+    fn iopattern_value_is_deterministic() {
+        let a = iopattern_value_absorb_then_squeeze(3, 1, 0);
+        let b = iopattern_value_absorb_then_squeeze(3, 1, 0);
+        assert_eq!(a, b);
+        let c = iopattern_value_absorb_then_squeeze(3, 1, 0);
+        assert_eq!(a, c);
+    }
+
+    /// IOPattern hasher distinguishes absorb counts.
+    #[test]
+    fn iopattern_value_distinguishes_absorb_counts() {
+        let a = iopattern_value_absorb_then_squeeze(3, 1, 0);
+        let b = iopattern_value_absorb_then_squeeze(4, 1, 0);
+        assert_ne!(a, b);
+    }
+
+    /// IOPattern hasher distinguishes domain separators.
+    #[test]
+    fn iopattern_value_distinguishes_domain_separator() {
+        let a = iopattern_value_absorb_then_squeeze(3, 1, 0);
+        let b = iopattern_value_absorb_then_squeeze(3, 1, 1);
+        assert_ne!(a, b);
+    }
+
+    /// `iopattern_tag_as_fr` converts a small u128 to the same Fr
+    /// you'd get from reading the low 16 bytes of an Fr with zero
+    /// high bytes.
+    #[test]
+    fn iopattern_tag_as_fr_for_small_value() {
+        // tag = 42 → state[0] = 42 (since 42 fits in low 16 bytes).
+        let f = iopattern_tag_as_fr(42u128);
+        assert_eq!(f, Bn254Fr::from(42u64));
     }
 
     /// truncate_to_n_le_bits: simple unit test on a known value.
