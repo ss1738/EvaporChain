@@ -2373,4 +2373,116 @@ mod tests {
         assert!(db.latest_snapshot_height().is_none());
         db.prune_snapshots_before(100);
     }
+
+    // ── T1.20 batch-3: reopen-loads-all-CFs + dirty-object/account sync ──
+
+    #[test]
+    fn t1_20c_reopen_loads_note_commitments_sentinel_stakes_delegations() {
+        use evaporchain_sentinel::{BoundedParameter, Vote};
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            // Note commitment
+            db.append_note_commitment(0, [42u8; 32]);
+            // Sentinel param + votes
+            db.put_sentinel_param(BoundedParameter::new(3, 300, 0, 1000).unwrap());
+            db.put_sentinel_votes(3, vec![Vote::new(1, 250, 99)]);
+            // Stake + delegation
+            db.put_stake(make_stake(7, 777_000));
+            db.put_delegation(make_delegation(0xAA, 7, 100_000));
+        } // DB dropped → RocksDB closed
+
+        // Reopen — exercises all iterator-based load paths in open()
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+
+        // Note commitments loaded from CF_NOTE_COMMITMENTS
+        let commits = db2.get_all_note_commitments();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0], [42u8; 32]);
+
+        // Sentinel params loaded from CF_SENTINEL_PARAMS
+        let param = db2.get_sentinel_param(3).expect("param should load from disk");
+        assert_eq!(param.current, 300);
+
+        // Sentinel votes loaded from CF_SENTINEL_VOTES
+        let votes = db2.get_sentinel_votes(3);
+        assert_eq!(votes.len(), 1);
+        assert_eq!(votes[0].target, 250);
+
+        // Stakes loaded from CF_STAKES
+        let stake = db2.get_stake(7).expect("stake should load from disk");
+        assert_eq!(stake.staked_amount, 777_000);
+
+        // Delegations loaded from CF_DELEGATIONS
+        let delegator = [0xAA; 32];
+        let del = db2.get_delegation(&delegator, 7).expect("delegation should load from disk");
+        assert_eq!(del.amount, 100_000);
+    }
+
+    #[test]
+    fn t1_20c_get_object_mut_marks_dirty_synced_by_compute_state_root() {
+        let mut db = tmp_db();
+        let obj = make_obj(0xBB, 1000);
+        db.put_object(obj.clone());
+        // get_object_mut marks the object dirty (dirty_objects set)
+        if let Some(o) = db.get_object_mut(&obj.id) {
+            o.energy = 777;
+        }
+        // compute_state_root → sync_dirty_to_trie → processes dirty_objects
+        // covers lines 597-605 (the object insert path in the loop)
+        let root = db.compute_state_root();
+        assert_ne!(root, [0u8; 32]);
+        assert_eq!(db.get_object(&obj.id).unwrap().energy, 777);
+    }
+
+    #[test]
+    fn t1_20c_dirty_account_synced_by_compute_state_root() {
+        use evaporchain_types::Account;
+        let mut db = tmp_db();
+        let addr = [0xCC; 32];
+        let acc = Account {
+            address: addr,
+            balance: 100,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        };
+        db.put_account(acc);
+        // get_account_mut marks the account dirty (dirty_accounts set)
+        if let Some(a) = db.get_account_mut(&addr) {
+            a.balance = 999;
+        }
+        // compute_state_root → sync_dirty_to_trie → processes dirty_accounts
+        // covers lines 613-617 (the account insert path in the loop)
+        let root = db.compute_state_root();
+        assert_ne!(root, [0u8; 32]);
+        assert_eq!(db.get_account(&addr).unwrap().balance, 999);
+    }
+
+    #[test]
+    fn t1_20c_reopen_objects_and_accounts_load_from_disk() {
+        use evaporchain_types::Account;
+        let dir = tempfile::tempdir().unwrap();
+        let obj = make_obj(0x55, 500);
+        let addr = [0x66; 32];
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.put_object(obj.clone());
+            db.put_account(Account {
+                address: addr, balance: 1234, nonce: 5,
+                storage_deposit: 0, storage_bytes: 0,
+                last_touched_epoch: 0, vesting: None,
+            });
+        }
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        let loaded_obj = db2.get_object(&obj.id).expect("object must reload from disk");
+        assert_eq!(loaded_obj.energy, 500);
+        let loaded_acc = db2.get_account(&addr).expect("account must reload from disk");
+        assert_eq!(loaded_acc.balance, 1234);
+        assert_eq!(loaded_acc.nonce, 5);
+        assert!(db2.has_data());
+    }
+
 }
