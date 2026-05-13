@@ -344,6 +344,110 @@ pub fn extract_mds_m_double_prime<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>
     extract_mds_sub_matrix(path, "m_double_prime")
 }
 
+/// Extract the top-level `psm` (pre-sparse matrix) from a neptune
+/// dump. This is the matrix neptune uses at the boundary round
+/// `current_round == half_full_rounds - 1`. Shape: `width × width`
+/// (25 × 25 for chain Poseidon-128 arity-24 Standard).
+///
+/// Used by [`crate::neptune_permutation_gadget::NeptuneParams::pre_sparse_mds`].
+pub fn extract_pre_sparse_matrix<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<Fr>>, String> {
+    let bytes = fs::read_to_string(path.as_ref())
+        .map_err(|e| format!("read {}: {}", path.as_ref().display(), e))?;
+    let v: Value = serde_json::from_str(&bytes).map_err(|e| format!("json parse: {e}"))?;
+
+    let psm = v
+        .get("psm")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "missing top-level `psm` array".to_string())?;
+
+    let mut out: Vec<Vec<Fr>> = Vec::with_capacity(psm.len());
+    for (i, row) in psm.iter().enumerate() {
+        let row_arr = row.as_array().ok_or_else(|| format!("psm[{i}] is not an array"))?;
+        let mut row_vec: Vec<Fr> = Vec::with_capacity(row_arr.len());
+        for (j, cell) in row_arr.iter().enumerate() {
+            let hex = cell
+                .as_str()
+                .ok_or_else(|| format!("psm[{i}][{j}] is not a hex string"))?;
+            row_vec.push(decode_hex_scalar(hex).map_err(|e| format!("psm[{i}][{j}]: {e}"))?);
+        }
+        out.push(row_vec);
+    }
+    Ok(out)
+}
+
+/// One sparse matrix as it appears in neptune's `sm` array. Mirrors
+/// neptune's `SparseMatrix<F>` struct exactly. Compatible with
+/// [`crate::neptune_permutation_gadget::NeptuneSparseMatrix`] (same
+/// `w_hat` + `v_rest` shape).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedSparseMatrix {
+    /// First column of the sparse matrix (length = width).
+    pub w_hat: Vec<Fr>,
+    /// First row beyond column 0 (length = width - 1).
+    pub v_rest: Vec<Fr>,
+}
+
+/// Extract the top-level `sm` (sparse matrices) array from a neptune
+/// dump. One sparse matrix per partial round; length = `partial_rounds`.
+///
+/// For chain Poseidon-128 arity-24 Standard: 59 sparse matrices,
+/// each with `w_hat: Vec<Fr>[25]` + `v_rest: Vec<Fr>[24]`.
+///
+/// Used by [`crate::neptune_permutation_gadget::NeptuneParams::sparse_matrices`]
+/// after converting each `ParsedSparseMatrix` into a
+/// `NeptuneSparseMatrix` (same shape, no field-order conversion needed).
+pub fn extract_sparse_matrices<P: AsRef<Path>>(
+    path: P,
+) -> Result<Vec<ParsedSparseMatrix>, String> {
+    let bytes = fs::read_to_string(path.as_ref())
+        .map_err(|e| format!("read {}: {}", path.as_ref().display(), e))?;
+    let v: Value = serde_json::from_str(&bytes).map_err(|e| format!("json parse: {e}"))?;
+
+    let sm = v
+        .get("sm")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "missing top-level `sm` array".to_string())?;
+
+    let mut out: Vec<ParsedSparseMatrix> = Vec::with_capacity(sm.len());
+    for (idx, entry) in sm.iter().enumerate() {
+        let obj = entry
+            .as_object()
+            .ok_or_else(|| format!("sm[{idx}] is not an object"))?;
+
+        let w_hat_arr = obj
+            .get("w_hat")
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| format!("sm[{idx}] missing `w_hat` array"))?;
+        let v_rest_arr = obj
+            .get("v_rest")
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| format!("sm[{idx}] missing `v_rest` array"))?;
+
+        let mut w_hat: Vec<Fr> = Vec::with_capacity(w_hat_arr.len());
+        for (i, cell) in w_hat_arr.iter().enumerate() {
+            let hex = cell
+                .as_str()
+                .ok_or_else(|| format!("sm[{idx}].w_hat[{i}] is not a hex string"))?;
+            w_hat.push(
+                decode_hex_scalar(hex).map_err(|e| format!("sm[{idx}].w_hat[{i}]: {e}"))?,
+            );
+        }
+
+        let mut v_rest: Vec<Fr> = Vec::with_capacity(v_rest_arr.len());
+        for (i, cell) in v_rest_arr.iter().enumerate() {
+            let hex = cell
+                .as_str()
+                .ok_or_else(|| format!("sm[{idx}].v_rest[{i}] is not a hex string"))?;
+            v_rest.push(
+                decode_hex_scalar(hex).map_err(|e| format!("sm[{idx}].v_rest[{i}]: {e}"))?,
+            );
+        }
+
+        out.push(ParsedSparseMatrix { w_hat, v_rest });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +606,115 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.contains("m_hat"), "error must mention m_hat: {err}");
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Pre-sparse matrix extraction on a minimal fixture: 2×2
+    /// `psm` of [[1, 2], [3, 4]].
+    #[test]
+    fn extract_pre_sparse_matrix_from_fixture() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-psm-fixture.json");
+        let one_hex = format!("01{}", "0".repeat(62));
+        let two_hex = format!("02{}", "0".repeat(62));
+        let three_hex = format!("03{}", "0".repeat(62));
+        let four_hex = format!("04{}", "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{one_hex}\"]],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\
+            \"crc\":[\"{one_hex}\"],\
+            \"psm\":[[\"{one_hex}\",\"{two_hex}\"],[\"{three_hex}\",\"{four_hex}\"]],\
+            \"sm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        fs::write(&path, json).unwrap();
+        let psm = extract_pre_sparse_matrix(&path).expect("extract psm");
+        assert_eq!(psm.len(), 2);
+        assert_eq!(psm[0].len(), 2);
+        assert_eq!(psm[0][0], Fr::from(1u64));
+        assert_eq!(psm[0][1], Fr::from(2u64));
+        assert_eq!(psm[1][0], Fr::from(3u64));
+        assert_eq!(psm[1][1], Fr::from(4u64));
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Sparse-matrices extraction on a minimal fixture with 2 entries.
+    /// First sparse matrix: w_hat=[1,2,3], v_rest=[4,5].
+    /// Second sparse matrix: w_hat=[6,7,8], v_rest=[9,10].
+    #[test]
+    fn extract_sparse_matrices_from_fixture() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-sm-fixture.json");
+        let h = |n: u64| format!("{:02x}{}", n, "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{h1}\"]],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\
+            \"crc\":[\"{h1}\"],\"psm\":[],\
+            \"sm\":[\
+              {{\"w_hat\":[\"{h1}\",\"{h2}\",\"{h3}\"],\"v_rest\":[\"{h4}\",\"{h5}\"]}},\
+              {{\"w_hat\":[\"{h6}\",\"{h7}\",\"{h8}\"],\"v_rest\":[\"{h9}\",\"{h10}\"]}}\
+            ],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}",
+            h1 = h(1), h2 = h(2), h3 = h(3), h4 = h(4), h5 = h(5),
+            h6 = h(6), h7 = h(7), h8 = h(8), h9 = h(9), h10 = h(10),
+        );
+        fs::write(&path, json).unwrap();
+        let sm = extract_sparse_matrices(&path).expect("extract sm");
+        assert_eq!(sm.len(), 2);
+        assert_eq!(sm[0].w_hat, vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+        assert_eq!(sm[0].v_rest, vec![Fr::from(4u64), Fr::from(5u64)]);
+        assert_eq!(sm[1].w_hat, vec![Fr::from(6u64), Fr::from(7u64), Fr::from(8u64)]);
+        assert_eq!(sm[1].v_rest, vec![Fr::from(9u64), Fr::from(10u64)]);
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Real-data shape pin: chain Poseidon-128 arity-24 Standard dump
+    /// has psm = 25×25 and 59 sparse matrices each {w_hat:25, v_rest:24}.
+    #[test]
+    #[ignore = "requires /tmp/neptune-bn256-standard.json"]
+    fn real_neptune_psm_and_sm_have_expected_shape() {
+        let path = "/tmp/neptune-bn256-standard.json";
+        let psm = extract_pre_sparse_matrix(path).expect("psm");
+        assert_eq!(psm.len(), 25, "psm must be 25 rows (state width)");
+        for (i, row) in psm.iter().enumerate() {
+            assert_eq!(row.len(), 25, "psm row {i} must be 25 cols");
+        }
+
+        let sm = extract_sparse_matrices(path).expect("sm");
+        assert_eq!(sm.len(), 59, "must have 59 sparse matrices (= partial_rounds)");
+        for (i, m) in sm.iter().enumerate() {
+            assert_eq!(m.w_hat.len(), 25, "sm[{i}].w_hat must be width = 25");
+            assert_eq!(m.v_rest.len(), 24, "sm[{i}].v_rest must be width-1 = 24");
+        }
+    }
+
+    /// Missing `psm` field → typed error, not panic.
+    #[test]
+    fn missing_psm_errors_cleanly() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-no-psm.json");
+        let one = format!("01{}", "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{one}\"]],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\
+            \"crc\":[\"{one}\"],\"sm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        fs::write(&path, json).unwrap();
+        let result = extract_pre_sparse_matrix(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("psm"));
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Missing `sm` field → typed error, not panic.
+    #[test]
+    fn missing_sm_errors_cleanly() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("neptune-no-sm.json");
+        let one = format!("01{}", "0".repeat(62));
+        let json = format!(
+            "{{\"mds\":{{\"m\":[[\"{one}\"]],\"m_inv\":[],\"m_hat\":[],\"m_hat_inv\":[],\"m_prime\":[],\"m_double_prime\":[]}},\
+            \"crc\":[\"{one}\"],\"psm\":[],\"s\":\"S\",\"ht\":\"H\",\"rf\":8,\"rp\":59}}"
+        );
+        fs::write(&path, json).unwrap();
+        let result = extract_sparse_matrices(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("sm"));
+        let _ = fs::remove_file(&path);
     }
 
     /// JSON without `rf` (full_rounds) field must reject cleanly
