@@ -22322,3 +22322,158 @@ mod t1_20_batch22 {
         assert_eq!(tc.height, 2, "block committed → height advances to 2 (line 6012 covered)");
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch23 {
+    use super::*;
+    use evaporchain_state::InMemoryStateDB;
+
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+    fn make_tc3() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs3())
+    }
+    fn make_block(number: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            producer_id: Some(1),
+            timestamp: 0,
+            chain_id: String::new(),
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // Test 1 (line 1509): evaporation_mmr_root Some(…) branch in four_act_state
+    #[test]
+    fn t23_mmr_root_some_when_nonempty() {
+        let mut tc = make_tc3();
+        tc.executor.mmr.append([0xAAu8; 32]);
+        let state = tc.four_act_state();
+        assert!(state.evaporation_mmr_root.is_some(), "non-empty MMR gives Some root");
+    }
+
+    // Test 2 (lines 5841-5842): Bell gate if-let-Ok closing braces with vrf_output
+    #[test]
+    fn t23_bell_gate_vrf_output_covers_closing_braces() {
+        let mut tc = make_tc3();
+        let mut block = make_block(1);
+        block.vrf_output = Some([0u8; 32]); // 32-byte array → Bell gate runs
+        tc.on_block_committed(&block, [0u8; 32], 0);
+        assert!(tc.last_bell_s_milli.is_some(), "Bell gate ran → s_milli recorded");
+    }
+
+    // Test 3 (line 4525): advance_round on 2f+1 nil precommit quorum in tick
+    #[test]
+    fn t23_advance_round_on_nil_precommit_quorum() {
+        let mut tc = make_tc3();
+        let mut db = InMemoryStateDB::new();
+        tc.round_state.phase = Phase::Precommit;
+        tc.round_state.precommits.insert(1, None);
+        tc.round_state.precommits.insert(2, None);
+        tc.round_state.precommits.insert(3, None);
+        let round_before = tc.round_state.round; // 0
+        tc.tick(&mut db);
+        assert!(
+            tc.round_state.round > round_before,
+            "nil quorum → advance_round fired (line 4525)"
+        );
+    }
+
+    // Test 4 (lines 5794-5795): da_confirmed_height updated via DAAttestationManager
+    #[test]
+    fn t23_da_confirmed_height_update_via_attestation() {
+        let mut tc = make_tc3();
+        let data_root = [0xABu8; 32];
+        let total_stake = tc.validator_set.total_stake();
+
+        tc.da_attestation.start_round(1, data_root, total_stake);
+        for vid in [1u64, 2, 3] {
+            let kp = BlsKeypair::generate();
+            let att = evaporchain_da::certificate::create_attestation(
+                1, &data_root, vid, 8, 1000, &kp,
+            );
+            let _ = tc.da_attestation.add_attestation(att);
+        }
+        tc.da_attestation.try_build_certificate();
+        assert!(tc.da_attestation.is_confirmed(1));
+
+        tc.on_block_committed(&make_block(1), [0u8; 32], 0);
+        assert_eq!(tc.da_confirmed_height(), 1, "da_confirmed_height advanced to 1");
+    }
+
+    // Test 5 (lines 7598-7599): verify_da_certificate: supermajority stake, zero attestations
+    #[test]
+    fn t23_verify_da_cert_supermajority_stake_empty_attestations() {
+        use evaporchain_da::certificate::DACertificate;
+        let tc = make_tc3();
+        let cert = DACertificate {
+            block_number: 1,
+            data_root: [0u8; 32],
+            attestations: vec![],
+            attested_stake: 2001, // > 2/3 × 3000 → is_supermajority() = true
+            total_stake: 3000,
+        };
+        let cert_bytes = serde_json::to_vec(&cert).expect("cert serialises");
+        let mut block = make_block(1);
+        block.da_certificate = Some(cert_bytes);
+        assert!(!tc.verify_da_certificate(&block), "empty-attestation cert rejected (lines 7598-7599)");
+    }
+
+    // Test 6 (line 6335): create_proposal re-proposes the locked block
+    #[test]
+    fn t23_create_proposal_re_proposes_locked_block() {
+        let mut tc = make_tc3();
+        tc.locked_block = Some(make_block(42));
+        let mut db = InMemoryStateDB::new();
+        let result = tc.create_proposal(&mut db);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().number, 42, "locked block re-proposed (line 6335)");
+    }
+
+    // Test 7 (lines 7111, 7115): verify_commit_certificate rejects signer with unverified PoP
+    #[test]
+    fn t23_verify_commit_cert_rejects_unverified_pop() {
+        let mut tc = make_tc3();
+        if let Some(vi) = tc.validator_set.get_mut(1) {
+            vi.bls_public_key = Some(vec![0u8; 48]);
+            vi.pop_verified = false;
+        }
+        let cert = CommitCertificate {
+            height: tc.height,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![],
+            signer_ids: vec![1],
+        };
+        assert!(
+            !tc.verify_commit_certificate(&cert),
+            "unverified PoP → cert rejected (lines 7111, 7115)"
+        );
+    }
+}
