@@ -111,4 +111,77 @@ mod tests {
         let back: TxOutcome = serde_json::from_str(&s).unwrap();
         assert_eq!(o, back);
     }
+
+    /// T1.20 — `Tx::new` populates every field directly from its
+    /// arguments. Trivial pin, but prevents a future "convenience"
+    /// constructor that silently drops or reorders fields.
+    #[test]
+    fn t1_20_tx_new_populates_all_fields() {
+        let mut ws = BTreeMap::new();
+        ws.insert(key(7), vec![0xAA, 0xBB]);
+        let tx = Tx::new(id(42), 1000, vec![key(1), key(2)], ws.clone());
+        assert_eq!(tx.id, id(42));
+        assert_eq!(tx.energy, 1000);
+        assert_eq!(tx.read_set, vec![key(1), key(2)]);
+        assert_eq!(tx.write_set, ws);
+    }
+
+    /// T1.20 — `StateKey` ordering is lexicographic on the underlying
+    /// `[u8; 32]`. The scheduler relies on this for validator-
+    /// deterministic conflict resolution; an `Ord` derive change that
+    /// silently inverted or broke this would re-order commits across
+    /// validators and split consensus.
+    #[test]
+    fn t1_20_state_key_ord_is_lexicographic() {
+        let a = StateKey([0x00; 32]);
+        let mut b_bytes = [0u8; 32];
+        b_bytes[0] = 0x01;
+        let b = StateKey(b_bytes);
+        let mut c_bytes = [0u8; 32];
+        c_bytes[31] = 0x01;
+        let c = StateKey(c_bytes);
+        // a < c (differs at last byte) < b (differs at first byte).
+        // Lexicographic order on big-endian byte arrays: leftmost-
+        // byte difference dominates.
+        assert!(a < c, "a < c (a is all zero, c differs at last byte)");
+        assert!(c < b, "c < b (b differs at first byte ≫ last-byte diff in c)");
+        assert!(a < b);
+    }
+
+    /// T1.20 — `TxOutcome::AbortedConflict` equality is field-wise.
+    /// Distinct `winner` ids produce distinct outcomes even when
+    /// `tx_id` and `contended_keys` match. Pins that the scheduler's
+    /// outcome-equality predicate doesn't accidentally drop fields.
+    #[test]
+    fn t1_20_tx_outcome_aborted_conflict_distinguishes_each_field() {
+        let base = TxOutcome::AbortedConflict {
+            tx_id: id(1),
+            winner: id(2),
+            contended_keys: vec![key(0)],
+        };
+        // Different winner → different outcome.
+        let other_winner = TxOutcome::AbortedConflict {
+            tx_id: id(1),
+            winner: id(99),
+            contended_keys: vec![key(0)],
+        };
+        assert_ne!(base, other_winner);
+        // Different tx_id → different.
+        let other_tx = TxOutcome::AbortedConflict {
+            tx_id: id(77),
+            winner: id(2),
+            contended_keys: vec![key(0)],
+        };
+        assert_ne!(base, other_tx);
+        // Different contended_keys → different.
+        let other_keys = TxOutcome::AbortedConflict {
+            tx_id: id(1),
+            winner: id(2),
+            contended_keys: vec![key(0), key(1)],
+        };
+        assert_ne!(base, other_keys);
+        // Committed and AbortedConflict are different variants.
+        let committed = TxOutcome::Committed { tx_id: id(1) };
+        assert_ne!(base, committed);
+    }
 }
