@@ -307,4 +307,89 @@ mod tests {
         let recovered = encoder.reconstruct(all_shards).unwrap();
         assert_eq!(&recovered[..data.len()], data.as_slice());
     }
+
+    /// T1.20 — `NotEnoughShards` error variant carries the actual
+    /// `have` and `need` values (lines 14-15 + 143-147). The existing
+    /// `test_too_many_missing_shards` only checks `is_err()`; this
+    /// pins the variant + counts so operators triaging a failed
+    /// reconstruction see *exactly* how many shards arrived vs were
+    /// expected.
+    #[test]
+    fn t1_20_not_enough_shards_error_carries_counts() {
+        let encoder = ErasureEncoder::default_config().unwrap();
+        let data = b"trigger the not-enough-shards path";
+        let encoded = encoder.encode(data).unwrap();
+        // Provide only 2 shards out of 4 required.
+        let mut partial: Vec<Option<Vec<u8>>> = encoded
+            .shards
+            .iter()
+            .map(|s| Some(s.data.clone()))
+            .collect();
+        for slot in partial.iter_mut().take(6) {
+            *slot = None;
+        }
+        let err = encoder.reconstruct(partial).unwrap_err();
+        match err {
+            ErasureError::NotEnoughShards { have, need } => {
+                assert_eq!(have, 2, "should report 2 present shards");
+                assert_eq!(need, 4, "should report data_shards=4 needed");
+            }
+            other => panic!("expected NotEnoughShards, got {other:?}"),
+        }
+    }
+
+    /// T1.20 — `ErasureConfig::Default` returns 4+4. The default is
+    /// what most callers (block_da, block_da_2d) get via
+    /// `default_config()`; pinning the values here protects against
+    /// a silent default change.
+    #[test]
+    fn t1_20_default_config_is_4_plus_4() {
+        let c = ErasureConfig::default();
+        assert_eq!(c.data_shards, 4);
+        assert_eq!(c.parity_shards, 4);
+    }
+
+    /// T1.20 — `ErasureConfig::total_shards` helper (lines 41-43).
+    /// Used by callers building shard arrays; pinning it documents
+    /// the data + parity sum contract.
+    #[test]
+    fn t1_20_total_shards_sum_of_data_and_parity() {
+        assert_eq!(ErasureConfig::default().total_shards(), 8);
+        let custom = ErasureConfig {
+            data_shards: 16,
+            parity_shards: 8,
+        };
+        assert_eq!(custom.total_shards(), 24);
+        let asymmetric = ErasureConfig {
+            data_shards: 3,
+            parity_shards: 5,
+        };
+        assert_eq!(asymmetric.total_shards(), 8);
+    }
+
+    /// T1.20 — `reconstruct` returns the padded-to-shard-boundary
+    /// length (lines 95-100 + 156-160). Existing tests slice with
+    /// `[..data.len()]` to work around this; the padding-preservation
+    /// contract — that callers must truncate to `original_len`
+    /// themselves — is what makes the round-trip exact.
+    #[test]
+    fn t1_20_recovered_length_is_padded_to_shard_boundary() {
+        let encoder = ErasureEncoder::default_config().unwrap();
+        // 5-byte data with 4 data_shards → shard_size = ceil(5/4) = 2,
+        // padded_len = 8.
+        let data = b"abcde";
+        let encoded = encoder.encode(data).unwrap();
+        assert_eq!(encoded.shard_size, 2);
+        assert_eq!(encoded.original_len, 5);
+        let all_shards: Vec<Option<Vec<u8>>> = encoded
+            .shards
+            .iter()
+            .map(|s| Some(s.data.clone()))
+            .collect();
+        let recovered = encoder.reconstruct(all_shards).unwrap();
+        // Recovered length is the padded length, not original_len.
+        assert_eq!(recovered.len(), 8, "recovered must be padded_len");
+        assert_eq!(&recovered[..5], data, "first 5 bytes are the original");
+        assert_eq!(&recovered[5..], &[0u8, 0u8, 0u8], "padding is zero");
+    }
 }
