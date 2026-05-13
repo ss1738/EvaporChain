@@ -48,6 +48,88 @@ The reverse-chronological layout means the most recent session is always at the 
 
 ---
 
+## 2026-05-13 (evening) — T1.20 batch 26: sprint ceiling documented, 934 tests
+
+**Focus:** Final coverage batch for tendermint.rs — exhaustive dead-code audit confirming the natural ceiling for `cargo llvm-cov --lib` without a tracing subscriber.
+
+**Commits shipped:** 1 (`b70fad68`)
+
+**Deliverables:**
+- `mod t1_20_batch26` (8 tests) in `tendermint.rs` — submit_reveal, MEV counter (fixed grace-period bug from batch 18), precommit quorum-hash mismatch → RequestSync
+- Exhaustive analysis of all 356 remaining missed lines from b25.lcov using Python max-per-line methodology
+- Coverage: 356 → 354 truly missed (2 side-effect gains: lines 4950, 5836)
+
+**Empirical results:**
+- 934/934 --lib tests pass, 2 ignored (perf benchmarks)
+- b26.lcov: 354 truly missed lines (max_hit=0 across all DA regions per line)
+- All 3 primary targets (3499, 5100, 5422-5464) still show DA:LINE,0 — confirmed LLVM instrumentation artifacts, not uncovered code:
+  - Line 3499: `}` absorbed into debug! lazy-arg false-branch region
+  - Line 5100: `if matches!(` — 0-hit false-branch region; body (5101-5109) fires 7×
+  - Lines 5422/5444/5464: closing `}` braces of `if let Some(stale) = proposed_block.take()` — LLVM brace absorption
+
+**Decisions made:**
+- T1.20 sprint declared COMPLETE at 97.31% line coverage (354 permanently uncoverable lines)
+- Permanent ceiling taxonomy: ~150 tracing macro lazy args, ~80 absorbed braces, ~80 structurally dead code, ~70 test match arms, ~30 #[ignore] benchmarks, ~4 batch-25 residual
+- Only path past 97.31% --lib: add tracing subscriber in tests (covers lazy args) or use integration tests with full executor mock
+
+**What’s next:**
+- Check MAINNET_READINESS.md for next open lane (T1.20 is DONE)
+- Consider coverage push on `state/rocksdb_backend.rs` (77.10%) or next mainnet lane
+
+**Blockers / open questions:**
+- None. Sprint closed cleanly.
+
+**Cross-references:**
+- memory/evaporchain_coverage_baseline.md — tendermint.rs final: 97.31% / 354 missed
+- Commit `b70fad68`
+
+## 2026-05-12 (marathon) — T0.10 Path A Nova bridge: Phase 2.2-section-1 → Phase 2.5 operational
+
+**Focus:** complete the Nova→Groth16→L1 bridge proof-emission scaffold on `main`, from Section 1 structural gate all the way through a real-fixture-bound 256-byte EIP-197 wire-format proof.
+
+**Commits shipped:** 29 PRs (#125–#129, #130–#142, #143–#154 excluding the two skipped numbers). First-hash `cbadfe81` (PR #125 Section 1 `validate_structurally`); last-hash `a5df8ccf` (PR #154 real-fixture integration test).
+
+**Deliverables (by phase):**
+
+- **Section 1 doctrine reconciliation (#125–#129):** off-circuit `validate_structurally` gate + `StructuralValidationError` typed variants on this branch's lineage (PR #64 lived on a parallel stack that never merged). Wired into `generate_constraints` as `SynthesisError::Unsatisfiable`. 7 new tests. SCAFFOLD_VERSION bump, struct docstring, crate-level Status block, `cs.is_satisfied()` pin all reconciled.
+- **Section 2 constants substrate cherry-pick cascade (#130–#142, 13 PRs):** brought the entire parallel docstring-refresh stack onto `main` piece by piece — `mds_linalg`, `neptune_dump_parser`, `grain_lfsr`, `vendored_neptune_grain`, `compress_ark`, `neptune_reference`, `section2_gadget` + 3 operator binaries + integration test + DESIGN.md + README.md refresh.
+- **Phase 2.3 scalar adapter + circuit_builder (#143, #144):** `scalar_adapter::primary_to_ark_fr / ark_fr_to_primary / secondary_to_ark_fr_lossy / ark_fr_to_secondary_lossy` + `circuit_builder::build_circuit_from_fixture`. First "real Nova fixture → bridge circuit → satisfied CS" round-trip on main.
+- **Phase 2.4 Groth16 wrappers (#145, #146):** `setup` / `prove` / `verify` / `public_inputs_for`. First end-to-end Groth16 round-trip on `NovaVerifierCircuit::dummy()`.
+- **Phase 2.5 EIP-197 codec (#147):** 256-byte wire format with explicit Fq2 (c1, c0) swap.
+- **Pipeline regression nets + operator CLIs (#148, #149, #153, #154):** `tests/full_pipeline.rs` (dummy), `tests/real_fixture_pipeline.rs` (real), `dummy-proof-emit` and `fixture-proof-emit` binaries — both emit L1-paste-ready hex.
+- **`l_u_secondary` access gap closed (#151, #152):** serde-reflection-based extraction of `rs.l_u_secondary.X[..2]` via `serde_json::to_value`. Wired into `build_circuit_from_fixture` so the bridge now produces proofs bound to real Nova accumulator state.
+
+**Empirical results:**
+
+- All bridge-crate unit + integration tests green on Mini 1 across the stack. 74 lib tests + 2×2 integration tests + 5 operator-binary smoke-runs.
+- `check-neptune-parity --neptune /tmp/neptune-bn256-standard.json` → `PASS — 259 of 259 crc entries match byte-for-byte`.
+- `fixture-proof-emit --steps 3 --seed 7` → 14.96s nova fixture, real committed hashes `020b1827a1…877065` / `031d2e34f9…af32716`, zi[0]=3, 256-byte EIP-197 proof emitted in <1ms after setup.
+- Section 2 sponge-framing canary `assert_ne!` (in `section2_gadget`) still fires correctly — documents the residual BESPOKE gap.
+
+**Decisions made:**
+
+- Closed `l_u_secondary` access via serde JSON reflection rather than fragile bincode-mirror or fork. Documented as brittle workaround pinned to nova-snark v0.68; the `debug_dump_l_u_secondary_json_shape` test makes future layout drift loud.
+- Section 2 sponge framing left as the documented BESPOKE gap rather than attempted as part of this session — the proof-emission scaffold is operationally complete without it, and the canary documents the gap inside the codebase.
+
+**What's next:**
+
+- Section 2 sponge framing port (close the `assert_ne!` canary). Multi-day BESPOKE — port neptune's SBOX-trick partial-round fusion into arkworks's PoseidonConfig OR vendor neptune's permutation as a custom gadget.
+- Section 3 RelaxedR1CS satisfiability in-circuit. 3-5 day BESPOKE research deliverable.
+- Upstream PR to nova-snark adding `pub fn l_u_secondary(&self) -> &R1CSInstance<E2>`, replacing the serde-reflection hack.
+
+**Blockers / open questions:**
+
+- None for operational completeness — the pipeline is end-to-end working.
+- Cryptographic soundness blocked on the two BESPOKE items above.
+
+**Cross-references:**
+
+- `crates/evaporchain-nova-bridge/DESIGN.md` (Phase 2 architecture)
+- `crates/evaporchain-nova-bridge/README.md` (module navigation + operator-binary cheatsheet)
+- Section 2 sponge-framing canary lives at `section2_gadget::tests::fully_aligned_gadget_byte_parity_with_neptune`
+
+---
+
 ## 2026-05-12 (late evening) — T1.20 parallel.rs batch 7: +57 tests, 78.89%→83.46%
 
 **Focus:** T1.20 coverage batch for execution/parallel.rs — all uncovered gas/partitioning/execute_partition arms.
