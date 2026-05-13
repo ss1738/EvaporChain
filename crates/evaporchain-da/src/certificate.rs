@@ -446,4 +446,63 @@ mod tests {
         assert!(!forged_cert.verify_signatures());
         assert!(!forged_cert.verify_all());
     }
+
+    // ── T1.20: verify_signatures_with_active (M4 audit post-jail filter) ──
+
+    /// T1.20 — M4 audit feature: `verify_signatures_with_active` with
+    /// an `is_active` predicate that returns true for every signer
+    /// behaves identically to `verify_signatures` (active-stake hits
+    /// supermajority). Pinning the all-active baseline before the
+    /// adversarial cases.
+    #[test]
+    fn t1_20_verify_with_active_all_active_passes() {
+        let cert = build_valid_cert(3);
+        // is_active accepts everyone.
+        assert!(cert.verify_signatures_with_active(&|_| true));
+    }
+
+    /// T1.20 — M4 audit: one signer marked inactive but the remaining
+    /// active signers still hit supermajority. Doctrine: a stale cert
+    /// whose minority signer was jailed post-hoc must still be
+    /// accepted (lines 117-125 — `continue` skips that attestation but
+    /// the loop keeps adding the remaining active stakes).
+    #[test]
+    fn t1_20_verify_with_active_one_inactive_still_meets_quorum() {
+        // 5 signers @ 1000 each = 5000 total. 2/3 threshold = 3333.
+        // Drop validator 5 → remaining 4 × 1000 = 4000 ≥ 3334.
+        let cert = build_valid_cert(5);
+        let is_active = |vid: u64| vid != 5;
+        assert!(
+            cert.verify_signatures_with_active(&is_active),
+            "remaining 4 of 5 signers must still constitute supermajority"
+        );
+    }
+
+    /// T1.20 — M4 audit: enough signers marked inactive that the
+    /// remaining active stake DROPS below supermajority. Doctrine:
+    /// post-jail check must refuse the cert. (3 jailed of 5 →
+    /// remaining 2 × 1000 = 2000 < 3334.)
+    #[test]
+    fn t1_20_verify_with_active_jailed_majority_fails() {
+        let cert = build_valid_cert(5);
+        // Validators 3, 4, 5 inactive — only 1+2 left.
+        let is_active = |vid: u64| vid <= 2;
+        assert!(
+            !cert.verify_signatures_with_active(&is_active),
+            "2 of 5 active signers is below 2/3 — cert must fail"
+        );
+    }
+
+    /// T1.20 — M4 audit boundary: ALL signers marked inactive. The
+    /// `recomputed_stake` stays at 0, and `0 * 3 >= total_stake * 2`
+    /// holds only when `total_stake == 0`. With non-zero stake this
+    /// must fail. Pinning the all-jailed edge case explicitly.
+    #[test]
+    fn t1_20_verify_with_active_all_inactive_fails() {
+        let cert = build_valid_cert(3);
+        assert!(
+            !cert.verify_signatures_with_active(&|_| false),
+            "every signer jailed → no recomputed stake → must fail"
+        );
+    }
 }
