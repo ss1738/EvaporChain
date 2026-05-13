@@ -11,6 +11,11 @@ use thiserror::Error;
 
 use crate::erasure::Shard;
 
+/// Domain-separation tag for the DA-sample seed (AUDIT_2026_05_13 H7).
+/// Versioned so a future Stage-B per-validator-VRF binding can ship
+/// with `:v2\0` and run alongside v1 during the cutover.
+pub const DA_SAMPLE_SEED_DST: &[u8] = b"evaporchain:da-sample-seed:v1\0";
+
 #[derive(Error, Debug)]
 pub enum SamplingError {
     #[error("shard index {index} out of range (total: {total})")]
@@ -220,6 +225,25 @@ impl DASampler {
     }
 
     /// Generate random sample queries for a block.
+    ///
+    /// **AUDIT_2026_05_13 H7 Stage A**: callers MUST construct `seed`
+    /// via [`build_da_sample_seed_v1`], which binds the seed to
+    /// `data_root` (the producer's commitment to the entire shard
+    /// matrix). Pre-Stage-A callers used `b"da-sample" || block.number
+    /// || validator_id`, both publicly known before block production —
+    /// a Byzantine producer could pre-compute every validator's queries
+    /// and ensure only the desired subset of shards was available.
+    ///
+    /// Binding to `data_root` makes that grinding cost exponential in
+    /// `(available_shards / total_shards)^(samples × validators)`. For
+    /// modest withhold rates against typical validator sets, the cost
+    /// is computationally infeasible.
+    ///
+    /// **Stage B follow-up**: per-validator VRF where each validator
+    /// signs a VRF over `(block.data_root, block.number)` and reveals
+    /// the output in their `DAAttestation`. Removes the grinding window
+    /// entirely (producer cannot precompute without the validator's
+    /// private key). Requires `DAAttestation` wire-format extension.
     pub fn generate_queries(
         block_number: u64,
         total_shards: usize,
@@ -333,6 +357,37 @@ impl DASampler {
             verified_count,
             invalid_indices,
         })
+    }
+
+    /// Build the canonical DA-sample seed for a `(block, validator)` pair.
+    /// AUDIT_2026_05_13 H7 Stage A closure.
+    ///
+    /// The seed binds to the producer's `data_root` commitment, which
+    /// commits to the entire shard matrix. The producer must choose
+    /// `data_root` BEFORE knowing which shards each validator will
+    /// sample — they cannot grind it to fit a withheld subset without
+    /// exponential work in (available_shards / total_shards)^(samples ×
+    /// validators).
+    ///
+    /// Stage B will additionally bind to a per-validator VRF output
+    /// (revealed in `DAAttestation`) to remove the grinding window
+    /// entirely. See `generate_queries` docstring.
+    ///
+    /// All callers — the production tendermint node, the consensus
+    /// light client, and tests — should go through this builder so the
+    /// seed shape is grep-checkable and future entropy additions are
+    /// one-edit migrations.
+    pub fn build_da_sample_seed_v1(
+        block_number: u64,
+        data_root: &[u8; 32],
+        validator_id: u64,
+    ) -> Vec<u8> {
+        let mut seed = Vec::with_capacity(DA_SAMPLE_SEED_DST.len() + 8 + 32 + 8);
+        seed.extend_from_slice(DA_SAMPLE_SEED_DST);
+        seed.extend_from_slice(&block_number.to_le_bytes());
+        seed.extend_from_slice(data_root);
+        seed.extend_from_slice(&validator_id.to_le_bytes());
+        seed
     }
 
     /// Build the canonical attestation message for a sample response.
@@ -855,5 +910,71 @@ mod tests {
             base, no_tag,
             "attestation_message must include the domain tag"
         );
+    }
+
+    // ─── AUDIT_2026_05_13 H7 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_h7_seed_differs_by_data_root() {
+        // The pre-fix seed depended only on (block.number, validator_id)
+        // — both publicly known before the producer commits. Post-fix
+        // the seed is bound to `data_root`. Two different data_roots
+        // for the same (block_number, validator_id) MUST produce
+        // different seeds → different queries.
+        let block_number = 42;
+        let validator_id = 7;
+        let root_a = [0xAAu8; 32];
+        let root_b = [0xBBu8; 32];
+
+        let seed_a = DASampler::build_da_sample_seed_v1(block_number, &root_a, validator_id);
+        let seed_b = DASampler::build_da_sample_seed_v1(block_number, &root_b, validator_id);
+        assert_ne!(seed_a, seed_b);
+
+        let q_a = DASampler::generate_queries(block_number, 256, 4, &seed_a);
+        let q_b = DASampler::generate_queries(block_number, 256, 4, &seed_b);
+        // With 256 shards and 4 samples, the probability of identical
+        // shard_index sets across two different seeds is < 2^-32.
+        assert_ne!(
+            q_a.iter().map(|q| q.shard_index).collect::<Vec<_>>(),
+            q_b.iter().map(|q| q.shard_index).collect::<Vec<_>>(),
+            "seeds bound to different data_roots must produce different queries"
+        );
+    }
+
+    #[test]
+    fn audit_h7_seed_deterministic_across_calls() {
+        // Same inputs → identical seed → identical queries. Required
+        // so the retry path (PendingSample.data_root) can reconstruct
+        // the same shard indices.
+        let seed_1 = DASampler::build_da_sample_seed_v1(100, &[0xCD; 32], 5);
+        let seed_2 = DASampler::build_da_sample_seed_v1(100, &[0xCD; 32], 5);
+        assert_eq!(seed_1, seed_2);
+        let q_1 = DASampler::generate_queries(100, 64, 4, &seed_1);
+        let q_2 = DASampler::generate_queries(100, 64, 4, &seed_2);
+        assert_eq!(q_1.len(), q_2.len());
+        for (a, b) in q_1.iter().zip(q_2.iter()) {
+            assert_eq!(a.shard_index, b.shard_index);
+        }
+    }
+
+    #[test]
+    fn audit_h7_seed_carries_dst_prefix() {
+        // The DST prefix `evaporchain:da-sample-seed:v1\0` is what
+        // makes a future v2 (per-validator-VRF) cleanly distinguishable
+        // during cutover. Lock it via byte-level assertion.
+        let seed = DASampler::build_da_sample_seed_v1(0, &[0u8; 32], 0);
+        assert!(seed.starts_with(DA_SAMPLE_SEED_DST));
+        // Length is fixed: DST + 8 (u64 block) + 32 (data_root) + 8 (u64 vid).
+        assert_eq!(seed.len(), DA_SAMPLE_SEED_DST.len() + 8 + 32 + 8);
+    }
+
+    #[test]
+    fn audit_h7_seed_differs_by_validator_id() {
+        // Defense-in-depth: each validator's seed is unique even
+        // sharing block_number + data_root. Pre-fix this was already
+        // true; locked by test to prevent regression.
+        let seed_a = DASampler::build_da_sample_seed_v1(1, &[0xFF; 32], 1);
+        let seed_b = DASampler::build_da_sample_seed_v1(1, &[0xFF; 32], 2);
+        assert_ne!(seed_a, seed_b);
     }
 }
