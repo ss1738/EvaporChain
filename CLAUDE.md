@@ -155,3 +155,27 @@ Every doctrine primitive must ship with:
 1. Source comment citing `INVENTION_STACK.md §X.Y` and the original theorem
 2. An adversarial test (not just a happy-path test)
 3. An end-to-end integration test against a non-trivial fixture
+
+---
+
+## 🚦 Strategic Question Protocol (added 2026-05-13)
+
+For any non-tactical question on EvaporChain — positioning, market, location, registration, launch, funding, hire/team, regulation, audit, "what about / where should / should I" — load this memory entry FIRST:
+
+`~/.claude-account-b/projects/-Users-satyawansingh/memory/meta_strategic_question_flow.md`
+
+The flow's EvaporChain anchor names which docs to read:
+- `research/INEVITABILITY_STRATEGY.md` (master thesis)
+- `research/whitepaper.md` §1
+- `research/papers/paper_1_mechanism.md` abstract
+- `research/INVENTION_STACK.md`
+- `MAINNET_READINESS.md`
+- `TOKENOMICS.md` (if economic question)
+
+**Project-specific anti-patterns to refuse:**
+- DON'T reframe EvaporChain as "compliance L1" / "mortal blockchain" / "RegTech infrastructure". The thesis is state-bloat killer / energy-decay as universal primitive. Satoshi pattern.
+- DON'T suggest hire-CTO / co-founders / open-source contributors helping ship the protocol. Solo-build is by design.
+- DON'T suggest non-UK relocation pre-ILR (~2029). User is international student locked to UK residency.
+- DON'T anchor strategy to what Solana/Aptos/Sui did. Different category.
+
+After reading, anchor every claim to a user doc by filename. End strategic answers with: Source / Confidence / Open questions.
