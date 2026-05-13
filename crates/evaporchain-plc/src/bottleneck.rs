@@ -271,6 +271,63 @@ mod tests {
         assert_eq!(bottleneck_distance(&a, &bb), 5);
     }
 
+    /// T1.20 — triangle inequality: `d(A,C) <= d(A,B) + d(B,C)`.
+    /// The metric property that distinguishes the bottleneck
+    /// distance from a similarity score; the light client's
+    /// stability gate composes across blocks only if this holds.
+    #[test]
+    fn t1_20_bottleneck_triangle_inequality() {
+        let a = bc(vec![b(10, 20)]);
+        let mid = bc(vec![b(13, 20)]);
+        let c = bc(vec![b(16, 20)]);
+        let d_ab = bottleneck_distance(&a, &mid);
+        let d_bc = bottleneck_distance(&mid, &c);
+        let d_ac = bottleneck_distance(&a, &c);
+        assert!(
+            d_ac <= d_ab.saturating_add(d_bc),
+            "triangle inequality: d(A,C)={d_ac} > d(A,B)+d(B,C)={d_ab}+{d_bc}"
+        );
+        // And direct shift bound (a→c is birth shift of 6).
+        assert!(d_ac <= 6);
+    }
+
+    /// T1.20 — multiple infinite bars matched by sorted births
+    /// (lines 64-72). Pin the order-preserving pair-up for ≥ 2
+    /// inf-bars; existing test only covered a single inf-bar.
+    #[test]
+    fn t1_20_multiple_inf_bars_matched_by_sorted_births() {
+        // a inf-births [5, 20]; b inf-births [7, 18] (input unsorted).
+        // Sorted pair-up: (5↔7)=2, (20↔18)=2. Max = 2.
+        let a = bc(vec![b(5, INF_DEATH), b(20, INF_DEATH)]);
+        let bb = bc(vec![b(18, INF_DEATH), b(7, INF_DEATH)]);
+        assert_eq!(bottleneck_distance(&a, &bb), 2);
+
+        // Three inf-bars: max(|1-5|, |10-10|, |20-22|) = 4.
+        let a3 = bc(vec![b(1, INF_DEATH), b(10, INF_DEATH), b(20, INF_DEATH)]);
+        let b3 = bc(vec![b(5, INF_DEATH), b(10, INF_DEATH), b(22, INF_DEATH)]);
+        assert_eq!(bottleneck_distance(&a3, &b3), 4);
+    }
+
+    /// T1.20 — bidirectional identity: `d(A,B) == 0` iff `A` and
+    /// `B` are equal as multisets. Existing test only covers
+    /// `A == B → 0`; this also pins the converse (perturbation →
+    /// positive) and confirms multiset-order invariance.
+    #[test]
+    fn t1_20_zero_distance_only_for_equal_barcodes() {
+        let a = bc(vec![b(10, 20), b(30, 40)]);
+        assert_eq!(bottleneck_distance(&a, &a), 0);
+        // Same multiset, distinct insertion order → still 0
+        // (Barcode canonicalises on construction).
+        let same_diff_order = bc(vec![b(30, 40), b(10, 20)]);
+        assert_eq!(bottleneck_distance(&a, &same_diff_order), 0);
+        // Any non-zero perturbation → strictly positive distance.
+        let perturbed = bc(vec![b(10, 21), b(30, 40)]);
+        assert!(
+            bottleneck_distance(&a, &perturbed) > 0,
+            "distinct barcodes must have positive bottleneck distance"
+        );
+    }
+
     // ── doctrine claim ────────────────────────────────────────────
 
     #[test]
