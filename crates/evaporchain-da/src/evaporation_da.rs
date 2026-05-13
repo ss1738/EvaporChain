@@ -298,4 +298,109 @@ mod tests {
             assert!(valid, "Failed for shard index {i}");
         }
     }
+
+    /// T1.20 — adversarial: VERIFY-side energy gate (lines 116-118).
+    /// `test_reject_nonzero_energy` covers the create-side gate; this
+    /// covers the symmetric verify-side gate that catches a proof
+    /// whose `energy_snapshot.energy_at_evaporation` was tampered to
+    /// nonzero AFTER the proof was built. Doctrine: evaporation DA
+    /// proofs only mean anything when the object actually decayed to
+    /// zero, so the verifier must independently re-check.
+    #[test]
+    fn t1_20_verify_rejects_nonzero_energy_in_proof() {
+        let (object_id, object_data, snapshot, shards) = setup_test_data();
+        let mut proof = EvaporationDAProofBuilder::create_proof(
+            object_id,
+            &object_data,
+            snapshot,
+            &shards,
+            0,
+        )
+        .unwrap();
+        // Tamper: claim the object had non-zero energy at evaporation.
+        proof.energy_snapshot.energy_at_evaporation = 1;
+        let valid = EvaporationDAProofBuilder::verify_proof(&proof, &shards[0].data).unwrap();
+        assert!(
+            !valid,
+            "verify must reject a proof whose energy_snapshot was tampered to nonzero"
+        );
+    }
+
+    /// T1.20 — adversarial: mismatched `da_commitment_root` (lines
+    /// 138-140). An attacker who swaps in a different commitment root
+    /// (pointing to a DIFFERENT block) must not be able to forge
+    /// evaporation provenance for an object that lived in this block.
+    #[test]
+    fn t1_20_verify_rejects_mismatched_commitment_root() {
+        let (object_id, object_data, snapshot, shards) = setup_test_data();
+        let mut proof = EvaporationDAProofBuilder::create_proof(
+            object_id,
+            &object_data,
+            snapshot,
+            &shards,
+            0,
+        )
+        .unwrap();
+        proof.da_commitment_root[0] ^= 0xFF;
+        let valid = EvaporationDAProofBuilder::verify_proof(&proof, &shards[0].data).unwrap();
+        assert!(
+            !valid,
+            "verify must reject when commitment root no longer matches Merkle proof root"
+        );
+    }
+
+    /// T1.20 — `proof_hash` must commit to `pre_evaporation_data_hash`
+    /// (line 150). `test_proof_hash_changes_with_object` only varies
+    /// `object_id`; this pins the data-hash component independently.
+    /// Without this, an attacker could swap object_data while keeping
+    /// the rest of the proof envelope and the compact on-chain hash
+    /// would not detect it.
+    #[test]
+    fn t1_20_proof_hash_changes_with_data_hash() {
+        let (object_id, _, snapshot, shards) = setup_test_data();
+        let p1 = EvaporationDAProofBuilder::create_proof(
+            object_id,
+            b"payload-A",
+            snapshot.clone(),
+            &shards,
+            0,
+        )
+        .unwrap();
+        let p2 = EvaporationDAProofBuilder::create_proof(
+            object_id,
+            b"payload-B-different",
+            snapshot,
+            &shards,
+            0,
+        )
+        .unwrap();
+        assert_ne!(p1.pre_evaporation_data_hash, p2.pre_evaporation_data_hash);
+        assert_ne!(
+            EvaporationDAProofBuilder::proof_hash(&p1),
+            EvaporationDAProofBuilder::proof_hash(&p2),
+            "compact proof_hash must commit to pre_evaporation_data_hash"
+        );
+    }
+
+    /// T1.20 — `EnergyNotZero` carries the actual reported energy
+    /// (line 87-89). `test_reject_nonzero_energy` only checks
+    /// `is_err()`; this pins the variant + value so operators see
+    /// *what* the misreported energy was when triaging.
+    #[test]
+    fn t1_20_energy_not_zero_error_carries_value() {
+        let (object_id, object_data, mut snapshot, shards) = setup_test_data();
+        snapshot.energy_at_evaporation = 12_345;
+        let err = EvaporationDAProofBuilder::create_proof(
+            object_id,
+            &object_data,
+            snapshot,
+            &shards,
+            0,
+        )
+        .unwrap_err();
+        match err {
+            EvaporationDAError::EnergyNotZero(e) => assert_eq!(e, 12_345),
+            other => panic!("expected EnergyNotZero, got {other:?}"),
+        }
+    }
 }
