@@ -6,6 +6,38 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-13 (evening) — commit flush + T0.10 nova-bridge Phases 2.1-2.4 + workspace coverage rerun
+
+**Focus:** Commit all uncommitted prior-session work (nova-bridge T0.10, DA/network/paymaster/substrate/crypto T1.20 coverage tests), push to GitHub, relaunch workspace coverage.
+**Commits shipped:** 9 (first `f75d88e3` → last `c2700d00` + MAINNET_READINESS.md update)
+**Deliverables:**
+- `f75d88e3` — T1.20 DA crate coverage tests (10 files, 892 lines, 165 tests)
+- `ac737f18` — T1.20 network crate coverage tests (3 files, 224 lines, 95 tests)
+- `ade9d9df` — T1.20 paymaster crate coverage tests (1 file, 148 lines, 67 tests)
+- `d12b92aa` — T1.20 substrate crate coverage tests (20 files, 1494 lines)
+- `be5d0c40` — T0.10 nova-bridge Phases 2.1-2.4 (31 files, 15.9K lines, 119 tests pass / 14 #[ignore])
+- `38c6a13e` — 9 new EvaporScript pilot contracts (bounty, lottery, multisig, oracle_feed, payment_split, sealed_bid_auction, subscription, time_lock, vesting_schedule)
+- `c2700d00` — T1.20 crypto crate coverage tests (3 files, 309 lines, 13 T1.20 tests)
+- MAINNET_READINESS.md: T0.10 status updated to IN PROGRESS (2.1-2.4 done); T1.20 per-crate table added
+**Empirical results:**
+- Crypto T1.20 tests: 13/13 pass in 8.13s (adversarial Verkle skipped in coverage run — too slow)
+- All commit batches clean (`git status` empty after each)
+- Disk freed: removed llvm-cov-target (7.4GB) + incremental (640MB) → 8GB free → coverage restarted
+- Workspace coverage relaunched at ~evening; lcov output to `/tmp/workspace_cov2.lcov`
+**Decisions made:**
+- Stray root-level files (`lib.rs`, `2`, `neptune-bn256-standard.json`) cleaned up; `neptune-bn256-standard.json` moved to `crates/evaporchain-nova-bridge/`
+- `--skip adversarial_collision_heavy_keys` used for coverage run (pre-existing slow test, not our addition)
+- T0.10 MAINNET_READINESS.md row: status set to IN PROGRESS not DONE (Phase 2.5 Solidity + Phase 2.2-section-3 RelaxedR1CS still open)
+**What's next:**
+1. Parse `/tmp/workspace_cov2.lcov` once ready — confirm ≥90% region → mark T1.20 ✅ DONE
+2. T0.10 Phase 2.2-section-3 (RelaxedR1CS in-circuit satisfiability) — research blocker
+3. T0.10 Phase 2.5 (VerkleProofVerifier.sol Solidity smoke test)
+**Blockers / open questions:**
+- Adversarial Verkle test (`adversarial_collision_heavy_keys_round_trip`) takes >60s — skipped from coverage; confirm it passes standalone before closing
+- Phase 2.2-section-3 is a research task (no known prior art for Neptune-in-Nova-bellman circuit); may need offline design session
+**Cross-references:** CHANGELOG.md entry needed; commits `f75d88e3`-`c2700d00`; MAINNET_READINESS.md T0.10+T1.20 sections updated
+
+
 ## 2026-05-13 (evening) — T1.20 rocksdb_backend.rs batch-2 + batch-3: 79% → 92%
 
 **Focus:** T1.20 coverage push targeting `state/rocksdb_backend.rs` — the next highest coverage gap after tendermint.rs closed.

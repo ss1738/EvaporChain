@@ -417,16 +417,25 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.10 — `VerkleProofVerifier.sol` Groth16 wrap
 
-**Status:** 🔴 BLOCKED on T0.9
-**Surface:** BRIDGE-SOL
-**Depends on:** T0.9
-**Effort:** 1 week
+**Status:** 🟡 IN PROGRESS — Phases 2.1-2.4 done (commit `be5d0c40`); Phase 2.5 (Solidity smoke test) open
+**Surface:** BRIDGE-SOL, BRIDGE-RUST (`crates/evaporchain-nova-bridge/`)
+**Depends on:** T0.9 ✅
+**Effort:** ~3 days remaining (Phase 2.5 + final wiring)
 
-**Goal:** On-chain consumer of the Phase 4 V2 IVC proofs. Standard Groth16 verifier wrapping the CompressedSNARK output.
+**Progress (2026-05-13):**
+- Phase 2.1 ✅ — chain-side adapter (RecursiveSNARK fixture + pipeline), 119 tests passing
+- Phase 2.2 ✅ — Neptune sponge (grain_lfsr, mds_linalg, neptune_reference, neptune_permutation_gadget, neptune_sponge, neptune_dump_parser, section2_gadget; BN254 constants match)
+- Phase 2.3-skeleton ✅ — chain adapter stub
+- Phase 2.4 ✅ — Groth16 wrapper (groth16_wrapper, compress_ark, eip197, scalar_adapter, l_u_secondary_extract)
+- Phase 2.2-section-3 🔴 OPEN — RelaxedR1CS in-circuit satisfiability
+- Phase 2.5 🔴 OPEN — Solidity smoke test (VerkleProofVerifier.sol)
+
+**Goal:** On-chain consumer of the Phase 4 V2 IVC proofs. Groth16-on-BN254 wrapping the CompressedSNARK output.
 
 **Files touched:**
-- `ethereum-bridge/contracts/src/VerkleProofVerifier.sol`
-- `ethereum-bridge/contracts/test/`
+- `crates/evaporchain-nova-bridge/src/` (groth16_wrapper, verifier_circuit, neptune sponge stack)
+- `ethereum-bridge/contracts/src/VerkleProofVerifier.sol` (Phase 2.5)
+- `ethereum-bridge/contracts/test/` (Phase 2.5)
 
 **Acceptance:** forge test verifies a real Phase 4 V2 proof produced by the Rust prover.
 
@@ -541,14 +550,30 @@ These are runbook executions on the live cluster. Operator-driven; documented in
 
 ### T1.20 — Coverage push to ≥90%
 
-**Status:** 🟡 OPEN
-**Surface:** STATE-DB primary; broader on need
+**Status:** 🟡 PARTIAL — per-file targets all hit; workspace-wide measurement pending (coverage run in progress 2026-05-13 evening)
+**Surface:** STATE-DB primary; broader
 **Depends on:** none
-**Effort:** 1-2 weeks
+**Effort:** measurement + final pass if workspace gate misses
 
-**Goal:** Push `cargo llvm-cov` from current ~73% to ≥90%, focusing on integration shims (the systematic gap per `evaporchain_coverage_baseline.md`).
+**Per-file progress (2026-05-13):**
+| File | Before | Now | Commit |
+|---|---|---|---|
+| `state/rocksdb_backend.rs` | 61.42% | **92.08% line** | `aab1f9b4` |
+| `consensus/tendermint.rs` | 87.68% | **97.31% line** | `b70fad68` |
+| `consensus/state_sync.rs` | 74.57% | 92.78% | `72516210` |
+| `consensus/lib.rs` | 82.04% | 89.67% | — |
+| `execution/parallel.rs` | 63.60% | 83.46% | `cb6420b1` |
+| `execution/block_stm.rs` | 66.95% | 82.85% | `2b54ed84` |
+| `execution/lib.rs` | 85.18% | 90.75% | `a8db8b5e` |
+| DA crate (10 files) | — | +892 lines tests | `f75d88e3` |
+| Network crate (3 files) | — | +224 lines tests | `ac737f18` |
+| Paymaster crate | — | +148 lines tests | `ade9d9df` |
+| Substrate crates (20 files) | — | +1494 lines tests | `d12b92aa` |
+| Crypto crate (3 files) | — | +309 lines tests | `c2700d00` |
 
-**Files touched:** wide; one PR per crate.
+**Goal:** Push `cargo llvm-cov --workspace` from ~73% to ≥90% region.
+
+**Files touched:** wide; per-crate commits above.
 
 **Acceptance:** `cargo llvm-cov --workspace` reports ≥90% region coverage.
 
