@@ -8,6 +8,7 @@ This directory holds the canonical, live research surface for EvaporChain. Histo
 
 - **`INEVITABILITY_STRATEGY.md`** — the master strategic doctrine. Read first for any non-tactical decision.
 - **`INVENTION_STACK.md`** — the locked list of 5 invention-stack primitives + supporting Tier-2/Tier-3 substrates.
+- **`APPLICATION_UNIVERSE.md`** — 12-category application taxonomy for what fits the energy-decay primitive, including the unique-value-prop filter, Satyawan's personal build queue, and Foundation grants priorities. Built 2026-05-13.
 
 ## Formal papers
 
