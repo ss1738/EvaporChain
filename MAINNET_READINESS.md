@@ -125,7 +125,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 |---|---|---|---|
 | T1.13 | Promote conservation audit gating → mandatory | 🟡 OPEN (T0.1 ✅; needs cluster governance flip — T3.1) | CONSENSUS |
 | T1.14 | Phase 2 round-trip test (proposer-stamp == validator-apply) | ✅ DONE (9191e87) — 3 tests appended end-of-file; build verification deferred | CONSENSUS |
-| T1.15 | Paymaster Finding 1 — per-key in-flight locking | 🟡 OPEN | PAYMASTER |
+| T1.15 | Paymaster Finding 1 — per-key in-flight locking | ✅ DONE (1f8c50a2) — inflight_locks per-key Mutex serialises concurrent retries; concurrent_same_key_retries_dont_double_allocate passes | PAYMASTER |
 | T1.16 | Internal audit findings reconciliation sweep | ✅ DONE (7f36b46) — `AUDIT_RECONCILIATION_2026-05-09.md` + opcode-count drift fix | AUDIT-SWEEP |
 | T1.17 | BLS key rotation under live cluster conditions | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
 | T1.18 | Validator-key passphrase migration on live nodes | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
