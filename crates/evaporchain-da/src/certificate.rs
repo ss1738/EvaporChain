@@ -42,7 +42,25 @@ pub struct DACertificate {
 }
 
 impl DACertificate {
-    /// Check if attested stake >= 2/3 of total stake (supermajority).
+    /// **DEPRECATED. AUDIT_2026_05_13 H5.**
+    ///
+    /// Compares two attacker-supplied fields (`self.attested_stake` and
+    /// `self.total_stake`). A single Byzantine validator with stake `s`
+    /// can build a cert with `attested_stake = s, total_stake = s,
+    /// attestations = [self_attestation]` — trivially passes
+    /// `s * 3 >= s * 2` AND the BLS-signature check in
+    /// `verify_signatures` (the cert's own self-attestation is a
+    /// genuine signature). Acceptance as DA supermajority follows.
+    ///
+    /// Use [`Self::verify_with_real_total_stake`] instead — it
+    /// reconciles `total_stake` against the node's live validator-set
+    /// view rather than the cert's self-reported value.
+    #[deprecated(
+        since = "0.2.0",
+        note = "AUDIT_2026_05_13 H5: trusts attacker-supplied total_stake. \
+                Use verify_with_real_total_stake which reconciles against \
+                the local validator-set view."
+    )]
     pub fn is_supermajority(&self) -> bool {
         // 2/3 threshold: attested_stake * 3 >= total_stake * 2
         self.attested_stake * 3 >= self.total_stake * 2
@@ -92,10 +110,79 @@ impl DACertificate {
         true
     }
 
-    /// Full validation: verify BLS signatures AND supermajority threshold.
-    /// Use this as the single entry point for validating received certificates.
+    /// **DEPRECATED. AUDIT_2026_05_13 H5.**
+    ///
+    /// Combines `verify_signatures` with the broken
+    /// `is_supermajority` — still trusts the cert's self-reported
+    /// `total_stake`. Use [`Self::verify_with_real_total_stake`].
+    #[deprecated(
+        since = "0.2.0",
+        note = "AUDIT_2026_05_13 H5: chains is_supermajority which trusts \
+                attacker-supplied total_stake. Use verify_with_real_total_stake."
+    )]
     pub fn verify_all(&self) -> bool {
-        self.verify_signatures() && self.is_supermajority()
+        #[allow(deprecated)]
+        let res = self.verify_signatures() && self.is_supermajority();
+        res
+    }
+
+    /// **AUDIT_2026_05_13 H5 closure.** Full DA-cert validation that
+    /// reconciles `total_stake` against the local validator-set view —
+    /// closes the "single Byzantine validator forges supermajority" hole.
+    ///
+    /// For every attestation:
+    /// 1. The signer must be active per `active_stake_of(vid)` (returns
+    ///    `Some(real_stake)` for active, `None` for jailed / unknown).
+    /// 2. The attestation's claimed `att.stake` is IGNORED in favour
+    ///    of the real on-chain stake — closes the inflated-self-stake
+    ///    forgery path within `verify_signatures`.
+    /// 3. The BLS signature must verify against the attestation's
+    ///    payload (block_number || data_root || validator_id ||
+    ///    samples_verified) under DA_ATTESTATION_DST.
+    ///
+    /// Final gate: `Σ real_stakes_of_active_attesters * 3 ≥
+    /// real_total_stake * 2`. The cert's self-reported
+    /// `attested_stake` and `total_stake` fields are NEVER consulted.
+    ///
+    /// This is the only DA-cert verifier that should run anywhere a
+    /// cert reaches consensus or finality gating. The legacy
+    /// `is_supermajority` / `verify_all` / `verify_signatures` are
+    /// preserved for back-compat against pre-fix tooling but flagged
+    /// `#[deprecated]`.
+    pub fn verify_with_real_total_stake(
+        &self,
+        real_total_stake: u64,
+        active_stake_of: &dyn Fn(u64) -> Option<u64>,
+    ) -> bool {
+        if self.attestations.is_empty() {
+            return false;
+        }
+        let mut real_attested_stake: u64 = 0;
+        for att in &self.attestations {
+            if att.block_number != self.block_number || att.data_root != self.data_root {
+                return false;
+            }
+            let Some(real_stake) = active_stake_of(att.validator_id) else {
+                // Jailed / unknown signer — skip per the same doctrine
+                // as verify_signatures_with_active.
+                continue;
+            };
+            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+            msg.extend_from_slice(DA_ATTESTATION_DST);
+            msg.extend_from_slice(&att.block_number.to_le_bytes());
+            msg.extend_from_slice(&att.data_root);
+            msg.extend_from_slice(&att.validator_id.to_le_bytes());
+            msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+            let pk = BlsPublicKey(att.public_key.clone());
+            let sig = BlsSignature(att.signature.clone());
+            if !BlsVerifier::verify(&msg, &sig, &pk) {
+                return false;
+            }
+            real_attested_stake = real_attested_stake.saturating_add(real_stake);
+        }
+        // Supermajority against the REAL total — attacker's self-reported
+        // total_stake field plays no part.
+        real_attested_stake.saturating_mul(3) >= real_total_stake.saturating_mul(2)
     }
 
     /// M4 (audit 2026-05-02): like `verify_signatures`, but only counts
@@ -255,6 +342,7 @@ impl CertificateBuilder {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // legacy tests still call deprecated is_supermajority / verify_all
 mod tests {
     use super::*;
 
@@ -504,5 +592,162 @@ mod tests {
             !cert.verify_signatures_with_active(&|_| false),
             "every signer jailed → no recomputed stake → must fail"
         );
+    }
+
+    // ─── AUDIT_2026_05_13 H5 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_h5_single_validator_supermajority_forgery_rejected() {
+        // The audit's exact exploit: a single Byzantine validator V
+        // with stake s builds a cert with self-attestation, attested
+        // = total = s. Pre-fix this passes is_supermajority + verify_all
+        // (the BLS signature IS genuine — V signed their own attestation).
+        // The fix: real_total_stake is read from the validator set, not
+        // the cert; the forgery's self-reported 100% supermajority is
+        // measured against the REAL ~5000 total and rejected.
+        let data_root = [0xAAu8; 32];
+        let kp = BlsKeypair::generate();
+        let v_stake = 1000u64;
+        let att = create_attestation(1, &data_root, 1, 8, v_stake, &kp);
+        let forgery = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![att],
+            // Attacker self-reports their own stake as the total.
+            attested_stake: v_stake,
+            total_stake: v_stake,
+        };
+        // Pre-fix: is_supermajority returns true (1000 * 3 >= 1000 * 2).
+        assert!(forgery.is_supermajority());
+        assert!(forgery.verify_signatures(), "BLS sig itself is genuine");
+        assert!(
+            forgery.verify_all(),
+            "pre-fix verify_all returns true — the audit's exact forgery"
+        );
+
+        // Post-fix: against the real validator set (V is one of 5 with
+        // 1000 each), verify_with_real_total_stake correctly rejects.
+        let real_total_stake = 5 * v_stake; // 5 validators in the real set
+        let active_stake_of = |vid: u64| {
+            if (1..=5).contains(&vid) {
+                Some(v_stake)
+            } else {
+                None
+            }
+        };
+        assert!(
+            !forgery.verify_with_real_total_stake(real_total_stake, &active_stake_of),
+            "single attester out of 5 must NOT pass supermajority against real total"
+        );
+    }
+
+    #[test]
+    fn audit_h5_legitimate_supermajority_against_real_set_verifies() {
+        // Soundness lower bound: a real cert with 4 of 5 active
+        // validators attesting (80% > 66.7%) must verify under
+        // verify_with_real_total_stake.
+        let data_root = [0xBBu8; 32];
+        let v_stake = 1000u64;
+        let kps: Vec<BlsKeypair> = (0..5).map(|_| BlsKeypair::generate()).collect();
+        let attestations: Vec<DAAttestation> = kps
+            .iter()
+            .enumerate()
+            .take(4) // only 4 of 5 attest
+            .map(|(i, kp)| create_attestation(1, &data_root, (i + 1) as u64, 8, v_stake, kp))
+            .collect();
+        let cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations,
+            // These fields could be anything attacker-supplied — verify_with_real_total_stake
+            // ignores them. Set them to legitimate values for clarity.
+            attested_stake: 4 * v_stake,
+            total_stake: 5 * v_stake,
+        };
+        let real_total_stake = 5 * v_stake;
+        let active_stake_of = |vid: u64| {
+            if (1..=5).contains(&vid) {
+                Some(v_stake)
+            } else {
+                None
+            }
+        };
+        assert!(cert.verify_with_real_total_stake(real_total_stake, &active_stake_of));
+    }
+
+    #[test]
+    fn audit_h5_inflated_self_stake_attestation_overridden_by_real() {
+        // A signer who is a real validator but claims a wildly inflated
+        // self-stake in `att.stake` must be measured by their REAL
+        // on-chain stake, not the inflated one. Pre-fix verify_signatures
+        // accumulated att.stake (capped by attested_stake but that itself
+        // is attacker-controlled). Post-fix uses the active_stake_of
+        // callback only.
+        let data_root = [0xCCu8; 32];
+        let kp = BlsKeypair::generate();
+        let inflated_claimed = 1_000_000_000u64; // 1B (claim)
+        let real = 1000u64; // truth
+        let att = create_attestation(1, &data_root, 1, 8, inflated_claimed, &kp);
+        let cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![att],
+            attested_stake: inflated_claimed,
+            total_stake: inflated_claimed, // attacker says it's the whole network
+        };
+        let real_total_stake = 10 * real; // 10 validators of 1000 each
+        let active_stake_of = |vid: u64| if vid == 1 { Some(real) } else { Some(real) };
+        // verify_with_real_total_stake uses `real` (1000) not `inflated_claimed`
+        // (1B), so attested = 1000 against total 10000 → 10% < 66.7% → reject.
+        assert!(
+            !cert.verify_with_real_total_stake(real_total_stake, &active_stake_of),
+            "inflated self-stake claim must be overridden by real on-chain stake"
+        );
+    }
+
+    #[test]
+    fn audit_h5_jailed_signer_drops_from_attested_pool() {
+        // 5 attestations but signer 5 is jailed at verification time.
+        // Real total is still 5000 (the validator-set view at proposal
+        // time, before jailing). 4 active attesters × 1000 = 4000 ≥ 3334,
+        // so the cert still passes — mirrors verify_signatures_with_active
+        // doctrine but with real total instead of self-reported.
+        let data_root = [0xDDu8; 32];
+        let v_stake = 1000u64;
+        let kps: Vec<BlsKeypair> = (0..5).map(|_| BlsKeypair::generate()).collect();
+        let attestations: Vec<DAAttestation> = kps
+            .iter()
+            .enumerate()
+            .map(|(i, kp)| create_attestation(1, &data_root, (i + 1) as u64, 8, v_stake, kp))
+            .collect();
+        let cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations,
+            attested_stake: 5 * v_stake,
+            total_stake: 5 * v_stake,
+        };
+        let real_total_stake = 5 * v_stake;
+        let active_stake_of = |vid: u64| {
+            if (1..=4).contains(&vid) {
+                Some(v_stake)
+            } else {
+                None // signer 5 jailed
+            }
+        };
+        assert!(cert.verify_with_real_total_stake(real_total_stake, &active_stake_of));
+    }
+
+    #[test]
+    fn audit_h5_empty_attestations_rejected() {
+        let cert = DACertificate {
+            block_number: 1,
+            data_root: [0xAA; 32],
+            attestations: vec![],
+            attested_stake: 0,
+            total_stake: 5000,
+        };
+        let active_stake_of = |_: u64| Some(1000u64);
+        assert!(!cert.verify_with_real_total_stake(5000, &active_stake_of));
     }
 }
