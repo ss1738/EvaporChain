@@ -262,4 +262,71 @@ mod tests {
             "unexpected error: {err}"
         );
     }
+
+    /// T1.20 — adversarial: tampering with the SALT bytes changes
+    /// the Argon2id-derived key, so even with the correct passphrase
+    /// decrypt fails. Pins that the salt is integrity-critical: an
+    /// attacker who flips a salt byte can't trick the decryptor
+    /// into using a known key.
+    #[test]
+    fn t1_20_decrypt_rejects_tampered_salt() {
+        let mut blob = encrypt_blob(b"sensitive payload", b"pw").unwrap();
+        // Salt lives at [4..20] (after MAGIC).
+        let salt_offset = MAGIC.len();
+        blob[salt_offset] ^= 0xFF;
+        let err = decrypt_blob(&blob, b"pw").unwrap_err();
+        assert!(
+            err.contains("decrypt failed"),
+            "salt tampering must yield decrypt-failed (the wrong-KDF-key path); got: {err}"
+        );
+    }
+
+    /// T1.20 — adversarial: flipping a byte inside the ciphertext
+    /// (post-header) trips the AEAD tag check. Pins ciphertext
+    /// integrity — distinct from len-field tampering (which can be
+    /// caught at the length-mismatch gate before AEAD runs).
+    #[test]
+    fn t1_20_decrypt_rejects_tampered_ciphertext_byte() {
+        let mut blob = encrypt_blob(b"ciphertext-integrity-test", b"pw").unwrap();
+        // Pick a byte in the ciphertext body — after MAGIC+SALT+NONCE+LEN.
+        let ct_offset = MAGIC.len() + SALT_LEN + NONCE_LEN + LEN_FIELD;
+        blob[ct_offset] ^= 0x01;
+        let err = decrypt_blob(&blob, b"pw").unwrap_err();
+        assert!(
+            err.contains("decrypt failed"),
+            "ciphertext byte flip must trip AEAD tag; got: {err}"
+        );
+    }
+
+    /// T1.20 — `is_evkv` boundary: inputs shorter than the 4-byte
+    /// magic return false without panicking on the slice. Existing
+    /// `is_evkv_only_matches_real_envelope` covers empty input;
+    /// this pins the 1/2/3-byte intermediate boundary explicitly.
+    #[test]
+    fn t1_20_is_evkv_short_input_returns_false() {
+        assert!(!is_evkv(b""));
+        assert!(!is_evkv(b"E"));
+        assert!(!is_evkv(b"EV"));
+        assert!(!is_evkv(b"EVK"));
+        // Exactly 4 bytes but wrong: still false.
+        assert!(!is_evkv(b"EVKW"));
+        // Exactly 4 bytes correct: true.
+        assert!(is_evkv(b"EVKV"));
+    }
+
+    /// T1.20 — large-payload round-trip (64 KiB). The existing
+    /// happy-path tests use <300-byte payloads; this pins that the
+    /// envelope handles realistic operator-credential sizes (large
+    /// PEM bundles, multi-key JSON) cleanly. Well under
+    /// MAX_PLAINTEXT_LEN (16 MiB), still exercises non-trivial
+    /// AEAD throughput.
+    #[test]
+    fn t1_20_large_payload_round_trips() {
+        let big: Vec<u8> = (0..65_536u32).map(|i| (i & 0xFF) as u8).collect();
+        let pass = b"operator-credential-pass";
+        let blob = encrypt_blob(&big, pass).unwrap();
+        let out = decrypt_blob(&blob, pass).unwrap();
+        assert_eq!(out.len(), big.len());
+        assert_eq!(out, big);
+    }
 }
