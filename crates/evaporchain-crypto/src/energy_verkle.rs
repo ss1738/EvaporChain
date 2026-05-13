@@ -25,6 +25,23 @@ use std::sync::OnceLock;
 const WIDTH: usize = 256;
 const MAX_DEPTH: usize = 32;
 
+// ─── Domain-separation tags (AUDIT_2026_05_13 H2) ─────────────────────────
+//
+// Energy-Verkle node-hash outputs were untagged: leaves produced
+// `blake3(key || value)` and internal nodes produced `point_to_bytes(
+// commitment)`. Same 32-byte type, distinct semantics, no DST. A leaf
+// hash could in principle collide with an internal-node serialisation
+// under second-preimage attack on controlled (key, value).
+//
+// Distinct DSTs separate the two output spaces globally. Hard-fork
+// impactful — every Energy-Verkle root changes post-fix.
+
+/// Domain tag for `EnergyNode::hash` LEAF branch.
+pub const ENERGY_VERKLE_LEAF_DST: &[u8] = b"evaporchain:energy-verkle:leaf:v1\0";
+
+/// Domain tag for `EnergyNode::hash` INTERNAL branch.
+pub const ENERGY_VERKLE_INTERNAL_DST: &[u8] = b"evaporchain:energy-verkle:internal:v1\0";
+
 // ─────────────────────── Generator Points ────────────────────────────────
 // Shared with the standard Verkle trie — same generators, same commitments.
 
@@ -187,11 +204,18 @@ impl EnergyNode {
 
     /// Compute the cryptographic hash/commitment of this node.
     /// Compressed nodes return their stored commitment (same as the original subtree).
+    ///
+    /// AUDIT_2026_05_13 H2: leaf vs internal output spaces now globally
+    /// separated by DST. `Compressed` keeps its stored `commitment`
+    /// verbatim — that commitment was already computed under the
+    /// post-fix DSTs at compress time, so the binding is preserved
+    /// across compression boundaries.
     fn hash(&self) -> [u8; 32] {
         match self {
             EnergyNode::Empty => [0u8; 32],
             EnergyNode::Leaf(leaf) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(ENERGY_VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(ENERGY_VERKLE_LEAF_DST);
                 data.extend_from_slice(&leaf.key);
                 data.extend_from_slice(&leaf.value);
                 *blake3::hash(&data).as_bytes()
@@ -204,7 +228,12 @@ impl EnergyNode {
                     let scalar = bytes_to_scalar(&child_hash);
                     commitment += gens[idx as usize] * scalar;
                 }
-                point_to_bytes(&commitment)
+                let point_bytes = point_to_bytes(&commitment);
+                let mut data =
+                    Vec::with_capacity(ENERGY_VERKLE_INTERNAL_DST.len() + 32);
+                data.extend_from_slice(ENERGY_VERKLE_INTERNAL_DST);
+                data.extend_from_slice(&point_bytes);
+                *blake3::hash(&data).as_bytes()
             }
             EnergyNode::Compressed(c) => c.commitment,
         }
@@ -732,7 +761,9 @@ impl EnergyVerkleTrie {
             if proof.value.is_none() {
                 return *expected_root == [0u8; 32] || proof.hit_compressed;
             }
-            let mut data = Vec::with_capacity(64);
+            // AUDIT H2: leaf hash mirrors EnergyNode::hash with DST prefix.
+            let mut data = Vec::with_capacity(ENERGY_VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(ENERGY_VERKLE_LEAF_DST);
             data.extend_from_slice(&proof.key);
             data.extend_from_slice(proof.value.as_ref().unwrap());
             let leaf_hash = *blake3::hash(&data).as_bytes();
@@ -746,10 +777,11 @@ impl EnergyVerkleTrie {
             return false;
         }
 
-        // Reconstruct leaf hash
+        // Reconstruct leaf hash (AUDIT H2: DST-prefixed)
         let leaf_hash = match &proof.value {
             Some(value) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(ENERGY_VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(ENERGY_VERKLE_LEAF_DST);
                 data.extend_from_slice(&proof.key);
                 data.extend_from_slice(value);
                 *blake3::hash(&data).as_bytes()
@@ -772,7 +804,13 @@ impl EnergyVerkleTrie {
                 commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
-            current_hash = point_to_bytes(&commitment);
+            // AUDIT H2: internal-node hash mirrors EnergyNode::hash —
+            // `point_to_bytes(commit)` wrapped with the internal DST.
+            let point_bytes = point_to_bytes(&commitment);
+            let mut data = Vec::with_capacity(ENERGY_VERKLE_INTERNAL_DST.len() + 32);
+            data.extend_from_slice(ENERGY_VERKLE_INTERNAL_DST);
+            data.extend_from_slice(&point_bytes);
+            current_hash = *blake3::hash(&data).as_bytes();
         }
 
         current_hash == *expected_root

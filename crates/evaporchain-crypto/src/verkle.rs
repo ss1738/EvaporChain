@@ -23,6 +23,28 @@ const WIDTH: usize = 256;
 /// Maximum trie depth (one byte per level, 32-byte keys).
 const MAX_DEPTH: usize = 32;
 
+// ─── Domain-separation tags (AUDIT_2026_05_13 H2) ─────────────────────────
+//
+// Pre-fix: leaf hashes and internal-node hashes both produced 32-byte
+// outputs in the same type. The verifier reconstructs from
+// `bytes_to_scalar(child_hash)` without knowing whether the child was a
+// leaf or an internal node. A second-preimage / cross-type confusion
+// attack: an attacker who controls leaf inputs (key, value) could in
+// principle engineer a leaf whose 32-byte hash serialises to bytes
+// matching a target internal-node commitment. The verifier cannot
+// distinguish, breaking Verkle's "binding to a specific tree shape"
+// under second-preimage assumptions.
+//
+// Stage-A closure: prefix each hash type with a distinct DST so the
+// two output spaces are globally separated. Hard-fork impactful — every
+// Verkle root changes.
+
+/// Domain tag for `node_hash` LEAF branch.
+pub const VERKLE_LEAF_DST: &[u8] = b"evaporchain:verkle:leaf:v1\0";
+
+/// Domain tag for `node_hash` INTERNAL branch (commitment serialisation).
+pub const VERKLE_INTERNAL_DST: &[u8] = b"evaporchain:verkle:internal:v1\0";
+
 // ─────────────────────── Generator Points ────────────────────────────────
 
 /// Pre-computed independent generator points on the Pallas curve.
@@ -109,19 +131,31 @@ fn commit_internal(children: &BTreeMap<u8, Node>) -> Ep {
 }
 
 /// Compute the hash/commitment of a node.
+///
+/// AUDIT_2026_05_13 H2: each branch carries its own DST so a leaf-hash
+/// output can never coincide with an internal-node-hash output. Pre-fix,
+/// both produced bare 32-byte values and the verifier reconstructed via
+/// `bytes_to_scalar` without knowing the type — cross-type confusion
+/// attack surface.
 fn node_hash(node: &Node) -> [u8; 32] {
     match node {
         Node::Empty => [0u8; 32],
         Node::Leaf(leaf) => {
-            // Hash(key || value) for leaf commitment
-            let mut data = Vec::with_capacity(64);
+            // blake3(VERKLE_LEAF_DST || key || value)
+            let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&leaf.key);
             data.extend_from_slice(&leaf.value);
             *blake3::hash(&data).as_bytes()
         }
         Node::Internal(internal) => {
+            // blake3(VERKLE_INTERNAL_DST || point_to_bytes(commitment))
             let commitment = commit_internal(&internal.children);
-            point_to_bytes(&commitment)
+            let point_bytes = point_to_bytes(&commitment);
+            let mut data = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            data.extend_from_slice(VERKLE_INTERNAL_DST);
+            data.extend_from_slice(&point_bytes);
+            *blake3::hash(&data).as_bytes()
         }
     }
 }
@@ -387,8 +421,10 @@ impl VerkleTrie {
                 // Empty trie: root should be the empty hash
                 return *expected_root == [0u8; 32];
             }
-            // Single leaf at root (no internal nodes): verify leaf hash = root
-            let mut data = Vec::with_capacity(64);
+            // Single leaf at root (no internal nodes): verify leaf hash = root.
+            // AUDIT H2: DST-prefixed to mirror node_hash.
+            let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&proof.key);
             data.extend_from_slice(proof.value.as_ref().unwrap());
             let leaf_hash = *blake3::hash(&data).as_bytes();
@@ -402,10 +438,11 @@ impl VerkleTrie {
             return false;
         }
 
-        // Reconstruct the leaf hash
+        // Reconstruct the leaf hash (AUDIT H2: DST-prefixed)
         let leaf_hash = match &proof.value {
             Some(value) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&proof.key);
                 data.extend_from_slice(value);
                 *blake3::hash(&data).as_bytes()
@@ -445,7 +482,13 @@ impl VerkleTrie {
                 commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
-            current_hash = point_to_bytes(&commitment);
+            // AUDIT H2: internal-node hash wraps point_to_bytes with the
+            // internal DST so verification mirrors `node_hash`.
+            let point_bytes = point_to_bytes(&commitment);
+            let mut data = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            data.extend_from_slice(VERKLE_INTERNAL_DST);
+            data.extend_from_slice(&point_bytes);
+            current_hash = *blake3::hash(&data).as_bytes();
         }
 
         // The reconstructed root should match
@@ -1101,6 +1144,58 @@ mod proptests {
                 unique_keys.insert(*k);
             }
             prop_assert_eq!(trie.len(), unique_keys.len());
+        }
+    }
+
+    // ─── AUDIT_2026_05_13 H2 regression suite (Verkle DSTs) ──────────
+
+    #[test]
+    fn audit_h2_verkle_leaf_dst_locks_in() {
+        // The leaf hash MUST differ from a bare BLAKE3 of (key||value).
+        let mut trie = VerkleTrie::new();
+        let key = [0xAB; 32];
+        let value = [0xCD; 32];
+        trie.insert(key, value);
+        let root_with_dst = trie.root();
+
+        let mut bare = Vec::with_capacity(64);
+        bare.extend_from_slice(&key);
+        bare.extend_from_slice(&value);
+        let bare_leaf = *blake3::hash(&bare).as_bytes();
+        assert_ne!(
+            root_with_dst, bare_leaf,
+            "single-leaf trie root must include the verkle-leaf DST"
+        );
+    }
+
+    #[test]
+    fn audit_h2_verkle_dsts_distinct() {
+        assert_ne!(VERKLE_LEAF_DST, VERKLE_INTERNAL_DST);
+        assert!(VERKLE_LEAF_DST.ends_with(b":v1\0"));
+        assert!(VERKLE_INTERNAL_DST.ends_with(b":v1\0"));
+    }
+
+    #[test]
+    fn audit_h2_verkle_proof_round_trip_post_dst() {
+        // Soundness lower bound: legitimate prove → verify still works
+        // after the DST rewrite. The verifier mirrors node_hash exactly.
+        let mut trie = VerkleTrie::new();
+        for i in 0u8..8 {
+            let mut k = [0u8; 32];
+            k[0] = i;
+            let mut v = [0u8; 32];
+            v[0] = i.wrapping_mul(7);
+            trie.insert(k, v);
+        }
+        let root = trie.root();
+        for i in 0u8..8 {
+            let mut k = [0u8; 32];
+            k[0] = i;
+            let proof = trie.prove(&k);
+            assert!(
+                VerkleTrie::verify(&proof, &root),
+                "legitimate inclusion proof must verify after DST migration (i={i})"
+            );
         }
     }
 }
