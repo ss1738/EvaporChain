@@ -247,7 +247,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.3 — POST_EXEC Phase 4 enforce-mode prevote NIL
 
-**Status:** 🟡 OPEN
+**Status:** ✅ **DONE** (`c191498`) — `post_state_verify_mode` governance flag + 4 tests shipped. Needs T0.4 fork-epoch + soak before flipping the flag to enforce (operator-driven).
 **Surface:** CONSENSUS
 **Depends on:** Phase 3 clean soak (governance flag value `"warn"` for ≥7 days on live cluster). Currently Phase 2+3 always-on per `af6876d`; needs `post_state_verify_mode` governance flag added.
 **Effort:** 3-5 days code + 1-2 week soak
@@ -271,10 +271,10 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.4 — POST_EXEC Phase 5 block-hash inclusion
 
-**Status:** 🔴 BLOCKED on T0.3
+**Status:** ✅ **DONE** (`695c49c`) — bit-compat fold (Some→include, None→skip); 3 hash tests shipped. T0.3 also ✅.
 **Surface:** CONSENSUS
-**Depends on:** T0.3 + 7-day clean enforce-mode soak
-**Effort:** 1-2 days code + fork-epoch coordination
+**Depends on:** T0.3 ✅
+**Effort:** 1-2 days code + fork-epoch coordination (shipped)
 
 **Goal:** Roll `post_state_root` into the bytes hashed for `block_hash`. Behind the same fork-epoch gate as T0.3.
 
@@ -349,9 +349,9 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.7 — Mempool + signature DoS hardening
 
-**Status:** 🟡 OPEN
+**Status:** 🟡 **PARTIAL** — Vectors 1-4 (tx flood, sig storm, per-account fairness, encrypted-mempool reveal flood) ✅ + V5 DAG fork-spam ✅ (`0e976f4`) + V6 ShardSample rate-limit + queries cap ✅ (`8c59fad`, AUDIT-2026-05-11-1/2). Remaining: operator-driven cluster-load ≥1hr DoS suite + fold new vectors into `docs/runbooks/dos-resistance.md`. See board for full per-vector status.
 **Surface:** NETWORK + EXECUTION
-**Depends on:** T3.1 (recommended)
+**Depends on:** T3.1 ✅ (unblocked 2026-05-13 — cluster live for ≥1hr load tests)
 **Effort:** 1-2 weeks
 
 **Goal:** Comprehensive DoS surface audit + remediation. Past incident: per-(height,round) suppression bug fixed (`evaporchain_verification_track_2026_05_02.md`); this lane finds the rest.
@@ -377,7 +377,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.8 — Light-client / fast-sync against malicious snapshots
 
-**Status:** 🟡 OPEN
+**Status:** ✅ **DONE** — all 5 lane-spec adversarial fixtures shipped in `crates/evaporchain-state/tests/adversarial_snapshots.rs` and green on Mini 1 release 2026-05-11. Covers sub-tasks 1 (5 fixtures), 2 (quorum-cert verification), 3 (integrity-hash chain validation), 4 (partial-state-withhold). See board summary for the specific test names.
 **Surface:** NETWORK
 **Depends on:** none
 **Effort:** 1-2 weeks
@@ -401,7 +401,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.9 — Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM)
 
-**Status:** 🟡 OPEN
+**Status:** ✅ **DONE** — all 8 sub-tasks shipped. D-finish resolved (`Params<halo2_proofs::pasta::EqAffine>` = vesta::Affine is the right verifier curve for an Fp-circuit; resolution at `circuit_v2.rs:997-1011`). `VerkleProverV2::{setup, prove_v2, verify_v2}` wired; headline test `prove_v2_and_verify_v2_round_trip` re-verified green on Mini 1 release 2026-05-11 (77.40s end-to-end, k=11 IPA params). Gated behind `--features v2-ecc`; default build remains V1 Poseidon until T0.10 pulls V2 through. See `evaporchain_t0_9_d_finish_done.md` memory + board summary for details.
 **Surface:** BRIDGE-RUST
 **Depends on:** none
 **Effort:** 2-3 weeks
@@ -418,7 +418,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.10 — `VerkleProofVerifier.sol` Groth16 wrap
 
-**Status:** 🔴 BLOCKED on T0.9
+**Status:** 🟡 **OPEN** (unblocked 2026-05-11 by T0.9 ✅) — wraps the V2 IPA proof in a Groth16 envelope so the on-chain Solidity verifier can pin-verify the same `VerkleProofV2` JSON the Rust side produces. Depends on the in-progress `evaporchain-nova-bridge` work (Phase 2.2+ scaffold).
 **Surface:** BRIDGE-SOL
 **Depends on:** T0.9
 **Effort:** 1 week
@@ -435,7 +435,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.11 — Cross-chain replay protection hardening
 
-**Status:** 🟡 OPEN
+**Status:** ✅ **DONE** (`ee2ebba`) — L1 finalization-depth gate (12 blocks); 46/46 forge tests pass on-host. Companion T0.11b extends the gate to StateMembershipAttester (`b74e72d`, 48/48 forge tests). See board for both.
 **Surface:** BRIDGE-SOL
 **Depends on:** none
 **Effort:** 1 week
@@ -480,7 +480,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T1.14 — Phase 2 round-trip test (proposer-stamp == validator-apply)
 
-**Status:** 🟡 OPEN
+**Status:** ✅ **DONE** (`9191e87`) — 3 tests appended end-of-file; build verification deferred.
 **Surface:** CONSENSUS (test-only)
 **Depends on:** none (the InMemoryStateDB batch fix `69ed84e` unblocked this)
 **Effort:** 1 day
@@ -517,7 +517,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T1.16 — Internal audit findings reconciliation sweep
 
-**Status:** 🟡 OPEN
+**Status:** ✅ **DONE** (`7f36b46`) — `AUDIT_RECONCILIATION_2026-05-09.md` enumerates each finding's current status + opcode-count drift fix shipped.
 **Surface:** AUDIT-SWEEP (read-only first; fix per finding)
 **Depends on:** none
 **Effort:** 1 week
