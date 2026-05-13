@@ -349,4 +349,133 @@ mod tests {
         let err = decrypt_bls_secret(&[0u8; 50], b"pw").unwrap_err();
         assert!(err.contains("expected"), "unexpected error: {err}");
     }
+
+    /// T1.20 — H5 audit (2026-05-02): `encrypt_bls_secret_with_aad` /
+    /// `decrypt_bls_secret_with_aad` round-trip with the same AAD
+    /// returns the original plaintext. Pins the happy path of the
+    /// AAD-bound API that production callers use via `path_aad`.
+    #[test]
+    fn t1_20_encrypt_decrypt_with_aad_roundtrip() {
+        let secret = [0x55u8; 32];
+        let pass = b"correct-horse-battery-staple";
+        let aad = path_aad(b"/var/lib/evaporchain/bls_key.bin");
+        let blob = encrypt_bls_secret_with_aad(&secret, pass, &aad).unwrap();
+        assert_eq!(blob.len(), ENCRYPTED_LEN);
+        let recovered = decrypt_bls_secret_with_aad(&blob, pass, &aad).unwrap();
+        assert_eq!(recovered, secret);
+    }
+
+    /// T1.20 — H5 audit ADVERSARIAL: AAD mismatch fails decryption
+    /// indistinguishably from a wrong-passphrase error. This is the
+    /// soundness property the AAD-binding added: an attacker who
+    /// relocates an EVK1 blob to a different file path (encoded as
+    /// a different `path_aad`) cannot decrypt it even with the
+    /// correct passphrase.
+    #[test]
+    fn t1_20_aad_mismatch_fails_decryption() {
+        let secret = [0xAAu8; 32];
+        let pass = b"same-passphrase";
+        let aad_original = path_aad(b"/expected/bls_key.bin");
+        let aad_attacker = path_aad(b"/attacker/bls_key.bin");
+        let blob = encrypt_bls_secret_with_aad(&secret, pass, &aad_original).unwrap();
+        // Correct AAD → decrypts.
+        assert!(decrypt_bls_secret_with_aad(&blob, pass, &aad_original).is_ok());
+        // Mismatched AAD with same passphrase → fails.
+        let err = decrypt_bls_secret_with_aad(&blob, pass, &aad_attacker).unwrap_err();
+        assert!(
+            err.contains("decrypt failed"),
+            "AAD mismatch must yield decrypt-failed (not bad-magic / wrong-length); got: {err}"
+        );
+        // Empty AAD (legacy `decrypt_bls_secret`) also fails.
+        let err = decrypt_bls_secret(&blob, pass).unwrap_err();
+        assert!(err.contains("decrypt failed"), "got: {err}");
+    }
+
+    /// T1.20 — `detect_bls_key_format` returns the right variant for
+    /// each on-disk shape (lines 268-278). Pins all four arms of the
+    /// classifier — a refactor that lost the `EVPL` magic check
+    /// would mis-route plaintext blobs through `LegacyRaw`, dropping
+    /// the audit's Crypto-6 protection.
+    #[test]
+    fn t1_20_detect_bls_key_format_all_variants() {
+        // PlaintextMagic: 36 bytes with EVPL prefix.
+        let plaintext_magic = {
+            let mut v = Vec::with_capacity(PLAINTEXT_MAGIC_LEN);
+            v.extend_from_slice(PLAINTEXT_MAGIC);
+            v.extend_from_slice(&[0xCC; PLAINTEXT_LEN]);
+            v
+        };
+        assert_eq!(
+            detect_bls_key_format(&plaintext_magic),
+            BlsKeyFormat::PlaintextMagic
+        );
+
+        // Encrypted: 92 bytes with EVK1 prefix.
+        let encrypted = encrypt_bls_secret(&[0x11; 32], b"pw").unwrap();
+        assert_eq!(detect_bls_key_format(&encrypted), BlsKeyFormat::Encrypted);
+
+        // LegacyRaw: 32 bytes, no magic.
+        assert_eq!(
+            detect_bls_key_format(&[0xFFu8; 32]),
+            BlsKeyFormat::LegacyRaw
+        );
+
+        // Unknown: anything else.
+        assert_eq!(detect_bls_key_format(&[0u8; 0]), BlsKeyFormat::Unknown);
+        assert_eq!(detect_bls_key_format(&[0u8; 64]), BlsKeyFormat::Unknown);
+        // 36 bytes WITHOUT EVPL magic → Unknown, NOT mis-classified
+        // as PlaintextMagic.
+        let bogus_36 = [0xABu8; PLAINTEXT_MAGIC_LEN];
+        assert_eq!(detect_bls_key_format(&bogus_36), BlsKeyFormat::Unknown);
+    }
+
+    /// T1.20 — `extract_plaintext` on an Encrypted blob returns Err
+    /// pointing the caller at the decrypt API (line 296-298).
+    /// Prevents a footgun where a caller routes an encrypted blob
+    /// through the plaintext path and gets ciphertext bytes back.
+    #[test]
+    fn t1_20_extract_plaintext_rejects_encrypted_blob() {
+        let encrypted = encrypt_bls_secret(&[0x77; 32], b"pw").unwrap();
+        let err = extract_plaintext(&encrypted).unwrap_err();
+        assert!(
+            err.contains("encrypted") && err.contains("decrypt"),
+            "encrypted blob should be routed to decrypt API; got: {err}"
+        );
+
+        // PlaintextMagic round-trips through extract_plaintext.
+        let secret = [0x99u8; 32];
+        let wrapped = format_plaintext_for_disk(&secret).unwrap();
+        assert_eq!(extract_plaintext(&wrapped).unwrap(), secret);
+
+        // LegacyRaw also extracts cleanly.
+        assert_eq!(extract_plaintext(&[0x42u8; 32]).unwrap(), [0x42u8; 32]);
+
+        // Unknown length is rejected with a diagnostic.
+        let err = extract_plaintext(&[0u8; 10]).unwrap_err();
+        assert!(
+            err.contains("unrecognised") || err.contains("10 bytes"),
+            "wrong-length input should be diagnosed; got: {err}"
+        );
+    }
+
+    /// T1.20 — wrong-secret-length inputs to the encryption helpers
+    /// fail loud (lines 140-145, 236-241). A future caller passing
+    /// the wrong-sized buffer must not silently produce a malformed
+    /// blob.
+    #[test]
+    fn t1_20_encrypt_rejects_wrong_secret_length() {
+        let pass = b"any-passphrase";
+        let too_short = [0u8; 16];
+        let too_long = [0u8; 64];
+
+        let err = encrypt_bls_secret(&too_short, pass).unwrap_err();
+        assert!(err.contains("32 bytes") && err.contains("got"));
+
+        let err = encrypt_bls_secret(&too_long, pass).unwrap_err();
+        assert!(err.contains("32 bytes") && err.contains("got"));
+
+        // Same gate on format_plaintext_for_disk.
+        let err = format_plaintext_for_disk(&too_short).unwrap_err();
+        assert!(err.contains("32 bytes"));
+    }
 }
