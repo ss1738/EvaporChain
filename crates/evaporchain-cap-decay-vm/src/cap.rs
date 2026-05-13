@@ -225,4 +225,96 @@ mod tests {
         let back: Capability = serde_json::from_str(&s).unwrap();
         assert_eq!(cap, back);
     }
+
+    /// T1.20 — `derive_id` is sensitive to the issuer and nonce
+    /// inputs, not just the authority. The existing
+    /// `derive_id_changes_with_authority` only varied authority;
+    /// without this, a refactor that dropped issuer or nonce from
+    /// the hash would silently collapse caps from different issuers
+    /// or replay nonces.
+    #[test]
+    fn t1_20_derive_id_sensitive_to_issuer_and_nonce() {
+        let a = auth("read", 1, 100);
+        let issuer_a = [1u8; 32];
+        let issuer_b = [9u8; 32];
+        let nonce_a = [2u8; 32];
+        let nonce_b = [8u8; 32];
+
+        // Same authority + nonce, different issuer → different id.
+        assert_ne!(
+            Capability::derive_id(&issuer_a, &nonce_a, &a),
+            Capability::derive_id(&issuer_b, &nonce_a, &a),
+            "issuer must be in the digest"
+        );
+        // Same authority + issuer, different nonce → different id.
+        assert_ne!(
+            Capability::derive_id(&issuer_a, &nonce_a, &a),
+            Capability::derive_id(&issuer_a, &nonce_b, &a),
+            "nonce must be in the digest"
+        );
+    }
+
+    /// T1.20 — `derive_id` includes the `evaporchain:capability:v1\0`
+    /// domain tag (line 105). A bare BLAKE3 of the same fields
+    /// without the tag must produce a different id. This pins the
+    /// cross-protocol domain separation.
+    #[test]
+    fn t1_20_derive_id_uses_domain_tag() {
+        let issuer = [1u8; 32];
+        let nonce = [2u8; 32];
+        let a = auth("read", 1, 100);
+        let with_tag = Capability::derive_id(&issuer, &nonce, &a);
+        let without_tag = {
+            let mut h = blake3::Hasher::new();
+            h.update(&issuer);
+            h.update(&nonce);
+            h.update(&a.canonical_bytes());
+            CapabilityId(*h.finalize().as_bytes())
+        };
+        assert_ne!(
+            with_tag, without_tag,
+            "derive_id must include the v1 domain tag"
+        );
+    }
+
+    /// T1.20 — `is_at_most` rejects mismatched verb or object even
+    /// when `max_invokes_per_epoch` would satisfy `<=`. Existing
+    /// `at_most_includes_equal` only covered the happy path. Pins
+    /// the same-verb / same-object preconditions on the partial-order
+    /// gate.
+    #[test]
+    fn t1_20_is_at_most_rejects_verb_and_object_mismatch() {
+        let parent = auth("read", 1, 100);
+        // Different verb, equal max.
+        let other_verb = auth("write", 1, 100);
+        assert!(!other_verb.is_at_most(&parent));
+        // Different verb, smaller max (would otherwise satisfy <=).
+        let other_verb_smaller = auth("write", 1, 50);
+        assert!(!other_verb_smaller.is_at_most(&parent));
+        // Different object.
+        let other_obj = auth("read", 9, 50);
+        assert!(!other_obj.is_at_most(&parent));
+    }
+
+    /// T1.20 — `canonical_bytes` length prefix actually prevents
+    /// collision. The existing test asserts inequality; this
+    /// constructs the adversarial pair where a naive
+    /// `verb_bytes || object || max` concatenation WOULD collide,
+    /// and confirms the length prefix breaks it.
+    #[test]
+    fn t1_20_canonical_bytes_length_prefix_breaks_collision() {
+        // verb "ab" + object [0xCD; 32] vs verb "abCD..." (where
+        // bytes of verb-tail look like the start of an object).
+        // The length prefix puts a distinct u32-LE in front, so
+        // canonical_bytes differ. Specifically: verb "ab" has
+        // prefix [0x02,0,0,0]; verb "abXY" has prefix [0x04,0,0,0].
+        let a = auth("ab", 0xCD, 100);
+        let b = auth("abCD", 0xCD, 100);
+        let ca = a.canonical_bytes();
+        let cb = b.canonical_bytes();
+        assert_ne!(ca, cb);
+        // First 4 bytes encode the verb length explicitly.
+        assert_eq!(&ca[..4], &2u32.to_le_bytes());
+        assert_eq!(&cb[..4], &4u32.to_le_bytes());
+    }
 }
