@@ -1504,6 +1504,18 @@ impl ExecutionEngine for ParallelExecutor {
                 | Transaction::ValidatorStake(_)
                 | Transaction::ValidatorExit(_)
                 | Transaction::ValidatorClaimStake(_)
+                // Delegate / Undelegate / ClaimDelegation mutate the
+                // delegation ledger via `db.put_delegation /
+                // db.remove_delegation`. Pre-AUDIT-C4 these three errored
+                // unconditionally with "executes in serial phase" — yet
+                // the filter did not push them to the serial bucket, so
+                // every delegation tx on the production executor failed.
+                // T1.20 tests at parallel.rs:4631-4720 codified this as
+                // desired behaviour (assert_eq!(txs_failed, 1)). Fixed:
+                // add to serial filter + port SimpleExecutor arms.
+                | Transaction::Delegate(_)
+                | Transaction::Undelegate(_)
+                | Transaction::ClaimDelegation(_)
                 // Validator key rotation mutates ValidatorSet via the
                 // BlockExecutionResult.validator_key_rotations side
                 // channel, which only the serial path populates. Putting
@@ -1948,6 +1960,182 @@ impl ExecutionEngine for ParallelExecutor {
                                                 sender.nonce += 1;
                                                 sender.last_touched_epoch = block.epoch;
                                                 db.remove_stake(claim.validator_id);
+                                                Ok(())
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // ─── AUDIT_2026_05_13 C4 closure: delegation trio ────────────
+                // Mirrors SimpleExecutor::execute_delegate /
+                // execute_undelegate / execute_claim_delegation at
+                // lib.rs:1699 / 1774 / 1828. Uses transferable_balance for
+                // the Delegate vesting gate (TOKENOMICS §2.6 / Q14).
+                Transaction::Delegate(dtx) => {
+                    use evaporchain_types::DelegationRecord;
+                    if dtx.amount == 0 {
+                        Err(ExecutionError::ZeroAmount)
+                    } else if db.get_stake(dtx.validator_id).is_none() {
+                        Err(ExecutionError::ContractError(format!(
+                            "validator-id {} has no stake record; cannot accept delegations",
+                            dtx.validator_id
+                        )))
+                    } else {
+                        let delegator_view = db
+                            .get_account(&dtx.delegator)
+                            .cloned()
+                            .unwrap_or_else(|| Account {
+                                address: dtx.delegator,
+                                balance: 0,
+                                nonce: 0,
+                                storage_deposit: 0,
+                                storage_bytes: 0,
+                                last_touched_epoch: 0,
+                                vesting: None,
+                            });
+                        if delegator_view.nonce != dtx.nonce {
+                            Err(ExecutionError::InvalidNonce {
+                                expected: delegator_view.nonce,
+                                got: dtx.nonce,
+                            })
+                        } else {
+                            let available = delegator_view.transferable_balance(block.epoch);
+                            if available < dtx.amount {
+                                Err(ExecutionError::InsufficientBalance {
+                                    account: hex::encode(dtx.delegator),
+                                    available,
+                                    required: dtx.amount,
+                                })
+                            } else {
+                                let existing = db
+                                    .get_delegation(&dtx.delegator, dtx.validator_id)
+                                    .cloned();
+                                let delegator = db.get_or_create_account(&dtx.delegator);
+                                delegator.balance -= dtx.amount;
+                                delegator.nonce += 1;
+                                delegator.last_touched_epoch = block.epoch;
+                                let record = match existing {
+                                    Some(mut r) => {
+                                        r.amount = r.amount.saturating_add(dtx.amount);
+                                        r.delegated_at_epoch = block.epoch;
+                                        r
+                                    }
+                                    None => DelegationRecord {
+                                        delegator: dtx.delegator,
+                                        validator_id: dtx.validator_id,
+                                        amount: dtx.amount,
+                                        delegated_at_epoch: block.epoch,
+                                        unbonding_amount: 0,
+                                        unbonding_epoch: None,
+                                    },
+                                };
+                                db.put_delegation(record);
+                                Ok(())
+                            }
+                        }
+                    }
+                }
+                Transaction::Undelegate(utx) => {
+                    if utx.amount == 0 {
+                        Err(ExecutionError::ZeroAmount)
+                    } else {
+                        let delegator_acct =
+                            db.get_or_create_account(&utx.delegator);
+                        if delegator_acct.nonce != utx.nonce {
+                            Err(ExecutionError::InvalidNonce {
+                                expected: delegator_acct.nonce,
+                                got: utx.nonce,
+                            })
+                        } else {
+                            delegator_acct.nonce += 1;
+                            delegator_acct.last_touched_epoch = block.epoch;
+                            match db.get_delegation(&utx.delegator, utx.validator_id).cloned() {
+                                None => Err(ExecutionError::ContractError(format!(
+                                    "no delegation from {} to validator-id {}",
+                                    hex::encode(utx.delegator),
+                                    utx.validator_id
+                                ))),
+                                Some(mut record) => {
+                                    if record.amount < utx.amount {
+                                        Err(ExecutionError::ContractError(format!(
+                                            "delegation has only {} but tried to undelegate {}",
+                                            record.amount, utx.amount
+                                        )))
+                                    } else {
+                                        record.amount =
+                                            record.amount.saturating_sub(utx.amount);
+                                        record.unbonding_amount = record
+                                            .unbonding_amount
+                                            .saturating_add(utx.amount);
+                                        record.unbonding_epoch = Some(block.epoch);
+                                        db.put_delegation(record);
+                                        Ok(())
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Transaction::ClaimDelegation(ctx) => {
+                    let delegator_acct = db.get_or_create_account(&ctx.delegator);
+                    if delegator_acct.nonce != ctx.nonce {
+                        Err(ExecutionError::InvalidNonce {
+                            expected: delegator_acct.nonce,
+                            got: ctx.nonce,
+                        })
+                    } else {
+                        delegator_acct.nonce += 1;
+                        delegator_acct.last_touched_epoch = block.epoch;
+                        match db.get_delegation(&ctx.delegator, ctx.validator_id).cloned() {
+                            None => Err(ExecutionError::ContractError(format!(
+                                "no delegation from {} to validator-id {}",
+                                hex::encode(ctx.delegator),
+                                ctx.validator_id
+                            ))),
+                            Some(mut record) => {
+                                if record.unbonding_amount == 0 {
+                                    Err(ExecutionError::ContractError(
+                                        "no unbonding amount to claim".into(),
+                                    ))
+                                } else {
+                                    match record.unbonding_epoch {
+                                        None => Err(ExecutionError::ContractError(
+                                            "unbonding_epoch unset".into(),
+                                        )),
+                                        Some(unbonding_started) => {
+                                            let claim_ready_at = unbonding_started
+                                                .saturating_add(
+                                                    crate::UNBONDING_PERIOD_EPOCHS,
+                                                );
+                                            if block.epoch < claim_ready_at {
+                                                Err(ExecutionError::ContractError(format!(
+                                                    "unbonding period not elapsed: claimable at epoch {} (current {})",
+                                                    claim_ready_at, block.epoch
+                                                )))
+                                            } else {
+                                                let claimed = record.unbonding_amount;
+                                                record.unbonding_amount = 0;
+                                                record.unbonding_epoch = None;
+                                                if let Some(acct) =
+                                                    db.get_account_mut(&ctx.delegator)
+                                                {
+                                                    acct.balance =
+                                                        acct.balance.saturating_add(claimed);
+                                                    acct.last_touched_epoch = block.epoch;
+                                                }
+                                                if record.amount == 0
+                                                    && record.unbonding_amount == 0
+                                                {
+                                                    db.remove_delegation(
+                                                        &ctx.delegator,
+                                                        ctx.validator_id,
+                                                    );
+                                                } else {
+                                                    db.put_delegation(record);
+                                                }
                                                 Ok(())
                                             }
                                         }
@@ -4719,42 +4907,169 @@ mod tests {
         assert_eq!(r.txs_failed, 1, "upgrade-contract must fail in execute_partition");
     }
 
+    // AUDIT_2026_05_13 C4 closure: these 3 tests previously asserted
+    // `txs_failed == 1` — codifying the bug (delegation txs failing with
+    // "executes in serial phase") as desired behaviour. The audit caught
+    // this. Tests now assert the inverse: a properly-set-up delegation
+    // flow succeeds and the delegation record exists at the right values.
     #[test]
-    fn t1_20_delegate_via_parallel_partition_fails() {
+    fn t1_20_delegate_via_parallel_executor_succeeds() {
+        use evaporchain_types::{DelegateTx, StakeRecord};
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![Transaction::Delegate(evaporchain_types::DelegateTx {
-            delegator: addr(64), validator_id: 1, amount: 1_000, nonce: 0,
-            signature: None, public_key: None,
-        })]);
+        // Validator-1 must have a stake record before delegations are
+        // accepted (matches SimpleExecutor::execute_delegate guard).
+        db.put_stake(StakeRecord {
+            validator_id: 1,
+            validator_address: addr(1),
+            staked_amount: 10_000,
+            staked_at_epoch: 1,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+        fund_account(&mut db, 64, 5_000);
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(64),
+                validator_id: 1,
+                amount: 1_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let mut ex = ParallelExecutor::new_for_test(100);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "delegate must fail in execute_partition");
+        assert_eq!(r.txs_executed, 1, "delegate must execute on serial path");
+        assert_eq!(r.txs_failed, 0);
+        let record = db
+            .get_delegation(&addr(64), 1)
+            .expect("delegation record missing after successful Delegate");
+        assert_eq!(record.amount, 1_000);
+        assert_eq!(record.delegated_at_epoch, 1);
+        // Balance debited (fee is charged on top, so balance is just <5_000 - 1_000>).
+        assert!(db.get_account(&addr(64)).unwrap().balance <= 4_000);
+        // Nonce bumped.
+        assert_eq!(db.get_account(&addr(64)).unwrap().nonce, 1);
     }
 
     #[test]
-    fn t1_20_undelegate_via_parallel_partition_fails() {
+    fn t1_20_undelegate_via_parallel_executor_succeeds() {
+        use evaporchain_types::{DelegateTx, StakeRecord, UndelegateTx};
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![Transaction::Undelegate(evaporchain_types::UndelegateTx {
-            delegator: addr(65), validator_id: 1, amount: 500, nonce: 0,
-            signature: None, public_key: None,
-        })]);
+        db.put_stake(StakeRecord {
+            validator_id: 1,
+            validator_address: addr(1),
+            staked_amount: 10_000,
+            staked_at_epoch: 1,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+        fund_account(&mut db, 65, 5_000);
+
+        let block = make_block(
+            1,
+            1,
+            vec![
+                Transaction::Delegate(DelegateTx {
+                    delegator: addr(65),
+                    validator_id: 1,
+                    amount: 2_000,
+                    nonce: 0,
+                    signature: None,
+                    public_key: None,
+                }),
+                Transaction::Undelegate(UndelegateTx {
+                    delegator: addr(65),
+                    validator_id: 1,
+                    amount: 500,
+                    nonce: 1,
+                    signature: None,
+                    public_key: None,
+                }),
+            ],
+        );
         let mut ex = ParallelExecutor::new_for_test(100);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "undelegate must fail in execute_partition");
+        assert_eq!(r.txs_executed, 2);
+        assert_eq!(r.txs_failed, 0);
+        let record = db.get_delegation(&addr(65), 1).expect("record missing");
+        assert_eq!(record.amount, 1_500);
+        assert_eq!(record.unbonding_amount, 500);
+        assert_eq!(record.unbonding_epoch, Some(1));
     }
 
     #[test]
-    fn t1_20_claim_delegation_via_parallel_partition_fails() {
+    fn t1_20_claim_delegation_via_parallel_executor_succeeds() {
+        use evaporchain_types::{ClaimDelegationTx, DelegateTx, StakeRecord, UndelegateTx};
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![
-            Transaction::ClaimDelegation(evaporchain_types::ClaimDelegationTx {
-                delegator: addr(66), validator_id: 1, nonce: 0,
-                signature: None, public_key: None,
-            }),
-        ]);
+        db.put_stake(StakeRecord {
+            validator_id: 1,
+            validator_address: addr(1),
+            staked_amount: 10_000,
+            staked_at_epoch: 1,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+        fund_account(&mut db, 66, 5_000);
+
+        // Block A: Delegate + Undelegate at epoch 1.
+        let block_a = make_block(
+            1,
+            1,
+            vec![
+                Transaction::Delegate(DelegateTx {
+                    delegator: addr(66),
+                    validator_id: 1,
+                    amount: 1_500,
+                    nonce: 0,
+                    signature: None,
+                    public_key: None,
+                }),
+                Transaction::Undelegate(UndelegateTx {
+                    delegator: addr(66),
+                    validator_id: 1,
+                    amount: 1_500,
+                    nonce: 1,
+                    signature: None,
+                    public_key: None,
+                }),
+            ],
+        );
         let mut ex = ParallelExecutor::new_for_test(100);
-        let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "claim-delegation must fail in execute_partition");
+        let _ = ex.execute_block(&mut db, &block_a).unwrap();
+
+        // Block B: ClaimDelegation after unbonding period elapses.
+        let claim_epoch = 1 + crate::UNBONDING_PERIOD_EPOCHS;
+        let block_b = make_block(
+            2,
+            claim_epoch,
+            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                delegator: addr(66),
+                validator_id: 1,
+                nonce: 2,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let r = ex.execute_block(&mut db, &block_b).unwrap();
+        assert_eq!(r.txs_executed, 1, "claim-delegation must execute");
+        assert_eq!(r.txs_failed, 0);
+        // After full claim with amount=0 + unbonding_amount=0, the
+        // delegation record is removed (SimpleExecutor parity).
+        assert!(
+            db.get_delegation(&addr(66), 1).is_none(),
+            "delegation record should be removed once fully claimed"
+        );
+        // Balance credited back (started 5_000, delegated 1_500, then claimed 1_500;
+        // fees deducted from the delegate and undelegate steps).
+        let after = db.get_account(&addr(66)).unwrap().balance;
+        assert!(
+            after > 4_000,
+            "claimed 1_500 should be credited back, got balance {after}"
+        );
     }
 
     // ── T1.20 batch 7: Blob via parallel path ────────────────────────────────

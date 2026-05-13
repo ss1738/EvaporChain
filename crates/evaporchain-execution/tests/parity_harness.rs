@@ -22,7 +22,10 @@
 use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_execution::{ExecutionEngine, SimpleExecutor};
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
-use evaporchain_types::{Account, Block, Epoch, Transaction, TransferTx, ValidatorStakeTx};
+use evaporchain_types::{
+    Account, Block, ClaimDelegationTx, DelegateTx, Epoch, StakeRecord, Transaction, TransferTx,
+    UndelegateTx, ValidatorStakeTx,
+};
 
 // ─── Public harness types ──────────────────────────────────────────────
 
@@ -232,6 +235,81 @@ fn compare_stakes(
     }
 }
 
+fn compare_delegations(
+    simple: &InMemoryStateDB,
+    parallel: &InMemoryStateDB,
+    out: &mut Vec<Divergence>,
+) {
+    let mut all_keys: std::collections::BTreeSet<([u8; 32], u64)> = simple
+        .all_delegations()
+        .iter()
+        .map(|d| (d.delegator, d.validator_id))
+        .collect();
+    for d in parallel.all_delegations() {
+        all_keys.insert((d.delegator, d.validator_id));
+    }
+
+    for (delegator, vid) in all_keys {
+        let s = simple.get_delegation(&delegator, vid);
+        let p = parallel.get_delegation(&delegator, vid);
+        match (s, p) {
+            (None, None) => {}
+            (Some(sd), Some(pd)) => {
+                if sd.amount != pd.amount {
+                    out.push(Divergence {
+                        domain: "delegations.amount",
+                        detail: format!("delegator={:02x}… vid={vid}", delegator[0]),
+                        simple_value: sd.amount.to_string(),
+                        parallel_value: pd.amount.to_string(),
+                    });
+                }
+                if sd.delegated_at_epoch != pd.delegated_at_epoch {
+                    out.push(Divergence {
+                        domain: "delegations.delegated_at_epoch",
+                        detail: format!("delegator={:02x}… vid={vid}", delegator[0]),
+                        simple_value: sd.delegated_at_epoch.to_string(),
+                        parallel_value: pd.delegated_at_epoch.to_string(),
+                    });
+                }
+                if sd.unbonding_amount != pd.unbonding_amount {
+                    out.push(Divergence {
+                        domain: "delegations.unbonding_amount",
+                        detail: format!("delegator={:02x}… vid={vid}", delegator[0]),
+                        simple_value: sd.unbonding_amount.to_string(),
+                        parallel_value: pd.unbonding_amount.to_string(),
+                    });
+                }
+                if sd.unbonding_epoch != pd.unbonding_epoch {
+                    out.push(Divergence {
+                        domain: "delegations.unbonding_epoch",
+                        detail: format!("delegator={:02x}… vid={vid}", delegator[0]),
+                        simple_value: format!("{:?}", sd.unbonding_epoch),
+                        parallel_value: format!("{:?}", pd.unbonding_epoch),
+                    });
+                }
+            }
+            (Some(_), None) => out.push(Divergence {
+                domain: "delegations.presence",
+                detail: format!(
+                    "delegator={:02x}… vid={vid} exists only in SimpleExecutor DB",
+                    delegator[0]
+                ),
+                simple_value: "Some(_)".into(),
+                parallel_value: "None".into(),
+            }),
+            (None, Some(_)) => out.push(Divergence {
+                domain: "delegations.presence",
+                detail: format!(
+                    "delegator={:02x}… vid={vid} exists only in ParallelExecutor DB",
+                    delegator[0]
+                ),
+                simple_value: "None".into(),
+                parallel_value: "Some(_)".into(),
+            }),
+        }
+    }
+}
+
 // ─── Harness entry point ───────────────────────────────────────────────
 
 /// Run a fixture through both executors, returning every divergence found.
@@ -304,6 +382,7 @@ pub fn run_parity(fixture: &ParityFixture) -> Vec<Divergence> {
 
     compare_accounts(&simple_db, &parallel_db, &mut divergences);
     compare_stakes(&simple_db, &parallel_db, &mut divergences);
+    compare_delegations(&simple_db, &parallel_db, &mut divergences);
 
     divergences
 }
@@ -488,6 +567,173 @@ fn parity_validator_stake_nonce_mismatch() {
             nonce: 7, // staker nonce is 0
             bls_public_key: None,
             vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+// ─── Phase 3: delegation-trio fixtures (closes audit C4 — first cluster) ──
+
+/// Seed: validator-1 has a 10_000 stake record + delegator funded with 5_000.
+/// Reusable across Delegate / Undelegate / ClaimDelegation fixtures.
+fn seed_with_validator_and_delegator(db: &mut InMemoryStateDB) {
+    db.put_stake(StakeRecord {
+        validator_id: 1,
+        validator_address: addr(1),
+        staked_amount: 10_000,
+        staked_at_epoch: 1,
+        unbonding_epoch: None,
+        slashed_amount: 0,
+    });
+    fund(db, 64, 5_000);
+}
+
+#[test]
+fn parity_delegate_happy_path() {
+    // Pre-fix divergence: Parallel errored "delegation txs execute in
+    // serial phase" → r.txs_failed == 1 → no delegation record.
+    // SimpleExecutor wrote the record. Post-fix both succeed identically.
+    let fixture = ParityFixture {
+        name: "delegate-happy-path",
+        seed: seed_with_validator_and_delegator,
+        transaction: Transaction::Delegate(DelegateTx {
+            delegator: addr(64),
+            validator_id: 1,
+            amount: 1_000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_delegate_to_nonexistent_validator() {
+    // Validator-99 has no stake record — both executors must reject
+    // identically with ContractError, no balance moved.
+    let fixture = ParityFixture {
+        name: "delegate-to-nonexistent-validator",
+        seed: |db| fund(db, 64, 5_000),
+        transaction: Transaction::Delegate(DelegateTx {
+            delegator: addr(64),
+            validator_id: 99,
+            amount: 1_000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_delegate_zero_amount() {
+    let fixture = ParityFixture {
+        name: "delegate-zero-amount",
+        seed: seed_with_validator_and_delegator,
+        transaction: Transaction::Delegate(DelegateTx {
+            delegator: addr(64),
+            validator_id: 1,
+            amount: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_delegate_insufficient_balance() {
+    let fixture = ParityFixture {
+        name: "delegate-insufficient-balance",
+        seed: |db| {
+            db.put_stake(StakeRecord {
+                validator_id: 1,
+                validator_address: addr(1),
+                staked_amount: 10_000,
+                staked_at_epoch: 1,
+                unbonding_epoch: None,
+                slashed_amount: 0,
+            });
+            fund(db, 64, 100);
+        },
+        transaction: Transaction::Delegate(DelegateTx {
+            delegator: addr(64),
+            validator_id: 1,
+            amount: 5_000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_undelegate_without_prior_delegation() {
+    // No prior Delegate → both executors must reject with ContractError
+    // ("no delegation from ... to validator-id ...").
+    let fixture = ParityFixture {
+        name: "undelegate-without-prior-delegation",
+        seed: |db| fund(db, 64, 5_000),
+        transaction: Transaction::Undelegate(UndelegateTx {
+            delegator: addr(64),
+            validator_id: 1,
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_undelegate_zero_amount() {
+    let fixture = ParityFixture {
+        name: "undelegate-zero-amount",
+        seed: |db| fund(db, 64, 5_000),
+        transaction: Transaction::Undelegate(UndelegateTx {
+            delegator: addr(64),
+            validator_id: 1,
+            amount: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_claim_delegation_without_unbonding() {
+    // Empty state → no delegation record → both executors must reject
+    // identically with "no delegation from ...".
+    let fixture = ParityFixture {
+        name: "claim-delegation-without-prior-delegation",
+        seed: |db| fund(db, 64, 5_000),
+        transaction: Transaction::ClaimDelegation(ClaimDelegationTx {
+            delegator: addr(64),
+            validator_id: 1,
+            nonce: 0,
             signature: None,
             public_key: None,
         }),
