@@ -381,6 +381,445 @@ pub fn enforce_neptune_partial_round_sparse<F: PrimeField>(
     Ok(())
 }
 
+// ── Slice 4: permute() orchestration ─────────────────────────────
+
+/// Full set of parameters for neptune's `hash_optimized_static`
+/// permutation. Mirrors the relevant fields of neptune's
+/// `PoseidonConstants` (`nova-snark-0.68/src/frontend/gadgets/
+/// poseidon/poseidon_inner.rs`).
+///
+/// For the chain's Poseidon-128 arity-24 Standard parameters:
+/// - `width = 25` (arity 24 + 1 capacity)
+/// - `full_rounds = 8` (4 first-half + 4 second-half, last is "no-post-key")
+/// - `partial_rounds = 59`
+/// - `compressed_ark` length = `full_rounds × width + partial_rounds`
+///   = `8 × 25 + 59 = 259`
+/// - `sparse_matrices` length = `partial_rounds` = 59
+#[derive(Clone, Debug)]
+pub struct NeptuneParams<F: PrimeField> {
+    /// State width (= sponge rate + capacity).
+    pub width: usize,
+    /// Number of full rounds. Must be even; half are at the start
+    /// and half at the end of the permutation.
+    pub full_rounds: usize,
+    /// Number of partial rounds (SBOX on state[0] only) sandwiched
+    /// between the two halves of full rounds.
+    pub partial_rounds: usize,
+    /// Compressed round-constants array, length =
+    /// `full_rounds × width + partial_rounds`. Produced by
+    /// `crate::compress_ark::compress_full` and verified
+    /// byte-correct against neptune via PR #135.
+    pub compressed_ark: Vec<F>,
+    /// Plain MDS matrix used for full rounds and the first/last
+    /// partial-MDS boundary rounds outside the sparse zone.
+    pub plain_mds: Vec<Vec<F>>,
+    /// "Pre-sparse" matrix used at the boundary round
+    /// (`current_round == half_full_rounds - 1`). Differs from
+    /// plain MDS because it's the factor that, composed with the
+    /// sparse matrices, equals successive plain MDS multiplications.
+    pub pre_sparse_mds: Vec<Vec<F>>,
+    /// Sparse matrices, one per partial round, length =
+    /// `partial_rounds`. Produced by neptune's
+    /// `factor_to_sparse_matrixes`.
+    pub sparse_matrices: Vec<NeptuneSparseMatrix<F>>,
+}
+
+impl<F: PrimeField> NeptuneParams<F> {
+    /// Half of `full_rounds`. Both the first half and the second
+    /// half of full rounds contain this many iterations (with the
+    /// final iteration being the "no-post-key" variant).
+    pub fn half_full(&self) -> usize {
+        self.full_rounds / 2
+    }
+
+    /// Sanity-check: `compressed_ark` and `sparse_matrices` lengths
+    /// match the round counts and width.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.full_rounds % 2 != 0 {
+            return Err(format!("full_rounds ({}) must be even", self.full_rounds));
+        }
+        let expected_ark = self.full_rounds * self.width + self.partial_rounds;
+        if self.compressed_ark.len() != expected_ark {
+            return Err(format!(
+                "compressed_ark length {} does not match expected {} = {}·{} + {}",
+                self.compressed_ark.len(),
+                expected_ark,
+                self.full_rounds,
+                self.width,
+                self.partial_rounds,
+            ));
+        }
+        if self.plain_mds.len() != self.width {
+            return Err(format!(
+                "plain_mds rows {} != width {}",
+                self.plain_mds.len(),
+                self.width
+            ));
+        }
+        if self.pre_sparse_mds.len() != self.width {
+            return Err(format!(
+                "pre_sparse_mds rows {} != width {}",
+                self.pre_sparse_mds.len(),
+                self.width
+            ));
+        }
+        if self.sparse_matrices.len() != self.partial_rounds {
+            return Err(format!(
+                "sparse_matrices count {} != partial_rounds {}",
+                self.sparse_matrices.len(),
+                self.partial_rounds
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Off-circuit reference for the full neptune permutation,
+/// `hash_optimized_static`. Mirrors the round-by-round sequence
+/// in `nova-snark-0.68/src/frontend/gadgets/poseidon/poseidon_inner.rs:315-340`:
+///
+/// 1. `add_round_constants()` — initial ARK on all width cells
+/// 2. `half_full_rounds` × `full_round(false)`
+/// 3. `partial_rounds` × `partial_round()`
+/// 4. `(half_full_rounds - 1)` × `full_round(false)`
+/// 5. 1 × `full_round(true)` — SBOX on all cells, NO post-key,
+///    then MDS
+///
+/// MDS selection per round index (matching neptune's
+/// `round_product_mds`):
+/// - `current_round == half_full - 1` → `pre_sparse_mds`
+/// - `half_full - 1 < current_round < half_full + partial_rounds`
+///   → `sparse_matrices[current_round - half_full]`
+/// - otherwise → `plain_mds`
+pub fn neptune_permute_native<F: PrimeField>(
+    state: &mut [F],
+    params: &NeptuneParams<F>,
+) {
+    assert_eq!(state.len(), params.width, "state width must match params.width");
+    params.validate().expect("invalid neptune params");
+
+    let half_full = params.half_full();
+    let mut offset: usize = 0;
+    let mut current_round: usize = 0;
+
+    // Step 1: add_round_constants — initial ARK.
+    for i in 0..params.width {
+        state[i] += params.compressed_ark[offset + i];
+    }
+    offset += params.width;
+
+    // Step 2 + 4: first-half + second-half-minus-1 full rounds
+    // + Step 3: partial rounds in between
+    // + Step 5: final full_round(true)
+
+    // First-half full rounds (half_full iterations).
+    for _ in 0..half_full {
+        full_round_native_step(
+            state,
+            &params.compressed_ark[offset..offset + params.width],
+            false,
+        );
+        offset += params.width;
+        apply_mds_step(state, params, current_round);
+        current_round += 1;
+    }
+
+    // Partial rounds (partial_rounds iterations).
+    for _ in 0..params.partial_rounds {
+        partial_round_native_step(state, params.compressed_ark[offset]);
+        offset += 1;
+        apply_mds_step(state, params, current_round);
+        current_round += 1;
+    }
+
+    // Second-half full rounds, all but the last (half_full - 1 iterations).
+    for _ in 1..half_full {
+        full_round_native_step(
+            state,
+            &params.compressed_ark[offset..offset + params.width],
+            false,
+        );
+        offset += params.width;
+        apply_mds_step(state, params, current_round);
+        current_round += 1;
+    }
+
+    // Final full_round(true): SBOX with NO post-key, then MDS.
+    full_round_native_step(state, &[], true);
+    apply_mds_step(state, params, current_round);
+    // current_round increment skipped — we're done.
+
+    assert_eq!(
+        offset,
+        params.compressed_ark.len(),
+        "permute consumed {} of {} compressed_ark entries — wrong",
+        offset,
+        params.compressed_ark.len()
+    );
+}
+
+/// Single full-round step (native): for each cell, `state[i] :=
+/// state[i]^5 + post_ark[i]` if `!last_round`; otherwise just
+/// `state[i] := state[i]^5` (no post-key).
+fn full_round_native_step<F: PrimeField>(
+    state: &mut [F],
+    post_ark: &[F],
+    last_round: bool,
+) {
+    if !last_round {
+        assert_eq!(
+            post_ark.len(),
+            state.len(),
+            "post_ark length must match state width when !last_round"
+        );
+    }
+    for i in 0..state.len() {
+        let s = state[i];
+        let s2 = s * s;
+        let s4 = s2 * s2;
+        let s5 = s * s4;
+        state[i] = if last_round { s5 } else { s5 + post_ark[i] };
+    }
+}
+
+/// Single partial-round SBOX step (native): SBOX on `state[0]` only
+/// with post-add. The MDS step is applied separately via
+/// `apply_mds_step`.
+fn partial_round_native_step<F: PrimeField>(state: &mut [F], post_ark: F) {
+    let s = state[0];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    state[0] = s * s4 + post_ark;
+}
+
+/// Apply the correct MDS matrix for `current_round` per neptune's
+/// `round_product_mds` selection rule.
+fn apply_mds_step<F: PrimeField>(
+    state: &mut [F],
+    params: &NeptuneParams<F>,
+    current_round: usize,
+) {
+    let half_full = params.half_full();
+    let sparse_offset = half_full - 1;
+
+    if current_round == sparse_offset {
+        // Boundary round — use pre_sparse_matrix.
+        apply_plain_mds(state, &params.pre_sparse_mds);
+    } else if current_round > sparse_offset
+        && current_round < half_full + params.partial_rounds
+    {
+        // Partial-round zone — use sparse matrix.
+        let index = current_round - sparse_offset - 1;
+        apply_sparse_mds(state, &params.sparse_matrices[index]);
+    } else {
+        // Plain MDS for the other full rounds.
+        apply_plain_mds(state, &params.plain_mds);
+    }
+}
+
+fn apply_plain_mds<F: PrimeField>(state: &mut [F], mds: &[Vec<F>]) {
+    let width = state.len();
+    let mut out = vec![F::zero(); width];
+    for (i, row) in mds.iter().enumerate() {
+        for (j, m) in row.iter().enumerate() {
+            out[i] += *m * state[j];
+        }
+    }
+    state.copy_from_slice(&out);
+}
+
+fn apply_sparse_mds<F: PrimeField>(state: &mut [F], sparse: &NeptuneSparseMatrix<F>) {
+    let width = state.len();
+    let mut out = vec![F::zero(); width];
+    for i in 0..width {
+        out[0] += sparse.w_hat[i] * state[i];
+    }
+    for j in 1..width {
+        out[j] = state[j] + sparse.v_rest[j - 1] * state[0];
+    }
+    state.copy_from_slice(&out);
+}
+
+/// In-circuit equivalent of [`neptune_permute_native`]. Mutates
+/// `state` in place with new `FpVar<F>` cells holding the
+/// post-permutation witnesses.
+///
+/// Constraint cost contributors (chain Poseidon-128 arity-24 Standard,
+/// width 25, full_rounds 8, partial_rounds 59):
+/// - First full-round half: 4 × (25 cells × 3 SBOX mults) = 300
+/// - Partial rounds: 59 × 3 SBOX mults = 177
+/// - Second full-round half: 4 × 75 = 300 (last includes SBOX but no post)
+/// - MDS multiplications: ALL ZERO under constant matrices
+///   (arkworks folds constants into linear combinations)
+/// - Total: ~777 constraints per full permutation
+pub fn enforce_neptune_permute<F: PrimeField>(
+    cs: ConstraintSystemRef<F>,
+    state: &mut Vec<FpVar<F>>,
+    params: &NeptuneParams<F>,
+) -> Result<(), SynthesisError> {
+    assert_eq!(state.len(), params.width, "state width must match params.width");
+    params.validate().expect("invalid neptune params");
+
+    let half_full = params.half_full();
+    let mut offset: usize = 0;
+    let mut current_round: usize = 0;
+
+    // Step 1: initial add_round_constants.
+    for i in 0..params.width {
+        let ark = FpVar::<F>::constant(params.compressed_ark[offset + i]);
+        state[i] = &state[i] + &ark;
+    }
+    offset += params.width;
+
+    // Step 2: first-half full rounds.
+    for _ in 0..half_full {
+        enforce_full_round_step(
+            state,
+            &params.compressed_ark[offset..offset + params.width],
+            false,
+        )?;
+        offset += params.width;
+        enforce_mds_step(state, params, current_round)?;
+        current_round += 1;
+    }
+
+    // Step 3: partial rounds.
+    for _ in 0..params.partial_rounds {
+        enforce_partial_round_sbox_step(state, params.compressed_ark[offset])?;
+        offset += 1;
+        enforce_mds_step(state, params, current_round)?;
+        current_round += 1;
+    }
+
+    // Step 4: second-half full rounds (all but last).
+    for _ in 1..half_full {
+        enforce_full_round_step(
+            state,
+            &params.compressed_ark[offset..offset + params.width],
+            false,
+        )?;
+        offset += params.width;
+        enforce_mds_step(state, params, current_round)?;
+        current_round += 1;
+    }
+
+    // Step 5: final full_round(true) — SBOX only, NO post-key, then MDS.
+    enforce_full_round_step(state, &[], true)?;
+    enforce_mds_step(state, params, current_round)?;
+    // Don't increment current_round — done.
+
+    assert_eq!(
+        offset,
+        params.compressed_ark.len(),
+        "permute consumed {} of {} compressed_ark entries — wrong",
+        offset,
+        params.compressed_ark.len()
+    );
+    let _ = cs; // CS handle reserved for future use (e.g. selector gadgets).
+    Ok(())
+}
+
+fn enforce_full_round_step<F: PrimeField>(
+    state: &mut Vec<FpVar<F>>,
+    post_ark: &[F],
+    last_round: bool,
+) -> Result<(), SynthesisError> {
+    if !last_round {
+        assert_eq!(post_ark.len(), state.len(), "post_ark width mismatch");
+    }
+    for i in 0..state.len() {
+        let s = state[i].clone();
+        let s2 = &s * &s;
+        let s4 = &s2 * &s2;
+        let s5 = &s * &s4;
+        state[i] = if last_round {
+            s5
+        } else {
+            let post = FpVar::<F>::constant(post_ark[i]);
+            s5 + post
+        };
+    }
+    Ok(())
+}
+
+fn enforce_partial_round_sbox_step<F: PrimeField>(
+    state: &mut Vec<FpVar<F>>,
+    post_ark: F,
+) -> Result<(), SynthesisError> {
+    let s = state[0].clone();
+    let s2 = &s * &s;
+    let s4 = &s2 * &s2;
+    let s5 = &s * &s4;
+    let post = FpVar::<F>::constant(post_ark);
+    state[0] = s5 + post;
+    Ok(())
+}
+
+fn enforce_mds_step<F: PrimeField>(
+    state: &mut Vec<FpVar<F>>,
+    params: &NeptuneParams<F>,
+    current_round: usize,
+) -> Result<(), SynthesisError> {
+    let half_full = params.half_full();
+    let sparse_offset = half_full - 1;
+
+    if current_round == sparse_offset {
+        enforce_plain_mds(state, &params.pre_sparse_mds)?;
+    } else if current_round > sparse_offset
+        && current_round < half_full + params.partial_rounds
+    {
+        let index = current_round - sparse_offset - 1;
+        enforce_sparse_mds(state, &params.sparse_matrices[index])?;
+    } else {
+        enforce_plain_mds(state, &params.plain_mds)?;
+    }
+    Ok(())
+}
+
+fn enforce_plain_mds<F: PrimeField>(
+    state: &mut Vec<FpVar<F>>,
+    mds: &[Vec<F>],
+) -> Result<(), SynthesisError> {
+    let width = state.len();
+    let mut out: Vec<FpVar<F>> = Vec::with_capacity(width);
+    for row in mds.iter() {
+        let mut acc = FpVar::<F>::constant(F::zero());
+        for (j, m) in row.iter().enumerate() {
+            let m_const = FpVar::<F>::constant(*m);
+            acc += &m_const * &state[j];
+        }
+        out.push(acc);
+    }
+    state.clear();
+    state.extend(out);
+    Ok(())
+}
+
+fn enforce_sparse_mds<F: PrimeField>(
+    state: &mut Vec<FpVar<F>>,
+    sparse: &NeptuneSparseMatrix<F>,
+) -> Result<(), SynthesisError> {
+    let width = state.len();
+    let mut out: Vec<FpVar<F>> = Vec::with_capacity(width);
+
+    let mut acc = FpVar::<F>::constant(F::zero());
+    for i in 0..width {
+        let m = FpVar::<F>::constant(sparse.w_hat[i]);
+        acc += &m * &state[i];
+    }
+    out.push(acc);
+
+    for j in 1..width {
+        let m = FpVar::<F>::constant(sparse.v_rest[j - 1]);
+        let cell = &state[j] + &m * &state[0];
+        out.push(cell);
+    }
+
+    state.clear();
+    state.extend(out);
+    Ok(())
+}
+
 /// Convenience: assert two state vectors are bit-equal in the
 /// constraint system. Used by tests to pin gadget output against
 /// the native reference.
@@ -800,6 +1239,174 @@ mod tests {
         assert_eq!(
             sparse_constraints, 3,
             "both paths cost exactly the 3 SBOX mults (s², s⁴, s⁵) when MDS is constant"
+        );
+    }
+
+    // ── Slice 4: permute() orchestration ────────────────────────
+
+    fn make_test_params_width_3() -> NeptuneParams<Bn254Fr> {
+        // Small-but-realistic permutation: width=3, full_rounds=4,
+        // partial_rounds=5. compressed_ark length = 4*3+5 = 17.
+        let next_fr = |k: u64| Bn254Fr::from(k.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let width = 3;
+        let full_rounds = 4;
+        let partial_rounds = 5;
+
+        let compressed_ark: Vec<Bn254Fr> = (0..(full_rounds * width + partial_rounds))
+            .map(|i| next_fr(i as u64 + 1))
+            .collect();
+
+        let plain_mds: Vec<Vec<Bn254Fr>> = (0..width)
+            .map(|i| {
+                (0..width)
+                    .map(|j| next_fr(100 + (i * width + j) as u64))
+                    .collect()
+            })
+            .collect();
+
+        let pre_sparse_mds: Vec<Vec<Bn254Fr>> = (0..width)
+            .map(|i| {
+                (0..width)
+                    .map(|j| next_fr(200 + (i * width + j) as u64))
+                    .collect()
+            })
+            .collect();
+
+        let sparse_matrices: Vec<NeptuneSparseMatrix<Bn254Fr>> = (0..partial_rounds)
+            .map(|r| {
+                NeptuneSparseMatrix::new(
+                    (0..width).map(|i| next_fr(300 + (r * width + i) as u64)).collect(),
+                    (0..width - 1)
+                        .map(|i| next_fr(400 + (r * (width - 1) + i) as u64))
+                        .collect(),
+                )
+            })
+            .collect();
+
+        NeptuneParams {
+            width,
+            full_rounds,
+            partial_rounds,
+            compressed_ark,
+            plain_mds,
+            pre_sparse_mds,
+            sparse_matrices,
+        }
+    }
+
+    /// Param validation accepts a well-formed config + rejects
+    /// length mismatches.
+    #[test]
+    fn neptune_params_validate_accepts_well_formed() {
+        let p = make_test_params_width_3();
+        assert_eq!(p.validate(), Ok(()));
+        assert_eq!(p.half_full(), 2);
+    }
+
+    #[test]
+    fn neptune_params_validate_rejects_odd_full_rounds() {
+        let mut p = make_test_params_width_3();
+        p.full_rounds = 5;
+        assert!(p.validate().unwrap_err().contains("must be even"));
+    }
+
+    #[test]
+    fn neptune_params_validate_rejects_ark_length_mismatch() {
+        let mut p = make_test_params_width_3();
+        p.compressed_ark.pop();
+        assert!(p.validate().unwrap_err().contains("compressed_ark length"));
+    }
+
+    /// Native permutation runs to completion on a well-formed param
+    /// set and consumes all compressed_ark entries.
+    #[test]
+    fn native_permute_consumes_all_ark_entries() {
+        let p = make_test_params_width_3();
+        let mut state = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+        // If the offset accounting is wrong, validate's assert at the end
+        // would panic. If it doesn't, we consumed exactly 17 entries.
+        neptune_permute_native(&mut state, &p);
+    }
+
+    /// **Bit-correctness pin** for the full permutation. Gadget
+    /// output must equal native output for the same input + params.
+    #[test]
+    fn permute_gadget_matches_native_on_width_3() {
+        let params = make_test_params_width_3();
+        let init = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+
+        let mut native = init.clone();
+        neptune_permute_native(&mut native, &params);
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_vars: Vec<FpVar<Bn254Fr>> = init
+            .iter()
+            .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_permute(cs.clone(), &mut state_vars, &params)
+            .expect("synthesize permute");
+
+        for (i, (var, expected)) in state_vars.iter().zip(native.iter()).enumerate() {
+            let v = var.value().expect("witness value");
+            assert_eq!(
+                v, *expected,
+                "permute gadget state[{i}] {v:?} != native {expected:?}"
+            );
+        }
+        assert!(cs.is_satisfied().expect("is_satisfied"));
+    }
+
+    /// Different input → different output (the permutation is
+    /// non-degenerate).
+    #[test]
+    fn permute_is_input_sensitive() {
+        let params = make_test_params_width_3();
+        let init_a = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+        let init_b = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(4u64)];
+
+        let mut a = init_a;
+        let mut b = init_b;
+        neptune_permute_native(&mut a, &params);
+        neptune_permute_native(&mut b, &params);
+
+        assert_ne!(a, b, "permutation must be input-sensitive");
+    }
+
+    /// Constraint-count check: with constant params, the entire
+    /// permutation at width 3, full_rounds=4, partial_rounds=5 is
+    /// dominated by SBOX mults.
+    /// - 4 full rounds × 3 cells × 3 SBOX mults = 36
+    /// - 5 partial rounds × 3 SBOX mults = 15
+    /// - 4 full rounds × 3 × 3 = 36 (second half + final)
+    /// - Wait: actually 4 + 5 + 4 = 13 rounds + initial ARK
+    /// - Actually let me just record what we observe.
+    #[test]
+    fn permute_constraint_count_is_dominated_by_sbox() {
+        let params = make_test_params_width_3();
+        let init = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_vars: Vec<FpVar<Bn254Fr>> = init
+            .iter()
+            .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_permute(cs.clone(), &mut state_vars, &params)
+            .expect("synthesize");
+
+        let constraints = cs.num_constraints();
+        eprintln!("width-3 permute constraints: {constraints}");
+
+        // Expected SBOX mults:
+        //   First-half full rounds: 2 rounds × 3 cells × 3 mults  = 18
+        //   Partial rounds: 5 × 3 mults                            = 15
+        //   Second-half-minus-1 full rounds: 1 × 3 × 3              = 9
+        //   Final full round (no post-key): 3 × 3                   = 9
+        //   Total: 51 SBOX constraints. (Plus possibly 0 for the
+        //   initial add_round_constants, since it's just adds.)
+        // MDS multiplications under constant matrices: 0 constraints.
+        assert!(
+            constraints >= 40 && constraints <= 60,
+            "permute constraint count {constraints} should be ~51 (SBOX-dominated, MDS-free)"
         );
     }
 
