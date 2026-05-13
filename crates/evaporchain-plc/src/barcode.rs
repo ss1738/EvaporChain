@@ -183,4 +183,61 @@ mod tests {
         let back: Barcode = serde_json::from_str(&s).unwrap();
         assert_eq!(bc, back);
     }
+
+    /// T1.20 — minimal-persistence boundary: `death == birth + 1` is
+    /// valid (persistence = 1); `death == birth` is not. Existing
+    /// tests cover the `==` rejection and a multi-unit happy path
+    /// but not the smallest valid bar.
+    #[test]
+    fn t1_20_bar_minimal_persistence_is_one() {
+        let b = Bar::new(10, 11).unwrap();
+        assert_eq!(b.persistence(), 1);
+        assert!(!b.is_infinite());
+        // Death exactly equal to birth is still rejected.
+        assert!(Bar::new(10, 10).is_err());
+    }
+
+    /// T1.20 — `Barcode` is a MULTISET: duplicate bars produce a
+    /// DIFFERENT hash than a single bar. This pins that the `len`
+    /// field is in the digest and that duplicates are preserved
+    /// rather than collapsed. A future refactor to `BTreeSet<Bar>`
+    /// (which would deduplicate) would silently break the chain's
+    /// barcode commitments.
+    #[test]
+    fn t1_20_barcode_multiset_duplicates_produce_distinct_hash() {
+        let bar = Bar::new(1, 5).unwrap();
+        let single = Barcode::from_bars(vec![bar]);
+        let doubled = Barcode::from_bars(vec![bar, bar]);
+        let tripled = Barcode::from_bars(vec![bar, bar, bar]);
+        assert_eq!(single.len(), 1);
+        assert_eq!(doubled.len(), 2);
+        assert_eq!(tripled.len(), 3);
+        // All three hashes must differ.
+        assert_ne!(single.hash(), doubled.hash());
+        assert_ne!(doubled.hash(), tripled.hash());
+        assert_ne!(single.hash(), tripled.hash());
+    }
+
+    /// T1.20 — the length prefix is the soundness gate that
+    /// prevents the "1 bar (1,5)" from colliding with "0 bars"
+    /// padded by 16 bytes of zeros (or other length-confusion
+    /// attacks). Pin by recomputing the hash without the length
+    /// prefix and checking it differs.
+    #[test]
+    fn t1_20_barcode_hash_includes_length_prefix() {
+        let bc = Barcode::from_bars(vec![Bar::new(1, 5).unwrap()]);
+        let with_len = bc.hash();
+        let without_len = {
+            let mut h = blake3::Hasher::new();
+            h.update(BARCODE_TAG);
+            // SKIP the length prefix — just write the bar bytes.
+            h.update(&1u64.to_le_bytes()); // birth
+            h.update(&5u64.to_le_bytes()); // death
+            *h.finalize().as_bytes()
+        };
+        assert_ne!(
+            with_len, without_len,
+            "barcode hash must include the multiset length"
+        );
+    }
 }
