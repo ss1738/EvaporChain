@@ -228,6 +228,159 @@ pub fn enforce_neptune_partial_round<F: PrimeField>(
     Ok(())
 }
 
+/// Neptune-style sparse matrix used in the fast partial-round MDS.
+///
+/// Neptune factors the partial-round MDS into `M = M' · M_sparse`
+/// where `M_sparse` has only `2·width - 1` non-trivial entries:
+///
+/// ```text
+///   [ w_hat[0]    v_rest[0]   v_rest[1]   ...   v_rest[w-2] ]
+///   [ w_hat[1]    1           0           ...   0           ]
+///   [ w_hat[2]    0           1           ...   0           ]
+///   [ ...                                       ...         ]
+///   [ w_hat[w-1]  0           0           ...   1           ]
+/// ```
+///
+/// Layout mirrors neptune's `SparseMatrix` struct
+/// (`nova-snark-0.68/src/frontend/gadgets/poseidon/poseidon_inner.rs`).
+/// Multiplication `out = M_sparse · state` costs `2·width - 1`
+/// scalar mults instead of `width²` for a generic MDS.
+#[derive(Clone, Debug)]
+pub struct NeptuneSparseMatrix<F: PrimeField> {
+    /// First column of the sparse matrix (length = width).
+    pub w_hat: Vec<F>,
+    /// First row beyond column 0 (length = width - 1).
+    pub v_rest: Vec<F>,
+}
+
+impl<F: PrimeField> NeptuneSparseMatrix<F> {
+    /// Construct a sparse matrix from its `w_hat` column + `v_rest` row.
+    ///
+    /// Panics if `v_rest.len() != w_hat.len() - 1`.
+    pub fn new(w_hat: Vec<F>, v_rest: Vec<F>) -> Self {
+        assert_eq!(
+            v_rest.len() + 1,
+            w_hat.len(),
+            "v_rest must have length width-1 where width = w_hat.len()"
+        );
+        Self { w_hat, v_rest }
+    }
+
+    /// Width of the sparse matrix (= state width).
+    pub fn width(&self) -> usize {
+        self.w_hat.len()
+    }
+}
+
+/// Off-circuit reference for one neptune **partial** round with the
+/// **sparse-MDS fast path** (mirrors neptune's
+/// `product_mds_with_sparse_matrix`):
+///
+/// 1. SBOX-trick on `state[0]` only:
+///    `state[0] := state[0]^5 + post_ark`
+/// 2. Sparse-MDS multiplication:
+///    - `out[0] := sum_i(w_hat[i] * state[i])`
+///    - `out[j>0] := state[j] + v_rest[j-1] * state[0]`
+///
+/// Cost: `2·width - 1` mults vs `width²` for a plain-MDS partial
+/// round. At width 25: 49 vs 625 mults (~12.7× speedup).
+pub fn neptune_partial_round_sparse_native<F: PrimeField>(
+    state: &mut [F],
+    post_ark: F,
+    sparse: &NeptuneSparseMatrix<F>,
+) {
+    let width = state.len();
+    assert_eq!(
+        sparse.width(),
+        width,
+        "sparse matrix width must match state width"
+    );
+
+    // Step 1: SBOX + post-add on state[0] only.
+    let s = state[0];
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    state[0] = s * s4 + post_ark;
+
+    // Step 2: sparse-MDS multiplication.
+    let mut out = vec![F::zero(); width];
+
+    // out[0] = sum_i(w_hat[i] * state[i]) — dense first column.
+    for i in 0..width {
+        out[0] += sparse.w_hat[i] * state[i];
+    }
+
+    // out[j>0] = state[j] + v_rest[j-1] * state[0] — identity diagonal
+    // plus dense first row's contribution from state[0].
+    for j in 1..width {
+        out[j] = state[j] + sparse.v_rest[j - 1] * state[0];
+    }
+
+    state.copy_from_slice(&out);
+}
+
+/// In-circuit equivalent of [`neptune_partial_round_sparse_native`].
+///
+/// **R1CS constraint cost: 3 (same as the plain-MDS partial round).**
+/// arkworks folds every `FpVar::constant * FpVar` multiplication
+/// into a linear combination at zero constraint cost — only the
+/// SBOX (`s²`, `s⁴`, `s⁵`) actually consumes constraints. So both
+/// sparse and plain paths cost exactly the 3 SBOX mults when the
+/// MDS entries are config-time constants (our case). See the test
+/// `sparse_and_plain_partial_round_have_same_constraint_cost_under_constant_mds`.
+///
+/// **Why slice 3 exists, then.** The value isn't constraint savings
+/// in R1CS — it's STRUCTURAL byte-parity match with neptune's
+/// permutation shape. Neptune switches between plain MDS, pre-sparse
+/// matrix, and sparse matrices at different rounds; slice 4
+/// (`permute()` orchestration) needs to call into the same shape
+/// neptune uses to produce bit-identical output.
+pub fn enforce_neptune_partial_round_sparse<F: PrimeField>(
+    _cs: ConstraintSystemRef<F>,
+    state: &mut Vec<FpVar<F>>,
+    post_ark: F,
+    sparse: &NeptuneSparseMatrix<F>,
+) -> Result<(), SynthesisError> {
+    let width = state.len();
+    assert_eq!(
+        sparse.width(),
+        width,
+        "sparse matrix width must match state width"
+    );
+
+    // Step 1: SBOX-trick on state[0] only — identical to slice 2's
+    // plain partial-round Step 1.
+    let s = state[0].clone();
+    let s2 = &s * &s;
+    let s4 = &s2 * &s2;
+    let s5 = &s * &s4;
+    let post = FpVar::<F>::constant(post_ark);
+    state[0] = s5 + post;
+
+    // Step 2: sparse-MDS multiplication.
+    let mut out: Vec<FpVar<F>> = Vec::with_capacity(width);
+
+    // out[0] = sum_i(w_hat[i] * state[i]) — width mults.
+    let mut acc = FpVar::<F>::constant(F::zero());
+    for i in 0..width {
+        let m = FpVar::<F>::constant(sparse.w_hat[i]);
+        acc += &m * &state[i];
+    }
+    out.push(acc);
+
+    // out[j>0] = state[j] + v_rest[j-1] * state[0] — (width-1) mults.
+    for j in 1..width {
+        let m = FpVar::<F>::constant(sparse.v_rest[j - 1]);
+        let cell = &state[j] + &m * &state[0];
+        out.push(cell);
+    }
+
+    state.clear();
+    state.extend(out);
+
+    Ok(())
+}
+
 /// Convenience: assert two state vectors are bit-equal in the
 /// constraint system. Used by tests to pin gadget output against
 /// the native reference.
@@ -485,6 +638,169 @@ mod tests {
             );
         }
         assert!(cs.is_satisfied().expect("is_satisfied"));
+    }
+
+    // ── Slice 3: sparse-MDS partial round ────────────────────────
+
+    /// Hand-computed sparse-MDS native pin at width 3.
+    /// State [3, 5, 7], post_ark = 11.
+    ///   After SBOX on state[0]: [3^5+11, 5, 7] = [254, 5, 7]
+    /// Sparse matrix with w_hat = [2, 3, 5], v_rest = [7, 11]:
+    ///   out[0] = 2·254 + 3·5 + 5·7 = 508 + 15 + 35 = 558
+    ///   out[1] = 5 + 7·254 = 5 + 1778 = 1783
+    ///   out[2] = 7 + 11·254 = 7 + 2794 = 2801
+    #[test]
+    fn native_partial_round_sparse_hand_computed() {
+        let mut state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let sparse = NeptuneSparseMatrix::new(
+            vec![Bn254Fr::from(2u64), Bn254Fr::from(3u64), Bn254Fr::from(5u64)],
+            vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64)],
+        );
+        neptune_partial_round_sparse_native(&mut state, Bn254Fr::from(11u64), &sparse);
+        assert_eq!(state[0], Bn254Fr::from(558u64), "2·254 + 3·5 + 5·7 = 558");
+        assert_eq!(state[1], Bn254Fr::from(1783u64), "5 + 7·254 = 1783");
+        assert_eq!(state[2], Bn254Fr::from(2801u64), "7 + 11·254 = 2801");
+    }
+
+    /// **Bit-correctness pin** for sparse-MDS partial round at width 3.
+    #[test]
+    fn sparse_gadget_matches_native_on_width_3() {
+        let init_state = vec![Bn254Fr::from(3u64), Bn254Fr::from(5u64), Bn254Fr::from(7u64)];
+        let post_ark = Bn254Fr::from(11u64);
+        let sparse = NeptuneSparseMatrix::new(
+            vec![Bn254Fr::from(2u64), Bn254Fr::from(3u64), Bn254Fr::from(5u64)],
+            vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64)],
+        );
+
+        let mut native = init_state.clone();
+        neptune_partial_round_sparse_native(&mut native, post_ark, &sparse);
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_vars: Vec<FpVar<Bn254Fr>> = init_state
+            .iter()
+            .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_partial_round_sparse(cs.clone(), &mut state_vars, post_ark, &sparse)
+            .expect("synthesize");
+
+        for (i, (var, expected)) in state_vars.iter().zip(native.iter()).enumerate() {
+            let v = var.value().expect("witness value");
+            assert_eq!(
+                v, *expected,
+                "sparse gadget state[{i}] {v:?} != native {expected:?}"
+            );
+        }
+        assert!(cs.is_satisfied().expect("is_satisfied"));
+    }
+
+    /// Bit-correctness pin at chain Poseidon width 25 with PRG-filled
+    /// sparse matrix.
+    #[test]
+    fn sparse_gadget_matches_native_on_width_25() {
+        let next_fr = |k: u64| Bn254Fr::from(k.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+
+        let width = 25;
+        let init_state: Vec<Bn254Fr> = (0..width).map(|i| next_fr(i as u64 + 1)).collect();
+        let post_ark = next_fr(7777);
+        let sparse = NeptuneSparseMatrix::new(
+            (0..width).map(|i| next_fr(3000 + i as u64)).collect(),
+            (0..width - 1).map(|i| next_fr(4000 + i as u64)).collect(),
+        );
+
+        let mut native = init_state.clone();
+        neptune_partial_round_sparse_native(&mut native, post_ark, &sparse);
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_vars: Vec<FpVar<Bn254Fr>> = init_state
+            .iter()
+            .map(|s| FpVar::new_witness(cs.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_partial_round_sparse(cs.clone(), &mut state_vars, post_ark, &sparse)
+            .expect("synthesize");
+
+        for (i, (var, expected)) in state_vars.iter().zip(native.iter()).enumerate() {
+            let v = var.value().expect("witness value");
+            assert_eq!(
+                v, *expected,
+                "sparse gadget state[{i}] != native at width 25"
+            );
+        }
+        assert!(cs.is_satisfied().expect("is_satisfied"));
+    }
+
+    /// **Constraint-count finding (post-empirical).** With a CONSTANT
+    /// MDS matrix, arkworks folds every `FpVar::constant * FpVar`
+    /// multiplication into a linear combination at ZERO constraint
+    /// cost — only the SBOX (`s²`, `s⁴`, `s⁵`) actually consumes
+    /// constraints.
+    ///
+    /// So sparse-vs-plain at width 25 both produce 3 constraints
+    /// (the 3 SBOX mults). The slice-3 sparse path's value is NOT
+    /// constraint-count savings — it's STRUCTURAL byte-parity match
+    /// with neptune's permutation shape (needed for slice 4
+    /// `permute()` to call into the right matrix per round).
+    ///
+    /// This pin documents the empirical equality so future readers
+    /// don't expect a constraint-count savings that doesn't exist
+    /// in this R1CS setting. (It WOULD show up if the MDS was a
+    /// witness, e.g. dynamic MDS, but ours is fixed at config time.)
+    #[test]
+    fn sparse_and_plain_partial_round_have_same_constraint_cost_under_constant_mds() {
+        let next_fr = |k: u64| Bn254Fr::from(k.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let width = 25;
+        let init_state: Vec<Bn254Fr> = (0..width).map(|i| next_fr(i as u64 + 1)).collect();
+        let post_ark = next_fr(99);
+
+        // Sparse path.
+        let sparse = NeptuneSparseMatrix::new(
+            (0..width).map(|i| next_fr(3000 + i as u64)).collect(),
+            (0..width - 1).map(|i| next_fr(4000 + i as u64)).collect(),
+        );
+        let cs_sparse = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_sparse: Vec<FpVar<Bn254Fr>> = init_state
+            .iter()
+            .map(|s| FpVar::new_witness(cs_sparse.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_partial_round_sparse(
+            cs_sparse.clone(),
+            &mut state_sparse,
+            post_ark,
+            &sparse,
+        )
+        .expect("sparse synth");
+        let sparse_constraints = cs_sparse.num_constraints();
+
+        // Plain path (slice 2).
+        let plain_mds: Vec<Vec<Bn254Fr>> = (0..width)
+            .map(|i| {
+                (0..width)
+                    .map(|j| next_fr(5000 + (i * width + j) as u64))
+                    .collect()
+            })
+            .collect();
+        let cs_plain = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mut state_plain: Vec<FpVar<Bn254Fr>> = init_state
+            .iter()
+            .map(|s| FpVar::new_witness(cs_plain.clone(), || Ok(*s)).expect("alloc"))
+            .collect();
+        enforce_neptune_partial_round(cs_plain.clone(), &mut state_plain, post_ark, &plain_mds)
+            .expect("plain synth");
+        let plain_constraints = cs_plain.num_constraints();
+
+        eprintln!("sparse: {sparse_constraints} constraints");
+        eprintln!("plain:  {plain_constraints} constraints");
+
+        // Empirical observation: both are exactly 3 (the SBOX mults).
+        // arkworks folds constant×FpVar into linear combinations
+        // at no constraint cost. Pin the equality.
+        assert_eq!(
+            sparse_constraints, plain_constraints,
+            "with constant MDS, sparse and plain produce identical constraint count"
+        );
+        assert_eq!(
+            sparse_constraints, 3,
+            "both paths cost exactly the 3 SBOX mults (s², s⁴, s⁵) when MDS is constant"
+        );
     }
 
     /// `enforce_state_eq` accepts identical state vectors.
