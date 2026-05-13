@@ -6,6 +6,66 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-13 (full day) — AUDIT_2026_05_13 closure arc + Executor-Parity arc
+
+**Focus:** Ran a fresh 5-agent end-to-end audit (#220), then drove all 5 CRITICAL + 13 HIGH findings to at least Stage-A closure. Plus built the executor-parity harness as the recurrence-proof infrastructure for the audit's Theme B bug class.
+
+**PRs shipped:** 23 (#220 → #243), all stacked off `origin/main` or each other.
+
+**Audit closure tally (post-arc):**
+
+| Status | Count | Findings |
+|---|---|---|
+| ✅ Fully closed | 15 | C1, C3, C4, H1, H2, H3, H4, H5, H6, H8, H9, H10, H11, H12, H13 |
+| 🟡 Stage A surgical close (Stage B = architectural follow-up) | 3 | C2 (NMT — Stage B = proof envelope extension + Merkle reconstruction), C5 (Shielded pool — Stage B = `Compartment::Shielded` kernel variant), H7 (DA seed — Stage B = per-validator VRF in `DAAttestation`) |
+| ⬜ Open | 0 | — |
+
+First time in audit history every CRITICAL + HIGH has shipped code.
+
+**Audit PRs by deliverable:**
+- #220 — `AUDIT_2026_05_13.md` (5-agent fan-out result)
+- #221 — C1 Energy-Verkle exclusion bypass (literal `|| hit_compressed` short-circuit at `energy_verkle.rs:733`)
+- #222, #224, #225, #226, #227, #228, #242 — **Executor-Parity arc**: parity harness foundation → ValidatorStake (C3) → delegation trio (C4 3/7) → Governance + MultiSig (C4 5/7) → UpgradeContract shared-impl (C4 6/7) → UserOp envelope (C4 7/7 envelope) → UserOp inner dispatch (C4 fully closed). Theme B structurally fixed.
+- #229 — H6 BlockSync `from_height` overflow → 1-packet OOM-DoS
+- #230 — H8 `verify_ghost_bridge_proof` fail-OPEN → fail-CLOSED
+- #231 — C2 Stage A NMT forgery shape gates
+- #232 — H10 `economics::compute_energy` Layer 0 violation (`pub` → `pub(crate)` + `#[deprecated]` + reroute through `energy_at_epoch`)
+- #233 — H5 DA cert real-validator-set reconciliation
+- #234 — H1 Energy-Verkle compress drop on resurrection insert
+- #235 — H7 Stage A DA sample seed bound to data_root
+- #236 — H4 MMR nullifier + node domain tags
+- #237 — H2 Verkle internal-vs-leaf domain tags
+- #238 — H3 Energy-Verkle distinct generator seed prefix
+- #239 — H11 antichain finalization → stake-weighted quorum
+- #240 — H13 dispute observations stripped from `validate_block_refunds`
+- #241 — H12 `block.parents` validation gate + `block_hash` extension
+- #243 — C5 Stage A shielded-pool delta as legitimate-redirect
+
+**Decisions made:**
+- For UpgradeContract (#227), introduced the **shared-impl pattern**: extract function body to `pub(crate) fn execute_upgrade_contract_impl(...)` taking the relevant `&mut` state as args. Both executors call the same function — copies cannot drift. Applied again for UserOp envelope (#228). This is the structurally-correct shape for cross-executor sharing and is the recommended pattern for future tx types.
+- For staged closures (C2, C5, H7), shipped the smallest surgical Stage-A fix that closes the audit's documented exploit, while explicitly documenting Stage B as the structural follow-up. Each Stage B is a real schema/wire-format change worthy of its own design call.
+- Hard-fork-impactful crypto fixes (H1, H2, H3, H4) all coordinated under "every Verkle/MMR root post-fix differs from pre-fix" with explicit cutover notes for the genesis ceremony.
+
+**Empirical results:**
+- 22 audit PRs all open and stacked (none merged yet — operator gates CI on GitHub Actions billing fix).
+- The executor-parity harness (`crates/evaporchain-execution/tests/parity_harness.rs`, 1204 lines) now has fixtures for: Transfer, ValidatorStake (4 variants), delegation trio (7 variants), Governance + MultiSig (8 variants), UpgradeContract (2 variants), UserOp envelope (2 variants), UserOp inner Transfer (2 variants). Comparator covers accounts / stakes / delegations / proposals / disposition.
+
+**What's next:**
+- Stage B follow-ups (NMT proof envelope, `Compartment::Shielded`, per-validator VRF) — each is its own design call.
+- Phases 4-6 of the executor-parity arc — Privacy variants, Contract + tail variants, Adversarial × flag-flip matrix (recurrence-proof).
+- Operator: unblock CI (GitHub Actions billing) so the 23 audit PRs can run their test suites on Mini cluster.
+
+**Blockers / open questions:**
+- 23 audit PRs queued OPEN. Merge order matters for any with shared files (the parity-arc PRs are stacked; audit PRs are mostly disjoint files).
+- Stage B work needs operator design calls before code (kernel schema, wire-format extensions).
+
+**Cross-references:**
+- `AUDIT_2026_05_13.md` — original 5-agent audit findings (this session's input)
+- `docs/plans/EXECUTOR_PARITY_PLAN.md` — 6-phase arc plan, ~half complete (Phases 1-3 done, 4-6 pending)
+- PR #243 commit body — full audit progress table
+
+---
+
 ## 2026-05-13 (evening) — T0.10 Ph2.2 Section 2 sponge framing CLOSED
 
 **Focus:** Close the "Section 2 sponge framing (OPEN, BESPOKE)" gap in evaporchain-nova-bridge — make enforce_neptune_sponge_primary byte-correct vs neptune's hash_optimized_static.
