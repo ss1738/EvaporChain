@@ -22800,3 +22800,217 @@ mod t1_20_batch25 {
         let _ = actions;
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch26 {
+    use super::*;
+    use evaporchain_mev_detect::MevObservation;
+
+    fn make_vs1() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs
+    }
+
+    fn make_vs4() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        vs
+    }
+
+    fn make_tc1() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs1())
+    }
+
+    fn make_tc4() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs4())
+    }
+
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: 0, parent_hash: [0u8; 32],
+            state_root: [0u8; 32], transactions: vec![],
+            producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    fn dummy_mev_obs(block_height: u64, idx: usize, refund: u64) -> MevObservation {
+        MevObservation {
+            block_height,
+            attacker_pre_idx: idx,
+            victim_idx: idx + 1,
+            attacker_post_idx: idx + 2,
+            attacker: [0xAAu8; 32],
+            victim: [0xBBu8; 32],
+            target: [0xCCu8; 32],
+            work_estimate: 500,
+            confidence_score_ppm: 1_000_000,
+            refund_amount: Some(refund),
+        }
+    }
+
+    // ── Test 1: submit_reveal pushes to pending_reveals (line 3499) ──
+    #[test]
+    fn t26_submit_reveal_pushes_to_pending_reveals() {
+        let mut tc = make_tc1();
+        assert_eq!(tc.mempool_stats().2, 0, "no pending reveals initially");
+        tc.submit_reveal([0xAA; 32], [0xBB; 32]);
+        assert_eq!(tc.mempool_stats().2, 1, "one reveal pending after submit");
+    }
+
+    // ── Test 2: multiple submit_reveal calls accumulate independently ──
+    #[test]
+    fn t26_submit_reveal_multiple_accumulates() {
+        let mut tc = make_tc1();
+        tc.submit_reveal([0x01; 32], [0x11; 32]);
+        tc.submit_reveal([0x02; 32], [0x22; 32]);
+        tc.submit_reveal([0x03; 32], [0x33; 32]);
+        assert_eq!(tc.mempool_stats().2, 3, "three reveals accumulated");
+        assert_eq!(tc.pending_reveals.len(), 3);
+    }
+
+    // ── Test 3: MEV counter increments in enforce mode with grace=0 (line 5100) ──
+    // Batch-18 had grace=5 (default), so refund was never due at height=1.
+    // Setting grace=0 makes the height-0 observation immediately due at height=1.
+    #[test]
+    fn t26_mev_counter_incremented_enforce_zero_grace() {
+        let mut tc = make_tc1();
+        tc.governance_params.insert(
+            "crooks_mev_settlement_mode".to_string(), "enforce".to_string(),
+        );
+        tc.governance_params.insert(
+            "crooks_mev_grace_period_blocks".to_string(), "0".to_string(),
+        );
+        tc.mev_observations.push_back(dummy_mev_obs(0, 0, 100));
+        tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block: make_block(1), proposer_id: 1,
+        });
+        assert_eq!(
+            tc.mev_missing_refund_violations.get(&1).copied().unwrap_or(0),
+            1,
+            "MissingRefund counter must reach 1 after first rejected proposal"
+        );
+    }
+
+    // ── Test 4: MEV counter accumulates across repeated rejected proposals ──
+    #[test]
+    fn t26_mev_counter_increments_on_each_proposal() {
+        let mut tc = make_tc1();
+        tc.governance_params.insert(
+            "crooks_mev_settlement_mode".to_string(), "enforce".to_string(),
+        );
+        tc.governance_params.insert(
+            "crooks_mev_grace_period_blocks".to_string(), "0".to_string(),
+        );
+        tc.mev_observations.push_back(dummy_mev_obs(0, 0, 50));
+        for _ in 0..5 {
+            tc.on_message(ConsensusMessage::Proposal {
+                height: 1, round: 0, block: make_block(1), proposer_id: 1,
+            });
+        }
+        assert_eq!(
+            tc.mev_missing_refund_violations.get(&1).copied().unwrap_or(0),
+            5,
+            "counter must accumulate across 5 rejected proposals"
+        );
+    }
+
+    // ── Test 5: precommit quorum on foreign hash emits RequestSync (lines 5422-5464) ──
+    // 4 validators (1=self, 2, 3, 4) with 1000 stake each.
+    // Quorum threshold = ceil(2*4000/3) = 2667; validators 2+3+4 = 3000 >= 2667.
+    // Local proposed_block has BLAKE3 hash != QUORUM_HASH → mismatch path fires.
+    #[test]
+    fn t26_precommit_quorum_hash_mismatch_emits_request_sync() {
+        let mut tc = make_tc4();
+        tc.round_state.proposed_block = Some(make_block(1));
+        let quorum_hash: [u8; 32] = [0xDE; 32];
+        tc.round_state.precommits.insert(2, Some(quorum_hash));
+        tc.round_state.precommits.insert(3, Some(quorum_hash));
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1, round: 0,
+            block_hash: Some(quorum_hash),
+            validator_id: 4,
+            bls_signature: None,
+        });
+        assert!(
+            actions.iter().any(|a| matches!(a, ConsensusAction::RequestSync(..))),
+            "precommit quorum on foreign hash must emit RequestSync (lines 5422-5464)"
+        );
+        assert!(
+            tc.round_state.proposed_block.is_none(),
+            "proposed_block must be cleared after hash mismatch"
+        );
+    }
+
+    // ── Test 6: hash mismatch emits exactly one RequestSync ──
+    #[test]
+    fn t26_precommit_quorum_hash_mismatch_single_request_sync() {
+        let mut tc = make_tc4();
+        tc.round_state.proposed_block = Some(make_block(1));
+        let quorum_hash: [u8; 32] = [0xEF; 32];
+        tc.round_state.precommits.insert(2, Some(quorum_hash));
+        tc.round_state.precommits.insert(3, Some(quorum_hash));
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1, round: 0,
+            block_hash: Some(quorum_hash),
+            validator_id: 4,
+            bls_signature: None,
+        });
+        let sync_count = actions
+            .iter()
+            .filter(|a| matches!(a, ConsensusAction::RequestSync(..)))
+            .count();
+        assert_eq!(sync_count, 1, "exactly one RequestSync on hash mismatch");
+    }
+
+    // ── Test 7: no proposed_block → quorum hash mismatch check is skipped ──
+    #[test]
+    fn t26_precommit_quorum_no_proposed_block_skips_mismatch() {
+        let mut tc = make_tc4();
+        // proposed_block intentionally absent (None)
+        let quorum_hash: [u8; 32] = [0xDE; 32];
+        tc.round_state.precommits.insert(2, Some(quorum_hash));
+        tc.round_state.precommits.insert(3, Some(quorum_hash));
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1, round: 0,
+            block_hash: Some(quorum_hash),
+            validator_id: 4,
+            bls_signature: None,
+        });
+        assert!(
+            !actions.iter().any(|a| matches!(a, ConsensusAction::RequestSync(..))),
+            "no RequestSync when proposed_block is absent (if-let at line 5422 fails)"
+        );
+    }
+
+    // ── Test 8: observe mode never increments MEV counter ──
+    #[test]
+    fn t26_mev_counter_no_increment_in_observe_mode() {
+        let mut tc = make_tc1();
+        // Default mode is "observe" → validate_block_refunds always returns Ok
+        tc.governance_params.insert(
+            "crooks_mev_grace_period_blocks".to_string(), "0".to_string(),
+        );
+        tc.mev_observations.push_back(dummy_mev_obs(0, 0, 100));
+        tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block: make_block(1), proposer_id: 1,
+        });
+        assert_eq!(
+            tc.mev_missing_refund_violations.get(&1).copied().unwrap_or(0),
+            0,
+            "observe mode must not increment violation counter"
+        );
+    }
+}
