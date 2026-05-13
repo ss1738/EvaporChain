@@ -2146,17 +2146,19 @@ impl ExecutionEngine for ParallelExecutor {
                         block.epoch,
                     )
                 }
-                // ─── AUDIT_2026_05_13 C4 closure: UserOp (envelope) ────────
+                // ─── AUDIT_2026_05_13 C4 closure: UserOp (envelope + inner) ─
                 // Envelope-level parity via shared
-                // `execute_user_op_envelope_impl`. Empty call_data
-                // (gas-only sponsorship) is fully parity-clean. Non-empty
-                // call_data is rejected with a clear deferred error
-                // until Phase 3e ports `execute_inner_transfer` /
-                // `execute_call_script` / `execute_call_contract` as
-                // shared impls. Pre-fix every UserOp errored at the
-                // partition arm; now sponsorship works and only the
-                // inner-dispatch case is gated.
+                // `execute_user_op_envelope_impl`. Inner-tx dispatch
+                // (call_data → Transfer / CallScript / CallContract)
+                // mirrors `SimpleExecutor::execute_user_op`'s Day 1C
+                // logic: same JSON decode, same no-impersonation rule,
+                // same whitelist. ContractEngine / ScriptEngine calls
+                // hit ParallelExecutor's local engines (mirror state
+                // mutation that the post-block merge_overlay would
+                // miss — UserOp runs in the serial phase). Phase 3e
+                // closes audit C4 fully (7/7).
                 Transaction::UserOp(uop) => {
+                    use evaporchain_types::Transaction as Tx;
                     match crate::execute_user_op_envelope_impl(
                         &self.chain_id,
                         db,
@@ -2164,17 +2166,150 @@ impl ExecutionEngine for ParallelExecutor {
                         block.epoch,
                     ) {
                         Err(e) => Err(e),
+                        Ok(()) if uop.call_data.is_empty() => Ok(()),
                         Ok(()) => {
-                            if uop.call_data.is_empty() {
-                                Ok(())
-                            } else {
-                                Err(ExecutionError::ContractError(
-                                    "UserOp inner-tx dispatch not yet wired in \
-                                     ParallelExecutor serial path (envelope ran; \
-                                     sender + paymaster mutations applied). \
-                                     See Phase 3e of executor-parity arc."
+                            // Decode the inner Transaction from JSON.
+                            let inner: Tx = match serde_json::from_slice(&uop.call_data) {
+                                Ok(t) => t,
+                                Err(e) => {
+                                    // Envelope mutations are kept (Ethereum
+                                    // semantics: failed-but-attempted txs
+                                    // consume the nonce slot).
+                                    return Err(ExecutionError::ContractError(format!(
+                                        "UserOp call_data: failed to decode inner Transaction: {e}"
+                                    )));
+                                }
+                            };
+                            match &inner {
+                                Tx::Transfer(t) => {
+                                    // No-impersonation: inner.from must
+                                    // equal outer UserOp.sender.
+                                    if t.from != uop.sender {
+                                        return Err(ExecutionError::ContractError(format!(
+                                            "UserOp inner Transfer: from-address {} does not match outer UserOp sender {} (no-impersonation rule)",
+                                            hex::encode(t.from),
+                                            hex::encode(uop.sender)
+                                        )));
+                                    }
+                                    if t.from == t.to {
+                                        return Err(ExecutionError::SelfTransfer);
+                                    }
+                                    if t.amount == 0 {
+                                        return Err(ExecutionError::ZeroAmount);
+                                    }
+                                    // Vesting-aware balance check
+                                    // (mirrors SimpleExecutor's
+                                    // execute_inner_transfer at
+                                    // lib.rs:2589-2630).
+                                    let available = db
+                                        .get_or_create_account(&t.from)
+                                        .transferable_balance(block.epoch);
+                                    if available < t.amount {
+                                        return Err(ExecutionError::InsufficientBalance {
+                                            account: hex::encode(t.from),
+                                            available,
+                                            required: t.amount,
+                                        });
+                                    }
+                                    let sender = db.get_or_create_account(&t.from);
+                                    sender.balance -= t.amount;
+                                    // No nonce bump — outer envelope consumed it.
+                                    sender.last_touched_epoch = block.epoch;
+                                    let receiver = db.get_or_create_account(&t.to);
+                                    receiver.balance =
+                                        receiver.balance.saturating_add(t.amount);
+                                    receiver.last_touched_epoch = block.epoch;
+                                    Ok(())
+                                }
+                                Tx::CallScript(t) => {
+                                    if t.caller != uop.sender {
+                                        return Err(ExecutionError::ContractError(format!(
+                                            "UserOp inner CallScript: caller {} does not match outer UserOp sender {} (no-impersonation rule)",
+                                            hex::encode(t.caller),
+                                            hex::encode(uop.sender)
+                                        )));
+                                    }
+                                    if serial_call_depth >= crate::MAX_CALL_DEPTH {
+                                        return Err(ExecutionError::CallDepthExceeded(
+                                            crate::MAX_CALL_DEPTH,
+                                        ));
+                                    }
+                                    serial_call_depth += 1;
+                                    let args: Vec<evaporchain_script::Value> =
+                                        if t.args.is_empty() || t.args == "[]" {
+                                            vec![]
+                                        } else {
+                                            serde_json::from_str(&t.args).unwrap_or_default()
+                                        };
+                                    let r = self
+                                        .script_engine
+                                        .call(t.contract_id, &t.method, args, t.caller, t.epoch)
+                                        .map(|_| ())
+                                        .map_err(|e| {
+                                            ExecutionError::ScriptError(e.to_string())
+                                        });
+                                    serial_call_depth = serial_call_depth.saturating_sub(1);
+                                    r
+                                }
+                                Tx::CallContract(t) => {
+                                    if t.caller != uop.sender {
+                                        return Err(ExecutionError::ContractError(format!(
+                                            "UserOp inner CallContract: caller {} does not match outer UserOp sender {} (no-impersonation rule)",
+                                            hex::encode(t.caller),
+                                            hex::encode(uop.sender)
+                                        )));
+                                    }
+                                    if serial_call_depth >= crate::MAX_CALL_DEPTH {
+                                        return Err(ExecutionError::CallDepthExceeded(
+                                            crate::MAX_CALL_DEPTH,
+                                        ));
+                                    }
+                                    serial_call_depth += 1;
+                                    let args: serde_json::Value = match serde_json::from_str(
+                                        &t.args,
+                                    ) {
+                                        Ok(a) => a,
+                                        Err(e) => {
+                                            serial_call_depth =
+                                                serial_call_depth.saturating_sub(1);
+                                            return Err(ExecutionError::ContractError(format!(
+                                                "invalid args JSON: {e}"
+                                            )));
+                                        }
+                                    };
+                                    let r = self
+                                        .contract_engine
+                                        .call(
+                                            t.contract_id,
+                                            &t.method,
+                                            &args,
+                                            &t.caller,
+                                            t.epoch,
+                                        )
+                                        .map(|_| ())
+                                        .map_err(|e| {
+                                            ExecutionError::ContractError(e.to_string())
+                                        });
+                                    serial_call_depth = serial_call_depth.saturating_sub(1);
+                                    r
+                                }
+                                Tx::UserOp(_)
+                                | Tx::Refund(_)
+                                | Tx::Blob(_)
+                                | Tx::MultiSig(_)
+                                | Tx::Shield(_)
+                                | Tx::Unshield(_)
+                                | Tx::PrivateTransfer(_)
+                                | Tx::Deferred(_) => {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "UserOp call_data: inner variant not sponsorable (got {:?})",
+                                        std::mem::discriminant(&inner)
+                                    )))
+                                }
+                                _ => Err(ExecutionError::ContractError(
+                                    "UserOp call_data: this inner variant is not whitelisted in V1. Whitelisted: Transfer, CallScript, CallContract."
                                         .into(),
-                                ))
+                                )),
                             }
                         }
                     }
@@ -5206,14 +5341,13 @@ mod tests {
     }
 
     #[test]
-    fn t1_20_userop_non_empty_call_data_fails_serial_path() {
-        // Documented partial closure: non-empty call_data is rejected
-        // with a clear "inner-tx dispatch not yet wired" message instead
-        // of the pre-fix generic "executes in serial phase". Envelope
-        // mutations (nonce bump) still apply identically — Ethereum
-        // semantics: failed-but-attempted tx consumes the nonce slot.
+    fn t1_20_userop_with_inner_transfer_executes() {
+        // Phase 3e closure: non-empty call_data with an inner Transfer
+        // now executes end-to-end on the parallel executor's serial
+        // path. The pre-3e test asserted r.txs_failed == 1; this is
+        // the inversion — both envelope AND inner-tx must commit.
         let mut db = InMemoryStateDB::new();
-        fund_account(&mut db, 62, 1_000);
+        fund_account(&mut db, 62, 5_000);
         let inner_payload =
             serde_json::to_vec(&Transaction::Transfer(evaporchain_types::TransferTx {
                 from: addr(62),
@@ -5244,7 +5378,61 @@ mod tests {
         );
         let mut ex = ParallelExecutor::new_for_test(100);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "non-empty call_data deferred to Phase 3e");
+        assert_eq!(r.txs_executed, 1, "envelope + inner Transfer must execute");
+        assert_eq!(r.txs_failed, 0);
+        // Envelope bumped sender's nonce; inner Transfer debited 100
+        // from sender and credited 100 to receiver.
+        assert_eq!(db.get_account(&addr(62)).unwrap().nonce, 1);
+        assert!(db.get_account(&addr(62)).unwrap().balance < 5_000);
+        assert_eq!(db.get_account(&addr(63)).unwrap().balance, 100);
+    }
+
+    #[test]
+    fn t1_20_userop_inner_transfer_no_impersonation_rejected() {
+        // The no-impersonation rule: inner Transfer's `from` must
+        // equal outer UserOp's `sender`. Sponsorship cannot debit
+        // someone else's account.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 62, 5_000);
+        fund_account(&mut db, 99, 5_000); // a third party — sponsorship cannot drain.
+        let impersonation_inner = serde_json::to_vec(&Transaction::Transfer(
+            evaporchain_types::TransferTx {
+                from: addr(99), // NOT outer UserOp sender
+                to: addr(63),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            },
+        ))
+        .unwrap();
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::UserOp(evaporchain_types::UserOpTx {
+                sender: addr(62),
+                nonce: 0,
+                call_data: impersonation_inner,
+                call_gas_limit: 100_000,
+                paymaster: None,
+                paymaster_nonce: None,
+                paymaster_data: None,
+                paymaster_signature: None,
+                paymaster_public_key: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "impersonation must be rejected");
+        // Envelope-side nonce bump still happens (Ethereum semantics).
+        assert_eq!(db.get_account(&addr(62)).unwrap().nonce, 1);
+        // Third party untouched.
+        assert_eq!(db.get_account(&addr(99)).unwrap().balance, 5_000);
+        // Receiver got nothing.
+        assert!(db.get_account(&addr(63)).is_none());
     }
 
     // AUDIT_2026_05_13 C4 (6/7) closure: UpgradeContract previously

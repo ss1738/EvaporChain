@@ -1123,3 +1123,82 @@ fn parity_userop_nonce_mismatch() {
     };
     assert_parity(&fixture);
 }
+
+// ─── Phase 3e: UserOp with inner Transfer (closes audit C4 fully) ─────────
+
+#[test]
+fn parity_userop_with_inner_transfer() {
+    // Phase 3d only handled empty call_data (envelope-only). Phase 3e
+    // ports the inner-tx dispatch, so a UserOp wrapping an inner
+    // Transfer now executes end-to-end on both executors and produces
+    // byte-identical post-state.
+    let inner_payload = serde_json::to_vec(&Transaction::Transfer(TransferTx {
+        from: addr(62),
+        to: addr(63),
+        amount: 200,
+        nonce: 0,
+        signature: None,
+        public_key: None,
+        mev_refund_eligible: None,
+    }))
+    .unwrap();
+    let fixture = ParityFixture {
+        name: "userop-with-inner-transfer",
+        seed: |db| fund(db, 62, 5_000),
+        transaction: Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(62),
+            nonce: 0,
+            call_data: inner_payload,
+            call_gas_limit: 100_000,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_userop_inner_transfer_impersonation_rejected() {
+    // No-impersonation: inner.from must equal outer UserOp.sender.
+    // Both executors must reject identically with ContractError.
+    let bad_inner = serde_json::to_vec(&Transaction::Transfer(TransferTx {
+        from: addr(99), // not the outer sender
+        to: addr(63),
+        amount: 100,
+        nonce: 0,
+        signature: None,
+        public_key: None,
+        mev_refund_eligible: None,
+    }))
+    .unwrap();
+    let fixture = ParityFixture {
+        name: "userop-inner-transfer-impersonation",
+        seed: |db| {
+            fund(db, 62, 5_000);
+            fund(db, 99, 5_000);
+        },
+        transaction: Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(62),
+            nonce: 0,
+            call_data: bad_inner,
+            call_gas_limit: 100_000,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
