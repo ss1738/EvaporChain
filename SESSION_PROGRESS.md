@@ -6,6 +6,37 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-13 (evening) — T0.10 Ph2.2 Section 2 sponge framing CLOSED
+
+**Focus:** Close the "Section 2 sponge framing (OPEN, BESPOKE)" gap in evaporchain-nova-bridge — make enforce_neptune_sponge_primary byte-correct vs neptune's hash_optimized_static.
+**Commits shipped:** 1 (3e2ca359)
+**Deliverables:**
+- `neptune_permutation_gadget.rs`: `params_from_dump_path` now stores `pre_sparse_mds = psm^T`; neptune's `product_mds_with_matrix` computes `matrix^T * elements` (column-sum), our `apply_plain_mds` computes `matrix * state` — storing the transpose makes them equal.
+- `neptune_sponge.rs`: `sponge_attempt_1_matches_neptune_hash_primary_on_pinned_42_7_99` flipped from `assert_ne!` to `assert_eq!` — both outputs = `[131, 47, 215, 132, ...]`.
+- `section2_gadget.rs`: Added `enforce_neptune_sponge_primary` (CRC permutation + IOPattern tag init, mirrors `our_neptune_hash_primary_native` exactly in R1CS form). Updated `fully_aligned_gadget_byte_parity_with_neptune` to use it with `assert_eq!` + 250-bit mask. Added `neptune_sponge_gadget_pinned_42_7_99`.
+- `lib.rs`: Phase 2.2 Section 2 sponge framing marked DONE; `SCAFFOLD_VERSION` bumped to `"phase-2.6-operational"`.
+- `MAINNET_READINESS.md`: T0.10 Phase 2.2-sponge-framing checkboxed.
+
+**Empirical results:**
+- 119 lib tests pass, 0 fail (92s on Mini 1)
+- `fully_aligned_gadget_byte_parity_with_neptune` (ignored): PASS — assert_eq!
+- `neptune_sponge_gadget_pinned_42_7_99` (ignored): PASS — both [131, 47, 215, 132, ...] after 250-bit mask
+
+**Decisions made:**
+- Pre_sparse_mds is NOT symmetric; must transpose at load time rather than fix the multiply.
+- In-circuit gadget returns untruncated Fr; tests apply `& 0x03` on byte 31 (250-bit mask) before comparison — avoids expensive bit-decomposition constraints.
+- Kept `enforce_poseidon_primary` + `fully_aligned_poseidon_config` in place (still used by shape tests and `placeholder_gadget_diverges_from_neptune_oracle`).
+
+**What's next:**
+1. **T0.10 Phase 2.2 Section 3 — RelaxedR1CS satisfiability** (only remaining BESPOKE; 3-5 day research item). Need to wire `enforce_neptune_sponge_primary` into `NovaVerifierCircuit::ConstraintSynthesizer` impl and enforce the actual cross-instance commitments check.
+2. T0.10 Phase 2.5 — VerkleProofVerifier.sol Solidity smoke test (forge test).
+
+**Blockers / open questions:**
+- None blocking. RelaxedR1CS is a research problem, not a technical blocker.
+
+**Cross-references:** MAINNET_READINESS.md T0.10; commit 3e2ca359; neptune_permutation_gadget.rs:psm^T transpose; neptune_sponge.rs:sponge_attempt_1 assert_eq!
+
+
 ## 2026-05-13 (evening) — commit flush + T0.10 nova-bridge Phases 2.1-2.4 + workspace coverage rerun
 
 **Focus:** Commit all uncommitted prior-session work (nova-bridge T0.10, DA/network/paymaster/substrate/crypto T1.20 coverage tests), push to GitHub, relaunch workspace coverage.
