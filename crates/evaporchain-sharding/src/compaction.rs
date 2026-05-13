@@ -240,4 +240,123 @@ mod tests {
         assert_eq!(neighbor_shard(ShardId(2)), ShardId(3));
         assert_eq!(neighbor_shard(ShardId(3)), ShardId(2));
     }
+
+    /// T1.20 — `is_dead` requires BOTH `live_objects == 0` AND
+    /// `total_energy == 0` (line 29). The existing `test_dead_shard_detection`
+    /// only covers the both-zero positive case. This pins the AND
+    /// semantics by exercising each leaky-half case: a shard with no
+    /// live objects but residual energy is NOT dead (energy may still
+    /// be redeemable via on_evaporate hooks); a shard with energy=0
+    /// but a live object is NOT dead either (the object is in the
+    /// grace window).
+    #[test]
+    fn t1_20_is_dead_requires_both_zero() {
+        let energy_but_no_live = ShardHealth {
+            shard_id: ShardId(0),
+            total_objects: 10,
+            live_objects: 0,
+            total_energy: 500,
+            avg_half_life: 100,
+        };
+        assert!(
+            !energy_but_no_live.is_dead(),
+            "residual energy must keep the shard non-dead"
+        );
+        let live_but_no_energy = ShardHealth {
+            shard_id: ShardId(0),
+            total_objects: 10,
+            live_objects: 1,
+            total_energy: 0,
+            avg_half_life: 100,
+        };
+        assert!(
+            !live_but_no_energy.is_dead(),
+            "a live object (grace-window) keeps the shard non-dead"
+        );
+    }
+
+    /// T1.20 — `is_cold` uses `<=` so exact-threshold energy is cold
+    /// (line 33). Boundary pin.
+    #[test]
+    fn t1_20_is_cold_at_exact_threshold() {
+        let h = make_health(0, 5, 100);
+        assert!(h.is_cold(100), "exact threshold must be cold (<= boundary)");
+        // One unit over → not cold.
+        let h_over = make_health(0, 5, 101);
+        assert!(!h_over.is_cold(100), "one unit over must not be cold");
+    }
+
+    /// T1.20 — `find_candidates` in a mixed-health batch must classify
+    /// each shard independently and only emit candidates for dead /
+    /// cold-with-live cases. Tests the loop body's branching across
+    /// all three states (dead → AllEvaporated, cold-with-live →
+    /// BelowEnergyThreshold, healthy → nothing) in a single call.
+    #[test]
+    fn t1_20_find_candidates_mixed_health_states() {
+        let healths = vec![
+            make_health(0, 100, 50_000), // healthy → no candidate
+            ShardHealth {
+                shard_id: ShardId(1),
+                total_objects: 50,
+                live_objects: 0,
+                total_energy: 0,
+                avg_half_life: 0,
+            }, // dead → AllEvaporated
+            make_health(2, 3, 50), // cold + live → BelowEnergyThreshold
+        ];
+        let candidates = find_candidates(&healths, 100);
+        assert_eq!(candidates.len(), 2);
+        // Order-sensitive: iteration over `healths`, so shard 1 (dead)
+        // is emitted before shard 2 (cold).
+        assert_eq!(candidates[0].shard, ShardId(1));
+        assert!(matches!(
+            candidates[0].reason,
+            CompactionReason::AllEvaporated
+        ));
+        assert_eq!(candidates[0].merge_into, ShardId(0)); // XOR neighbor
+        assert_eq!(candidates[1].shard, ShardId(2));
+        match candidates[1].reason {
+            CompactionReason::BelowEnergyThreshold {
+                total_energy,
+                threshold,
+            } => {
+                assert_eq!(total_energy, 50);
+                assert_eq!(threshold, 100);
+            }
+            ref other => panic!("expected BelowEnergyThreshold, got {other:?}"),
+        }
+    }
+
+    /// T1.20 — `compute_hash` must commit to every field on the
+    /// proof. The existing `test_compact_proof_hash_deterministic`
+    /// only checks determinism for one input; this varies each field
+    /// independently so a future refactor that dropped one would
+    /// silently collapse distinct proofs.
+    #[test]
+    fn t1_20_compact_proof_hash_distinguishes_each_field() {
+        let base = ShardCompactionProof {
+            source_shard: ShardId(4),
+            target_shard: ShardId(5),
+            objects_reassigned: 7,
+            energy_at_compaction: 100,
+            proof_hash: [0u8; 32],
+        };
+        let base_hash = base.compute_hash();
+        // Vary source_shard.
+        let mut diff = base.clone();
+        diff.source_shard = ShardId(8);
+        assert_ne!(base_hash, diff.compute_hash(), "source_shard must be in digest");
+        // Vary target_shard.
+        let mut diff = base.clone();
+        diff.target_shard = ShardId(99);
+        assert_ne!(base_hash, diff.compute_hash(), "target_shard must be in digest");
+        // Vary objects_reassigned.
+        let mut diff = base.clone();
+        diff.objects_reassigned = 8;
+        assert_ne!(base_hash, diff.compute_hash(), "objects_reassigned must be in digest");
+        // Vary energy_at_compaction.
+        let mut diff = base;
+        diff.energy_at_compaction = 101;
+        assert_ne!(base_hash, diff.compute_hash(), "energy_at_compaction must be in digest");
+    }
 }
