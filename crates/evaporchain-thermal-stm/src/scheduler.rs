@@ -405,4 +405,68 @@ mod tests {
             proptest::prop_assert_eq!(committed, 1);
         }
     }
+
+    /// T1.20 — `CommitOutcome::outcomes` is returned in
+    /// commit-priority order (source comment at line 39:
+    /// "in commit-priority order"). 3 txs with distinct energies
+    /// + disjoint write-sets must appear in descending-energy
+    /// order regardless of submission order.
+    #[test]
+    fn t1_20_outcomes_returned_in_priority_order() {
+        let s = ThermalScheduler::new();
+        let lo = write_only(1, 100, key(10), b"L");
+        let mid = write_only(2, 500, key(11), b"M");
+        let hi = write_only(3, 9000, key(12), b"H");
+        // Submit lo→mid→hi; scheduler must reorder.
+        let r = s.run(BTreeMap::new(), vec![lo, mid, hi]).unwrap();
+        assert_eq!(r.outcomes.len(), 3);
+        let tx_id = |o: &TxOutcome| match o {
+            TxOutcome::Committed { tx_id } => *tx_id,
+            TxOutcome::AbortedConflict { tx_id, .. } => *tx_id,
+        };
+        assert_eq!(tx_id(&r.outcomes[0]), id(3), "highest-energy tx first");
+        assert_eq!(tx_id(&r.outcomes[1]), id(2));
+        assert_eq!(tx_id(&r.outcomes[2]), id(1));
+    }
+
+    /// T1.20 — `outcomes.len()` equals the input batch size, even
+    /// when some txs abort. Pin that no tx is silently dropped —
+    /// the scheduler accounts for every accepted tx.
+    #[test]
+    fn t1_20_outcomes_count_equals_batch_size_even_with_aborts() {
+        let s = ThermalScheduler::new();
+        let mut batch = Vec::new();
+        for i in 1..=4u8 {
+            batch.push(write_only(i, (i as u64) * 1000, key(0), &[i]));
+        }
+        let r = s.run(BTreeMap::new(), batch).unwrap();
+        assert_eq!(r.outcomes.len(), 4);
+        let committed_count = r
+            .outcomes
+            .iter()
+            .filter(|o| matches!(o, TxOutcome::Committed { .. }))
+            .count();
+        let aborted_count = r
+            .outcomes
+            .iter()
+            .filter(|o| matches!(o, TxOutcome::AbortedConflict { .. }))
+            .count();
+        assert_eq!(committed_count, 1);
+        assert_eq!(aborted_count, 3);
+        assert_eq!(committed_count + aborted_count, 4);
+    }
+
+    /// T1.20 — `ThermalScheduler::default()` produces an
+    /// equivalent scheduler to `new()`. Existing tests all use
+    /// `new()`; pin the Default delegation.
+    #[test]
+    fn t1_20_scheduler_default_matches_new() {
+        let s_default: ThermalScheduler = Default::default();
+        let s_new = ThermalScheduler::new();
+        let tx_a = write_only(1, 1000, key(0), b"A");
+        let tx_b = tx_a.clone();
+        let r_default = s_default.run(BTreeMap::new(), vec![tx_a]).unwrap();
+        let r_new = s_new.run(BTreeMap::new(), vec![tx_b]).unwrap();
+        assert_eq!(r_default, r_new);
+    }
 }
