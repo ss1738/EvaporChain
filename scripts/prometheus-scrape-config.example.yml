@@ -1,0 +1,46 @@
+# EvaporChain Prometheus scrape config — example.
+#
+# Drop the relevant sections into your `prometheus.yml`. Replace
+# IP addresses with your cluster's actual Tailscale or LAN
+# addresses. Set the bearer-token file owner to the prometheus
+# user (`chown prometheus:prometheus`) and mode 0600.
+#
+# See: docs/runbooks/monitoring.md
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Chain nodes — `/metrics` is admin-auth-gated.
+  - job_name: evaporchain-chain
+    scrape_interval: 15s
+    scheme: http
+    bearer_token_file: /etc/prometheus/evaporchain-admin-key
+    static_configs:
+      - targets:
+          - '100.119.53.101:8081'  # satyawan  (Mini 1)
+          - '100.113.253.72:8081'  # apsarth   (Mini 2)
+          - '100.103.216.125:8081' # ironman   (Mini 3)
+          - '100.66.208.20:8081'   # hel-1
+          - '100.91.235.22:8081'   # hel-2
+        labels:
+          cluster: testnet-1
+
+  # Paymaster — `/metrics` is unauthenticated; gate via network.
+  - job_name: evaporchain-paymaster
+    scrape_interval: 30s
+    scheme: http
+    static_configs:
+      - targets:
+          - '<paymaster-host>:<port>'
+        labels:
+          cluster: testnet-1
+
+# Alertmanager + rule files live alongside this config:
+#   rule_files:
+#     - /etc/prometheus/rules/evaporchain.rules.yml
+#   alerting:
+#     alertmanagers:
+#       - static_configs:
+#           - targets: ['localhost:9093']

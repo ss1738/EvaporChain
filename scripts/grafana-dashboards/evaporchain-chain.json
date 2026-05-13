@@ -1,0 +1,192 @@
+{
+  "title": "EvaporChain — Chain Liveness",
+  "uid": "evaporchain-chain-liveness",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["evaporchain", "consensus", "liveness"],
+  "timezone": "browser",
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Block height per node",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "evaporchain_block_height",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 2,
+      "title": "Cluster height spread (max - min)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "max(evaporchain_block_height) - min(evaporchain_block_height)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 3},
+              {"color": "red", "value": 6}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Finality lag (worst unfinalised gap, s)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "max(evap_worst_unfinalised_gap_seconds)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 10},
+              {"color": "red", "value": 30}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Peers per node",
+      "type": "timeseries",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {
+          "expr": "evaporchain_peer_count",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 2},
+              {"color": "green", "value": 4}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "TPS — current vs peak",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "evaporchain_tps", "legendFormat": "TPS — {{instance}}", "refId": "A"},
+        {"expr": "evaporchain_peak_tps", "legendFormat": "peak TPS — {{instance}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 6,
+      "title": "Avg block execution (ms)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "evaporchain_avg_block_exec_ms",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}}
+    },
+    {
+      "id": 7,
+      "title": "Active vs ghost objects",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {"expr": "evaporchain_active_objects", "legendFormat": "active — {{instance}}", "refId": "A"},
+        {"expr": "evaporchain_ghost_count", "legendFormat": "ghost — {{instance}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 8,
+      "title": "Consensus phase (3=Liveness 2=Safety 1=Frozen 0=Chaotic)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "min(evaporchain_consensus_phase)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "Chaotic", "color": "red"}}},
+            {"type": "value", "options": {"1": {"text": "Frozen", "color": "red"}}},
+            {"type": "value", "options": {"2": {"text": "Safety", "color": "yellow"}}},
+            {"type": "value", "options": {"3": {"text": "Liveness", "color": "green"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Autopoietic viability (2=Viable 1=Stressed 0=Inviable)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16},
+      "targets": [
+        {
+          "expr": "min(evaporchain_autopoietic_viability)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "Inviable", "color": "red"}}},
+            {"type": "value", "options": {"1": {"text": "Stressed", "color": "yellow"}}},
+            {"type": "value", "options": {"2": {"text": "Viable", "color": "green"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Validator set — active vs total",
+      "type": "timeseries",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 20},
+      "targets": [
+        {"expr": "evap_active_validators", "legendFormat": "active — {{instance}}", "refId": "A"},
+        {"expr": "evap_validator_set_size", "legendFormat": "total — {{instance}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    }
+  ]
+}
