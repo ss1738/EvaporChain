@@ -671,4 +671,98 @@ mod tests {
             k
         );
     }
+
+    /// T1.20 — `encode_2d` rejects empty data with `EmptyData` (line
+    /// 56-58). The encode-from-empty path was previously unreached;
+    /// pinning it documents the calling contract.
+    #[test]
+    fn t1_20_encode_2d_empty_data_rejects() {
+        let encoder = ErasureEncoder2D::with_cell_size(32);
+        let err = encoder.encode_2d(&[]).unwrap_err();
+        assert!(
+            matches!(err, ErasureError::EmptyData),
+            "empty input must produce EmptyData; got {err:?}"
+        );
+    }
+
+    /// T1.20 — `reconstruct_row` rejects (a) row index >= extended_dim
+    /// and (b) known_cells length mismatch with `extended_dim`. Both
+    /// are early-validation gates. Without these pins, a refactor
+    /// that loosened either gate would silently produce malformed
+    /// output instead of a clean error.
+    #[test]
+    fn t1_20_reconstruct_row_validation_errors() {
+        let encoder = ErasureEncoder2D::with_cell_size(16);
+        let matrix = encoder.encode_2d(&vec![0xEE; 64]).unwrap();
+        let ext = matrix.extended_dim;
+
+        // Row index out of range.
+        let known = vec![None; ext];
+        let err = reconstruct_row(&matrix, ext, &known).unwrap_err();
+        match err {
+            ErasureError::ReedSolomon(msg) => assert!(
+                msg.contains("out of range"),
+                "row OOB should mention range; got {msg}"
+            ),
+            other => panic!("expected ReedSolomon, got {other:?}"),
+        }
+
+        // known_cells length mismatch (too short).
+        let short = vec![None; ext - 1];
+        let err = reconstruct_row(&matrix, 0, &short).unwrap_err();
+        match err {
+            ErasureError::ReedSolomon(msg) => assert!(
+                msg.contains("does not match extended_dim"),
+                "length mismatch should mention extended_dim; got {msg}"
+            ),
+            other => panic!("expected ReedSolomon, got {other:?}"),
+        }
+    }
+
+    /// T1.20 — `reconstruct_column` symmetric validation gates.
+    /// Mirrors the row test against the column code path.
+    #[test]
+    fn t1_20_reconstruct_column_validation_errors() {
+        let encoder = ErasureEncoder2D::with_cell_size(16);
+        let matrix = encoder.encode_2d(&vec![0xFF; 64]).unwrap();
+        let ext = matrix.extended_dim;
+
+        // Column index out of range.
+        let known = vec![None; ext];
+        let err = reconstruct_column(&matrix, ext + 5, &known).unwrap_err();
+        match err {
+            ErasureError::ReedSolomon(msg) => assert!(
+                msg.contains("out of range"),
+                "col OOB should mention range; got {msg}"
+            ),
+            other => panic!("expected ReedSolomon, got {other:?}"),
+        }
+
+        // known_cells too long.
+        let too_long = vec![None; ext + 3];
+        let err = reconstruct_column(&matrix, 0, &too_long).unwrap_err();
+        match err {
+            ErasureError::ReedSolomon(msg) => assert!(
+                msg.contains("does not match extended_dim"),
+                "length mismatch should mention extended_dim; got {msg}"
+            ),
+            other => panic!("expected ReedSolomon, got {other:?}"),
+        }
+    }
+
+    /// T1.20 — `Matrix2D::get_cell` returns None for BOTH dimensions
+    /// out of range. Existing `test_cell_access` only covered
+    /// `row == extended_dim, col=0`; this pins the column-OOB
+    /// symmetry (line 31: `row >= ... || col >= ...`).
+    #[test]
+    fn t1_20_get_cell_col_out_of_range_returns_none() {
+        let encoder = ErasureEncoder2D::with_cell_size(16);
+        let matrix = encoder.encode_2d(&vec![0xAA; 64]).unwrap();
+        let ext = matrix.extended_dim;
+        // Valid row, invalid col → None.
+        assert!(matrix.get_cell(0, ext).is_none());
+        assert!(matrix.get_cell(0, ext + 100).is_none());
+        // Both invalid → None.
+        assert!(matrix.get_cell(ext, ext).is_none());
+    }
 }
