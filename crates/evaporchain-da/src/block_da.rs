@@ -262,4 +262,82 @@ mod tests {
             assert!(q.shard_index < package.header.total_shards);
         }
     }
+
+    /// T1.20 — adversarial: a sample response whose `proof.root` no
+    /// longer matches `header.commitment_root` must fail verification
+    /// (lines 130-133). This blocks the attack where an adversary
+    /// replays a valid Merkle proof from a DIFFERENT block's
+    /// commitment — the per-block commitment binding is what makes
+    /// the proof block-specific.
+    #[test]
+    fn t1_20_verify_rejects_mismatched_proof_root() {
+        let da = BlockDA::new().unwrap();
+        let block_data = b"proof root binding test";
+        let package = da.encode_block(block_data).unwrap();
+        let mut response = da.prove_shard(&package, 1).unwrap();
+        assert!(
+            BlockDA::verify_shard_sample(&package.header, &response),
+            "honest proof must verify"
+        );
+        // Tamper the proof root to point at a different commitment.
+        response.proof.root[0] ^= 0xFF;
+        assert!(
+            !BlockDA::verify_shard_sample(&package.header, &response),
+            "proof.root != header.commitment_root must fail verify"
+        );
+    }
+
+    /// T1.20 — adversarial: a header that lies about `original_len`
+    /// upward (claims more bytes than the reconstruction actually
+    /// produces) must fail with `ReconstructionHashMismatch` at
+    /// lines 93-95. The doctrine: the header IS the commitment to
+    /// the block's size, so a server presenting partial bytes can't
+    /// fool the verifier by under-counting.
+    #[test]
+    fn t1_20_reconstruct_rejects_header_claiming_longer_data() {
+        let da = BlockDA::new().unwrap();
+        let block_data = b"original length integrity";
+        let package = da.encode_block(block_data).unwrap();
+        let mut tampered_header = package.header.clone();
+        // Claim the block is much longer than what was actually encoded.
+        tampered_header.original_len = block_data.len() + 10_000_000;
+        let all: Vec<Option<Vec<u8>>> = package
+            .shards
+            .iter()
+            .map(|s| Some(s.data.clone()))
+            .collect();
+        let result = da.reconstruct_block(&tampered_header, all);
+        assert!(
+            matches!(result, Err(BlockDAError::ReconstructionHashMismatch)),
+            "header claiming longer-than-recovered must fail \
+             ReconstructionHashMismatch; got {result:?}"
+        );
+    }
+
+    /// T1.20 — `BlockDA::with_config` (lines 59-63) — alternative
+    /// constructor with a custom erasure config. Existing tests all
+    /// use `new()` (default 4+4); this pins that the custom-config
+    /// path encodes with the requested shard counts.
+    #[test]
+    fn t1_20_with_config_uses_custom_erasure_params() {
+        let cfg = ErasureConfig {
+            data_shards: 2,
+            parity_shards: 2,
+        };
+        let da = BlockDA::with_config(cfg).unwrap();
+        let block_data = b"custom config encoding";
+        let package = da.encode_block(block_data).unwrap();
+        assert_eq!(package.header.erasure_config.data_shards, 2);
+        assert_eq!(package.header.erasure_config.parity_shards, 2);
+        assert_eq!(package.header.total_shards, 4);
+        assert_eq!(package.shards.len(), 4);
+        // Full round-trip must still hold under the custom config.
+        let all: Vec<Option<Vec<u8>>> = package
+            .shards
+            .iter()
+            .map(|s| Some(s.data.clone()))
+            .collect();
+        let recovered = da.reconstruct_block(&package.header, all).unwrap();
+        assert_eq!(recovered, block_data);
+    }
 }
