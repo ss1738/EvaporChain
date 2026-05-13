@@ -729,4 +729,69 @@ mod tests {
         let commits = nmt.blob_commitments();
         assert_eq!(commits.len(), 1);
     }
+
+    /// T1.20 — `try_from_leaves` happy path. Existing tests only
+    /// cover the reservation-rejection branch; this pins that valid
+    /// leaves construct a tree cleanly (no error, root populated,
+    /// commitments match input).
+    #[test]
+    fn t1_20_try_from_leaves_accepts_valid_leaves() {
+        let leaves = vec![
+            NmtLeaf {
+                namespace: [0x01; 8],
+                data_hash: [0xAAu8; 32],
+            },
+            NmtLeaf {
+                namespace: [0x02; 8],
+                data_hash: [0xBBu8; 32],
+            },
+        ];
+        let nmt =
+            NamespaceMerkleTree::try_from_leaves(leaves).expect("valid leaves must accept");
+        assert_eq!(nmt.blob_commitments().len(), 2);
+        assert_eq!(nmt.root().min_namespace, [0x01; 8]);
+        assert_eq!(nmt.root().max_namespace, [0x02; 8]);
+    }
+
+    /// T1.20 — `root()` on a tree built from zero leaves returns the
+    /// inverted-range sentinel (min=NAMESPACE_MAX, max=NAMESPACE_MIN)
+    /// from the empty-layer construction at line 232. Callers can
+    /// detect "no real root" via `min > max`.
+    #[test]
+    fn t1_20_root_empty_tree_returns_inverted_sentinel() {
+        let nmt = NamespaceMerkleTree::from_leaves(vec![]);
+        let root = nmt.root();
+        assert_eq!(root.min_namespace, NAMESPACE_MAX);
+        assert_eq!(root.max_namespace, NAMESPACE_MIN);
+        // Empty-tree predicate: min > max.
+        assert!(root.min_namespace > root.max_namespace);
+    }
+
+    /// T1.20 — `prove_namespace` boundary: namespace strictly BELOW
+    /// the tree's minimum yields an absence proof anchored at
+    /// insertion point 0 (line 333: `start.unwrap_or(self.leaves.len())`
+    /// when start is None for a below-min ns). The verifier accepts
+    /// because `ns < root.min_namespace`.
+    #[test]
+    fn t1_20_prove_namespace_below_minimum_is_absent() {
+        let leaves = vec![
+            NmtLeaf {
+                namespace: [0x05; 8],
+                data_hash: [0xCC; 32],
+            },
+            NmtLeaf {
+                namespace: [0x06; 8],
+                data_hash: [0xDD; 32],
+            },
+        ];
+        let nmt = NamespaceMerkleTree::from_leaves(leaves);
+        let proof = nmt.prove_namespace(&[0x01; 8]);
+        assert!(proof.is_absence);
+        assert_eq!(proof.start_index, 0);
+        assert_eq!(proof.end_index, 0);
+        assert!(
+            NamespaceMerkleTree::verify_namespace_proof(&proof),
+            "below-min absence proof must verify"
+        );
+    }
 }
