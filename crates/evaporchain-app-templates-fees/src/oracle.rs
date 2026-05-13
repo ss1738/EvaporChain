@@ -189,6 +189,42 @@ mod tests {
     }
 
     #[test]
+    fn ssm_fee_scales_with_fragment_length() {
+        let short = TypedInit::Ssm(init_ssm::InitConfig {
+            fragment: "x".into(),
+        });
+        let long = TypedInit::Ssm(init_ssm::InitConfig {
+            fragment: "x".repeat(100),
+        });
+        let delta = fee_for(&long) - fee_for(&short);
+        assert!(fee_for(&long) > fee_for(&short));
+        assert_eq!(delta, (100u64 - 1) * PER_FRAGMENT_BYTE);
+    }
+
+    #[test]
+    fn sfsv_fee_scales_with_predicate_length() {
+        let short = TypedInit::Sfsv(init_sfsv::InitConfig {
+            deposit: 1,
+            predicate: "p".into(),
+            release_epoch: 1,
+        });
+        let long = TypedInit::Sfsv(init_sfsv::InitConfig {
+            deposit: 1,
+            predicate: "p".repeat(50),
+            release_epoch: 1,
+        });
+        let delta = fee_for(&long) - fee_for(&short);
+        assert!(fee_for(&long) > fee_for(&short));
+        assert_eq!(delta, (50u64 - 1) * PER_FRAGMENT_BYTE);
+    }
+
+    #[test]
+    fn lineage_with_empty_ladder_costs_only_base() {
+        let empty = TypedInit::SinghLineage(init_singh_lineage::InitConfig { ladder: vec![] });
+        assert_eq!(fee_for(&empty), base_fee(&empty));
+    }
+
+    #[test]
     fn fixed_shape_primitives_cost_only_their_base() {
         let mayfly = TypedInit::Mayfly(init_mayfly::InitConfig {
             initial_energy: 1000,
