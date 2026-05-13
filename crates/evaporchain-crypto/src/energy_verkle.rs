@@ -26,7 +26,29 @@ const WIDTH: usize = 256;
 const MAX_DEPTH: usize = 32;
 
 // ─────────────────────── Generator Points ────────────────────────────────
-// Shared with the standard Verkle trie — same generators, same commitments.
+//
+// AUDIT_2026_05_13 H3 closure. Pre-fix this module used the SAME seed
+// format as `evaporchain-crypto::verkle` (`"EvaporChain_Verkle_Gen_{i}"`)
+// — 257 generator points bit-identical between the two trie types. A
+// commitment from `EnergyVerkleTrie` at level L was structurally
+// indistinguishable from a `VerkleTrie` commitment at level L when the
+// children's scalar contributions matched. Any consumer accepting
+// proofs from either trie against a root that is just `[u8; 32]` could
+// substitute proofs from the cheaper structure.
+//
+// Distinct seed prefixes generate distinct generator vectors → distinct
+// commitments → distinct roots. Hard-fork impactful: every Energy-Verkle
+// root computed post-fix differs from pre-fix. Coordinate cutover with
+// the genesis ceremony.
+//
+// The standard `verkle::generators()` keeps the canonical
+// `EvaporChain_Verkle_Gen_*` prefix; the energy-verkle variant uses
+// `EvaporChain_EnergyVerkle_Gen_*`. Both produce 257-element vectors
+// with identical structure but different element values.
+
+/// Domain-separated seed prefix for Energy-Verkle generator derivation.
+/// Pinned as a `pub const` so a regression test can grep-assert it.
+pub const ENERGY_VERKLE_GENERATOR_SEED_PREFIX: &str = "EvaporChain_EnergyVerkle_Gen_";
 
 static GENERATORS: OnceLock<Vec<Ep>> = OnceLock::new();
 
@@ -34,7 +56,7 @@ fn generators() -> &'static Vec<Ep> {
     GENERATORS.get_or_init(|| {
         let mut gens = Vec::with_capacity(WIDTH + 1);
         for i in 0..=WIDTH {
-            let seed = format!("EvaporChain_Verkle_Gen_{}", i);
+            let seed = format!("{ENERGY_VERKLE_GENERATOR_SEED_PREFIX}{i}");
             let hash = blake3::hash(seed.as_bytes());
             let scalar = bytes_to_scalar(hash.as_bytes());
             gens.push(Ep::generator() * scalar);
@@ -2003,6 +2025,65 @@ mod proptests {
                 v[0] ^= 0xFF;
             }
             prop_assert!(!EnergyVerkleTrie::verify_multi(&mp, &root));
+        }
+    }
+
+    // ─── AUDIT_2026_05_13 H3 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_h3_seed_prefix_locked_to_energy_verkle() {
+        // Lock the seed prefix so a future refactor cannot silently
+        // unify it back with the standard verkle prefix.
+        assert_eq!(
+            ENERGY_VERKLE_GENERATOR_SEED_PREFIX,
+            "EvaporChain_EnergyVerkle_Gen_"
+        );
+        assert!(ENERGY_VERKLE_GENERATOR_SEED_PREFIX.contains("EnergyVerkle"));
+    }
+
+    #[test]
+    fn audit_h3_energy_verkle_generators_differ_from_standard_verkle() {
+        // Compute what the FIRST generator point would be under each
+        // seed prefix. Distinct prefixes ⇒ distinct scalars ⇒ distinct
+        // generator points.
+        let energy_seed = format!("{ENERGY_VERKLE_GENERATOR_SEED_PREFIX}0");
+        let standard_seed = "EvaporChain_Verkle_Gen_0";
+        assert_ne!(energy_seed.as_str(), standard_seed);
+
+        let energy_scalar =
+            bytes_to_scalar(blake3::hash(energy_seed.as_bytes()).as_bytes());
+        let standard_scalar =
+            bytes_to_scalar(blake3::hash(standard_seed.as_bytes()).as_bytes());
+        assert_ne!(
+            energy_scalar, standard_scalar,
+            "EnergyVerkle and Verkle generator scalars must differ for index 0"
+        );
+
+        let energy_g = Ep::generator() * energy_scalar;
+        let standard_g = Ep::generator() * standard_scalar;
+        assert_ne!(
+            energy_g, standard_g,
+            "EnergyVerkle and Verkle generator POINTS must differ for index 0"
+        );
+    }
+
+    #[test]
+    fn audit_h3_full_generator_vector_pairwise_distinct_across_tries() {
+        // Sweep across all 257 generators. EVERY index must produce a
+        // distinct scalar between the two prefixes. A single collision
+        // would mean any commitment whose only non-zero contribution
+        // came from that index would be cross-trie-confusable.
+        for i in 0..=WIDTH {
+            let energy_seed = format!("{ENERGY_VERKLE_GENERATOR_SEED_PREFIX}{i}");
+            let standard_seed = format!("EvaporChain_Verkle_Gen_{i}");
+            let energy_scalar =
+                bytes_to_scalar(blake3::hash(energy_seed.as_bytes()).as_bytes());
+            let standard_scalar =
+                bytes_to_scalar(blake3::hash(standard_seed.as_bytes()).as_bytes());
+            assert_ne!(
+                energy_scalar, standard_scalar,
+                "generator scalar collision at index {i}"
+            );
         }
     }
 }
