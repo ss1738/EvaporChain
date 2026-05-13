@@ -6,6 +6,43 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-13 (evening) — T1.20 rocksdb_backend.rs batch-2 + batch-3: 79% → 92%
+
+**Focus:** T1.20 coverage push targeting `state/rocksdb_backend.rs` — the next highest coverage gap after tendermint.rs closed.
+
+**Commits shipped:** 4 (6e7ad015 → aab1f9b4)
+
+**Deliverables:**
+- `6e7ad015` — batch-2 (20 tests): in-batch persist paths for put_nullifier/stake/delegation/account; account get_mut/delete/get_or_create in-batch; prove_account/prove_object; trie_snapshot roundtrip; prune_before_height; stub governance methods
+- `aab1f9b4` — batch-3 (4 tests): reopen-loads-all-CFs (note_commitments/sentinel_params/votes/stakes/delegations iterator paths in open()); get_object_mut dirty → compute_state_root sync; dirty account → compute_state_root sync; reopen objects/accounts
+- `19c30ab5` — doc drift fix: T1.15 marked DONE (paymaster per-key inflight locking already shipped in 1f8c50a2)
+- `6af58074` — doc drift fix: T0.1 marked DONE (all 6 sub-tasks shipped 2026-05-11 per SESSION_PROGRESS)
+
+**Empirical results:**
+- batch-2: 235/235 tests pass; line coverage 79.0% → 89.31% (+10.31pp, +124 lines)
+- batch-3: 239/239 tests pass; line coverage 89.31% → 92.08% (+2.77pp, +124 lines)
+- State crate TOTAL: 93.94% line (up from ~89.19% before this session)
+
+**Decisions made:**
+- Lines 62-70 (fatal_persistence_error), 503 (cf panic), 514/524/538/546/556/567-571/578/588 (fatal calls): permanently uncoverable — process::exit cannot be exercised in unit tests
+- Lines 172-176, 195-204, 208-222, 243-255, 259-269: legacy format migration paths — coverable only with raw-bytes RocksDB fixture injection; deferred (diminishing returns at 92%)
+- Lines 406/420/443/460: LLVM brace-absorption artifacts post-iterator — same pattern as tendermint.rs ceiling
+
+**What's next:**
+- T1.20 rocksdb_backend.rs DONE at 92.08% ✅ — above 90% target
+- Check workspace-wide coverage against the T1.20 lane definition in MAINNET_READINESS.md
+- Next highest-gap crate below 90%: execution/block_stm.rs (82.85%) and execution/parallel.rs (83.46%) — consider batch runs
+- Or pivot to T0.10 (VerkleProofVerifier.sol) or T0.7 (DoS runbook) if coverage sprint is done
+
+**Blockers / open questions:**
+- MacBook is now 2 commits behind Mini 1 (SCP workflow means MacBook never gets the new files). User should `git pull` on MacBook to sync.
+
+**Cross-references:**
+- CHANGELOG.md 2026-05-13
+- Coverage baseline memory: `evaporchain_coverage_baseline.md` (update needed)
+- Commits: 6e7ad015, aab1f9b4 (new state tests); 19c30ab5, 6af58074 (doc drift)
+
+---
 ## How to add an entry (read once, then forget)
 
 When you wrap up a session, prepend a new block at the top using this template. Don't bother with prose — bullet-pointed is fine. The discipline is **consistency of format**, not polish.
