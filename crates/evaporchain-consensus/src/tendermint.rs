@@ -2744,7 +2744,47 @@ impl TendermintConsensus {
         if mode != "enforce" {
             return Ok(());
         }
-        let expected = self.due_refund_txs(block.number);
+        // AUDIT_2026_05_13 H13 closure. Pre-fix `self.due_refund_txs`
+        // consulted `self.disputed_observations` — a per-validator
+        // local state with no cluster-wide consensus (Phase 4.4d is
+        // the outstanding plan-doc item). Under `enforce` mode +
+        // asymmetric disputes across operators, validators would
+        // build/expect different refund sets for the same block and
+        // reject each other's proposals → liveness split + innocent-
+        // proposer slashing via Phase 3.5d.
+        //
+        // Fix: validation uses an EMPTY disputed-set so every
+        // validator computes the same consensus-shared expected list
+        // from `mev_observations` + `settled_refunds` + governance
+        // params. Operator-local disputes still affect own-proposal
+        // building via `self.due_refund_txs` (kept unchanged for that
+        // path), but NEVER influence cross-validator agreement.
+        let empty_disputed: std::collections::HashSet<(u64, usize)> =
+            std::collections::HashSet::new();
+        let grace = self
+            .governance_params
+            .get("crooks_mev_grace_period_blocks")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_GRACE_PERIOD_BLOCKS);
+        let window = self
+            .governance_params
+            .get("crooks_mev_refund_window_blocks")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_REFUND_WINDOW_BLOCKS);
+        let conf_threshold = self
+            .governance_params
+            .get("crooks_mev_confidence_threshold_ppm")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
+        let expected = evaporchain_mev_detect::due_refund_txs(
+            &self.mev_observations,
+            &self.settled_refunds,
+            &empty_disputed,
+            block.number,
+            grace,
+            window,
+            conf_threshold,
+        );
         let block_refunds: Vec<&evaporchain_types::RefundTx> = block
             .transactions
             .iter()
