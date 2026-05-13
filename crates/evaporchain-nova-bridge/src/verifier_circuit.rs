@@ -53,9 +53,15 @@
 
 use ark_bn254::Fr as Bn254Fr;
 use ark_r1cs_std::alloc::AllocVar;
+use ark_r1cs_std::boolean::Boolean;
+use ark_r1cs_std::convert::ToBitsGadget;
+use ark_r1cs_std::eq::EqGadget;
+use ark_r1cs_std::R1CSVar;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use thiserror::Error;
+
+use crate::section2_witness::Section2Witness;
 
 /// Off-circuit structural-validation errors for [`NovaVerifierCircuit`].
 ///
@@ -136,12 +142,10 @@ pub struct NovaVerifierCircuit {
     /// at adapter time. Section-2 check companion to
     /// [`Self::committed_hash_primary`].
     pub committed_hash_secondary: Bn254Fr,
-    // Section-3 witnesses (RelaxedR1CS instances + their R1CS
-    // satisfying assignments) are intentionally NOT field members
-    // yet — the type to use depends on the adapter design decision
-    // (Phase 2.3). Adding them as `Vec<Bn254Fr>` placeholders without
-    // a concrete schema would force a churn-prone refactor when 2.3
-    // lands.
+    /// Section 2 Neptune witness. When `Some`, `generate_constraints`
+    /// enforces the primary transcript hash in-circuit. `None` for
+    /// `dummy()` (trusted setup).
+    pub section2: Option<Section2Witness>,
 }
 
 impl NovaVerifierCircuit {
@@ -159,7 +163,14 @@ impl NovaVerifierCircuit {
             zi,
             committed_hash_primary,
             committed_hash_secondary,
+            section2: None,
         }
+    }
+
+    /// Attach a Section 2 Neptune witness. Builder-style; returns `self`.
+    pub fn with_section2(mut self, s2: Section2Witness) -> Self {
+        self.section2 = Some(s2);
+        self
     }
 
     /// Dummy instance for Groth16 setup. Shape-stable across the
@@ -176,6 +187,7 @@ impl NovaVerifierCircuit {
             zi: vec![Bn254Fr::from(0u64)],
             committed_hash_primary: Bn254Fr::from(0u64),
             committed_hash_secondary: Bn254Fr::from(0u64),
+            section2: None,
         }
     }
 
@@ -241,34 +253,51 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
         // num_steps is NOT a public input — it's an immediate
         // baked into the circuit shape at trusted-setup time
         // (each chain advance has a fixed num_steps cadence).
-        let _committed_hash_primary_var =
+        let committed_hash_primary_var =
             FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.committed_hash_primary))?;
         let _committed_hash_secondary_var =
             FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.committed_hash_secondary))?;
-        for z in &self.z0 {
-            let _ = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(*z))?;
-        }
-        for z in &self.zi {
-            let _ = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(*z))?;
-        }
+        let z0_vars: Vec<FpVar<Bn254Fr>> = self
+            .z0
+            .iter()
+            .map(|z| FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(*z)))
+            .collect::<Result<_, _>>()?;
+        let zi_vars: Vec<FpVar<Bn254Fr>> = self
+            .zi
+            .iter()
+            .map(|z| FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(*z)))
+            .collect::<Result<_, _>>()?;
 
-        // ── Section 2: Poseidon transcript hash ────────────────────
+        // ── Section 2: Neptune transcript hash ──────────────────────
         //
-        // TODO (Phase 2.2 step 3 of N — ~1 day work):
-        //   - Use ark-crypto-primitives Poseidon gadget
-        //   - Absorb: pp.digest (constant), num_steps (constant),
-        //     z0[..] (public), zi[..] (public), R1CS-instance fields
-        //     (via adapter), ri_primary/ri_secondary (witness)
-        //   - Squeeze NUM_HASH_BITS
-        //   - Compare against committed_hash_primary/secondary vars
-        //
-        // OPEN QUESTION: align Poseidon parameters with nova-snark's
-        // bellman-style sponge. nova-snark uses its own Poseidon
-        // constants; arkworks ships generic Poseidon. Parameter
-        // mismatch → hash divergence → false-reject.
-        //
-        // Source: nova-snark/src/nova/mod.rs:597-630 (hash_primary,
-        // hash_secondary construction).
+        // When `section2` is present, enforce that neptune_sponge over
+        // the 18-element primary absorb sequence, truncated to 250 bits
+        // (nova-snark NUM_HASH_BITS), equals `committed_hash_primary`.
+        // Source: nova-snark/src/nova/mod.rs:597-630.
+        if let Some(ref s2) = self.section2 {
+            use crate::section2_gadget::enforce_neptune_sponge_primary;
+
+            let z0_vals: Vec<Bn254Fr> = z0_vars
+                .iter()
+                .map(|v| v.value().unwrap_or(Bn254Fr::from(0u64)))
+                .collect();
+            let zi_vals: Vec<Bn254Fr> = zi_vars
+                .iter()
+                .map(|v| v.value().unwrap_or(Bn254Fr::from(0u64)))
+                .collect();
+            let absorb_seq = s2.absorb_seq(self.num_steps, &z0_vals, &zi_vals);
+            let seq_vars: Vec<FpVar<Bn254Fr>> = absorb_seq
+                .into_iter()
+                .map(|s| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(s)))
+                .collect::<Result<_, _>>()?;
+
+            let hash_var = enforce_neptune_sponge_primary(cs.clone(), &s2.params, &seq_vars)?;
+
+            // Truncate to 250 bits (NUM_HASH_BITS) before comparing.
+            let bits = hash_var.to_bits_le()?;
+            let truncated = Boolean::<Bn254Fr>::le_bits_to_fp(&bits[..250])?;
+            committed_hash_primary_var.enforce_equal(&truncated)?;
+        }
 
         // ── Section 3: RelaxedR1CS satisfiability check ────────────
         //

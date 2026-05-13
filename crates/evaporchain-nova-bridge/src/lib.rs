@@ -116,6 +116,7 @@ pub mod neptune_sponge;
 pub mod recursive_snark_fixture;
 pub mod scalar_adapter;
 pub mod section2_gadget;
+pub mod section2_witness;
 pub mod vendored_neptune_grain;
 pub mod verifier_circuit;
 

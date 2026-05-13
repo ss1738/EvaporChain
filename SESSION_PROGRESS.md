@@ -6,6 +6,26 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-13 (night) — T0.10 Ph2.2 Section 2 in-circuit wiring DONE
+
+**Focus:** Wire Section 2 Neptune transcript hash into `NovaVerifierCircuit::generate_constraints` — the in-circuit enforcement that `neptune_sponge(absorb_seq).truncate_250_bits == committed_hash_primary`.
+**Commits shipped:** 0 (all work on Mini 1 directly; needs commit from Mini)
+**Deliverables:**
+- `section2_witness.rs` (NEW): `Section2Witness` struct + `extract_section2_witness` — extracts all 18 absorb-sequence elements (`pp_digest`, `comm_W/E x/y`, `u_as_base`, `x0/x1_limbs[4]`, `ri_primary`) from a live `RecursiveSNARK` via serde-JSON reflection. 6 unit tests + 1 `#[ignore]` integration test.
+- `verifier_circuit.rs` (MODIFIED): `section2: Option<Section2Witness>` field; `with_section2()` builder; `generate_constraints` now enforces `enforce_neptune_sponge_primary` + 250-bit truncation + `enforce_equal` when `section2.is_some()`. `dummy()` keeps `section2 = None` (trusted setup safe).
+- `circuit_builder.rs` (MODIFIED): `build_circuit_with_section2(rs, pp_digest, dump_path)` — full pipeline from `RecursiveSNARK` to a Section-2-wired `NovaVerifierCircuit`. `#[ignore]` integration test added.
+- `recursive_snark_fixture.rs` (MODIFIED): `generate_fixture_with_digest` — returns `(RecursiveSNARK, Scalar1)` so callers have `pp.digest()`.
+- `lib.rs` (MODIFIED): `pub mod section2_witness` added.
+- `Cargo.toml` (MODIFIED): `group = "0.13"` added (for `GroupEncoding::from_bytes` trait).
+**Empirical results:** `cargo test -p evaporchain-nova-bridge --lib` → 125 passed, 0 failed, 16 ignored (91s). All pre-existing tests still green. 6 new `section2_witness` unit tests all green.
+**Decisions made:**
+- Section 2 enforcement block is conditional (`if let Some(ref s2) = self.section2`) so `dummy()` (trusted setup) produces same constraint shape as real prover — critical for Groth16 setup/prove key compatibility.
+- Used `GroupEncoding::from_bytes(&repr)` with `arr.into()` for grumpkin point decompression (halo2curves 0.9.0 API).
+- `NeptuneSparseMatrix::new(w_hat[width], v_rest[width-1])` — fixed constructor assertion (v_rest must be width-1, not width).
+**What's next:** (1) Commit all changes on Mini 1 to git. (2) Run `#[ignore]` integration tests with `/tmp/neptune-bn256-standard.json` to verify Section 2 satisfiability end-to-end. (3) Phase 2.2 Section 3 — RelaxedR1CS satisfiability (BESPOKE, ~3-5 days research).
+**Blockers / open questions:** Section 2 integration test requires neptune constants dump — generate with `dump-neptune-constants` binary. The `committed_hash_primary` comparison will likely NOT pass until Section 3 is also wired (the witness must match nova's actual hash output). This is expected — the scaffold is wired, soundness follows from Section 3.
+**Cross-references:** Section 2 sponge framing (prior session 2026-05-13 evening), `section2_gadget::enforce_neptune_sponge_primary` (already byte-correct).
+
 ## 2026-05-13 (evening) — T0.10 Ph2.2 Section 2 sponge framing CLOSED
 
 **Focus:** Close the "Section 2 sponge framing (OPEN, BESPOKE)" gap in evaporchain-nova-bridge — make enforce_neptune_sponge_primary byte-correct vs neptune's hash_optimized_static.

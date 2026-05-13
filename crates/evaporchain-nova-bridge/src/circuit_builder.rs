@@ -48,8 +48,9 @@
 //! both bound AND verifying-with-soundness.
 
 use crate::l_u_secondary_extract::{extract_committed_hashes_via_serde, ExtractError};
-use crate::recursive_snark_fixture::{TrivialIncrementCircuit, E1, E2};
+use crate::recursive_snark_fixture::{TrivialIncrementCircuit, Scalar1, E1, E2};
 use crate::scalar_adapter::primary_to_ark_fr;
+use crate::section2_witness::extract_section2_witness;
 use crate::verifier_circuit::NovaVerifierCircuit;
 use ark_bn254::Fr as ArkFr;
 use nova_snark::nova::RecursiveSNARK;
@@ -86,6 +87,20 @@ pub fn build_circuit_from_fixture(
         committed_hash_primary,
         committed_hash_secondary,
     ))
+}
+
+/// Like [`build_circuit_from_fixture`] but also extracts Section 2
+/// Neptune witness and attaches it via `NovaVerifierCircuit::with_section2`.
+///
+/// Requires the `dump-neptune-constants` JSON at `dump_path`.
+pub fn build_circuit_with_section2<P: AsRef<std::path::Path>>(
+    rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
+    pp_digest: Scalar1,
+    dump_path: P,
+) -> Result<NovaVerifierCircuit, ExtractError> {
+    let base = build_circuit_from_fixture(rs)?;
+    let s2 = extract_section2_witness(rs, pp_digest, dump_path)?;
+    Ok(base.with_section2(s2))
 }
 
 #[cfg(test)]
@@ -162,5 +177,33 @@ mod tests {
         let rs = generate_fixture(1).expect("generate 1-step fixture");
         let circuit = build_circuit_from_fixture(&rs).expect("build");
         assert_eq!(circuit.validate_structurally(), Ok(()));
+    }
+
+    /// Section 2 integration test. Requires neptune constants dump.
+    #[test]
+    #[ignore]
+    fn build_circuit_with_section2_synthesizes_and_is_satisfied() {
+        use crate::recursive_snark_fixture::generate_fixture_with_digest;
+        use ark_relations::r1cs::ConstraintSystem;
+
+        let dump = std::path::Path::new("/tmp/neptune-bn256-standard.json");
+        if !dump.exists() {
+            eprintln!("SKIP: dump file not present at {}", dump.display());
+            return;
+        }
+
+        let (rs, pp_digest) = generate_fixture_with_digest(2).expect("generate fixture");
+        let circuit = build_circuit_with_section2(&rs, pp_digest, dump).expect("build with s2");
+
+        assert!(circuit.section2.is_some(), "section2 witness must be attached");
+        let cs = ConstraintSystem::<ArkFr>::new_ref();
+        circuit
+            .generate_constraints(cs.clone())
+            .expect("synthesize with section2");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "circuit with real section2 witness must be satisfied"
+        );
+        assert_eq!(cs.num_instance_variables(), 5);
     }
 }

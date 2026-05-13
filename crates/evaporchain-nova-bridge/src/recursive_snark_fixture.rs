@@ -119,6 +119,30 @@ pub fn generate_fixture(
     Ok(rs)
 }
 
+/// Run a fresh Nova fold over `num_steps` invocations of
+/// [`TrivialIncrementCircuit`], returning the accumulator and the
+/// `PublicParams::digest()` needed by Section 2 witness extraction.
+pub fn generate_fixture_with_digest(
+    num_steps: usize,
+) -> Result<(RecursiveSNARK<E1, E2, TrivialIncrementCircuit>, Scalar1), String> {
+    let circuit = TrivialIncrementCircuit;
+    let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+        &circuit,
+        &*S1::ck_floor(),
+        &*S2::ck_floor(),
+    )
+    .map_err(|e| format!("PublicParams::setup: {:?}", e))?;
+    let pp_digest = pp.digest();
+    let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+    let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(&pp, &circuit, &z0)
+        .map_err(|e| format!("RecursiveSNARK::new: {:?}", e))?;
+    for i in 0..num_steps {
+        rs.prove_step(&pp, &circuit)
+            .map_err(|e| format!("prove_step {}: {:?}", i, e))?;
+    }
+    Ok((rs, pp_digest))
+}
+
 /// Statistics about a generated fixture — what the in-circuit
 /// verifier will need to consume as witness. Phase 2.2 finish must
 /// figure out which of these fields map to in-circuit variables

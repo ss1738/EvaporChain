@@ -38,6 +38,7 @@ nova-snark = { version = "0.68", features = ["test-utils"] }
 
 # Type-system glue (matching `evaporchain-proving`).
 ff            = "0.13"
+group         = "0.13"
 generic-array = "1"
 
 # Misc.
