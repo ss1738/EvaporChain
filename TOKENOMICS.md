@@ -1,6 +1,6 @@
 # EvaporChain Tokenomics
 
-**Status: ~55% complete (up from 30% earlier today).** Structure exists in code, parameters are wired and functional. Three of six §2 items closed in the 2026-05-07 build session — vesting (§2.6), emission schedule (§2.4), and MEV settlement (§2.3 reconciled). Three §2 items remain ceremony-blocked: §2.1 recipient policy, §2.2 commission split, §2.5 staking-APY controller.
+**Status: ~75% complete (up from 30% earlier today, ~55% after the 2026-05-07 build).** Structure exists in code, parameters are wired and functional. 6 of 7 §2 items have wired mechanisms — vesting (§2.6), emission schedule (§2.4), MEV settlement (§2.3), 60/40 reward split (§2.1), `commission_ppm` (§2.2), and APY cap (§2.5). What remains is ceremony decisions on **parameter values** (the 60/40 ratio itself, default commission_ppm, target APY, vesting durations) plus §2.7 mainnet genesis sync (operational, not economic).
 
 **Audience:** Satyawan Singh + future tokenomics advisor. The "ceremony questions" sections are the punch list of decisions you must make before mainnet launch.
 
@@ -212,22 +212,19 @@ These parameters work; their *values* are arbitrary defaults that have not been 
 
 These appear in genesis, comments, or design docs but **the hot path doesn't actually use them**.
 
-### 2.1 Block reward distribution recipient policy (still ceremony-blocked)
+### 2.1 Block reward distribution recipient policy (mechanism wired; ratio is ceremony)
 
-**Resolved 2026-05-07** (commit `fd1b580`): the actual minting path is `RewardAccumulator::process_block_rewards` in `crates/evaporchain-execution/src/rewards.rs:107`. It uses `Tokenomics::block_reward(epoch, total_minted)` which now dispatches to either `EmissionParams::block_reward_at` (when `emission: Some`) or the legacy `reward_at_epoch_capped` (when `emission: None`). `crates/evaporchain-execution/src/emission.rs` still hosts the test module; the type definitions moved to `evaporchain-types::emission`. **No more dead code or contradiction.**
+**Resolved 2026-05-07** (commit `fd1b580`): the actual minting path is `RewardAccumulator::process_block_rewards` in `crates/evaporchain-execution/src/rewards.rs`. It uses `Tokenomics::block_reward(epoch, total_minted)` which dispatches to either `EmissionParams::block_reward_at` (when `emission: Some`) or the legacy `reward_at_epoch_capped` (when `emission: None`).
 
-Still ceremony-blocked: **recipient policy is hardcoded to proposer-only** at `rewards.rs:111-117` (the producing validator's account is credited with the full block reward). This is one valid choice but it should be a deliberate one. See §3 Q6.
+**Recipient policy is now split, not proposer-only.** `process_block_rewards_v2` (rewards.rs:251) implements a **60% proposer / 40% attesters** split with dust-to-first-attester rounding, falling back to 100%-proposer when `attesters` is empty. The v2 entry point is wired from both hot paths: the sequential executor (`crates/evaporchain-execution/src/lib.rs:3441`) and the BlockSTM parallel executor (`crates/evaporchain-execution/src/parallel.rs:2215`). v1 remains in the codebase as a test-only legacy path.
 
-### 2.2 Delegator/validator fee split
+Ceremony-blocked decisions that remain: the **60/40 ratio itself** (currently a hardcoded default), and whether attester rewards should be weighted by stake or split equally. See §3 Q6.
 
-`staker_fee_share: 0.5` says 50% of fees go to "stakers." But validators have no commission parameter, no on-chain commission contract, and no rule for splitting that 50% between the validator and their delegators.
+### 2.2 Delegator/validator fee split (mechanism wired; commission value is ceremony)
 
-Without this:
-- Delegators have no economic claim on fees
-- Validators implicitly take 100% of the "staker share"
-- No reason to delegate over self-staking
+**Wired.** `ValidatorInfo::commission_ppm` (`crates/evaporchain-consensus-types/src/lib.rs:137`) gives every validator an explicit, on-chain commission in parts-per-million. `Tokenomics::split_staker_pool(staker_pool) -> (net_delegators, commission)` at `crates/evaporchain-types/src/genesis.rs:175` splits the staker share before delegators receive their pro-rata cut. The split is applied on the hot path in `process_block_rewards_v2` at `rewards.rs:339`: validator commission is credited to the producer (with dead-producer tombstone redirect to RefreshPool), and the net delegator share accrues to `pending_staker_rewards`.
 
-Mainnet-blocker.
+Ceremony-blocked decisions that remain: the **default `commission_ppm` value** at genesis (currently a hardcoded default — needs deliberate ceremony selection), and whether commission rates should be governance-amendable per-validator or fixed at registration. See §3 Q7.
 
 ### 2.3 MEV refund settlement (resolved — fully wired, dormant by default)
 
@@ -271,11 +268,11 @@ Mainnet must still:
 - Set `max_supply` if shape isn't naturally bounded
 - Persist the choice in genesis
 
-### 2.5 `target_staking_apy: 0.05`
+### 2.5 `target_staking_apy: 0.05` (mechanism wired; target value is ceremony)
 
-Stored in genesis tokenomics, **read by nothing in code.** Pure documentation. Either:
-- Wire it as a controller target (adjust block_reward to maintain 5% APY for total bonded stake), OR
-- Delete it from genesis to avoid confusion
+**Wired.** `Tokenomics::apy_capped_reward(raw_reward, total_staked)` at `crates/evaporchain-types/src/genesis.rs:189` enforces a per-block ceiling: `cap = (total_staked × target_staking_apy) / blocks_per_year`. `blocks_per_year` is now a first-class field on `Tokenomics` (default = 15,768,000 for 2-second blocks). The cap is applied on the hot path in `process_block_rewards_v2` at `rewards.rs:265` — if the raw reward exceeds the APY budget, it is scaled down proportionally before the 60/40 split runs.
+
+Ceremony-blocked decisions that remain: the **target APY value itself** (5% is the current default — needs deliberate selection vs. industry-typical 4–8%), and whether the cap should be a hard ceiling (current behaviour) or trigger a governance amendment when sustained breaches occur. See §3 Q21.
 
 ### 2.6 Vesting / cliff / locked balances (resolved 2026-05-07)
 
