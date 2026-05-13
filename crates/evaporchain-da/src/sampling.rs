@@ -752,4 +752,108 @@ mod tests {
             |qs: &[SampleQuery]| -> Vec<usize> { qs.iter().map(|q| q.shard_index).collect() };
         assert_eq!(indices(&q1), indices(&q2));
     }
+
+    /// T1.20 — `compute_commitment` rejects empty shards with the
+    /// `NoShards` variant (lines 152-154). Previously the path was
+    /// unreached. Also pins the same gate on the _with_config variant.
+    #[test]
+    fn t1_20_compute_commitment_empty_shards_returns_noshards() {
+        let err = DASampler::compute_commitment(&[]).unwrap_err();
+        assert!(
+            matches!(err, SamplingError::NoShards),
+            "empty shards must yield NoShards; got {err:?}"
+        );
+        let err2 = DASampler::compute_commitment_with_config(&[], 4).unwrap_err();
+        assert!(matches!(err2, SamplingError::NoShards));
+    }
+
+    /// T1.20 — `generate_queries` short-circuits to empty when
+    /// `total_shards == 0` (lines 232-234). Without this gate the
+    /// modulo would panic; the test pins the guard.
+    #[test]
+    fn t1_20_generate_queries_zero_shards_returns_empty() {
+        let queries = DASampler::generate_queries(42, 0, 10, b"any-seed");
+        assert!(queries.is_empty(), "zero shards must short-circuit to empty");
+    }
+
+    /// T1.20 — `SamplingError` variants carry the diagnostic values
+    /// their format strings reference. Existing tests only check
+    /// `is_err()`; operators triaging a failed verification need
+    /// *which* index was out of range and *how many* samples fell
+    /// short.
+    #[test]
+    fn t1_20_error_variants_carry_diagnostic_values() {
+        // IndexOutOfRange { index, total }
+        let shards = make_test_shards();
+        let total = shards.len();
+        let err = DASampler::generate_proof(&shards, 99).unwrap_err();
+        match err {
+            SamplingError::IndexOutOfRange { index, total: t } => {
+                assert_eq!(index, 99);
+                assert_eq!(t, total);
+            }
+            other => panic!("expected IndexOutOfRange, got {other:?}"),
+        }
+
+        // InsufficientSamples { got, need }
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+        let err = DASampler::verify_samples(&da_proof, &[], 4).unwrap_err();
+        match err {
+            SamplingError::InsufficientSamples { got, need } => {
+                assert_eq!(got, 0);
+                assert_eq!(need, 4);
+            }
+            other => panic!("expected InsufficientSamples, got {other:?}"),
+        }
+    }
+
+    /// T1.20 — `attestation_message` is (a) domain-separated under
+    /// the `evaporchain-da-attestation-v1` tag and (b) field-sensitive
+    /// across `commitment_root`, `shard_index`, `shard_hash`. Pinning
+    /// these three components prevents a future refactor that dropped
+    /// one of them from silently collapsing signatures across
+    /// different shards or different blocks.
+    #[test]
+    fn t1_20_attestation_message_domain_separated_and_field_sensitive() {
+        let root_a = [0x11u8; 32];
+        let root_b = [0x22u8; 32];
+        let hash_a = [0xAAu8; 32];
+        let hash_b = [0xBBu8; 32];
+
+        let base = DASampler::attestation_message(&root_a, 0, &hash_a);
+        // Vary commitment_root.
+        assert_ne!(
+            base,
+            DASampler::attestation_message(&root_b, 0, &hash_a),
+            "commitment_root must be in the digest"
+        );
+        // Vary shard_index.
+        assert_ne!(
+            base,
+            DASampler::attestation_message(&root_a, 1, &hash_a),
+            "shard_index must be in the digest"
+        );
+        // Vary shard_hash.
+        assert_ne!(
+            base,
+            DASampler::attestation_message(&root_a, 0, &hash_b),
+            "shard_hash must be in the digest"
+        );
+
+        // Domain-separated: a raw concatenation without the v1 tag
+        // would produce a different result. Pin by computing the
+        // "no domain tag" baseline by hand and checking it differs.
+        let no_tag = {
+            let mut h = blake3::Hasher::new();
+            h.update(&root_a);
+            h.update(&0u64.to_le_bytes());
+            h.update(&hash_a);
+            let out: [u8; 32] = h.finalize().into();
+            out
+        };
+        assert_ne!(
+            base, no_tag,
+            "attestation_message must include the domain tag"
+        );
+    }
 }

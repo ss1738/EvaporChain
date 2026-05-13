@@ -978,4 +978,73 @@ mod tests {
         let n = store.tick_re_attestation_sampler(0, 5, 1);
         assert_eq!(n, 0);
     }
+
+    /// T1.20 — `re_attest` returns `false` when the block_number is
+    /// not in the store (lines 384-388). Adversarial: a malicious or
+    /// stale re-attestation message must NOT silently create a new
+    /// cert or extend a non-existent one.
+    #[test]
+    fn t1_20_re_attest_returns_false_on_missing_cert() {
+        let mut store = PoHAStore::new(1000, 100);
+        register_cert(&mut store, 1, 0);
+        // Block 999 was never registered.
+        assert!(
+            !store.re_attest(999, 10),
+            "re_attest on unknown block must return false"
+        );
+        // Active count unchanged.
+        assert_eq!(store.active_count(), 1);
+        // Original cert untouched (re_attestation_count still 0).
+        assert_eq!(store.get(1).unwrap().re_attestation_count, 0);
+    }
+
+    /// T1.20 — `get` / `get_ghost` return `None` for unknown block
+    /// numbers (lines 421-423, 426-428). Boundary pin that prevents a
+    /// silent default-cert leak if a future refactor switched to
+    /// `entry().or_insert_with(...)` semantics.
+    #[test]
+    fn t1_20_get_and_get_ghost_return_none_for_missing() {
+        let store = PoHAStore::new(1000, 100);
+        assert!(store.get(42).is_none());
+        assert!(store.get_ghost(42).is_none());
+        // Same after some registrations.
+        let mut store = store;
+        register_cert(&mut store, 1, 0);
+        assert!(store.get(2).is_none(), "registered 1, not 2");
+        assert!(store.get_ghost(1).is_none(), "1 is active, not ghost");
+    }
+
+    /// T1.20 — `register` with the same `block_number` REPLACES the
+    /// existing entry (line 313: `BTreeMap::insert` overwrites).
+    /// Doctrine pin: the second register resets energy to
+    /// `default_energy` and clears `re_attestation_count` — registering
+    /// is NOT a no-op. Any future change to refuse-on-duplicate would
+    /// trip this test, surfacing the semantics break before it ships.
+    #[test]
+    fn t1_20_register_overwrites_existing_block_number() {
+        let mut store = PoHAStore::new(1000, 100);
+        register_cert(&mut store, 1, 0);
+        // Boost the first cert.
+        assert!(store.re_attest(1, 5));
+        let after_boost = store.get(1).unwrap().re_attestation_count;
+        assert_eq!(after_boost, 1);
+
+        // Re-register the same block — overwrites the old cert.
+        register_cert(&mut store, 1, 10);
+        let fresh = store.get(1).unwrap();
+        assert_eq!(
+            fresh.re_attestation_count, 0,
+            "re-register must reset re_attestation_count"
+        );
+        assert_eq!(
+            fresh.energy, 1000,
+            "re-register must reset energy to default"
+        );
+        assert_eq!(
+            fresh.created_epoch, 10,
+            "re-register must capture new created_epoch"
+        );
+        // Active count stays 1 (overwrite, not duplicate).
+        assert_eq!(store.active_count(), 1);
+    }
 }
