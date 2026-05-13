@@ -117,4 +117,102 @@ mod tests {
         assert_eq!(enc[144], 0x44, "Y.c0 at [144]");
         assert_eq!(enc[208], 0x33, "Y.c1 at [208]");
     }
+
+    /// T1.20 — `g1_raw_to_eip2537` preserves the FULL 48 bytes of
+    /// each coordinate, not just the first. Existing routing test
+    /// only checked the first byte of X and Y; this pins that all
+    /// 48 X-bytes land at [16..64] and all 48 Y-bytes land at
+    /// [80..128], and the 16-byte zero padding is preserved on
+    /// each side.
+    #[test]
+    fn t1_20_g1_raw_to_eip2537_preserves_full_coordinates() {
+        let mut raw = [0u8; 96];
+        // Distinctive byte patterns so a coordinate swap would trip.
+        for i in 0..48 {
+            raw[i] = 0xA0 | (i as u8 & 0x0F); // X: 0xA0..0xAF cycling
+            raw[48 + i] = 0xB0 | (i as u8 & 0x0F); // Y: 0xB0..0xBF cycling
+        }
+        let enc = g1_raw_to_eip2537(&raw).unwrap();
+        // Padding zones.
+        assert_eq!(&enc[0..16], &[0u8; 16], "left padding before X");
+        assert_eq!(&enc[64..80], &[0u8; 16], "left padding before Y");
+        // X bytes preserved.
+        assert_eq!(&enc[16..64], &raw[0..48]);
+        // Y bytes preserved.
+        assert_eq!(&enc[80..128], &raw[48..96]);
+    }
+
+    /// T1.20 — `g2_raw_to_eip2537` preserves all 4 × 48 coordinate
+    /// bytes through the ZCash → EIP-2537 reordering. Existing test
+    /// only checked one byte per coordinate.
+    #[test]
+    fn t1_20_g2_raw_to_eip2537_preserves_full_coordinates() {
+        let mut raw = [0u8; 192];
+        for i in 0..48 {
+            raw[i] = 0xC0 | (i as u8 & 0x0F); // X.c1
+            raw[48 + i] = 0xD0 | (i as u8 & 0x0F); // X.c0
+            raw[96 + i] = 0xE0 | (i as u8 & 0x0F); // Y.c1
+            raw[144 + i] = 0xF0 | (i as u8 & 0x0F); // Y.c0
+        }
+        let enc = g2_raw_to_eip2537(&raw).unwrap();
+        // X.c0 at [16..64], padded by [0..16].
+        assert_eq!(&enc[0..16], &[0u8; 16]);
+        assert_eq!(&enc[16..64], &raw[48..96]);
+        // X.c1 at [80..128], padded by [64..80].
+        assert_eq!(&enc[64..80], &[0u8; 16]);
+        assert_eq!(&enc[80..128], &raw[0..48]);
+        // Y.c0 at [144..192], padded by [128..144].
+        assert_eq!(&enc[128..144], &[0u8; 16]);
+        assert_eq!(&enc[144..192], &raw[144..192]);
+        // Y.c1 at [208..256], padded by [192..208].
+        assert_eq!(&enc[192..208], &[0u8; 16]);
+        assert_eq!(&enc[208..256], &raw[96..144]);
+    }
+
+    /// T1.20 — `g1_compressed_to_eip2537` round-trips a real BLS
+    /// public key (compressed → blst::serialize → EIP-2537). This
+    /// is the production path for L1 precompile call setup; it
+    /// previously had zero test coverage despite shipping behind
+    /// `bls-native`.
+    #[cfg(feature = "bls-native")]
+    #[test]
+    fn t1_20_g1_compressed_smoke_via_blst() {
+        // Generate a real BLS keypair via blst.
+        let ikm = [0x42u8; 32];
+        let sk = blst::min_pk::SecretKey::key_gen(&ikm, &[]).expect("keygen");
+        let pk = sk.sk_to_pk();
+        let compressed = pk.compress(); // 48 bytes
+        let enc = g1_compressed_to_eip2537(&compressed).expect("compressed → eip2537");
+        // EIP-2537 layout is 128 bytes with two 16-byte zero
+        // paddings; the X coordinate (decompressed) must be present
+        // at [16..64] and Y at [80..128].
+        assert_eq!(&enc[0..16], &[0u8; 16]);
+        assert_eq!(&enc[64..80], &[0u8; 16]);
+        // X is not all-zero (the generator's serialize never is).
+        assert!(enc[16..64].iter().any(|&b| b != 0));
+        // Wrong-length compressed input must Err.
+        assert!(g1_compressed_to_eip2537(&[0u8; 47]).is_none());
+        assert!(g1_compressed_to_eip2537(&[0u8; 48]).is_none()); // valid len, invalid bytes
+    }
+
+    /// T1.20 — `g2_compressed_to_eip2537` round-trips a real G2
+    /// signature. Same shape as the G1 smoke; pins the
+    /// `bls-native` compressed-input path.
+    #[cfg(feature = "bls-native")]
+    #[test]
+    fn t1_20_g2_compressed_smoke_via_blst() {
+        let ikm = [0x37u8; 32];
+        let sk = blst::min_pk::SecretKey::key_gen(&ikm, &[]).expect("keygen");
+        let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+        let sig = sk.sign(b"test message", dst, &[]);
+        let compressed = sig.compress(); // 96 bytes
+        let enc = g2_compressed_to_eip2537(&compressed).expect("compressed → eip2537");
+        // Four padding zones at [0..16], [64..80], [128..144], [192..208].
+        assert_eq!(&enc[0..16], &[0u8; 16]);
+        assert_eq!(&enc[64..80], &[0u8; 16]);
+        assert_eq!(&enc[128..144], &[0u8; 16]);
+        assert_eq!(&enc[192..208], &[0u8; 16]);
+        // Wrong-length compressed input rejected.
+        assert!(g2_compressed_to_eip2537(&[0u8; 95]).is_none());
+    }
 }
