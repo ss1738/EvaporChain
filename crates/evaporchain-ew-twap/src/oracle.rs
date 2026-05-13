@@ -360,6 +360,60 @@ mod tests {
         );
     }
 
+    /// T1.20 — adversarial: when ALL observations have energy 0,
+    /// `read()` surfaces `ZeroTotalEnergy` rather than dividing
+    /// by zero (lines 105-107). Pin the error path that the
+    /// `sum_energy == 0` gate protects.
+    #[test]
+    fn t1_20_zero_total_energy_error_when_all_energy_zero() {
+        let mut o = EwTwapOracle::new(100);
+        // Both observations have legitimate prices but zero energy.
+        o.observe(obs(10, 1_000_000, 0)).unwrap();
+        o.observe(obs(11, 2_000_000, 0)).unwrap();
+        assert_eq!(o.read().unwrap_err(), OracleError::ZeroTotalEnergy);
+        // read_at is symmetric.
+        assert_eq!(o.read_at(12).unwrap_err(), OracleError::ZeroTotalEnergy);
+    }
+
+    /// T1.20 — `prune_at(now)` is callable directly (not just as
+    /// a side effect of `observe`). Pin that the standalone API
+    /// drops stale entries and is idempotent. Useful when the
+    /// chain advances epoch without a new observation.
+    #[test]
+    fn t1_20_prune_at_directly_drops_stale_entries() {
+        let mut o = EwTwapOracle::new(10);
+        o.observe(obs(5, 1_000_000, 1000)).unwrap();
+        o.observe(obs(10, 2_000_000, 1000)).unwrap();
+        assert_eq!(o.observation_count(), 2);
+        // Prune at epoch 20: cutoff = 10, so obs(5) is dropped.
+        o.prune_at(20);
+        assert_eq!(o.observation_count(), 1);
+        // Idempotent: re-pruning at same epoch is a no-op.
+        o.prune_at(20);
+        assert_eq!(o.observation_count(), 1);
+        // Prune further: cutoff = 50, obs(10) dropped too.
+        o.prune_at(60);
+        assert_eq!(o.observation_count(), 0);
+    }
+
+    /// T1.20 — `window_epochs == 0` means "no window — keep
+    /// everything". `read_at` must short-circuit to `read()` in
+    /// this case (line 121), so `now` is ignored.
+    #[test]
+    fn t1_20_read_at_with_zero_window_uses_read() {
+        let mut o = EwTwapOracle::new(0);
+        o.observe(obs(5, 1_000_000, 1000)).unwrap();
+        o.observe(obs(1_000_000, 2_000_000, 1000)).unwrap();
+        // window=0 → read_at ignores `now` and uses all observations.
+        let r_at_1 = o.read_at(1).unwrap();
+        let r_at_huge = o.read_at(u64::MAX).unwrap();
+        let r_plain = o.read().unwrap();
+        assert_eq!(r_at_1, r_plain);
+        assert_eq!(r_at_huge, r_plain);
+        // Equal energy → arithmetic mean = 1_500_000.
+        assert_eq!(r_plain, 1_500_000);
+    }
+
     proptest::proptest! {
         #[test]
         fn property_ew_twap_in_observed_range(
