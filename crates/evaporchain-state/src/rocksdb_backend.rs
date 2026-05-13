@@ -2113,4 +2113,264 @@ mod tests {
         // Stub impl always returns None — verify it does not panic.
         assert!(db.get_governance_param("fee_base").is_none());
     }
+
+    // ── T1.20 batch-2: in-batch persist paths + proof/prune/trie-snapshot ──
+
+    fn make_ghost_rec(b: u8, evaporated_at: u64) -> GhostRecord {
+        GhostRecord {
+            object_id: [b; 32],
+            owner: [0u8; 32],
+            evaporated_at,
+            data_hash: [0u8; 32],
+            original_data: None,
+            mmr_position: None,
+            original_half_life: None,
+        }
+    }
+
+    #[test]
+    fn t1_20b_spend_nullifier_inside_batch_buffers_write() {
+        let mut db = tmp_db();
+        db.begin_batch();
+        let nf = [0xABu8; 32];
+        assert!(db.spend_nullifier(&nf));
+        assert!(db.is_nullifier_spent(&nf));
+        db.commit_batch().unwrap();
+        assert!(db.is_nullifier_spent(&nf));
+        assert_eq!(db.nullifier_count(), 1);
+    }
+
+    #[test]
+    fn t1_20b_append_note_commitment_inside_batch() {
+        let mut db = tmp_db();
+        let c = [0x77u8; 32];
+        db.begin_batch();
+        db.append_note_commitment(0, c);
+        db.commit_batch().unwrap();
+        let all = db.get_all_note_commitments();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0], c);
+    }
+
+    #[test]
+    fn t1_20b_put_shielded_pool_balance_inside_batch() {
+        let mut db = tmp_db();
+        db.begin_batch();
+        db.put_shielded_pool_balance(42_000);
+        db.put_note_count(7);
+        db.commit_batch().unwrap();
+        assert_eq!(db.get_shielded_pool_balance(), 42_000);
+        assert_eq!(db.get_note_count(), 7);
+    }
+
+    #[test]
+    fn t1_20b_put_last_rent_epoch_inside_batch() {
+        let mut db = tmp_db();
+        db.begin_batch();
+        db.put_last_rent_epoch(99);
+        db.commit_batch().unwrap();
+        assert_eq!(db.get_last_rent_epoch(), 99);
+    }
+
+    #[test]
+    fn t1_20b_put_stake_inside_batch() {
+        let mut db = tmp_db();
+        db.begin_batch();
+        db.put_stake(make_stake(1, 1_000));
+        db.put_stake(make_stake(2, 2_000));
+        db.commit_batch().unwrap();
+        assert_eq!(db.all_stakes().len(), 2);
+    }
+
+    #[test]
+    fn t1_20b_remove_stake_inside_batch() {
+        let mut db = tmp_db();
+        db.put_stake(make_stake(5, 5_000));
+        assert!(db.get_stake(5).is_some());
+        db.begin_batch();
+        db.remove_stake(5);
+        db.commit_batch().unwrap();
+        assert!(db.get_stake(5).is_none());
+    }
+
+    #[test]
+    fn t1_20b_put_delegation_inside_batch() {
+        let mut db = tmp_db();
+        db.begin_batch();
+        db.put_delegation(make_delegation(1, 10, 500));
+        db.commit_batch().unwrap();
+        assert_eq!(db.delegations_for_validator(10).len(), 1);
+    }
+
+    #[test]
+    fn t1_20b_remove_delegation_inside_batch() {
+        let mut db = tmp_db();
+        let d = make_delegation(2, 20, 300);
+        let delegator = d.delegator;
+        db.put_delegation(d);
+        db.begin_batch();
+        db.remove_delegation(&delegator, 20);
+        db.commit_batch().unwrap();
+        assert!(db.get_delegation(&delegator, 20).is_none());
+    }
+
+    #[test]
+    fn t1_20b_get_account_mut_in_batch_records_undo() {
+        let mut db = tmp_db();
+        let acc = make_account(7, 777);
+        db.put_account(acc.clone());
+        db.begin_batch();
+        {
+            let m = db.get_account_mut(&acc.address).unwrap();
+            m.balance = 999;
+        }
+        db.rollback_batch();
+        assert_eq!(db.get_account(&acc.address).unwrap().balance, 777);
+    }
+
+    #[test]
+    fn t1_20b_get_account_mut_missing_returns_none() {
+        let mut db = tmp_db();
+        let mut addr = [0u8; 32];
+        addr[0] = 0xFF;
+        // Not in batch — just confirm missing address returns None
+        assert!(db.get_account_mut(&addr).is_none());
+    }
+
+    #[test]
+    fn t1_20b_delete_account_in_batch_then_rollback() {
+        let mut db = tmp_db();
+        let acc = make_account(8, 888);
+        db.put_account(acc.clone());
+        db.begin_batch();
+        db.delete_account(&acc.address);
+        assert!(db.get_account(&acc.address).is_none());
+        db.rollback_batch();
+        assert_eq!(db.get_account(&acc.address).unwrap().balance, 888);
+    }
+
+    #[test]
+    fn t1_20b_get_or_create_existing_account_in_batch() {
+        let mut db = tmp_db();
+        let acc = make_account(9, 900);
+        db.put_account(acc.clone());
+        db.begin_batch();
+        {
+            let m = db.get_or_create_account(&acc.address);
+            m.balance = 1800;
+        }
+        db.rollback_batch();
+        assert_eq!(db.get_account(&acc.address).unwrap().balance, 900);
+    }
+
+    #[test]
+    fn t1_20b_get_or_create_new_account_in_batch() {
+        let mut db = tmp_db();
+        let mut addr = [0u8; 32];
+        addr[0] = 0xEE;
+        db.begin_batch();
+        {
+            let m = db.get_or_create_account(&addr);
+            m.balance = 42;
+        }
+        db.rollback_batch();
+        assert!(db.get_account(&addr).is_none());
+    }
+
+    #[test]
+    fn t1_20b_prove_account_and_prove_object() {
+        let mut db = tmp_db();
+        let acc = make_account(0xAA, 5000);
+        db.put_account(acc.clone());
+        let _proof = db.prove_account(&acc.address);
+        let obj = make_obj(0xBB, 1234);
+        db.put_object(obj.clone());
+        let _proof2 = db.prove_object(&obj.id);
+        let key = trie_key_for_object(&obj.id);
+        let _proof3 = db.prove_at_key(&key);
+    }
+
+    #[test]
+    fn t1_20b_trie_snapshot_roundtrip() {
+        let mut db = tmp_db();
+        db.put_object(make_obj(1, 100));
+        db.put_account(make_account(1, 200));
+        let snapshot = db.trie_snapshot();
+        assert!(!snapshot.is_empty());
+        db.put_object(make_obj(2, 999));
+        db.load_trie_snapshot(&snapshot).unwrap();
+        let _root = db.compute_state_root();
+    }
+
+    #[test]
+    fn t1_20b_prune_before_height_zero_when_none_qualify() {
+        let mut db = tmp_db();
+        db.put_ghost(make_ghost_rec(1, 50));
+        db.put_ghost(make_ghost_rec(2, 60));
+        let pruned = db.prune_before_height(10);
+        assert_eq!(pruned, 0);
+        assert_eq!(db.ghost_count(), 2);
+    }
+
+    #[test]
+    fn t1_20b_prune_before_height_removes_qualifying_ghosts() {
+        let mut db = tmp_db();
+        db.put_ghost(make_ghost_rec(1, 5));
+        db.put_ghost(make_ghost_rec(2, 15));
+        db.put_ghost(make_ghost_rec(3, 25));
+        let pruned = db.prune_before_height(20);
+        assert_eq!(pruned, 2);
+        assert_eq!(db.ghost_count(), 1);
+        assert!(db.get_ghost(&[3u8; 32]).is_some());
+    }
+
+    #[test]
+    fn t1_20b_sync_dirty_trie_delete_path() {
+        let mut db = tmp_db();
+        db.put_object(make_obj(1, 100));
+        let r1 = db.compute_state_root();
+        db.delete_object(&make_obj(1, 0).id);
+        let r2 = db.compute_state_root();
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn t1_20b_all_account_addresses_after_batch() {
+        let mut db = tmp_db();
+        db.put_account(make_account(1, 100));
+        db.put_account(make_account(2, 200));
+        db.begin_batch();
+        db.put_account(make_account(3, 300));
+        db.commit_batch().unwrap();
+        let addrs = db.all_account_addresses();
+        assert_eq!(addrs.len(), 3);
+    }
+
+    #[test]
+    fn t1_20b_stub_governance_methods_dont_panic() {
+        let mut db = tmp_db();
+        assert!(db.get_proposal(1).is_none());
+        db.put_proposal(evaporchain_types::GovernanceProposal {
+            proposal_id: 1,
+            proposer: [0u8; 32],
+            title: "test".to_string(),
+            param_key: "fee".to_string(),
+            param_value: "100".to_string(),
+            start_epoch: 0,
+            end_epoch: 10,
+            votes_for: 0,
+            votes_against: 0,
+            status: evaporchain_types::ProposalStatus::Active,
+            created_at: 0,
+            voters: Default::default(),
+        });
+        let all = db.all_proposals();
+        assert!(all.is_empty());
+        db.commit_state_snapshot(1);
+        assert!(db.get_account_at_height(&[0u8; 32], 1).is_none());
+        assert!(db.get_object_at_height(&[0u8; 32], 1).is_none());
+        assert!(db.earliest_snapshot_height().is_none());
+        assert!(db.latest_snapshot_height().is_none());
+        db.prune_snapshots_before(100);
+    }
 }
