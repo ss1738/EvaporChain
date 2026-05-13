@@ -692,4 +692,64 @@ mod tests {
         let r_default: CapRegistry = Default::default();
         assert!(r_default.is_empty());
     }
+
+    /// T1.20 — `set_energy` on an unknown cap returns `NotFound`,
+    /// not a silent insert. Adversarial pin: an attacker who
+    /// fabricates a `CapabilityId` cannot create an entry via the
+    /// decay-tick setter.
+    #[test]
+    fn t1_20_set_energy_unknown_cap_returns_not_found() {
+        let mut r = CapRegistry::new();
+        let fabricated = CapabilityId([0xCC; 32]);
+        let err = r.set_energy(fabricated, 1000).unwrap_err();
+        assert_eq!(err, RegistryError::NotFound(fabricated));
+        // Registry remains empty.
+        assert!(r.is_empty());
+    }
+
+    /// T1.20 — `set_energy` accepts both decreases AND increases.
+    /// The registry layer doesn't gate energy direction — the
+    /// chain's decay logic owns that policy. Pinning the
+    /// unconstrained setter so the chain-layer's gating stays
+    /// orthogonal: a refactor adding a "never increase" check at
+    /// this layer would surface here.
+    #[test]
+    fn t1_20_set_energy_can_increase_or_decrease() {
+        let mut r = CapRegistry::new();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        // Decrease (typical decay tick).
+        r.set_energy(id, 500).unwrap();
+        assert_eq!(r.get(&id).unwrap().energy, 500);
+        // Increase (typical refresh / re-attestation).
+        r.set_energy(id, 2000).unwrap();
+        assert_eq!(r.get(&id).unwrap().energy, 2000);
+        // Set to ENERGY_FLOOR (=0) — registry doesn't gate.
+        r.set_energy(id, ENERGY_FLOOR).unwrap();
+        assert_eq!(r.get(&id).unwrap().energy, 0);
+        // …and the invoke_gate now refuses (NonInvocable).
+        let err = r.invoke_gate(id).unwrap_err();
+        assert_eq!(err, RegistryError::NonInvocable(id));
+    }
+
+    /// T1.20 — `transfer` to the SAME holder is a valid no-op.
+    /// Degenerate case: the validation is "caller must be current
+    /// holder", which is satisfied if you transfer to yourself.
+    /// A future refactor adding a "must change" check would
+    /// silently break self-transfer.
+    #[test]
+    fn t1_20_transfer_to_same_holder_is_valid_noop() {
+        let mut r = CapRegistry::new();
+        let id = r
+            .mint(alice(), auth("read", 1, 100), 1000, nonce(1), 0)
+            .unwrap();
+        // Alice transfers to alice.
+        r.transfer(alice(), id, alice()).unwrap();
+        assert_eq!(r.get(&id).unwrap().holder, alice());
+        assert_eq!(r.get(&id).unwrap().energy, 1000);
+        // And alice can still transfer to bob.
+        r.transfer(alice(), id, bob()).unwrap();
+        assert_eq!(r.get(&id).unwrap().holder, bob());
+    }
 }
