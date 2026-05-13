@@ -213,4 +213,74 @@ mod tests {
         };
         assert!(empty.is_empty());
     }
+
+    /// T1.20 — `ShardConfig::new(0)` panics (line 28-31 assertion).
+    /// The existing `test_shard_config_non_power_of_two_panics` covers
+    /// the `is_power_of_two()` half of the assertion; this pins the
+    /// `num_shards > 0` half. (0 is a corner case because `0` is also
+    /// not a power of two, but the assertion message attributes the
+    /// failure to the power-of-2 check; the contract is that EITHER
+    /// condition violation panics.)
+    #[test]
+    #[should_panic]
+    fn t1_20_shard_config_zero_panics() {
+        ShardConfig::new(0);
+    }
+
+    /// T1.20 — `shard_for_object` reads the first two ID bytes as
+    /// BIG-ENDIAN (line 46). Pinning endianness explicitly prevents a
+    /// silent refactor to `from_le_bytes` from re-bucketing every
+    /// object on the chain.
+    #[test]
+    fn t1_20_shard_for_object_is_big_endian() {
+        let config = ShardConfig::new(256); // mask = 0xFF → uses low byte after BE read
+        // id = 0x12 0x34 ... — BE reads as 0x1234; masked & 0xFF = 0x34 = 52.
+        let id = [
+            0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let shard = shard_for_object(&id, &config);
+        assert_eq!(
+            shard,
+            ShardId(0x34),
+            "BE read of (0x12, 0x34) masked to 8 bits must be 0x34"
+        );
+
+        // Mirror-image LE would have masked to 0x12. Explicit
+        // anti-LE assertion documents the contract.
+        assert_ne!(shard, ShardId(0x12), "must NOT be LE-byte interpretation");
+    }
+
+    /// T1.20 — `validator_shards` uses `validator_id % num_validators`
+    /// (line 82). A `validator_id` larger than `num_validators` must
+    /// produce the same assignment as `validator_id % num_validators`.
+    /// Pinning this prevents a future refactor that silently changed
+    /// the modulo semantics from breaking validators with high IDs.
+    #[test]
+    fn t1_20_validator_shards_validator_id_modulo_wraps() {
+        let config = ShardConfig::new(8);
+        let mod3 = validator_shards(0, 3, &config);
+        let wrap_3 = validator_shards(3, 3, &config); // 3 % 3 == 0
+        let wrap_300 = validator_shards(300, 3, &config); // 300 % 3 == 0
+        assert_eq!(mod3, wrap_3);
+        assert_eq!(mod3, wrap_300);
+        // And id=1 ≠ id=0 in the same modulo class.
+        assert_ne!(validator_shards(1, 3, &config), mod3);
+    }
+
+    /// T1.20 — `ShardRange::len` boundary: `start == end` returns 1
+    /// (single-shard range), not 0 (line 64: `+ 1` ensures inclusive
+    /// on both ends). The existing `test_shard_range_len` covers an
+    /// 8-element range; this pins the single-element corner.
+    #[test]
+    fn t1_20_shard_range_single_shard_has_len_one() {
+        let r = ShardRange {
+            start: ShardId(7),
+            end: ShardId(7),
+        };
+        assert_eq!(r.len(), 1, "single-shard range is inclusive on both ends");
+        assert!(!r.is_empty());
+        assert!(r.contains(ShardId(7)));
+        assert!(!r.contains(ShardId(6)));
+        assert!(!r.contains(ShardId(8)));
+    }
 }
