@@ -21778,3 +21778,170 @@ mod t1_20_batch19 {
         assert!(finalized.is_empty());
     }
 }
+
+#[cfg(test)]
+mod t1_20_batch20 {
+    use super::*;
+    use evaporchain_types::Block;
+
+    fn make_vs1() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs
+    }
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+    fn make_tc1() -> TendermintConsensus { TendermintConsensus::new_for_test(1, 5, make_vs1()) }
+    fn make_tc3() -> TendermintConsensus { TendermintConsensus::new_for_test(1, 5, make_vs3()) }
+    fn make_block(number: u64) -> Block {
+        Block {
+            number, epoch: 0, parent_hash: [0u8; 32], state_root: [0u8; 32],
+            transactions: vec![], producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: ConsensusMessage::DAAttestation height() returns block_number (line 205) ──
+    #[test]
+    fn t1_20_da_attestation_height() {
+        let msg = ConsensusMessage::DAAttestation {
+            block_number: 42,
+            data_root: [0u8; 32],
+            validator_id: 1,
+            samples_verified: 0,
+            stake: 1000,
+            signature: vec![],
+            public_key: vec![],
+        };
+        assert_eq!(msg.height(), 42);
+    }
+
+    // ── Test 2: ConsensusMessage::KeyAnnounce height() and round() (lines 204, 215) ──
+    #[test]
+    fn t1_20_key_announce_height_and_round() {
+        let msg = ConsensusMessage::KeyAnnounce {
+            validator_id: 7,
+            bls_public_key: vec![0u8; 48],
+            proof_of_possession: vec![],
+        };
+        assert_eq!(msg.height(), 0);
+        assert_eq!(msg.round(), 0);
+    }
+
+    // ── Test 3: ConsensusMessage::OracleVote height() and round() (lines 206, 217) ──
+    #[test]
+    fn t1_20_oracle_vote_height_and_round() {
+        let msg = ConsensusMessage::OracleVote { payload: b"{}".to_vec() };
+        assert_eq!(msg.height(), 0);
+        assert_eq!(msg.round(), 0);
+    }
+
+    // ── Test 4: ConsensusMessage::DAAttestation round() returns 0 (line 216) ──
+    #[test]
+    fn t1_20_da_attestation_round_is_zero() {
+        let msg = ConsensusMessage::DAAttestation {
+            block_number: 99,
+            data_root: [1u8; 32],
+            validator_id: 2,
+            samples_verified: 5,
+            stake: 500,
+            signature: vec![],
+            public_key: vec![],
+        };
+        assert_eq!(msg.round(), 0);
+    }
+
+    // ── Test 5: quorum_size with empty ValidatorSet returns usize::MAX (line 4072) ──
+    #[test]
+    fn t1_20_quorum_size_empty_vs_returns_max() {
+        let tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::new());
+        assert_eq!(tc.quorum_size(), usize::MAX);
+    }
+
+    // ── Test 6: stake_quorum_threshold with empty ValidatorSet returns u64::MAX (line 4081) ──
+    #[test]
+    fn t1_20_stake_quorum_threshold_empty_vs_returns_max() {
+        let tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::new());
+        assert_eq!(tc.stake_quorum_threshold(), u64::MAX);
+    }
+
+    // ── Test 7: mortis_cert_preview returns None when mortis is triggered (line 1564) ──
+    #[test]
+    fn t1_20_mortis_cert_preview_returns_none_when_triggered() {
+        let mut tc = make_tc1();
+        tc.executor.mortis_monitor.triggered = true;
+        assert!(tc.mortis_cert_preview().is_none());
+    }
+
+    // ── Test 8: maybe_emit_cartel_alarm_event early-return when alarm has no status (line 1890) ──
+    #[test]
+    fn t1_20_cartel_alarm_event_no_status_early_return() {
+        let mut tc = make_tc1();
+        tc.governance_params
+            .insert("cartel_alarm_mode".to_string(), "alarm".to_string());
+        let blk = make_block(1);
+        // Fresh doctrine_default alarm has no status; on_block_committed triggers
+        // cartel_alarm.record_block then maybe_emit_cartel_alarm_event, which
+        // returns at line 1890 because status() is None.
+        tc.on_block_committed(&blk, [0u8; 32], 0);
+        // No pending alarms should have been pushed.
+        assert!(tc.pending_cartel_alarms.is_empty());
+    }
+
+    // ── Test 9: record_dag_precommit skips entry when round mismatches this_round (line 2490) ──
+    #[test]
+    fn t1_20_record_dag_precommit_round_mismatch_skips() {
+        let mut tc = make_tc3();
+        tc.governance_params.insert(
+            "light_cone_state_branches_enabled".to_string(),
+            "true".to_string(),
+        );
+        let tip_a = [0xAAu8; 32];
+        let tip_b = [0xBBu8; 32];
+        // Insert tip_a (round defaults to 0 via RoundState::new(0)).
+        tc.record_dag_precommit(tip_a, 1, Some([3u8; 32]), vec![]);
+        // Mutate tip_a's round so it differs from this_round (0) → triggers continue at 2490.
+        tc.dag_round_states.get_mut(&tip_a).unwrap().round = 7;
+        // Process tip_b; during the equivocation scan, tip_a is skipped via the continue.
+        tc.record_dag_precommit(tip_b, 1, Some([4u8; 32]), vec![]);
+        // Both entries must exist; no false equivocation should have been recorded.
+        assert!(tc.dag_round_states.contains_key(&tip_a));
+        assert!(tc.dag_round_states.contains_key(&tip_b));
+        assert_eq!(tc.cross_fork_equivocation_count(1), 0);
+    }
+
+    // ── Test 10: DA attestation with pk matching registered key but invalid BLS sig → line 4663 ──
+    #[test]
+    fn t1_20_da_attestation_bls_verify_failure_returns_early() {
+        let mut tc = make_tc3();
+        // Register a fake BLS public key for validator 1.
+        let fake_pk = vec![0xCCu8; 48];
+        tc.validator_set.get_mut(1).unwrap().bls_public_key = Some(fake_pk.clone());
+        // Attestation: pk matches the registered key but signature is all-zero (invalid BLS).
+        let msg = ConsensusMessage::DAAttestation {
+            block_number: 10,
+            data_root: [0u8; 32],
+            validator_id: 1,
+            samples_verified: 0,
+            stake: 1000,
+            signature: vec![0u8; 96],
+            public_key: fake_pk,
+        };
+        // BlsVerifier::verify_native returns false on malformed bytes → early return at line 4663.
+        let actions = tc.on_message(msg);
+        assert!(actions.is_empty());
+    }
+}
