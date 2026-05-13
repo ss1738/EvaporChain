@@ -591,6 +591,104 @@ pub(crate) fn execute_upgrade_contract_impl(
     Ok(())
 }
 
+/// Shared UserOp envelope (sender nonce check + paymaster preconditions
+/// + paymaster gas debit). Called by both SimpleExecutor and
+/// ParallelExecutor. AUDIT_2026_05_13 C4 closure (7/7) — pre-fix,
+/// ParallelExecutor errored every UserOp with the generic "executes in
+/// serial phase" partition arm. Now the envelope runs on both
+/// executors. Inner-tx dispatch (Transfer / CallScript / CallContract)
+/// remains in SimpleExecutor only — ParallelExecutor returns a clear
+/// "deferred" error when call_data is non-empty (Phase 3e follow-up).
+///
+/// Empty call_data (gas-only sponsorship) is fully parity-clean.
+pub(crate) fn execute_user_op_envelope_impl(
+    chain_id: &str,
+    db: &mut dyn StateDB,
+    tx: &evaporchain_types::UserOpTx,
+    epoch: Epoch,
+) -> Result<(), ExecutionError> {
+    // ── Section 1: read sender precondition ──────────────────────
+    let sender_current_nonce = db.get_or_create_account(&tx.sender).nonce;
+    if sender_current_nonce != tx.nonce {
+        return Err(ExecutionError::InvalidNonce {
+            expected: sender_current_nonce,
+            got: tx.nonce,
+        });
+    }
+
+    // ── Section 2: read + verify paymaster preconditions ─────────
+    let paymaster_state: Option<(evaporchain_types::AccountAddress, u64)> =
+        if let Some(ref paymaster) = tx.paymaster {
+            let paymaster_nonce_arg = tx.paymaster_nonce.ok_or_else(|| {
+                ExecutionError::ContractError(
+                    "UserOpTx with paymaster must include paymaster_nonce \
+                     (replay protection)"
+                        .into(),
+                )
+            })?;
+            let pm_sig = tx.paymaster_signature.as_deref().ok_or_else(|| {
+                ExecutionError::ContractError(
+                    "UserOpTx with paymaster must include paymaster_signature".into(),
+                )
+            })?;
+            let pm_pk = tx.paymaster_public_key.as_deref().ok_or_else(|| {
+                ExecutionError::ContractError(
+                    "UserOpTx with paymaster must include paymaster_public_key".into(),
+                )
+            })?;
+            let derived_pm_addr: [u8; 32] = *blake3::hash(pm_pk).as_bytes();
+            if &derived_pm_addr != paymaster {
+                return Err(ExecutionError::ContractError(format!(
+                    "UserOpTx: paymaster_public_key does not derive to paymaster address \
+                     (derived {} vs paymaster {})",
+                    hex::encode(derived_pm_addr),
+                    hex::encode(paymaster)
+                )));
+            }
+            let payload = tx
+                .paymaster_sponsorship_payload(chain_id)
+                .expect("paymaster + paymaster_nonce both checked Some above");
+            if !HybridVerifier::verify(&payload, pm_sig, pm_pk) {
+                return Err(ExecutionError::ContractError(
+                    "UserOpTx: paymaster_signature verification failed".into(),
+                ));
+            }
+            let pm_acct = db.get_or_create_account(paymaster);
+            if pm_acct.nonce != paymaster_nonce_arg {
+                return Err(ExecutionError::InvalidNonce {
+                    expected: pm_acct.nonce,
+                    got: paymaster_nonce_arg,
+                });
+            }
+            let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
+            if pm_acct.balance < total_gas_cost {
+                return Err(ExecutionError::InsufficientGas {
+                    account: hex::encode(paymaster),
+                    required: total_gas_cost,
+                    available: pm_acct.balance,
+                });
+            }
+            Some((*paymaster, total_gas_cost))
+        } else {
+            None
+        };
+
+    // ── Section 3: apply mutations (all preconditions passed) ────
+    {
+        let sender = db.get_or_create_account(&tx.sender);
+        sender.nonce = sender.nonce.saturating_add(1);
+        sender.last_touched_epoch = epoch;
+    }
+    if let Some((pm_addr, total_gas_cost)) = paymaster_state {
+        let pm = db.get_or_create_account(&pm_addr);
+        pm.balance = pm.balance.saturating_sub(total_gas_cost);
+        pm.nonce = pm.nonce.saturating_add(1);
+        pm.last_touched_epoch = epoch;
+    }
+
+    Ok(())
+}
+
 /// Number of state snapshots to retain before pruning older ones.
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
 
@@ -2344,131 +2442,16 @@ impl SimpleExecutor {
         tx: &evaporchain_types::UserOpTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
-        // ─── Audit fix #2 (2026-05-09): validate-then-mutate. ─────────
-        //
-        // Pre-Day-12C bug: the sender's nonce was bumped BEFORE the
-        // paymaster preconditions (signature, paymaster_nonce match,
-        // gas budget). Any post-sender-bump precondition failure
-        // returned Err while leaving sender.nonce already incremented.
-        // The block-level revert (lib.rs:3211) restores `tx.sender()`
-        // — which for a sponsored UserOp returns the PAYMASTER, not
-        // the user — so paymaster's pre-execution state was restored
-        // but the user's nonce stayed bumped. Under
-        // `verify_signatures: false` (legacy testnet) a third party
-        // could submit unsigned UserOps and bump the victim's nonce
-        // arbitrarily.
-        //
-        // This restructure reads all preconditions first (no
-        // mutation), and applies the sender-nonce bump + paymaster
-        // gas debit + paymaster-nonce bump together at the end. A
-        // pre-check failure leaves both accounts untouched. After
-        // pre-checks pass, all three mutations apply. Inner-tx
-        // dispatch failures still return Err but at that point the
-        // user's nonce is correctly consumed (Ethereum semantics:
-        // failed-but-attempted txs do consume the nonce slot).
-
-        // ── Section 1: read sender precondition ──────────────────────
-        let sender_current_nonce = db.get_or_create_account(&tx.sender).nonce;
-        if sender_current_nonce != tx.nonce {
-            return Err(ExecutionError::InvalidNonce {
-                expected: sender_current_nonce,
-                got: tx.nonce,
-            });
-        }
-
-        // ── Section 2: read + verify paymaster preconditions ─────────
-        // Returns `Some((pm_addr, total_gas_cost))` on success so
-        // section 3 can apply the mutations without re-reading.
-        let paymaster_state: Option<(evaporchain_types::AccountAddress, u64)> = if let Some(
-            ref paymaster,
-        ) = tx.paymaster
-        {
-            // Phase 4.1 (2026-05-03): paymaster_nonce required when
-            // paymaster is set, for replay protection.
-            let paymaster_nonce_arg = tx.paymaster_nonce.ok_or_else(|| {
-                ExecutionError::ContractError(
-                    "UserOpTx with paymaster must include paymaster_nonce \
-                     (replay protection — see audit §3 / 2026-05-03 closure)"
-                        .into(),
-                )
-            })?;
-
-            // Day 1B (Option B paymaster, 2026-05-08): require + verify
-            // hybrid sponsorship signature. Without this, any user could
-            // forge `paymaster: <victim>` and drain the victim's balance.
-            // Verified unconditionally — paymaster debit is real state
-            // and must always carry proof of consent.
-            let pm_sig = tx.paymaster_signature.as_deref().ok_or_else(|| {
-                ExecutionError::ContractError(
-                    "UserOpTx with paymaster must include paymaster_signature \
-                     (sponsorship-consent — closes drain-by-forged-paymaster)"
-                        .into(),
-                )
-            })?;
-            let pm_pk = tx.paymaster_public_key.as_deref().ok_or_else(|| {
-                ExecutionError::ContractError(
-                    "UserOpTx with paymaster must include paymaster_public_key"
-                        .into(),
-                )
-            })?;
-            // Bind paymaster public key to paymaster address (same
-            // blake3 derivation as `generate_address_from_pubkey`).
-            let derived_pm_addr: [u8; 32] = *blake3::hash(pm_pk).as_bytes();
-            if &derived_pm_addr != paymaster {
-                return Err(ExecutionError::ContractError(format!(
-                    "UserOpTx: paymaster_public_key does not derive to paymaster address \
-                     (derived {} vs paymaster {})",
-                    hex::encode(derived_pm_addr),
-                    hex::encode(paymaster)
-                )));
-            }
-            // Canonical sponsorship payload — chain-id-bound,
-            // blake3(call_data)-bound. See UserOpTx::paymaster_sponsorship_payload.
-            let payload = tx
-                .paymaster_sponsorship_payload(&self.chain_id)
-                .expect("paymaster + paymaster_nonce both checked Some above");
-            if !HybridVerifier::verify(&payload, pm_sig, pm_pk) {
-                return Err(ExecutionError::ContractError(
-                    "UserOpTx: paymaster_signature verification failed".into(),
-                ));
-            }
-
-            // Read-only paymaster account check. We DO NOT mutate
-            // here — section 3 applies the gas debit + nonce bump
-            // after sender-side validation has also passed.
-            let pm_acct = db.get_or_create_account(paymaster);
-            if pm_acct.nonce != paymaster_nonce_arg {
-                return Err(ExecutionError::InvalidNonce {
-                    expected: pm_acct.nonce,
-                    got: paymaster_nonce_arg,
-                });
-            }
-            let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
-            if pm_acct.balance < total_gas_cost {
-                return Err(ExecutionError::InsufficientGas {
-                    account: hex::encode(paymaster),
-                    required: total_gas_cost,
-                    available: pm_acct.balance,
-                });
-            }
-            // Mutable borrow ends with the if-let block.
-            Some((*paymaster, total_gas_cost))
-        } else {
-            None
-        };
-
-        // ── Section 3: apply mutations (all preconditions passed) ────
-        {
-            let sender = db.get_or_create_account(&tx.sender);
-            sender.nonce = sender.nonce.saturating_add(1);
-            sender.last_touched_epoch = epoch;
-        }
-        if let Some((pm_addr, total_gas_cost)) = paymaster_state {
-            let pm = db.get_or_create_account(&pm_addr);
-            pm.balance = pm.balance.saturating_sub(total_gas_cost);
-            pm.nonce = pm.nonce.saturating_add(1);
-            pm.last_touched_epoch = epoch;
-        }
+        // AUDIT_2026_05_13 C4 closure (7/7): envelope extracted to
+        // `execute_user_op_envelope_impl` so ParallelExecutor's serial
+        // path shares the nonce / paymaster-sig / gas-debit logic. The
+        // inner-tx dispatch below still runs from SimpleExecutor only —
+        // ParallelExecutor returns a clear "deferred" error for
+        // non-empty call_data until Phase 3e ports the inner dispatch
+        // helpers (`execute_inner_transfer` / `execute_call_script` /
+        // `execute_call_contract`) as shared impls too. Sponsorship
+        // envelope + gas-only UserOps already parity-clean.
+        execute_user_op_envelope_impl(&self.chain_id, db, tx, epoch)?;
 
         // Day 1C (Option B paymaster, 2026-05-08): dispatch the inner
         // intent encoded in call_data. The paymaster's sponsorship sig

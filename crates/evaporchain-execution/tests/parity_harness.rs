@@ -1063,3 +1063,63 @@ fn parity_upgrade_contract_bytecode_hash_mismatch() {
     };
     assert_parity(&fixture);
 }
+
+// ─── Phase 3d: UserOp gas-only envelope fixture (closes audit C4 7/7) ─────
+//
+// Non-empty call_data fixtures are deferred to Phase 3e — the inner
+// dispatch helpers (execute_inner_transfer / execute_call_script /
+// execute_call_contract) remain SimpleExecutor-only until that PR.
+// Empty call_data exercises the full envelope path on both executors.
+
+#[test]
+fn parity_userop_gas_only_no_paymaster() {
+    // Pre-fix: ParallelExecutor errored at the partition's "executes in
+    // serial phase" arm. SimpleExecutor succeeded. The harness reported
+    // a `result.disposition` divergence (Ok vs Err). Post-fix both
+    // succeed via the shared envelope impl with identical nonce bumps.
+    let fixture = ParityFixture {
+        name: "userop-gas-only-no-paymaster",
+        seed: |db| fund(db, 62, 1_000),
+        transaction: Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(62),
+            nonce: 0,
+            call_data: vec![],
+            call_gas_limit: 0,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_userop_nonce_mismatch() {
+    // Envelope-level nonce check fires on both executors identically.
+    let fixture = ParityFixture {
+        name: "userop-nonce-mismatch",
+        seed: |db| fund(db, 62, 1_000),
+        transaction: Transaction::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(62),
+            nonce: 7, // sender nonce is 0
+            call_data: vec![],
+            call_gas_limit: 0,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}

@@ -1531,6 +1531,15 @@ impl ExecutionEngine for ParallelExecutor {
                 // ParallelExecutor share the implementation; copies
                 // cannot drift.
                 | Transaction::UpgradeContract(_)
+                // UserOp envelope (sender nonce, paymaster sig verify,
+                // gas debit) extracted to shared
+                // `execute_user_op_envelope_impl` — audit C4 7/7.
+                // Inner-tx dispatch (Transfer / CallScript /
+                // CallContract on call_data) remains in SimpleExecutor
+                // only; ParallelExecutor errors with a clear deferred
+                // message for non-empty call_data until Phase 3e
+                // ports the inner dispatch helpers.
+                | Transaction::UserOp(_)
                 // Validator key rotation mutates ValidatorSet via the
                 // BlockExecutionResult.validator_key_rotations side
                 // channel, which only the serial path populates. Putting
@@ -2136,6 +2145,39 @@ impl ExecutionEngine for ParallelExecutor {
                         utx,
                         block.epoch,
                     )
+                }
+                // ─── AUDIT_2026_05_13 C4 closure: UserOp (envelope) ────────
+                // Envelope-level parity via shared
+                // `execute_user_op_envelope_impl`. Empty call_data
+                // (gas-only sponsorship) is fully parity-clean. Non-empty
+                // call_data is rejected with a clear deferred error
+                // until Phase 3e ports `execute_inner_transfer` /
+                // `execute_call_script` / `execute_call_contract` as
+                // shared impls. Pre-fix every UserOp errored at the
+                // partition arm; now sponsorship works and only the
+                // inner-dispatch case is gated.
+                Transaction::UserOp(uop) => {
+                    match crate::execute_user_op_envelope_impl(
+                        &self.chain_id,
+                        db,
+                        uop,
+                        block.epoch,
+                    ) {
+                        Err(e) => Err(e),
+                        Ok(()) => {
+                            if uop.call_data.is_empty() {
+                                Ok(())
+                            } else {
+                                Err(ExecutionError::ContractError(
+                                    "UserOp inner-tx dispatch not yet wired in \
+                                     ParallelExecutor serial path (envelope ran; \
+                                     sender + paymaster mutations applied). \
+                                     See Phase 3e of executor-parity arc."
+                                        .into(),
+                                ))
+                            }
+                        }
+                    }
                 }
                 // ─── AUDIT_2026_05_13 C4 closure: MultiSig ─────────────────
                 // Mirrors SimpleExecutor::execute_multisig at lib.rs:2133.
@@ -5129,18 +5171,80 @@ mod tests {
         assert_eq!(db.get_account(&addr(61)).unwrap().nonce, 1);
     }
 
+    // AUDIT_2026_05_13 C4 (7/7) closure: UserOp envelope. The
+    // gas-only / no-paymaster UserOp executes through the shared
+    // `execute_user_op_envelope_impl` and succeeds — pre-fix it
+    // errored at the partition arm with "executes in serial phase".
+    // Non-empty call_data is gated to Phase 3e (sibling test below).
     #[test]
-    fn t1_20_userop_via_parallel_partition_fails() {
+    fn t1_20_userop_gas_only_via_parallel_executor_succeeds() {
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![Transaction::UserOp(evaporchain_types::UserOpTx {
-            sender: addr(62), nonce: 0, call_data: vec![], call_gas_limit: 0,
-            paymaster: None, paymaster_nonce: None, paymaster_data: None,
-            paymaster_signature: None, paymaster_public_key: None,
-            signature: None, public_key: None,
-        })]);
+        fund_account(&mut db, 62, 1_000);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::UserOp(evaporchain_types::UserOpTx {
+                sender: addr(62),
+                nonce: 0,
+                call_data: vec![],
+                call_gas_limit: 0,
+                paymaster: None,
+                paymaster_nonce: None,
+                paymaster_data: None,
+                paymaster_signature: None,
+                paymaster_public_key: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let mut ex = ParallelExecutor::new_for_test(100);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "user-op must fail in execute_partition");
+        assert_eq!(r.txs_executed, 1, "gas-only UserOp must execute on serial path");
+        assert_eq!(r.txs_failed, 0);
+        // Sender nonce bumped via shared envelope impl.
+        assert_eq!(db.get_account(&addr(62)).unwrap().nonce, 1);
+    }
+
+    #[test]
+    fn t1_20_userop_non_empty_call_data_fails_serial_path() {
+        // Documented partial closure: non-empty call_data is rejected
+        // with a clear "inner-tx dispatch not yet wired" message instead
+        // of the pre-fix generic "executes in serial phase". Envelope
+        // mutations (nonce bump) still apply identically — Ethereum
+        // semantics: failed-but-attempted tx consumes the nonce slot.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 62, 1_000);
+        let inner_payload =
+            serde_json::to_vec(&Transaction::Transfer(evaporchain_types::TransferTx {
+                from: addr(62),
+                to: addr(63),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            }))
+            .unwrap();
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::UserOp(evaporchain_types::UserOpTx {
+                sender: addr(62),
+                nonce: 0,
+                call_data: inner_payload,
+                call_gas_limit: 100_000,
+                paymaster: None,
+                paymaster_nonce: None,
+                paymaster_data: None,
+                paymaster_signature: None,
+                paymaster_public_key: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "non-empty call_data deferred to Phase 3e");
     }
 
     // AUDIT_2026_05_13 C4 (6/7) closure: UpgradeContract previously
