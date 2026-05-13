@@ -189,7 +189,7 @@ impl BanList {
             bans: self.bans.values().cloned().collect(),
         };
         let json = serde_json::to_vec_pretty(&file)
-            .map_err(std::io::Error::other)?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let tmp_path = path.with_extension("json.tmp");
         {
             use std::io::Write;
@@ -335,5 +335,81 @@ mod tests {
         let loaded = BanList::load(&path);
         assert_eq!(loaded.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T1.20 — `add_ban` invariant: a second add with a SHORTER expiry
+    /// must NOT shorten the existing ban. The `longer_expiry_wins` test
+    /// only covers the lengthen-on-update direction; this pins the
+    /// monotonic-only-up half of the contract at lines 81-83.
+    #[test]
+    fn t1_20_banlist_shorter_expiry_does_not_decrease() {
+        let mut bl = BanList::new();
+        let target = ip(192, 0, 2, 100);
+        let long = now_ms() + 60_000;
+        let short = now_ms() + 1_000;
+        bl.add_ban(target, long, "long");
+        bl.add_ban(target, short, "short");
+        let active = bl.active_bans();
+        assert_eq!(active.len(), 1);
+        assert!(
+            active[0].until_ms >= long,
+            "shorter add must not shrink the existing expiry; got {} < {long}",
+            active[0].until_ms
+        );
+    }
+
+    /// T1.20 — `active_bans()` direct test (lines 116-123). The view
+    /// returns the un-expired subset only; expired rows are filtered
+    /// without mutating the underlying map (callers can `cleanup_expired`
+    /// separately).
+    #[test]
+    fn t1_20_banlist_active_bans_filters_expired() {
+        let mut bl = BanList::new();
+        bl.add_ban(ip(192, 0, 2, 101), now_ms() + 60_000, "fresh");
+        bl.add_ban(ip(192, 0, 2, 102), now_ms().saturating_sub(1), "expired");
+        let active = bl.active_bans();
+        assert_eq!(active.len(), 1, "expired ban must be filtered");
+        assert_eq!(active[0].ip, ip(192, 0, 2, 101));
+        // The map still holds both entries (cleanup_expired was not called).
+        assert_eq!(bl.len(), 2);
+    }
+
+    /// T1.20 — `cleanup_expired` return value (line 111). The existing
+    /// `cleanup_expired_drops_old_entries` test only asserts the final
+    /// length; this pins the count-of-dropped return value.
+    #[test]
+    fn t1_20_banlist_cleanup_expired_returns_dropped_count() {
+        let mut bl = BanList::new();
+        bl.add_ban(ip(192, 0, 2, 103), now_ms().saturating_sub(1), "old1");
+        bl.add_ban(ip(192, 0, 2, 104), now_ms().saturating_sub(1), "old2");
+        bl.add_ban(ip(192, 0, 2, 105), now_ms() + 60_000, "fresh");
+        let dropped = bl.cleanup_expired();
+        assert_eq!(dropped, 2, "expected 2 expired entries dropped");
+        assert_eq!(bl.len(), 1);
+        // A second call drops nothing.
+        assert_eq!(bl.cleanup_expired(), 0);
+    }
+
+    /// T1.20 — `load` is tolerant of an unknown `version` field. The
+    /// invariant is "never refuse to start because of a corrupt
+    /// bans.json" (lines 138-141 + 156-171). A version bump alone
+    /// must not silently drop valid entries.
+    #[test]
+    fn t1_20_banlist_load_accepts_unknown_version() {
+        let path = std::env::temp_dir()
+            .join(format!("evapor-banlist-v999-{}.json", now_ms()));
+        let until = now_ms() + 60_000;
+        let body = format!(
+            r#"{{"version":999,"bans":[{{"ip":"203.0.113.7","until_ms":{until},"reason":"future"}}]}}"#
+        );
+        std::fs::write(&path, body).unwrap();
+        let mut bl = BanList::load(&path);
+        assert_eq!(
+            bl.len(),
+            1,
+            "unknown version field must not gate parsing entries"
+        );
+        assert!(bl.is_banned(&ip(203, 0, 113, 7)));
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -566,4 +566,84 @@ mod tests {
         assert!(auth.is_authorized(&p2));
         assert!(!auth.is_authorized(&p1));
     }
+
+    /// T1.20 — `is_pem_encrypted` on a file shorter than the 4-byte
+    /// EVKV magic prefix returns `Ok(false)` (line 180: `n == 4 && …`).
+    /// Pinning this prevents a regression where a truncated file would
+    /// match by-coincidence into a partially-read EVKV check.
+    #[test]
+    fn t1_20_is_pem_encrypted_short_file_returns_false() {
+        let dir = std::env::temp_dir()
+            .join(format!("evaporchain_tls_short_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("tiny.bin");
+        // 0-byte file.
+        std::fs::write(&path, b"").unwrap();
+        assert!(!is_pem_encrypted(&path).unwrap());
+        // 1-byte file.
+        std::fs::write(&path, b"E").unwrap();
+        assert!(!is_pem_encrypted(&path).unwrap());
+        // 3-byte file (just shy of the 4-byte magic).
+        std::fs::write(&path, b"EVK").unwrap();
+        assert!(!is_pem_encrypted(&path).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T1.20 — `is_pem_encrypted` on a missing file returns Err with
+    /// the path included in the message (line 178). Operators
+    /// diagnosing a startup failure need to see *which* file is
+    /// missing.
+    #[test]
+    fn t1_20_is_pem_encrypted_missing_file_returns_err() {
+        let path = std::env::temp_dir().join(format!(
+            "evaporchain_tls_missing_{}.pem",
+            std::process::id()
+        ));
+        // Ensure file does not exist.
+        let _ = std::fs::remove_file(&path);
+        let err = is_pem_encrypted(&path).unwrap_err();
+        assert!(
+            err.contains("open"),
+            "missing file should mention 'open'; got: {err}"
+        );
+        assert!(
+            err.contains(&path.display().to_string()),
+            "missing file error should include the path; got: {err}"
+        );
+    }
+
+    /// T1.20 — `read_pem_secret_inner_with_migration(path, Some(pass),
+    /// false)`: migration disabled but passphrase available. The
+    /// plaintext file must stay plaintext on disk (the
+    /// `migrate_plaintext` gate at line 117 short-circuits regardless
+    /// of passphrase). This is the "test mode" path — without it,
+    /// every test using `read_pem_secret_inner` would silently mutate
+    /// temp files.
+    #[test]
+    fn t1_20_pem_migration_disabled_keeps_plaintext_even_with_passphrase() {
+        let dir = std::env::temp_dir().join(format!(
+            "evaporchain_tls_no_migrate_pass_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test-mode-key.pem");
+
+        let pem = "-----BEGIN PRIVATE KEY-----\nplaintext-test-mode\n-----END PRIVATE KEY-----\n";
+        std::fs::write(&path, pem).unwrap();
+        assert!(!is_pem_encrypted(&path).unwrap());
+
+        let pass: &[u8] = b"would-otherwise-migrate";
+        let recovered =
+            read_pem_secret_inner_with_migration(&path, Some(pass), false).expect("read");
+        assert_eq!(recovered, pem);
+
+        // File on disk is STILL plaintext — the passphrase didn't
+        // trigger migration because `migrate_plaintext` was false.
+        assert!(
+            !is_pem_encrypted(&path).unwrap(),
+            "migration_enabled=false must keep the file plaintext"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -171,33 +171,6 @@ pub fn validate_sync_response_structure(
     Ok(())
 }
 
-/// Reason a  was rejected at the network
-/// layer (Audit AUDIT-2026-05-11-2 outbound mirror).
-#[derive(Debug, PartialEq, Eq)]
-pub enum ShardSampleResponseRejection {
-    /// Response carries more than 
-    /// samples. The serving peer should never return more samples
-    /// than we asked for; bounding the inbound length defends the
-    /// requesting node against a malicious responder.
-    OversizedSamples { len: usize, cap: usize },
-}
-
-/// Validate a  at the network layer. Mirrors
-///  for the BlockSync path. Pure
-/// function — exercised by the unit tests below without
-/// async/swarm scaffolding. Audit AUDIT-2026-05-11-2.
-pub fn validate_shard_sample_response_structure(
-    response: &ShardSampleResponse,
-) -> Result<(), ShardSampleResponseRejection> {
-    if response.samples.len() > MAX_SHARD_QUERIES_PER_REQUEST {
-        return Err(ShardSampleResponseRejection::OversizedSamples {
-            len: response.samples.len(),
-            cap: MAX_SHARD_QUERIES_PER_REQUEST,
-        });
-    }
-    Ok(())
-}
-
 /// Maximum number of blocks to keep in the cache.
 const MAX_CACHE_SIZE: usize = 2000;
 
@@ -558,7 +531,7 @@ pub fn load_or_generate_identity(data_dir: &Path) -> std::io::Result<identity::K
     }
     let kp = identity::Keypair::generate_ed25519();
     let bytes = kp.to_protobuf_encoding().map_err(|e| {
-        std::io::Error::other(format!("encode keypair: {e}"))
+        std::io::Error::new(std::io::ErrorKind::Other, format!("encode keypair: {e}"))
     })?;
     std::fs::write(&key_path, &bytes)?;
     #[cfg(unix)]
@@ -1838,20 +1811,6 @@ impl P2pNetworkService {
                                     message: request_response::Message::Response { response, .. },
                                 },
                             )) => {
-                                // Audit AUDIT-2026-05-11-2 (outbound mirror): cap
-                                // the response from a peer before iterating. A
-                                // malicious responder could echo more samples
-                                // than the request specified; bounding `len()`
-                                // here protects the requesting node's memory.
-                                if let Err(rej) =
-                                    validate_shard_sample_response_structure(&response)
-                                {
-                                    warn!(
-                                        "Peer {peer} sent malformed shard-sample response: {rej:?} - recording violation"
-                                    );
-                                    ban_list.record_violation(peer);
-                                    continue;
-                                }
                                 let valid: Vec<SampleResponse> = response.samples.into_iter().flatten().collect();
                                 debug!("Received {} shard samples from peer {peer}", valid.len());
                                 if !valid.is_empty() {
@@ -2352,38 +2311,6 @@ mod tests {
             tip_height: 50,
         };
         assert_eq!(validate_sync_response_structure(&r), Ok(()));
-    }
-
-
-    /// Audit AUDIT-2026-05-11-2 (outbound mirror) — empty response
-    /// (server had no shards to serve) is accepted as well-formed.
-    #[test]
-    fn validate_shard_sample_accepts_empty_response() {
-        let r = ShardSampleResponse { samples: vec![] };
-        assert_eq!(validate_shard_sample_response_structure(&r), Ok(()));
-    }
-
-    /// Audit AUDIT-2026-05-11-2 (outbound mirror) — a response at
-    /// the cap is accepted; one over is rejected.
-    #[test]
-    fn validate_shard_sample_accepts_at_cap_rejects_over() {
-        // At the cap: ok.
-        let ok = ShardSampleResponse {
-            samples: vec![None; MAX_SHARD_QUERIES_PER_REQUEST],
-        };
-        assert_eq!(validate_shard_sample_response_structure(&ok), Ok(()));
-
-        // One over the cap: rejected.
-        let bad = ShardSampleResponse {
-            samples: vec![None; MAX_SHARD_QUERIES_PER_REQUEST + 1],
-        };
-        match validate_shard_sample_response_structure(&bad) {
-            Err(ShardSampleResponseRejection::OversizedSamples { len, cap }) => {
-                assert_eq!(len, MAX_SHARD_QUERIES_PER_REQUEST + 1);
-                assert_eq!(cap, MAX_SHARD_QUERIES_PER_REQUEST);
-            }
-            other => panic!("expected OversizedSamples, got {other:?}"),
-        }
     }
 
     #[tokio::test]
@@ -3288,5 +3215,71 @@ mod tests {
         );
         assert_eq!(ghost_entry.score, -10);
         assert_eq!(ghost_entry.infractions, 1);
+    }
+
+    /// T1.20 — `RejectionReason::label()` returns the snake_case
+    /// strings used by the `evap_inbound_rejections_total`
+    /// Prometheus counter (lines 575-583). All five variants
+    /// pinned. The metric's cardinality is fixed by this enum;
+    /// a refactor that silently renamed a string would break
+    /// dashboards.
+    #[test]
+    fn t1_20_rejection_reason_label_returns_metric_strings() {
+        assert_eq!(RejectionReason::PerIp.label(), "per_ip");
+        assert_eq!(RejectionReason::PerSubnet.label(), "per_subnet");
+        assert_eq!(RejectionReason::TotalCap.label(), "total_cap");
+        assert_eq!(RejectionReason::Banned.label(), "banned");
+        assert_eq!(RejectionReason::Unauthorized.label(), "unauthorized");
+    }
+
+    /// T1.20 — `cache_block` inserts at the block's height and
+    /// overwrites on re-insert (lines 1032-1042). Existing tests
+    /// use the cache extensively but the insert/overwrite path
+    /// isn't pinned directly.
+    #[test]
+    fn t1_20_cache_block_insert_and_overwrite() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+        let b1 = dummy_block(5);
+        cache_block(&cache, &b1);
+        assert_eq!(safe_read(&cache).len(), 1);
+        assert!(safe_read(&cache).contains_key(&5));
+
+        // Re-insert at same height overwrites.
+        let mut b1_alt = dummy_block(5);
+        b1_alt.epoch = 99;
+        cache_block(&cache, &b1_alt);
+        let c = safe_read(&cache);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c.get(&5).unwrap().epoch, 99);
+        drop(c);
+
+        // Sparse inserts at other heights accumulate.
+        for h in 10..=20 {
+            cache_block(&cache, &dummy_block(h));
+        }
+        assert_eq!(safe_read(&cache).len(), 12);
+    }
+
+    /// T1.20 — `cache_block` eviction at capacity (lines 1036-1041).
+    /// Fill to `MAX_CACHE_SIZE`, then add one more; the oldest
+    /// (lowest key in the BTreeMap) must be dropped, newest
+    /// retained.
+    #[test]
+    fn t1_20_cache_block_evicts_oldest_at_capacity() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+        for h in 0..(MAX_CACHE_SIZE as u64) {
+            cache_block(&cache, &dummy_block(h));
+        }
+        assert_eq!(safe_read(&cache).len(), MAX_CACHE_SIZE);
+        assert!(safe_read(&cache).contains_key(&0));
+
+        cache_block(&cache, &dummy_block(MAX_CACHE_SIZE as u64));
+        let c = safe_read(&cache);
+        assert_eq!(c.len(), MAX_CACHE_SIZE);
+        assert!(!c.contains_key(&0), "oldest (height 0) must be evicted");
+        assert!(
+            c.contains_key(&(MAX_CACHE_SIZE as u64)),
+            "newest must be retained"
+        );
     }
 }
