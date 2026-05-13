@@ -453,8 +453,80 @@ pub fn run_parity(fixture: &ParityFixture) -> Vec<Divergence> {
     compare_stakes(&simple_db, &parallel_db, &mut divergences);
     compare_delegations(&simple_db, &parallel_db, &mut divergences);
     compare_proposals(&simple_db, &parallel_db, &mut divergences);
+    compare_privacy(&simple_db, &parallel_db, &mut divergences);
 
     divergences
+}
+
+// ─── Phase 4: privacy comparator (nullifiers + note commitments + pool) ──
+
+fn compare_privacy(
+    simple: &InMemoryStateDB,
+    parallel: &InMemoryStateDB,
+    out: &mut Vec<Divergence>,
+) {
+    // Shielded-pool balance — single u64, easy.
+    let s_pool = simple.get_shielded_pool_balance();
+    let p_pool = parallel.get_shielded_pool_balance();
+    if s_pool != p_pool {
+        out.push(Divergence {
+            domain: "privacy.shielded_pool_balance",
+            detail: "block-end pool total".into(),
+            simple_value: s_pool.to_string(),
+            parallel_value: p_pool.to_string(),
+        });
+    }
+
+    // Spent-nullifier set — compare as BTreeSet so ordering doesn't
+    // matter. Any divergence in membership is a parity failure.
+    let s_nulls: std::collections::BTreeSet<[u8; 32]> =
+        simple.all_nullifiers().into_iter().collect();
+    let p_nulls: std::collections::BTreeSet<[u8; 32]> =
+        parallel.all_nullifiers().into_iter().collect();
+    for n in s_nulls.difference(&p_nulls) {
+        out.push(Divergence {
+            domain: "privacy.spent_nullifiers.presence",
+            detail: format!("nullifier {:02x}… spent only in SimpleExecutor DB", n[0]),
+            simple_value: "spent".into(),
+            parallel_value: "not-spent".into(),
+        });
+    }
+    for n in p_nulls.difference(&s_nulls) {
+        out.push(Divergence {
+            domain: "privacy.spent_nullifiers.presence",
+            detail: format!("nullifier {:02x}… spent only in ParallelExecutor DB", n[0]),
+            simple_value: "not-spent".into(),
+            parallel_value: "spent".into(),
+        });
+    }
+
+    // Note-commitment set — BTreeSet for stable comparison.
+    let s_notes: std::collections::BTreeSet<[u8; 32]> =
+        simple.get_all_note_commitments().into_iter().collect();
+    let p_notes: std::collections::BTreeSet<[u8; 32]> =
+        parallel.get_all_note_commitments().into_iter().collect();
+    for c in s_notes.difference(&p_notes) {
+        out.push(Divergence {
+            domain: "privacy.note_commitments.presence",
+            detail: format!(
+                "commitment {:02x}… persisted only in SimpleExecutor DB",
+                c[0]
+            ),
+            simple_value: "Some(_)".into(),
+            parallel_value: "None".into(),
+        });
+    }
+    for c in p_notes.difference(&s_notes) {
+        out.push(Divergence {
+            domain: "privacy.note_commitments.presence",
+            detail: format!(
+                "commitment {:02x}… persisted only in ParallelExecutor DB",
+                c[0]
+            ),
+            simple_value: "None".into(),
+            parallel_value: "Some(_)".into(),
+        });
+    }
 }
 
 /// Assert full parity. Panics with the full divergence list — one run
@@ -1196,6 +1268,163 @@ fn parity_userop_inner_transfer_impersonation_rejected() {
             paymaster_public_key: None,
             signature: None,
             public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+// ─── Phase 4: privacy variants (Shield / Unshield / PrivateTransfer) ─────
+
+#[test]
+fn parity_shield_happy_path() {
+    // Shield debits transparent balance, credits shielded_pool, and
+    // appends a note commitment. Both executors must produce the same
+    // post-state across accounts, shielded_pool_balance, and the
+    // commitment set.
+    let fixture = ParityFixture {
+        name: "shield-happy-path",
+        seed: |db| fund(db, 10, 10_000),
+        transaction: Transaction::Shield(evaporchain_types::ShieldTx {
+            from: addr(10),
+            amount: 2_500,
+            nonce: 0,
+            note_owner_hash: [0xAA; 32],
+            value_blinding: [0xBB; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_shield_zero_amount() {
+    // Shield with amount=0 must reject identically on both executors.
+    let fixture = ParityFixture {
+        name: "shield-zero-amount",
+        seed: |db| fund(db, 10, 10_000),
+        transaction: Transaction::Shield(evaporchain_types::ShieldTx {
+            from: addr(10),
+            amount: 0,
+            nonce: 0,
+            note_owner_hash: [0xAA; 32],
+            value_blinding: [0xBB; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_shield_insufficient_balance() {
+    let fixture = ParityFixture {
+        name: "shield-insufficient-balance",
+        seed: |db| fund(db, 10, 100),
+        transaction: Transaction::Shield(evaporchain_types::ShieldTx {
+            from: addr(10),
+            amount: 5_000,
+            nonce: 0,
+            note_owner_hash: [0xAA; 32],
+            value_blinding: [0xBB; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_shield_nonce_mismatch() {
+    let fixture = ParityFixture {
+        name: "shield-nonce-mismatch",
+        seed: |db| fund(db, 10, 10_000),
+        transaction: Transaction::Shield(evaporchain_types::ShieldTx {
+            from: addr(10),
+            amount: 2_500,
+            nonce: 7, // sender nonce is 0
+            note_owner_hash: [0xAA; 32],
+            value_blinding: [0xBB; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_unshield_missing_anchor_rejected() {
+    // Empty inputs / unknown anchor — both executors must reject
+    // identically at the privacy_exec validation gate before any
+    // shielded_pool mutation. Happy-path Unshield requires a real
+    // Merkle proof which isn't tractable in a unit-level fixture;
+    // error-path parity is what matters for the harness.
+    let fixture = ParityFixture {
+        name: "unshield-missing-anchor",
+        seed: |db| fund(db, 10, 100),
+        transaction: Transaction::Unshield(evaporchain_types::UnshieldTx {
+            to: addr(10),
+            amount: 1_000,
+            input_nullifiers: vec![[0x11; 32]],
+            anchor: [0xFF; 32], // anchor doesn't exist in the empty trie
+            balance_binding: [0; 32],
+            input_amounts: vec![1_000],
+            input_blindings: vec![[0x22; 32]],
+            input_value_commitments: vec![[0x33; 32]],
+            input_note_commitments: vec![[0x44; 32]],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![],
+            change_commitments: vec![],
+            energy_proofs: vec![],
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_private_transfer_missing_anchor_rejected() {
+    let fixture = ParityFixture {
+        name: "private-transfer-missing-anchor",
+        seed: |_db| {},
+        transaction: Transaction::PrivateTransfer(evaporchain_types::PrivateTransferTx {
+            input_nullifiers: vec![[0x11; 32]],
+            output_commitments: vec![[0x22; 32]],
+            anchor: [0xFF; 32],
+            balance_binding: [0; 32],
+            fee: 0,
+            input_amounts: vec![100],
+            input_blindings: vec![[0x33; 32]],
+            input_value_commitments: vec![[0x44; 32]],
+            input_note_commitments: vec![[0x55; 32]],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![[0x66; 32]],
+            output_value_commitments: vec![[0x77; 32]],
+            output_amounts: vec![100],
+            energy_proofs: vec![],
         }),
         block_number: 1,
         epoch: 1,
