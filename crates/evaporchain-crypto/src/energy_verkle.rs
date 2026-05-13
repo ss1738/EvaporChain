@@ -357,16 +357,25 @@ impl EnergyVerkleTrie {
                 //
                 // This handles resurrection: a new object landing in a previously
                 // dead region of the trie.
+                //
+                // AUDIT_2026_05_13 H1 closure: the pre-fix rule placed the
+                // compressed node at slot 0 and gated re-insertion behind
+                // `if idx != 0`. When `key[depth] == 0`, the compressed
+                // child was silently dropped — the trie root no longer
+                // reflected the prior-dead-subtree's stored commitment,
+                // decoupling current state from any historical anchored
+                // root. Fix: place the compressed node at `idx ^ 0xFF`,
+                // which is always distinct from `idx` for any byte value
+                // (XOR with all-ones is a bit-flip permutation). No
+                // collision possible; commitment preserved unconditionally.
                 let idx = key[depth];
+                let compressed_slot = idx ^ 0xFF;
+                debug_assert_ne!(
+                    idx, compressed_slot,
+                    "idx ^ 0xFF is always distinct from idx for u8 values"
+                );
                 let mut internal = EnergyInternal::new();
-                // The compressed node keeps its slot but we need to decide where.
-                // Since we lost the original key structure, we place the compressed
-                // node at index 0 (arbitrary but deterministic) and the new leaf
-                // at its natural index. If they collide, the new leaf takes priority
-                // (the compressed region was dead anyway).
-                if idx != 0 {
-                    internal.children.insert(0, node);
-                }
+                internal.children.insert(compressed_slot, node);
                 internal.children.insert(
                     idx,
                     EnergyNode::Leaf(EnergyLeaf {
@@ -1825,6 +1834,136 @@ mod tests {
         let count = trie.update_energy_batch(&updates);
         assert_eq!(count, 5);
         assert_eq!(trie.root_meta().max_energy, 0);
+    }
+
+    // ─── AUDIT_2026_05_13 H1 regression suite ─────────────────────────
+
+    /// Build a CompressedNode wrapped in EnergyNode::Compressed with a
+    /// fixed, recognisable commitment we can search for in the result.
+    fn fake_compressed(commitment_byte: u8) -> EnergyNode {
+        EnergyNode::Compressed(CompressedNode {
+            commitment: [commitment_byte; 32],
+            leaf_count: 7,
+            last_activity_epoch: 42,
+        })
+    }
+
+    /// Assert that an EnergyNode tree contains a Compressed leaf with
+    /// the given commitment somewhere. Used to verify the commitment
+    /// survived a decompression insert.
+    fn contains_compressed_with_commitment(node: &EnergyNode, target: &[u8; 32]) -> bool {
+        match node {
+            EnergyNode::Compressed(c) => c.commitment == *target,
+            EnergyNode::Internal(internal) => internal
+                .children
+                .values()
+                .any(|c| contains_compressed_with_commitment(c, target)),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn audit_h1_compress_survives_resurrection_insert_key_byte_0() {
+        // Pre-fix exploit: insert with key[0] == 0 into a Compressed
+        // region. The old code path placed the compressed node at slot 0
+        // and gated re-insertion behind `if idx != 0`, silently
+        // dropping the compressed commitment. Root no longer reflects
+        // the dead-subtree's history.
+        let commitment_byte = 0xAB;
+        let compressed = fake_compressed(commitment_byte);
+        let mut key = [0u8; 32];
+        key[0] = 0; // the audit's exact `idx == 0` shape
+        let value = make_value(7);
+
+        let result = EnergyVerkleTrie::insert_recursive(compressed, &key, &value, 1000, 100, 0, 0);
+
+        // Post-fix: result is Internal with TWO children. Compressed
+        // node at slot `0 ^ 0xFF == 0xFF`, new leaf at slot 0.
+        match &result {
+            EnergyNode::Internal(internal) => {
+                assert_eq!(internal.children.len(), 2, "must keep both children");
+                assert!(
+                    matches!(internal.children.get(&0xFF), Some(EnergyNode::Compressed(_))),
+                    "compressed node must live at idx ^ 0xFF == 0xFF"
+                );
+                assert!(
+                    matches!(internal.children.get(&0), Some(EnergyNode::Leaf(_))),
+                    "new leaf must live at the natural idx 0"
+                );
+            }
+            _ => panic!("expected Internal, got {result:?}"),
+        }
+        assert!(
+            contains_compressed_with_commitment(&result, &[commitment_byte; 32]),
+            "the compressed commitment must survive the resurrection insert"
+        );
+    }
+
+    #[test]
+    fn audit_h1_compress_survives_resurrection_insert_key_byte_FF() {
+        // Symmetric case: key[0] == 0xFF places the compressed node
+        // at slot 0 (0xFF ^ 0xFF). Verify no collision in the mirror.
+        let commitment_byte = 0xCD;
+        let compressed = fake_compressed(commitment_byte);
+        let mut key = [0u8; 32];
+        key[0] = 0xFF;
+        let value = make_value(11);
+
+        let result = EnergyVerkleTrie::insert_recursive(compressed, &key, &value, 1000, 100, 0, 0);
+
+        match &result {
+            EnergyNode::Internal(internal) => {
+                assert_eq!(internal.children.len(), 2);
+                assert!(matches!(
+                    internal.children.get(&0),
+                    Some(EnergyNode::Compressed(_))
+                ));
+                assert!(matches!(
+                    internal.children.get(&0xFF),
+                    Some(EnergyNode::Leaf(_))
+                ));
+            }
+            _ => panic!("expected Internal, got {result:?}"),
+        }
+        assert!(contains_compressed_with_commitment(
+            &result,
+            &[commitment_byte; 32]
+        ));
+    }
+
+    #[test]
+    fn audit_h1_compress_survives_resurrection_insert_arbitrary_key() {
+        // Sweep across all 256 possible key[0] bytes — for every
+        // single one, the compressed commitment must survive at
+        // slot `key[0] ^ 0xFF`.
+        for k0 in 0u8..=255 {
+            let commitment_byte = k0.wrapping_add(1); // pick a different recognisable byte
+            let compressed = fake_compressed(commitment_byte);
+            let mut key = [0u8; 32];
+            key[0] = k0;
+            let value = make_value(0);
+            let result =
+                EnergyVerkleTrie::insert_recursive(compressed, &key, &value, 1000, 100, 0, 0);
+            assert!(
+                contains_compressed_with_commitment(&result, &[commitment_byte; 32]),
+                "compressed commitment dropped for key[0] = {k0}"
+            );
+            // Also assert structural shape: Internal with 2 children
+            // when k0 != 0xFF ^ 0 == 0xFF (the slot mapping is
+            // permutation-bijective, so distinct k0 → distinct
+            // compressed slot, never colliding with the leaf slot).
+            if let EnergyNode::Internal(internal) = &result {
+                assert_eq!(
+                    internal.children.len(),
+                    2,
+                    "must have 2 children for k0 = {k0}"
+                );
+                assert!(internal.children.contains_key(&k0));
+                assert!(internal.children.contains_key(&(k0 ^ 0xFF)));
+            } else {
+                panic!("expected Internal for k0 = {k0}, got {result:?}");
+            }
+        }
     }
 }
 
