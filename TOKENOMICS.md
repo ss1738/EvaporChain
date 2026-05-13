@@ -6,7 +6,9 @@
 
 **Pairs with:** `genesis-mainnet.json` (current allocation snapshot, now with placeholder vesting schedules), `research/INVENTION_STACK.md` (line 216 explicitly flags "tokenomics ceremony question"), `research/whitepaper.md` (which has zero tokenomics section — gap to close).
 
-**Last updated:** 2026-05-07, after the build session that landed: TOKENOMICS.md (`9827ce1`), VestingLock primitive (`b666fe7`), genesis-mainnet vesting placeholders (`bcbb9b0`), EmissionParams dispatch (`fd1b580`), and MEV reconciliation (this commit). First end-to-end ML-DSA-signed external transactions on the running 5-node WAN cluster were tonight too (TX hashes `22fc15c...`, `0801743...`, `7c74142...`).
+**Last updated:** 2026-05-13 — §0.3 doc-drift fix syncing the allocation table with the actual placeholder vesting schedules already present in `genesis-mainnet.json` (the "zero vesting / unshippable" claim was stale).
+
+**Prior update:** 2026-05-07, after the build session that landed: TOKENOMICS.md (`9827ce1`), VestingLock primitive (`b666fe7`), genesis-mainnet vesting placeholders (`bcbb9b0`), EmissionParams dispatch (`fd1b580`), and MEV reconciliation. First end-to-end ML-DSA-signed external transactions on the running 5-node WAN cluster were tonight too (TX hashes `22fc15c...`, `0801743...`, `7c74142...`).
 
 ---
 
@@ -45,19 +47,21 @@ These are functioning today on `evaporchain-testnet-1` (the running cluster) and
 
 ### 0.3 Genesis allocation (mainnet, 1B EVP)
 
-| Bucket | EVP | % | Vesting? |
-|---|---:|---:|---|
-| Foundation Treasury (`0xa0...`) | 350,000,000 | 35% | **NONE** |
-| Ecosystem Development (`0xb0...`) | 200,000,000 | 20% | **NONE** |
-| Core Contributors (`0xc0...`) | 150,000,000 | 15% | **NONE** |
-| Community Airdrop (`0xd0...`) | 100,000,000 | 10% | **NONE** |
-| Validator Alpha (`0x01...`) | 50,000,000 | 5% | **NONE** |
-| Validator Beta (`0x02...`) | 50,000,000 | 5% | **NONE** |
-| Validator Gamma (`0x03...`) | 50,000,000 | 5% | **NONE** |
-| Validator Delta (`0x04...`) | 50,000,000 | 5% | **NONE** |
-| **Total** | **1,000,000,000** | 100% | |
+Vesting placeholders are applied to 7 of 8 buckets in `genesis-mainnet.json` (cliff in epochs at `block_interval_ms=2000` → 12 months = 15,768,000 epochs). They are **placeholders pending counsel + tokenomics-advisor review** per the `_vesting_placeholder_warning` field in the genesis file itself; they are NOT final legal/economic decisions.
 
-**Critical gap:** zero vesting on any bucket including Foundation Treasury and Core Contributors. Day-one liquid: 100% of supply. No cliff, no linear release. **This is unshippable for any public mainnet** — see §3 ceremony question 14.
+| Bucket | EVP | % | Cliff | Linear release | Source |
+|---|---:|---:|---:|---:|---|
+| Foundation Treasury (`0xa0...`) | 350,000,000 | 35% | 12 mo | 48 mo | placeholder |
+| Ecosystem Development (`0xb0...`) | 200,000,000 | 20% | 6 mo | 24 mo | placeholder |
+| Core Contributors (`0xc0...`) | 150,000,000 | 15% | 12 mo | 36 mo | placeholder |
+| Community Airdrop (`0xd0...`) | 100,000,000 | 10% | — | — | TGE 100% (industry-standard for airdrops) |
+| Validator Alpha (`0x01...`) | 50,000,000 | 5% | 12 mo | 24 mo | placeholder |
+| Validator Beta (`0x02...`) | 50,000,000 | 5% | 12 mo | 24 mo | placeholder |
+| Validator Gamma (`0x03...`) | 50,000,000 | 5% | 12 mo | 24 mo | placeholder |
+| Validator Delta (`0x04...`) | 50,000,000 | 5% | 12 mo | 24 mo | placeholder |
+| **Total** | **1,000,000,000** | 100% | | | |
+
+The on-chain primitive enforcing these schedules is `VestingLock` in `crates/evaporchain-types/src/lib.rs:437` (cliff_epoch + linear_release_epochs + total_locked, with `locked_at(epoch)` computing the unreleased balance). Counsel/advisor sign-off on the durations is the remaining gate — see §3 ceremony questions Q14–Q17. The Community Airdrop bucket being unvested is intentional (standard pattern); explicit confirmation needed before launch.
 
 **Mainnet–live mismatch:** genesis-mainnet.json names 4 validators (Alpha/Beta/Gamma/Delta), but the running cluster has 5 validators (V1–V5, including 2 Hetzner Helsinki). Mainnet genesis is stale and must be updated before launch.
 
