@@ -23,25 +23,37 @@ pub struct DecaySimResult {
     pub refreshes_needed: u64,
 }
 
-/// Compute energy remaining after `epochs_elapsed` using EvaporChain's bit-shift decay.
-pub fn compute_energy(initial: u64, half_life: u64, epochs_elapsed: u64) -> u64 {
-    if half_life == 0 {
-        return 0;
-    }
-    let full_halvings = epochs_elapsed / half_life;
-    if full_halvings >= 64 {
-        return 0;
-    }
-    let energy_after_halvings = initial >> full_halvings;
-    let remainder = epochs_elapsed % half_life;
-    if remainder == 0 {
-        return energy_after_halvings;
-    }
-    // Linear interpolation within the current halving period
-    let next_halving_energy = energy_after_halvings >> 1;
-    let diff = energy_after_halvings - next_halving_energy;
-    let fraction_elapsed = remainder as f64 / half_life as f64;
-    energy_after_halvings - (diff as f64 * fraction_elapsed) as u64
+/// **DEPRECATED. AUDIT_2026_05_13 H10.**
+///
+/// Pre-fix this was a `pub fn` that used raw `>>` on energy values
+/// AND `f64` interpolation. Both violate CLAUDE.md's Layer 0 invariant
+/// ("Never use `>>` on energy values outside `evaporchain-types`")
+/// because:
+/// 1. Raw `>>` outside `evaporchain-types` makes the decay formula
+///    drift from the Coq-verified canonical one (the
+///    `energy_at_epoch_monotone` theorem in `research/coq/`).
+/// 2. `f64` arithmetic is architecture-dependent — two validators on
+///    different cores can compute different `(diff as f64 *
+///    fraction_elapsed) as u64` results, breaking consensus
+///    determinism.
+///
+/// Today no external callers; the `pub` visibility was the hazard.
+/// Function is now `pub(crate)` + `#[deprecated]`; the only in-file
+/// caller (`simulate_decay` below) has been rerouted through the
+/// canonical `evaporchain_types::energy_at_epoch`. Any future use must
+/// go through the canonical function instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "AUDIT_2026_05_13 H10: violates Layer 0 invariant (raw `>>` + f64). \
+            Use `evaporchain_types::energy_at_epoch` for the canonical, \
+            Coq-verified, deterministic-across-architectures formula."
+)]
+pub(crate) fn compute_energy(initial: u64, half_life: u64, epochs_elapsed: u64) -> u64 {
+    // Forwarder to the canonical function. Result-wise this may differ
+    // by ~1 unit from the pre-deprecation body due to u128-integer vs
+    // f64-float interpolation, but the canonical answer is the only
+    // one that all validators agree on byte-for-byte.
+    evaporchain_types::energy_at_epoch(initial, half_life, epochs_elapsed)
 }
 
 /// Simulate energy decay over N blocks.
@@ -52,7 +64,9 @@ pub fn simulate_decay(config: &DecaySimConfig) -> DecaySimResult {
     let mut total_cost = 0u64;
 
     for block in 1..=config.blocks_to_simulate {
-        let energy = compute_energy(config.initial_energy, config.half_life, block);
+        // AUDIT H10: route through canonical energy_at_epoch (Layer 0).
+        let energy =
+            evaporchain_types::energy_at_epoch(config.initial_energy, config.half_life, block);
         if energy == 0 && blocks_until_grace.is_none() {
             blocks_until_grace = Some(block);
         }
@@ -62,7 +76,8 @@ pub fn simulate_decay(config: &DecaySimConfig) -> DecaySimResult {
         }
     }
 
-    let energy_at_end = compute_energy(
+    // AUDIT H10: canonical energy_at_epoch (deterministic across arches).
+    let energy_at_end = evaporchain_types::energy_at_epoch(
         config.initial_energy,
         config.half_life,
         config.blocks_to_simulate,
@@ -89,7 +104,8 @@ pub fn simulate_decay(config: &DecaySimConfig) -> DecaySimResult {
 /// Find the minimum half-life needed for an object to survive M blocks.
 pub fn find_min_half_life_for_survival(initial_energy: u64, target_blocks: u64) -> u64 {
     for hl in 1..=target_blocks * 2 {
-        let energy = compute_energy(initial_energy, hl, target_blocks);
+        // AUDIT H10: canonical energy_at_epoch (Layer 0).
+        let energy = evaporchain_types::energy_at_epoch(initial_energy, hl, target_blocks);
         if energy > 0 {
             return hl;
         }
@@ -443,6 +459,7 @@ pub fn simulate(params: &EconomicParams, blocks: u64) -> Result<SimulationMetric
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // tests still exercise the deprecated compute_energy forwarder
 mod tests {
     use super::*;
 
@@ -452,6 +469,40 @@ mod tests {
         assert_eq!(compute_energy(1000, 10, 10), 500);
         assert_eq!(compute_energy(1000, 10, 20), 250);
         assert_eq!(compute_energy(1000, 10, 30), 125);
+    }
+
+    // ─── AUDIT_2026_05_13 H10 regression suite ────────────────────────
+
+    #[test]
+    fn audit_h10_compute_energy_forwards_to_canonical() {
+        // Post-fix, compute_energy is a thin forwarder to
+        // evaporchain_types::energy_at_epoch. Result-wise the integer
+        // u128 interpolation may differ by ~1 unit from the pre-fix
+        // f64 version, but it MUST match the canonical answer that
+        // every validator computes the same way.
+        for (initial, half_life, epochs) in [
+            (1000u64, 10u64, 0u64),
+            (1000, 10, 5),
+            (1000, 10, 10),
+            (1000, 10, 15),
+            (1_000_000, 100, 123),
+            (u64::MAX, 1, 64), // saturation path
+        ] {
+            assert_eq!(
+                compute_energy(initial, half_life, epochs),
+                evaporchain_types::energy_at_epoch(initial, half_life, epochs),
+                "compute_energy must match canonical energy_at_epoch for ({initial}, {half_life}, {epochs})"
+            );
+        }
+    }
+
+    #[test]
+    fn audit_h10_no_external_callers_outside_economics() {
+        // Documentary assertion: the deprecated `compute_energy` is
+        // `pub(crate)` so the workspace-grep would catch any external
+        // reactivation. This test serves as a build-time reminder by
+        // referencing the symbol through its narrowed visibility.
+        let _ = compute_energy(1, 1, 0); // pub(crate) — compiles only in-crate
     }
 
     #[test]
