@@ -269,6 +269,77 @@ mod tests {
         assert_eq!(v1, v2);
     }
 
+    /// T1.20 — saturation pin: when the true value is at `i64::MAX`
+    /// and noise tries to push past it, the result clamps to
+    /// `i64::MAX` rather than overflowing to a negative. Existing
+    /// `does_not_panic_at_i64_extremes` only confirms no panic;
+    /// this pins the actual saturation behaviour (lines 132-139).
+    #[test]
+    fn t1_20_noise_saturates_correctly_at_i64_max() {
+        let m = NoiseMechanism::DiscreteLaplace;
+        // Many seeds at i64::MAX; some will produce positive noise
+        // that triggers the upper-clamp branch. The result must
+        // never wrap negative.
+        for s in 0u8..200 {
+            let r = m.apply(i64::MAX, 1_000_000, 1, NoiseSeed([s; 32])).unwrap();
+            assert!(
+                r >= 0,
+                "i64::MAX + positive noise must NOT wrap negative; got {r}"
+            );
+        }
+        // Symmetric: i64::MIN with negative noise must not wrap positive.
+        for s in 0u8..200 {
+            let r = m.apply(i64::MIN, 1_000_000, 1, NoiseSeed([s; 32])).unwrap();
+            assert!(
+                r <= 0,
+                "i64::MIN + negative noise must NOT wrap positive; got {r}"
+            );
+        }
+    }
+
+    /// T1.20 — symmetry pin: across many seeds at moderate noise
+    /// magnitude, both positive AND negative deviations occur.
+    /// Discrete Laplace must be mean-zero — a one-sided distribution
+    /// would silently bias every DP query. Existing
+    /// `output_disperses_at_low_epsilon` only checks magnitude,
+    /// not sign.
+    #[test]
+    fn t1_20_noise_yields_both_signs_across_seeds() {
+        let m = NoiseMechanism::DiscreteLaplace;
+        let true_v = 10_000_i64;
+        let mut pos_count = 0;
+        let mut neg_count = 0;
+        let mut zero_count = 0;
+        for s in 0u8..200 {
+            let noised = m
+                .apply(true_v, 100, 100_000, NoiseSeed([s; 32]))
+                .unwrap();
+            match noised.cmp(&true_v) {
+                std::cmp::Ordering::Greater => pos_count += 1,
+                std::cmp::Ordering::Less => neg_count += 1,
+                std::cmp::Ordering::Equal => zero_count += 1,
+            }
+        }
+        // With 200 seeds and b ≈ 1, expect both signs to appear.
+        // (A strict 50/50 would be statistical; we assert each side
+        // produces at least 10 samples.)
+        assert!(
+            pos_count >= 10 && neg_count >= 10,
+            "noise must be symmetric: pos={pos_count}, neg={neg_count}, zero={zero_count}"
+        );
+    }
+
+    /// T1.20 — `NoiseSeed` serde round-trip. Validators ship seeds
+    /// across the wire via JSON in some paths; pin that the
+    /// canonical encoding round-trips byte-for-byte.
+    #[test]
+    fn t1_20_noise_seed_serde_round_trip() {
+        let s = NoiseSeed([0x42u8; 32]);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: NoiseSeed = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
     proptest::proptest! {
         #[test]
         fn property_determinism_under_arbitrary_seeds(

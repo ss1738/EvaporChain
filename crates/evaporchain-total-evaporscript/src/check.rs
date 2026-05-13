@@ -820,4 +820,80 @@ mod tests {
             proptest::prop_assert!(check_total(&t).is_err());
         }
     }
+
+    /// T1.20 — `Certificate` is a unit-y witness type with derived
+    /// `Eq` + `Clone`. Two certificates are always equal (any
+    /// `check_total` success produces the same witness). Pin so a
+    /// future refactor adding a field without updating Eq surfaces.
+    #[test]
+    fn t1_20_certificate_eq_and_clone() {
+        let c1 = check_total(&Term::Skip).unwrap();
+        let c2 = check_total(&Term::Skip).unwrap();
+        assert_eq!(c1, c2);
+        let cloned = c1.clone();
+        assert_eq!(c1, cloned);
+    }
+
+    /// T1.20 — `check_total` on an `If` whose both branches are
+    /// total accepts the term; either branch being non-total fails.
+    /// Pin via explicit If with distinct total branches AND a
+    /// counter-example where the else branch is non-total.
+    #[test]
+    fn t1_20_check_total_on_if_with_two_total_branches() {
+        let t = Term::If {
+            cond: var("flag"),
+            then_body: Box::new(Term::Return(Some(lit(1)))),
+            else_body: Box::new(Term::Emit(Expr::Str("else".into()))),
+        };
+        assert!(check_total(&t).is_ok());
+
+        // If with one non-total branch fails.
+        let bad_inner = Term::BoundedWhile {
+            cond: bin(BinOp::Gt, var("r"), lit(0)),
+            ranking_var: "r".into(),
+            body: Box::new(Term::Skip),
+        };
+        let t_bad = Term::If {
+            cond: var("flag"),
+            then_body: Box::new(Term::Return(Some(lit(1)))),
+            else_body: Box::new(bad_inner),
+        };
+        assert!(check_total(&t_bad).is_err());
+    }
+
+    /// T1.20 — `TotalError::Display` includes the variable name
+    /// for each variant that carries one. Operators triaging a
+    /// rejected program need to see WHICH var caused the failure.
+    /// Pin via a sample of variants.
+    #[test]
+    fn t1_20_total_error_display_includes_variable_name() {
+        // BoundedForNonPositiveStep with var="i".
+        let err = check_total(&Term::BoundedFor {
+            var: "i".into(),
+            from: lit(0),
+            to: lit(10),
+            step: 0,
+            body: Box::new(Term::Skip),
+        })
+        .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("`i`"),
+            "BoundedForNonPositiveStep msg should name var: {msg}"
+        );
+        assert!(msg.contains('0'), "msg should report step value: {msg}");
+
+        // BoundedWhile* with ranking_var="r".
+        let err = check_total(&Term::BoundedWhile {
+            cond: bin(BinOp::Gt, var("r"), lit(0)),
+            ranking_var: "r".into(),
+            body: Box::new(Term::Skip),
+        })
+        .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("`r`"),
+            "BoundedWhile msg should name ranking_var: {msg}"
+        );
+    }
 }

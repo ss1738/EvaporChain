@@ -247,4 +247,97 @@ mod tests {
         // Not a Bin at all.
         assert!(Expr::Lit(5).as_strict_decrement().is_none());
     }
+
+    /// T1.20 — soundness pin: `Lit(k) - Var` is NOT a strict
+    /// decrement. The decrement shape required by the termination
+    /// calculus is `Var - Lit(k>0)`. A refactor that loosened the
+    /// pattern to "either side could be the Var" would silently
+    /// accept `k - r` as a decrement of `r`, but `k - r` doesn't
+    /// decrement `r` at all (it computes an unrelated value). This
+    /// pin protects the BoundedWhile termination guarantee.
+    #[test]
+    fn t1_20_as_strict_decrement_rejects_reversed_operands() {
+        // Lit - Var: this is k - r, NOT a decrement of r.
+        let reversed = Expr::Bin {
+            op: BinOp::Sub,
+            lhs: Box::new(Expr::Lit(5)),
+            rhs: Box::new(Expr::Var("r".into())),
+        };
+        assert!(
+            reversed.as_strict_decrement().is_none(),
+            "Lit - Var must NOT be classified as a strict decrement"
+        );
+        // Lit - Lit: also not a decrement (no variable).
+        let lit_lit = Expr::Bin {
+            op: BinOp::Sub,
+            lhs: Box::new(Expr::Lit(10)),
+            rhs: Box::new(Expr::Lit(1)),
+        };
+        assert!(lit_lit.as_strict_decrement().is_none());
+    }
+
+    /// T1.20 — Term variants serde round-trip. Existing test only
+    /// covers `BoundedFor`; this pins `BoundedWhile`, `Seq`, `If`
+    /// + nested. The chain stores compiled Total-EvaporScript
+    /// programs on-disk via serde, so a variant that broke serde
+    /// would silently fail to load.
+    #[test]
+    fn t1_20_term_variants_serde_round_trip() {
+        // BoundedWhile.
+        let bw = Term::BoundedWhile {
+            cond: Expr::Bin {
+                op: BinOp::Gt,
+                lhs: Box::new(Expr::Var("r".into())),
+                rhs: Box::new(Expr::Lit(0)),
+            },
+            ranking_var: "r".into(),
+            body: Box::new(Term::Assign {
+                target: "r".into(),
+                value: Expr::Bin {
+                    op: BinOp::Sub,
+                    lhs: Box::new(Expr::Var("r".into())),
+                    rhs: Box::new(Expr::Lit(1)),
+                },
+            }),
+        };
+        let s = serde_json::to_string(&bw).unwrap();
+        assert_eq!(bw, serde_json::from_str::<Term>(&s).unwrap());
+
+        // Seq containing If.
+        let seq = Term::Seq(vec![
+            Term::Skip,
+            Term::If {
+                cond: Expr::Var("flag".into()),
+                then_body: Box::new(Term::Return(Some(Expr::Lit(1)))),
+                else_body: Box::new(Term::Return(Some(Expr::Lit(0)))),
+            },
+            Term::Require {
+                cond: Expr::Lit(1),
+                message: Expr::Str("ok".into()),
+            },
+            Term::Emit(Expr::Str("event".into())),
+        ]);
+        let s = serde_json::to_string(&seq).unwrap();
+        assert_eq!(seq, serde_json::from_str::<Term>(&s).unwrap());
+    }
+
+    /// T1.20 — `Expr::Un` variant serde round-trip. Not is_positive
+    /// nor as_strict_decrement matches it, and existing tests use
+    /// only `Lit`, `Var`, `Bin`. Pin both unary ops (Not, Neg).
+    #[test]
+    fn t1_20_expr_unary_serde_round_trip() {
+        let not_e = Expr::Un {
+            op: UnaryOp::Not,
+            e: Box::new(Expr::Var("flag".into())),
+        };
+        let s = serde_json::to_string(&not_e).unwrap();
+        assert_eq!(not_e, serde_json::from_str::<Expr>(&s).unwrap());
+
+        let neg_e = Expr::Un {
+            op: UnaryOp::Neg,
+            e: Box::new(Expr::Lit(42)),
+        };
+        let s = serde_json::to_string(&neg_e).unwrap();
+        assert_eq!(neg_e, serde_json::from_str::<Expr>(&s).unwrap());
+    }
 }

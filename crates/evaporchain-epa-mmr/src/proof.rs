@@ -483,4 +483,65 @@ mod tests {
             proptest::prop_assert!(verify_inclusion(&proof, &root, floor).is_err());
         }
     }
+
+    /// T1.20 — `MalformedPath` error variant. The only error
+    /// variant without a unit test. Verify rejects a proof whose
+    /// `sibling_path.len()` doesn't match the expected peak-tree
+    /// height. An adversary who pads or truncates the path can't
+    /// confuse the verifier.
+    #[test]
+    fn t1_20_tampered_sibling_path_length_yields_malformed_path() {
+        let m = build_mmr(8, 1000);
+        let root = m.root().unwrap();
+        let mut proof = InclusionProof::build(&m, 3).unwrap();
+        // Original path length = 3 (height of size-8 peak).
+        assert_eq!(proof.sibling_path.len(), 3);
+        // Pad with an extra sibling — length mismatch.
+        proof.sibling_path.push([0x42u8; 32]);
+        let err = verify_inclusion(&proof, &root, 0).unwrap_err();
+        assert_eq!(err, ProofError::MalformedPath);
+
+        // Truncate — also a length mismatch.
+        let mut short = InclusionProof::build(&m, 3).unwrap();
+        short.sibling_path.pop();
+        let err = verify_inclusion(&short, &root, 0).unwrap_err();
+        assert_eq!(err, ProofError::MalformedPath);
+    }
+
+    /// T1.20 — flipping one byte inside the sibling path produces
+    /// a `RootMismatch` (the reconstructed peak differs from the
+    /// real one). Existing tamper tests cover the leaf and root;
+    /// this pins the sibling-byte soundness gate.
+    #[test]
+    fn t1_20_tampered_sibling_byte_rejected_via_root_mismatch() {
+        let m = build_mmr(8, 1000);
+        let root = m.root().unwrap();
+        let mut proof = InclusionProof::build(&m, 3).unwrap();
+        assert!(!proof.sibling_path.is_empty());
+        // Flip one byte of the first sibling — reconstruction
+        // yields a peak that doesn't bag back to the real root.
+        proof.sibling_path[0][0] ^= 0x01;
+        let err = verify_inclusion(&proof, &root, 0).unwrap_err();
+        assert_eq!(err, ProofError::RootMismatch);
+    }
+
+    /// T1.20 — `inner_hash` and `peak_bag_hash` are NON-commutative
+    /// in their arguments. h(a, b) ≠ h(b, a). The verifier
+    /// distinguishes left-child from right-child via index parity;
+    /// a commutative hash would let an attacker swap them silently.
+    #[test]
+    fn t1_20_inner_and_peak_bag_hashes_are_non_commutative() {
+        let a = [0x11u8; 32];
+        let b = [0x22u8; 32];
+        assert_ne!(
+            inner_hash(&a, &b),
+            inner_hash(&b, &a),
+            "inner_hash must be order-sensitive (left vs right child)"
+        );
+        assert_ne!(
+            peak_bag_hash(&a, &b),
+            peak_bag_hash(&b, &a),
+            "peak_bag_hash must be order-sensitive"
+        );
+    }
 }

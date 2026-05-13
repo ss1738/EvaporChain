@@ -263,6 +263,91 @@ mod tests {
         assert!(r.get(&ds(1)).unwrap().is_exhausted());
     }
 
+    /// T1.20 — adversarial: `admits` returns false when the
+    /// arithmetic would overflow u64 (lines 61-68). An attacker
+    /// who submits a query with `u64::MAX` epsilon cannot trick
+    /// the gate into accepting via wraparound.
+    #[test]
+    fn t1_20_admits_returns_false_on_arithmetic_overflow() {
+        let b = PrivacyBudget::new(1_000_000, 1_000);
+        // Start with a small consumption so consumed + huge would overflow.
+        let b = PrivacyBudget {
+            consumed_epsilon_micros: 100,
+            ..b
+        };
+        assert!(
+            !b.admits(u64::MAX - 50, 0),
+            "epsilon overflow on checked_add must yield admits=false"
+        );
+        assert!(
+            !b.admits(0, u64::MAX - 50),
+            "delta overflow on checked_add must yield admits=false"
+        );
+        // Both overflow.
+        assert!(!b.admits(u64::MAX, u64::MAX));
+    }
+
+    /// T1.20 — `BudgetExhausted` error carries diagnostic values
+    /// (req_eps_micros, req_delta_ppb, rem_eps_micros, rem_delta_ppb).
+    /// Existing tests use `matches!` without checking values;
+    /// operators triaging a rejected query need to see exactly
+    /// how much budget remained.
+    #[test]
+    fn t1_20_budget_exhausted_error_carries_diagnostic_values() {
+        let mut r = BudgetRegistry::new();
+        r.register(ds(1), 1_000_000, 1_000).unwrap();
+        // Consume 70% of budget.
+        r.consume(ds(1), 700_000, 700).unwrap();
+        // Request more than the remaining 30%.
+        let err = r.consume(ds(1), 400_000, 100).unwrap_err();
+        match err {
+            BudgetError::BudgetExhausted {
+                req_eps_micros,
+                req_delta_ppb,
+                rem_eps_micros,
+                rem_delta_ppb,
+            } => {
+                assert_eq!(req_eps_micros, 400_000);
+                assert_eq!(req_delta_ppb, 100);
+                assert_eq!(rem_eps_micros, 300_000);
+                assert_eq!(rem_delta_ppb, 300);
+            }
+            other => panic!("expected BudgetExhausted with values, got {other:?}"),
+        }
+    }
+
+    /// T1.20 — `is_exhausted` returns true on EITHER axis being
+    /// at zero (line 72-74: `||` not `&&`). The chain refuses
+    /// queries the moment either ε OR δ hits 0; existing
+    /// `budget_exhausts_then_fails_closed` only tested
+    /// dual-exhaustion. Pin both partial cases.
+    #[test]
+    fn t1_20_is_exhausted_on_either_axis() {
+        // ε exhausted, δ remaining.
+        let eps_only = PrivacyBudget {
+            initial_epsilon_micros: 1_000_000,
+            initial_delta_ppb: 1_000,
+            consumed_epsilon_micros: 1_000_000, // all
+            consumed_delta_ppb: 100,            // some
+        };
+        assert!(eps_only.is_exhausted());
+        assert_eq!(eps_only.remaining_delta_ppb(), 900);
+
+        // δ exhausted, ε remaining.
+        let delta_only = PrivacyBudget {
+            initial_epsilon_micros: 1_000_000,
+            initial_delta_ppb: 1_000,
+            consumed_epsilon_micros: 100_000,
+            consumed_delta_ppb: 1_000, // all
+        };
+        assert!(delta_only.is_exhausted());
+        assert_eq!(delta_only.remaining_epsilon_micros(), 900_000);
+
+        // Neither exhausted → false.
+        let healthy = PrivacyBudget::new(1_000_000, 1_000);
+        assert!(!healthy.is_exhausted());
+    }
+
     #[test]
     fn budget_value_round_trips_serde() {
         // The registry uses HashMap<DatasetId, _> where DatasetId is
