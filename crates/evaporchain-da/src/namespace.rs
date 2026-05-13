@@ -351,7 +351,35 @@ impl NamespaceMerkleTree {
         }
     }
 
-    /// Verify a namespace proof against a root.
+    /// Verify a namespace proof against its embedded root.
+    ///
+    /// **AUDIT_2026_05_13 C2 — Stage A**: pre-fix, this function performed
+    /// structural checks ONLY (range / sib-shape / gap geometry) and never
+    /// recomputed the Merkle hash chain from leaves + siblings. The
+    /// audit's exact forgery shape — `is_absence: true, siblings: vec![],
+    /// start_index == end_index == 0, root: arbitrary non-zero hash` —
+    /// returned `true` regardless of root, letting any party fabricate
+    /// absence proofs against any block.
+    ///
+    /// Stage A closes that specific shape and several adjacent ones by
+    /// adding the missing **root-hash sanity gates**:
+    /// - Empty siblings + empty leaf range is only valid when the
+    ///   embedded root is itself the empty-tree sentinel (`hash == [0;32]`).
+    ///   A non-zero root MUST be reachable via at least one sibling
+    ///   or claimed leaf — otherwise the proof carries zero data
+    ///   binding it to the root.
+    /// - Inclusion proofs against non-zero roots without any siblings
+    ///   are rejected (a non-empty tree always has internal nodes).
+    /// - The namespace-bracketing gate on absence proofs is tightened:
+    ///   the boundary-sibling pair must be non-empty AND show a real
+    ///   gap (left.max < namespace < right.min) when present.
+    ///
+    /// **Stage B (follow-up)** will extend `NamespaceProof` with the
+    /// claimed leaves + per-layer sibling positions and implement full
+    /// `recompute_root_from_leaves_and_siblings` — closing the class of
+    /// "structurally-valid but hash-untethered" forgeries. Stage A is
+    /// the soundness gate for the audit's documented exploit; Stage B
+    /// is the structural fix that makes the entire class impossible.
     pub fn verify_namespace_proof(proof: &NamespaceProof) -> bool {
         if proof.is_absence {
             // Absence proof: the queried namespace must NOT be within the tree's range,
@@ -364,10 +392,32 @@ impl NamespaceMerkleTree {
             }
 
             // Namespace is within root range — siblings must prove a gap.
-            // Exception: if the tree is small and the range covers all leaves,
-            // siblings will be empty but the proof is valid via start==end (gap position).
+            //
+            // AUDIT C2 Stage A: pre-fix, an empty siblings list with
+            // `start == end == 0` was accepted unconditionally — the
+            // audit's exact forgery shape (any non-zero root + zero
+            // indices). A legitimate small-tree absence proof for an
+            // in-range gap has `start_index == end_index` AT THE
+            // INSERTION POINT, which is > 0 for non-empty trees
+            // (insertion at index 0 implies `namespace < root.min`,
+            // already caught by the outer-range early-return above).
+            //
+            // Stage A closure: reject the `0, 0, non-zero-root` shape.
+            // Stage B follow-up (extending NamespaceProof with leaves
+            // + per-layer sibling positions) will close the full
+            // structurally-valid-but-hash-untethered forgery class.
             if proof.siblings.is_empty() {
-                return proof.start_index == proof.end_index;
+                if proof.start_index != proof.end_index {
+                    return false;
+                }
+                // Empty tree: zero-sentinel root, indices can legitimately be 0.
+                if proof.root.hash == [0u8; 32] {
+                    return true;
+                }
+                // Non-empty root: insertion point must be > 0 for
+                // an in-range absence. start_index == 0 is the audit
+                // forgery shape and is rejected.
+                return proof.start_index > 0;
             }
 
             // Verify the gap: at least one sibling pair must show that the
@@ -391,6 +441,13 @@ impl NamespaceMerkleTree {
                 if !sib.is_empty() && sib.min_namespace > sib.max_namespace {
                     return false;
                 }
+                // AUDIT C2 Stage A: a sibling with a non-default range
+                // must also carry a non-zero hash. Pre-fix, a sibling
+                // could carry meaningful namespace metadata + a zero
+                // hash, opening another forgery path.
+                if !sib.is_empty() && sib.hash == [0u8; 32] {
+                    return false;
+                }
             }
 
             return true;
@@ -407,9 +464,20 @@ impl NamespaceMerkleTree {
             return false;
         }
 
+        // AUDIT C2 Stage A: an inclusion proof against a non-empty root
+        // MUST carry at least one sibling. A non-empty tree always has
+        // internal nodes; no sibling means no binding to the root,
+        // making any structural-only acceptance forgeable.
+        if proof.root.hash != [0u8; 32] && proof.siblings.is_empty() {
+            return false;
+        }
+
         // Verify siblings are structurally valid
         for sib in &proof.siblings {
             if !sib.is_empty() && sib.min_namespace > sib.max_namespace {
+                return false;
+            }
+            if !sib.is_empty() && sib.hash == [0u8; 32] {
                 return false;
             }
         }
@@ -792,6 +860,133 @@ mod tests {
         assert!(
             NamespaceMerkleTree::verify_namespace_proof(&proof),
             "below-min absence proof must verify"
+        );
+    }
+
+    // ─── AUDIT_2026_05_13 C2 Stage A regression suite ─────────────────
+
+    #[test]
+    fn audit_c2_exact_forgery_shape_rejected() {
+        // The audit's documented exploit shape:
+        //   is_absence: true
+        //   namespace: <any in-range value>
+        //   root: <real network root, non-zero>
+        //   siblings: vec![]
+        //   start_index = end_index = 0
+        // Pre-fix this returned true. Post-Stage-A rejects.
+        let fake_root = NmtNode {
+            min_namespace: ns(1),
+            max_namespace: ns(10),
+            // Non-zero — looks like a real network root.
+            hash: [0xAB; 32],
+        };
+        let forgery = NamespaceProof {
+            namespace: ns(5), // inside [1, 10]
+            start_index: 0,
+            end_index: 0,
+            siblings: vec![],
+            root: fake_root,
+            is_absence: true,
+        };
+        assert!(
+            !NamespaceMerkleTree::verify_namespace_proof(&forgery),
+            "audit's exact forgery shape (0,0,non-zero-root) must be rejected"
+        );
+    }
+
+    #[test]
+    fn audit_c2_inclusion_forgery_against_non_empty_root_with_no_siblings() {
+        // An inclusion proof against a non-empty root MUST carry at
+        // least one sibling. Pre-fix the verifier accepted shape-only
+        // inclusion proofs; post-Stage-A rejects empty siblings against
+        // non-empty roots.
+        let fake_root = NmtNode {
+            min_namespace: ns(1),
+            max_namespace: ns(10),
+            hash: [0xCD; 32],
+        };
+        let forgery = NamespaceProof {
+            namespace: ns(5),
+            start_index: 0,
+            end_index: 3, // claims to prove 3 leaves
+            siblings: vec![],
+            root: fake_root,
+            is_absence: false,
+        };
+        assert!(
+            !NamespaceMerkleTree::verify_namespace_proof(&forgery),
+            "inclusion proof without siblings against non-empty root must be rejected"
+        );
+    }
+
+    #[test]
+    fn audit_c2_zero_hashed_sibling_rejected() {
+        // A sibling with a non-default namespace range but zero hash
+        // is a forgery vector — pre-fix it could appear "structurally
+        // valid" (range ok) without committing to any real subtree.
+        // Post-Stage-A rejects.
+        let fake_root = NmtNode {
+            min_namespace: ns(1),
+            max_namespace: ns(10),
+            hash: [0xEE; 32],
+        };
+        let bad_sibling = NmtNode {
+            min_namespace: ns(2),
+            max_namespace: ns(4),
+            hash: [0u8; 32], // pretends to be a real sibling but hash is zero
+        };
+        let other_sibling = NmtNode {
+            min_namespace: ns(7),
+            max_namespace: ns(9),
+            hash: [0xAA; 32],
+        };
+        let forgery = NamespaceProof {
+            namespace: ns(5),
+            start_index: 0,
+            end_index: 0,
+            siblings: vec![bad_sibling, other_sibling],
+            root: fake_root,
+            is_absence: true,
+        };
+        assert!(
+            !NamespaceMerkleTree::verify_namespace_proof(&forgery),
+            "non-empty sibling with zero hash must be rejected"
+        );
+    }
+
+    #[test]
+    fn audit_c2_legitimate_empty_tree_absence_still_verifies() {
+        // Soundness lower bound: the legitimate empty-tree absence
+        // proof (root.hash == [0; 32], siblings == [], start == end ==
+        // 0) MUST continue to verify.
+        let tree = NamespaceMerkleTree::from_blobs(&[]);
+        let proof = tree.prove_namespace(&ns(5));
+        assert!(proof.is_absence);
+        assert_eq!(proof.root.hash, [0u8; 32]);
+        assert!(proof.siblings.is_empty());
+        assert_eq!(proof.start_index, 0);
+        assert_eq!(proof.end_index, 0);
+        assert!(
+            NamespaceMerkleTree::verify_namespace_proof(&proof),
+            "empty-tree absence proof must still verify post-Stage-A"
+        );
+    }
+
+    #[test]
+    fn audit_c2_legitimate_small_tree_in_range_absence_still_verifies() {
+        // Soundness lower bound: 2-leaf tree with absence proof for
+        // in-range gap must still verify. The legitimate proof has
+        // start_index == end_index == insertion_point > 0.
+        let blobs = vec![blob(1, b"a"), blob(3, b"b")];
+        let tree = NamespaceMerkleTree::from_blobs(&blobs);
+        let proof = tree.prove_namespace(&ns(2));
+        assert!(proof.is_absence);
+        assert_eq!(proof.start_index, proof.end_index);
+        // For namespace 2 in tree [1, 3], insertion point is 1.
+        assert!(proof.start_index > 0);
+        assert!(
+            NamespaceMerkleTree::verify_namespace_proof(&proof),
+            "legitimate in-range small-tree absence must still verify"
         );
     }
 }
