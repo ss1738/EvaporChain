@@ -22,7 +22,7 @@
 use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_execution::{ExecutionEngine, SimpleExecutor};
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
-use evaporchain_types::{Account, Block, Epoch, Transaction, TransferTx};
+use evaporchain_types::{Account, Block, Epoch, Transaction, TransferTx, ValidatorStakeTx};
 
 // ─── Public harness types ──────────────────────────────────────────────
 
@@ -155,6 +155,83 @@ fn compare_accounts(
     }
 }
 
+fn compare_stakes(
+    simple: &InMemoryStateDB,
+    parallel: &InMemoryStateDB,
+    out: &mut Vec<Divergence>,
+) {
+    let mut all_ids: std::collections::BTreeSet<u64> = simple
+        .all_stakes()
+        .iter()
+        .map(|s| s.validator_id)
+        .collect();
+    for s in parallel.all_stakes() {
+        all_ids.insert(s.validator_id);
+    }
+
+    for vid in all_ids {
+        let s = simple.get_stake(vid);
+        let p = parallel.get_stake(vid);
+        match (s, p) {
+            (None, None) => {}
+            (Some(ss), Some(ps)) => {
+                if ss.staked_amount != ps.staked_amount {
+                    out.push(Divergence {
+                        domain: "stakes.staked_amount",
+                        detail: format!("validator_id={vid}"),
+                        simple_value: ss.staked_amount.to_string(),
+                        parallel_value: ps.staked_amount.to_string(),
+                    });
+                }
+                if ss.staked_at_epoch != ps.staked_at_epoch {
+                    out.push(Divergence {
+                        domain: "stakes.staked_at_epoch",
+                        detail: format!("validator_id={vid}"),
+                        simple_value: ss.staked_at_epoch.to_string(),
+                        parallel_value: ps.staked_at_epoch.to_string(),
+                    });
+                }
+                if ss.unbonding_epoch != ps.unbonding_epoch {
+                    out.push(Divergence {
+                        domain: "stakes.unbonding_epoch",
+                        detail: format!("validator_id={vid}"),
+                        simple_value: format!("{:?}", ss.unbonding_epoch),
+                        parallel_value: format!("{:?}", ps.unbonding_epoch),
+                    });
+                }
+                if ss.slashed_amount != ps.slashed_amount {
+                    out.push(Divergence {
+                        domain: "stakes.slashed_amount",
+                        detail: format!("validator_id={vid}"),
+                        simple_value: ss.slashed_amount.to_string(),
+                        parallel_value: ps.slashed_amount.to_string(),
+                    });
+                }
+                if ss.validator_address != ps.validator_address {
+                    out.push(Divergence {
+                        domain: "stakes.validator_address",
+                        detail: format!("validator_id={vid}"),
+                        simple_value: format!("{:02x}…", ss.validator_address[0]),
+                        parallel_value: format!("{:02x}…", ps.validator_address[0]),
+                    });
+                }
+            }
+            (Some(_), None) => out.push(Divergence {
+                domain: "stakes.presence",
+                detail: format!("validator_id={vid} exists only in SimpleExecutor DB"),
+                simple_value: "Some(_)".into(),
+                parallel_value: "None".into(),
+            }),
+            (None, Some(_)) => out.push(Divergence {
+                domain: "stakes.presence",
+                detail: format!("validator_id={vid} exists only in ParallelExecutor DB"),
+                simple_value: "None".into(),
+                parallel_value: "Some(_)".into(),
+            }),
+        }
+    }
+}
+
 // ─── Harness entry point ───────────────────────────────────────────────
 
 /// Run a fixture through both executors, returning every divergence found.
@@ -226,6 +303,7 @@ pub fn run_parity(fixture: &ParityFixture) -> Vec<Divergence> {
     }
 
     compare_accounts(&simple_db, &parallel_db, &mut divergences);
+    compare_stakes(&simple_db, &parallel_db, &mut divergences);
 
     divergences
 }
@@ -310,6 +388,108 @@ fn parity_transfer_zero_amount() {
             signature: None,
             public_key: None,
             mev_refund_eligible: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+// ─── Phase 2: ValidatorStake fixtures (closes audit C3) ─────────────────
+
+#[test]
+fn parity_validator_stake_happy_path() {
+    // AUDIT_2026_05_13 C3 surfaces here: pre-fix, ParallelExecutor's
+    // `exec_validator_stake` debited the staker's balance via the
+    // overlay but never wrote a StakeRecord (overlay put_stake was `{}`).
+    // SimpleExecutor's execute_validator_stake correctly persists the
+    // record. The divergence shows up under `stakes.presence`:
+    //   Simple   = Some(_)
+    //   Parallel = None
+    // After the C3 fix (move ValidatorStake to serial phase + port the
+    // SimpleExecutor arm), this fixture is green.
+    let fixture = ParityFixture {
+        name: "validator-stake-happy-path",
+        seed: |db| fund(db, 1, 100_000),
+        transaction: Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1),
+            stake_amount: 50_000,
+            validator_id: 1,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_validator_stake_insufficient_balance() {
+    // Both executors must reject with InsufficientBalance — no stake
+    // record created, no balance moved.
+    let fixture = ParityFixture {
+        name: "validator-stake-insufficient-balance",
+        seed: |db| fund(db, 1, 100),
+        transaction: Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1),
+            stake_amount: 50_000,
+            validator_id: 1,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_validator_stake_zero_amount() {
+    // ZeroAmount must reject identically; pre-fix the parallel path
+    // returned ZeroAmount before the put_stake bug, so this case was
+    // accidentally green.
+    let fixture = ParityFixture {
+        name: "validator-stake-zero-amount",
+        seed: |db| fund(db, 1, 100_000),
+        transaction: Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1),
+            stake_amount: 0,
+            validator_id: 1,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_validator_stake_nonce_mismatch() {
+    // Nonce mismatch must reject in both executors with the same
+    // expected/got values.
+    let fixture = ParityFixture {
+        name: "validator-stake-nonce-mismatch",
+        seed: |db| fund(db, 1, 100_000),
+        transaction: Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1),
+            stake_amount: 50_000,
+            validator_id: 1,
+            nonce: 7, // staker nonce is 0
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
         }),
         block_number: 1,
         epoch: 1,

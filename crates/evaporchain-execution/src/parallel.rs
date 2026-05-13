@@ -24,7 +24,8 @@ use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
     Account, AccountAddress, Block, CreateObjectTx, Epoch, GhostRecord, ObjectId, ObjectState,
-    RefreshTx, StateObject, Transaction, TransferTx, ValidatorExitTx, ValidatorStakeTx,
+    RefreshTx, StakeRecord, StateObject, Transaction, TransferTx, ValidatorExitTx,
+    ValidatorStakeTx,
 };
 use rayon::prelude::*;
 use tracing::{debug, info};
@@ -1167,8 +1168,17 @@ impl ParallelExecutor {
                 Transaction::Transfer(t) => Self::exec_transfer(overlay, t, epoch),
                 Transaction::CreateObject(t) => Self::exec_create_object(overlay, t, epoch),
                 Transaction::Refresh(t) => Self::exec_refresh(overlay, t, epoch),
-                Transaction::ValidatorStake(t) => Self::exec_validator_stake(overlay, t, epoch),
-                Transaction::ValidatorExit(t) => Self::exec_validator_exit(overlay, t, epoch),
+                // ValidatorStake / Exit / ClaimStake all execute in the
+                // serial phase (see filter above + AUDIT_2026_05_13 C3
+                // closure). Reaching this arm would be a filter regression
+                // — error fail-CLOSED so a future bug surfaces as a tx
+                // failure, not a silent balance burn.
+                Transaction::ValidatorStake(_) => Err(ExecutionError::ContractError(
+                    "validator stake executes in serial phase".into(),
+                )),
+                Transaction::ValidatorExit(_) => Err(ExecutionError::ContractError(
+                    "validator exit executes in serial phase".into(),
+                )),
                 Transaction::ValidatorClaimStake(_) => Err(ExecutionError::ContractError(
                     "validator claim stake executes in serial phase".into(),
                 )),
@@ -1435,72 +1445,14 @@ impl ParallelExecutor {
         Err(ExecutionError::ObjectNotFound(hex::encode(tx.object_id)))
     }
 
-    fn exec_validator_stake(
-        db: &mut OverlayStateDB,
-        tx: &ValidatorStakeTx,
-        epoch: Epoch,
-    ) -> Result<(), ExecutionError> {
-        if tx.stake_amount == 0 {
-            return Err(ExecutionError::ZeroAmount);
-        }
-        let sender = db.get_or_create_account(&tx.validator_address);
-        if sender.nonce != tx.nonce {
-            return Err(ExecutionError::InvalidNonce {
-                expected: sender.nonce,
-                got: tx.nonce,
-            });
-        }
-        if sender.balance < tx.stake_amount {
-            return Err(ExecutionError::InsufficientBalance {
-                account: hex::encode(tx.validator_address),
-                available: sender.balance,
-                required: tx.stake_amount,
-            });
-        }
-        sender.balance -= tx.stake_amount;
-        sender.nonce += 1;
-        // Stake locks balance + bumps nonce — stamp the demurrage anchor.
-        sender.last_touched_epoch = epoch;
-        Ok(())
-    }
-
-    fn exec_validator_exit(
-        db: &mut OverlayStateDB,
-        tx: &ValidatorExitTx,
-        current_epoch: u64,
-    ) -> Result<(), ExecutionError> {
-        let sender = db.get_or_create_account(&tx.validator_address);
-        if sender.nonce != tx.nonce {
-            return Err(ExecutionError::InvalidNonce {
-                expected: sender.nonce,
-                got: tx.nonce,
-            });
-        }
-        sender.nonce += 1;
-        // Nonce mutated — stamp the demurrage anchor.
-        sender.last_touched_epoch = current_epoch;
-
-        let mut stake = db.get_stake(tx.validator_id).cloned().ok_or_else(|| {
-            ExecutionError::ObjectNotFound(format!(
-                "no stake record for validator {}",
-                tx.validator_id
-            ))
-        })?;
-
-        if stake.validator_address != tx.validator_address {
-            return Err(ExecutionError::InvalidSignature);
-        }
-
-        if stake.unbonding_epoch.is_some() {
-            return Err(ExecutionError::ContractError(
-                "validator already exiting".to_string(),
-            ));
-        }
-
-        stake.unbonding_epoch = Some(current_epoch + crate::UNBONDING_PERIOD_EPOCHS);
-        db.put_stake(stake);
-        Ok(())
-    }
+    // AUDIT_2026_05_13 C3 closure: `exec_validator_stake` and
+    // `exec_validator_exit` were the parallel-partition implementations.
+    // They wrote balance debits to the overlay but never reached the
+    // main stake ledger (`OverlayStateDB::put_stake` is `{}`), so
+    // ValidatorStake silently burned balance and ValidatorExit was a
+    // no-op on production. Both transaction types now execute in the
+    // serial phase (see filter at the top of `execute_block` and the
+    // arm in the serial loop below). Functions removed.
 }
 
 impl ExecutionEngine for ParallelExecutor {
@@ -1542,6 +1494,14 @@ impl ExecutionEngine for ParallelExecutor {
                 | Transaction::Unshield(_)
                 | Transaction::PrivateTransfer(_)
                 | Transaction::Deferred(_)
+                // ValidatorStake / Exit / ClaimStake mutate the stake
+                // ledger via `db.put_stake / db.remove_stake`. The overlay
+                // does not buffer stake writes (put_stake there is `{}`)
+                // so the parallel-path version silently dropped the stake
+                // record — AUDIT_2026_05_13 C3 (silent balance burn on
+                // production executor). All three go through serial path
+                // which uses the main `db` directly.
+                | Transaction::ValidatorStake(_)
                 | Transaction::ValidatorExit(_)
                 | Transaction::ValidatorClaimStake(_)
                 // Validator key rotation mutates ValidatorSet via the
@@ -1853,6 +1813,68 @@ impl ExecutionEngine for ParallelExecutor {
                     .submit(dtx.clone())
                     .map(|_| ())
                     .map_err(|e| ExecutionError::ContractError(e.to_string())),
+                Transaction::ValidatorStake(stake_tx) => {
+                    // AUDIT_2026_05_13 C3 + H9 closure. Mirrors
+                    // SimpleExecutor::execute_validator_stake at
+                    // lib.rs:1632. Uses transferable_balance(epoch)
+                    // for the vesting gate (TOKENOMICS §2.6 / Q14)
+                    // and writes the StakeRecord with staked_at_epoch
+                    // set to the block epoch so the unbonding cooldown
+                    // gate fires correctly.
+                    if stake_tx.stake_amount == 0 {
+                        Err(ExecutionError::ZeroAmount)
+                    } else {
+                        let sender_view = db
+                            .get_account(&stake_tx.validator_address)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                use evaporchain_types::Account;
+                                Account {
+                                    address: stake_tx.validator_address,
+                                    balance: 0,
+                                    nonce: 0,
+                                    storage_deposit: 0,
+                                    storage_bytes: 0,
+                                    last_touched_epoch: 0,
+                                    vesting: None,
+                                }
+                            });
+                        if sender_view.nonce != stake_tx.nonce {
+                            Err(ExecutionError::InvalidNonce {
+                                expected: sender_view.nonce,
+                                got: stake_tx.nonce,
+                            })
+                        } else {
+                            let available = sender_view.transferable_balance(block.epoch);
+                            if available < stake_tx.stake_amount {
+                                Err(ExecutionError::InsufficientBalance {
+                                    account: hex::encode(stake_tx.validator_address),
+                                    available,
+                                    required: stake_tx.stake_amount,
+                                })
+                            } else {
+                                let existing_stake = db
+                                    .get_stake(stake_tx.validator_id)
+                                    .map(|s| s.staked_amount)
+                                    .unwrap_or(0);
+                                let sender = db
+                                    .get_or_create_account(&stake_tx.validator_address);
+                                sender.balance -= stake_tx.stake_amount;
+                                sender.nonce += 1;
+                                sender.last_touched_epoch = block.epoch;
+                                db.put_stake(StakeRecord {
+                                    validator_id: stake_tx.validator_id,
+                                    validator_address: stake_tx.validator_address,
+                                    staked_amount: existing_stake + stake_tx.stake_amount,
+                                    staked_at_epoch: block.epoch,
+                                    unbonding_epoch: None,
+                                    slashed_amount: 0,
+                                });
+                                Ok(())
+                            }
+                        }
+                    }
+                }
                 Transaction::ValidatorExit(exit) => {
                     let sender = db.get_or_create_account(&exit.validator_address);
                     if sender.nonce != exit.nonce {
@@ -3371,6 +3393,21 @@ mod tests {
         assert_eq!(result.txs_executed, 2);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 50_000);
         assert_eq!(db.get_account(&addr(2)).unwrap().balance, 70_000);
+
+        // AUDIT_2026_05_13 C3 regression guard: the pre-fix
+        // exec_validator_stake debited balance but never wrote a
+        // StakeRecord (silent burn). Assert both records exist with
+        // the right amount + correct staked_at_epoch (otherwise the
+        // unbonding-cooldown gate in execute_validator_claim_stake
+        // never fires).
+        let s1 = db.get_stake(1).expect("validator 1 stake record missing");
+        assert_eq!(s1.staked_amount, 50_000);
+        assert_eq!(s1.validator_address, addr(1));
+        assert_eq!(s1.staked_at_epoch, 1);
+        let s2 = db.get_stake(2).expect("validator 2 stake record missing");
+        assert_eq!(s2.staked_amount, 30_000);
+        assert_eq!(s2.validator_address, addr(2));
+        assert_eq!(s2.staked_at_epoch, 1);
     }
 
     #[test]
