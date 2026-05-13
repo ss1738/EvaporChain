@@ -22477,3 +22477,159 @@ mod t1_20_batch23 {
         );
     }
 }
+
+// ── T1.20 batch 24 — stake-below-threshold · DA supermajority paths · pending-cert · DA sampling ──
+#[cfg(test)]
+mod t1_20_batch24 {
+    use super::*;
+    use evaporchain_da::certificate::{DAAttestation, DACertificate};
+    use evaporchain_crypto::signatures::BlsKeypair;
+    use evaporchain_state::InMemoryStateDB;
+
+    fn make_vs3() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs
+    }
+    fn make_tc3() -> TendermintConsensus {
+        TendermintConsensus::new_for_test(1, 5, make_vs3())
+    }
+    fn make_block(number: u64) -> evaporchain_types::Block {
+        evaporchain_types::Block {
+            number, epoch: 0, parent_hash: [0u8; 32], state_root: [0u8; 32],
+            transactions: vec![], producer_id: Some(1), timestamp: 0,
+            chain_id: String::new(), commit_certificate: None, nova_proof: None,
+            anchor_hash: None, vrf_output: None, vrf_proof: None, data_root: None,
+            da_row_roots: vec![], da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None, protocol_version: 0,
+            state_root_version: 0, submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    // ── Test 1: verify_commit_certificate returns false when stake < threshold ──
+    // covers line 7133: `return false` when signer_stake < threshold && !allow_stake_fallback
+    #[test]
+    fn t24_stake_below_threshold_returns_false() {
+        let mut tc = make_tc3();
+        // Set validator 1's BLS key (pop_verified=true) — loop runs through without early return
+        tc.set_bls_keypair(BlsKeypair::generate());
+        // Cert signed only by validator 1: stake=1000 < threshold=2000
+        let cert = CommitCertificate {
+            height: tc.height,
+            round: 0,
+            block_hash: [0u8; 32],
+            aggregate_signature: vec![],
+            signer_ids: vec![1],
+        };
+        // verify_commit_certificate calls inner(cert, false) → line 7133 returns false
+        assert!(!tc.verify_commit_certificate(&cert));
+    }
+
+    // ── Test 2: has_da_supermajority returns false when total_stake == 0 ──
+    // covers line 7275: `return false` when threshold == u64::MAX
+    #[test]
+    fn t24_da_supermajority_max_threshold_returns_false() {
+        let tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::new());
+        // empty validator set → total_stake=0 → stake_quorum_threshold()=u64::MAX
+        assert!(!tc.has_da_supermajority(1));
+    }
+
+    // ── Test 3: has_da_supermajority returns false when no attestations for block ──
+    // covers line 7300: `None => return false` in da_attestations.get
+    #[test]
+    fn t24_da_supermajority_no_attestations_returns_false() {
+        let mut tc = make_tc3();
+        // Proposer record set so exclude_proposer path doesn't early-return at line 7292
+        tc.da_block_proposers.insert(1, 1);
+        // No attestations for block 1 → da_attestations.get(&1) = None → line 7300
+        assert!(!tc.has_da_supermajority(1));
+    }
+
+    // ── Test 4: has_da_supermajority continue on duplicate validator ──
+    // covers line 7307: `continue` when same validator_id appears twice
+    #[test]
+    fn t24_da_supermajority_dedup_continue() {
+        let mut tc = make_tc3();
+        // small_cluster_da_mode=true: exclude_proposer=false, no proposer-cache check
+        tc.set_small_cluster_da_mode(true);
+        // Two attestations from the same validator id=2 — dedup must continue on the second
+        let fake_att = DAAttestation {
+            block_number: 1, data_root: [0u8; 32], validator_id: 2,
+            samples_verified: 8, stake: 1000,
+            signature: vec![], public_key: vec![],
+        };
+        tc.da_attestations.insert(1, vec![fake_att.clone(), fake_att]);
+        // Weight counted once (1000) < threshold (2000) → returns false, but line 7307 is hit
+        assert!(!tc.has_da_supermajority(1));
+    }
+
+    // ── Test 5: try_attach_pending_da_certificate continues past empty attestation vec ──
+    // covers line 7370: `continue` when atts.is_empty()
+    #[test]
+    fn t24_pending_cert_skips_empty_attestation_vec() {
+        let mut tc = make_tc3();
+        tc.height = 5;
+        // Insert an empty attestation list for block 4 — line 7370 `continue` is hit
+        tc.da_attestations.insert(4, vec![]);
+        let result = tc.try_attach_pending_da_certificate();
+        assert!(result.is_none());
+    }
+
+    // ── Test 6: try_attach_pending_da_certificate returns Some(cert_bytes) ──
+    // covers lines 7381-7382: `return Some(cert_bytes)` when cert is built
+    #[test]
+    fn t24_pending_cert_returns_cert_bytes_when_supermajority() {
+        let mut tc = make_tc3();
+        // small_cluster_da_mode: all validators' attestations count including proposer
+        tc.set_small_cluster_da_mode(true);
+        tc.height = 2;
+        let data_root = [0xCCu8; 32];
+        // Create real BLS-signed attestations from all 3 validators
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let kp3 = BlsKeypair::generate();
+        let att1 = evaporchain_da::certificate::create_attestation(1, &data_root, 1, 8, 1000, &kp1);
+        let att2 = evaporchain_da::certificate::create_attestation(1, &data_root, 2, 8, 1000, &kp2);
+        let att3 = evaporchain_da::certificate::create_attestation(1, &data_root, 3, 8, 1000, &kp3);
+        tc.da_attestations.insert(1, vec![att1, att2, att3]);
+        // try_attach_pending_da_certificate → scans block 1 → builds cert → lines 7381-7382
+        let result = tc.try_attach_pending_da_certificate();
+        assert!(result.is_some(), "should return cert bytes when supermajority reached");
+    }
+
+    // ── Test 7: perform_da_sampling returns None for empty block with wrong data_root ──
+    // covers lines 7409, 7413: warn! + return None when empty-block sentinel mismatch
+    #[test]
+    fn t24_da_sampling_empty_block_wrong_data_root_returns_none() {
+        let tc = make_tc3();
+        let mut block = make_block(1);
+        // block.transactions is empty but data_root does not match empty_block_data_root sentinel
+        block.data_root = Some([0x99u8; 32]);
+        // perform_da_sampling: empty block path, data_root != expected → warn! + return None
+        let result = tc.perform_da_sampling(&block);
+        assert!(result.is_none());
+    }
+
+    // ── Test 8: verify_da_certificate returns false when not supermajority ──
+    // covers lines 7588, 7594: warn! + return false when cert.is_supermajority() == false
+    #[test]
+    fn t24_verify_da_cert_not_supermajority_returns_false() {
+        let tc = make_tc3();
+        // attested_stake=1000 * 3 = 3000 < total_stake=3000 * 2 = 6000 → not supermajority
+        let cert = DACertificate {
+            block_number: 1,
+            data_root: [0u8; 32],
+            attestations: vec![],
+            attested_stake: 1000,
+            total_stake: 3000,
+        };
+        let cert_bytes = serde_json::to_vec(&cert).expect("serialises");
+        let mut block = make_block(1);
+        block.da_certificate = Some(cert_bytes);
+        assert!(!tc.verify_da_certificate(&block));
+    }
+}
