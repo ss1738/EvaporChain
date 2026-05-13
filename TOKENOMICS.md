@@ -399,22 +399,19 @@ Decide: cap at e.g., 5% of total bonded stake? (Polkadot does this with NPoS.)
 
 ### Q14. Vesting on Foundation Treasury (350M = 35% of supply)
 
-Today: zero vesting. Day-one liquid. Standard practice:
-- 12-month cliff
-- 36-month linear release thereafter
-- Multisig or DAO control over disbursements
-
-**This is the single biggest unboxed risk in the current allocation.** Without vesting, the token is unsellable at any reputable launchpad / CEX.
+**Placeholder applied** in `genesis-mainnet.json`: 12-month cliff (15,768,000 epochs at 2s blocks) + 48-month linear release. Enforced on every outflow via `VestingLock` at `crates/evaporchain-types/src/lib.rs:437`. Decide before mainnet:
+- Confirm or revise the 12/48 split (industry typical for L1 foundation treasuries: 6–24mo cliff + 24–60mo linear)
+- Multisig or DAO control over disbursements (currently single-address — see Q19)
 
 ### Q15. Vesting on Core Contributors (150M = 15%)
 
-Same problem, smaller magnitude. Standard:
-- 12-month cliff (no claim before)
-- 24- to 48-month linear vesting
+**Placeholder applied** in `genesis-mainnet.json`: 12-month cliff + 36-month linear release. Same primitive (`VestingLock`) and outflow gating as Q14. Decide before mainnet:
+- Confirm or revise the 12/36 split (industry typical for contributors: 12mo cliff + 36–48mo linear)
+- Per-recipient allocation if the single 150M bucket is to be split among multiple individuals
 
 ### Q16. Vesting on Ecosystem Development (200M = 20%)
 
-If used for grants/partnerships: need a release schedule tied to milestones, not time. Multisig disbursement gate.
+**Placeholder applied** in `genesis-mainnet.json`: 6-month cliff + 24-month linear release (faster than Q14/Q15 to support ecosystem grants in year 1). If the bucket is to fund grants/partnerships, this time-based schedule may need to be replaced or augmented with a milestone-based release gate (currently no on-chain milestone-gate primitive — would need a new `MilestoneLock` type or off-chain multisig discipline).
 
 ### Q17. Community Airdrop distribution (100M = 10%)
 
@@ -449,13 +446,12 @@ Today: no min, no max. Decide:
 
 ### Q21. Inflation toward target staking ratio
 
-Cosmos varies inflation between 7% and 20% to push staking ratio toward 67% (more staked → lower inflation). EvaporChain has `target_staking_apy: 0.05` in genesis but unwired.
+Cosmos varies inflation between 7% and 20% to push staking ratio toward 67% (more staked → lower inflation). EvaporChain takes a simpler shape: `target_staking_apy: 0.05` is **wired as a hard ceiling** via `Tokenomics::apy_capped_reward` (§2.5) — block reward scales down if it would exceed the per-block budget `(total_staked × 0.05) / blocks_per_year`.
 
 Decide:
-- Target staking ratio (% of supply that should be bonded)
-- Inflation band (min/max)
-- Controller gain (how fast inflation adjusts)
-- Or: discard adaptive inflation entirely and use a fixed schedule
+- The target APY value itself (5% is the current default — industry-typical range is 4–8%)
+- Whether to keep the current "hard ceiling" shape or switch to a band-and-controller scheme like Cosmos (drives inflation toward a target staking ratio rather than capping reward)
+- If keeping the ceiling: should sustained breaches trigger a governance amendment, or stay silent?
 
 ### Q22. RefreshPool drawdown rate
 
