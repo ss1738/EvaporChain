@@ -24,7 +24,8 @@ use evaporchain_execution::{ExecutionEngine, SimpleExecutor};
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
 use evaporchain_types::{
     Account, Block, ClaimDelegationTx, DelegateTx, Epoch, GovernanceAction, GovernanceTx,
-    MultiSigTx, StakeRecord, Transaction, TransferTx, UndelegateTx, ValidatorStakeTx,
+    MultiSigTx, StakeRecord, Transaction, TransferTx, UndelegateTx, UpgradeContractTx,
+    ValidatorStakeTx,
 };
 
 // ─── Public harness types ──────────────────────────────────────────────
@@ -988,6 +989,74 @@ fn parity_multisig_duplicate_signer() {
             ],
             public_keys: vec![],
             nonce: 0,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+// ─── Phase 3c: UpgradeContract fixture (closes audit C4 — 6/7) ───────────
+//
+// UpgradeContract uses the shared `execute_upgrade_contract_impl` so
+// parity is guaranteed by construction. The harness can only exercise
+// error paths (contract-not-found, bytecode-hash-mismatch) without
+// per-executor script_engine state. Happy-path coverage lives in the
+// in-impl integration tests where the script_engine is pre-populated.
+
+#[test]
+fn parity_upgrade_contract_non_existent_id() {
+    // Both executors run through the shared impl and reach the
+    // "contract N not found" branch. Pre-fix, ParallelExecutor errored
+    // at the partition with "executes in serial phase" instead — a
+    // different error variant + no nonce bump. Now both fail
+    // identically via execute_upgrade_contract_impl.
+    let payload = b"contract Empty { fn noop() { } }".to_vec();
+    let hash = *blake3::hash(&payload).as_bytes();
+    let fixture = ParityFixture {
+        name: "upgrade-contract-non-existent-id",
+        seed: |db| fund(db, 63, 1_000),
+        transaction: Transaction::UpgradeContract(UpgradeContractTx {
+            owner: addr(63),
+            contract_id: 999,
+            new_bytecode: payload,
+            new_bytecode_hash: hash,
+            nonce: 0,
+            admin_signature: None,
+            admin_public_key: None,
+            endorser_stakes: vec![],
+            required_stake: 0,
+            governance_approved: false,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_upgrade_contract_bytecode_hash_mismatch() {
+    // Mismatched hash trips the binding check before any contract
+    // lookup. Both executors must reject identically via the shared
+    // impl.
+    let fixture = ParityFixture {
+        name: "upgrade-contract-bytecode-hash-mismatch",
+        seed: |db| fund(db, 63, 1_000),
+        transaction: Transaction::UpgradeContract(UpgradeContractTx {
+            owner: addr(63),
+            contract_id: 1,
+            new_bytecode: b"contract A {}".to_vec(),
+            new_bytecode_hash: [0xFF; 32], // not BLAKE3 of the body
+            nonce: 0,
+            admin_signature: None,
+            admin_public_key: None,
+            endorser_stakes: vec![],
+            required_stake: 0,
+            governance_approved: false,
+            signature: None,
+            public_key: None,
         }),
         block_number: 1,
         epoch: 1,

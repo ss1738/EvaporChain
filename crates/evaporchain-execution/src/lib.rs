@@ -455,6 +455,142 @@ pub(crate) fn validate_param_value(key: &str, value: &str) -> Result<(), String>
     }
 }
 
+/// Shared upgrade-contract implementation. Called by both
+/// `SimpleExecutor::execute_upgrade_contract` and the
+/// `ParallelExecutor` serial-phase arm. Closes audit C4 (6/7) and
+/// makes future divergence between the two executors structurally
+/// impossible for this transaction type.
+pub(crate) fn execute_upgrade_contract_impl(
+    script_engine: &mut evaporchain_script::ScriptEngine,
+    db: &mut dyn StateDB,
+    tx: &evaporchain_types::UpgradeContractTx,
+    current_epoch: u64,
+) -> Result<(), ExecutionError> {
+    // ── 1. Nonce check + bump ────────────────────────────────────
+    let sender = db.get_or_create_account(&tx.owner);
+    if sender.nonce != tx.nonce {
+        return Err(ExecutionError::InvalidNonce {
+            expected: sender.nonce,
+            got: tx.nonce,
+        });
+    }
+    sender.nonce = sender.nonce.saturating_add(1);
+    // Nonce mutated — stamp the demurrage anchor.
+    sender.last_touched_epoch = current_epoch;
+
+    // ── 2. Bytecode hash binding ─────────────────────────────────
+    let computed_hash = blake3::hash(&tx.new_bytecode);
+    if computed_hash.as_bytes() != &tx.new_bytecode_hash {
+        return Err(ExecutionError::ContractError(format!(
+            "UpgradeContract: new_bytecode_hash mismatch — computed {} \
+             vs supplied {}",
+            hex::encode(computed_hash.as_bytes()),
+            hex::encode(tx.new_bytecode_hash)
+        )));
+    }
+
+    // ── 3. Look up contract ──────────────────────────────────────
+    let contract = script_engine.get_contract(tx.contract_id).ok_or_else(|| {
+        ExecutionError::ContractError(format!(
+            "UpgradeContract: contract {} not found",
+            tx.contract_id
+        ))
+    })?;
+    let contract_admin = contract.admin;
+
+    // ── 4. Pick authorization path ───────────────────────────────
+    let auth = if let Some(sig_bytes) = tx.admin_signature.as_deref() {
+        // Path A — admin upgrade. Require pk to be present and to
+        // match contract.admin; verify ML-DSA-65 sig over the
+        // canonical settle-demurrage-style payload.
+        let pk_bytes = tx.admin_public_key.as_deref().ok_or_else(|| {
+            ExecutionError::ContractError(
+                "UpgradeContract: admin_signature present but admin_public_key missing".into(),
+            )
+        })?;
+
+        let admin_addr = contract_admin.ok_or_else(|| {
+            ExecutionError::ContractError(format!(
+                "UpgradeContract: contract {} is frozen (admin = None) — \
+                 admin path unavailable, use governance quorum",
+                tx.contract_id
+            ))
+        })?;
+
+        // Bind admin pk to the contract.admin address. Canonical
+        // derivation across the chain is `blake3(public_key_bytes)`.
+        let derived_addr: [u8; 32] = *blake3::hash(pk_bytes).as_bytes();
+        if derived_addr != admin_addr {
+            return Err(ExecutionError::ContractError(format!(
+                "UpgradeContract: admin_public_key does not match \
+                 contract.admin (derived {} vs admin {})",
+                hex::encode(derived_addr),
+                hex::encode(admin_addr)
+            )));
+        }
+
+        // Canonical payload — mirrors `settle_demurrage` in
+        // crates/evaporchain-node/src/api.rs.
+        let canonical = format!(
+            "{{\"type\":\"upgrade_contract\",\"contract_id\":{},\"new_bytecode_hash_hex\":\"{}\",\"nonce\":{}}}",
+            tx.contract_id,
+            hex::encode(tx.new_bytecode_hash),
+            tx.nonce
+        );
+
+        use evaporchain_crypto::signatures::MlDsaVerifier;
+        if !MlDsaVerifier::verify(canonical.as_bytes(), sig_bytes, pk_bytes) {
+            return Err(ExecutionError::ContractError(
+                "UpgradeContract: admin_signature verification failed".into(),
+            ));
+        }
+
+        evaporchain_script::UpgradeAuth::Admin(admin_addr)
+    } else {
+        // Path B — governance quorum. No signature on the body for
+        // this path; the chain enforces by stake totals (mirrors
+        // ForkChoiceAmendReq in api.rs).
+        let total: u64 = tx
+            .endorser_stakes
+            .iter()
+            .copied()
+            .fold(0u64, |a, b| a.saturating_add(b));
+        if total < tx.required_stake {
+            return Err(ExecutionError::ContractError(format!(
+                "UpgradeContract: governance quorum not met — \
+                 endorser_stakes sum {} < required_stake {}",
+                total, tx.required_stake
+            )));
+        }
+        if tx.required_stake == 0 {
+            // Refuse a quorum of zero — mirrors the implicit
+            // "must have at least one endorsement" sanity check
+            // that the fork-choice amendment relies on.
+            return Err(ExecutionError::ContractError(
+                "UpgradeContract: governance path requires required_stake > 0".into(),
+            ));
+        }
+        evaporchain_script::UpgradeAuth::Governance
+    };
+
+    // ── 5. Apply the swap ────────────────────────────────────────
+    let new_source = std::str::from_utf8(&tx.new_bytecode).map_err(|_| {
+        ExecutionError::ContractError(
+            "UpgradeContract: new_bytecode is not valid UTF-8 EvaporScript source".into(),
+        )
+    })?;
+    script_engine
+        .upgrade_contract(tx.contract_id, new_source, auth, current_epoch)
+        .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
+
+    // Stamp the contract owner's account demurrage anchor — we did
+    // mutate state on their behalf.
+    let owner_acct = db.get_or_create_account(&tx.owner);
+    owner_acct.last_touched_epoch = current_epoch;
+
+    Ok(())
+}
+
 /// Number of state snapshots to retain before pruning older ones.
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
 
@@ -2530,134 +2666,11 @@ impl SimpleExecutor {
         tx: &evaporchain_types::UpgradeContractTx,
         current_epoch: u64,
     ) -> Result<(), ExecutionError> {
-        // ── 1. Nonce check + bump ────────────────────────────────────
-        let sender = db.get_or_create_account(&tx.owner);
-        if sender.nonce != tx.nonce {
-            return Err(ExecutionError::InvalidNonce {
-                expected: sender.nonce,
-                got: tx.nonce,
-            });
-        }
-        sender.nonce = sender.nonce.saturating_add(1);
-        // Nonce mutated — stamp the demurrage anchor.
-        sender.last_touched_epoch = current_epoch;
-
-        // ── 2. Bytecode hash binding ─────────────────────────────────
-        let computed_hash = blake3::hash(&tx.new_bytecode);
-        if computed_hash.as_bytes() != &tx.new_bytecode_hash {
-            return Err(ExecutionError::ContractError(format!(
-                "UpgradeContract: new_bytecode_hash mismatch — computed {} \
-                 vs supplied {}",
-                hex::encode(computed_hash.as_bytes()),
-                hex::encode(tx.new_bytecode_hash)
-            )));
-        }
-
-        // ── 3. Look up contract ──────────────────────────────────────
-        let contract = self
-            .script_engine
-            .get_contract(tx.contract_id)
-            .ok_or_else(|| {
-                ExecutionError::ContractError(format!(
-                    "UpgradeContract: contract {} not found",
-                    tx.contract_id
-                ))
-            })?;
-        let contract_admin = contract.admin;
-
-        // ── 4. Pick authorization path ───────────────────────────────
-        let auth = if let Some(sig_bytes) = tx.admin_signature.as_deref() {
-            // Path A — admin upgrade. Require pk to be present and to
-            // match contract.admin; verify ML-DSA-65 sig over the
-            // canonical settle-demurrage-style payload.
-            let pk_bytes = tx.admin_public_key.as_deref().ok_or_else(|| {
-                ExecutionError::ContractError(
-                    "UpgradeContract: admin_signature present but admin_public_key missing".into(),
-                )
-            })?;
-
-            let admin_addr = contract_admin.ok_or_else(|| {
-                ExecutionError::ContractError(format!(
-                    "UpgradeContract: contract {} is frozen (admin = None) — \
-                     admin path unavailable, use governance quorum",
-                    tx.contract_id
-                ))
-            })?;
-
-            // Bind admin pk to the contract.admin address. Canonical
-            // derivation across the chain is `blake3(public_key_bytes)`
-            // — see `generate_address_from_pubkey` in
-            // crates/evaporchain-node/src/auth.rs L115-120.
-            let derived_addr: [u8; 32] = *blake3::hash(pk_bytes).as_bytes();
-            if derived_addr != admin_addr {
-                return Err(ExecutionError::ContractError(format!(
-                    "UpgradeContract: admin_public_key does not match \
-                     contract.admin (derived {} vs admin {})",
-                    hex::encode(derived_addr),
-                    hex::encode(admin_addr)
-                )));
-            }
-
-            // Canonical payload — mirrors `settle_demurrage` in
-            // crates/evaporchain-node/src/api.rs L5499.
-            let canonical = format!(
-                "{{\"type\":\"upgrade_contract\",\"contract_id\":{},\"new_bytecode_hash_hex\":\"{}\",\"nonce\":{}}}",
-                tx.contract_id,
-                hex::encode(tx.new_bytecode_hash),
-                tx.nonce
-            );
-
-            use evaporchain_crypto::signatures::MlDsaVerifier;
-            if !MlDsaVerifier::verify(canonical.as_bytes(), sig_bytes, pk_bytes) {
-                return Err(ExecutionError::ContractError(
-                    "UpgradeContract: admin_signature verification failed".into(),
-                ));
-            }
-
-            evaporchain_script::UpgradeAuth::Admin(admin_addr)
-        } else {
-            // Path B — governance quorum. No signature on the body for
-            // this path; the chain enforces by stake totals (mirrors
-            // ForkChoiceAmendReq in api.rs L1905).
-            let total: u64 = tx
-                .endorser_stakes
-                .iter()
-                .copied()
-                .fold(0u64, |a, b| a.saturating_add(b));
-            if total < tx.required_stake {
-                return Err(ExecutionError::ContractError(format!(
-                    "UpgradeContract: governance quorum not met — \
-                     endorser_stakes sum {} < required_stake {}",
-                    total, tx.required_stake
-                )));
-            }
-            if tx.required_stake == 0 {
-                // Refuse a quorum of zero — mirrors the implicit
-                // "must have at least one endorsement" sanity check
-                // that the fork-choice amendment relies on.
-                return Err(ExecutionError::ContractError(
-                    "UpgradeContract: governance path requires required_stake > 0".into(),
-                ));
-            }
-            evaporchain_script::UpgradeAuth::Governance
-        };
-
-        // ── 5. Apply the swap ────────────────────────────────────────
-        let new_source = std::str::from_utf8(&tx.new_bytecode).map_err(|_| {
-            ExecutionError::ContractError(
-                "UpgradeContract: new_bytecode is not valid UTF-8 EvaporScript source".into(),
-            )
-        })?;
-        self.script_engine
-            .upgrade_contract(tx.contract_id, new_source, auth, current_epoch)
-            .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
-
-        // Stamp the contract owner's account demurrage anchor — we did
-        // mutate state on their behalf.
-        let owner_acct = db.get_or_create_account(&tx.owner);
-        owner_acct.last_touched_epoch = current_epoch;
-
-        Ok(())
+        // AUDIT_2026_05_13 C4 closure: body extracted to
+        // `execute_upgrade_contract_impl` so ParallelExecutor's serial
+        // loop can share the same implementation. Single source of truth
+        // — copies cannot drift.
+        execute_upgrade_contract_impl(&mut self.script_engine, db, tx, current_epoch)
     }
 
     /// Tick the vesting registry: walk every active VestingSchedule,

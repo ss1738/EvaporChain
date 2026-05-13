@@ -1525,6 +1525,12 @@ impl ExecutionEngine for ParallelExecutor {
                 // codified the failure as desired behaviour; PR inverts.
                 | Transaction::Governance(_)
                 | Transaction::MultiSig(_)
+                // UpgradeContract mutates `script_engine` — serial-only
+                // (audit C4 6/7). Body extracted to shared
+                // `execute_upgrade_contract_impl` so SimpleExecutor and
+                // ParallelExecutor share the implementation; copies
+                // cannot drift.
+                | Transaction::UpgradeContract(_)
                 // Validator key rotation mutates ValidatorSet via the
                 // BlockExecutionResult.validator_key_rotations side
                 // channel, which only the serial path populates. Putting
@@ -2119,6 +2125,17 @@ impl ExecutionEngine for ParallelExecutor {
                             }
                         }
                     }
+                }
+                // ─── AUDIT_2026_05_13 C4 closure: UpgradeContract ──────────
+                // Calls the shared `execute_upgrade_contract_impl` —
+                // single source of truth across both executors.
+                Transaction::UpgradeContract(utx) => {
+                    crate::execute_upgrade_contract_impl(
+                        &mut self.script_engine,
+                        db,
+                        utx,
+                        block.epoch,
+                    )
                 }
                 // ─── AUDIT_2026_05_13 C4 closure: MultiSig ─────────────────
                 // Mirrors SimpleExecutor::execute_multisig at lib.rs:2133.
@@ -5126,21 +5143,52 @@ mod tests {
         assert_eq!(r.txs_failed, 1, "user-op must fail in execute_partition");
     }
 
+    // AUDIT_2026_05_13 C4 (6/7) closure: UpgradeContract previously
+    // fell to the parallel partition's "executes in serial phase"
+    // error arm, so every contract upgrade on the production executor
+    // failed silently. Now wired through the shared
+    // `execute_upgrade_contract_impl`. This test asserts the
+    // error-path parity (no contract registered → ContractError) on
+    // the serial path, NOT the partition-error.
     #[test]
-    fn t1_20_upgrade_contract_via_parallel_partition_fails() {
+    fn t1_20_upgrade_contract_via_parallel_executor_reaches_serial_path() {
         let mut db = InMemoryStateDB::new();
-        let block = make_block(1, 1, vec![
-            Transaction::UpgradeContract(evaporchain_types::UpgradeContractTx {
-                owner: addr(63), contract_id: 1, new_bytecode: vec![],
-                new_bytecode_hash: [0u8; 32], nonce: 0,
-                admin_signature: None, admin_public_key: None,
-                endorser_stakes: vec![], required_stake: 0,
-                governance_approved: false, signature: None, public_key: None,
-            }),
-        ]);
+        fund_account(&mut db, 63, 1_000);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::UpgradeContract(
+                evaporchain_types::UpgradeContractTx {
+                    owner: addr(63),
+                    contract_id: 1,
+                    new_bytecode: b"contract Empty { fn noop() { } }".to_vec(),
+                    new_bytecode_hash: *blake3::hash(b"contract Empty { fn noop() { } }")
+                        .as_bytes(),
+                    nonce: 0,
+                    admin_signature: None,
+                    admin_public_key: None,
+                    endorser_stakes: vec![],
+                    required_stake: 0,
+                    governance_approved: false,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
         let mut ex = ParallelExecutor::new_for_test(100);
         let r = ex.execute_block(&mut db, &block).unwrap();
-        assert_eq!(r.txs_failed, 1, "upgrade-contract must fail in execute_partition");
+        // Still 1 failed (no contract id=1 exists, and required_stake=0
+        // is rejected via the governance path) — but failure NOW comes
+        // from the serial-path ContractError, not the parallel-phase
+        // "executes in serial phase" error arm. Nonce bumped at owner
+        // because pre-fix the partition-error skipped nonce mutation;
+        // post-fix the serial impl bumps nonce before failing.
+        assert_eq!(r.txs_failed, 1, "expected serial-path validation failure");
+        assert_eq!(
+            db.get_account(&addr(63)).unwrap().nonce,
+            1,
+            "serial-path execute_upgrade_contract_impl bumps owner nonce on validation failure"
+        );
     }
 
     // AUDIT_2026_05_13 C4 closure: these 3 tests previously asserted
