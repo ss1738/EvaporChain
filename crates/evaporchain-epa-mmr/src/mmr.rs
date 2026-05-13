@@ -287,4 +287,58 @@ mod tests {
         assert_eq!(m.get(0).unwrap().energy, 1000);
         assert!(m.get(99).is_none());
     }
+
+    /// T1.20 — `update_energy` mutates the leaf in-place AND the
+    /// change is visible via `get(idx)`. Existing
+    /// `root_changes_with_energy_update` only checks the root
+    /// shifts; this pins that the per-leaf accessor reflects the
+    /// update too (the chain's decay tick reads back via `get`
+    /// to recompute decay invariants).
+    #[test]
+    fn t1_20_update_energy_reflects_in_get() {
+        let mut m = EpaMmr::new();
+        m.append(leaf(1, 1000));
+        assert_eq!(m.get(0).unwrap().energy, 1000);
+        m.update_energy(0, 250).unwrap();
+        assert_eq!(m.get(0).unwrap().energy, 250);
+        // Round-trip: update back to original.
+        m.update_energy(0, 1000).unwrap();
+        assert_eq!(m.get(0).unwrap().energy, 1000);
+    }
+
+    /// T1.20 — `peaks()` on an empty MMR returns an empty Vec
+    /// (lines 80-82 short-circuit). Pin so a refactor that
+    /// "tidied up" the early return doesn't accidentally allocate
+    /// a sentinel peak that the bagger would process as a real one.
+    #[test]
+    fn t1_20_peaks_empty_returns_empty_vec() {
+        let m = EpaMmr::new();
+        assert!(m.peaks().is_empty());
+        // And the corresponding root() still returns Empty error.
+        assert!(matches!(m.root().unwrap_err(), MmrError::Empty));
+    }
+
+    /// T1.20 — `peaks()` returns peaks left-to-right, largest tree
+    /// first. For 11 leaves (= 8 + 2 + 1), the first peak spans
+    /// leaves 0..8, the second spans 8..10, the third is leaf 10.
+    /// Pin this ordering — bagging is order-sensitive, so a
+    /// silent swap would change the root.
+    #[test]
+    fn t1_20_peaks_ordered_largest_first() {
+        let mut m = EpaMmr::new();
+        for i in 1..=11u8 {
+            m.append(leaf(i, 1000));
+        }
+        let peaks = m.peaks();
+        assert_eq!(peaks.len(), 3, "11 = 0b1011 → three peaks");
+
+        // Reconstruct the expected peaks manually.
+        let leaves_slice = m.leaves();
+        let p_big = perfect_tree_root(&leaves_slice[0..8]);
+        let p_mid = perfect_tree_root(&leaves_slice[8..10]);
+        let p_small = perfect_tree_root(&leaves_slice[10..11]);
+        assert_eq!(peaks[0], p_big, "leftmost peak = largest tree (8 leaves)");
+        assert_eq!(peaks[1], p_mid, "middle peak = 2-leaf tree");
+        assert_eq!(peaks[2], p_small, "rightmost peak = single leaf");
+    }
 }
