@@ -34,23 +34,89 @@
 //!   - The open research questions for Phase 2.2 onward.
 //!   - The Phase 2 milestone breakdown.
 //!
-//! # Status — Phase 2.1 scaffold
+//! See `README.md` next to this `lib.rs` for the module-by-module
+//! navigation guide + operator binary cheatsheet.
 //!
-//! This crate ships:
-//!   - Cargo.toml with nova-snark + arkworks deps pinned to the chain's
-//!     existing versions (no new dependency drift).
-//!   - This module-level doc + the design rationale doc next to it.
-//!   - No working verifier yet. The verifier circuit is the multi-day
-//!     research deliverable for Phase 2.2-2.3.
+//! # Status (as of `SCAFFOLD_VERSION = "phase-2.5-operational"`)
 //!
-//! Phase 2.1's goal is to give the *next* session a clean starting
-//! point with the surrounding plumbing in place, so the research
-//! attention can stay on the verifier algorithm itself.
+//! The full proof-emission scaffold is operationally complete on
+//! `main`. A real Nova `RecursiveSNARK` fixture flows end-to-end
+//! through every wrapper to L1-paste-ready 256-byte EIP-197 bytes:
+//!
+//! ```text
+//! generate_fixture
+//!   → l_u_secondary_extract (serde reflection)
+//!   → scalar_adapter
+//!   → circuit_builder::build_circuit_from_fixture
+//!   → groth16_wrapper::setup / prove
+//!   → eip197::proof_to_eip197_bytes
+//! ```
+//!
+//! Per-phase:
+//!
+//! - **Phase 2.1 — scaffold (DONE, PR #52).**
+//! - **Phase 2.2 starter — fixture generator (DONE, PR #55):** see
+//!   [`recursive_snark_fixture`].
+//! - **Phase 2.2 skeleton — verifier circuit shape (DONE):** see
+//!   [`verifier_circuit::NovaVerifierCircuit`] +
+//!   `ConstraintSynthesizer` impl + public-input wiring contract.
+//! - **Phase 2.2 Section 1 — structural checks (DONE, PR #125):**
+//!   off-circuit precondition gate
+//!   [`verifier_circuit::NovaVerifierCircuit::validate_structurally`]
+//!   mapped to `SynthesisError::Unsatisfiable`.
+//! - **Phase 2.2 Section 2 — Poseidon transcript constants (DONE):**
+//!   byte-correct against neptune end-to-end via the substrate
+//!   stack ([`grain_lfsr`], [`compress_ark`], [`mds_linalg`],
+//!   [`neptune_dump_parser`], [`neptune_reference`],
+//!   [`section2_gadget`], [`vendored_neptune_grain`]) +
+//!   `dump-neptune-constants` / `dump-our-compressed-ark` /
+//!   `check-neptune-parity` operator binaries.
+//! - **Phase 2.2 Section 2 — sponge framing (OPEN, BESPOKE):**
+//!   residual gap between arkworks `PoseidonSpongeVar` and
+//!   neptune's `Poseidon::hash_optimized_static`. Documented by
+//!   the `assert_ne!` canary
+//!   [`section2_gadget::tests::fully_aligned_gadget_byte_parity_with_neptune`].
+//! - **Phase 2.2 Section 3 — RelaxedR1CS satisfiability (OPEN,
+//!   BESPOKE):** 3-5 day research deliverable.
+//! - **Phase 2.3 — scalar adapter + circuit_builder (DONE):**
+//!   [`scalar_adapter`], [`l_u_secondary_extract`],
+//!   [`circuit_builder::build_circuit_from_fixture`] producing a
+//!   `NovaVerifierCircuit` with real `committed_hash_*` values.
+//! - **Phase 2.4 — Groth16 setup/prove/verify (DONE):** see
+//!   [`groth16_wrapper`]. Round-trip green on dummy and real
+//!   fixtures.
+//! - **Phase 2.5 — EIP-197 codec (DONE):** see [`eip197`]. 256-byte
+//!   wire format with Fq2 (c1, c0) swap.
+//!
+//! Operator binaries:
+//!
+//! - `dump-neptune-constants`, `dump-our-compressed-ark`,
+//!   `check-neptune-parity` — Section 2 constants verification.
+//! - `dummy-proof-emit`, `fixture-proof-emit` — full proof
+//!   pipeline emitting L1-paste-ready hex.
+//!
+//! What's still required for **cryptographic soundness** (vs
+//! operational completeness): the two BESPOKE items above —
+//! Section 2 sponge framing + Section 3 RelaxedR1CS.
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod circuit_builder;
+pub mod compress_ark;
+pub mod eip197;
+pub mod grain_lfsr;
+pub mod groth16_wrapper;
+pub mod l_u_secondary_extract;
+pub mod mds_linalg;
+pub mod neptune_dump_parser;
+pub mod neptune_permutation_gadget;
+pub mod neptune_reference;
+pub mod neptune_sponge;
 pub mod recursive_snark_fixture;
+pub mod scalar_adapter;
+pub mod section2_gadget;
+pub mod vendored_neptune_grain;
 pub mod verifier_circuit;
 
 pub use recursive_snark_fixture::{
@@ -58,14 +124,23 @@ pub use recursive_snark_fixture::{
 };
 pub use verifier_circuit::NovaVerifierCircuit;
 
-/// Marker constant. Phase 2.2-finish is multi-step:
+/// Marker constant. Phase progression for the bridge crate:
 ///   - `phase-2.2-starter`    — fixture generator (PR #55)
-///   - `phase-2.2-skeleton`   — verifier circuit skeleton + ConstraintSynthesizer + public-input wiring (this commit)
-///   - `phase-2.2-section-1`  — Section 1 structural checks filled in
-///   - `phase-2.2-section-2`  — Section 2 Poseidon transcript filled in
-///   - `phase-2.2-section-3`  — Section 3 RelaxedR1CS satisfiability filled in (BESPOKE)
-///   - `phase-2.2-complete`   — all three sections + empirical constraint count
-pub const SCAFFOLD_VERSION: &str = "phase-2.2-skeleton";
+///   - `phase-2.2-skeleton`   — verifier circuit skeleton
+///   - `phase-2.2-section-1`  — Section 1 off-circuit gate (#125)
+///   - `phase-2.2-section-2-constants` — neptune-byte-correct constants substrate (#130–#142)
+///   - `phase-2.3-operational` — scalar adapter + circuit_builder
+///                               + real l_u_secondary extraction (#143, #151, #152)
+///   - `phase-2.4-operational` — setup/prove/verify wrappers (#145, #146)
+///   - `phase-2.5-operational` — EIP-197 codec + full real-fixture pipeline
+///                               (#147–#149, #153, #154). This is the
+///                               current marker — proof emission is
+///                               operationally complete; the remaining
+///                               gap to cryptographic soundness is
+///                               Section 2 sponge framing + Section 3
+///                               RelaxedR1CS, both BESPOKE.
+///   - `phase-2-complete`     — sponge framing + RelaxedR1CS closed.
+pub const SCAFFOLD_VERSION: &str = "phase-2.5-operational";
 
 #[cfg(test)]
 mod tests {
@@ -76,6 +151,6 @@ mod tests {
     /// `RecursiveSNARK::verify` PoC test when Phase 2.2 finish ships.
     #[test]
     fn scaffold_compiles_and_marker_present() {
-        assert_eq!(SCAFFOLD_VERSION, "phase-2.2-skeleton");
+        assert_eq!(SCAFFOLD_VERSION, "phase-2.5-operational");
     }
 }

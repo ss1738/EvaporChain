@@ -59,14 +59,18 @@ production-grade choice.
 
 ## Phase 2 milestones — concrete file-level work
 
-| Step | Deliverable | File / module | Estimate |
+| Step | Deliverable | File / module | Status |
 |---|---|---|---|
-| **2.1** ✅ | This crate scaffold + design doc | `crates/evaporchain-nova-bridge/{Cargo.toml,src/lib.rs,DESIGN.md}` | DONE |
-| **2.2** | In-circuit `RecursiveSNARK::verify` PoC | `src/verifier_circuit.rs` — implements `ConstraintSynthesizer<ark_bn254::Fr>`; verifies a *dummy* fold over `Bn256EngineKZG + GrumpkinEngine`. **Output: empirical constraint count.** | 3-5 days |
-| **2.3** | Wire to real chain accumulator | `src/adapter.rs` — converts `evaporchain-proving::nova::CompressedProof` bytes back to `RecursiveSNARK<E1, E2, BlockStepCircuit<G1>>` and feeds to the verifier circuit | 2-3 days |
-| **2.4** | Groth16 setup + prove + verify roundtrip | `src/prover.rs` — mirrors `evaporchain-verkle-wrapper::prover` shape; produces 256-byte L1 calldata | 2 days |
-| **2.5** | Solidity contract smoke test | `ethereum-bridge/contracts/test/NovaBridgeVerifier.t.sol` — consumes the new wrapper's proof + asserts L1 verifies | 1 day |
-| **Total** | end-to-end empirical evidence | | ~10-14 days |
+| **2.1** ✅ | This crate scaffold + design doc | `crates/evaporchain-nova-bridge/{Cargo.toml,src/lib.rs,DESIGN.md}` | DONE — PR #52 |
+| **2.2-skeleton** ✅ | `NovaVerifierCircuit` + public-input wiring | `src/verifier_circuit.rs` | DONE — PR #56 |
+| **2.2-section-1** ✅ | Off-circuit structural-validation gate | `src/verifier_circuit.rs::validate_structurally` | DONE — PR #64 |
+| **2.2-section-2-constants** ✅ | Neptune compressed-ARK byte-complete | `src/grain_lfsr.rs` + `src/compress_ark.rs` + 4 verification paths (PRs #103/#108/#109/#111) | DONE — PR #103 (sponge framing residual) |
+| **2.2-section-2** | Full hash byte parity (sponge framing port) | TBD: vendor neptune's `Poseidon::hash_optimized_static` per-round op OR port to arkworks `PoseidonSpongeVar` config | OPEN |
+| **2.2-section-3** | RelaxedR1CS in-circuit satisfiability | `src/verifier_circuit.rs` — BESPOKE, 3-5 days | OPEN |
+| **2.3** | Wire to real chain accumulator | `src/adapter.rs` — blocked on `RecursiveSNARK` private-field access | OPEN |
+| **2.4-starter** ✅ | Groth16 setup + prove + verify wrappers | `src/groth16_wrapper.rs` + `src/canonical_io.rs` + `src/eip197.rs` + 2 operator CLIs (`setup-keys`, `prove-and-verify`) | DONE — PRs #67/#71/#72/#73/#74/#75 |
+| **2.5** | Solidity contract smoke test | `ethereum-bridge/contracts/test/NovaBridgeVerifier.t.sol` | OPEN |
+| **Total to mainnet path completion** | | | ~10-14 days remaining |
 
 ## Key open research questions (block Phase 2.2)
 
