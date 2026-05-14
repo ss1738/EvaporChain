@@ -4,6 +4,20 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (night, continued) — T1.21/T1.22 runbooks merged + board resync
+
+**Focus:** Cherry-pick T1.21/T1.22 runbook commits from PR branches onto main; sync MAINNET_READINESS.md with T3.1 confirmed live
+**Commits shipped:** 3 (a1646a7f, 49b1a4e1, bb3d67bf)
+**Deliverables:**
+- T1.21 DONE: `docs/runbooks/monitoring.md` + `scripts/prometheus-scrape-config.example.yml` + `scripts/grafana-dashboards/evaporchain-chain.json`. Written by Opus 4.7 on PR branch 2026-05-13; cherry-picked onto main today.
+- T1.22 DONE: `docs/runbooks/governance-rehearsal.md`. Written by Opus 4.7 on PR branch 2026-05-13; cherry-picked onto main today.
+- MAINNET_READINESS.md cascade sync: T3.1 DONE (PR #209, cluster live). T3.2 DONE. T1.21/T1.22 DONE. T0.2, T0.6, T1.13, T1.17-T1.19, T1.23 all now OPEN.
+**Board status:** DONE: T0.1-T0.11b + T1.14-T1.16 + T1.20 + T1.X1 + T1.21 + T1.22 + T3.1 + T3.2. OPEN: T0.2, T0.6 soak, T1.13, T1.17-T1.19, T1.23. BLOCKED on auditor: T0.12.
+**What's next:** T0.2 D-track 72hr cluster soak (highest value). T1.23 genesis dry-run runbook (doc-only). T1.13/T1.17-T1.19 operator steps on live cluster.
+**Cross-references:** commits a1646a7f, 49b1a4e1, bb3d67bf. Original PR branches: pr/t1-21, pr/t1-22.
+
+---
+
 ## 2026-05-14 (night) — Close audit M7/M12/M15/M16 (uncommitted fixes recovered + committed)
 
 **Focus:** Recover and commit 4 important security fixes from 2026-05-13 audit session that were implemented but never committed
