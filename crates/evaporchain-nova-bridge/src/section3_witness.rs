@@ -25,6 +25,21 @@ use ark_bn254::Fr as ArkFr;
 use ark_ff::PrimeField;
 use nova_snark::nova::{PublicParams, RecursiveSNARK};
 
+/// NCR5: maximum admitted `num_cons` in `r1cs_shape_primary`.
+/// Production `TrivialIncrementCircuit` has ~10⁴ constraints; the
+/// cap absorbs roughly 100× growth and refuses anything larger so
+/// the gadget can't be coerced into multi-hour synthesis.
+pub const MAX_R1CS_NUM_CONS: usize = 1_000_000;
+
+/// NCR5: maximum admitted `num_vars` in `r1cs_shape_primary`.
+pub const MAX_R1CS_NUM_VARS: usize = 1_000_000;
+
+/// NCR5: maximum admitted `num_io` in `r1cs_shape_primary`. The
+/// public-input arity stays small in practice (`TrivialIncrementCircuit`
+/// has 4); 1 024 leaves plenty of headroom while keeping `vk_x`
+/// MSM bounded.
+pub const MAX_R1CS_NUM_IO: usize = 1_024;
+
 /// Sparse matrix in COO (triplet) format with ArkFr values.
 #[derive(Clone, Debug)]
 pub struct SparseTriple {
@@ -157,6 +172,37 @@ pub fn extract_section3_witness(
         .ok_or_else(|| ExtractError::MissingField("num_vars".into()))? as usize;
     let num_io = shape["num_io"].as_u64()
         .ok_or_else(|| ExtractError::MissingField("num_io".into()))? as usize;
+
+    // NCR5 (re-audit 2026-05-14): cap R1CS shape parameters so a
+    // malicious dump can't drive the Section 3 gadget into
+    // multi-hour setup. Production `TrivialIncrementCircuit` has
+    // num_cons ≈ 10 003 / num_vars ≈ 9 995; the cap is ~6×
+    // expected to absorb future circuit growth without inviting
+    // DoS. NCR5 pairs with the gadget's pre-bucketing fix in
+    // section3_gadget.rs to turn the worst case from
+    // O(num_cons × entries) into O(num_cons + entries).
+    if num_cons > MAX_R1CS_NUM_CONS {
+        return Err(ExtractError::ShapeTooLarge {
+            name: "num_cons",
+            value: num_cons,
+            cap: MAX_R1CS_NUM_CONS,
+        });
+    }
+    if num_vars > MAX_R1CS_NUM_VARS {
+        return Err(ExtractError::ShapeTooLarge {
+            name: "num_vars",
+            value: num_vars,
+            cap: MAX_R1CS_NUM_VARS,
+        });
+    }
+    if num_io > MAX_R1CS_NUM_IO {
+        return Err(ExtractError::ShapeTooLarge {
+            name: "num_io",
+            value: num_io,
+            cap: MAX_R1CS_NUM_IO,
+        });
+    }
+
     let num_cols = num_vars + 1 + num_io;
 
     let a_primary = parse_csr(&shape["A"], num_cons, num_cols)

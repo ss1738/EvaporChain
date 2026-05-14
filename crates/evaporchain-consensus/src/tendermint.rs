@@ -5306,7 +5306,7 @@ impl TendermintConsensus {
                     // ── BLS Signature Verification ──
                     if let Some(ref bls_pk_bytes) = validator.bls_public_key {
                         let msg =
-                            Self::bls_vote_message(self.height, round, &block_hash, "prevote");
+                            Self::bls_vote_message(&self.chain_id, self.height, round, &block_hash, "prevote");
                         match &bls_signature {
                             Some(sig) => {
                                 let pk = BlsPublicKey(bls_pk_bytes.clone());
@@ -5431,7 +5431,7 @@ impl TendermintConsensus {
                     // ── BLS Signature Verification ──
                     if let Some(ref bls_pk_bytes) = validator.bls_public_key {
                         let msg =
-                            Self::bls_vote_message(self.height, round, &block_hash, "precommit");
+                            Self::bls_vote_message(&self.chain_id, self.height, round, &block_hash, "precommit");
                         match &bls_signature {
                             Some(sig) => {
                                 let pk = BlsPublicKey(bls_pk_bytes.clone());
@@ -7063,12 +7063,21 @@ impl TendermintConsensus {
 
     /// Construct the canonical message to BLS-sign for a vote.
     pub fn bls_vote_message(
+        chain_id: &str,
         height: u64,
         round: u32,
         block_hash: &Option<[u8; 32]>,
         phase: &str,
     ) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(48);
+        // Audit K4 (2026-05-14): bind vote messages to the chain_id.
+        // Without this, a validator's BLS prevote/precommit for chain-A
+        // is a valid signature on chain-B if both reach the same
+        // height, round, and block_hash. Length-prefix chain_id so
+        // "mainnet-1" != "mainnet" + trailing byte.
+        let chain_id_bytes = chain_id.as_bytes();
+        let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 48);
+        msg.push(chain_id_bytes.len() as u8);
+        msg.extend_from_slice(chain_id_bytes);
         msg.extend_from_slice(phase.as_bytes());
         msg.extend_from_slice(&height.to_le_bytes());
         msg.extend_from_slice(&round.to_le_bytes());
@@ -7087,7 +7096,7 @@ impl TendermintConsensus {
         phase: &str,
     ) -> Option<Vec<u8>> {
         self.bls_keypair.as_ref().map(|kp| {
-            let msg = Self::bls_vote_message(height, round, block_hash, phase);
+            let msg = Self::bls_vote_message(&self.chain_id, height, round, block_hash, phase);
             kp.sign(&msg).0
         })
     }
@@ -7294,7 +7303,7 @@ impl TendermintConsensus {
         }
 
         let msg =
-            Self::bls_vote_message(cert.height, cert.round, &Some(cert.block_hash), "precommit");
+            Self::bls_vote_message(&self.chain_id, cert.height, cert.round, &Some(cert.block_hash), "precommit");
         let agg_sig = BlsSignature(cert.aggregate_signature.clone());
 
         // Pass 1: current keys.
@@ -7888,7 +7897,7 @@ mod tests {
         let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
 
         let block_hash = [9u8; 32];
-        let msg = TendermintConsensus::bls_vote_message(7, 0, &Some(block_hash), "precommit");
+        let msg = TendermintConsensus::bls_vote_message("", 7, 0, &Some(block_hash), "precommit");
 
         // Construct a cert signed by all 4 validators, BUT validator 1
         // signs with their PREVIOUS key (kps[0]) — modelling a vote that
@@ -7932,7 +7941,7 @@ mod tests {
 
         let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
         let block_hash = [3u8; 32];
-        let msg = TendermintConsensus::bls_vote_message(7, 0, &Some(block_hash), "precommit");
+        let msg = TendermintConsensus::bls_vote_message("", 7, 0, &Some(block_hash), "precommit");
         let signatures = vec![
             new_kp.sign(&msg), // validator 1 with NEW key (post-rotation)
             kps[1].sign(&msg),
@@ -14157,17 +14166,17 @@ mod tests {
 
     #[test]
     fn test_bls_vote_message_deterministic() {
-        let msg1 = TendermintConsensus::bls_vote_message(10, 0, &Some([1u8; 32]), "prevote");
-        let msg2 = TendermintConsensus::bls_vote_message(10, 0, &Some([1u8; 32]), "prevote");
+        let msg1 = TendermintConsensus::bls_vote_message("testchain", 10, 0, &Some([1u8; 32]), "prevote");
+        let msg2 = TendermintConsensus::bls_vote_message("testchain", 10, 0, &Some([1u8; 32]), "prevote");
         assert_eq!(msg1, msg2, "Same inputs should produce same message");
 
-        let msg3 = TendermintConsensus::bls_vote_message(10, 0, &Some([2u8; 32]), "prevote");
+        let msg3 = TendermintConsensus::bls_vote_message("testchain", 10, 0, &Some([2u8; 32]), "prevote");
         assert_ne!(
             msg1, msg3,
             "Different hash should produce different message"
         );
 
-        let msg4 = TendermintConsensus::bls_vote_message(10, 0, &Some([1u8; 32]), "precommit");
+        let msg4 = TendermintConsensus::bls_vote_message("testchain", 10, 0, &Some([1u8; 32]), "precommit");
         assert_ne!(
             msg1, msg4,
             "Different phase should produce different message"

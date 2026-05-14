@@ -427,7 +427,10 @@ impl BridgeVerifier {
         }
 
         // 6b. Verify BLS aggregate signature on the commit certificate
+        // Audit K4 (2026-05-14): include source chain_id so vote messages from
+        // different chains cannot be replayed across bridge verifiers.
         let vote_msg = crate::tendermint::TendermintConsensus::bls_vote_message(
+            &msg.source_chain,
             msg.commit_certificate.height,
             msg.commit_certificate.round,
             &Some(msg.commit_certificate.block_hash),
@@ -526,8 +529,22 @@ mod tests {
         keypairs: &[BlsKeypair],
         signer_indices: &[usize],
     ) -> CommitCertificate {
-        // Build the vote message (matches tendermint.rs format)
+        make_signed_certificate_with_chain("evaporchain", height, block_hash, round, keypairs, signer_indices)
+    }
+
+    fn make_signed_certificate_with_chain(
+        chain_id: &str,
+        height: u64,
+        block_hash: [u8; 32],
+        round: u32,
+        keypairs: &[BlsKeypair],
+        signer_indices: &[usize],
+    ) -> CommitCertificate {
+        // Audit K4: vote message now includes chain_id length-prefix
+        let chain_id_bytes = chain_id.as_bytes();
         let mut vote_msg = Vec::new();
+        vote_msg.push(chain_id_bytes.len() as u8);
+        vote_msg.extend_from_slice(chain_id_bytes);
         vote_msg.extend_from_slice(b"precommit");
         vote_msg.extend_from_slice(&height.to_le_bytes());
         vote_msg.extend_from_slice(&round.to_le_bytes());
@@ -609,8 +626,11 @@ mod tests {
         let block_hash = [0xCC; 32];
         let cert = make_signed_certificate(5, block_hash, 0, &keypairs, &[0, 1, 2]);
 
-        // Reconstruct the vote message
+        // Reconstruct the vote message (Audit K4: chain_id length-prefix)
+        let chain_id_bytes = b"evaporchain";
         let mut vote_msg = Vec::new();
+        vote_msg.push(chain_id_bytes.len() as u8);
+        vote_msg.extend_from_slice(chain_id_bytes);
         vote_msg.extend_from_slice(b"precommit");
         vote_msg.extend_from_slice(&5u64.to_le_bytes());
         vote_msg.extend_from_slice(&0u32.to_le_bytes());
