@@ -326,6 +326,24 @@ impl PeerBanList {
                     f.write_all(&data)?;
                     f.sync_all()?;
                     std::fs::rename(&tmp, path)?;
+                    // NN5 (re-audit 2026-05-14): durability of the
+                    // rename itself. A1's file-level fsync only
+                    // commits the tmp file's *content*; POSIX
+                    // commits the directory entry to disk only
+                    // after a subsequent fsync(dir). A power loss
+                    // between rename returning and the next
+                    // implicit dir-sync can revert the rename —
+                    // dropping the freshly-written ban set even
+                    // though the tmp content was fully fsynced.
+                    // B1/B2 closed this for faucet + singh_pools
+                    // but the network bucket missed it.
+                    if let Some(parent) = path.parent() {
+                        // Best-effort — tmpfs and a few other FSes
+                        // reject open-for-sync on a dir.
+                        if let Ok(dir) = std::fs::File::open(parent) {
+                            let _ = dir.sync_all();
+                        }
+                    }
                     Ok(())
                 })();
                 if let Err(e) = result {
