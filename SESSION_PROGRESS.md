@@ -4,6 +4,24 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 17) — Audit K4 closed; BLS vote cross-chain replay
+
+**Focus:** BLS vote message chain_id binding — cross-chain replay gap
+**Commits shipped:** 1 (`5a008085`)
+**Deliverables:**
+- K4 CLOSED (HIGH): `bls_vote_message` had no chain_id field; validator keys shared across testnets/mainnet could have precommit votes replayed to falsely advance consensus on another chain
+- Fix: chain_id length-prefixed as first field — `[len || chain_id_bytes || phase || height_le || round_le || hash?]`; prevents "mainnet-1" / "mainnet" + trailing-byte ambiguity
+- All 8 call sites updated: 7 in `tendermint.rs` + 1 in `bridge.rs:430` (uses `msg.source_chain` — correct, as validators sign on the source chain)
+- `bridge.rs` test helpers updated: `make_signed_certificate` → delegates to `make_signed_certificate_with_chain("evaporchain", ...)`; `test_certificate_bls_verification` vote_msg rebuilt with chain_id prefix
+- J-class was clean: J1 trie atomicity self-heals via `build_energy_trie` at startup; J2 state-branch isolation confirmed correct
+**Empirical results:** 942 consensus lib tests pass, 0 failed; bridge 6-test suite pass after missed `bridge.rs:430` call site was caught and fixed
+**Decisions made:** `bridge.rs` verifier uses `msg.source_chain` as chain_id for vote reconstruction
+**What's next:** K-class remainder — K2 (P2P message chain_id pre-validation, defense-in-depth); then L-class sweep
+**Blockers / open questions:** MacBook branch drift is recurring — stale branch accumulation in WIP state on MacBook needs a cleanup pass
+**Cross-references:** `AUDIT_2026_05_11.md` — K4 row; commit `5a008085`
+
+---
+
 ## 2026-05-14 (session 15) — Audit I1 closed (CRITICAL); signature–address binding
 
 **Focus:** Signature verification address binding — pk→sender check missing across all tx types
