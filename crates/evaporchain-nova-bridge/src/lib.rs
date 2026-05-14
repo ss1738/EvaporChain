@@ -123,8 +123,14 @@ pub mod vendored_neptune_grain;
 pub mod verifier_circuit;
 
 pub use recursive_snark_fixture::{
-    fixture_stats, generate_fixture, FixtureStats, Scalar1, TrivialIncrementCircuit, E1, E2,
+    fixture_stats, generate_fixture, public_inputs_for_bridge, FixtureStats, Scalar1,
+    TrivialIncrementCircuit, E1, E2,
 };
+pub use scalar_adapter::{
+    ark_fr_to_primary, ark_fr_to_secondary_lossy, primary_to_ark_fr, secondary_to_ark_fr_lossy,
+    PrimaryScalar, SecondaryScalar,
+};
+pub use neptune_dump_parser::parse_dump;
 pub use verifier_circuit::NovaVerifierCircuit;
 
 /// Marker constant. Phase progression for the bridge crate:

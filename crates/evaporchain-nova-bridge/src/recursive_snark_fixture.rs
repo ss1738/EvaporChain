@@ -157,6 +157,29 @@ pub struct FixtureStats {
     pub z_i: Vec<Scalar1>,
 }
 
+/// Convert a fixture's accumulator outputs (the chain-side
+/// `<E1 as Engine>::Scalar` values) into the `ark_bn254::Fr`
+/// representation that [`crate::NovaVerifierCircuit`] consumes as
+/// public inputs.
+///
+/// Uses [`crate::scalar_adapter::nova_to_bn254_fr`] under the hood
+/// — this is the first place the adapter touches real
+/// `RecursiveSNARK` artifact data. Section 2 / Section 3 will
+/// follow the same conversion pattern on additional fields
+/// (transcript scalars, witness commitments).
+///
+/// Returns the converted `zi` vector. `z0` is fixed at `[0]` by
+/// [`generate_fixture`] so its conversion is trivial and not
+/// emitted here.
+pub fn public_inputs_for_bridge(
+    rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
+) -> Vec<ark_bn254::Fr> {
+    rs.outputs()
+        .iter()
+        .map(|s| crate::scalar_adapter::primary_to_ark_fr(*s))
+        .collect()
+}
+
 /// Return human-readable stats about a fixture. Useful for sizing
 /// the in-circuit verifier's witness allocation in Phase 2.2.
 pub fn fixture_stats(
@@ -197,5 +220,22 @@ mod tests {
         let bytes = bincode::serialize(&rs).expect("serialize");
         let _round_trip: RecursiveSNARK<E1, E2, TrivialIncrementCircuit> =
             bincode::deserialize(&bytes).expect("deserialize");
+    }
+
+    /// First end-to-end exercise of [`crate::scalar_adapter`] on a
+    /// real `RecursiveSNARK` artifact: feed a 2-step fixture's
+    /// outputs through the nova → ark_bn254::Fr conversion and
+    /// assert the result matches the expected scalar value
+    /// (`ark_bn254::Fr::from(2u64)`).
+    ///
+    /// Pins that the scalar-adapter byte conversion produces the
+    /// expected NUMERIC value (not just the same bytes) on data
+    /// produced by the actual `prove_step` pipeline.
+    #[test]
+    fn public_inputs_for_bridge_converts_two_step_fixture() {
+        let rs = generate_fixture(2).expect("generate fixture");
+        let public_inputs = public_inputs_for_bridge(&rs);
+        assert_eq!(public_inputs.len(), 1, "arity-1 TrivialIncrementCircuit");
+        assert_eq!(public_inputs[0], ark_bn254::Fr::from(2u64));
     }
 }
