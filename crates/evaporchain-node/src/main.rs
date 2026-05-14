@@ -192,14 +192,80 @@ fn fatal_persist_err(op: &str, r: Result<(), String>) {
 
 fn write_secret_file(path: impl AsRef<std::path::Path>, data: &[u8]) {
     let path = path.as_ref();
-    if let Err(e) = std::fs::write(path, data) {
-        eprintln!("Failed to write secret file {}: {}", path.display(), e);
-        return;
-    }
+    // AUDIT_2026_05_13 M5 closure. Pre-fix called `fs::write` (creates
+    // with default umask, typically 0o644) and THEN `set_permissions(
+    // 0o600)`. A same-user process running between the two syscalls
+    // could read the secret in the 0o644 window — especially severe
+    // on multi-tenant systems or when this path writes the *plaintext*
+    // fallback BLS key (no `EVAPORCHAIN_VALIDATOR_KEY_PASS` set).
+    //
+    // Fix on unix: `OpenOptions` with `create_new(true) + mode(0o600)`
+    // opens at the correct permissions atomically — the file never
+    // exists with 0o644 because POSIX `open(O_CREAT, mode)` honours
+    // `mode` (subject to umask) at creation time, and we additionally
+    // post-set the mode to guarantee 0o600 regardless of umask.
+    // `create_new(true)` (O_CREAT|O_EXCL) refuses to overwrite — if a
+    // file is already there, we fall back to truncate-and-restrict
+    // on the existing path under a separate atomic step.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        // Try the atomic create_new path first.
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create_new(true).write(true).mode(0o600);
+        match opts.open(path) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(data) {
+                    eprintln!(
+                        "Failed to write secret file {} after create_new: {}",
+                        path.display(),
+                        e
+                    );
+                }
+                // Belt-and-braces: re-assert 0o600 in case the umask
+                // narrowed the bits (umask cannot grant additional
+                // bits, but explicit set is the audited shape).
+                let _ = std::fs::set_permissions(
+                    path,
+                    std::fs::Permissions::from_mode(0o600),
+                );
+                return;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // File already exists — fall back to write-then-chmod
+                // on the existing path. The pre-existing file already
+                // has whatever permissions it had before (likely 0o600
+                // from a prior write_secret_file call), so the TOCTOU
+                // window only matters for first-write.
+                if let Err(e) = std::fs::write(path, data) {
+                    eprintln!(
+                        "Failed to overwrite secret file {}: {}",
+                        path.display(),
+                        e
+                    );
+                    return;
+                }
+                let _ = std::fs::set_permissions(
+                    path,
+                    std::fs::Permissions::from_mode(0o600),
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "Failed to create secret file {}: {}",
+                    path.display(),
+                    e
+                );
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = std::fs::write(path, data) {
+            eprintln!("Failed to write secret file {}: {}", path.display(), e);
+        }
     }
 }
 
