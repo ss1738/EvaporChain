@@ -3033,21 +3033,67 @@ async fn main() -> Result<()> {
                             // format). Fall back to legacy empty-AAD
                             // for back-compat with EVKV blobs written
                             // before the deployment of path-binding.
+                            //
+                            // AUDIT_2026_05_13 M6 closure: legacy
+                            // empty-AAD fallback is now a one-shot
+                            // migration. On successful empty-AAD load,
+                            // we IMMEDIATELY re-encrypt with the
+                            // current path-AAD and write back to disk.
+                            // This prevents the unforced AAD-rollback
+                            // attack: an adversary who can stage an
+                            // old empty-AAD ciphertext at a new path
+                            // could otherwise defeat H5's path-binding
+                            // forever. With one-shot migration, the
+                            // window is at most one successful load.
                             let aad = evaporchain_crypto::bls_key_store::path_aad(
                                 bls_key_path.as_bytes(),
                             );
-                            let result =
+                            let aad_result =
                                 evaporchain_crypto::bls_key_store::decrypt_bls_secret_with_aad(
                                     &file_bytes,
                                     pass,
                                     &aad,
-                                )
-                                .or_else(|_| {
-                                    evaporchain_crypto::bls_key_store::decrypt_bls_secret(
-                                        &file_bytes,
-                                        pass,
-                                    )
-                                });
+                                );
+                            let result = match aad_result {
+                                Ok(plain) => Ok(plain),
+                                Err(_) => {
+                                    // Try the legacy empty-AAD path.
+                                    let legacy_plain =
+                                        evaporchain_crypto::bls_key_store::decrypt_bls_secret(
+                                            &file_bytes,
+                                            pass,
+                                        );
+                                    if let Ok(ref plain) = legacy_plain {
+                                        // M6: one-shot migration —
+                                        // re-encrypt with current
+                                        // path-AAD and overwrite.
+                                        eprintln!(
+                                            "{} \x1b[33m⚠ AUDIT_M6: legacy empty-AAD BLS blob at {} accepted ONCE; re-encrypting with path-binding now\x1b[0m",
+                                            node_tag, bls_key_path
+                                        );
+                                        match evaporchain_crypto::bls_key_store::encrypt_bls_secret_with_aad(
+                                            plain.as_ref(),
+                                            pass,
+                                            &aad,
+                                        ) {
+                                            Ok(new_ct) => {
+                                                write_secret_file(&bls_key_path, &new_ct);
+                                                eprintln!(
+                                                    "{} \x1b[32m✓ AUDIT_M6: BLS blob at {} re-encrypted with path-AAD; legacy fallback no longer required for this path\x1b[0m",
+                                                    node_tag, bls_key_path
+                                                );
+                                            }
+                                            Err(e) => {
+                                                eprintln!(
+                                                    "{} \x1b[31m⚠ AUDIT_M6: re-encryption FAILED ({}); the legacy empty-AAD blob remains on disk — operator should rotate manually\x1b[0m",
+                                                    node_tag, e
+                                                );
+                                            }
+                                        }
+                                    }
+                                    legacy_plain
+                                }
+                            };
                             match result {
                                 Ok(plain) => Some(plain.to_vec()),
                                 Err(e) => {
