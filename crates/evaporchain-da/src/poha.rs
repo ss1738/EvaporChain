@@ -19,6 +19,25 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+// ─── Domain-separation tags (AUDIT_2026_05_13 M8) ─────────────────────────
+//
+// Pre-fix `PoHACertificate::hash` and `ReAttestation::sign_message`
+// both produced bare BLAKE3 / BLS-signed bytes without DST prefixes —
+// while every other signed message in the workspace carries a
+// versioned tag (compare `DA_ATTESTATION_DST` at sampling.rs). The
+// uniform-shape risk: a 52-byte `(cert_hash, epoch, validator_id,
+// shards_held)` re-attestation payload could collide with a future
+// 52-byte BLS message signed by the same validator key in a different
+// protocol context (oracle attestation, governance vote, cross-shard
+// receipt). Replay-as-PoHA-re-attestation would fraudulently boost
+// the energy of an arbitrary certificate.
+
+/// Domain tag for `PoHACertificate::hash`.
+pub const POHA_CERT_HASH_DST: &[u8] = b"evaporchain:poha-cert:v1\0";
+
+/// Domain tag for `ReAttestation::sign_message`.
+pub const POHA_REATTEST_DST: &[u8] = b"evaporchain:poha-reattest:v1\0";
+
 // ─────────────────────── Certificate Temperature ─────────────────────────
 
 /// Temperature classification for a PoHA certificate.
@@ -135,8 +154,13 @@ impl PoHACertificate {
     }
 
     /// Compute a 32-byte hash of this certificate for compact storage.
+    ///
+    /// AUDIT_2026_05_13 M8: prefixed with `POHA_CERT_HASH_DST` so a
+    /// PoHA cert hash cannot collide with any other 32-byte BLAKE3
+    /// computed elsewhere in the workspace.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
+        hasher.update(POHA_CERT_HASH_DST);
         hasher.update(&self.block_number.to_le_bytes());
         hasher.update(&self.data_root);
         hasher.update(&self.shard_count.to_le_bytes());
@@ -175,13 +199,19 @@ pub struct ReAttestation {
 
 impl ReAttestation {
     /// Build the message bytes that should be signed.
+    ///
+    /// AUDIT_2026_05_13 M8: prefixed with `POHA_REATTEST_DST` so a
+    /// re-attestation BLS signature cannot be replayed as a
+    /// same-shape 52-byte message signed by the same validator key
+    /// in a different protocol context.
     pub fn sign_message(
         cert_hash: &[u8; 32],
         epoch: u64,
         validator_id: u64,
         shards_held: u32,
     ) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(52);
+        let mut msg = Vec::with_capacity(POHA_REATTEST_DST.len() + 52);
+        msg.extend_from_slice(POHA_REATTEST_DST);
         msg.extend_from_slice(cert_hash);
         msg.extend_from_slice(&epoch.to_le_bytes());
         msg.extend_from_slice(&validator_id.to_le_bytes());
@@ -1046,5 +1076,73 @@ mod tests {
         );
         // Active count stays 1 (overwrite, not duplicate).
         assert_eq!(store.active_count(), 1);
+    }
+
+    // ─── AUDIT_2026_05_13 M8 regression suite ─────────────────────────
+
+    /// Build a minimal certificate for DST-prefix testing.
+    fn cert_for_dst_test() -> PoHACertificate {
+        PoHACertificate {
+            block_number: 42,
+            data_root: [0xAB; 32],
+            shard_count: 16,
+            initial_energy: 1_000,
+            energy: 800,
+            half_life: 100,
+            created_epoch: 7,
+            last_attested_epoch: 7,
+            attested_stake: 5_000,
+            total_stake: 10_000,
+            re_attestation_count: 0,
+            aggregate_signature: vec![0xCD; 96],
+            signer_ids: vec![],
+        }
+    }
+
+    #[test]
+    fn audit_m8_cert_hash_has_dst_prefix() {
+        // Lock the DST: the cert hash must differ from a bare BLAKE3
+        // of the body without the tag.
+        let c = cert_for_dst_test();
+        let with_tag = c.hash();
+        let mut bare = blake3::Hasher::new();
+        bare.update(&c.block_number.to_le_bytes());
+        bare.update(&c.data_root);
+        bare.update(&c.shard_count.to_le_bytes());
+        bare.update(&c.initial_energy.to_le_bytes());
+        bare.update(&c.half_life.to_le_bytes());
+        bare.update(&c.created_epoch.to_le_bytes());
+        bare.update(&c.attested_stake.to_le_bytes());
+        bare.update(&c.aggregate_signature);
+        let without_tag: [u8; 32] = bare.finalize().into();
+        assert_ne!(
+            with_tag, without_tag,
+            "PoHA cert hash must include POHA_CERT_HASH_DST"
+        );
+    }
+
+    #[test]
+    fn audit_m8_reattest_message_has_dst_prefix() {
+        let cert_hash = [0x11; 32];
+        let with_tag = ReAttestation::sign_message(&cert_hash, 7, 1, 4);
+
+        let mut bare = Vec::with_capacity(52);
+        bare.extend_from_slice(&cert_hash);
+        bare.extend_from_slice(&7u64.to_le_bytes());
+        bare.extend_from_slice(&1u64.to_le_bytes());
+        bare.extend_from_slice(&4u32.to_le_bytes());
+
+        assert_ne!(
+            with_tag, bare,
+            "re-attestation sign_message must include POHA_REATTEST_DST"
+        );
+        assert!(with_tag.starts_with(POHA_REATTEST_DST));
+    }
+
+    #[test]
+    fn audit_m8_dsts_distinct_and_versioned() {
+        assert_ne!(POHA_CERT_HASH_DST, POHA_REATTEST_DST);
+        assert!(POHA_CERT_HASH_DST.ends_with(b":v1\0"));
+        assert!(POHA_REATTEST_DST.ends_with(b":v1\0"));
     }
 }
