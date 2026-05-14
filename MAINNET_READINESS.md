@@ -246,7 +246,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.3 — POST_EXEC Phase 4 enforce-mode prevote NIL
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE (c191498) — flag + 4 tests; needs T0.4 fork-epoch + cluster soak before flipping to enforce
 **Surface:** CONSENSUS
 **Depends on:** Phase 3 clean soak (governance flag value `"warn"` for ≥7 days on live cluster). Currently Phase 2+3 always-on per `af6876d`; needs `post_state_verify_mode` governance flag added.
 **Effort:** 3-5 days code + 1-2 week soak
@@ -376,7 +376,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.8 — Light-client / fast-sync against malicious snapshots
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE — all 5 adversarial fixtures in `crates/evaporchain-state/tests/adversarial_snapshots.rs`; 5/5 green on Mini 1 2026-05-11. Covers sub-tasks 1-4.
 **Surface:** NETWORK
 **Depends on:** none
 **Effort:** 1-2 weeks
@@ -489,7 +489,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T1.14 — Phase 2 round-trip test (proposer-stamp == validator-apply)
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE (9191e87) — 3 tests appended end-of-file; green on Mini 1.
 **Surface:** CONSENSUS (test-only)
 **Depends on:** none (the InMemoryStateDB batch fix `69ed84e` unblocked this)
 **Effort:** 1 day
@@ -505,7 +505,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T1.15 — Paymaster Finding 1 — per-key in-flight locking
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE (1f8c50a2) — inflight_locks per-key Mutex; concurrent_same_key_retries_dont_double_allocate passes.
 **Surface:** PAYMASTER
 **Depends on:** none, but coordinate with parallel Sonnet 4.6 paymaster arc
 **Effort:** 2-3 days
@@ -526,7 +526,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T1.16 — Internal audit findings reconciliation sweep
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE (7f36b46) — AUDIT_RECONCILIATION_2026-05-09.md + opcode-count drift fix.
 **Surface:** AUDIT-SWEEP (read-only first; fix per finding)
 **Depends on:** none
 **Effort:** 1 week
