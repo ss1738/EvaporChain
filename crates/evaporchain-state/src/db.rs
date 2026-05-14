@@ -349,6 +349,55 @@ pub trait StateDB: Send + Sync {
     /// Replace the entire vote slate for `parameter_id`. Caller is
     /// responsible for one-vote-per-validator semantics.
     fn put_sentinel_votes(&mut self, _parameter_id: u32, _votes: Vec<evaporchain_sentinel::Vote>) {}
+
+    // ─── Bulk-clear helpers (snapshot restore path) ─────────────────────
+    // M12 (audit 2026-05-13): pre-fix `SnapshotApplier::apply` /
+    // `SnapshotFile::apply_to` only wiped objects/ghosts/accounts.
+    // Stakes, delegations, sentinel params/votes, governance, vesting,
+    // note_commitments, and prior spent_nullifiers all survived a
+    // restore. That left a hybrid state where the validator set
+    // disagreed with the restored balances, slashing kept hitting
+    // ghost stakes, and previously spent nullifiers blocked legitimate
+    // notes. Each backend that holds the corresponding CF should
+    // override the matching `clear_*` method.
+
+    /// Delete every nullifier. Default no-op for backends with no
+    /// privacy CF.
+    fn clear_all_nullifiers(&mut self) {}
+    /// Delete every persisted note commitment. Default no-op.
+    fn clear_all_note_commitments(&mut self) {}
+    /// Delete every stake + delegation record. Default no-op.
+    fn clear_all_stakes_and_delegations(&mut self) {}
+    /// Delete every sentinel parameter and its vote slate. Default no-op.
+    fn clear_all_sentinel_state(&mut self) {}
+    /// Delete every vesting schedule. Default no-op.
+    fn clear_all_vesting_schedules(&mut self) {}
+    /// Delete every governance proposal + parameter. Default no-op.
+    fn clear_all_governance_state(&mut self) {}
+
+    /// Full clean-slate wipe of every state column the snapshot is
+    /// about to repopulate. Called by the snapshot apply path so a
+    /// node rejoining via fast-sync does not carry stale stakes,
+    /// delegations, sentinel votes, or nullifiers into its restored
+    /// life. **DO NOT** call this outside a snapshot-restore — it
+    /// destroys consensus state.
+    fn wipe_full_state_for_snapshot_restore(&mut self) {
+        for id in self.all_object_ids() {
+            self.delete_object(&id);
+        }
+        for id in self.all_ghost_ids() {
+            self.remove_ghost(&id);
+        }
+        for addr in self.all_account_addresses() {
+            self.delete_account(&addr);
+        }
+        self.clear_all_nullifiers();
+        self.clear_all_note_commitments();
+        self.clear_all_stakes_and_delegations();
+        self.clear_all_sentinel_state();
+        self.clear_all_vesting_schedules();
+        self.clear_all_governance_state();
+    }
 }
 
 /// In-memory state database for development and testing.
@@ -880,6 +929,34 @@ impl StateDB for InMemoryStateDB {
     fn put_sentinel_votes(&mut self, parameter_id: u32, votes: Vec<evaporchain_sentinel::Vote>) {
         self.sentinel_votes.insert(parameter_id, votes);
     }
+
+    // ─── M12 bulk-clear helpers ─────────────────────────────────────────
+
+    fn clear_all_nullifiers(&mut self) {
+        self.spent_nullifiers.clear();
+    }
+
+    fn clear_all_note_commitments(&mut self) {
+        self.note_commitments.clear();
+    }
+
+    fn clear_all_stakes_and_delegations(&mut self) {
+        self.stakes.clear();
+        self.delegations.clear();
+    }
+
+    fn clear_all_sentinel_state(&mut self) {
+        self.sentinel_params.clear();
+        self.sentinel_votes.clear();
+    }
+
+    fn clear_all_vesting_schedules(&mut self) {
+        self.vesting_schedules.clear();
+    }
+
+    // governance proposals / params are not currently held by
+    // InMemoryStateDB beyond the trait's default-no-op accessors —
+    // nothing to clear here. The trait default suffices.
 
     // ─── Batch (begin/commit/rollback) ───────────────────────────────
     //

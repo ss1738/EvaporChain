@@ -2638,6 +2638,20 @@ impl TendermintConsensus {
                 .min_by(|(t1, m1), (t2, m2)| m1.caliber.cmp(&m2.caliber).then_with(|| t1.cmp(t2)))
             {
                 self.state_branches.remove(&victim);
+                // M16 (audit 2026-05-13): cascade-prune
+                // `dag_round_states[victim]` too. Pre-fix the
+                // per-tip RoundState (precommits / prevotes /
+                // signatures) leaked across LRU evictions: every
+                // tip ever seen accumulated a permanent entry,
+                // and the cross-fork equivocation scan at
+                // `record_precommit_for_tip` walks ALL entries
+                // (`for (other_tip, rs) in &self.dag_round_states`).
+                // O(stale_tips) per precommit, growing unbounded
+                // over chain lifetime. With this remove, evicting
+                // a branch from `state_branches` immediately drops
+                // its round-tally state too — keeping the
+                // equivocation scan bounded by `cap` (default 4).
+                self.dag_round_states.remove(&victim);
                 // Phase 5.3 of LIGHT_CONE_FULL_DAG_PLAN.md — pair
                 // the metadata eviction with a DAG-side cascade
                 // prune. `prune_orphan_branch` walks the victim's
@@ -10210,6 +10224,85 @@ mod tests {
         );
         assert!(tc.state_branches().contains_key(&[0xBB; 32]));
         assert!(tc.state_branches().contains_key(&[0xCC; 32]));
+    }
+
+    // ── M16 (audit 2026-05-13): dag_round_states cascade prune ──
+
+    /// Pre-fix the LRU eviction in `prune_state_branches` removed the
+    /// victim from `state_branches` and `light_cone_dag` but left a
+    /// `dag_round_states[victim]` entry behind. Every tip ever seen
+    /// accumulated a permanent entry, and the cross-fork equivocation
+    /// scan at `record_dag_precommit` walks ALL entries on every
+    /// precommit. Post-fix the cascade prune drops the round state
+    /// too — bounding the scan at `light_cone_max_concurrent_forks`.
+    #[test]
+    fn audit_m16_lru_eviction_cascade_prunes_dag_round_states() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Enable light-cone branches so record_dag_precommit isn't a no-op.
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        tc.governance_set_param("light_cone_max_concurrent_forks", "2")
+            .unwrap();
+
+        // Three branches with distinct calibers; [0xAA;32] is the
+        // lowest-caliber → LRU victim.
+        tc.record_state_branch([0xAA; 32], 1, 100);
+        tc.record_state_branch([0xBB; 32], 2, 200);
+        tc.record_state_branch([0xCC; 32], 3, 150);
+
+        // Plant a per-tip RoundState on the about-to-evict victim so we
+        // can prove it gets cleared (not just orphaned).
+        tc.record_dag_precommit([0xAA; 32], 1, Some([0xAA; 32]), vec![]);
+        tc.record_dag_precommit([0xBB; 32], 2, Some([0xBB; 32]), vec![]);
+        tc.record_dag_precommit([0xCC; 32], 3, Some([0xCC; 32]), vec![]);
+        assert_eq!(
+            tc.dag_round_states_count(),
+            3,
+            "all three tips have round state"
+        );
+
+        tc.prune_state_branches();
+
+        // state_branches enforces cap.
+        assert_eq!(tc.state_branches().len(), 2, "cap=2 → 2 survivors");
+        assert!(
+            !tc.state_branches().contains_key(&[0xAA; 32]),
+            "lowest-caliber tip evicted from state_branches"
+        );
+        // CRITICAL: dag_round_states matches the cap too. Pre-fix this
+        // would have been 3.
+        assert_eq!(
+            tc.dag_round_states_count(),
+            2,
+            "evicted tip must NOT survive in dag_round_states (M16)"
+        );
+    }
+
+    /// Multi-eviction shape: drive a longer sequence of branches in,
+    /// then prune. The equivocation-scan loop's worst case is bounded
+    /// by `dag_round_states_count`, so this also pins the
+    /// growth-bound regression.
+    #[test]
+    fn audit_m16_repeated_eviction_keeps_dag_round_states_bounded() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        tc.governance_set_param("light_cone_max_concurrent_forks", "2")
+            .unwrap();
+
+        for n in 0u8..20 {
+            let tip = [n; 32];
+            tc.record_state_branch(tip, n as u64, 100 + n as u64);
+            tc.record_dag_precommit(tip, 1, Some(tip), vec![]);
+            tc.prune_state_branches();
+        }
+        // After 20 inserts with cap=2, both sides must be at-cap.
+        assert_eq!(tc.state_branches().len(), 2);
+        assert_eq!(
+            tc.dag_round_states_count(),
+            2,
+            "dag_round_states must not grow beyond the cap (M16)"
+        );
     }
 
     /// Phase 3.5 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `light_cone_state_branches_enabled`

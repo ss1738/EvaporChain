@@ -1369,6 +1369,90 @@ impl StateDB for RocksDBStateDB {
         }
         self.sentinel_votes.insert(parameter_id, votes);
     }
+
+    // ─── M12 (audit 2026-05-13): bulk-clear helpers for snapshot restore ───
+    // Each helper drops both the in-memory cache and every row of the
+    // corresponding column family. Snapshot apply uses
+    // `wipe_full_state_for_snapshot_restore` (default trait impl) to
+    // chain them together so stale stakes / delegations / sentinel
+    // votes / nullifiers / note_commitments do not survive a restore.
+
+    fn clear_all_nullifiers(&mut self) {
+        let cf = self.cf(CF_NULLIFIERS);
+        let mut batch = WriteBatch::default();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((key, _)) = item {
+                batch.delete_cf(cf, key);
+            }
+        }
+        if let Err(e) = self.db.write(batch) {
+            fatal_persistence_error("clear_all_nullifiers", e);
+        }
+        self.spent_nullifiers.clear();
+    }
+
+    fn clear_all_note_commitments(&mut self) {
+        let cf = self.cf(CF_NOTE_COMMITMENTS);
+        let mut batch = WriteBatch::default();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((key, _)) = item {
+                batch.delete_cf(cf, key);
+            }
+        }
+        if let Err(e) = self.db.write(batch) {
+            fatal_persistence_error("clear_all_note_commitments", e);
+        }
+        self.note_commitments.clear();
+    }
+
+    fn clear_all_stakes_and_delegations(&mut self) {
+        let mut batch = WriteBatch::default();
+        let cf_s = self.cf(CF_STAKES);
+        for item in self.db.iterator_cf(cf_s, rocksdb::IteratorMode::Start) {
+            if let Ok((key, _)) = item {
+                batch.delete_cf(cf_s, key);
+            }
+        }
+        let cf_d = self.cf(CF_DELEGATIONS);
+        for item in self.db.iterator_cf(cf_d, rocksdb::IteratorMode::Start) {
+            if let Ok((key, _)) = item {
+                batch.delete_cf(cf_d, key);
+            }
+        }
+        if let Err(e) = self.db.write(batch) {
+            fatal_persistence_error("clear_all_stakes_and_delegations", e);
+        }
+        self.stakes.clear();
+        self.delegations.clear();
+    }
+
+    fn clear_all_sentinel_state(&mut self) {
+        let mut batch = WriteBatch::default();
+        let cf_p = self.cf(CF_SENTINEL_PARAMS);
+        for item in self.db.iterator_cf(cf_p, rocksdb::IteratorMode::Start) {
+            if let Ok((key, _)) = item {
+                batch.delete_cf(cf_p, key);
+            }
+        }
+        let cf_v = self.cf(CF_SENTINEL_VOTES);
+        for item in self.db.iterator_cf(cf_v, rocksdb::IteratorMode::Start) {
+            if let Ok((key, _)) = item {
+                batch.delete_cf(cf_v, key);
+            }
+        }
+        if let Err(e) = self.db.write(batch) {
+            fatal_persistence_error("clear_all_sentinel_state", e);
+        }
+        self.sentinel_params.clear();
+        self.sentinel_votes.clear();
+    }
+
+    // vesting / governance: no dedicated CFs in this backend yet — the
+    // accessor methods are the trait defaults. The trait-level
+    // `clear_*` no-ops are correct here. If/when those tables get
+    // dedicated CFs, mirror the pattern above.
 }
 
 /// Flush account changes back to RocksDB after mutable borrows.
