@@ -18485,6 +18485,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Merge auth routes (different state type)
         .merge(auth_router)
         .fallback(fallback_404)
+        // Audit G3 (2026-05-14): explicit 2MB body cap — Axum's implicit default
+        // is also 2MB, but relying on implicit behavior means a framework upgrade
+        // could silently raise or remove it. Explicit cap is self-documenting.
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .layer(cors)
         .layer(axum::middleware::map_response(
             |mut resp: axum::http::Response<axum::body::Body>| async move {

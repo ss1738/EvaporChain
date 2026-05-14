@@ -1511,6 +1511,12 @@ impl SimpleExecutor {
         }
         self.call_depth += 1;
 
+        // Audit G2 (2026-05-14): reject oversized args before allocating a serde parse tree.
+        if tx.args.len() > 1_000_000 {
+            return Err(ExecutionError::ContractError(
+                "args JSON too large (max 1 MB)".into(),
+            ));
+        }
         let args: serde_json::Value = serde_json::from_str(&tx.args)
             .map_err(|e| ExecutionError::ContractError(format!("invalid args JSON: {e}")))?;
 
@@ -1588,6 +1594,12 @@ impl SimpleExecutor {
         self.call_depth += 1;
 
         // Parse args from JSON
+        // Audit G2 (2026-05-14): reject oversized args before serde parse.
+        if tx.args.len() > 1_000_000 {
+            return Err(ExecutionError::ScriptError(
+                "args JSON too large (max 1 MB)".into(),
+            ));
+        }
         let args: Vec<evaporchain_script::Value> = if tx.args.is_empty() || tx.args == "[]" {
             vec![]
         } else {
