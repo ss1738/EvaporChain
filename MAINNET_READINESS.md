@@ -98,19 +98,19 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
-| T3.1 | Phase C cluster deploy + bring-up | 🔴 BLOCKED on Hetzner SSH auth | OPS |
-| T3.2 | 5-node Tailscale genesis switch | 🔴 BLOCKED on T3.1 | OPS |
+| T3.1 | Phase C cluster deploy + bring-up | ✅ DONE — cluster live (PR #209, 2026-05-13); 3 Minis + 2 Hetzners, chain_id `evaporchain-tailscale-5node-1` | OPS |
+| T3.2 | 5-node Tailscale genesis switch | ✅ DONE — folded into T3.1; 5-node genesis live since PR #209 | OPS |
 
 ### Tier 0 — Critical path (mainnet-blocking)
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
 | T0.1 | Layer 4 hot-path consensus surgery (C.1-C.6) | ✅ DONE (32af53c/61c95cf) — C.1-C.4 substrate shipped 2026-05-05; C.5 (validator-determinism proptest) + C.6 (Byzantine adversarial) shipped 2026-05-11 | CONSENSUS |
-| T0.2 | Layer 4 D-track adversarial + perf + 72hr soak | 🔴 BLOCKED on T3.1 | CONSENSUS |
+| T0.2 | Layer 4 D-track adversarial + perf + 72hr soak | 🟡 OPEN — T3.1 ✅; cluster live; D.1-D.5 soak ready to run | CONSENSUS |
 | T0.3 | POST_EXEC Phase 4 enforce-mode (refuse-to-apply, not prevote-NIL — see spec note) | ✅ DONE (c191498) — flag + 4 tests; needs T0.4 fork-epoch + soak before flipping to enforce | CONSENSUS |
 | T0.4 | POST_EXEC Phase 5 block-hash inclusion | ✅ DONE (695c49c) — bit-compat fold (Some→include, None→skip); 3 hash tests | CONSENSUS |
 | T0.5 | PNT v1+ activation (privacy authoritative) | 🟡 **CODE-COMPLETE — OPS-ONLY** — sub-tasks 1, 3, 4-infra, **5** all ✅. Sub-task 5 adversarial tests live at `crates/evaporchain-execution/src/privacy_exec.rs:2168` (`pnt_v1_respend_after_window_eviction_rejected_via_anchor`) + line 2296 (Stage-1 companion); both green on Mini 1 release 2026-05-11. Remaining: operator step 2 (governance flip 0→1 at fork-epoch, needs T3.1 cluster) + operator step 6 (storage-growth telemetry post-flip, needs T3.1). No further code work for this lane. | PRIVACY |
-| T0.6 | Slashing-at-scale empirical tests | 🟡 **CODE-COMPLETE — OPS-ONLY** — all 5 adversarial scenarios in `crates/evaporchain-consensus/tests/slashing_at_scale.rs` (prevote-equivocation, precommit-equivocation, MEV-missing-refund, downtime-proportional, multi-validator cascade) — 5/5 green on Mini 1 2026-05-14. Live-cluster soak requires T3.1. | EXECUTION + STATE-DB |
+| T0.6 | Slashing-at-scale empirical tests | 🟡 **OPEN — cluster soak ready** — all 5 adversarial scenarios in `crates/evaporchain-consensus/tests/slashing_at_scale.rs` (prevote-equivocation, precommit-equivocation, MEV-missing-refund, downtime-proportional, multi-validator cascade) — 5/5 green on Mini 1 2026-05-14. T3.1 ✅; live-cluster soak can now run. | EXECUTION + STATE-DB |
 | T0.7 | Mempool + signature DoS hardening | ✅ **DONE** — all 7 vectors: V1-V4 in `dos_resistance.rs`; V5 fork-spam (`0e976f4`/`mcc_phase_d.rs`); V6 ShardSample (`8c59fad`). Runbook V4+V5 ops sections added. `tests/dos/` harness committed. Cluster soak requires T3.1. done-as-of: 2026-05-13 | NETWORK + EXECUTION |
 | T0.8 | Light-client / fast-sync against malicious snapshots | ✅ **DONE** — all 5 lane-spec adversarial fixtures shipped in `crates/evaporchain-state/tests/adversarial_snapshots.rs` and green on Mini 1 release 2026-05-11 (`adversarial_t08_forged_integrity_hash_rejected_via_missing_quorum_cert`, `..._stale_quorum_cert_from_different_snapshot_rejected`, `..._duplicate_validator_ids_in_set_rejected`, `..._truncated_zstd_payload_rejects`, `..._partial_state_withhold_nullifier_rejected_via_cert`). Covers sub-tasks 1 (5 fixtures), 2 (quorum-cert verification), 3 (integrity-hash chain validation), 4 (partial-state-withhold). | NETWORK |
 | T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | ✅ **DONE** — all 8 sub-tasks shipped. D-finish resolved (`Params<halo2_proofs::pasta::EqAffine>` = vesta::Affine IS the right verifier curve for an Fp-circuit; resolution comment at `circuit_v2.rs:997-1011`). `VerkleProverV2::{setup, prove_v2, verify_v2}` (lines 1019-1104) wire `keygen_vk` + `keygen_pk` + `create_proof` + `verify_proof` over the EccVerkleStepCircuit. Headline test `prove_v2_and_verify_v2_round_trip` re-verified green on Mini 1 release 2026-05-11 (77.40s end-to-end, k=11 IPA params). Crate is gated behind `--features v2-ecc`; default build remains V1 Poseidon path until T0.10 pulls V2 through. Earlier 2026-05-09 green run preserved in memory `evaporchain_t0_9_d_finish_done.md`. | BRIDGE-RUST |
@@ -123,18 +123,18 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
-| T1.13 | Promote conservation audit gating → mandatory | 🟡 OPEN (T0.1 ✅; needs cluster governance flip — T3.1) | CONSENSUS |
+| T1.13 | Promote conservation audit gating → mandatory | 🟡 OPEN — T0.1 ✅, T3.1 ✅; operator must POST conservation_enforcement=enforce via governance API on live cluster | CONSENSUS |
 | T1.14 | Phase 2 round-trip test (proposer-stamp == validator-apply) | ✅ DONE (9191e87) — 3 tests appended end-of-file; build verification deferred | CONSENSUS |
 | T1.15 | Paymaster Finding 1 — per-key in-flight locking | ✅ DONE (1f8c50a2) — inflight_locks per-key Mutex serialises concurrent retries; concurrent_same_key_retries_dont_double_allocate passes | PAYMASTER |
 | T1.16 | Internal audit findings reconciliation sweep | ✅ DONE (7f36b46) — `AUDIT_RECONCILIATION_2026-05-09.md` + opcode-count drift fix | AUDIT-SWEEP |
-| T1.17 | BLS key rotation under live cluster conditions | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
-| T1.18 | Validator-key passphrase migration on live nodes | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
-| T1.19 | EVPL plaintext key migration on live nodes | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
+| T1.17 | BLS key rotation under live cluster conditions | 🟡 OPEN — T3.1 ✅; cluster live; runbook exists at `validator-onboarding.md`; live rotation ready to execute | OPS-RUNBOOK |
+| T1.18 | Validator-key passphrase migration on live nodes | 🟡 OPEN — T3.1 ✅; runbook at `docs/runbooks/validator-passphrase-migration.md`; operator to run on each node | OPS-RUNBOOK |
+| T1.19 | EVPL plaintext key migration on live nodes | 🟡 OPEN — T3.1 ✅; migration procedure documented; operator to run `evaporchain-cli key-migrate` on each node | OPS-RUNBOOK |
 | T1.20 | Coverage push to ≥90% (currently ~73%) | ✅ **DONE** — 87.22% line / 88.54% function workspace-wide; 93.28% excl. wallet CLI binary (structural ceiling). All target-crate goals achieved. done-as-of: 2026-05-13 | STATE-DB |
 | T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | ✅ DONE — false-positive from audit reconciliation; both EVR docs already carry detailed implementation-status tables ahead of the spec body | docs |
-| T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
-| T1.22 | Network upgrade rehearsal (live flag-flip + rollback) | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
-| T1.23 | Mainnet genesis-amendment dry-run | 🔴 BLOCKED on T3.1 | OPS-RUNBOOK |
+| T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | ✅ DONE — `docs/runbooks/monitoring.md` + `scripts/prometheus-scrape-config.example.yml` + `scripts/grafana-dashboards/evaporchain-chain.json` (cherry-picked `a1646a7f` 2026-05-14) | OPS-RUNBOOK |
+| T1.22 | Network upgrade rehearsal (live flag-flip + rollback) | ✅ DONE — `docs/runbooks/governance-rehearsal.md` (cherry-picked `49b1a4e1` 2026-05-14) | OPS-RUNBOOK |
+| T1.23 | Mainnet genesis-amendment dry-run | 🟡 OPEN — T3.1 ✅; cluster live; runbook needed | OPS-RUNBOOK |
 
 ### Tier 2 — Defer to V1.5 (NOT blocking mainnet)
 
