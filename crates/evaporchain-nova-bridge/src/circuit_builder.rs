@@ -51,9 +51,10 @@ use crate::l_u_secondary_extract::{extract_committed_hashes_via_serde, ExtractEr
 use crate::recursive_snark_fixture::{TrivialIncrementCircuit, Scalar1, E1, E2};
 use crate::scalar_adapter::primary_to_ark_fr;
 use crate::section2_witness::extract_section2_witness;
+use crate::section3_witness::extract_section3_witness;
 use crate::verifier_circuit::NovaVerifierCircuit;
 use ark_bn254::Fr as ArkFr;
-use nova_snark::nova::RecursiveSNARK;
+use nova_snark::nova::{PublicParams, RecursiveSNARK};
 
 /// Map a real `RecursiveSNARK` fixture into the populated
 /// `NovaVerifierCircuit` witness shape — including real
@@ -101,6 +102,21 @@ pub fn build_circuit_with_section2<P: AsRef<std::path::Path>>(
     let base = build_circuit_from_fixture(rs)?;
     let s2 = extract_section2_witness(rs, pp_digest, dump_path)?;
     Ok(base.with_section2(s2))
+}
+
+/// Like [`build_circuit_from_fixture`] but also extracts the Section 3
+/// primary RelaxedR1CS witness and attaches it via
+/// `NovaVerifierCircuit::with_section3`.
+///
+/// Requires `pp` (the `PublicParams` used to generate `rs`).
+/// Serialises both `rs` and `pp` to JSON internally.
+pub fn build_circuit_with_section3(
+    rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
+    pp: &PublicParams<E1, E2, TrivialIncrementCircuit>,
+) -> Result<NovaVerifierCircuit, ExtractError> {
+    let base = build_circuit_from_fixture(rs)?;
+    let s3 = extract_section3_witness(rs, pp)?;
+    Ok(base.with_section3(s3))
 }
 
 #[cfg(test)]
@@ -204,6 +220,43 @@ mod tests {
             cs.is_satisfied().expect("is_satisfied"),
             "circuit with real section2 witness must be satisfied"
         );
+        assert_eq!(cs.num_instance_variables(), 5);
+    }
+
+    /// Section 3 integration test.
+    /// Requires PublicParams::setup (~3s) + pp JSON serialisation (~30s).
+    /// `cargo test -p evaporchain-nova-bridge build_circuit_with_section3 -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn build_circuit_with_section3_synthesizes_and_is_satisfied() {
+        use nova_snark::nova::PublicParams;
+        use nova_snark::provider::{
+            hyperkzg::EvaluationEngine as EE1,
+            ipa_pc::EvaluationEngine as EE2,
+        };
+        use nova_snark::spartan::snark::RelaxedR1CSSNARK;
+        use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
+        type S1 = RelaxedR1CSSNARK<E1, EE1<E1>>;
+        type S2 = RelaxedR1CSSNARK<E2, EE2<E2>>;
+
+        let circuit_step = crate::recursive_snark_fixture::TrivialIncrementCircuit;
+        let pp = PublicParams::<E1, E2, _>::setup(
+            &circuit_step, &*S1::ck_floor(), &*S2::ck_floor(),
+        ).expect("setup");
+
+        let rs = generate_fixture(2).expect("2-step fixture");
+        let circuit = build_circuit_with_section3(&rs, &pp).expect("build with s3");
+
+        assert!(circuit.section3.is_some(), "section3 witness must be attached");
+        let cs = ConstraintSystem::<ArkFr>::new_ref();
+        circuit
+            .generate_constraints(cs.clone())
+            .expect("synthesize with section3");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "circuit with real section3 witness must be satisfied"
+        );
+        // Public-input arity unchanged (Section 3 adds only private witnesses)
         assert_eq!(cs.num_instance_variables(), 5);
     }
 }

@@ -62,6 +62,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisE
 use thiserror::Error;
 
 use crate::section2_witness::Section2Witness;
+use crate::section3_witness::Section3Witness;
 
 /// Off-circuit structural-validation errors for [`NovaVerifierCircuit`].
 ///
@@ -146,6 +147,10 @@ pub struct NovaVerifierCircuit {
     /// enforces the primary transcript hash in-circuit. `None` for
     /// `dummy()` (trusted setup).
     pub section2: Option<Section2Witness>,
+    /// Section 3 primary RelaxedR1CS witness. When `Some`,
+    /// `generate_constraints` enforces the primary R1CS row check in-circuit.
+    /// `None` for `dummy()` (trusted setup safety).
+    pub section3: Option<Section3Witness>,
 }
 
 impl NovaVerifierCircuit {
@@ -164,12 +169,19 @@ impl NovaVerifierCircuit {
             committed_hash_primary,
             committed_hash_secondary,
             section2: None,
+            section3: None,
         }
     }
 
     /// Attach a Section 2 Neptune witness. Builder-style; returns `self`.
     pub fn with_section2(mut self, s2: Section2Witness) -> Self {
         self.section2 = Some(s2);
+        self
+    }
+
+    /// Attach a Section 3 primary RelaxedR1CS witness. Builder-style.
+    pub fn with_section3(mut self, s3: Section3Witness) -> Self {
+        self.section3 = Some(s3);
         self
     }
 
@@ -188,6 +200,7 @@ impl NovaVerifierCircuit {
             committed_hash_primary: Bn254Fr::from(0u64),
             committed_hash_secondary: Bn254Fr::from(0u64),
             section2: None,
+            section3: None,
         }
     }
 
@@ -299,28 +312,36 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
             committed_hash_primary_var.enforce_equal(&truncated)?;
         }
 
-        // ── Section 3: RelaxedR1CS satisfiability check ────────────
+        // ── Section 3: primary RelaxedR1CS row satisfiability ──────
         //
-        // TODO (Phase 2.2 step 4 of N — BESPOKE, ~3-5 days research):
-        //   Three R1CS-satisfaction checks:
-        //     1. r1cs_shape_primary.is_sat_relaxed(ck, r_U_primary,
-        //        r_W_primary)
-        //     2. r1cs_shape_secondary.is_sat_relaxed(ck, r_U_secondary,
-        //        r_W_secondary)
-        //     3. r1cs_shape_secondary.is_sat(ck, l_u_secondary,
-        //        l_w_secondary)
+        // When `section3` is present, enforce for each row i of the
+        // primary R1CS: (Az)_i * (Bz)_i == u * (Cz)_i + E_i
+        // where z = [W, u, X[0], X[1]].
         //
-        // Each is_sat / is_sat_relaxed verifies that for every row
-        // (a, b, c) of the R1CS matrix triple, <a, z>·<b, z> = <c, z>
-        // (with the relaxation slack for RelaxedR1CS). Naively
-        // encoding this in-circuit costs O(N_rows × cost_per_check)
-        // — easily 100k+ constraints if not careful.
+        // Cost: num_cons mult gates (~10k for TrivialIncrementCircuit).
+        // Witnesses: W (num_vars), E (num_cons), u — all allocated as
+        // private witnesses here; x_primary built from z0/zi public vars.
         //
-        // Open research path (the bespoke part): use a sumcheck-style
-        // protocol replay OR direct sparse-R1CS evaluation gadget.
+        // Gaps (documented in section3_witness.rs):
+        //   - Commitment checks (comm_W, comm_E) deferred: need KZG pairing.
+        //   - Secondary R1CS checks deferred: Grumpkin Fr is non-native.
         //
-        // Source: nova-snark/src/nova/mod.rs:634-665 (rayon::join
-        // wrapping the three is_sat calls).
+        // Source: nova-snark/src/nova/mod.rs:634-665
+        if let Some(ref s3) = self.section3 {
+            use crate::section3_gadget::enforce_primary_relaxed_r1cs_sat;
+            // The x_primary for the gadget is r_U_primary.X[0..2].
+            // These are allocated as private witnesses (not public inputs)
+            // because they are the primary instance's hash outputs, distinct
+            // from l_u_secondary.X[..2] which are the public inputs above.
+            let x_primary_vars: Vec<FpVar<Bn254Fr>> = s3
+                .x_primary
+                .iter()
+                .map(|&val| {
+                    FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(val))
+                })
+                .collect::<Result<_, _>>()?;
+            enforce_primary_relaxed_r1cs_sat(cs.clone(), s3, &x_primary_vars)?;
+        }
 
         Ok(())
     }

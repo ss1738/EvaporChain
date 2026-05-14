@@ -86,6 +86,14 @@ pub enum ExtractError {
         /// Underlying parser error message.
         reason: String,
     },
+
+    /// A serde operation failed during Section 3 extraction.
+    #[error("serde error: {0}")]
+    SerdeError(String),
+
+    /// A required field was missing or malformed during Section 3 extraction.
+    #[error("missing or malformed field: {0}")]
+    MissingField(String),
 }
 
 /// Extract `l_u_secondary.X[0]` and `l_u_secondary.X[1]` as
