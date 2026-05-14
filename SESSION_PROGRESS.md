@@ -4,6 +4,27 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 18) — Audit K-remainder + L-class: both clean
+
+**Focus:** K-remainder (K2/K3) + L-class (crypto primitive misuse)
+**Commits shipped:** 0 (no actionable fixes)
+**Deliverables:**
+- K2 (P2P chain_id pre-validation): PASS — gossipsub topic scoping + downstream consensus chain_id check provides adequate defense; deserialization before check is DoS surface mitigated by signature validation
+- K3-1 (height replay): PASS — old-height messages correctly rejected at `tendermint.rs:4782`
+- K3-2 (nonce mempool gap): ACCEPTED RISK — mempool has no DB, so nonce-vs-account check requires architectural refactor; attacker needs 64 collected valid victim txs (rare), effect is 1-block delay; execution-layer exact-match + per-account cap (64) + TTL eviction are adequate mitigations
+- L1 (ML-DSA nonce reuse): PASS — `pqc_dilithium` uses OS RNG + rejection sampling internally
+- L2 (BLS rogue-key): PASS — PoP enforced at validator registration via `verify_proof_of_possession`
+- L3 (BLAKE3 domain sep): FALSE POSITIVE — `blake3(pk)` is the consistent convention across 8+ sites; ML-DSA pk is fixed 1952 bytes (implicit domain distinction); no exploit path
+- L4 (VRF bias): PASS — threshold computed in u128 with no rejection-sampling issue
+- L5 (constant-time): PASS — `subtle::ConstantTimeEq` on all secret-derived comparisons
+**Empirical results:** No code changes required; both K-remainder and L-class are clean
+**Decisions made:** K3-2 accepted as low-risk; L3 false-positive (consistent convention across 8+ sites)
+**What's next:** M-class sweep (memory/resource management — unbounded allocations, stack depth, long-running resource leaks)
+**Blockers / open questions:** none
+**Cross-references:** `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 17) — Audit K4 closed; BLS vote cross-chain replay
 
 **Focus:** BLS vote message chain_id binding — cross-chain replay gap
