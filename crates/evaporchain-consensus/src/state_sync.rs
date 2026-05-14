@@ -1868,7 +1868,6 @@ mod tests {
         );
     }
 
-}
 
     #[test]
     fn t1_20_tip_response_same_peer_updates_and_builds_consensus() {
