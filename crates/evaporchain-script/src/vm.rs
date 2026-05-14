@@ -21,6 +21,21 @@ const GAS_CMP: u64 = 3;
 const GAS_LOGIC: u64 = 3;
 const GAS_JUMP: u64 = 2;
 const GAS_CALL: u64 = 10;
+/// M15 (audit 2026-05-13): size-scaled gas for O(n) builtins.
+/// Pre-fix `hash()` ran FNV-1a over up to 1 MiB under flat GAS_CALL=10
+/// — a single block could chain-stall the validator for ~13 minutes by
+/// looping a 1 MiB-string hash. The base cost stays cheap so calls on
+/// short inputs don't get over-charged; the per-32-byte rider is what
+/// makes 1 MiB inputs actually expensive. Same shape as
+/// `GAS_CONCAT_PER_32B` in the string-concat path at line ~236.
+const GAS_HASH_BASE: u64 = 10;
+const GAS_HASH_PER_32B: u64 = 1;
+/// `to_string` on a structured value walks the whole structure via
+/// Rust's `Display` impl. Use the same shape as the hash path so a
+/// contract that recursively `to_string`s a near-MAX_STRING_LEN string
+/// can't burn O(1 MiB) for `GAS_CALL=10`.
+const GAS_TOSTRING_BASE: u64 = 10;
+const GAS_TOSTRING_PER_32B: u64 = 1;
 const GAS_MAP_GET: u64 = 10;
 const GAS_MAP_SET: u64 = 20;
 const GAS_REQUIRE: u64 = 5;
@@ -57,6 +72,39 @@ pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 const MAX_MEMORY_BYTES: usize = 4_194_304; // 4 MiB
 
 // ─── VM ─────────────────────────────────────────────────────────────────────
+
+/// M15 (audit 2026-05-13): cheap upper-bound estimate for the byte
+/// length of `Display::fmt(v)`. Walks recursive Map / Array values.
+/// Used to size-scale the gas cost of `to_string`. Returns
+/// approximate bytes; bounded by the VM's MAX_MEMORY_BYTES cap on
+/// any single value, so this is O(materialised size) not O(blow-up).
+fn estimated_to_string_bytes(v: &Value) -> usize {
+    match v {
+        Value::Str(s) => s.len(),
+        // u64 → up to 20 ASCII digits
+        Value::U64(_) => 20,
+        // "true" | "false"
+        Value::Bool(_) => 5,
+        // 32-byte address → "0x" + 64 hex chars + commas/braces fluff
+        Value::Address(_) => 70,
+        // "null"
+        Value::Null => 4,
+        Value::Map(m) => {
+            // braces, commas, colons, quotes — ~6 bytes of fluff per entry
+            let fluff: usize = m.len().saturating_mul(6);
+            let entries: usize = m
+                .iter()
+                .map(|(k, val)| k.len() + estimated_to_string_bytes(val))
+                .sum();
+            fluff.saturating_add(entries).saturating_add(2)
+        }
+        Value::Array(a) => {
+            let fluff: usize = a.len().saturating_mul(2);
+            let entries: usize = a.iter().map(estimated_to_string_bytes).sum();
+            fluff.saturating_add(entries).saturating_add(2)
+        }
+    }
+}
 
 /// Stack-based virtual machine for EvaporScript bytecode.
 pub struct EvaporVM {
@@ -977,6 +1025,18 @@ impl EvaporVM {
                     Value::Address(a) => a.to_vec(),
                     _ => format!("{val:?}").into_bytes(),
                 };
+                // M15 (audit 2026-05-13): size-scaled gas. The
+                // baseline `GAS_CALL=10` for `Op::Call("hash", _)` was
+                // already paid by the caller at the dispatch site;
+                // this is the per-byte rider that makes a 1 MiB hash
+                // actually cost more than a 4-byte hash. Without it a
+                // contract could chain-stall the validator ~13 min
+                // per block by looping `hash(megabyte_str)` while
+                // gas_used stayed near 10⁷ × GAS_CALL = 10⁸ — under
+                // the DEFAULT_GAS_LIMIT.
+                let extra =
+                    (input.len() as u64).div_ceil(32).saturating_mul(GAS_HASH_PER_32B);
+                self.charge_gas(GAS_HASH_BASE.saturating_add(extra))?;
                 // Use a simple hash → u64 for in-VM use
                 let hash = {
                     let mut h: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
@@ -1013,6 +1073,17 @@ impl EvaporVM {
                     return Err(ScriptError::Runtime("to_string() takes 1 argument".into()));
                 }
                 let val = self.pop()?;
+                // M15 (audit 2026-05-13): same shape as `hash` — the
+                // Display impl walks recursive Map / Array values
+                // linearly. Charge per 32-byte slice of the input's
+                // estimated byte footprint so a 1 MiB string can't be
+                // converted for the same gas as a 4-byte one. The
+                // estimate is computed BEFORE the format! so we don't
+                // pay to_string()-builds-the-string and only then
+                // charge for it.
+                let est = estimated_to_string_bytes(&val);
+                let extra = (est as u64).div_ceil(32).saturating_mul(GAS_TOSTRING_PER_32B);
+                self.charge_gas(GAS_TOSTRING_BASE.saturating_add(extra))?;
                 let s = match val {
                     Value::Str(s) => s,
                     other => format!("{other}"),
@@ -2224,5 +2295,102 @@ contract WithStateArray {
             Value::Array(arr) => assert_eq!(arr[0], Value::U64(999)),
             other => panic!("expected array, got {other:?}"),
         }
+    }
+
+    // ── M15 (audit 2026-05-13): size-scaled gas for hash() + to_string() ──
+
+    /// 1 MiB string hashed in a tight loop must run out of gas long
+    /// before the audit's ~13-min chain-stall budget. Pre-fix: GAS_CALL
+    /// = 10 charged once per hash → 10⁶ hashes fit under
+    /// DEFAULT_GAS_LIMIT = 10⁷. Post-fix: every hash charges
+    /// GAS_HASH_BASE + ceil(1 MiB / 32) * GAS_HASH_PER_32B ≈ 32 778
+    /// gas, so DEFAULT_GAS_LIMIT caps the loop at ~305 iterations.
+    #[test]
+    fn audit_m15_hash_megabyte_input_runs_out_of_gas_in_loop() {
+        let big: String = "a".repeat(1_048_576); // 1 MiB
+        let mut ops: Vec<Op> = Vec::new();
+        // Loop body: push the megabyte string, hash it, pop the result.
+        for _ in 0..10_000 {
+            ops.push(Op::Push(Value::Str(big.clone())));
+            ops.push(Op::Call("hash".into(), 1));
+            ops.push(Op::Pop);
+        }
+        ops.push(Op::Push(Value::U64(0)));
+        ops.push(Op::Return);
+        let bytecode = make_bytecode("spam", ops);
+        let result =
+            EvaporVM::execute(&bytecode, "spam", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err(), "expected gas exhaustion");
+        let err = format!("{:?}", result.unwrap_err());
+        assert!(
+            err.contains("gas") || err.contains("Gas") || err.contains("memory"),
+            "expected gas/memory error, got: {err}"
+        );
+    }
+
+    /// Small inputs still hash cheaply — the per-32B rider only adds
+    /// 1 gas for a sub-32-byte payload.
+    #[test]
+    fn audit_m15_hash_short_input_still_cheap() {
+        let ops = vec![
+            Op::Push(Value::Str("hi".into())),
+            Op::Call("hash".into(), 1),
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx())
+            .unwrap();
+        match r.return_value {
+            Value::U64(_) => {}
+            other => panic!("expected U64 hash, got {other:?}"),
+        }
+        // Sanity: total gas burned is dominated by the per-32B rider
+        // for a 2-byte input → ~3 (push+call dispatch) + GAS_HASH_BASE
+        // (10) + 1 (rider for 2 bytes ≤ 32) + GAS_RETURN. Should fit
+        // comfortably under 50 gas.
+        assert!(r.gas_used < 200, "got {} gas — expected ≪200", r.gas_used);
+    }
+
+    /// `to_string` on a 1 MiB string must charge ~the same envelope
+    /// as `hash` so a tight `to_string(big_str)` loop also tops out.
+    #[test]
+    fn audit_m15_tostring_megabyte_input_runs_out_of_gas_in_loop() {
+        let big: String = "x".repeat(1_048_576);
+        let mut ops: Vec<Op> = Vec::new();
+        for _ in 0..10_000 {
+            ops.push(Op::Push(Value::Str(big.clone())));
+            ops.push(Op::Call("to_string".into(), 1));
+            ops.push(Op::Pop);
+        }
+        ops.push(Op::Push(Value::U64(0)));
+        ops.push(Op::Return);
+        let bytecode = make_bytecode("spam", ops);
+        let result =
+            EvaporVM::execute(&bytecode, "spam", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err(), "expected gas exhaustion");
+    }
+
+    /// The size-estimator must walk recursive Map / Array values.
+    /// A nested Map with 32 KiB of nested data should price out
+    /// substantially higher than a 4-byte Map.
+    #[test]
+    fn audit_m15_tostring_estimator_walks_recursive_value() {
+        let big_str = "z".repeat(32 * 1024);
+        let small = Value::Map({
+            let mut m = HashMap::new();
+            m.insert("k".to_string(), Value::U64(1));
+            m
+        });
+        let big = Value::Map({
+            let mut m = HashMap::new();
+            m.insert("k".to_string(), Value::Str(big_str));
+            m
+        });
+        let small_est = estimated_to_string_bytes(&small);
+        let big_est = estimated_to_string_bytes(&big);
+        assert!(
+            big_est > small_est * 100,
+            "estimator should scale with nested string size (small={small_est}, big={big_est})"
+        );
     }
 }
