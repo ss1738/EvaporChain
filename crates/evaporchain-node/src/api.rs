@@ -3913,8 +3913,13 @@ async fn post_sentinel_vote(
 
 async fn post_sentinel_tick(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<SentinelTickReq>,
 ) -> Json<SentinelParameterResp> {
+    // Audit E4: sentinel tick (parameter adjustment) must be admin-gated.
+    if let Err(_) = require_admin_auth(&headers) {
+        return Json(SentinelParameterResp { id: req.parameter_id, current: 0, min: 0, max: 0, vote_count: 0 });
+    }
     let mut db = safe_lock(&state.db);
     let votes = db.get_sentinel_votes(req.parameter_id);
     let param = match db.get_sentinel_param(req.parameter_id) {
