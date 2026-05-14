@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 9) — Audit D1 + NC1 closed; integer underflow sweep
+
+**Focus:** Integer underflow sweep across execution/consensus; NC1 regression from stashed branch landed
+**Commits shipped:** 2 (`abe1b3b4` D1, `4234bc69` NC1)
+**Deliverables:**
+- D1 (LOW): `rewards.rs:423` dust-distribution loop — `remainder -= 1` changed to `saturating_sub(1)`. Guarded by break-at-zero, but inconsistent with codebase convention; 538 execution tests pass.
+- NC1 (HIGH, regression): `submit_reveal()` PENDING_REVEALS_CAP deleted by commit `300440db` (Audit L9 apply silently dropped L10 cap). Re-applied cap + drop-at-cap guard + canary test. 943 consensus tests pass on Mini 2.
+- Underflow sweep: all balance/stake subtraction operations audited as safe — execution uses saturating_sub or balance-check guard everywhere. Only D1 needed fixing.
+- C-class overflow audit complete (C1+C2 fixed at HIGH). D-class underflow audit complete. Integer arithmetic class exhausted.
+**Empirical results:** 538 execution / 943 consensus tests green
+**What's next:** Next audit class — access control / auth bypass paths, or check remaining open MAINNET_READINESS lanes
+**Blockers / open questions:** none
+**Cross-references:** `abe1b3b4`, `4234bc69`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 8) — Audit C2 closed; supermajority u64 overflow sweep
 
 **Focus:** C1 fix prompted a sweep — found same overflow class in 5 more production supermajority checks
