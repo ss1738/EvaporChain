@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 6) — Audit B1/B2 closed; fsync gap sweep
+
+**Focus:** Sweep all `fs::write` persistence paths for missing fsync — same class as A1 (PeerBanList)
+**Commits shipped:** 1 (`b470c801`)
+**Deliverables:**
+- B1 (MEDIUM): `evaporchain-faucet ClaimStore.save()` — was temp+rename without fsync; post-rename crash could clear rate-limiting records, allowing IPs to claim again. Fixed with write_all + sync_all + rename.
+- B2 (MEDIUM): `evaporchain-consensus api::persist_pools()` — Singh Pool ledger used same missing-fsync pattern; silently reset to empty on crash. Fixed with write_all + sync_all + rename + tmp cleanup on failure.
+- Sweep found paymaster already correct (has sync_all). BanList.save() already correct (fixed in L7). Snapshot files protected by integrity hash. CLI writes are one-time setup (acceptable).
+- AUDIT_2026_05_11.md: B1/B2 rows added as CLOSED
+**Empirical results:** `cargo test -p evaporchain-consensus` — 939 passed / 0 failed
+**What's next:** Run full workspace test; check for any remaining open audit classes
+**Blockers / open questions:** none
+**Cross-references:** `b470c801`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 5) — Audit A1/A2/A3 closed; PeerBanList save hardening
 
 **Focus:** Post-L3 audit of PeerBanList.save() / new_with_path() surfaced 2 CRITICAL + 1 HIGH findings
