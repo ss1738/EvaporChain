@@ -18,10 +18,26 @@ interface ICommitCertVerifier {
     ///         math (aggregation + pairing) for those validators marked
     ///         in `signedBitmap`.
     ///
-    /// @param prevValidators        full prev set (witness; ordering matches signedBitmap MSB→LSB).
+    /// @param prevValidators        full prev set (witness; same order as
+    ///                              the producer used when packing
+    ///                              `signedBitmap` — see below).
     /// @param prevPubkeysUncompressed 128-byte uncompressed G1 point per validator,
     ///                              concatenated in the same order as prevValidators.
-    /// @param signedBitmap          big-endian byte-packed bitmap; bit `i` = validator `i` signed.
+    /// @param signedBitmap          **LSB-first-within-byte** packed bitmap.
+    ///                              Bit `i` (validator `i` signed) lives at
+    ///                              `(bitmap[i / 8] >> (i % 8)) & 1`. This
+    ///                              matches the Rust producer at
+    ///                              `evaporchain-consensus::api` (the
+    ///                              `/api/bridge/headers/:h/commit_cert`
+    ///                              endpoint returns `signed_bitmap` in
+    ///                              the same layout) and the on-chain
+    ///                              consumers `CommitCertVerifier._bitSet`,
+    ///                              `ValidatorSetRegistry._sumSignedStake`,
+    ///                              `StateMembershipAttester._sumSignedStake`.
+    ///                              L7 (audit 2026-05-13): pre-fix this
+    ///                              doc said "big-endian byte-packed
+    ///                              bitmap" / "MSB→LSB ordering" — neither
+    ///                              matches the actual code. Corrected.
     /// @param messageHash           keccak256 commitment to (DOMAIN_TAG_COMMIT,
     ///                              prevEpoch, nextValsetRoot, nextEpoch).
     /// @param aggSignature          BLS-G2 aggregate signature, EIP-2537 uncompressed (256 bytes).
