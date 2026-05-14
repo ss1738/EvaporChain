@@ -1295,7 +1295,17 @@ impl StateDB for RocksDBStateDB {
         for id in &ids_to_prune {
             batch.delete_cf(cf, id);
         }
-        if let Err(e) = self.db.write(batch) {
+        // NB5 (re-audit 2026-05-14): L5 fsync'd `commit_batch` but
+        // missed this site. `prune_before_height` runs as a
+        // maintenance op outside the per-block commit envelope, so
+        // its writes default to async — a crash between this write
+        // and the next compaction can lose the prune and leave
+        // ghost records that we already removed from the in-memory
+        // cache. Fsync the prune-batch so the in-memory and disk
+        // views agree across crash recovery.
+        let mut wopts = WriteOptions::default();
+        wopts.set_sync(true);
+        if let Err(e) = self.db.write_opt(batch, &wopts) {
             fatal_persistence_error("prune_before_height_writebatch_commit", e);
         }
 
@@ -1389,62 +1399,160 @@ impl StateDB for RocksDBStateDB {
     // `wipe_full_state_for_snapshot_restore` (default trait impl) to
     // chain them together so stale stakes / delegations / sentinel
     // votes / nullifiers / note_commitments do not survive a restore.
+    //
+    // NB1-b (re-audit 2026-05-14): pre-fix every helper constructed
+    // its own `WriteBatch` and called `self.db.write(batch)` directly
+    // — bypassing `pending_batch` entirely. Snapshot apply wraps
+    // these helpers in `begin_batch` / `commit_batch`, but the
+    // direct writes committed async, OUTSIDE the atomic envelope.
+    // On `rollback_batch` the pending_batch was dropped while the
+    // disk had already been wiped → on-disk and in-memory diverge.
+    //
+    // NB5 (re-audit 2026-05-14): the same direct writes also missed
+    // L5's `set_sync(true)` upgrade — they committed async to the
+    // OS page cache.
+    //
+    // Combined fix: when a `pending_batch` is active, merge the
+    // deletes into IT (atomicity inherited from commit_batch's
+    // fsync, NB5 covered by L5's commit_batch). When no batch is
+    // active (rare direct-call), write_opt with set_sync(true) so
+    // standalone wipes are at least durable.
 
     fn clear_all_nullifiers(&mut self) {
         let cf = self.cf(CF_NULLIFIERS);
-        let mut batch = WriteBatch::default();
-        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for (key, _) in iter.flatten() {
-            batch.delete_cf(cf, key);
-        }
-        if let Err(e) = self.db.write(batch) {
-            fatal_persistence_error("clear_all_nullifiers", e);
+        let keys: Vec<Vec<u8>> = self
+            .db
+            .iterator_cf(cf, rocksdb::IteratorMode::Start)
+            .flatten()
+            .map(|(k, _)| k.to_vec())
+            .collect();
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            for key in &keys {
+                batch.delete_cf(cf, key);
+            }
+        } else {
+            drop(guard);
+            let mut batch = WriteBatch::default();
+            for key in &keys {
+                batch.delete_cf(cf, key);
+            }
+            let mut wopts = WriteOptions::default();
+            wopts.set_sync(true);
+            if let Err(e) = self.db.write_opt(batch, &wopts) {
+                fatal_persistence_error("clear_all_nullifiers", e);
+            }
         }
         self.spent_nullifiers.clear();
     }
 
     fn clear_all_note_commitments(&mut self) {
         let cf = self.cf(CF_NOTE_COMMITMENTS);
-        let mut batch = WriteBatch::default();
-        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for (key, _) in iter.flatten() {
-            batch.delete_cf(cf, key);
-        }
-        if let Err(e) = self.db.write(batch) {
-            fatal_persistence_error("clear_all_note_commitments", e);
+        let keys: Vec<Vec<u8>> = self
+            .db
+            .iterator_cf(cf, rocksdb::IteratorMode::Start)
+            .flatten()
+            .map(|(k, _)| k.to_vec())
+            .collect();
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            for key in &keys {
+                batch.delete_cf(cf, key);
+            }
+        } else {
+            drop(guard);
+            let mut batch = WriteBatch::default();
+            for key in &keys {
+                batch.delete_cf(cf, key);
+            }
+            let mut wopts = WriteOptions::default();
+            wopts.set_sync(true);
+            if let Err(e) = self.db.write_opt(batch, &wopts) {
+                fatal_persistence_error("clear_all_note_commitments", e);
+            }
         }
         self.note_commitments.clear();
     }
 
     fn clear_all_stakes_and_delegations(&mut self) {
-        let mut batch = WriteBatch::default();
         let cf_s = self.cf(CF_STAKES);
-        for (key, _) in self.db.iterator_cf(cf_s, rocksdb::IteratorMode::Start).flatten() {
-            batch.delete_cf(cf_s, key);
-        }
         let cf_d = self.cf(CF_DELEGATIONS);
-        for (key, _) in self.db.iterator_cf(cf_d, rocksdb::IteratorMode::Start).flatten() {
-            batch.delete_cf(cf_d, key);
-        }
-        if let Err(e) = self.db.write(batch) {
-            fatal_persistence_error("clear_all_stakes_and_delegations", e);
+        let stake_keys: Vec<Vec<u8>> = self
+            .db
+            .iterator_cf(cf_s, rocksdb::IteratorMode::Start)
+            .flatten()
+            .map(|(k, _)| k.to_vec())
+            .collect();
+        let deleg_keys: Vec<Vec<u8>> = self
+            .db
+            .iterator_cf(cf_d, rocksdb::IteratorMode::Start)
+            .flatten()
+            .map(|(k, _)| k.to_vec())
+            .collect();
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            for key in &stake_keys {
+                batch.delete_cf(cf_s, key);
+            }
+            for key in &deleg_keys {
+                batch.delete_cf(cf_d, key);
+            }
+        } else {
+            drop(guard);
+            let mut batch = WriteBatch::default();
+            for key in &stake_keys {
+                batch.delete_cf(cf_s, key);
+            }
+            for key in &deleg_keys {
+                batch.delete_cf(cf_d, key);
+            }
+            let mut wopts = WriteOptions::default();
+            wopts.set_sync(true);
+            if let Err(e) = self.db.write_opt(batch, &wopts) {
+                fatal_persistence_error("clear_all_stakes_and_delegations", e);
+            }
         }
         self.stakes.clear();
         self.delegations.clear();
     }
 
     fn clear_all_sentinel_state(&mut self) {
-        let mut batch = WriteBatch::default();
         let cf_p = self.cf(CF_SENTINEL_PARAMS);
-        for (key, _) in self.db.iterator_cf(cf_p, rocksdb::IteratorMode::Start).flatten() {
-            batch.delete_cf(cf_p, key);
-        }
         let cf_v = self.cf(CF_SENTINEL_VOTES);
-        for (key, _) in self.db.iterator_cf(cf_v, rocksdb::IteratorMode::Start).flatten() {
-            batch.delete_cf(cf_v, key);
-        }
-        if let Err(e) = self.db.write(batch) {
-            fatal_persistence_error("clear_all_sentinel_state", e);
+        let param_keys: Vec<Vec<u8>> = self
+            .db
+            .iterator_cf(cf_p, rocksdb::IteratorMode::Start)
+            .flatten()
+            .map(|(k, _)| k.to_vec())
+            .collect();
+        let vote_keys: Vec<Vec<u8>> = self
+            .db
+            .iterator_cf(cf_v, rocksdb::IteratorMode::Start)
+            .flatten()
+            .map(|(k, _)| k.to_vec())
+            .collect();
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            for key in &param_keys {
+                batch.delete_cf(cf_p, key);
+            }
+            for key in &vote_keys {
+                batch.delete_cf(cf_v, key);
+            }
+        } else {
+            drop(guard);
+            let mut batch = WriteBatch::default();
+            for key in &param_keys {
+                batch.delete_cf(cf_p, key);
+            }
+            for key in &vote_keys {
+                batch.delete_cf(cf_v, key);
+            }
+            let mut wopts = WriteOptions::default();
+            wopts.set_sync(true);
+            if let Err(e) = self.db.write_opt(batch, &wopts) {
+                fatal_persistence_error("clear_all_sentinel_state", e);
+            }
         }
         self.sentinel_params.clear();
         self.sentinel_votes.clear();
