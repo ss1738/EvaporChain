@@ -62,7 +62,32 @@ fn kdf(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
 
 /// Encrypt `plaintext` with `passphrase`, returning the EVKV envelope.
 /// Plaintext may be any length up to `MAX_PLAINTEXT_LEN` (16 MiB).
+///
+/// **AUDIT_2026_05_13 M4**: this no-AAD variant is preserved for
+/// callers that intentionally want a path-portable blob (e.g., a
+/// general-purpose backup tool). Production callers should use
+/// `encrypt_blob_with_aad(plain, pass, path_aad(file_path))` so
+/// path-swap attacks are caught by the AEAD tag.
 pub fn encrypt_blob(plaintext: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, String> {
+    encrypt_blob_with_aad(plaintext, passphrase, &[])
+}
+
+/// **AUDIT_2026_05_13 M4 closure.** Encrypt with an explicit AAD —
+/// callers should pass `bls_key_store::path_aad(file_path)` so an
+/// attacker with FS-write access cannot swap an EVKV blob between
+/// paths (e.g., move a TLS key to a PoP-key location and vice-versa).
+/// The AAD is authenticated by XChaCha20-Poly1305: decrypting under
+/// a different AAD yields a tag failure, NOT a silently-mismatched
+/// blob.
+///
+/// EVK1 (BLS key store) got AAD via H5 (2026-05-02); EVKV did not.
+/// This brings the variable-length store to parity.
+pub fn encrypt_blob_with_aad(
+    plaintext: &[u8],
+    passphrase: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::Payload;
     if plaintext.len() > MAX_PLAINTEXT_LEN {
         return Err(format!(
             "plaintext too large: {} bytes (limit {})",
@@ -84,7 +109,7 @@ pub fn encrypt_blob(plaintext: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, Stri
         XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(nonce, Payload { msg: plaintext, aad })
         .map_err(|e| format!("encrypt: {e}"))?;
 
     let mut out = Vec::with_capacity(MIN_ENVELOPE_LEN + plaintext.len());
@@ -97,7 +122,24 @@ pub fn encrypt_blob(plaintext: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, Stri
 }
 
 /// Decrypt an EVKV envelope with `passphrase`. Returns the plaintext.
+///
+/// **AUDIT_2026_05_13 M4**: no-AAD variant. Production callers should
+/// use `decrypt_blob_with_aad` matching the AAD they used to encrypt.
 pub fn decrypt_blob(blob: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, String> {
+    decrypt_blob_with_aad(blob, passphrase, &[])
+}
+
+/// **AUDIT_2026_05_13 M4 closure.** Decrypt with explicit AAD.
+/// Callers must pass the SAME aad used at encrypt time
+/// (`bls_key_store::path_aad(file_path)` for production paths).
+/// A blob staged at a different path → different AAD → AEAD tag
+/// failure → safe rejection, not a silently-wrong decrypt.
+pub fn decrypt_blob_with_aad(
+    blob: &[u8],
+    passphrase: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::Payload;
     if blob.len() < MIN_ENVELOPE_LEN {
         return Err(format!(
             "blob too short for EVKV envelope: {} < {}",
@@ -142,7 +184,7 @@ pub fn decrypt_blob(blob: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, String> {
         XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(nonce, Payload { msg: ciphertext, aad })
         .map_err(|_| "decrypt failed — wrong passphrase or corrupt blob".to_string())?;
 
     if plaintext.len() != claimed_len {
@@ -328,5 +370,59 @@ mod tests {
         let out = decrypt_blob(&blob, pass).unwrap();
         assert_eq!(out.len(), big.len());
         assert_eq!(out, big);
+    }
+
+    // ─── AUDIT_2026_05_13 M4 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_m4_with_aad_round_trip() {
+        let plain = b"validator-tls-private-key-bytes-here";
+        let pass = b"node-operator-passphrase";
+        let aad_a = b"/var/evaporchain/tls.key";
+        let blob = encrypt_blob_with_aad(plain, pass, aad_a).unwrap();
+        let out = decrypt_blob_with_aad(&blob, pass, aad_a).unwrap();
+        assert_eq!(&out, plain);
+    }
+
+    #[test]
+    fn audit_m4_wrong_aad_rejected() {
+        // The whole point: a blob encrypted under path A's AAD must
+        // NOT decrypt under path B's AAD. An attacker swapping the
+        // file between paths trips this.
+        let plain = b"validator-tls-private-key";
+        let pass = b"node-operator-passphrase";
+        let aad_a = b"/var/evaporchain/tls.key";
+        let aad_b = b"/var/evaporchain/pop.key";
+        let blob = encrypt_blob_with_aad(plain, pass, aad_a).unwrap();
+        let err = decrypt_blob_with_aad(&blob, pass, aad_b).unwrap_err();
+        assert!(
+            err.contains("decrypt failed"),
+            "wrong AAD must trip AEAD tag, got: {err}"
+        );
+    }
+
+    #[test]
+    fn audit_m4_no_aad_back_compat_path_still_works() {
+        // The no-AAD path (`encrypt_blob` / `decrypt_blob`) is a thin
+        // wrapper that passes `&[]` as the AAD. Existing callers see
+        // unchanged behaviour: blob encrypted with no AAD decrypts
+        // with no AAD.
+        let plain = b"legacy operator credential";
+        let pass = b"pw";
+        let blob = encrypt_blob(plain, pass).unwrap();
+        let out = decrypt_blob(&blob, pass).unwrap();
+        assert_eq!(&out, plain);
+    }
+
+    #[test]
+    fn audit_m4_aad_blob_does_not_decrypt_under_empty_aad() {
+        // Defense in depth: a path-bound blob must NOT decrypt via
+        // the legacy no-AAD path (which uses `&[]`). This proves
+        // path-binding is binding.
+        let plain = b"the-secret";
+        let pass = b"pw";
+        let aad = b"/etc/evaporchain/secret.bin";
+        let blob = encrypt_blob_with_aad(plain, pass, aad).unwrap();
+        assert!(decrypt_blob(&blob, pass).is_err());
     }
 }
