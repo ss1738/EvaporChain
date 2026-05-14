@@ -4,6 +4,23 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 13) — Audit G2+G3 closed; serialization/body-limit sweep
+
+**Focus:** Serialization safety — explicit body cap + args allocation-DoS pre-flight
+**Commits shipped:** 1 (`59b8a2de`)
+**Deliverables:**
+- G3 CLOSED: explicit `DefaultBodyLimit::max(2MB)` layer added to `create_router`; previously relied on Axum's implicit default (silent on framework bumps)
+- G2 CLOSED: `tx.args.len() > 1_000_000` pre-flight guard in both `execute_call_contract` (lib.rs:1514) and `execute_call_script` (lib.rs:1594) — rejects multi-MB args JSON before serde allocates a parse tree; gas metering cannot defend here because the alloc happens before gas check
+- G1 + G4: G1 (request-struct field lengths) mitigated by G3 body cap; G4 (P2P 4MB cap) confirmed already present from prior session — no additional work needed
+**Empirical results:** 234/235 evaporchain-node tests pass (1 pre-existing flakey env-var race); all evaporchain-execution tests pass
+**Decisions made:**
+- G2 threshold set to 1 MB (args), body cap remains at 2 MB (request envelope); inner limit is tighter to leave headroom for outer framing fields
+**What's next:** H-class sweep (invariant/logic correctness in consensus + state transitions) or I-class (input validation at RPC boundary — method name length, contract_id format)
+**Blockers / open questions:** none
+**Cross-references:** `AUDIT_2026_05_11.md` — G2, G3 rows; commit `59b8a2de`
+
+---
+
 ## 2026-05-14 (session 12) — Audit F1 closed; panic/crash path sweep
 
 **Focus:** Panic paths in HTTP handler hot paths — `.lock().unwrap()` mutex poison + unguarded `.unwrap()` on fallible operations
