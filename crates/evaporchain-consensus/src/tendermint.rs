@@ -1125,6 +1125,14 @@ pub const BLOCK_PROD_HISTORY_CAP: usize = 1024;
 /// cheap while covering ~17 min at a 1 s slot time.
 pub const FINALITY_GAP_HISTORY_CAP: usize = 1024;
 
+/// L10 (audit 2026-05-13): cap on `pending_reveals` to bound memory
+/// under reveal-spam. Each block proposal `mem::take`s the buffer,
+/// so honest load never exceeds ~MAX_TXS_PER_BLOCK between
+/// proposals. The cap is 50 × MAX_TXS_PER_BLOCK to accommodate
+/// proposal stalls (e.g. a long consensus round on a slow network)
+/// without disrupting honest submitters.
+pub const PENDING_REVEALS_CAP: usize = 50 * MAX_TXS_PER_BLOCK;
+
 impl TendermintConsensus {
     /// Create a new Tendermint consensus engine.
     pub fn new(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
@@ -3508,7 +3516,24 @@ impl TendermintConsensus {
 
     /// Submit a reveal nonce for a previously committed encrypted transaction.
     /// The nonce will be used at the next block production to decrypt and include the tx.
+    ///
+    /// L10 (audit 2026-05-13): bounded by [`PENDING_REVEALS_CAP`].
+    /// Pre-fix any caller could push unbounded into `pending_reveals`
+    /// — the buffer drains via `mem::take` at block-proposal time, so
+    /// honest load is small, but a spam loop between proposals had
+    /// unbounded growth. At cap we silently drop the new submission
+    /// (an attacker can't predict which commitment we'll accept
+    /// anyway — `encrypted_mempool.process_reveals` already rejects
+    /// reveals without a matching commitment).
     pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) {
+        if self.pending_reveals.len() >= PENDING_REVEALS_CAP {
+            debug!(
+                commitment = hex::encode(commitment),
+                cap = PENDING_REVEALS_CAP,
+                "pending_reveals at cap — dropping submission"
+            );
+            return;
+        }
         debug!(
             commitment = hex::encode(commitment),
             "Reveal nonce submitted for encrypted tx"
@@ -23115,6 +23140,27 @@ mod t1_20_batch26 {
         tc.submit_reveal([0x03; 32], [0x33; 32]);
         assert_eq!(tc.mempool_stats().2, 3, "three reveals accumulated");
         assert_eq!(tc.pending_reveals.len(), 3);
+    }
+
+    // ── L10 (audit 2026-05-13): pending_reveals cap regression ──
+    /// Spamming `submit_reveal` past the cap must not grow the buffer
+    /// beyond `PENDING_REVEALS_CAP`. Pre-fix the buffer was unbounded.
+    #[test]
+    fn audit_l10_submit_reveal_bounded_at_cap() {
+        let mut tc = make_tc1();
+        // Synthesize unique commitments by encoding the index into the
+        // first 8 bytes — keeps each push distinct (HashSet membership
+        // isn't asserted; the test just measures growth).
+        for n in 0u32..(PENDING_REVEALS_CAP as u32 + 100) {
+            let mut commitment = [0u8; 32];
+            commitment[..4].copy_from_slice(&n.to_be_bytes());
+            tc.submit_reveal(commitment, [0u8; 32]);
+        }
+        assert_eq!(
+            tc.pending_reveals.len(),
+            PENDING_REVEALS_CAP,
+            "submit_reveal must bound at PENDING_REVEALS_CAP under spam"
+        );
     }
 
     // ── Test 3: MEV counter increments in enforce mode with grace=0 (line 5100) ──
