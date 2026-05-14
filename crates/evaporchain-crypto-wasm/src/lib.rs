@@ -165,12 +165,32 @@ pub fn ml_dsa_verify(message: &[u8], signature: &[u8], public_key: &[u8]) -> boo
     pqc_dilithium::verify(signature, message, public_key).is_ok()
 }
 
+/// Domain-separation tag for the WASM address derivation.
+///
+/// L2 (audit 2026-05-13): pre-fix the SHA-256 input was just the
+/// public-key bytes, with no DST. Any other protocol that happened
+/// to hash a similarly-shaped byte string via SHA-256 — including a
+/// future EvaporChain primitive that derives a different identifier
+/// from a public key — could in principle collide with an address
+/// at no extra cost. Prepending a domain-versioned NUL-terminated
+/// tag (matching the workspace convention used by PoHA, DA-attest,
+/// VRF, etc.) makes the address derivation collision-resistant
+/// against off-the-shelf SHA-256(pk) constructions.
+///
+/// **Breaking change for already-derived addresses:** wallets that
+/// stored an address produced by the pre-fix function MUST re-derive
+/// after this rolls out. No on-chain state references WASM-derived
+/// addresses (the server-side auth path uses BLAKE3, not this
+/// function), so the impact is local wallet UI only.
+const ADDRESS_DST: &[u8] = b"evaporchain:address:v1\0";
+
 /// Derive an EvaporChain address from a public key.
 ///
-/// address = "0x" + hex(SHA-256(publicKey))
+/// `address = "0x" + hex(SHA-256(ADDRESS_DST || publicKey))`
 #[wasm_bindgen(js_name = "deriveAddress")]
 pub fn derive_address(public_key: &[u8]) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(ADDRESS_DST);
     hasher.update(public_key);
     let hash = hasher.finalize();
     let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
@@ -378,6 +398,56 @@ mod tests {
         let addr = derive_address(&kp.public);
         assert!(addr.starts_with("0x"));
         assert_eq!(addr.len(), 66); // "0x" + 64 hex chars
+    }
+
+    // ── L2 (audit 2026-05-13): SHA-256 address derivation now uses DST ──
+
+    /// The derived address must NOT equal the bare SHA-256 of the
+    /// public key. If a future refactor removes the DST prepend, this
+    /// test fails. Pinning the audit fix.
+    #[test]
+    fn audit_l2_address_derivation_includes_dst() {
+        use sha2::{Digest, Sha256};
+        let pk = [0x42u8; 32];
+
+        // What the function produces:
+        let addr_with_dst = derive_address(&pk);
+
+        // What the pre-fix code would have produced (bare SHA-256):
+        let mut hasher = Sha256::new();
+        hasher.update(&pk);
+        let bare_hash = hasher.finalize();
+        let bare_hex: String = bare_hash.iter().map(|b| format!("{:02x}", b)).collect();
+        let bare_addr = format!("0x{}", bare_hex);
+
+        assert_ne!(
+            addr_with_dst, bare_addr,
+            "derive_address must NOT collide with bare SHA-256(pk) — DST prepend missing"
+        );
+
+        // And it must match SHA-256(DST || pk).
+        let mut hasher = Sha256::new();
+        hasher.update(ADDRESS_DST);
+        hasher.update(&pk);
+        let want_hash = hasher.finalize();
+        let want_hex: String = want_hash.iter().map(|b| format!("{:02x}", b)).collect();
+        let want_addr = format!("0x{}", want_hex);
+        assert_eq!(addr_with_dst, want_addr);
+    }
+
+    /// Address derivation is deterministic (sanity).
+    #[test]
+    fn audit_l2_address_derivation_is_deterministic() {
+        let pk = [0x77u8; 32];
+        assert_eq!(derive_address(&pk), derive_address(&pk));
+    }
+
+    /// Distinct public keys → distinct addresses.
+    #[test]
+    fn audit_l2_address_derivation_distinct_keys_distinct_addresses() {
+        let a = derive_address(&[0x01u8; 32]);
+        let b = derive_address(&[0x02u8; 32]);
+        assert_ne!(a, b);
     }
 
     #[test]
