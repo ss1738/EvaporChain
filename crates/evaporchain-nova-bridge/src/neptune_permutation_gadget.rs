@@ -35,6 +35,8 @@
 //! both width 3 (smallest non-trivial) and width 25 (the chain's
 //! Poseidon parameter).
 
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::ptr_arg)]
 use ark_ff::PrimeField;
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::eq::EqGadget;
@@ -435,7 +437,7 @@ impl<F: PrimeField> NeptuneParams<F> {
     /// Sanity-check: `compressed_ark` and `sparse_matrices` lengths
     /// match the round counts and width.
     pub fn validate(&self) -> Result<(), String> {
-        if self.full_rounds % 2 != 0 {
+        if !self.full_rounds.is_multiple_of(2) {
             return Err(format!("full_rounds ({}) must be even", self.full_rounds));
         }
         let expected_ark = self.full_rounds * self.width + self.partial_rounds;

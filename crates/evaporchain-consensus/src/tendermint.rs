@@ -2342,10 +2342,7 @@ impl TendermintConsensus {
             // multiple violation buckets to get non-trivial entropy.
             // Phase 3.5d ships the wiring; entropy-based amount
             // tuning is operator follow-up.
-            let amount = match evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]) {
-                Ok(v) => v,
-                Err(_) => 0,
-            };
+            let amount = evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]).unwrap_or_default();
             if amount > 0 {
                 let actual = self
                     .validator_set

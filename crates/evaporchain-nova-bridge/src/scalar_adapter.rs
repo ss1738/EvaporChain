@@ -77,7 +77,7 @@ pub fn ark_fr_to_primary(f: ArkFr) -> PrimaryScalar {
     let len = bigint_le.len().min(32);
     bytes[..len].copy_from_slice(&bigint_le[..len]);
     let repr = <PrimaryScalar as FfPrimeField>::Repr::from(bytes);
-    Option::from(PrimaryScalar::from_repr_vartime(repr))
+    PrimaryScalar::from_repr_vartime(repr)
         .expect("ark Fr value must canonicalise to a valid bn256::Scalar (same field)")
 }
 
@@ -111,7 +111,7 @@ pub fn ark_fr_to_secondary_lossy(f: ArkFr) -> SecondaryScalar {
     let len = bigint_le.len().min(32);
     bytes[..len].copy_from_slice(&bigint_le[..len]);
     let repr = <SecondaryScalar as FfPrimeField>::Repr::from(bytes);
-    Option::from(SecondaryScalar::from_repr_vartime(repr))
+    SecondaryScalar::from_repr_vartime(repr)
         .expect(
             "ark Fr value must canonicalise to a valid grumpkin::Scalar via byte read; \
              every byte sequence ≤ 254 bits maps to *some* grumpkin::Scalar via the \

@@ -151,7 +151,7 @@ fn parse_secondary_scalar_hex(
     let mut bytes_le_arr = [0u8; 32];
     bytes_le_arr.copy_from_slice(&bytes_le);
     let repr = <SecondaryScalar as PrimeField>::Repr::from(bytes_le_arr);
-    Option::from(SecondaryScalar::from_repr_vartime(repr)).ok_or_else(|| {
+    SecondaryScalar::from_repr_vartime(repr).ok_or_else(|| {
         ExtractError::HexParseFailed {
             index,
             reason: "bytes do not canonicalise to a valid grumpkin scalar (try byte-reverse)"

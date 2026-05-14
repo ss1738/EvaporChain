@@ -1381,10 +1381,8 @@ impl StateDB for RocksDBStateDB {
         let cf = self.cf(CF_NULLIFIERS);
         let mut batch = WriteBatch::default();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for item in iter {
-            if let Ok((key, _)) = item {
-                batch.delete_cf(cf, key);
-            }
+        for (key, _) in iter.flatten() {
+            batch.delete_cf(cf, key);
         }
         if let Err(e) = self.db.write(batch) {
             fatal_persistence_error("clear_all_nullifiers", e);
@@ -1396,10 +1394,8 @@ impl StateDB for RocksDBStateDB {
         let cf = self.cf(CF_NOTE_COMMITMENTS);
         let mut batch = WriteBatch::default();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for item in iter {
-            if let Ok((key, _)) = item {
-                batch.delete_cf(cf, key);
-            }
+        for (key, _) in iter.flatten() {
+            batch.delete_cf(cf, key);
         }
         if let Err(e) = self.db.write(batch) {
             fatal_persistence_error("clear_all_note_commitments", e);
@@ -1410,16 +1406,12 @@ impl StateDB for RocksDBStateDB {
     fn clear_all_stakes_and_delegations(&mut self) {
         let mut batch = WriteBatch::default();
         let cf_s = self.cf(CF_STAKES);
-        for item in self.db.iterator_cf(cf_s, rocksdb::IteratorMode::Start) {
-            if let Ok((key, _)) = item {
-                batch.delete_cf(cf_s, key);
-            }
+        for (key, _) in self.db.iterator_cf(cf_s, rocksdb::IteratorMode::Start).flatten() {
+            batch.delete_cf(cf_s, key);
         }
         let cf_d = self.cf(CF_DELEGATIONS);
-        for item in self.db.iterator_cf(cf_d, rocksdb::IteratorMode::Start) {
-            if let Ok((key, _)) = item {
-                batch.delete_cf(cf_d, key);
-            }
+        for (key, _) in self.db.iterator_cf(cf_d, rocksdb::IteratorMode::Start).flatten() {
+            batch.delete_cf(cf_d, key);
         }
         if let Err(e) = self.db.write(batch) {
             fatal_persistence_error("clear_all_stakes_and_delegations", e);
@@ -1431,16 +1423,12 @@ impl StateDB for RocksDBStateDB {
     fn clear_all_sentinel_state(&mut self) {
         let mut batch = WriteBatch::default();
         let cf_p = self.cf(CF_SENTINEL_PARAMS);
-        for item in self.db.iterator_cf(cf_p, rocksdb::IteratorMode::Start) {
-            if let Ok((key, _)) = item {
-                batch.delete_cf(cf_p, key);
-            }
+        for (key, _) in self.db.iterator_cf(cf_p, rocksdb::IteratorMode::Start).flatten() {
+            batch.delete_cf(cf_p, key);
         }
         let cf_v = self.cf(CF_SENTINEL_VOTES);
-        for item in self.db.iterator_cf(cf_v, rocksdb::IteratorMode::Start) {
-            if let Ok((key, _)) = item {
-                batch.delete_cf(cf_v, key);
-            }
+        for (key, _) in self.db.iterator_cf(cf_v, rocksdb::IteratorMode::Start).flatten() {
+            batch.delete_cf(cf_v, key);
         }
         if let Err(e) = self.db.write(batch) {
             fatal_persistence_error("clear_all_sentinel_state", e);

@@ -242,7 +242,7 @@ fn extract_primary_hex(parent: &Value, field_name: &str) -> Result<ArkFr, Extrac
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes_le);
     let repr = <PrimaryScalar as PrimeField>::Repr::from(arr);
-    let s = Option::from(PrimaryScalar::from_repr_vartime(repr)).ok_or_else(|| {
+    let s = PrimaryScalar::from_repr_vartime(repr).ok_or_else(|| {
         ExtractError::HexParseFailed {
             index: 0,
             reason: format!("{field_name}: bytes not a canonical primary scalar"),
@@ -267,7 +267,7 @@ fn parse_secondary_hex(hex: &str, index: usize) -> Result<SecondaryScalar, Extra
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes_le);
     let repr = <SecondaryScalar as PrimeField>::Repr::from(arr);
-    Option::from(SecondaryScalar::from_repr_vartime(repr)).ok_or_else(|| {
+    SecondaryScalar::from_repr_vartime(repr).ok_or_else(|| {
         ExtractError::HexParseFailed {
             index,
             reason: "bytes not a canonical secondary scalar".to_string(),
