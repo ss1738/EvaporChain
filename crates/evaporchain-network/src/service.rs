@@ -235,9 +235,20 @@ impl PeerRateLimiter {
     }
 }
 
+/// L3 (audit 2026-05-13): on-disk shape for persisted PeerId bans.
+/// Wall-clock `until_ms` survives reboots; `Instant` is monotonic-only.
+/// PeerId encoded as libp2p multihash base58 for stable cross-version serde.
+#[derive(Serialize, Deserialize, Default)]
+struct PeerBanFile {
+    /// peer_id_base58 -> until_ms (unix millis)
+    banned: BTreeMap<String, u64>,
+}
+
 struct PeerBanList {
     violations: HashMap<PeerId, u32>,
     banned: HashMap<PeerId, Instant>,
+    /// L3: path for cross-restart persistence. `None` = in-memory only.
+    ban_path: Option<PathBuf>,
 }
 
 impl PeerBanList {
@@ -245,6 +256,60 @@ impl PeerBanList {
         Self {
             violations: HashMap::new(),
             banned: HashMap::new(),
+            ban_path: None,
+        }
+    }
+
+    /// L3: load persisted bans from `path` and re-save on every new ban or gc prune.
+    fn new_with_path(path: PathBuf) -> Self {
+        let mut banned = HashMap::new();
+        match std::fs::read_to_string(&path) {
+            Ok(data) => match serde_json::from_str::<PeerBanFile>(&data) {
+                Ok(file) => {
+                    let now = now_ms();
+                    for (peer_b58, until_ms) in file.banned {
+                        if until_ms > now {
+                            if let Ok(pid) = peer_b58.parse::<PeerId>() {
+                                let remaining = Duration::from_millis(until_ms - now);
+                                banned.insert(pid, Instant::now() + remaining);
+                            }
+                        }
+                    }
+                }
+                Err(e) => warn!("PeerBanList: malformed ban file {:?}: {}", path, e),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!("PeerBanList: could not read ban file {:?}: {}", path, e),
+        }
+        Self {
+            violations: HashMap::new(),
+            banned,
+            ban_path: Some(path),
+        }
+    }
+
+    /// L3: persist current bans to disk. Best-effort — failures log warn.
+    fn save(&self) {
+        let path = match &self.ban_path {
+            Some(p) => p,
+            None => return,
+        };
+        let now_wall = now_ms();
+        let now_inst = Instant::now();
+        let mut file = PeerBanFile::default();
+        for (peer, expiry) in &self.banned {
+            if *expiry > now_inst {
+                let millis_left = expiry.duration_since(now_inst).as_millis() as u64;
+                file.banned.insert(peer.to_base58(), now_wall + millis_left);
+            }
+        }
+        match serde_json::to_string(&file) {
+            Ok(data) => {
+                if let Err(e) = std::fs::write(path, data) {
+                    warn!("PeerBanList: failed to save ban file {:?}: {}", path, e);
+                }
+            }
+            Err(e) => warn!("PeerBanList: failed to serialise ban file: {}", e),
         }
     }
 
@@ -266,14 +331,15 @@ impl PeerBanList {
     /// event loop.
     fn gc(&mut self) {
         let now = Instant::now();
+        let before = self.banned.len();
         self.banned.retain(|_, expiry| now < *expiry);
-        // Drop violation counts older than 2× the ban window —
-        // arbitrary but bounded. Without timestamps on violations
-        // we approximate by clearing if the ban set is empty (any
-        // currently-tracked violations couldn't have triggered a ban
-        // by now if BAN_DURATION has passed).
+        // Drop violation counts older than 2x the ban window.
         if self.banned.is_empty() && self.violations.len() > 1024 {
             self.violations.clear();
+        }
+        // L3: persist only if we actually pruned something.
+        if self.banned.len() < before {
+            self.save();
         }
     }
 
@@ -286,6 +352,8 @@ impl PeerBanList {
                 "Banned peer {peer} for {}s after {count} violations",
                 BAN_DURATION.as_secs()
             );
+            // L3: persist immediately so the ban survives a restart.
+            self.save();
             true
         } else {
             false
@@ -1369,7 +1437,18 @@ impl P2pNetworkService {
             redial_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             let mut rate_limiter = PeerRateLimiter::new();
-            let mut ban_list = PeerBanList::new();
+            let mut ban_list = {
+                // L3: derive sibling path for PeerId bans: bans.json -> bans.peers.json
+                let peer_ban_path = config.ban_list_path.as_ref().map(|p| {
+                    let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+                    let parent = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+                    parent.join(format!("{}.peers.json", stem))
+                });
+                match peer_ban_path {
+                    Some(pp) => PeerBanList::new_with_path(pp),
+                    None => PeerBanList::new(),
+                }
+            };
             let mut per_ip_tracker = PerIpConnectionTracker::new(MAX_CONNECTIONS_PER_IP);
             let mut gc_counter: u64 = 0;
             // M12 (audit 2026-05-02): rotate the picked peer for
@@ -2873,7 +2952,76 @@ mod tests {
         assert_eq!(*bl.violations.get(&peer).unwrap(), 2);
     }
 
-    // ── Sybil-resistance state ──────────────────────────────────────────
+    // -- Audit L3: PeerBanList persistence across restart ----------------
+
+    #[test]
+    fn audit_l3_peer_ban_persists_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bans.peers.json");
+
+        let peer = PeerId::random();
+        {
+            let mut bl = PeerBanList::new_with_path(path.clone());
+            for _ in 0..BAN_THRESHOLD {
+                bl.record_violation(peer);
+            }
+            assert!(bl.is_banned(&peer), "peer must be banned before drop");
+        }
+        let mut bl2 = PeerBanList::new_with_path(path);
+        assert!(bl2.is_banned(&peer), "ban must survive restart");
+    }
+
+    #[test]
+    fn audit_l3_expired_ban_is_dropped_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bans.peers.json");
+        let peer = PeerId::random();
+        let file = PeerBanFile {
+            banned: [(peer.to_base58(), 1u64)].into_iter().collect(),
+        };
+        std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
+        let mut bl = PeerBanList::new_with_path(path);
+        assert!(!bl.is_banned(&peer), "expired ban must not be loaded");
+    }
+
+    #[test]
+    fn audit_l3_missing_file_yields_empty_ban_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.peers.json");
+        let mut bl = PeerBanList::new_with_path(path);
+        assert!(!bl.is_banned(&PeerId::random()));
+    }
+
+    #[test]
+    fn audit_l3_malformed_file_yields_empty_ban_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bans.peers.json");
+        std::fs::write(&path, b"not valid json at all {{{{").unwrap();
+        let mut bl = PeerBanList::new_with_path(path);
+        assert!(!bl.is_banned(&PeerId::random()));
+    }
+
+    #[test]
+    fn audit_l3_gc_persists_after_pruning() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bans.peers.json");
+        let peer = PeerId::random();
+        let mut bl = PeerBanList::new_with_path(path.clone());
+        for _ in 0..BAN_THRESHOLD {
+            bl.record_violation(peer);
+        }
+        // Manually expire the ban.
+        bl.banned.insert(peer, Instant::now() - Duration::from_secs(1));
+        bl.gc();
+        let data = std::fs::read_to_string(&path).unwrap();
+        let file: PeerBanFile = serde_json::from_str(&data).unwrap();
+        assert!(
+            !file.banned.contains_key(&peer.to_base58()),
+            "expired peer must be pruned from file"
+        );
+    }
+
+        // ── Sybil-resistance state ──────────────────────────────────────────
 
     fn sybil_cfg() -> SybilConfig {
         SybilConfig {
