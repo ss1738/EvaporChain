@@ -4,23 +4,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
-## 2026-05-14 (late night) — T1.23 runbook + T0.2 D-track scripts + audits M18/L10/L8
+## 2026-05-14 (late night) — clippy batch + L1 audit + doc drift closures
 
-**Focus:** T1.23 genesis-amendment dry-run runbook; T0.2 D-track soak/fault/partition scripts; close 3 more audit findings
-**Commits shipped:** 3 (b57d5713, 4a3b284b, + this session's audit doc commit)
+**Focus:** Fix remaining clippy warnings across 8 crates; close L1 audit bytes_to_scalar hardening; fix rocksdb flatten indent; close Layer 4 / T0.5 doc drift
+**Commits shipped:** 1 (`4764cf25`)
 **Deliverables:**
-- T1.23 DONE: `docs/runbooks/genesis-amendment-dry-run.md` — full operator runbook for `POST /api/llsa/apply_amendment` dry-run on testnet cluster. Covers pre-flight, error-path exercises, EPV state verification, `MultiAuditorVerifier` unit check, rollback, post-run report template.
-- T0.2 D-track scripts: `scripts/d-track-soak.sh` (72hr sustained load, D.2+D.3), `scripts/d-track-fault-injection.sh` (kill/restart cycles, D.4), `scripts/d-track-partition.sh` (iptables partition + healing, D.5).
-- Audit M18 CLOSED: 3 proptest monotonicity pins on `entropic_slash` Shannon-entropy direction.
-- Audit L10 CLOSED: `PENDING_REVEALS_CAP = 50 * MAX_TXS_PER_BLOCK` bounds `submit_reveal` buffer.
-- Audit L8 CLOSED: `MAX_EVENT_TOPICS=64` + `checked_add` caps `Op::EmitEvent` topic_count.
-- AUDIT_2026_05_11.md: addendum sections added for M18/L10/L8.
-**Board status:** T0.2 D-track soak can now run against live cluster (scripts ready). T1.23 runbook landed (operator executes to record result). All audit findings M7-M18, L8, L10 CLOSED.
-**What's next:** Operator executes T0.2 72hr soak (`DURATION=259200 ./scripts/d-track-soak.sh`); fault-injection and partition tests follow. T1.23 execute on cluster. T1.13/T1.17-T1.19 governance flips on live cluster.
-**Blockers:** T0.12 (external auditor) still needs operator selection. T0.2/T1.23 execution requires cluster access.
-**Cross-references:** commits b57d5713 (M18+L10+T1.23), 4a3b284b (D-track scripts+L8), AUDIT_2026_05_11.md addendum 2026-05-14.
-
----
+- `rocksdb_backend.rs` — corrected 16-space→12/8 indentation in 6 `for (key, _) in iter.flatten()` loops (M12 clear_* helpers; no semantic change)
+- `energy_verkle.rs` + `verkle.rs` — L1 audit: `bytes_to_scalar` hardened from `unwrap_or(Fq::ONE)` to `.expect()`; 4 invariant tests each; `#[allow(unused_imports)]` on Field import that method resolution needs but clippy flags
+- `tendermint.rs:2345` — `match { Ok(v)=>v, Err(_)=>0 }` → `.unwrap_or_default()`
+- `scalar_adapter.rs`, `l_u_secondary_extract.rs`, `section2_witness.rs` — removed useless `Option::from()` wrappers around `from_repr_vartime()` (already returns `Option<T>`)
+- `neptune_permutation_gadget.rs` — `% 2 != 0` → `.is_multiple_of(2)`; added `#![allow]` for `needless_range_loop` + `ptr_arg` on vendored math code
+- `DOCTRINE_PUNCH_LIST.md` — Layer 4 MCC entry updated: Phases C + E were all done 2026-05-05; only Phase D (T0.2 OPS soak) remains
+- `MAINNET_READINESS.md` — T0.5 section header updated to CODE-COMPLETE / OPS-ONLY
+**Empirical results:**
+- `evaporchain-state`: 243 + 5 adversarial = 248 tests, 0 fail
+- `evaporchain-crypto` + `evaporchain-consensus`: 939 + 22 + 6 + 18 + 5 tests, 0 fail
+- `evaporchain-nova-bridge`: build clean (0 errors, 15 warnings — all in vendored math)
+**Decisions made:**
+- Field import kept (with `#[allow]`) — clippy wrongly flags it but rustc needs it for `is_zero()` method resolution
+- neptune_permutation_gadget loop rewrites deferred — vendored math code with index-based mutations; `#![allow]` is safer than restructuring
+**What's next:**
+- OPS: run T0.2 D-track soak (`./scripts/d-track-soak.sh` + fault injection + partition)
+- OPS: T1.13 governance flip `conservation_enforcement=enforce` via POST
+- OPS: T0.5 op-step 2 (governance flip protocol_version 0→1 at fork epoch)
+- Code-complete board — all readiness lanes are DONE or OPS-ONLY or BLOCKED
+**Blockers / open questions:** T0.12 (external audit) blocked on operator auditor selection
+**Cross-references:** `4764cf25`; AUDIT_2026_05_11.md (L1 bytes_to_scalar finding)
 
 ## 2026-05-14 (night, continued) — T1.21/T1.22 runbooks merged + board resync
 

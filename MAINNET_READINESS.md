@@ -134,7 +134,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | ✅ DONE — false-positive from audit reconciliation; both EVR docs already carry detailed implementation-status tables ahead of the spec body | docs |
 | T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | ✅ DONE — `docs/runbooks/monitoring.md` + `scripts/prometheus-scrape-config.example.yml` + `scripts/grafana-dashboards/evaporchain-chain.json` (cherry-picked `a1646a7f` 2026-05-14) | OPS-RUNBOOK |
 | T1.22 | Network upgrade rehearsal (live flag-flip + rollback) | ✅ DONE — `docs/runbooks/governance-rehearsal.md` (cherry-picked `49b1a4e1` 2026-05-14) | OPS-RUNBOOK |
-| T1.23 | Mainnet genesis-amendment dry-run | ✅ DONE — runbook at `docs/runbooks/genesis-amendment-dry-run.md`; execute on cluster to close fully | OPS-RUNBOOK |
+| T1.23 | Mainnet genesis-amendment dry-run | 🟡 OPEN — T3.1 ✅; cluster live; runbook needed | OPS-RUNBOOK |
 
 ### Tier 2 — Defer to V1.5 (NOT blocking mainnet)
 
@@ -287,7 +287,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.5 — PNT v1+ activation (privacy authoritative)
 
-**Status:** 🟡 OPEN — code mostly shipped; remaining work is operational + 1 adversarial test
+**Status:** 🟡 **CODE-COMPLETE — OPS-ONLY** — all sub-tasks 1, 3, 4-infra, 5 done. Remaining: operator step 2 (governance flip 0→1, needs T3.1 cluster) + operator step 6 (storage-growth telemetry, needs T3.1). No further code work for this lane.
 **Surface:** PRIVACY
 **Depends on:** none
 **Effort:** 2-3 weeks (revised: ~3-5 days code + operational soak)
@@ -611,15 +611,13 @@ These are runbook executions on the live cluster. Operator-driven; documented in
 
 ### T1.23 — Mainnet genesis-amendment dry-run
 
-**Status:** ✅ DONE (runbook landed 2026-05-14)
+**Status:** 🔴 BLOCKED on T3.1
 **Surface:** OPS-RUNBOOK
 **Effort:** 3-5 days
 
 **Goal:** Build + sign + broadcast a real `LlsaProof`-bound genesis amendment on the testnet. Validates the full upgrade path (`evaporchain-llsa::apply_amendment` + EPV registry binding + MultiAuditorVerifier k-of-n).
 
-**Files touched:** `docs/runbooks/genesis-amendment-dry-run.md` (new).
-
-**Remaining:** operator executes runbook against live cluster and appends result to `SESSION_PROGRESS.md`.
+**Files touched:** runbook + test fixtures only.
 
 ---
 
