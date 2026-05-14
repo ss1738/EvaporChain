@@ -4420,7 +4420,12 @@ async fn main() -> Result<()> {
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
                                     if let Err(e) = db_guard.commit_batch() {
-                                        eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
+                                        // J2 (audit 2026-05-14): roll back the in-memory
+                                        // mutations the failed batch staged so the next
+                                        // begin_batch baselines off-disk state, not the
+                                        // ghost post-write view.
+                                        eprintln!("\x1b[31mFATAL: state batch commit failed: {} — rolling back in-memory state\x1b[0m", e);
+                                        db_guard.rollback_batch();
                                     }
                                 }
 
@@ -5532,7 +5537,9 @@ async fn main() -> Result<()> {
                                         db_guard.flush_accounts();
                                         db_guard.flush_objects();
                                         if let Err(e) = db_guard.commit_batch() {
-                                            eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
+                                            // J2 (audit 2026-05-14): see other call sites.
+                                            eprintln!("\x1b[31mFATAL: state batch commit failed: {} — rolling back in-memory state\x1b[0m", e);
+                                            db_guard.rollback_batch();
                                         }
                                     }
                                     // Submit fold to async worker (gossip-
@@ -6271,7 +6278,9 @@ async fn main() -> Result<()> {
                             db_guard.flush_accounts();
                             db_guard.flush_objects();
                             if let Err(e) = db_guard.commit_batch() {
-                                eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
+                                // J2 (audit 2026-05-14): see other call sites.
+                                eprintln!("\x1b[31mFATAL: state batch commit failed: {} — rolling back in-memory state\x1b[0m", e);
+                                db_guard.rollback_batch();
                             }
 
                             let obj_count = db_guard.object_count();

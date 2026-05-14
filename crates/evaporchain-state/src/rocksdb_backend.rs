@@ -866,8 +866,23 @@ impl StateDB for RocksDBStateDB {
     /// the consensus hot path: a block that gossipsub reports
     /// committed must be on-disk before the validator votes the next
     /// height.
+    ///
+    /// J2 (audit 2026-05-14): `batch_undo` is cleared ONLY on a
+    /// successful `write_opt`. The previous implementation set
+    /// `self.batch_undo = None` before attempting the write, so a
+    /// failed `write_opt` (disk full, I/O error, fsync error) left
+    /// the caller with the `Err` return value but no working
+    /// `rollback_batch` — the in-memory mutation history was gone,
+    /// `rollback_batch` became a no-op, and in-memory state had
+    /// already moved past the (failed) write while disk had not.
+    /// Production caller `node/src/main.rs:4422` only logs `FATAL`
+    /// on error and continues, so the next `begin_batch` would
+    /// snapshot a corrupt baseline.
+    ///
+    /// Callers MUST call `rollback_batch()` if this returns `Err`
+    /// to revert the in-memory + trie state to the pre-batch
+    /// snapshot.
     fn commit_batch(&mut self) -> Result<(), String> {
-        self.batch_undo = None;
         let batch = self
             .pending_batch
             .lock()
@@ -878,7 +893,10 @@ impl StateDB for RocksDBStateDB {
         wopts.set_sync(true);
         self.db
             .write_opt(batch, &wopts)
-            .map_err(|e| format!("WriteBatch commit failed: {e}"))
+            .map_err(|e| format!("WriteBatch commit failed: {e}"))?;
+        // Only drop the undo log once the write has durably landed.
+        self.batch_undo = None;
+        Ok(())
     }
 
     /// Discard buffered writes and revert in-memory + trie state to
@@ -1666,6 +1684,35 @@ mod tests {
     fn test_commit_batch_without_begin_fails() {
         let mut db = tmp_db();
         assert!(db.commit_batch().is_err());
+    }
+
+    /// J2 (audit 2026-05-14): pin the success-path contract — after
+    /// a successful `commit_batch`, the in-memory mutations have
+    /// landed AND the undo log is cleared, so a subsequent
+    /// `commit_batch` errors ("no active batch") and
+    /// `rollback_batch` is a clean no-op that leaves committed
+    /// state intact.
+    ///
+    /// We can't unit-test the failure path here without injecting a
+    /// `write_opt` failure (RocksDB does not expose a clean
+    /// failure-injection seam). The failure-path invariant —
+    /// `batch_undo` survives a failed write so `rollback_batch`
+    /// reverts the in-memory mutations — is enforced structurally
+    /// by the ordering inside `commit_batch`: the undo log is
+    /// cleared ONLY after `write_opt` returns `Ok`.
+    #[test]
+    fn test_commit_batch_clears_undo_only_after_success() {
+        let mut db = tmp_db();
+        db.begin_batch();
+        db.put_object(make_obj(7, 100));
+        db.commit_batch().expect("write should succeed on tmp_db");
+
+        // post-success: no batch active, no undo log
+        assert!(db.commit_batch().is_err(), "no active batch after success");
+
+        // rollback after success is a clean no-op — committed object stays
+        db.rollback_batch();
+        assert!(db.get_object(&make_obj(7, 0).id).is_some());
     }
 
     #[test]
