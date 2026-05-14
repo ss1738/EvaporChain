@@ -6064,10 +6064,35 @@ impl TendermintConsensus {
                 if cutoff > 0 {
                     let pruned = self.light_cone_dag.prune_before_epoch(cutoff);
                     if pruned > 0 {
+                        // NC3 (re-audit 2026-05-14): M16's cascade
+                        // prune of `dag_round_states` fires only
+                        // inside `prune_state_branches`'s LRU
+                        // eviction loop. But `prune_before_epoch`
+                        // can orphan tips that are STILL INSIDE the
+                        // LRU cap (lowest-caliber survivors among
+                        // recently-touched), leaving stale entries
+                        // in both `state_branches` and
+                        // `dag_round_states`. The cross-fork
+                        // equivocation scan at
+                        // `record_dag_precommit` then walks those
+                        // stale entries on every precommit —
+                        // M16's claimed O(cap) per-precommit cost
+                        // no longer holds. Sweep both maps after
+                        // every epoch prune so they're coextensive
+                        // with the DAG.
+                        let before_sb = self.state_branches.len();
+                        let before_rs = self.dag_round_states.len();
+                        let dag = &self.light_cone_dag;
+                        self.state_branches.retain(|tip, _| dag.contains(tip));
+                        self.dag_round_states.retain(|tip, _| dag.contains(tip));
+                        let stale_sb = before_sb.saturating_sub(self.state_branches.len());
+                        let stale_rs = before_rs.saturating_sub(self.dag_round_states.len());
                         debug!(
                             block = block.number,
                             cutoff_epoch = cutoff,
                             pruned,
+                            stale_state_branches_dropped = stale_sb,
+                            stale_round_states_dropped = stale_rs,
                             "LightCone DAG pruned"
                         );
                     }
