@@ -4,6 +4,27 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (very late) — workspace clippy zero; full sweep complete
+
+**Focus:** Eliminate all remaining non-doc clippy warnings across 147-crate workspace
+**Commits shipped:** 3 (`2358ea0e`, `4a5041cb`, `2b2a2a91`)
+**Deliverables:**
+- `banlist.rs` + `service.rs` (network): `Error::new(Other,…)` → `Error::other(…)`; closure eta-reduced to `Error::other`
+- `tendermint.rs:6016`: `% INTERVAL == 0` → `.is_multiple_of(INTERVAL)`
+- `section2_witness.rs`: `#[allow(non_snake_case)]` on struct + fn (comm_W/comm_E are Nova protocol names)
+- `section3_witness.rs`: doc comments for `num_rows/cols/cons/vars/io`
+- `neptune_permutation_gadget.rs`: removed unused `AllocVar` import
+- `grain_lfsr.rs`, `mds_linalg.rs`, `section3_gadget.rs`: `#[allow(clippy::needless_range_loop)]` at loop sites where index is used arithmetically, not just for indexing
+**Empirical results:** `cargo clippy --workspace` → 0 non-doc warnings remaining across all 147 crates
+**Decisions made:** needless_range_loop in math code suppressed with targeted allows — converting to iterators would break the arithmetic or require unsafe restructuring of cryptographic gadgets
+**What's next:**
+- OPS: run T0.2 D-track soak (`./scripts/d-track-soak.sh TPS=1000 DURATION=259200`)
+- OPS: T1.13 governance flip `conservation_enforcement=enforce`
+- OPS: T0.5 op-step 2 (protocol_version 0→1 at fork epoch)
+- Board is fully code-complete — no further code lanes open
+**Blockers / open questions:** T0.12 (external audit) blocked on operator auditor selection; disk pressure on Mini 1 recurring (target/debug/deps 23 GB, needs periodic `rm -rf incremental` + stale rlib cleanup)
+**Cross-references:** `2358ea0e`, `4a5041cb`, `2b2a2a91`
+
 ## 2026-05-14 (late night) — clippy batch + L1 audit + doc drift closures
 
 **Focus:** Fix remaining clippy warnings across 8 crates; close L1 audit bytes_to_scalar hardening; fix rocksdb flatten indent; close Layer 4 / T0.5 doc drift
