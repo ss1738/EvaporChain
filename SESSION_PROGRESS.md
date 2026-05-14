@@ -6,6 +6,27 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-14 (morning) — T0.10 Ph2.2 Section 3 primary RelaxedR1CS row check WIRED
+
+**Focus:** Wire Section 3 primary RelaxedR1CS satisfiability into NovaVerifierCircuit::generate_constraints
+**Commits shipped:** 1 (21a96580)
+**Deliverables:**
+- section3_witness.rs (NEW): Section3Witness + extract_section3_witness(rs, pp). Extracts r_W_primary.W/E, r_U_primary.u/X, r1cs_shape_primary A/B/C (COO) from rs+pp via serde. validate_rows_native(). 3 unit tests + 1 ignore integration test.
+- section3_gadget.rs (NEW): enforce_primary_relaxed_r1cs_sat — allocates W/E as circuit witnesses; enforces (Az)_i * (Bz)_i == u * (Cz)_i + E_i per row. A/B/C as circuit constants. ~num_cons mult gates. 2 unit tests green.
+- verifier_circuit.rs: section3: Option<Section3Witness> field + with_section3() builder + enforcement block gated on section3.is_some(). dummy() keeps section3=None.
+- circuit_builder.rs: build_circuit_with_section3(rs, pp) entry point.
+- l_u_secondary_extract.rs: SerdeError + MissingField added to ExtractError.
+- lib.rs: pub mod section3_gadget/section3_witness; SCAFFOLD_VERSION -> phase-2.6-operational.
+**Empirical results:** 130 passed / 0 failed / 19 ignored in 90.94s on Mini 1.
+**Decisions made:**
+- Primary R1CS check is native BN254 Fr — no non-native arithmetic.
+- Commitment checks deferred (KZG pairing, Section 2 hash provides partial binding).
+- Secondary R1CS checks deferred (Grumpkin Fr = BN254 Fq non-native).
+**What's next:** Run ignore integration tests; T0.10 Ph2.5 Solidity smoke test.
+**Cross-references:** commit 21a96580, prior c090880e.
+
+---
+
 ## 2026-05-13 (night) — T0.10 Ph2.2 Section 2 in-circuit wiring DONE
 
 **Focus:** Wire Section 2 Neptune transcript hash into `NovaVerifierCircuit::generate_constraints` — the in-circuit enforcement that `neptune_sponge(absorb_seq).truncate_250_bits == committed_hash_primary`.
