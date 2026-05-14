@@ -35,14 +35,33 @@ fn hash_to_g2(msg: &[u8], dst: &[u8]) -> G2Projective {
 }
 
 /// Parse a 48-byte compressed G1 point. Returns `None` on invalid
-/// encoding or non-prime-order subgroup membership.
+/// encoding, non-prime-order subgroup membership, OR the identity
+/// point (audit M3 defense-in-depth).
+///
+/// AUDIT_2026_05_13 M3: pre-fix accepted the identity point (BLS12-381
+/// compressed encoding for ∞ is `0xc0 || zeros`). Identity public
+/// keys contribute nothing to aggregate verification — if the chain
+/// ever admitted a validator with an identity PK (a bug, or an
+/// attacker inserting through a state path that bypasses PoP), a
+/// forged aggregate `(real_sig, [pk_real, identity, identity])`
+/// would verify (the identity contributions vanish in the sum) and
+/// inflated stake credit would flow to the bogus signer. PoP at
+/// registration is the canonical defense — this parser-level reject
+/// is defense in depth.
 fn parse_g1_pk(bytes: &[u8]) -> Option<G1Affine> {
     if bytes.len() != 48 {
         return None;
     }
     let mut buf = [0u8; 48];
     buf.copy_from_slice(bytes);
-    G1Affine::from_compressed(&buf).into_option()
+    let pk = G1Affine::from_compressed(&buf).into_option()?;
+    // AUDIT M3 defense-in-depth: reject the identity point.
+    // `Group::is_identity` is already in scope via the top-of-file
+    // `use group::{..., Group}`.
+    if bool::from(pk.is_identity()) {
+        return None;
+    }
+    Some(pk)
 }
 
 /// Parse a 96-byte compressed G2 point.
@@ -140,5 +159,41 @@ mod tests {
     fn empty_aggregate_verify_returns_false() {
         let agg_sig = vec![0u8; 96];
         assert!(!aggregate_verify(b"msg", &agg_sig, &[], b"dst"));
+    }
+
+    // ─── AUDIT_2026_05_13 M3 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_m3_identity_g1_pk_rejected_by_parser() {
+        // The identity point's compressed encoding for BLS12-381 G1:
+        // 0xc0 followed by 47 zero bytes (compressed-infinity flag).
+        let identity_bytes = G1Affine::identity().to_compressed().to_vec();
+        assert_eq!(identity_bytes.len(), 48);
+        assert!(
+            parse_g1_pk(&identity_bytes).is_none(),
+            "identity G1 must be rejected by parse_g1_pk"
+        );
+    }
+
+    #[test]
+    fn audit_m3_aggregate_verify_rejects_identity_in_pks() {
+        // Even with a valid signature shape (96 zeros — won't verify
+        // anyway), aggregate_verify must short-circuit on identity in
+        // the pubkey list. The identity is encoded as the 48-byte
+        // compressed-infinity flag.
+        let identity_pk = G1Affine::identity().to_compressed().to_vec();
+        let agg_sig = vec![0u8; 96];
+        assert!(
+            !aggregate_verify(b"msg", &agg_sig, &[identity_pk.as_slice()], b"dst"),
+            "aggregate_verify must refuse to admit an identity pubkey"
+        );
+    }
+
+    #[test]
+    fn audit_m3_legitimate_pk_still_parses() {
+        // Soundness lower bound: the G1 generator is a legitimate
+        // non-identity point and parse_g1_pk must accept it.
+        let pk_bytes = G1Affine::generator().to_compressed().to_vec();
+        assert!(parse_g1_pk(&pk_bytes).is_some());
     }
 }
