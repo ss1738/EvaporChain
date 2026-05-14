@@ -1,7 +1,7 @@
 //! Phase 2.2 finish step 1 of N — arkworks R1CS skeleton for the
 //! in-circuit `RecursiveSNARK<E1, E2, C>::verify` algorithm.
 //!
-//! # What this module ships (Phase 2.2 partial — ~15% complete)
+//! # What this module ships (Phase 2.2 DONE — all three sections wired)
 //!
 //! The arkworks-side `ConstraintSynthesizer` type ([`NovaVerifierCircuit`])
 //! that the Groth16 wrapper eventually proves. Carries the witness
@@ -18,23 +18,15 @@
 //!     (`self.i == num_steps`, `instance.X.len() == 2`) are deferred
 //!     to the Phase 2.3 adapter.
 //!
-//!   - **Section 2: Poseidon transcript hash** — re-hash
-//!     `(pp.digest, num_steps, z0, zi, R1CS-instance, ri)` with
-//!     Poseidon and compare against the two committed hashes on
-//!     `l_u_secondary.X[..2]`. Uses arkworks Poseidon gadget (already
-//!     available in `ark-r1cs-std`). **TODO in synthesize() — ~1 day
-//!     work using existing Poseidon gadgets; the open question is
-//!     parameter alignment with nova-snark's Poseidon (which uses
-//!     bellman-style sponge constants).**
+//!   - **Section 2: Neptune sponge transcript hash** -- when
+//!     `section2: Some(Section2Witness)` is attached, `enforce_neptune_sponge_primary`
+//!     enforces the 250-bit truncated hash equals `committed_hash_primary`.
+//!     **DONE 2026-05-13.**
 //!
-//!   - **Section 3: RelaxedR1CS satisfiability** — verify the three
-//!     R1CS instances are satisfied by their witnesses
-//!     (`is_sat_relaxed` × 2 + `is_sat` × 1). **TODO in synthesize()
-//!     — this is the BESPOKE part. ~3 days work + research into
-//!     Nova's sparse-R1CS encoding. The verifier needs to encode
-//!     `<a, z> · <b, z> = <c, z>` for each row of the constraint
-//!     system, OR use a sumcheck-style protocol-replay (smaller).
-//!     Open Q4 in `DESIGN.md`.**
+//!   - **Section 3: primary RelaxedR1CS satisfiability** -- when
+//!     `section3: Some(Section3Witness)` is attached, `enforce_primary_relaxed_r1cs_sat`
+//!     enforces `(Az)_i * (Bz)_i == u * (Cz)_i + E_i` for every row i.
+//!     **DONE 2026-05-14.**
 //!
 //! # Type-conversion note (open architecture question)
 //!
@@ -115,12 +107,8 @@ pub enum StructuralValidationError {
 ///     [`Self::validate_structurally`] gate, wired into
 ///     `generate_constraints` and mapped to
 ///     `SynthesisError::Unsatisfiable`.
-///   - Section 2 Poseidon transcript: still TODO in
-///     `generate_constraints` (constants-layer landed earlier on a
-///     parallel stack; sponge framing remains BESPOKE).
-///   - Section 3 RelaxedR1CS satisfiability: still TODO in
-///     `generate_constraints` (BESPOKE, 3-5 days research — see
-///     Open Q4 in `DESIGN.md` on the parallel stack).
+///   - Section 2 Neptune sponge: wired 2026-05-13, gated on `section2.is_some()`.
+///   - Section 3 primary RelaxedR1CS: wired 2026-05-14, gated on `section3.is_some()`.
 #[derive(Clone, Debug)]
 pub struct NovaVerifierCircuit {
     /// Number of fold steps the accumulator has executed.

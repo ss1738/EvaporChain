@@ -37,15 +37,9 @@
 //! `committed_hash_primary` and `committed_hash_secondary`
 //! witness slots now bind to actual Nova accumulator state. The
 //! Groth16 proof produced via [`crate::groth16_wrapper::prove`]
-//! still verifies (because Section 2 / Section 3 are still TODO
-//! in `generate_constraints` — no constraint actually consumes
-//! these witnesses yet), but the proof is no longer the
-//! "trivial zero-witness" proof: it commits to a specific
-//! accumulator state.
-//!
-//! When Sections 2 + 3 wire up, the same `build_circuit_from_fixture`
-//! call site keeps working — at that point the proof becomes
-//! both bound AND verifying-with-soundness.
+//! still verifies with Sections 2 + 3 wired (when  / 
+//! are called).  alone (no sections) still produces
+//! a satisfied CS via the Section 1 structural gate only.
 
 use crate::l_u_secondary_extract::{extract_committed_hashes_via_serde, ExtractError};
 use crate::recursive_snark_fixture::{TrivialIncrementCircuit, Scalar1, E1, E2};
@@ -169,8 +163,7 @@ mod tests {
             .expect("synthesize real-fixture circuit");
         assert!(
             cs.is_satisfied().expect("is_satisfied"),
-            "real-fixture circuit must produce a satisfied CS today (Section 2 TODO; \
-             only Section 1 structural gate is active)"
+            "real-fixture circuit must produce a satisfied CS (Sections 2+3 wired when witness attached)"
         );
 
         // Public-input arity contract: 2 hashes + |z0| + |zi| + 1 const = 5.
