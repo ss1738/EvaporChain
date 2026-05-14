@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 14) — Audit H1 closed; input-validation sweep
+
+**Focus:** API-layer string field length caps — method names and source code
+**Commits shipped:** 1 (`6d03ec95`)
+**Deliverables:**
+- H1a CLOSED: `req.method.len() > 256` early-return in `post_call_contract` and `post_call_script`; method names have no per-byte gas, so a 2MB method name reaches engine dispatch before any gas check
+- H1b CLOSED: `req.source_code.len() > 65_536` early-return in `post_deploy_script`; admission pre-check used only flat `GAS_DEPLOY_SCRIPT` (underestimate), allowing a minimal-balance deployer to slip past the balance gate with 2MB source for the parser
+- H2 (OCC nonce race) + H4 (ArrayNew gas ordering) assessed as false positives — OCC STM conflict detection handles nonce races by design; ArrayNew validates `count < MAX_ARRAY_SIZE` before the pop loop
+**Empirical results:** 234/235 evaporchain-node tests pass (1 pre-existing flakey env-var race)
+**Decisions made:** method cap=256 bytes, source_code cap=64KB; per-byte gas metering still applies at execution for contracts under the cap
+**What's next:** I-class sweep (signature verification gaps — tx types missing sig checks, validator identity binding)
+**Blockers / open questions:** none
+**Cross-references:** `AUDIT_2026_05_11.md` — H1a, H1b rows; commit `6d03ec95`
+
+---
+
 ## 2026-05-14 (session 13) — Audit G2+G3 closed; serialization/body-limit sweep
 
 **Focus:** Serialization safety — explicit body cap + args allocation-DoS pre-flight
