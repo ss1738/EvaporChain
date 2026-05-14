@@ -12,7 +12,7 @@ use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 use evaporchain_types::{
     Account, AccountAddress, DelegationRecord, GhostRecord, ObjectId, StakeRecord, StateObject,
 };
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, WriteOptions, DB};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
@@ -855,6 +855,17 @@ impl StateDB for RocksDBStateDB {
     }
 
     /// Atomically write all buffered mutations to disk.
+    ///
+    /// L5 (audit 2026-05-13): writes via `write_opt` with `sync = true`
+    /// so the buffered batch is fsync'd to disk BEFORE this returns.
+    /// Pre-fix `self.db.write(batch)` used RocksDB's default
+    /// `WriteOptions` (sync=false), which only hit the OS page cache —
+    /// a crash between commit_batch and the next compaction/flush
+    /// would lose committed blocks. fsync is slow (1-10ms on SSD)
+    /// but block-commit durability outweighs commit throughput on
+    /// the consensus hot path: a block that gossipsub reports
+    /// committed must be on-disk before the validator votes the next
+    /// height.
     fn commit_batch(&mut self) -> Result<(), String> {
         self.batch_undo = None;
         let batch = self
@@ -863,8 +874,10 @@ impl StateDB for RocksDBStateDB {
             .unwrap()
             .take()
             .ok_or("no active batch")?;
+        let mut wopts = WriteOptions::default();
+        wopts.set_sync(true);
         self.db
-            .write(batch)
+            .write_opt(batch, &wopts)
             .map_err(|e| format!("WriteBatch commit failed: {e}"))
     }
 
@@ -2557,4 +2570,60 @@ mod tests {
         assert!(db2.has_data());
     }
 
+    // ── L5 (audit 2026-05-13): commit_batch fsync ──
+
+    /// Committed-via-`commit_batch` state survives a DB close + reopen.
+    /// Pre-fix the batch landed in the OS page cache via async write;
+    /// a hard crash before the next compaction/flush would lose it.
+    /// Post-fix `write_opt(_, set_sync(true))` fsyncs before returning,
+    /// so the data is on-disk at commit_batch's return. We can't
+    /// simulate `kill -9` from a test (no fault injection layer), but
+    /// the canonical "open → commit_batch → drop → reopen → assert
+    /// data present" shape is the contract a fsync'd write satisfies
+    /// (and an async write satisfies *probabilistically*; an explicit
+    /// fsync makes the contract deterministic).
+    #[test]
+    fn audit_l5_commit_batch_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let obj_a = make_obj(0xA1, 100);
+        let obj_b = make_obj(0xA2, 200);
+        let acc = make_account(0xAA, 5_000);
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.begin_batch();
+            db.put_object(obj_a.clone());
+            db.put_object(obj_b.clone());
+            db.put_account(acc.clone());
+            db.commit_batch().expect("commit_batch must succeed");
+        } // DB dropped here — close + flush.
+
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        assert_eq!(db2.get_object(&obj_a.id).unwrap().energy, 100);
+        assert_eq!(db2.get_object(&obj_b.id).unwrap().energy, 200);
+        assert_eq!(db2.get_account(&acc.address).unwrap().balance, 5_000);
+    }
+
+    /// Multiple sequential commit_batch calls each fsync independently.
+    /// Sanity that the WriteOptions object isn't leaking state across
+    /// commits or stalling on shared resources.
+    #[test]
+    fn audit_l5_repeated_commit_batches_all_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            for i in 0u8..20 {
+                db.begin_batch();
+                db.put_object(make_obj(i, 1_000 + i as u64));
+                db.commit_batch().expect("commit must succeed");
+            }
+        }
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        for i in 0u8..20 {
+            assert_eq!(
+                db2.get_object(&make_obj(i, 0).id).unwrap().energy,
+                1_000 + i as u64,
+                "object {i} must survive reopen"
+            );
+        }
+    }
 }
