@@ -4,6 +4,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (night) — Close audit M7/M12/M15/M16 (uncommitted fixes recovered + committed)
+
+**Focus:** Recover and commit 4 important security fixes from 2026-05-13 audit session that were implemented but never committed
+**Commits shipped:** 1 (83077c19)
+**Deliverables:**
+- M7 (`service.rs`): Gossipsub manual-validation mode — `.validate_messages()` + `report_message_validation_result` gating on every message arm. Pre-fix: gossipsub auto-forwarded junk JSON before app-layer deserialization, enabling mesh amplification.
+- M12 (`snapshot.rs` + `db.rs` + `rocksdb_backend.rs`): Snapshot apply now does a full clean-slate wipe via `wipe_full_state_for_snapshot_restore` before repopulating. Pre-fix: stakes/delegations/sentinel votes/nullifiers/note_commitments survived a fast-sync restore, leaving hybrid state with ghost stakes and blocked legitimate notes. `CommitFailed` SnapshotError variant added. RocksDB overrides all six `clear_*` helpers.
+- M15 (`vm.rs`): Size-scaled gas for `hash()` and `to_string()` builtins. Pre-fix: flat `GAS_CALL=10` for O(n) work let a 1 MiB string hash stall the validator ~13 min. Added `GAS_HASH_BASE=10 + GAS_HASH_PER_32B=1` and `estimated_to_string_bytes()` for recursive upper-bound sizing.
+- M16 (`tendermint.rs`): `dag_round_states[victim]` now cascade-pruned on LRU branch eviction. Pre-fix: every tip accumulated a permanent entry; cross-fork equivocation scan walked O(stale_tips) per precommit. Two regression tests: `audit_m16_lru_eviction_cascade_prunes_dag_round_states` + `audit_m16_repeated_eviction_keeps_dag_round_states_bounded`.
+- Fixed compile error in M16 tests: `make_consensus(1, &[1, 2, 3, 4])` → `make_tc4()` (correct helper for `mod t1_20_batch26`).
+- M17 (`tendermint.rs:5724`): `settled_refunds` set now pruned on every commit via `.retain()`. Pre-fix: ~40 bytes/entry x 10 refunds/block x 10M blocks ~ 4 GB resident on every node. Post-fix retains only entries inside `crooks_mev_refund_window_blocks`. 1 regression test `audit_m17_settled_refunds_prunes_past_refund_window`.
+- AUDIT_2026_05_11.md: addendum table added recording M7/M12/M15/M16 as CLOSED.
+**Empirical results:** consensus 989/0, network 95/0, state 129+/0, script 243+/0 — all green after 1.7 GiB disk reclaim (incremental/ cleared).
+**Decisions made:** Committed as a single atomic fix batch rather than 4 separate commits — all changes were already verified to work together pre-commit (they were from a prior session that just forgot to commit).
+**What's next:** Board is fully code-complete. T3.1 (Hetzner SSH auth) is the single remaining unblock. No further code work available without cluster access or operator auditor selection (T0.12).
+**Cross-references:** commit 83077c19, AUDIT_2026_05_11.md addendum, prior session T0.6 code-complete (724aecc7).
+
+---
+
 ---
 
 ## 2026-05-14 (evening) — T0.6 slashing-at-scale suite CODE-COMPLETE + doc-drift fixes

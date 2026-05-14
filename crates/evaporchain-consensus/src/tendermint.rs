@@ -5724,6 +5724,25 @@ impl TendermintConsensus {
             }
         }
 
+        // M17 (audit 2026-05-13): bound `settled_refunds` to the
+        // refund window. Pre-fix the set grew chain-lifetime:
+        // ~40 bytes/entry × 10 refunds/block × 10M blocks ≈ 4 GB
+        // resident on every node. Once an observation is older than
+        // `current_height - crooks_mev_refund_window_blocks`,
+        // `due_refund_txs` refuses to emit a Refund for it
+        // regardless of the settled set (see the
+        // `block_height >= oldest_settleable` filter in
+        // evaporchain-mev-detect::due_refund_txs). So entries past
+        // that cutoff are dead weight — safely droppable.
+        let refund_window = self
+            .governance_params
+            .get("crooks_mev_refund_window_blocks")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_REFUND_WINDOW_BLOCKS);
+        let prune_cutoff = block.number.saturating_sub(refund_window);
+        self.settled_refunds
+            .retain(|(source_height, _)| *source_height >= prune_cutoff);
+
         // Lambda-Fold per-block step. Each committed block contributes
         // one StepWitness {state_hash = state_root, step_energy = J,
         // observed_epoch = block.epoch}. The fold accumulator is O(1)
@@ -11095,6 +11114,130 @@ mod tests {
         assert!(
             due_after_settle.is_empty(),
             "settled observation must not re-emit"
+        );
+    }
+
+    // ── M17 (audit 2026-05-13): settled_refunds chain-lifetime growth ──
+
+    /// Stale `settled_refunds` entries (source_block_height older than
+    /// `current_height - refund_window_blocks`) must be pruned on
+    /// every commit. Pre-fix the set grew without bound — ~40
+    /// bytes/entry × 10 refunds/block × 10M blocks ≈ 4 GB resident.
+    /// Post-fix the on_block_committed path retains only entries
+    /// whose source_height is inside the refund window.
+    #[test]
+    fn audit_m17_settled_refunds_prunes_past_refund_window() {
+        use evaporchain_types::Block;
+        fn empty_block(num: u64) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+                post_state_root: None,
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Tight refund window for a small-numbers test.
+        tc.governance_set_param("crooks_mev_refund_window_blocks", "10")
+            .unwrap();
+
+        // Plant several settled refunds directly. The on_block_committed
+        // ingest path is exercised elsewhere; here we want a deterministic
+        // pre-state.
+        tc.settled_refunds.insert((100, 0)); // → cutoff at commit-height 200 keeps this OUT
+        tc.settled_refunds.insert((150, 0)); // → also OUT
+        tc.settled_refunds.insert((195, 0)); // → IN (195 ≥ 200 - 10 = 190)
+        tc.settled_refunds.insert((198, 0)); // → IN
+        assert_eq!(tc.settled_refunds.len(), 4);
+
+        // Commit a block at height 200 — prune cutoff = 200 - 10 = 190.
+        tc.on_block_committed(&empty_block(200), [0u8; 32], 0);
+
+        assert!(!tc.settled_refunds.contains(&(100, 0)), "(100,0) must be pruned");
+        assert!(!tc.settled_refunds.contains(&(150, 0)), "(150,0) must be pruned");
+        assert!(tc.settled_refunds.contains(&(195, 0)), "(195,0) inside window — keep");
+        assert!(tc.settled_refunds.contains(&(198, 0)), "(198,0) inside window — keep");
+        assert_eq!(tc.settled_refunds.len(), 2);
+    }
+
+    /// Long-running shape: drive 1 000 commit ticks at 10 refunds/tick
+    /// and verify the set never exceeds 10 × refund_window. Pre-fix
+    /// would have accumulated 10 000 entries unbounded.
+    #[test]
+    fn audit_m17_settled_refunds_bounded_under_sustained_commits() {
+        use evaporchain_types::Block;
+        fn empty_block(num: u64) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+                post_state_root: None,
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("crooks_mev_refund_window_blocks", "20")
+            .unwrap();
+
+        for h in 1u64..=1_000 {
+            for idx in 0usize..10 {
+                tc.settled_refunds.insert((h, idx));
+            }
+            tc.on_block_committed(&empty_block(h), [0u8; 32], 0);
+        }
+
+        // After 1000 ticks the set is bounded by 10 × (window + 1)
+        // = 10 × 21 = 210 entries (heights [h - window, h] inclusive,
+        // 10 idx per height). Pre-fix this would be ~10 000.
+        assert!(
+            tc.settled_refunds.len() <= 10 * 21,
+            "M17 growth-bound violated: {} entries",
+            tc.settled_refunds.len()
         );
     }
 
