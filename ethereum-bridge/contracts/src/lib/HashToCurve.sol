@@ -12,9 +12,22 @@ import {BLS381} from "./BLS381.sol";
 ///         construction for BLS12-381 G2.
 ///
 /// @dev    Domain Separation Tag (DST):
-///           "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_EVAPORCHAIN_V1"
-///         must match the DST used by EvaporChain validators when signing.
-///         (See `evaporchain-crypto::signatures::bls`.)
+///           "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_"
+///         must match the DST used by EvaporChain validators when signing
+///         state-root attestations, commit certificates, and DA
+///         attestations. This is the **non-PoP** ciphersuite; proof-of-
+///         possession uses a different DST (`BLS_POP_DST` in the Rust
+///         side at `evaporchain-crypto::signatures::BLS_POP_DST`,
+///         `..._POP_` suffix) — that one is verified off-chain at
+///         validator-onboarding time and is NOT what the bridge
+///         consumes here.
+///         (See `evaporchain-crypto::signatures::BLS_DST`.)
+///
+///         L6 (audit 2026-05-13): pre-fix this docblock said
+///         `..._POP_EVAPORCHAIN_V1` while the constant below was
+///         `..._NUL_`. The constant is authoritative — verified
+///         against the Rust producer at `signatures.rs:403`. Comment
+///         corrected to match.
 library HashToCurve {
     /// @dev Domain Separation Tag. Must match the Rust producer in
     ///      `evaporchain-crypto::signatures::BLS_DST`.
