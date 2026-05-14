@@ -29,7 +29,24 @@ contract SealedBidAuction {
 
         phase: u64 = 0
 
+        // NX4 (re-audit 2026-05-14): pre-fix the `committed` map only
+        // held a presence flag (1/0) and the bid hash supplied at
+        // commit time was discarded. `reveal` never re-derived the
+        // hash from (nominal, effective, blinding) and compared, so
+        // the "seal" of "sealed-bid" was decorative — a bidder could
+        // observe other reveals in-order on-chain and pick their own
+        // nominal/effective to beat the highest seen.
+        //
+        // Fix: keep the presence map (workspace gotcha — map defaults
+        // are U64(0) regardless of declared type; non-numeric maps
+        // need a parallel u64 presence flag to test "key exists"
+        // safely) AND store the actual commit hash in a parallel
+        // string-keyed map. Reveal recomputes
+        //   to_string(hash(blinding + ":" + to_string(nominal) +
+        //                  ":" + to_string(effective)))
+        // and rejects on mismatch.
         committed: map[address -> u64]
+        committed_hash: map[address -> string]
         revealed: map[address -> u64]
         nominal: map[address -> u64]
         effective: map[address -> u64]
@@ -65,11 +82,19 @@ contract SealedBidAuction {
     }
 
     // Commit a bid hash in phase 0. Open call; one commit per address.
+    //
+    // `commit_hash` is the bidder's pre-computed
+    //   to_string(hash(blinding + ":" + to_string(nominal) +
+    //                  ":" + to_string(effective)))
+    // computed off-chain. `reveal` will recompute the same value from
+    // the revealed inputs and require a match — that's what makes
+    // this sealed. See NX4 docstring on the state block.
     fn commit(commit_hash: string) {
         require(self.sealed == true, "auction not configured")
         require(self.phase == 0, "not in COMMIT phase")
         require(self.committed[caller] == 0, "already committed")
         self.committed[caller] = 1
+        self.committed_hash[caller] = commit_hash
         self.commit_count += 1
         emit("commit recorded")
     }
@@ -78,11 +103,27 @@ contract SealedBidAuction {
     // Nominal must clear the reserve; effective must not exceed
     // nominal (the dApp coordinator decays nominal → effective by
     // reveal-time distance from commit, so effective <= nominal always).
-    fn reveal(nominal_bid: u64, effective_bid: u64) {
+    //
+    // NX4 (re-audit 2026-05-14): `blinding` is the bidder's private
+    // entropy that turned the (nominal, effective) pair into a
+    // commitment opaque to other bidders. Pre-fix `reveal` ignored
+    // this entirely; post-fix the contract recomputes
+    //   expected = to_string(hash(blinding + ":" +
+    //                             to_string(nominal_bid) + ":" +
+    //                             to_string(effective_bid)))
+    // and requires it match the stored `committed_hash[caller]`.
+    // Without this binding, a bidder could observe other reveals
+    // in-order on-chain during phase 1 and pick their own values
+    // to beat the highest seen.
+    fn reveal(nominal_bid: u64, effective_bid: u64, blinding: string) {
         require(self.sealed == true, "auction not configured")
         require(self.phase == 1, "not in REVEAL phase")
         require(self.committed[caller] > 0, "no commit on file")
         require(self.revealed[caller] == 0, "already revealed")
+        // NX4: bind the reveal to the prior commit.
+        let preimage = blinding + ":" + to_string(nominal_bid) + ":" + to_string(effective_bid)
+        let expected = to_string(hash(preimage))
+        require(self.committed_hash[caller] == expected, "reveal does not match commit")
         require(nominal_bid >= self.reserve_price, "nominal below reserve")
         require(effective_bid <= nominal_bid, "effective cannot exceed nominal")
         self.revealed[caller] = 1
