@@ -99,10 +99,19 @@ impl ClaimStore {
 
     fn save(&self, path: &PathBuf) -> Result<()> {
         let json = serde_json::to_string_pretty(self).context("encode claim store")?;
-        // Atomic-ish write: write to .tmp + rename. Avoids leaving a
-        // half-written file if the process is killed mid-write.
+        // Audit B1 (2026-05-14): atomic write — tmp + fsync + rename.
+        // Without fsync the OS may not flush pages before the rename,
+        // and a crash can leave the claim-store silently cleared.
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).with_context(|| format!("write {}", tmp.display()))?;
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&tmp)
+                .with_context(|| format!("create {}", tmp.display()))?;
+            f.write_all(json.as_bytes())
+                .with_context(|| format!("write {}", tmp.display()))?;
+            f.sync_all()
+                .with_context(|| format!("fsync {}", tmp.display()))?;
+        }
         std::fs::rename(&tmp, path).with_context(|| format!("rename to {}", path.display()))?;
         Ok(())
     }

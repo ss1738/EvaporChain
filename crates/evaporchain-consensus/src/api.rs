@@ -13506,12 +13506,22 @@ fn persist_pools(state: &ApiState) {
     };
     drop(pools);
     let tmp = target.with_extension("bin.tmp");
-    if let Err(e) = std::fs::write(&tmp, &payload) {
-        tracing::warn!(error = %e, "singh_pools persist: tmp write failed");
-        return;
-    }
-    if let Err(e) = std::fs::rename(&tmp, &target) {
-        tracing::warn!(error = %e, "singh_pools persist: atomic rename failed");
+    // Audit B2 (2026-05-14): add fsync before rename so pages are durable
+    // before the rename commits; without it a post-rename crash can leave
+    // an empty file (OS drops unflushed pages on a power-loss).
+    {
+        use std::io::Write;
+        let result: std::io::Result<()> = (|| {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(&payload)?;
+            f.sync_all()?;
+            std::fs::rename(&tmp, &target)?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            tracing::warn!(error = %e, "singh_pools persist: write/rename failed");
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 }
 
