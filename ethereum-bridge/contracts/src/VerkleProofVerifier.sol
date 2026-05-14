@@ -34,6 +34,18 @@ contract VerkleProofVerifier {
     error EcMulFailed();
     error EcAddFailed();
     error PairingFailed();
+    /// NB4 (re-audit 2026-05-14): deployer supplied no IC bytes.
+    /// `verify()` reads `_ic_x[0]` for `vk_x` — with zero IC, every
+    /// access reverts and the contract is permanently unusable;
+    /// worse, with exactly one IC, `verify()` accepts any proof with
+    /// `publicInputs.length == 0` whose pairing closes against
+    /// `vk_x = IC[0]` alone. Reject at constructor time.
+    error EmptyVerifyingKey();
+    /// NB4: a G1 coordinate or a G2 component is outside the
+    /// BN254 base field. EIP-196 ecMul rejects this lazily at
+    /// first use; rejecting at decode time gives a clean error
+    /// at deployment / proof submission rather than mid-pairing.
+    error CoordinateNotInField(uint256 component);
 
     // ── Storage (VK, immutable after construction) ────────────────────────────
 
@@ -61,6 +73,16 @@ contract VerkleProofVerifier {
     /// @param gammaBytes  128-byte G2.
     /// @param deltaBytes  128-byte G2.
     /// @param icBytes     Array of 64-byte G1 encodings: IC[0], IC[1], …
+    ///                    Must have ≥ 1 entry (`IC[0]` is the constant
+    ///                    term of `vk_x`). NB4 (re-audit 2026-05-14):
+    ///                    pre-fix `icBytes.length == 0` deployed a
+    ///                    permanently broken verifier; `icBytes.length
+    ///                    == 1` accepted any zero-publicInput proof
+    ///                    whose pairing closed against `vk_x = IC[0]`
+    ///                    alone (the public-input MSM contributed
+    ///                    nothing). Reject the empty case at
+    ///                    construction; the arity-vs-publicInput
+    ///                    count check happens at `verify()` time.
     constructor(
         bytes memory alphaBytes,
         bytes memory betaBytes,
@@ -68,6 +90,7 @@ contract VerkleProofVerifier {
         bytes memory deltaBytes,
         bytes[] memory icBytes
     ) {
+        if (icBytes.length == 0) revert EmptyVerifyingKey();
         (_alpha_x, _alpha_y)                             = _decodeG1(alphaBytes);
         (_beta_xc1, _beta_xc0, _beta_yc1, _beta_yc0)   = _decodeG2(betaBytes);
         (_gamma_xc1, _gamma_xc0, _gamma_yc1, _gamma_yc0) = _decodeG2(gammaBytes);
@@ -215,6 +238,17 @@ contract VerkleProofVerifier {
             x := mload(add(b, 32))
             y := mload(add(b, 64))
         }
+        // NB4 (re-audit 2026-05-14): field-range check. BN254
+        // points must have both coordinates in [0, FQ_PRIME).
+        // EIP-196 ecMul rejects out-of-range coordinates lazily
+        // at first use; checking here gives a clean revert at
+        // decode time rather than mid-pairing on the first proof
+        // submission. Note that on-curve `y² == x³ + 3 (mod p)`
+        // is delegated to the precompile — adding the explicit
+        // check here costs gas every constructor / verify call
+        // and the precompile already enforces it.
+        if (x >= FQ_PRIME) revert CoordinateNotInField(x);
+        if (y >= FQ_PRIME) revert CoordinateNotInField(y);
     }
 
     function _decodeG2(bytes memory b)
@@ -227,5 +261,22 @@ contract VerkleProofVerifier {
             yc1 := mload(add(b, 96))
             yc0 := mload(add(b, 128))
         }
+        // NB4: field-range check on all four Fp components.
+        // Note: BN254 G2 subgroup membership is NOT enforced
+        // here — EIP-197 ecPairing accepts wrong-subgroup G2
+        // points (cofactor h2 ≠ 1), which is a known
+        // subgroup-confusion vector. We do NOT mitigate this
+        // contract-side; the deployer is trusted to supply VK
+        // G2 entries from a correct setup (multi-party
+        // ceremony in production, deterministic seed-0 fixture
+        // in testing). A fully-paranoid verifier would
+        // implement an EIP-2537-style explicit subgroup check
+        // via Frobenius (~50 lines + ~250k gas); not added
+        // here because the operator-trusted VK assumption
+        // already covers this attack surface.
+        if (xc1 >= FQ_PRIME) revert CoordinateNotInField(xc1);
+        if (xc0 >= FQ_PRIME) revert CoordinateNotInField(xc0);
+        if (yc1 >= FQ_PRIME) revert CoordinateNotInField(yc1);
+        if (yc0 >= FQ_PRIME) revert CoordinateNotInField(yc0);
     }
 }
