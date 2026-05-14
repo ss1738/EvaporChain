@@ -134,7 +134,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T1.X1 | EVR-20 / EVR-721 implementation-status badges (docs-only, audit follow-up) | ✅ DONE — false-positive from audit reconciliation; both EVR docs already carry detailed implementation-status tables ahead of the spec body | docs |
 | T1.21 | Cluster monitoring (Prometheus + Grafana + alerts) | ✅ DONE — `docs/runbooks/monitoring.md` + `scripts/prometheus-scrape-config.example.yml` + `scripts/grafana-dashboards/evaporchain-chain.json` (cherry-picked `a1646a7f` 2026-05-14) | OPS-RUNBOOK |
 | T1.22 | Network upgrade rehearsal (live flag-flip + rollback) | ✅ DONE — `docs/runbooks/governance-rehearsal.md` (cherry-picked `49b1a4e1` 2026-05-14) | OPS-RUNBOOK |
-| T1.23 | Mainnet genesis-amendment dry-run | 🟡 OPEN — T3.1 ✅; cluster live; runbook needed | OPS-RUNBOOK |
+| T1.23 | Mainnet genesis-amendment dry-run | 🟡 **CODE-COMPLETE — OPS-ONLY** — runbook at `docs/runbooks/genesis-amendment-dry-run.md`; operator to execute on live cluster (Step 2 + 3 + error-path tests) and commit report | OPS-RUNBOOK |
 
 ### Tier 2 — Defer to V1.5 (NOT blocking mainnet)
 
@@ -225,22 +225,22 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.2 — Layer 4 D-track (adversarial + perf + 72hr soak)
 
-**Status:** 🔴 BLOCKED on T3.1
+**Status:** 🟡 **CODE-COMPLETE — OPS-ONLY** — All 5 D-track scripts shipped. T3.1 ✅; operator must run scripts against the live cluster and commit the soak report.
 **Surface:** CONSENSUS
-**Depends on:** T3.1
-**Effort:** 1 week + 72hr wall-clock
+**Depends on:** T3.1 ✅
+**Effort:** 72hr wall-clock (scripts ready)
 
 **Sub-tasks:**
 
-- D.1 — adversarial sweep on the live cluster
-- D.2 — perf profile (target: ≥1 block/sec under 1k tx/sec mempool feed)
-- D.3 — 72-hr stability soak with live tx generator
-- D.4 — fault injection (kill one validator, restart, lockstep recovery)
-- D.5 — partition healing test
+- D.1 — ✅ CODE DONE — `scripts/d-track-adversarial.sh` (10 vectors: sig forgery, replay, conservation violation, energy overflow, malformed JSON, governance attack, nullifier replay, zero-value, address format, future-nonce). Run against live cluster.
+- D.2 — ✅ CODE DONE — `scripts/d-track-soak.sh` — perf profile (≥1 blk/s at 1k tx/s). Run: `TPS=1000 DURATION=3600 ./scripts/d-track-soak.sh`
+- D.3 — ✅ CODE DONE — `scripts/d-track-soak.sh` — 72hr stability soak. Run: `TPS=1000 DURATION=259200 ./scripts/d-track-soak.sh`
+- D.4 — ✅ CODE DONE — `scripts/d-track-fault-injection.sh` — kill/restart one validator, verify lockstep recovery.
+- D.5 — ✅ CODE DONE — `scripts/d-track-partition.sh` — network partition + healing (iptables-based; use `--interactive` if no passwordless sudo).
 
-**Files touched:** `tests/integration/`, `scripts/` (perf + soak harness)
+**Files touched:** `scripts/d-track-adversarial.sh` (D.1, new 2026-05-14), `scripts/d-track-soak.sh` (D.2+D.3), `scripts/d-track-fault-injection.sh` (D.4), `scripts/d-track-partition.sh` (D.5)
 
-**Acceptance:** soak report committed to `docs/runbooks/layer4-soak-report.md`.
+**Acceptance:** operator runs all 5 scripts against live cluster and commits soak report to `docs/runbooks/layer4-soak-report.md`.
 
 ---
 
@@ -611,9 +611,9 @@ These are runbook executions on the live cluster. Operator-driven; documented in
 
 ### T1.23 — Mainnet genesis-amendment dry-run
 
-**Status:** 🔴 BLOCKED on T3.1
+**Status:** 🟡 **CODE-COMPLETE — OPS-ONLY** — runbook at `docs/runbooks/genesis-amendment-dry-run.md`. Operator executes Steps 2-6 on live cluster and appends result to `SESSION_PROGRESS.md`.
 **Surface:** OPS-RUNBOOK
-**Effort:** 3-5 days
+**Effort:** 1-2 hours (runbook done)
 
 **Goal:** Build + sign + broadcast a real `LlsaProof`-bound genesis amendment on the testnet. Validates the full upgrade path (`evaporchain-llsa::apply_amendment` + EPV registry binding + MultiAuditorVerifier k-of-n).
 
