@@ -19,6 +19,22 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+// ─────────────────────── DST prefixes ───────────────────────────────────
+//
+// NN3 (re-audit 2026-05-14): workspace convention is
+// `evaporchain:<protocol>:<role>:v1\0`. Pre-NN3 PoHA had no DST on
+// either the cert hash or the re-attestation signing message — a
+// cross-protocol BLS replay could in principle map a re-attestation
+// signature onto an unrelated EvaporChain message that happened to
+// share the 52-byte shape.
+
+/// DST for `PoHACertificate::hash` — versioned so a future schema
+/// bump (e.g. adding a new field) bumps the suffix to `v2\0` and
+/// old/new hashes don't collide.
+pub const POHA_CERT_HASH_DST: &[u8] = b"evaporchain:poha:cert:v1\0";
+/// DST for `ReAttestation::sign_message` — same scheme.
+pub const POHA_REATTEST_DST: &[u8] = b"evaporchain:poha:reattest:v1\0";
+
 // ─────────────────────── Certificate Temperature ─────────────────────────
 
 /// Temperature classification for a PoHA certificate.
@@ -136,16 +152,55 @@ impl PoHACertificate {
     }
 
     /// Compute a 32-byte hash of this certificate for compact storage.
+    ///
+    /// NN3 (re-audit 2026-05-14): pre-fix this hash omitted
+    /// `total_stake`, `signer_ids`, `last_attested_epoch`, and
+    /// `re_attestation_count`, and lacked a DST prefix.
+    ///
+    /// **Forgery surface (pre-fix):** omitting `total_stake` while
+    /// including `attested_stake` made `is_supermajority`
+    /// (`attested * 3 ≥ total * 2`) unverifiable from the hash. An
+    /// attacker could craft a fake cert with `attested = K,
+    /// total = 2K` (NOT supermajority) that hash-matched a real cert
+    /// with `attested = K, total = K` (supermajority). Omitting
+    /// `signer_ids` likewise let a fake cert with different signers
+    /// produce the same hash — accountability loss for slashing /
+    /// re-attestation. The missing DST (M8 closed it in the audit
+    /// but the doc-level closure shipped only the `cert_hash` field,
+    /// not the prefix) put PoHA in the cross-protocol BLS replay
+    /// surface.
+    ///
+    /// Post-fix:
+    /// - All 11 security-critical fields covered.
+    /// - DST prefix `POHA_CERT_HASH_DST` per workspace convention.
+    /// - `signer_ids` length-prefixed so two certs with different
+    ///   numbers of signers can't be made to collide via padding.
+    ///
+    /// **Hard fork.** Any persisted cert hash from before this fix
+    /// will not match its post-fix recomputation. The chain's
+    /// production storage references cert_hash in CertGhost +
+    /// ReAttestation only; a migration path is to recompute on
+    /// next attestation rather than rewrite ghosts in place.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
+        hasher.update(POHA_CERT_HASH_DST);
         hasher.update(&self.block_number.to_le_bytes());
         hasher.update(&self.data_root);
         hasher.update(&self.shard_count.to_le_bytes());
         hasher.update(&self.initial_energy.to_le_bytes());
         hasher.update(&self.half_life.to_le_bytes());
         hasher.update(&self.created_epoch.to_le_bytes());
+        hasher.update(&self.last_attested_epoch.to_le_bytes());
         hasher.update(&self.attested_stake.to_le_bytes());
+        hasher.update(&self.total_stake.to_le_bytes());
+        hasher.update(&self.re_attestation_count.to_le_bytes());
         hasher.update(&self.aggregate_signature);
+        // signer_ids: length-prefix the count so two certs with
+        // different signer-list sizes can't collide via padding.
+        hasher.update(&(self.signer_ids.len() as u64).to_le_bytes());
+        for id in &self.signer_ids {
+            hasher.update(&id.to_le_bytes());
+        }
         hasher.finalize().into()
     }
 
@@ -176,13 +231,22 @@ pub struct ReAttestation {
 
 impl ReAttestation {
     /// Build the message bytes that should be signed.
+    ///
+    /// NN3 (re-audit 2026-05-14): now prefixed with
+    /// `POHA_REATTEST_DST` so the signature can never be
+    /// confused with another EvaporChain message of the same
+    /// 52-byte shape (cross-protocol BLS replay defense). M8
+    /// closed this in the audit doc at the field level (added
+    /// the `cert_hash` reference) but never landed the DST
+    /// prefix — NN3 finds the gap.
     pub fn sign_message(
         cert_hash: &[u8; 32],
         epoch: u64,
         validator_id: u64,
         shards_held: u32,
     ) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(52);
+        let mut msg = Vec::with_capacity(POHA_REATTEST_DST.len() + 52);
+        msg.extend_from_slice(POHA_REATTEST_DST);
         msg.extend_from_slice(cert_hash);
         msg.extend_from_slice(&epoch.to_le_bytes());
         msg.extend_from_slice(&validator_id.to_le_bytes());
@@ -1047,5 +1111,128 @@ mod tests {
         );
         // Active count stays 1 (overwrite, not duplicate).
         assert_eq!(store.active_count(), 1);
+    }
+
+    // ── NN3 (re-audit 2026-05-14): cert_hash field omission + DST ──
+
+    /// Construct a minimal `PoHACertificate` directly for the
+    /// per-field hash regressions below. Bypasses the PoHAStore so
+    /// we can poke individual fields to construct the forgery
+    /// pairs the audit identified.
+    fn cert_for_dst_test() -> PoHACertificate {
+        PoHACertificate {
+            block_number: 42,
+            data_root: [0xAA; 32],
+            shard_count: 8,
+            initial_energy: 1000,
+            energy: 800,
+            half_life: 100,
+            created_epoch: 5,
+            last_attested_epoch: 5,
+            attested_stake: 1_000_000,
+            total_stake: 1_000_000,
+            re_attestation_count: 0,
+            aggregate_signature: vec![0xBB; 96],
+            signer_ids: vec![1, 2, 3],
+        }
+    }
+
+    /// Pre-fix this assertion would have FAILED: omitting
+    /// `total_stake` from the hash meant a cert with
+    /// `attested=K, total=2K` (not supermajority) hash-matched a
+    /// cert with `attested=K, total=K` (supermajority). Post-fix
+    /// the same `attested` but different `total` produces a
+    /// different hash.
+    #[test]
+    fn audit_nn3_hash_includes_total_stake() {
+        let a = cert_for_dst_test();
+        let mut b = a.clone();
+        b.total_stake = 2_000_000;
+        assert_ne!(
+            a.hash(),
+            b.hash(),
+            "NN3: cert_hash MUST include total_stake (supermajority forgery defense)"
+        );
+    }
+
+    #[test]
+    fn audit_nn3_hash_includes_signer_ids() {
+        let a = cert_for_dst_test();
+        let mut b = a.clone();
+        b.signer_ids = vec![1, 2, 4]; // same length, different members
+        assert_ne!(
+            a.hash(),
+            b.hash(),
+            "NN3: cert_hash MUST include signer_ids (accountability)"
+        );
+
+        // Different length too.
+        let mut c = a.clone();
+        c.signer_ids = vec![1, 2, 3, 4];
+        assert_ne!(a.hash(), c.hash());
+    }
+
+    #[test]
+    fn audit_nn3_hash_includes_last_attested_epoch() {
+        let a = cert_for_dst_test();
+        let mut b = a.clone();
+        b.last_attested_epoch = 42;
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn audit_nn3_hash_includes_re_attestation_count() {
+        let a = cert_for_dst_test();
+        let mut b = a.clone();
+        b.re_attestation_count = 7;
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    /// Hash diverges from the bare blake3 of the legacy field set —
+    /// the DST prefix changes the output deterministically.
+    #[test]
+    fn audit_nn3_hash_uses_dst_prefix() {
+        let cert = cert_for_dst_test();
+
+        // Recompute what the pre-fix hash would have been (no DST,
+        // 7 fields only).
+        let mut pre_fix = blake3::Hasher::new();
+        pre_fix.update(&cert.block_number.to_le_bytes());
+        pre_fix.update(&cert.data_root);
+        pre_fix.update(&cert.shard_count.to_le_bytes());
+        pre_fix.update(&cert.initial_energy.to_le_bytes());
+        pre_fix.update(&cert.half_life.to_le_bytes());
+        pre_fix.update(&cert.created_epoch.to_le_bytes());
+        pre_fix.update(&cert.attested_stake.to_le_bytes());
+        pre_fix.update(&cert.aggregate_signature);
+        let pre_fix_hash: [u8; 32] = pre_fix.finalize().into();
+
+        assert_ne!(
+            cert.hash(),
+            pre_fix_hash,
+            "NN3: post-fix hash must differ from pre-fix (DST + new fields landed)"
+        );
+    }
+
+    /// `ReAttestation::sign_message` now starts with the
+    /// `POHA_REATTEST_DST` prefix.
+    #[test]
+    fn audit_nn3_reattest_message_uses_dst() {
+        let cert_hash = [0xAB; 32];
+        let msg = ReAttestation::sign_message(&cert_hash, 100, 7, 64);
+        assert!(
+            msg.starts_with(POHA_REATTEST_DST),
+            "NN3: reattest sign_message must start with POHA_REATTEST_DST"
+        );
+        // And the trailing bytes are the same shape as pre-fix.
+        let suffix = &msg[POHA_REATTEST_DST.len()..];
+        assert_eq!(suffix.len(), 52, "32 + 8 + 8 + 4 = 52");
+    }
+
+    #[test]
+    fn audit_nn3_cert_hash_remains_deterministic_under_fix() {
+        let cert = cert_for_dst_test();
+        assert_eq!(cert.hash(), cert.hash());
+        assert_ne!(cert.hash(), [0u8; 32]);
     }
 }
