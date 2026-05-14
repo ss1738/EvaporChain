@@ -1985,3 +1985,263 @@ fn enum_exhaustiveness_every_tx_variant_has_a_parity_fixture() {
         "exhaustiveness baseline: 24 Transaction variants known"
     );
 }
+
+// ─── Phase 6: adversarial × flag-flip matrix (recurrence-proof) ──────────
+//
+// Per docs/plans/EXECUTOR_PARITY_PLAN.md Phase 6: the executor-parity
+// arc's last preventative layer. Pre-Phase-6 the harness tested every
+// variant under the default governance-flag settings. Phase 6 asserts
+// that flag flips preserve parity — adversarial settings of each of
+// the 6 doctrine flags (conservation_enforcement,
+// parent_acceptance_mode, block_source_mode,
+// light_cone_state_branches_enabled, lambda_fold_mode,
+// crooks_mev_settlement_mode) on representative txs.
+//
+// Scope honesty: the full cross-product (2³·3·2² = 96 settings × 25
+// variants × N fixtures each = thousands of tests) is intractable.
+// This phase ships ONE focused fixture per governance flag exercising
+// the flag-flip behaviour on a representative tx. The structural
+// invariant: same flag setting on both executors → same post-state
+// regardless of variant.
+
+/// Build a fixture that flips `conservation_enforcement` to `"enforce"`
+/// alongside funding the actor. C5 Stage A's shielded-pool redirect
+/// means a Shield tx must still pass on both executors with enforcement
+/// active. Pre-C5-Stage-A this fixture would have failed both
+/// executors equally (a parity-clean failure mode); post-fix it
+/// passes both. Either way, parity is preserved — the recurrence-proof
+/// property.
+#[test]
+fn parity_conservation_enforcement_under_shield_with_enforce_flag() {
+    let fixture = ParityFixture {
+        name: "conservation-enforce-shield",
+        seed: |db| {
+            fund(db, 50, 10_000);
+            db.put_governance_param("conservation_enforcement".into(), "enforce".into());
+        },
+        transaction: Transaction::Shield(evaporchain_types::ShieldTx {
+            from: addr(50),
+            amount: 1_000,
+            nonce: 0,
+            note_owner_hash: [0xAB; 32],
+            value_blinding: [0xCD; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_block_source_mode_antichain_with_transfer() {
+    // `block_source_mode = "antichain"` activates the antichain mempool
+    // post-FIFO projection for proposers. Both executors should run a
+    // standalone Transfer identically regardless of the flag (it
+    // affects proposal building, not block execution).
+    let fixture = ParityFixture {
+        name: "block-source-mode-antichain",
+        seed: |db| {
+            fund(db, 51, 5_000);
+            db.put_governance_param("block_source_mode".into(), "antichain".into());
+        },
+        transaction: Transaction::Transfer(TransferTx {
+            from: addr(51),
+            to: addr(52),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_parent_acceptance_mode_mcc_with_transfer() {
+    // `parent_acceptance_mode = "mcc"` changes proposal-acceptance
+    // semantics but should leave tx-level execution untouched.
+    let fixture = ParityFixture {
+        name: "parent-acceptance-mode-mcc",
+        seed: |db| {
+            fund(db, 53, 5_000);
+            db.put_governance_param("parent_acceptance_mode".into(), "mcc".into());
+        },
+        transaction: Transaction::Transfer(TransferTx {
+            from: addr(53),
+            to: addr(54),
+            amount: 50,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_light_cone_branches_enabled_with_transfer() {
+    let fixture = ParityFixture {
+        name: "light-cone-branches-enabled",
+        seed: |db| {
+            fund(db, 55, 5_000);
+            db.put_governance_param(
+                "light_cone_state_branches_enabled".into(),
+                "true".into(),
+            );
+        },
+        transaction: Transaction::Transfer(TransferTx {
+            from: addr(55),
+            to: addr(56),
+            amount: 75,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_lambda_fold_mode_nova_with_transfer() {
+    let fixture = ParityFixture {
+        name: "lambda-fold-mode-nova",
+        seed: |db| {
+            fund(db, 57, 5_000);
+            db.put_governance_param("lambda_fold_mode".into(), "nova".into());
+        },
+        transaction: Transaction::Transfer(TransferTx {
+            from: addr(57),
+            to: addr(58),
+            amount: 25,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_crooks_mev_settlement_enforce_with_transfer() {
+    // `crooks_mev_settlement_mode = "enforce"` activates the MEV
+    // refund validation gate. For a standalone Transfer (no MEV
+    // observation pending), validation is a no-op and both executors
+    // must commit identically. Post-H13 (PR #240), disputes are
+    // stripped from `validate_block_refunds` so the flag-flip is
+    // parity-safe.
+    let fixture = ParityFixture {
+        name: "crooks-mev-settlement-enforce",
+        seed: |db| {
+            fund(db, 59, 5_000);
+            db.put_governance_param("crooks_mev_settlement_mode".into(), "enforce".into());
+        },
+        transaction: Transaction::Transfer(TransferTx {
+            from: addr(59),
+            to: addr(60),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+// ─── Adversarial × flag-flip combinations ──────────────────────────────
+
+#[test]
+fn parity_shield_zero_amount_under_enforce() {
+    // Adversarial: zero-amount Shield under conservation_enforcement =
+    // "enforce". Both executors must reject identically before any
+    // shielded-pool mutation; the C5 Stage A redirect is a no-op when
+    // the tx is rejected pre-mutation.
+    let fixture = ParityFixture {
+        name: "shield-zero-amount-under-enforce",
+        seed: |db| {
+            fund(db, 61, 10_000);
+            db.put_governance_param("conservation_enforcement".into(), "enforce".into());
+        },
+        transaction: Transaction::Shield(evaporchain_types::ShieldTx {
+            from: addr(61),
+            amount: 0,
+            nonce: 0,
+            note_owner_hash: [0xAB; 32],
+            value_blinding: [0xCD; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_transfer_insufficient_balance_under_enforce() {
+    let fixture = ParityFixture {
+        name: "transfer-insufficient-balance-under-enforce",
+        seed: |db| {
+            fund(db, 62, 50);
+            db.put_governance_param("conservation_enforcement".into(), "enforce".into());
+        },
+        transaction: Transaction::Transfer(TransferTx {
+            from: addr(62),
+            to: addr(63),
+            amount: 5_000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_validator_stake_zero_amount_under_enforce() {
+    let fixture = ParityFixture {
+        name: "validator-stake-zero-under-enforce",
+        seed: |db| {
+            fund(db, 64, 10_000);
+            db.put_governance_param("conservation_enforcement".into(), "enforce".into());
+        },
+        transaction: Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(64),
+            stake_amount: 0,
+            validator_id: 1,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
