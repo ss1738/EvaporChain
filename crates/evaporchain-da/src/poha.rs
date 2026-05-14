@@ -131,7 +131,8 @@ impl PoHACertificate {
 
     /// Check if this certificate has supermajority attestation.
     pub fn is_supermajority(&self) -> bool {
-        self.attested_stake * 3 >= self.total_stake * 2
+        // Audit C2: u128 to prevent wrap when stake > u64::MAX/3.
+        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
     }
 
     /// Compute a 32-byte hash of this certificate for compact storage.

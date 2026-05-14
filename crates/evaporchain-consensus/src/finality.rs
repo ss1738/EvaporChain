@@ -54,7 +54,8 @@ impl FinalityRecord {
 
     /// Whether this record has supermajority (2/3+).
     pub fn has_supermajority(&self) -> bool {
-        self.signing_stake * 3 > self.total_stake * 2
+        // Audit C2: u128 to prevent wrap when stake > u64::MAX/2.
+        (self.signing_stake as u128) * 3 > (self.total_stake as u128) * 2
     }
 }
 
@@ -293,7 +294,8 @@ impl FinalityTracker {
         if certificate.signer_ids.is_empty() {
             return false; // Reject finality without any signers
         }
-        if total_stake > 0 && signing_stake * 3 < total_stake * 2 {
+        // Audit C2: u128 to prevent wrap when stake > u64::MAX/2.
+        if total_stake > 0 && (signing_stake as u128) * 3 < (total_stake as u128) * 2 {
             return false; // Reject finality without 2/3 stake
         }
 
@@ -897,4 +899,29 @@ mod tests {
         };
         assert!((rec.participation_rate() - 0.75).abs() < 1e-9);
     }
+
+    // Audit C2: has_supermajority must not overflow when stakes are near u64::MAX.
+    #[test]
+    fn audit_c2_has_supermajority_no_overflow_near_u64_max() {
+        let total: u64 = u64::MAX / 2 + 1; // above the old overflow boundary
+        // 2/3 of total (rounded up) — just enough for supermajority
+        let attested: u64 = ((total as u128 * 2 + 2) / 3) as u64;
+        let dummy_cert = make_cert(1, [0u8; 32], vec![]);
+        let rec = FinalityRecord {
+            height: 1,
+            block_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            epoch: 0,
+            finalized_at: 0,
+            certificate: dummy_cert.clone(),
+            signer_count: 1,
+            signing_stake: attested,
+            total_stake: total,
+            da_confirmed: false,
+        };
+        assert!(rec.has_supermajority(), "2/3 threshold of near-max stake must pass");
+        let rec2 = FinalityRecord { signing_stake: attested - 1, ..rec };
+        assert!(!rec2.has_supermajority(), "just below 2/3 must not pass");
+    }
+
 }

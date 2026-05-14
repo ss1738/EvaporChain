@@ -76,7 +76,8 @@ impl ValidatorSetCommitment {
             .map(|(stake, _)| stake)
             .sum();
 
-        signing_stake * 3 > self.total_stake * 2
+        // Audit C2: u128 to prevent wrap when total_stake > u64::MAX/2.
+        (signing_stake as u128) * 3 > (self.total_stake as u128) * 2
     }
 
     /// Verify BLS aggregate signature on a commit certificate against this validator set.

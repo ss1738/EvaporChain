@@ -4065,7 +4065,9 @@ impl TendermintConsensus {
         // With 3 equal-stake validators (total=3000) this gives 2000, so any
         // 2-of-3 combination reaches quorum. Using `total*2/3 + 1` = 2001 would
         // demand all three validators — impossible if any one times out or lags.
-        (total * 2).div_ceil(3)
+        // Audit C2: use u128 to prevent `total * 2` from overflowing u64 when
+        // total > u64::MAX/2. Result fits in u64: (2*total/3) <= total <= u64::MAX.
+        ((total as u128 * 2 + 2) / 3) as u64
     }
 
     /// Who is the proposer for the current height/round?
@@ -17697,6 +17699,25 @@ mod phase2_round_trip_tests {
         assert!(
             tc.block_number() > height_before,
             "clean block must advance the chain"
+        );
+    }
+
+    // Audit C2: stake_quorum_threshold in consensus-types must not overflow.
+    // This crate is the WASM-compatible types layer used by light clients and bridges.
+    // Pre-fix: `total * 2` wraps when total > u64::MAX/2, threshold collapses to 0.
+    #[test]
+    fn audit_c2_stake_quorum_threshold_no_overflow_in_types_crate() {
+        let large_stake = u64::MAX / 2 + 1;
+        let expected = ((large_stake as u128 * 2 + 2) / 3) as u64;
+        assert_eq!(expected, 6_148_914_691_236_517_206);
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, large_stake, [1u8; 32]));
+        let tc = TendermintConsensus::new_for_test(1, 5, vs);
+        assert_eq!(
+            tc.stake_quorum_threshold(),
+            expected,
+            "quorum threshold in consensus-types must use u128 to avoid overflow"
         );
     }
 }

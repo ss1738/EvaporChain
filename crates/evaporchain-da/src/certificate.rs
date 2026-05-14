@@ -44,8 +44,8 @@ pub struct DACertificate {
 impl DACertificate {
     /// Check if attested stake >= 2/3 of total stake (supermajority).
     pub fn is_supermajority(&self) -> bool {
-        // 2/3 threshold: attested_stake * 3 >= total_stake * 2
-        self.attested_stake * 3 >= self.total_stake * 2
+        // Audit C2: cast to u128 before multiplication to prevent wrap when stake > u64::MAX/3.
+        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
     }
 
     /// Verify every attestation's BLS signature and check that `attested_stake`
@@ -250,7 +250,8 @@ impl CertificateBuilder {
 
     /// Check if we already have supermajority.
     pub fn has_supermajority(&self) -> bool {
-        self.attested_stake * 3 >= self.total_stake * 2
+        // Audit C2: u128 to prevent wrap when stake > u64::MAX/3.
+        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
     }
 }
 
@@ -504,5 +505,25 @@ mod tests {
             !cert.verify_signatures_with_active(&|_| false),
             "every signer jailed → no recomputed stake → must fail"
         );
+    }
+
+    // Audit C2: is_supermajority must not overflow when stakes are near u64::MAX.
+    // Pre-fix: `attested * 3` and `total * 2` both wrap in u64, producing false
+    // positives (undersized quorum passes) or false negatives (real quorum fails).
+    #[test]
+    fn audit_c2_is_supermajority_no_overflow_near_u64_max() {
+        // total near u64::MAX (divisible by 3 for clean 2/3 boundary).
+        let total: u64 = u64::MAX / 3 * 3;
+        let attested: u64 = total / 3 * 2; // exactly 2/3
+        let mut cert = DACertificate {
+            block_number: 1,
+            data_root: [0u8; 32],
+            attestations: vec![],
+            attested_stake: attested,
+            total_stake: total,
+        };
+        assert!(cert.is_supermajority(), "2/3 of near-max stake must be supermajority");
+        cert.attested_stake = attested - 1; // one below 2/3
+        assert!(!cert.is_supermajority(), "2/3 - 1 of near-max stake must not be supermajority");
     }
 }
