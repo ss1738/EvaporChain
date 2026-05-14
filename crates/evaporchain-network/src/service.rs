@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use futures::StreamExt;
 use libp2p::{
-    gossipsub::{self, IdentTopic, MessageAuthenticity},
+    gossipsub::{self, IdentTopic, MessageAcceptance, MessageAuthenticity},
     identify, identity, mdns, noise,
     request_response::{self, ProtocolSupport},
     swarm::{behaviour::toggle::Toggle, NetworkBehaviour, SwarmEvent},
@@ -1113,9 +1113,30 @@ impl P2pNetworkService {
                 // two genuinely outbound (i.e. peer-id we dialed)
                 // mesh members so an inbound-only adversary can't
                 // saturate the slot count.
+                // M7 (audit 2026-05-13): `.validate_messages()` flips
+                // libp2p-gossipsub into manual-validation mode. Without
+                // it, gossipsub auto-forwards every payload to mesh
+                // peers the moment the libp2p signature check passes
+                // (which is all `ValidationMode::Strict` does — it
+                // doesn't look at our app payload at all). A peer
+                // pushing 4MB junk JSON would amplify across the entire
+                // mesh before our deserializer rejected it.
+                //
+                // In manual mode the node holds the message in the
+                // memcache until we call
+                // `report_message_validation_result(&msg_id,
+                //  &propagation_source, MessageAcceptance::*)`:
+                //   * Accept → forward to mesh peers
+                //   * Reject → drop + penalise propagation_source via
+                //              libp2p's peer-score system
+                //   * Ignore → drop without penalising (use for
+                //              local-policy drops like ban-list hits)
+                // See the event handler at the `gossipsub::Event::
+                // Message` arm below for the call sites.
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_millis(500))
                     .validation_mode(gossipsub::ValidationMode::Strict)
+                    .validate_messages()
                     .max_transmit_size(MAX_GOSSIPSUB_TRANSMIT_SIZE)
                     .mesh_n(8)
                     .mesh_n_low(6)
@@ -1546,71 +1567,124 @@ impl P2pNetworkService {
                     event = swarm.select_next_some() => {
                         match event {
                             // ── GossipSub messages ──
+                            //
+                            // M7 (audit 2026-05-13): with `.validate_messages()`
+                            // on the config, every gossipsub payload sits in the
+                            // memcache here until we tell gossipsub what to do
+                            // with it via `report_message_validation_result`:
+                            //   * Accept  → forward to mesh peers
+                            //   * Reject  → drop + ding propagation_source via
+                            //               libp2p peer-score
+                            //   * Ignore  → drop without penalising
+                            // We MUST hit `report_message_validation_result`
+                            // exactly once on every path the message takes
+                            // through this arm — otherwise the memcache keeps
+                            // it around and the message never relays (even on
+                            // honest peers).
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::Gossipsub(
-                                gossipsub::Event::Message { message, .. },
+                                gossipsub::Event::Message {
+                                    message,
+                                    message_id,
+                                    propagation_source,
+                                },
                             )) => {
+                                let mut acceptance = MessageAcceptance::Ignore;
                                 // Per-peer ban + rate limiting
+                                let mut skip = false;
                                 if let Some(ref source) = message.source {
                                     if ban_list.is_banned(source) {
-                                        continue;
-                                    }
-                                    if !rate_limiter.check_and_increment(source) {
+                                        // Local policy drop — Ignore (no peer-score penalty
+                                        // beyond what the ban-list already imposes).
+                                        acceptance = MessageAcceptance::Ignore;
+                                        skip = true;
+                                    } else if !rate_limiter.check_and_increment(source) {
                                         debug!("Rate-limited peer {source} — dropping gossip message");
                                         gc_counter += 1;
                                         if gc_counter.is_multiple_of(100) {
                                             rate_limiter.maybe_gc();
                                         }
-                                        continue;
+                                        // Local policy drop — Ignore.
+                                        acceptance = MessageAcceptance::Ignore;
+                                        skip = true;
                                     }
                                 }
-                                gc_counter += 1;
-                                if gc_counter.is_multiple_of(1000) {
-                                    rate_limiter.maybe_gc();
-                                }
-                                // Drop oversized messages before deserialization (DoS protection)
-                                if message.data.len() > MAX_GOSSIP_MESSAGE_SIZE {
-                                    warn!(
-                                        "Dropping oversized gossip message: {} bytes (limit {})",
-                                        message.data.len(),
-                                        MAX_GOSSIP_MESSAGE_SIZE
-                                    );
-                                } else if message.topic == tx_topic_hash {
-                                    match serde_json::from_slice::<Transaction>(&message.data) {
-                                        Ok(tx) => {
-                                            let _ = net_tx_sender.send(tx).await;
-                                        }
-                                        Err(e) => {
-                                            debug!("Invalid tx gossip: {e}");
-                                            if let Some(ref source) = message.source {
-                                                ban_list.record_violation(*source);
-                                            }
-                                        }
+                                if !skip {
+                                    gc_counter += 1;
+                                    if gc_counter.is_multiple_of(1000) {
+                                        rate_limiter.maybe_gc();
                                     }
-                                } else if message.topic == block_topic_hash {
-                                    match serde_json::from_slice::<Block>(&message.data) {
-                                        Ok(block) => {
-                                            let _ = net_block_sender.send(block).await;
-                                        }
-                                        Err(e) => {
-                                            debug!("Invalid block gossip: {e}");
-                                            if let Some(ref source) = message.source {
-                                                ban_list.record_violation(*source);
-                                            }
-                                        }
-                                    }
-                                } else if message.topic == consensus_topic_hash {
-                                    if message.data.len() > MAX_CONSENSUS_MESSAGE_SIZE {
-                                        debug!(
-                                            "Dropping oversized consensus message: {} bytes (limit {})",
+                                    // Drop oversized messages before deserialization (DoS protection)
+                                    if message.data.len() > MAX_GOSSIP_MESSAGE_SIZE {
+                                        warn!(
+                                            "Dropping oversized gossip message: {} bytes (limit {})",
                                             message.data.len(),
-                                            MAX_CONSENSUS_MESSAGE_SIZE
+                                            MAX_GOSSIP_MESSAGE_SIZE
                                         );
                                         if let Some(ref source) = message.source {
                                             ban_list.record_violation(*source);
                                         }
+                                        acceptance = MessageAcceptance::Reject;
+                                    } else if message.topic == tx_topic_hash {
+                                        match serde_json::from_slice::<Transaction>(&message.data) {
+                                            Ok(tx) => {
+                                                let _ = net_tx_sender.send(tx).await;
+                                                acceptance = MessageAcceptance::Accept;
+                                            }
+                                            Err(e) => {
+                                                debug!("Invalid tx gossip: {e}");
+                                                if let Some(ref source) = message.source {
+                                                    ban_list.record_violation(*source);
+                                                }
+                                                acceptance = MessageAcceptance::Reject;
+                                            }
+                                        }
+                                    } else if message.topic == block_topic_hash {
+                                        match serde_json::from_slice::<Block>(&message.data) {
+                                            Ok(block) => {
+                                                let _ = net_block_sender.send(block).await;
+                                                acceptance = MessageAcceptance::Accept;
+                                            }
+                                            Err(e) => {
+                                                debug!("Invalid block gossip: {e}");
+                                                if let Some(ref source) = message.source {
+                                                    ban_list.record_violation(*source);
+                                                }
+                                                acceptance = MessageAcceptance::Reject;
+                                            }
+                                        }
+                                    } else if message.topic == consensus_topic_hash {
+                                        if message.data.len() > MAX_CONSENSUS_MESSAGE_SIZE {
+                                            debug!(
+                                                "Dropping oversized consensus message: {} bytes (limit {})",
+                                                message.data.len(),
+                                                MAX_CONSENSUS_MESSAGE_SIZE
+                                            );
+                                            if let Some(ref source) = message.source {
+                                                ban_list.record_violation(*source);
+                                            }
+                                            acceptance = MessageAcceptance::Reject;
+                                        } else {
+                                            let _ = net_consensus_sender.send(message.data.to_vec()).await;
+                                            acceptance = MessageAcceptance::Accept;
+                                        }
                                     } else {
-                                        let _ = net_consensus_sender.send(message.data.to_vec()).await;
+                                        // Unknown topic — peer is probably from an old
+                                        // version. Don't relay, don't penalise.
+                                        acceptance = MessageAcceptance::Ignore;
                                     }
+                                }
+                                if let Err(e) = swarm
+                                    .behaviour_mut()
+                                    .gossipsub
+                                    .report_message_validation_result(
+                                        &message_id,
+                                        &propagation_source,
+                                        acceptance,
+                                    )
+                                {
+                                    debug!(
+                                        "report_message_validation_result failed for {message_id}: {e:?}"
+                                    );
                                 }
                             }
                             // ── Block sync: inbound request (serve blocks) ──
