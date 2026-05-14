@@ -11550,6 +11550,16 @@ async fn post_call_contract(
     if let Err(resp) = require_tx_auth(&headers, &state, false) {
         return resp;
     }
+    // Audit H1 (2026-05-14): method name has no gas metering by length;
+    // a 2MB method name would hash and look up in O(n) before reaching
+    // any gas check. Cap at 256 bytes — generous for any real identifier.
+    if req.method.len() > 256 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "method name too long (max 256 bytes)".into(),
+            tx_hash: None,
+        });
+    }
     let mut tx = Transaction::CallContract(CallContractTx {
         caller: addr_from_byte(req.caller),
         contract_id: req.contract_id,
@@ -11656,6 +11666,17 @@ async fn post_deploy_script(
     if let Err(resp) = require_tx_auth(&headers, &state, false) {
         return resp;
     }
+    // Audit H1 (2026-05-14): admission pre-check uses only flat GAS_DEPLOY_SCRIPT
+    // (underestimates for large source), so a deployer with minimal balance can
+    // slip past the balance gate and submit 2MB of source for the parser.
+    // Cap at 64KB — sufficient for any realistic EvaporScript contract.
+    if req.source_code.len() > 65_536 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "source_code too large (max 64 KB)".into(),
+            tx_hash: None,
+        });
+    }
     let deployer_addr = addr_from_byte(req.deployer);
     // Admission pre-check — same pattern as post_deploy_contract above.
     // Source-code length affects gas linearly via the executor's
@@ -11727,6 +11748,15 @@ async fn post_call_script(
 ) -> Json<TxResultResponse> {
     if let Err(resp) = require_tx_auth(&headers, &state, false) {
         return resp;
+    }
+    // Audit H1 (2026-05-14): same as post_call_contract — method name has
+    // no per-byte gas and is passed directly to script engine dispatch.
+    if req.method.len() > 256 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "method name too long (max 256 bytes)".into(),
+            tx_hash: None,
+        });
     }
     let mut tx = Transaction::CallScript(evaporchain_types::CallScriptTx {
         caller: addr_from_byte(req.caller),
