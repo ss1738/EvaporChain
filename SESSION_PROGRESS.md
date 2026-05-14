@@ -4,6 +4,24 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 5) — Audit A1/A2/A3 closed; PeerBanList save hardening
+
+**Focus:** Post-L3 audit of PeerBanList.save() / new_with_path() surfaced 2 CRITICAL + 1 HIGH findings
+**Commits shipped:** 1 (`7f0ea5ff`)
+**Deliverables:**
+- A1 (CRITICAL): PeerBanList.save() made atomic — temp file + fsync + rename, matching BanList::save() L7 pattern. Non-atomic `fs::write()` left half-written JSON on crash, re-admitting all banned peers on restart.
+- A2 (CRITICAL): `now_wall + millis_left` replaced with `now_wall.saturating_add(millis_left)` — integer overflow turned far-future expiries into past timestamps, evicting bans immediately on next restart.
+- A3 (HIGH): Loaded `until_ms` clamped to `2×BAN_DURATION` (1200s) before `Duration::from_millis()` — corrupted or tampered `until_ms = u64::MAX` produced an enormous Instant offset.
+- 2 regression tests: `audit_a1_crash_safe_write_produces_valid_json`, `audit_a2_far_future_until_ms_is_clamped_on_load`
+- AUDIT_2026_05_11.md: 3 new rows added (A1/A2/A3, all CLOSED)
+**Empirical results:** `cargo test -p evaporchain-network` — 102 passed / 0 failed
+**Decisions made:** Medium/Low findings (clock skew, path traversal config, is_banned write-lock) left as-is — each requires operator-configurable input or is a design trade-off rather than an exploitable code bug
+**What's next:** Check for any remaining open code lanes; otherwise board is fully code-complete
+**Blockers / open questions:** none
+**Cross-references:** `7f0ea5ff`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 4) — Audit L3 closed; PeerBanList cross-restart persistence
 
 **Focus:** Implement audit L3 — PeerBanList was in-memory only; banned PeerIds forgotten on restart
