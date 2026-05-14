@@ -6,6 +6,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-14 (evening) — T0.6 slashing-at-scale suite CODE-COMPLETE + doc-drift fixes
+
+**Focus:** T0.6 slashing-at-scale adversarial scenarios + MAINNET_READINESS.md doc-drift cleanup
+**Commits shipped:** 3 (724aecc7, 279727b0, e960062e)
+**Deliverables:**
+- `crates/evaporchain-consensus/tests/slashing_at_scale.rs` (NEW): 5 T0.6 adversarial scenarios all green on Mini 1:
+  - S1 prevote equivocation → SanovSlash zeros stake + jails (t06_scenario_1)
+  - S2 precommit equivocation → same detection on independent path (t06_scenario_2)
+  - S3 MEV missing-refund → entropic slash fires with flag enabled, no-op without, counter cleared (t06_scenario_3)
+  - S4 downtime proportional → Sanov KL monotone in miss count, jail threshold at 3 misses (t06_scenario_4)
+  - S5 multi-validator cascade → 3 validators slashed; stake_delta == reported_slash conservation invariant; unslashed untouched (t06_scenario_5)
+- MAINNET_READINESS.md: T0.6 → 🟡 CODE-COMPLETE — OPS-ONLY. Synced 7 stale section statuses (T0.3, T0.6, T0.8, T0.9, T0.11, T1.14, T1.15, T1.16 section bodies were showing OPEN despite table rows saying DONE). T0.5 sub-task 5 row → ✅ DONE.
+**Empirical results:** 5/5 slashing_at_scale tests green. No regressions.
+**Current board status:** Every MAINNET_READINESS T0/T1 task is now DONE or CODE-COMPLETE—OPS-ONLY. All remaining OPEN items gate on T3.1 (Hetzner SSH auth) or T0.12 (auditor selection). No further code work available in this lane without cluster access.
+**What's next:** T3.1 (Hetzner cluster SSH auth from operator) is the single code-side blocker. While waiting: (a) CSLC even-process CSSR precision (research-grade, multi-week); (b) app templates / substrate V1.1 improvements; (c) ethereum-bridge Phase 6 Sepolia prep (needs operator PRIVATE_KEY + ETHEREUM_RPC).
+**Cross-references:** commits 724aecc7 (T0.6 suite), 279727b0 + e960062e (doc-drift fixes).
+
+---
+
 ## 2026-05-14 (afternoon) — T0.10 Ph2.5 VerkleProofVerifier.sol DONE
 
 **Focus:** Phase 2.5 — on-chain Groth16 BN254 verifier smoke test
