@@ -79,6 +79,7 @@ pub fn matrix_mul(a: &[Vec<Fr>], b: &[Vec<Fr>]) -> Vec<Vec<Fr>> {
 /// Build an N×N identity matrix over `ark_bn254::Fr`.
 pub fn identity_matrix(n: usize) -> Vec<Vec<Fr>> {
     let mut m = vec![vec![Fr::from(0u64); n]; n];
+    #[allow(clippy::needless_range_loop)]
     for i in 0..n {
         m[i][i] = Fr::from(1u64);
     }

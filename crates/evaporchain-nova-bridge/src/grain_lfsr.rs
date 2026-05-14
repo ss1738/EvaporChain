@@ -294,6 +294,7 @@ pub fn grain_seed_state(params: GrainSeedParams) -> [u8; 10] {
     // the LOW 80 bits of `bits` (since we left-shifted on each
     // push). Read the high byte first.
     let mut out = [0u8; 10];
+    #[allow(clippy::needless_range_loop)]
     for i in 0..10 {
         let shift = (9 - i) * 8;
         out[i] = ((bits >> shift) & 0xff) as u8;

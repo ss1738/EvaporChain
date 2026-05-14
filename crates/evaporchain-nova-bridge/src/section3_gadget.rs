@@ -61,6 +61,7 @@ pub fn enforce_primary_relaxed_r1cs_sat(
     }
 
     // ── For each row: enforce (Az)_i * (Bz)_i == u * (Cz)_i + E_i ───────
+    #[allow(clippy::needless_range_loop)]
     for row in 0..s3.num_cons {
         let az_i = sparse_lc(&s3.a_primary, &z_vars, row)?;
         let bz_i = sparse_lc(&s3.b_primary, &z_vars, row)?;
