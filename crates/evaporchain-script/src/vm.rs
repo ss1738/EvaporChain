@@ -116,7 +116,22 @@ impl EvaporVM {
     }
 
     fn charge_gas(&mut self, cost: u64) -> Result<(), ScriptError> {
-        self.gas_used += cost;
+        // AUDIT_2026_05_13 M14 closure. Pre-fix used `self.gas_used +=
+        // cost` which would silently wrap on overflow — making
+        // `gas_used > gas_limit` false in the wrapped range and
+        // allowing execution past gas exhaustion in release builds
+        // (panic-on-overflow in debug, silent wrap in release).
+        //
+        // checked_add converts the overflow case directly into
+        // GasLimitExceeded with `used: u64::MAX` so any future
+        // unbounded path surfaces as a clean error rather than a
+        // value-corrupted continuation.
+        self.gas_used = self.gas_used.checked_add(cost).ok_or(
+            ScriptError::GasLimitExceeded {
+                used: u64::MAX,
+                limit: self.gas_limit,
+            },
+        )?;
         if self.gas_used > self.gas_limit {
             return Err(ScriptError::GasLimitExceeded {
                 used: self.gas_used,
@@ -792,7 +807,17 @@ impl EvaporVM {
                             ctx.call_depth + 1,
                             gas_remaining,
                         )?;
-                        self.gas_used += gas_used;
+                        // AUDIT M14: clamp the returned gas to what we
+                        // actually advertised remaining + checked_add
+                        // to avoid u64 overflow drifting `gas_used`
+                        // past `gas_limit` undetected.
+                        let returned = gas_used.min(gas_remaining);
+                        self.gas_used = self.gas_used.checked_add(returned).ok_or(
+                            ScriptError::GasLimitExceeded {
+                                used: u64::MAX,
+                                limit: self.gas_limit,
+                            },
+                        )?;
                         self.structured_events.extend(events);
                         self.push(return_val)?;
                     } else {
@@ -2223,6 +2248,49 @@ contract WithStateArray {
         match updated_items {
             Value::Array(arr) => assert_eq!(arr[0], Value::U64(999)),
             other => panic!("expected array, got {other:?}"),
+        }
+    }
+
+    // ─── AUDIT_2026_05_13 M14 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_m14_charge_gas_overflow_returns_gas_limit_exceeded() {
+        // Pre-fix `gas_used += cost` would wrap silently on overflow,
+        // letting execution continue past gas exhaustion. Post-fix uses
+        // checked_add and converts the overflow case to the
+        // GasLimitExceeded error.
+        let mut vm = EvaporVM::new(HashMap::new(), 10_000);
+        vm.gas_used = u64::MAX - 5; // perched at the cliff
+        let err = vm
+            .charge_gas(10)
+            .expect_err("overflowing add must return GasLimitExceeded");
+        match err {
+            ScriptError::GasLimitExceeded { used, limit } => {
+                assert_eq!(used, u64::MAX);
+                assert_eq!(limit, 10_000);
+            }
+            other => panic!("expected GasLimitExceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn audit_m14_charge_gas_normal_path_unchanged() {
+        // Soundness lower bound: non-overflowing add must continue to
+        // function exactly as before — used tracked, limit gated.
+        let mut vm = EvaporVM::new(HashMap::new(), 1_000);
+        assert!(vm.charge_gas(200).is_ok());
+        assert_eq!(vm.gas_used, 200);
+        assert!(vm.charge_gas(500).is_ok());
+        assert_eq!(vm.gas_used, 700);
+        // Over the limit fires GasLimitExceeded with the correct
+        // used value (not u64::MAX, since no overflow).
+        let err = vm.charge_gas(500).expect_err("must exceed limit");
+        match err {
+            ScriptError::GasLimitExceeded { used, limit } => {
+                assert_eq!(used, 1_200);
+                assert_eq!(limit, 1_000);
+            }
+            other => panic!("expected GasLimitExceeded, got {other:?}"),
         }
     }
 }
