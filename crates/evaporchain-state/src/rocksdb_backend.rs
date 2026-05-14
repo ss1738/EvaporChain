@@ -88,6 +88,21 @@ struct BatchUndoLog {
     shielded_pool_balance: u64,
     note_count: u64,
     note_commitments_snapshot: BTreeMap<u64, [u8; 32]>,
+    // M10 (audit 2026-05-13): stakes/delegations/sentinel maps were
+    // missing from the undo log. `put_stake` / `put_delegation` mutate
+    // the in-memory cache directly; if the batch rolls back, the
+    // RocksDB side reverts via the dropped `pending_batch` (those
+    // writes were correctly routed through it) but the in-memory map
+    // kept the speculative value → in-memory + on-disk diverge. For
+    // sentinel state it's worse: `put_sentinel_*` wrote direct-to-disk
+    // bypassing `pending_batch` entirely, so even the disk side
+    // survived rollback. Snapshot all four maps at `begin_batch` and
+    // restore them on `rollback_batch`; route the sentinel writes
+    // through `pending_batch` so disk reverts too.
+    stakes_snapshot: HashMap<u64, StakeRecord>,
+    delegations_snapshot: HashMap<[u8; 40], DelegationRecord>,
+    sentinel_params_snapshot: BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
+    sentinel_votes_snapshot: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
 }
 
 /// RocksDB-backed state database with in-memory write-through cache.
@@ -851,6 +866,11 @@ impl StateDB for RocksDBStateDB {
             shielded_pool_balance: self.shielded_pool_balance,
             note_count: self.note_count,
             note_commitments_snapshot: self.note_commitments.clone(),
+            // M10: snapshot stakes/delegations/sentinel for in-memory restore.
+            stakes_snapshot: self.stakes.clone(),
+            delegations_snapshot: self.delegations.clone(),
+            sentinel_params_snapshot: self.sentinel_params.clone(),
+            sentinel_votes_snapshot: self.sentinel_votes.clone(),
         });
     }
 
@@ -918,6 +938,14 @@ impl StateDB for RocksDBStateDB {
             self.shielded_pool_balance = undo.shielded_pool_balance;
             self.note_count = undo.note_count;
             self.note_commitments = undo.note_commitments_snapshot;
+            // M10: revert stakes/delegations/sentinel in-memory caches.
+            // Disk side reverts automatically — stakes/delegations were
+            // already buffered into `pending_batch` (dropped above) and
+            // sentinel writes are now buffered too (see put_sentinel_*).
+            self.stakes = undo.stakes_snapshot;
+            self.delegations = undo.delegations_snapshot;
+            self.sentinel_params = undo.sentinel_params_snapshot;
+            self.sentinel_votes = undo.sentinel_votes_snapshot;
         }
     }
 
@@ -1336,14 +1364,29 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn put_sentinel_param(&mut self, param: evaporchain_sentinel::BoundedParameter) {
+        // M10 (audit 2026-05-13): was direct `db.put_cf` which bypassed
+        // `pending_batch`. A rolled-back speculative execution that
+        // mutated a sentinel parameter would survive on disk and
+        // permanently shift governance state. Route through the
+        // pending batch (mirroring `persist_stake` /
+        // `persist_delegation`) so commit is atomic with the rest of
+        // the block and rollback drops the disk write along with the
+        // rest of the buffered batch.
         let key = param.id.to_be_bytes();
         let val = match bincode::serialize(&param) {
             Ok(v) => v,
             Err(e) => fatal_persistence_error("serialize_sentinel_param", e),
         };
-        let cf = self.cf(CF_SENTINEL_PARAMS);
-        if let Err(e) = self.db.put_cf(cf, key, val) {
-            fatal_persistence_error("put_sentinel_param", e);
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_SENTINEL_PARAMS).unwrap();
+            batch.put_cf(cf, key, &val);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_SENTINEL_PARAMS);
+            if let Err(e) = self.db.put_cf(cf, key, val) {
+                fatal_persistence_error("put_sentinel_param", e);
+            }
         }
         self.sentinel_params.insert(param.id, param);
         self.sentinel_votes.entry(param.id).or_default();
@@ -1358,14 +1401,25 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn put_sentinel_votes(&mut self, parameter_id: u32, votes: Vec<evaporchain_sentinel::Vote>) {
+        // M10 (audit 2026-05-13): mirror of `put_sentinel_param` — was
+        // direct `db.put_cf` bypassing `pending_batch`. Route through
+        // the batch so commit/rollback semantics match the rest of
+        // block-level state.
         let key = parameter_id.to_be_bytes();
         let val = match bincode::serialize(&votes) {
             Ok(v) => v,
             Err(e) => fatal_persistence_error("serialize_sentinel_votes", e),
         };
-        let cf = self.cf(CF_SENTINEL_VOTES);
-        if let Err(e) = self.db.put_cf(cf, key, val) {
-            fatal_persistence_error("put_sentinel_votes", e);
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_SENTINEL_VOTES).unwrap();
+            batch.put_cf(cf, key, &val);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_SENTINEL_VOTES);
+            if let Err(e) = self.db.put_cf(cf, key, val) {
+                fatal_persistence_error("put_sentinel_votes", e);
+            }
         }
         self.sentinel_votes.insert(parameter_id, votes);
     }
@@ -2485,4 +2539,117 @@ mod tests {
         assert!(db2.has_data());
     }
 
+    // ── M10 (audit 2026-05-13): rollback of stakes/delegations/sentinel ──
+
+    #[test]
+    fn audit_m10_put_stake_rolls_back_in_memory() {
+        let mut db = tmp_db();
+        db.put_stake(make_stake(1, 1_000));
+        db.begin_batch();
+        db.put_stake(make_stake(1, 9_999));
+        db.put_stake(make_stake(2, 2_000));
+        db.rollback_batch();
+        // Pre-batch stake unchanged; speculative writes evaporated.
+        assert_eq!(db.get_stake(1).unwrap().staked_amount, 1_000);
+        assert!(db.get_stake(2).is_none());
+    }
+
+    #[test]
+    fn audit_m10_remove_stake_rolls_back_in_memory() {
+        let mut db = tmp_db();
+        db.put_stake(make_stake(3, 3_000));
+        db.begin_batch();
+        db.remove_stake(3);
+        assert!(db.get_stake(3).is_none());
+        db.rollback_batch();
+        // Removed stake restored.
+        assert_eq!(db.get_stake(3).unwrap().staked_amount, 3_000);
+    }
+
+    #[test]
+    fn audit_m10_put_delegation_rolls_back_in_memory() {
+        let mut db = tmp_db();
+        let d = make_delegation(0x10, 7, 500);
+        let delegator = d.delegator;
+        db.put_delegation(d);
+        db.begin_batch();
+        db.put_delegation(make_delegation(0x10, 7, 9_999));
+        db.put_delegation(make_delegation(0x10, 8, 1_111));
+        db.rollback_batch();
+        assert_eq!(db.get_delegation(&delegator, 7).unwrap().amount, 500);
+        assert!(db.get_delegation(&delegator, 8).is_none());
+    }
+
+    #[test]
+    fn audit_m10_remove_delegation_rolls_back_in_memory() {
+        let mut db = tmp_db();
+        let d = make_delegation(0x20, 9, 750);
+        let delegator = d.delegator;
+        db.put_delegation(d);
+        db.begin_batch();
+        db.remove_delegation(&delegator, 9);
+        assert!(db.get_delegation(&delegator, 9).is_none());
+        db.rollback_batch();
+        assert_eq!(db.get_delegation(&delegator, 9).unwrap().amount, 750);
+    }
+
+    #[test]
+    fn audit_m10_put_sentinel_param_rolls_back_in_memory_and_on_disk() {
+        use evaporchain_sentinel::BoundedParameter;
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+        db.put_sentinel_param(BoundedParameter::new(11, 100, 0, 1_000).unwrap());
+        db.begin_batch();
+        db.put_sentinel_param(BoundedParameter::new(11, 9_999, 0, 10_000).unwrap());
+        db.put_sentinel_param(BoundedParameter::new(12, 222, 0, 1_000).unwrap());
+        db.rollback_batch();
+        // In-memory pre-batch value preserved.
+        assert_eq!(db.get_sentinel_param(11).unwrap().current, 100);
+        assert!(db.get_sentinel_param(12).is_none());
+        // And — the critical part — on-disk too: reopen the DB and
+        // confirm the rolled-back writes did not survive (they would
+        // have under the pre-fix direct-`db.put_cf` path).
+        drop(db);
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        assert_eq!(db2.get_sentinel_param(11).unwrap().current, 100);
+        assert!(db2.get_sentinel_param(12).is_none());
+    }
+
+    #[test]
+    fn audit_m10_put_sentinel_votes_rolls_back_in_memory_and_on_disk() {
+        use evaporchain_sentinel::{BoundedParameter, Vote};
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+        db.put_sentinel_param(BoundedParameter::new(21, 5, 0, 100).unwrap());
+        db.put_sentinel_votes(21, vec![Vote::new(1, 50, 1)]);
+        db.begin_batch();
+        db.put_sentinel_votes(21, vec![Vote::new(1, 99, 2), Vote::new(2, 99, 2)]);
+        db.rollback_batch();
+        let votes_after = db.get_sentinel_votes(21);
+        assert_eq!(votes_after.len(), 1);
+        assert_eq!(votes_after[0].target, 50);
+        // Disk side reverted too.
+        drop(db);
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        let disk_votes = db2.get_sentinel_votes(21);
+        assert_eq!(disk_votes.len(), 1);
+        assert_eq!(disk_votes[0].target, 50);
+    }
+
+    #[test]
+    fn audit_m10_commit_persists_sentinel_writes_through_batch() {
+        // Belt-and-braces: ensure the new pending_batch routing doesn't
+        // break the happy path — committed sentinel writes still land.
+        use evaporchain_sentinel::{BoundedParameter, Vote};
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+        db.begin_batch();
+        db.put_sentinel_param(BoundedParameter::new(31, 77, 0, 100).unwrap());
+        db.put_sentinel_votes(31, vec![Vote::new(7, 77, 7)]);
+        db.commit_batch().unwrap();
+        drop(db);
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        assert_eq!(db2.get_sentinel_param(31).unwrap().current, 77);
+        assert_eq!(db2.get_sentinel_votes(31)[0].target, 77);
+    }
 }
