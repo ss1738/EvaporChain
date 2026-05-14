@@ -24,6 +24,33 @@ const WIDTH: usize = 256;
 /// Maximum trie depth (one byte per level, 32-byte keys).
 const MAX_DEPTH: usize = 32;
 
+/// NCR4 (re-audit 2026-05-14): compile-time guard that the scalar
+/// field's modulus is large enough for the 254-bit masking in
+/// `bytes_to_scalar` to be safe.
+///
+/// `bytes_to_scalar` masks `repr[31] &= 0x3F` → input bounded by
+/// `2^254 − 1`. The `from_repr(...).expect(...)` only succeeds
+/// when this masked value is `< Fq::MODULUS`. Today
+/// `Fq::CAPACITY == 254` (Pallas Fq is a 255-bit field, modulus
+/// `2^254 + 4.56×10^37`), so the masked value is provably
+/// representable and the expect is dead in production.
+///
+/// L1 closed the silent-collision-on-fallback bug; NCR4 catches
+/// the residual concern that the expect IS reachable from
+/// JSON-RPC verifier paths. A future change that swaps Pallas
+/// for a smaller-modulus field (e.g. accidentally re-using this
+/// helper on a 253-bit field) would convert silent injectivity
+/// loss into a denial-of-service crash that takes down the API
+/// process. This const-eval assertion fails compilation in that
+/// scenario — the swap is caught at `cargo check` time, not at
+/// first verifier call.
+const _BYTES_TO_SCALAR_CAPACITY_GUARD: () = {
+    assert!(
+        Fq::CAPACITY >= 254,
+        "bytes_to_scalar masks to 254 bits; field CAPACITY must be >= 254 for the masked value to be a valid field element"
+    );
+};
+
 // ─────────────────────── Generator Points ────────────────────────────────
 
 /// Pre-computed independent generator points on the Pallas curve.

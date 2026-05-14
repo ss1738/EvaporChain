@@ -26,6 +26,21 @@ use std::sync::OnceLock;
 const WIDTH: usize = 256;
 const MAX_DEPTH: usize = 32;
 
+/// NCR4 (re-audit 2026-05-14): compile-time guard mirroring the
+/// one in `verkle.rs`. `bytes_to_scalar` here uses the same
+/// `repr[31] &= 0x3F` mask → 254-bit subspace, so it requires
+/// `Fq::CAPACITY >= 254`. A future field swap that violates this
+/// invariant fails compilation; without the guard, the swap
+/// would silently turn the verifier hot path into a panic
+/// reachable from JSON-RPC handlers. See the longer rationale
+/// in `verkle.rs` at the matching const.
+const _BYTES_TO_SCALAR_CAPACITY_GUARD: () = {
+    assert!(
+        Fq::CAPACITY >= 254,
+        "bytes_to_scalar masks to 254 bits; field CAPACITY must be >= 254 for the masked value to be a valid field element"
+    );
+};
+
 // ─────────────────────── Generator Points ────────────────────────────────
 // Shared with the standard Verkle trie — same generators, same commitments.
 
