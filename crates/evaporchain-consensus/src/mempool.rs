@@ -253,6 +253,21 @@ impl Mempool {
                     self.rejected_count += 1;
                     return false;
                 }
+                // Audit I1 (2026-05-14): bind pk to claimed sender (matching
+                // the fix in execution::verify_tx_signature). MultiSig uses
+                // a script-derived address; UserOp sig is from the user sender.
+                let binding_addr: Option<&evaporchain_types::AccountAddress> = match tx {
+                    Transaction::MultiSig(_) => None,
+                    Transaction::UserOp(t) => Some(&t.sender),
+                    _ => tx.sender(),
+                };
+                if let Some(claimed) = binding_addr {
+                    let derived: [u8; 32] = *blake3::hash(pk).as_bytes();
+                    if &derived != claimed {
+                        self.rejected_count += 1;
+                        return false;
+                    }
+                }
             } else if tx.signature().is_none() && tx.sender().is_some() {
                 self.rejected_count += 1;
                 return false;

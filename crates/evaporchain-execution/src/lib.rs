@@ -1183,6 +1183,25 @@ impl SimpleExecutor {
             return Err(ExecutionError::InvalidSignature);
         }
 
+        // Audit I1 (2026-05-14): bind the public key to the claimed sender address.
+        // Without this, an attacker submits tx.from=victim, signs with attacker_sk;
+        // HybridVerifier::verify passes (valid sig under attacker_pk), but the sig
+        // authorises the attacker's key, not the victim's. Address derivation on this
+        // chain: address = blake3(pk_bytes). 
+        // MultiSig uses a script-derived address — skip binding.
+        // UserOp tx-level sig is always from tx.sender (user), not the paymaster.
+        let binding_addr: Option<&evaporchain_types::AccountAddress> = match tx {
+            evaporchain_types::Transaction::MultiSig(_) => None,
+            evaporchain_types::Transaction::UserOp(t) => Some(&t.sender),
+            _ => tx.sender(),
+        };
+        if let Some(claimed) = binding_addr {
+            let derived: [u8; 32] = *blake3::hash(pk).as_bytes();
+            if &derived != claimed {
+                return Err(ExecutionError::InvalidSignature);
+            }
+        }
+
         Ok(())
     }
 
@@ -8751,6 +8770,62 @@ contract Counter {
         let mut ex = SimpleExecutor::new(10);
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_failed, 1, "wrong nonce on multisig must fail");
+    }
+
+    // ── Audit I1 regression (2026-05-14) ─────────────────────────────────────
+    // An attacker constructs a Transfer with tx.from = victim_addr, signs it
+    // with their OWN keypair, and submits. Before the I1 fix, HybridVerifier
+    // would accept (valid sig under attacker_pk), draining the victim.
+    // After the fix, the execution layer checks blake3(pk) == tx.from and
+    // rejects the forgery with InvalidSignature.
+    #[test]
+    fn audit_i1_forged_sender_rejected() {
+        let mut db = InMemoryStateDB::default();
+        // Victim has balance.
+        let victim_kp = MlDsaKeypair::generate();
+        let victim_addr: [u8; 32] = *blake3::hash(&victim_kp.public_key_bytes()).as_bytes();
+        db.get_or_create_account(&victim_addr).balance = 1_000_000;
+
+        // Attacker keypair — different from victim's.
+        let attacker_kp = MlDsaKeypair::generate();
+        let attacker_addr: [u8; 32] = *blake3::hash(&attacker_kp.public_key_bytes()).as_bytes();
+
+        // Forge: tx.from = victim, but signed by attacker.
+        let chain_id = "testchain";
+        let msg_template = Transaction::Transfer(TransferTx {
+            from: victim_addr,
+            to: attacker_addr,
+            amount: 500_000,
+            nonce: 0,
+            mev_refund_eligible: None,
+            signature: None,
+            public_key: None,
+        });
+        let msg_bytes = msg_template.signing_message(chain_id);
+        let forged_sig = attacker_kp.sign(&msg_bytes);
+        let forged_pk = attacker_kp.public_key_bytes();
+
+        let forged_tx = Transaction::Transfer(TransferTx {
+            from: victim_addr,
+            to: attacker_addr,
+            amount: 500_000,
+            nonce: 0,
+            mev_refund_eligible: None,
+            signature: Some(forged_sig),
+            public_key: Some(forged_pk),
+        });
+
+        let block = make_block(1, 1, vec![forged_tx]);
+        let mut ex = SimpleExecutor::new_with_sig_verification_for_test(10);
+        ex.set_chain_id(chain_id.to_string());
+        let r = ex.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "forged-sender transfer must be rejected");
+        // Gas is charged even on rejected txs (spam-deterrence). Security
+        // property: the forged 500_000 transfer must NOT have executed.
+        let victim_bal = db.get_account(&victim_addr).map(|a| a.balance).unwrap_or(0);
+        let attacker_bal = db.get_account(&attacker_addr).map(|a| a.balance).unwrap_or(0);
+        assert!(victim_bal > 500_000, "victim must not be drained by forged tx");
+        assert_eq!(attacker_bal, 0, "attacker must receive nothing from forged tx");
     }
 
 }
