@@ -4,6 +4,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 10) — Audit E1/E2/E3/E4 closed; access control sweep
+
+**Focus:** Access control audit — 10 mutation endpoints in the node HTTP API had no authentication
+**Commits shipped:** 1 (`284f3fe4`)
+**Deliverables:**
+- E1 (CRITICAL): `POST /api/governance/{param,fork_choice_mode}` — governance flag changes gated with `require_admin_auth`
+- E2 (HIGH): `POST /api/cartel_alarm/run_gate` — expensive Bell CHSH gate gated with `require_admin_auth`
+- E3 (CRITICAL): `POST /api/hbct/{mint,transfer,burn,settle}` — HBCT capacity token operations gated with `require_admin_auth`
+- E4 (CRITICAL): `POST /api/sentinel/{register,vote,tick}` — governance parameter registration/voting gated with `require_admin_auth`
+- All 10 handlers: added `headers: HeaderMap` param + early-return auth check matching existing admin endpoint pattern (drain, ban, validator reinstate)
+- EVAPORCHAIN_ADMIN_KEY unset → fails closed with 503 (per Audit C1 fix at :1388)
+- Pre-existing flakey test `client_ip_ignores_x_forwarded_for_by_default` (env-var race, not our change)
+**Empirical results:** 234 node tests pass / 1 pre-existing env-race flakey
+**What's next:** Continue access control sweep — check sentinel seed / HBCT seed_demo / tick endpoints; then oracle timing side-channel fix
+**Blockers / open questions:** none
+**Cross-references:** `284f3fe4`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 9) — Audit D1 + NC1 closed; integer underflow sweep
 
 **Focus:** Integer underflow sweep across execution/consensus; NC1 regression from stashed branch landed
