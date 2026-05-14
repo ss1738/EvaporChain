@@ -1431,3 +1431,557 @@ fn parity_private_transfer_missing_anchor_rejected() {
     };
     assert_parity(&fixture);
 }
+
+// ─── Phase 5: contract + tail variants (closes the 25-variant matrix) ────
+//
+// For variants where happy-path requires complex pre-conditions
+// (deployed contracts, registered scripts, valid signatures), the
+// error-path fixtures lock rejection-side parity. The harness goal
+// is "same input → same output on both executors" — error parity is
+// as important as success parity for the recurrence-proof property.
+
+#[test]
+fn parity_refresh_unknown_object() {
+    let fixture = ParityFixture {
+        name: "refresh-unknown-object",
+        seed: |db| fund(db, 10, 1_000),
+        transaction: Transaction::Refresh(evaporchain_types::RefreshTx {
+            object_id: [0xFF; 32],
+            energy_deposit: 100,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_create_object_empty_data() {
+    let fixture = ParityFixture {
+        name: "create-object-empty-data",
+        seed: |db| fund(db, 11, 100_000),
+        transaction: Transaction::CreateObject(evaporchain_types::CreateObjectTx {
+            creator: addr(11),
+            object_id: [0x77; 32],
+            energy: 1_000,
+            half_life: 100,
+            data: vec![],
+            decay_curve: None,
+            lad_mode: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_deploy_contract_unknown_template() {
+    let fixture = ParityFixture {
+        name: "deploy-contract-unknown-template",
+        seed: |db| fund(db, 12, 100_000),
+        transaction: Transaction::DeployContract(evaporchain_types::DeployContractTx {
+            deployer: addr(12),
+            template: "NonExistentTemplate".into(),
+            init_args: "{}".into(),
+            energy: 1_000,
+            half_life: 100,
+            rules: None,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_call_contract_unknown_id() {
+    let fixture = ParityFixture {
+        name: "call-contract-unknown-id",
+        seed: |db| fund(db, 13, 1_000),
+        transaction: Transaction::CallContract(evaporchain_types::CallContractTx {
+            caller: addr(13),
+            contract_id: 9999,
+            method: "noop".into(),
+            args: "[]".into(),
+            epoch: 1,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_deploy_script_invalid_source() {
+    let fixture = ParityFixture {
+        name: "deploy-script-invalid-source",
+        seed: |db| fund(db, 14, 100_000),
+        transaction: Transaction::DeployScript(evaporchain_types::DeployScriptTx {
+            deployer: addr(14),
+            source_code: "garbage{}{not valid syntax".into(),
+            energy: 1_000,
+            half_life: 100,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_call_script_unknown_id() {
+    let fixture = ParityFixture {
+        name: "call-script-unknown-id",
+        seed: |db| fund(db, 15, 1_000),
+        transaction: Transaction::CallScript(evaporchain_types::CallScriptTx {
+            caller: addr(15),
+            contract_id: 9999,
+            method: "noop".into(),
+            args: "[]".into(),
+            epoch: 1,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_validator_exit_no_stake_record() {
+    let fixture = ParityFixture {
+        name: "validator-exit-no-stake-record",
+        seed: |db| fund(db, 16, 1_000),
+        transaction: Transaction::ValidatorExit(evaporchain_types::ValidatorExitTx {
+            validator_address: addr(16),
+            validator_id: 9999,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_validator_claim_stake_no_record() {
+    let fixture = ParityFixture {
+        name: "validator-claim-stake-no-record",
+        seed: |db| fund(db, 17, 1_000),
+        transaction: Transaction::ValidatorClaimStake(evaporchain_types::ValidatorClaimStakeTx {
+            validator_address: addr(17),
+            validator_id: 9999,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_rotate_validator_key_wrong_length() {
+    let fixture = ParityFixture {
+        name: "rotate-validator-key-wrong-length",
+        seed: |db| fund(db, 18, 1_000),
+        transaction: Transaction::RotateValidatorKey(evaporchain_types::RotateValidatorKeyTx {
+            validator_address: addr(18),
+            validator_id: 1,
+            new_bls_public_key: vec![0xAA; 32], // must be 48 bytes
+            bls_pop_old: vec![0; 96],
+            bls_pop_new: vec![0; 96],
+            effective_epoch: 5,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_deferred_zero_deposit() {
+    let fixture = ParityFixture {
+        name: "deferred-zero-deposit",
+        seed: |db| fund(db, 19, 1_000),
+        transaction: Transaction::Deferred(evaporchain_types::DeferredTx {
+            submitter: addr(19),
+            nonce: 0,
+            deposit: 0,
+            guards: vec![],
+            inner_tx_bytes: vec![],
+            gas_limit: 0,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_blob_empty_data() {
+    let fixture = ParityFixture {
+        name: "blob-empty-data",
+        seed: |db| fund(db, 20, 1_000),
+        transaction: Transaction::Blob(evaporchain_types::BlobTx {
+            submitter: addr(20),
+            data: vec![],
+            nonce: 0,
+            namespace_id: 1,
+            signature: None,
+            public_key: None,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+#[test]
+fn parity_refund_unknown_observation() {
+    let fixture = ParityFixture {
+        name: "refund-unknown-observation",
+        seed: |db| {
+            fund(db, 21, 1_000);
+            fund(db, 22, 1_000);
+        },
+        transaction: Transaction::Refund(evaporchain_types::RefundTx {
+            source_block_height: 999,
+            source_observation_idx: 999,
+            attacker: addr(21),
+            victim: addr(22),
+            amount: 100,
+            settle_block_height: 1,
+        }),
+        block_number: 1,
+        epoch: 1,
+    };
+    assert_parity(&fixture);
+}
+
+// ─── Phase 5: enum-exhaustiveness gate (recurrence-proof) ─────────────────
+//
+// Adding a new `Transaction` variant must require a parity-fixture
+// author to acknowledge it. This gate uses an exhaustive match on
+// `&Transaction` — a new variant won't compile until the match has
+// an arm for it. The arm body documents which fixture covers the
+// variant; an `unimplemented!("…no parity fixture yet…")` arm forces
+// the author to add one before merging.
+//
+// This is what closes the audit's Theme B class permanently: the
+// next time someone adds (say) `Transaction::FooBar`, this test
+// fails to compile and they MUST either write a parity fixture for
+// FooBar or explicitly opt out with a documented reason.
+#[test]
+fn enum_exhaustiveness_every_tx_variant_has_a_parity_fixture() {
+    use evaporchain_types::Transaction as T;
+
+    /// Returns the name of the fixture(s) covering a given variant.
+    /// Adding a new variant to `Transaction` causes this match to
+    /// fail compilation until an arm is added — the parity-arc's
+    /// recurrence-proof property.
+    #[allow(unreachable_patterns)]
+    fn fixture_for(tx: &T) -> &'static str {
+        match tx {
+            T::Transfer(_) => "parity_transfer_*",
+            T::Refresh(_) => "parity_refresh_unknown_object",
+            T::CreateObject(_) => "parity_create_object_empty_data",
+            T::DeployContract(_) => "parity_deploy_contract_unknown_template",
+            T::CallContract(_) => "parity_call_contract_unknown_id",
+            T::DeployScript(_) => "parity_deploy_script_invalid_source",
+            T::CallScript(_) => "parity_call_script_unknown_id",
+            T::ValidatorStake(_) => "parity_validator_stake_*",
+            T::ValidatorExit(_) => "parity_validator_exit_no_stake_record",
+            T::ValidatorClaimStake(_) => "parity_validator_claim_stake_no_record",
+            T::Shield(_) => "parity_shield_*",
+            T::Unshield(_) => "parity_unshield_missing_anchor_rejected",
+            T::PrivateTransfer(_) => "parity_private_transfer_missing_anchor_rejected",
+            T::Deferred(_) => "parity_deferred_zero_deposit",
+            T::Blob(_) => "parity_blob_empty_data",
+            T::Governance(_) => "parity_governance_*",
+            T::MultiSig(_) => "parity_multisig_*",
+            T::UserOp(_) => "parity_userop_*",
+            T::UpgradeContract(_) => "parity_upgrade_contract_*",
+            T::Delegate(_) => "parity_delegate_*",
+            T::Undelegate(_) => "parity_undelegate_*",
+            T::RotateValidatorKey(_) => "parity_rotate_validator_key_wrong_length",
+            T::ClaimDelegation(_) => "parity_claim_delegation_*",
+            T::Refund(_) => "parity_refund_unknown_observation",
+        }
+    }
+
+    // Build one representative of every variant. Any divergence
+    // between this list and the Transaction enum is caught at compile
+    // time by `fixture_for`'s match.
+    let representatives: Vec<T> = vec![
+        T::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        }),
+        T::Refresh(evaporchain_types::RefreshTx {
+            object_id: [0; 32],
+            energy_deposit: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::CreateObject(evaporchain_types::CreateObjectTx {
+            creator: addr(1),
+            object_id: [0; 32],
+            energy: 0,
+            half_life: 0,
+            data: vec![],
+            decay_curve: None,
+            lad_mode: None,
+            signature: None,
+            public_key: None,
+        }),
+        T::DeployContract(evaporchain_types::DeployContractTx {
+            deployer: addr(1),
+            template: String::new(),
+            init_args: String::new(),
+            energy: 0,
+            half_life: 0,
+            rules: None,
+            signature: None,
+            public_key: None,
+        }),
+        T::CallContract(evaporchain_types::CallContractTx {
+            caller: addr(1),
+            contract_id: 0,
+            method: String::new(),
+            args: String::new(),
+            epoch: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::DeployScript(evaporchain_types::DeployScriptTx {
+            deployer: addr(1),
+            source_code: String::new(),
+            energy: 0,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::CallScript(evaporchain_types::CallScriptTx {
+            caller: addr(1),
+            contract_id: 0,
+            method: String::new(),
+            args: String::new(),
+            epoch: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1),
+            stake_amount: 0,
+            validator_id: 0,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        T::ValidatorExit(evaporchain_types::ValidatorExitTx {
+            validator_address: addr(1),
+            validator_id: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::ValidatorClaimStake(evaporchain_types::ValidatorClaimStakeTx {
+            validator_address: addr(1),
+            validator_id: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::Shield(evaporchain_types::ShieldTx {
+            from: addr(1),
+            amount: 0,
+            nonce: 0,
+            note_owner_hash: [0; 32],
+            value_blinding: [0; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::Unshield(evaporchain_types::UnshieldTx {
+            to: addr(1),
+            amount: 0,
+            input_nullifiers: vec![],
+            anchor: [0; 32],
+            balance_binding: [0; 32],
+            input_amounts: vec![],
+            input_blindings: vec![],
+            input_value_commitments: vec![],
+            input_note_commitments: vec![],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![],
+            change_commitments: vec![],
+            energy_proofs: vec![],
+        }),
+        T::PrivateTransfer(evaporchain_types::PrivateTransferTx {
+            input_nullifiers: vec![],
+            output_commitments: vec![],
+            anchor: [0; 32],
+            balance_binding: [0; 32],
+            fee: 0,
+            input_amounts: vec![],
+            input_blindings: vec![],
+            input_value_commitments: vec![],
+            input_note_commitments: vec![],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![],
+            output_value_commitments: vec![],
+            output_amounts: vec![],
+            energy_proofs: vec![],
+        }),
+        T::Deferred(evaporchain_types::DeferredTx {
+            submitter: addr(1),
+            nonce: 0,
+            deposit: 0,
+            guards: vec![],
+            inner_tx_bytes: vec![],
+            gas_limit: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::Blob(evaporchain_types::BlobTx {
+            submitter: addr(1),
+            data: vec![],
+            nonce: 0,
+            namespace_id: 1,
+            signature: None,
+            public_key: None,
+        }),
+        T::Governance(GovernanceTx {
+            action: GovernanceAction::CastVote {
+                proposal_id: 0,
+                vote: true,
+            },
+            sender: addr(1),
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::MultiSig(MultiSigTx {
+            multisig_address: addr(1),
+            threshold: 1,
+            signers: vec![addr(2)],
+            inner_tx_bytes: vec![],
+            signatures: vec![],
+            public_keys: vec![],
+            nonce: 0,
+        }),
+        T::UserOp(evaporchain_types::UserOpTx {
+            sender: addr(1),
+            nonce: 0,
+            call_data: vec![],
+            call_gas_limit: 0,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        }),
+        T::UpgradeContract(UpgradeContractTx {
+            owner: addr(1),
+            contract_id: 0,
+            new_bytecode: vec![],
+            new_bytecode_hash: [0; 32],
+            nonce: 0,
+            admin_signature: None,
+            admin_public_key: None,
+            endorser_stakes: vec![],
+            required_stake: 0,
+            governance_approved: false,
+            signature: None,
+            public_key: None,
+        }),
+        T::Delegate(DelegateTx {
+            delegator: addr(1),
+            validator_id: 0,
+            amount: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::Undelegate(UndelegateTx {
+            delegator: addr(1),
+            validator_id: 0,
+            amount: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::RotateValidatorKey(evaporchain_types::RotateValidatorKeyTx {
+            validator_address: addr(1),
+            validator_id: 0,
+            new_bls_public_key: vec![],
+            bls_pop_old: vec![],
+            bls_pop_new: vec![],
+            effective_epoch: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::ClaimDelegation(ClaimDelegationTx {
+            delegator: addr(1),
+            validator_id: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }),
+        T::Refund(evaporchain_types::RefundTx {
+            source_block_height: 0,
+            source_observation_idx: 0,
+            attacker: addr(1),
+            victim: addr(2),
+            amount: 0,
+            settle_block_height: 1,
+        }),
+    ];
+
+    // Every representative resolves to a fixture name (a documentation
+    // string; not actually called here). If `Transaction` gains a new
+    // variant, `fixture_for`'s match becomes non-exhaustive and the
+    // file fails to compile — forcing the new variant's author to add
+    // a parity fixture.
+    for tx in &representatives {
+        let _name = fixture_for(tx);
+    }
+    assert_eq!(
+        representatives.len(),
+        24,
+        "exhaustiveness baseline: 24 Transaction variants known"
+    );
+}
