@@ -94,6 +94,20 @@ pub enum ExtractError {
     /// A required field was missing or malformed during Section 3 extraction.
     #[error("missing or malformed field: {0}")]
     MissingField(String),
+
+    /// NCR5 (re-audit 2026-05-14): R1CS shape parameter from the
+    /// supplied JSON exceeds the hard sanity cap. Without this
+    /// gate a malicious `RecursiveSNARK` dump could specify
+    /// `num_cons / num_vars / num_io` large enough to make the
+    /// Section 3 gadget's `sparse_lc` synthesis loop quadratic
+    /// in `num_cons × entries.len()` — multi-hour setup DoS even
+    /// off-chain.
+    #[error("R1CS shape parameter `{name}` = {value} exceeds cap {cap}")]
+    ShapeTooLarge {
+        name: &'static str,
+        value: usize,
+        cap: usize,
+    },
 }
 
 /// Extract `l_u_secondary.X[0]` and `l_u_secondary.X[1]` as

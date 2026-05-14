@@ -60,12 +60,29 @@ pub fn enforce_primary_relaxed_r1cs_sat(
         z_vars.push(xv.clone());
     }
 
+    // ── Pre-bucket sparse matrix entries by row ──────────────────────────
+    // NCR5 (re-audit 2026-05-14): the previous implementation called
+    // `sparse_lc(m, z, row)` for every (matrix, row), and each call did
+    // a linear scan over `m.entries` to filter `r == row`. With three
+    // matrices and `num_cons` rows that is O(num_cons × Σ|entries|),
+    // i.e. quadratic in shape. For the production `TrivialIncrementCircuit`
+    // (~10 k rows / ~30 k entries per matrix) it was still feasible, but
+    // a malicious dump with shape near the size cap (paired with the
+    // shape-cap gate in `section3_witness::extract_section3_witness`)
+    // could push setup into the multi-hour range. Pre-bucketing collapses
+    // the per-row cost to O(entries-in-row), making the total cost
+    // O(Σ|entries|) — linear in shape and unconditionally bounded by the
+    // shape caps.
+    let a_rows = bucket_by_row(&s3.a_primary);
+    let b_rows = bucket_by_row(&s3.b_primary);
+    let c_rows = bucket_by_row(&s3.c_primary);
+
     // ── For each row: enforce (Az)_i * (Bz)_i == u * (Cz)_i + E_i ───────
     #[allow(clippy::needless_range_loop)]
     for row in 0..s3.num_cons {
-        let az_i = sparse_lc(&s3.a_primary, &z_vars, row)?;
-        let bz_i = sparse_lc(&s3.b_primary, &z_vars, row)?;
-        let cz_i = sparse_lc(&s3.c_primary, &z_vars, row)?;
+        let az_i = sparse_lc_bucketed(&a_rows, &z_vars, row);
+        let bz_i = sparse_lc_bucketed(&b_rows, &z_vars, row);
+        let cz_i = sparse_lc_bucketed(&c_rows, &z_vars, row);
 
         let lhs = &az_i * &bz_i;
         let rhs = &u_var * &cz_i + &e_vars[row];
@@ -75,20 +92,38 @@ pub fn enforce_primary_relaxed_r1cs_sat(
     Ok(())
 }
 
-/// Compute one row of a sparse matrix-vector product as a `FpVar` linear
-/// combination.  Constant coefficients → no extra mult gates.
-fn sparse_lc(
-    m: &SparseTriple,
-    z: &[FpVar<Bn254Fr>],
-    row: usize,
-) -> Result<FpVar<Bn254Fr>, SynthesisError> {
-    let mut acc = FpVar::<Bn254Fr>::Constant(Bn254Fr::from(0u64));
-    for &(r, col, ref coeff) in &m.entries {
-        if r == row {
-            acc += &z[col] * *coeff;
+/// Group sparse-matrix entries by row index.
+///
+/// Returns a `Vec` of length `m.num_rows` where each cell holds the
+/// `(col, coeff)` pairs for that row. Entries whose `row >= m.num_rows`
+/// are silently dropped — they cannot influence any constraint and
+/// `extract_section3_witness` is responsible for refusing malformed
+/// shapes before we get here.
+fn bucket_by_row(m: &SparseTriple) -> Vec<Vec<(usize, Bn254Fr)>> {
+    let mut rows: Vec<Vec<(usize, Bn254Fr)>> = vec![Vec::new(); m.num_rows];
+    for &(r, col, coeff) in &m.entries {
+        if r < m.num_rows {
+            rows[r].push((col, coeff));
         }
     }
-    Ok(acc)
+    rows
+}
+
+/// Compute one row of a sparse matrix-vector product as a `FpVar` linear
+/// combination, given pre-bucketed rows. Constant coefficients → no
+/// extra mult gates.
+fn sparse_lc_bucketed(
+    rows: &[Vec<(usize, Bn254Fr)>],
+    z: &[FpVar<Bn254Fr>],
+    row: usize,
+) -> FpVar<Bn254Fr> {
+    let mut acc = FpVar::<Bn254Fr>::Constant(Bn254Fr::from(0u64));
+    if let Some(entries) = rows.get(row) {
+        for &(col, coeff) in entries {
+            acc += &z[col] * coeff;
+        }
+    }
+    acc
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
