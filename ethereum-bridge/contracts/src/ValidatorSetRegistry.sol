@@ -52,6 +52,15 @@ contract ValidatorSetRegistry {
     error PrevValsetWitnessMismatch();
     error PubkeyArityMismatch();
     error InsufficientStake(uint128 signed, uint128 required);
+    /// L4 (audit 2026-05-13): a valset with a duplicate pubkey would
+    /// double-count that signer's stake in `_sumSignedStake`,
+    /// dropping the effective 2/3 quorum threshold below the real
+    /// network stake-weight. Caught at `_computeRoot` time via an
+    /// O(n²) pairwise comparison (acceptable at MAX_VALIDATORS=1024
+    /// — even the worst case is ~520K comparisons × 48-byte memcmp,
+    /// well under genesis/update block gas limits at realistic sizes
+    /// of <128 validators).
+    error DuplicatePubkey(uint256 firstIndex, uint256 duplicateIndex);
 
     // ─── Events ─────────────────────────────────────────────────────
 
@@ -205,8 +214,26 @@ contract ValidatorSetRegistry {
             uint32(validators.length)
         );
 
+        // L4 (audit 2026-05-13): hash each pubkey once before the
+        // main loop so the duplicate check is O(n²) keccak-compares
+        // instead of O(n²) 48-byte memcmps. Keeps gas reasonable
+        // at the MAX_VALIDATORS=1024 ceiling.
+        bytes32[] memory pkHashes = new bytes32[](validators.length);
+
         for (uint256 i = 0; i < validators.length; i++) {
             if (validators[i].pubkey.length != 48) revert InvalidPubkeyLength();
+            pkHashes[i] = keccak256(validators[i].pubkey);
+            // Duplicate check against every earlier entry. The doc
+            // comment above asks the producer to ship sorted-by-
+            // pubkey order, but we don't enforce that here — the
+            // L4 audit-required guarantee is just "no duplicates"
+            // (and a producer that emits canonical order
+            // automatically satisfies it).
+            for (uint256 j = 0; j < i; j++) {
+                if (pkHashes[j] == pkHashes[i]) {
+                    revert DuplicatePubkey(j, i);
+                }
+            }
             buf = abi.encodePacked(buf, validators[i].pubkey, uint128(validators[i].stake));
             // Saturate-add not needed: uint128 sum of 1024×uint128 fits in uint256
             // headspace, and we cap the array at MAX_VALIDATORS. We assert no

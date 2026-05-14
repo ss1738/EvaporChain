@@ -173,4 +173,95 @@ contract ValidatorSetRegistryTest is Test {
         assertFalse(registry.isActiveValset(1, other));
         assertFalse(registry.isActiveValset(2, vs)); // wrong epoch
     }
+
+    // ── L4 (audit 2026-05-13): duplicate-pubkey rejection ──
+
+    /// Pre-fix this valset would have been accepted: pubkey 0x33
+    /// listed twice would double-count that signer's stake in
+    /// `_sumSignedStake`, dropping the effective 2/3 quorum
+    /// threshold. Post-fix `_computeRoot` rejects with
+    /// `DuplicatePubkey(firstIndex, duplicateIndex)`.
+    function test_audit_l4_genesisInit_rejectsDuplicateAdjacent() public {
+        BridgeTypes.Validator[] memory vs = new BridgeTypes.Validator[](3);
+        vs[0] = _v(0x11, 100);
+        vs[1] = _v(0x33, 100);
+        vs[2] = _v(0x33, 100); // duplicate of index 1
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ValidatorSetRegistry.DuplicatePubkey.selector,
+                uint256(1),
+                uint256(2)
+            )
+        );
+        registry.genesisInit(1, vs);
+    }
+
+    /// Non-adjacent duplicates (the pre-fix exploit shape — sneaking
+    /// a copy of validator 0 into position 4 of a longer list) are
+    /// also caught.
+    function test_audit_l4_genesisInit_rejectsDuplicateNonAdjacent() public {
+        BridgeTypes.Validator[] memory vs = new BridgeTypes.Validator[](5);
+        vs[0] = _v(0x11, 100);
+        vs[1] = _v(0x22, 100);
+        vs[2] = _v(0x33, 100);
+        vs[3] = _v(0x44, 100);
+        vs[4] = _v(0x11, 100); // duplicate of index 0
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ValidatorSetRegistry.DuplicatePubkey.selector,
+                uint256(0),
+                uint256(4)
+            )
+        );
+        registry.genesisInit(1, vs);
+    }
+
+    /// `updateValset`'s next-set is also subject to the same gate.
+    /// Pre-fix an adversarial relayer could have shipped a next-set
+    /// with duplicates and inflated quorum for the next epoch.
+    function test_audit_l4_updateValset_rejectsDuplicateInNextSet() public {
+        BridgeTypes.Validator[] memory prev = _genesisFive();
+        registry.genesisInit(1, prev);
+
+        BridgeTypes.Validator[] memory bad = new BridgeTypes.Validator[](3);
+        bad[0] = _v(0x10, 100);
+        bad[1] = _v(0x20, 100);
+        bad[2] = _v(0x20, 100); // duplicate
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ValidatorSetRegistry.DuplicatePubkey.selector,
+                uint256(1),
+                uint256(2)
+            )
+        );
+        registry.updateValset(
+            2,
+            bad,
+            prev,
+            _zeroPubkeysFor(prev.length),
+            hex"1F",
+            "OK"
+        );
+    }
+
+    /// Singleton valsets are accepted (no pairs to compare).
+    function test_audit_l4_genesisInit_acceptsSingletonValset() public {
+        BridgeTypes.Validator[] memory vs = new BridgeTypes.Validator[](1);
+        vs[0] = _v(0x42, 1000);
+        registry.genesisInit(1, vs);
+        assertEq(registry.totalStake(), 1000);
+    }
+
+    /// Un-sorted (but non-duplicate) valsets are still accepted —
+    /// the audit's narrow ask was duplicate-rejection only. Sorting
+    /// is a doctrine convention that the producer follows but the
+    /// contract doesn't yet enforce.
+    function test_audit_l4_genesisInit_acceptsUnsortedNonDuplicate() public {
+        BridgeTypes.Validator[] memory vs = new BridgeTypes.Validator[](3);
+        vs[0] = _v(0x55, 100);
+        vs[1] = _v(0x22, 100); // out of order
+        vs[2] = _v(0x99, 100);
+        registry.genesisInit(1, vs);
+        assertEq(registry.totalStake(), 300);
+    }
 }
