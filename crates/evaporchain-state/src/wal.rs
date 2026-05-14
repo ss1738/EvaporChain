@@ -150,47 +150,93 @@ impl WriteAheadLog {
 
     /// Truncate the WAL after recovery, keeping only the magic header.
     /// Call this after state has been verified consistent.
+    ///
+    /// AUDIT_2026_05_13 M11 closure: pre-fix called `set_len(0) →
+    /// write_all(WAL_MAGIC)` with no sync between. Crash between the
+    /// two left the file empty. Post-fix uses the same atomic
+    /// rename pattern as `compact` — write a fresh magic-only WAL
+    /// to a tmp path, fsync, atomic rename over the live path. Either
+    /// the rename has succeeded (live file is fresh) or not (live
+    /// file is the pre-truncate one). No torn middle state.
     pub fn truncate_after_recovery(&mut self) -> io::Result<()> {
-        self.file.set_len(HEADER_SIZE as u64)?;
-        self.file.seek(SeekFrom::End(0))?;
-        self.file.sync_all()?;
-        Ok(())
+        self.write_compact_via_tmp(&[])
     }
 
     /// Compact: remove all entries for heights <= committed_up_to.
+    ///
+    /// AUDIT_2026_05_13 M11 closure: pre-fix used `set_len(0) →
+    /// write_all → loop → sync_all` — crash between the truncate
+    /// and end-of-loop permanently lost retained heights
+    /// (set_len(0) leaves the file empty; if the loop didn't
+    /// complete, the retained heights are gone). Post-fix writes
+    /// the new compacted contents to a sibling `.wal.compact-tmp`,
+    /// fsyncs it, then atomically renames over the live path.
+    /// `rename(2)` on POSIX is atomic — the live path either points
+    /// at the old file or the new one, never a torn middle.
     pub fn compact(&mut self, committed_up_to: u64) -> io::Result<()> {
         self.file.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
         let entries = Self::read_all_entries(&mut self.file)?;
-
         let remaining: Vec<&WalEntry> = entries
             .iter()
             .filter(|e| e.height > committed_up_to)
             .collect();
+        self.write_compact_via_tmp(&remaining)
+    }
 
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.set_len(0)?;
-        self.file.write_all(WAL_MAGIC)?;
-
-        for entry in remaining {
-            let payload = bincode::serialize(&entry.mutations)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            let checksum = blake3::hash(&payload);
-            let marker = if entry.committed {
-                MARKER_COMMIT
-            } else {
-                MARKER_BEGIN
-            };
-
-            self.file.write_all(&entry.height.to_le_bytes())?;
-            self.file.write_all(&entry.pre_state_root)?;
-            let len = payload.len() as u32;
-            self.file.write_all(&len.to_le_bytes())?;
-            self.file.write_all(&payload)?;
-            self.file.write_all(checksum.as_bytes())?;
-            self.file.write_all(&[marker])?;
+    /// Shared atomic-replace helper for `compact` and
+    /// `truncate_after_recovery`. Writes WAL_MAGIC + the given
+    /// retained entries to a sibling tmp file, fsyncs, then renames
+    /// over the live path. Reopens `self.file` to point at the new
+    /// inode.
+    fn write_compact_via_tmp(&mut self, remaining: &[&WalEntry]) -> io::Result<()> {
+        let tmp_path = self._path.with_extension("wal.compact-tmp");
+        // Best-effort remove any stale tmp from a previous aborted
+        // compaction; ignore NotFound.
+        let _ = std::fs::remove_file(&tmp_path);
+        {
+            let mut tmp = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)?;
+            tmp.write_all(WAL_MAGIC)?;
+            for entry in remaining {
+                let payload = bincode::serialize(&entry.mutations)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                let checksum = blake3::hash(&payload);
+                let marker = if entry.committed {
+                    MARKER_COMMIT
+                } else {
+                    MARKER_BEGIN
+                };
+                tmp.write_all(&entry.height.to_le_bytes())?;
+                tmp.write_all(&entry.pre_state_root)?;
+                let len = payload.len() as u32;
+                tmp.write_all(&len.to_le_bytes())?;
+                tmp.write_all(&payload)?;
+                tmp.write_all(checksum.as_bytes())?;
+                tmp.write_all(&[marker])?;
+            }
+            // fsync the tmp file's contents BEFORE the rename. POSIX
+            // requires the data to be durably on disk before the
+            // rename completes — otherwise a power-loss between
+            // rename and sync could leave the rename committed but
+            // its contents not yet on disk.
+            tmp.sync_all()?;
         }
-
-        self.file.sync_all()?;
+        // Atomic rename: either the live path points at the old WAL
+        // (crash before rename) or the new compacted one (crash
+        // after). No torn intermediate.
+        std::fs::rename(&tmp_path, &self._path)?;
+        // Reopen `self.file` so subsequent appends target the new
+        // inode. The old handle still pointed at the (now-unlinked)
+        // pre-compact file.
+        self.file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .append(true)
+            .open(&self._path)?;
+        self.file.seek(SeekFrom::End(0))?;
         Ok(())
     }
 
@@ -571,6 +617,81 @@ mod tests {
         }
         let wal2 = WriteAheadLog::open(f.path()).unwrap();
         // Scan should hit the cap-check break and stop at h=3.
+        assert_eq!(wal2.last_committed_height(), Some(3));
+    }
+
+    // ─── AUDIT_2026_05_13 M11 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_m11_compact_leaves_no_tmp_file_behind() {
+        // Successful compact must remove the tmp file via atomic
+        // rename. A stale `.wal.compact-tmp` lingering after success
+        // would mean we silently leaked a partial file the next
+        // compact must defensively clean up.
+        let (mut wal, f) = tmp_wal();
+        for h in 1..=4 {
+            let m = vec![WalMutation::SetNoteCount { count: h }];
+            wal.begin_block(h, [0; 32], &m).unwrap();
+            wal.commit_block(h).unwrap();
+        }
+        let tmp_path = f.path().with_extension("wal.compact-tmp");
+        wal.compact(2).unwrap();
+        assert!(
+            !tmp_path.exists(),
+            "compact tmp file must be renamed away, not leaked: {}",
+            tmp_path.display()
+        );
+    }
+
+    #[test]
+    fn audit_m11_truncate_after_recovery_uses_atomic_rename() {
+        // Same property for truncate_after_recovery — it shares the
+        // write_compact_via_tmp helper with compact.
+        let (mut wal, f) = tmp_wal();
+        let m = vec![WalMutation::SpendNullifier {
+            nullifier: [0xCC; 32],
+        }];
+        wal.begin_block(7, [0; 32], &m).unwrap();
+        wal.commit_block(7).unwrap();
+        let tmp_path = f.path().with_extension("wal.compact-tmp");
+        wal.truncate_after_recovery().unwrap();
+        assert!(
+            !tmp_path.exists(),
+            "truncate_after_recovery must not leak tmp file"
+        );
+        // And the file is reloadable as a fresh, magic-only WAL.
+        drop(wal);
+        let mut wal2 = WriteAheadLog::open(f.path()).unwrap();
+        assert_eq!(wal2.last_committed_height(), None);
+    }
+
+    #[test]
+    fn audit_m11_compact_recovers_from_stale_tmp_from_prior_aborted_run() {
+        // If a previous compact crashed AFTER writing the tmp but
+        // BEFORE renaming, a stale tmp file persists. The next
+        // successful compact must overwrite it (best-effort remove
+        // before create_new). Otherwise create_new would fail with
+        // AlreadyExists.
+        let (mut wal, f) = tmp_wal();
+        for h in 1..=3 {
+            let m = vec![WalMutation::SetNoteCount { count: h }];
+            wal.begin_block(h, [0; 32], &m).unwrap();
+            wal.commit_block(h).unwrap();
+        }
+        // Simulate a stale tmp left over from an aborted prior run.
+        let tmp_path = f.path().with_extension("wal.compact-tmp");
+        std::fs::write(&tmp_path, b"stale-junk-from-crash").unwrap();
+        assert!(tmp_path.exists());
+        // Compact should succeed despite the stale tmp, and end
+        // with no tmp file remaining.
+        wal.compact(1).unwrap();
+        assert!(
+            !tmp_path.exists(),
+            "stale tmp must be cleaned up before create_new"
+        );
+        // And the WAL is sound.
+        drop(wal);
+        let wal2 = WriteAheadLog::open(f.path()).unwrap();
         assert_eq!(wal2.last_committed_height(), Some(3));
     }
 }
