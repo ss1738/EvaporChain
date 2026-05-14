@@ -4,6 +4,26 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 8) — Audit C2 closed; supermajority u64 overflow sweep
+
+**Focus:** C1 fix prompted a sweep — found same overflow class in 5 more production supermajority checks
+**Commits shipped:** 1 (`fe8b7291`)
+**Deliverables:**
+- C2 (HIGH): 5 sites using `x * 3 >= y * 2` on u64 stakes — wraps when stake > u64::MAX/3:
+  - `evaporchain-da/src/certificate.rs:DACertificate::is_supermajority` + `has_supermajority`
+  - `evaporchain-da/src/poha.rs:PoHACertificate::is_supermajority`
+  - `evaporchain-consensus/src/bridge.rs:verify_supermajority`
+  - `evaporchain-consensus/src/finality.rs:has_supermajority` + inline check (:296)
+  - All fixed: `(x as u128) * 3 >= (y as u128) * 2`
+- `evaporchain-consensus-types/src/tendermint.rs:stake_quorum_threshold` — same fix applied (file is dead/unincluded but fix documents intent)
+- 3 regression tests (certificate.rs, finality.rs, consensus-types/tendermint.rs)
+**Empirical results:** 941 consensus / 166 DA tests — all passed
+**What's next:** Continue overflow audit sweep — check remaining arithmetic paths or move to next audit class
+**Blockers / open questions:** consensus-types/tendermint.rs is not mod-included in lib.rs; it's dead code. Should be removed or activated in a future refactor sprint.
+**Cross-references:** `fe8b7291`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 7) — Audit C1 closed; BFT quorum u64 overflow
 
 **Focus:** Fix BFT quorum threshold overflow — `stake_quorum_threshold()` multiplied u64 total by 2 before dividing, wrapping when total > u64::MAX/2
