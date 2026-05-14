@@ -3931,6 +3931,14 @@ mod tests {
         });
     }
 
+    /// Derive an account address from a keypair the same way the
+    /// I1 pk→sender binding does: `blake3(kp.public_key_bytes())`.
+    /// Use this for the `from` / `creator` field of any test that
+    /// signs a tx and expects the binding check to pass.
+    fn addr_from_kp(kp: &MlDsaKeypair) -> [u8; 32] {
+        *blake3::hash(&kp.public_key_bytes()).as_bytes()
+    }
+
     /// Helper: sign a transaction with the given keypair.
     /// Uses signing_message with empty chain_id to match executor verification.
     fn sign_tx(tx: &mut Transaction, kp: &MlDsaKeypair) {
@@ -5080,13 +5088,25 @@ mod tests {
     #[test]
     fn test_signed_transfer_succeeds() {
         let mut db = InMemoryStateDB::new();
-        fund_account(&mut db, 1, 1000);
+
+        let kp = MlDsaKeypair::generate();
+        let sender = addr_from_kp(&kp);
+        // I1 binding: `tx.from` must equal `blake3(pk)`. Fund the
+        // derived address, not a synthetic `addr(N)` byte.
+        db.put_account(Account {
+            address: sender,
+            balance: 1000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
-        let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
-            from: addr(1),
+            from: sender,
             to: addr(2),
             amount: 200,
             nonce: 0,
@@ -5100,7 +5120,7 @@ mod tests {
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
         assert_eq!(result.txs_failed, 0);
-        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 800);
+        assert_eq!(db.get_account(&sender).unwrap().balance, 800);
     }
 
     #[test]
@@ -5196,13 +5216,24 @@ mod tests {
     #[test]
     fn test_signed_create_object_succeeds() {
         let mut db = InMemoryStateDB::new();
-        // CreateObject debits the creator for MIN_STORAGE_DEPOSIT — fund first.
-        fund_account(&mut db, 1, 10_000);
-        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
+
         let kp = MlDsaKeypair::generate();
+        let creator = addr_from_kp(&kp);
+        // I1 binding: `tx.creator` must equal `blake3(pk)`.
+        // CreateObject debits the creator for MIN_STORAGE_DEPOSIT — fund first.
+        db.put_account(Account {
+            address: creator,
+            balance: 10_000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
 
         let mut tx = Transaction::CreateObject(CreateObjectTx {
-            creator: addr(1),
+            creator,
             object_id: obj_id(42),
             energy: 5000,
             half_life: 100,
@@ -5594,11 +5625,21 @@ contract Looper {
     #[test]
     fn test_valid_signature_passes() {
         let mut db = InMemoryStateDB::new();
-        fund_account(&mut db, 1, 1000);
         let kp = MlDsaKeypair::generate();
+        let sender = addr_from_kp(&kp);
+        // I1 binding: `tx.from` must equal `blake3(pk)`.
+        db.put_account(Account {
+            address: sender,
+            balance: 1000,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
 
         let mut tx = Transaction::Transfer(TransferTx {
-            from: addr(1),
+            from: sender,
             to: addr(2),
             amount: 100,
             nonce: 0,
