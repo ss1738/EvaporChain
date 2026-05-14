@@ -52,6 +52,7 @@ use serde_json::Value;
 /// Constructed via [`extract_section2_witness`] from a live
 /// `RecursiveSNARK`, or built manually in tests.
 #[derive(Clone, Debug)]
+#[allow(non_snake_case)]
 pub struct Section2Witness {
     /// Neptune permutation parameters (width-25 BN254 standard).
     /// Loaded from the `dump-neptune-constants` JSON dump.
@@ -110,6 +111,7 @@ impl Section2Witness {
 /// * `pp_digest` — `PublicParams::digest()` from the same setup call.
 /// * `dump_path` — path to the `dump-neptune-constants` JSON dump
 ///   (typically `/tmp/neptune-bn256-standard.json`).
+#[allow(non_snake_case)]
 pub fn extract_section2_witness<P: AsRef<std::path::Path>>(
     rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
     pp_digest: Scalar1,

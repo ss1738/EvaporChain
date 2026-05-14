@@ -6013,7 +6013,7 @@ impl TendermintConsensus {
             // the node-side block-record prune at main.rs ~line 4357.
             const LIGHT_CONE_PRUNE_INTERVAL: u64 = 100;
             const LIGHT_CONE_RETENTION_EPOCHS: u64 = 1_000;
-            if block.number > 0 && block.number % LIGHT_CONE_PRUNE_INTERVAL == 0 {
+            if block.number > 0 && block.number.is_multiple_of(LIGHT_CONE_PRUNE_INTERVAL) {
                 let cutoff = block.epoch.saturating_sub(LIGHT_CONE_RETENTION_EPOCHS);
                 if cutoff > 0 {
                     let pruned = self.light_cone_dag.prune_before_epoch(cutoff);
