@@ -4,6 +4,21 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 11) — Audit E5/E6 closed; access control sweep complete
+
+**Focus:** Remaining medium-priority access control and timing side-channel findings
+**Commits shipped:** 1 (`7ef31cee`)
+**Deliverables:**
+- E5 (MEDIUM): Admin-gated 4 more state-mutating endpoints: `hbct_seed_demo`, `hbct_tick`, `sentinel_seed_demo`, `sentinel_seed_votes`
+- E6 (MEDIUM): Oracle API key comparison — replaced length-leaking short-circuit with `subtle::ConstantTimeEq` (crate already a dep of evaporchain-node). Old XOR loop was correct for content but leaked key length via early exit on length mismatch.
+- Access control audit class (E) now complete: 14 endpoints total gated, 0 remaining unprotected mutation endpoints.
+**Empirical results:** 234 node tests pass / 1 pre-existing env-race flakey
+**What's next:** Run full workspace test; move to next audit class or start closing remaining MAINNET_READINESS lanes
+**Blockers / open questions:** none
+**Cross-references:** `7ef31cee`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 10) — Audit E1/E2/E3/E4 closed; access control sweep
 
 **Focus:** Access control audit — 10 mutation endpoints in the node HTTP API had no authentication
