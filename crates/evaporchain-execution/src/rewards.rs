@@ -420,7 +420,7 @@ impl RewardAccumulator {
                 acct.balance = acct.balance.saturating_add(1);
                 acct.last_touched_epoch = epoch;
                 distributed = distributed.saturating_add(1);
-                remainder -= 1;
+                remainder = remainder.saturating_sub(1);
             }
         }
 
