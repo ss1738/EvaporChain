@@ -30,9 +30,11 @@ pub use signatures::BlsKeypair;
 pub use eip2537::{g1_compressed_to_eip2537, g2_compressed_to_eip2537};
 pub use eip2537::{g1_raw_to_eip2537, g2_raw_to_eip2537};
 pub use verkle::{VerkleProof, VerkleTrie};
+#[allow(deprecated)]
 pub use vrf::{
-    leader_vrf_input, sortition, sortition_vrf_input, vrf_leader_check, vrf_verify,
-    RandomnessBeacon, VrfKeypair, VrfOutput, VrfProof,
+    leader_vrf_input, leader_vrf_input_v1, sortition, sortition_vrf_input,
+    sortition_vrf_input_v1, vrf_leader_check, vrf_verify, RandomnessBeacon, VrfKeypair,
+    VrfOutput, VrfProof,
 };
 
 #[cfg(test)]

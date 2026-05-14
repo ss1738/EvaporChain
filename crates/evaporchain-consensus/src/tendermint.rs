@@ -29,7 +29,7 @@ use evaporchain_entropic_slashing::entropic_slash;
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsSignature, BlsVerifier};
 use evaporchain_crypto::vrf::{
-    leader_vrf_input, vrf_verify, RandomnessBeacon, VrfKeypair, VrfOutput, VrfProof,
+    leader_vrf_input_v1, vrf_verify, RandomnessBeacon, VrfKeypair, VrfOutput, VrfProof,
 };
 use evaporchain_execution::fees::PidFeeController;
 use evaporchain_execution::parallel::ParallelExecutor;
@@ -5018,7 +5018,16 @@ impl TendermintConsensus {
                 {
                     if let Some(proposer_info) = self.validator_set.get(proposer_id) {
                         if let Some(ref vrf_pk) = proposer_info.vrf_public_key {
-                            let alpha = leader_vrf_input(height, round);
+                            // AUDIT M2: bind chain_id + beacon to the VRF
+                            // input so a proof from chain A cannot replay
+                            // against chain B and the producer cannot
+                            // pre-compute outputs.
+                            let alpha = leader_vrf_input_v1(
+                                &self.chain_id,
+                                &self.randomness_beacon.current(),
+                                height,
+                                round,
+                            );
                             let output = VrfOutput(*vrf_out);
                             let proof = VrfProof(vrf_proof.clone());
                             if !vrf_verify(vrf_pk, &alpha, &output, &proof) {
@@ -6468,7 +6477,13 @@ impl TendermintConsensus {
 
         // Compute VRF output for this block (leader election proof + randomness).
         let (vrf_out, vrf_prf) = if let Some(ref vrf_kp) = self.vrf_keypair {
-            let alpha = leader_vrf_input(self.height, self.round_state.round);
+            // AUDIT M2: bind chain_id + beacon (see verify-side mirror).
+            let alpha = leader_vrf_input_v1(
+                &self.chain_id,
+                &self.randomness_beacon.current(),
+                self.height,
+                self.round_state.round,
+            );
             let (output, proof) = vrf_kp.evaluate(&alpha);
             (Some(output.0), Some(proof.0))
         } else {
@@ -14944,8 +14959,10 @@ mod integration_tests {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // legacy tests still call deprecated leader_vrf_input
 mod vrf_tests {
     use super::*;
+    #[allow(deprecated)]
     use evaporchain_crypto::vrf::{
         leader_vrf_input, vrf_leader_check, vrf_verify, VrfKeypair, VrfOutput, VrfProof,
     };

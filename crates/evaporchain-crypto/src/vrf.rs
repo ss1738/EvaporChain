@@ -199,7 +199,37 @@ pub fn sortition(
     whole_seats + extra
 }
 
-/// Construct the VRF input for leader election at a given height and round.
+/// Domain tag for v1 leader-VRF inputs (AUDIT_2026_05_13 M2).
+pub const LEADER_VRF_INPUT_V1_DST: &[u8] = b"evaporchain:leader-vrf:v1\0";
+
+/// Domain tag for v1 sortition-VRF inputs.
+pub const SORTITION_VRF_INPUT_V1_DST: &[u8] = b"evaporchain:sortition-vrf:v1\0";
+
+/// **DEPRECATED. AUDIT_2026_05_13 M2.**
+///
+/// Includes only `(height, round)` — both publicly known before the
+/// block is produced. Two failure modes:
+///
+/// 1. **Cross-chain replay.** A validator running the same VRF key on
+///    testnet and mainnet (or two forks) produces interchangeable
+///    proofs — the gossip topic chain-id isolation defense (P2-fix
+///    2026-05-02) is bypassed at the cryptographic layer.
+/// 2. **Pre-computation.** With deterministic ML-DSA signing + a
+///    public input shape, any future leader's VRF table is
+///    pre-computable from the moment they hold the key. Validators
+///    leaving the active set can publish their VRF outputs for all
+///    future heights.
+///
+/// Use [`leader_vrf_input_v1`] which binds `chain_id` (cross-chain
+/// isolation) + the current `RandomnessBeacon` value (eliminates
+/// pre-computation: producer can't pre-compute without the beacon
+/// from the previous block, which depends on every prior block's
+/// finalised state).
+#[deprecated(
+    since = "0.2.0",
+    note = "AUDIT_2026_05_13 M2: cross-chain replay + pre-computable. \
+            Use leader_vrf_input_v1(chain_id, beacon, height, round)."
+)]
 pub fn leader_vrf_input(height: u64, round: u32) -> Vec<u8> {
     let mut input = Vec::with_capacity(12);
     input.extend_from_slice(&height.to_le_bytes());
@@ -207,12 +237,82 @@ pub fn leader_vrf_input(height: u64, round: u32) -> Vec<u8> {
     input
 }
 
-/// Construct the VRF input for committee sortition at a given height, round, and role.
+/// **AUDIT_2026_05_13 M2 closure.** Bound leader-VRF input.
+///
+/// Layout: `LEADER_VRF_INPUT_V1_DST || chain_id_len_le || chain_id ||
+/// beacon || height_le || round_le`
+///
+/// The DST + chain_id binding eliminate cross-chain replay (a proof
+/// produced on chain A cannot verify against chain B). The beacon
+/// binding eliminates pre-computation: the producer cannot precompute
+/// VRF outputs without knowing every prior block's contribution to
+/// the beacon, which is only finalised when those blocks commit.
+pub fn leader_vrf_input_v1(
+    chain_id: &str,
+    beacon: &[u8; 32],
+    height: u64,
+    round: u32,
+) -> Vec<u8> {
+    let chain_id_bytes = chain_id.as_bytes();
+    let chain_id_len = chain_id_bytes.len() as u32;
+    let mut input = Vec::with_capacity(
+        LEADER_VRF_INPUT_V1_DST.len() + 4 + chain_id_bytes.len() + 32 + 8 + 4,
+    );
+    input.extend_from_slice(LEADER_VRF_INPUT_V1_DST);
+    input.extend_from_slice(&chain_id_len.to_le_bytes());
+    input.extend_from_slice(chain_id_bytes);
+    input.extend_from_slice(beacon);
+    input.extend_from_slice(&height.to_le_bytes());
+    input.extend_from_slice(&round.to_le_bytes());
+    input
+}
+
+/// **DEPRECATED. AUDIT_2026_05_13 M2.** Same hazards as
+/// `leader_vrf_input`. Use [`sortition_vrf_input_v1`].
+#[deprecated(
+    since = "0.2.0",
+    note = "AUDIT_2026_05_13 M2: cross-chain replay + pre-computable. \
+            Use sortition_vrf_input_v1(chain_id, beacon, height, round, role)."
+)]
 pub fn sortition_vrf_input(height: u64, round: u32, role: &str) -> Vec<u8> {
     let mut input = Vec::with_capacity(12 + role.len());
     input.extend_from_slice(&height.to_le_bytes());
     input.extend_from_slice(&round.to_le_bytes());
     input.extend_from_slice(role.as_bytes());
+    input
+}
+
+/// **AUDIT_2026_05_13 M2 closure.** Bound sortition-VRF input.
+/// Same shape as `leader_vrf_input_v1` plus the `role` byte string.
+pub fn sortition_vrf_input_v1(
+    chain_id: &str,
+    beacon: &[u8; 32],
+    height: u64,
+    round: u32,
+    role: &str,
+) -> Vec<u8> {
+    let chain_id_bytes = chain_id.as_bytes();
+    let role_bytes = role.as_bytes();
+    let chain_id_len = chain_id_bytes.len() as u32;
+    let role_len = role_bytes.len() as u32;
+    let mut input = Vec::with_capacity(
+        SORTITION_VRF_INPUT_V1_DST.len()
+            + 4
+            + chain_id_bytes.len()
+            + 32
+            + 8
+            + 4
+            + 4
+            + role_bytes.len(),
+    );
+    input.extend_from_slice(SORTITION_VRF_INPUT_V1_DST);
+    input.extend_from_slice(&chain_id_len.to_le_bytes());
+    input.extend_from_slice(chain_id_bytes);
+    input.extend_from_slice(beacon);
+    input.extend_from_slice(&height.to_le_bytes());
+    input.extend_from_slice(&round.to_le_bytes());
+    input.extend_from_slice(&role_len.to_le_bytes());
+    input.extend_from_slice(role_bytes);
     input
 }
 
@@ -569,5 +669,46 @@ mod tests {
         let alpha = vec![0xCDu8; 10_000];
         let (output, proof) = kp.evaluate(&alpha);
         assert!(vrf_verify(&kp.public_key_bytes(), &alpha, &output, &proof));
+    }
+
+    // ─── AUDIT_2026_05_13 M2 regression suite ─────────────────────────
+
+    #[test]
+    fn audit_m2_v1_input_differs_by_chain_id() {
+        // Different chain_id → different VRF input → different VRF
+        // output. A proof from testnet must NOT verify against the
+        // same (height, round) on mainnet.
+        let beacon = [0xAB; 32];
+        let a = leader_vrf_input_v1("testnet-1", &beacon, 100, 0);
+        let b = leader_vrf_input_v1("mainnet-1", &beacon, 100, 0);
+        assert_ne!(a, b, "chain_id binding must change the VRF input");
+    }
+
+    #[test]
+    fn audit_m2_v1_input_differs_by_beacon() {
+        // Different beacon → different input → different output. The
+        // producer cannot pre-compute future VRFs without each prior
+        // block's beacon contribution.
+        let a = leader_vrf_input_v1("c", &[0x11; 32], 100, 0);
+        let b = leader_vrf_input_v1("c", &[0x22; 32], 100, 0);
+        assert_ne!(a, b, "beacon binding must change the VRF input");
+    }
+
+    #[test]
+    fn audit_m2_v1_input_dst_locked() {
+        let input = leader_vrf_input_v1("c", &[0; 32], 0, 0);
+        assert!(input.starts_with(LEADER_VRF_INPUT_V1_DST));
+        let sort_input = sortition_vrf_input_v1("c", &[0; 32], 0, 0, "proposer");
+        assert!(sort_input.starts_with(SORTITION_VRF_INPUT_V1_DST));
+        assert_ne!(LEADER_VRF_INPUT_V1_DST, SORTITION_VRF_INPUT_V1_DST);
+    }
+
+    #[test]
+    fn audit_m2_v1_input_deterministic_for_same_args() {
+        // Soundness lower bound: same args → byte-identical input
+        // (so the verifier's reconstruction matches the prover's).
+        let a = leader_vrf_input_v1("test", &[0x42; 32], 7, 3);
+        let b = leader_vrf_input_v1("test", &[0x42; 32], 7, 3);
+        assert_eq!(a, b);
     }
 }
