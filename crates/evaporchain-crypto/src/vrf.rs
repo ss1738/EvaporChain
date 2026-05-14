@@ -17,10 +17,26 @@
 //! - **Pseudorandomness**: output is unpredictable without sk
 //! - **Verifiability**: anyone with pk can verify (output, proof)
 //! - **Collision resistance**: BLAKE3 binds output to (alpha, sigma)
+//! - **Determinism**: under the workspace-pinned `pqc_dilithium =
+//!   "=0.2.0"` (mode3, no `random_signing` feature), ML-DSA signing
+//!   is byte-deterministic — same (sk, msg) → same signature. This
+//!   is what makes the VRF safe against leader-election grinding.
 //!
-//! The ML-DSA signature uses internal rejection sampling so is not
-//! perfectly deterministic across calls. Validators must evaluate once
-//! per (height, round) and commit. The proof is always verifiable.
+//! **AUDIT_2026_05_13 M1**: pre-fix this comment claimed VRF was
+//! "not perfectly deterministic across calls" (false in our
+//! configuration; pqc_dilithium 0.2.0 default is deterministic via
+//! `RANDOMIZED_SIGNING = cfg!(feature = "random_signing")` → false).
+//! The misleading docstring obscured a real grinding hazard: if a
+//! future workspace change ever enables `pqc_dilithium/random_signing`,
+//! the VRF silently becomes non-deterministic. A validator could
+//! re-run `evaluate(alpha)` until `vrf_leader_check` selects them,
+//! breaking proportional-stake fairness.
+//!
+//! Defense against feature flip: the unit test
+//! `audit_m1_vrf_evaluate_is_deterministic` runs `evaluate` on the
+//! same `(keypair, alpha)` twice and asserts byte-identical output
+//! AND proof. If a future change introduces randomness into the
+//! signing path, this test fails loudly on Mini CI.
 
 use crate::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
 use subtle::ConstantTimeEq;
@@ -569,5 +585,52 @@ mod tests {
         let alpha = vec![0xCDu8; 10_000];
         let (output, proof) = kp.evaluate(&alpha);
         assert!(vrf_verify(&kp.public_key_bytes(), &alpha, &output, &proof));
+    }
+
+    // ─── AUDIT_2026_05_13 M1 regression suite ─────────────────────────
+
+    /// Locks the VRF determinism invariant against `pqc_dilithium`
+    /// feature drift. Pre-M1 the module's docstring claimed VRF was
+    /// non-deterministic — false in our pinned `=0.2.0` mode3 config,
+    /// but a real hazard if a future Cargo.toml change ever enables
+    /// `pqc_dilithium/random_signing`. The signing path would become
+    /// byte-randomised on each call and a validator could grind the
+    /// VRF output to land in their favoured leader-election bucket.
+    ///
+    /// This test runs `evaluate(alpha)` twice with the same
+    /// `(keypair, alpha)` and asserts byte-identical output AND
+    /// proof. If a future workspace change introduces randomness,
+    /// the test fails loudly on Mini CI.
+    #[test]
+    fn audit_m1_vrf_evaluate_is_deterministic() {
+        let kp = VrfKeypair::generate();
+        let alpha = b"audit-m1-determinism-input";
+        let (out1, proof1) = kp.evaluate(alpha);
+        let (out2, proof2) = kp.evaluate(alpha);
+        assert_eq!(
+            out1, out2,
+            "VRF output must be deterministic — if this fails, check pqc_dilithium feature flags for random_signing"
+        );
+        assert_eq!(
+            proof1.0, proof2.0,
+            "VRF proof must be deterministic — same root cause as output drift"
+        );
+    }
+
+    /// Sweep multiple alphas + multiple keys to ensure the
+    /// determinism property holds broadly, not just for one trivial
+    /// fixture. A subtle drift (e.g., randomness in only some signing
+    /// paths) would survive a single-point test.
+    #[test]
+    fn audit_m1_vrf_evaluate_deterministic_across_keys_and_alphas() {
+        for seed in [b"k1".as_slice(), b"k2".as_slice(), b"k3".as_slice()] {
+            let kp = VrfKeypair::generate();
+            for alpha_byte in [0u8, 1, 0xFF] {
+                let alpha = [seed, &[alpha_byte][..]].concat();
+                let (out_a, _) = kp.evaluate(&alpha);
+                let (out_b, _) = kp.evaluate(&alpha);
+                assert_eq!(out_a, out_b, "non-deterministic VRF for alpha={alpha:?}");
+            }
+        }
     }
 }
