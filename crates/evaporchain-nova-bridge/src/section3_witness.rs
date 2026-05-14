@@ -28,7 +28,9 @@ use nova_snark::nova::{PublicParams, RecursiveSNARK};
 /// Sparse matrix in COO (triplet) format with ArkFr values.
 #[derive(Clone, Debug)]
 pub struct SparseTriple {
+    /// Number of rows in the matrix.
     pub num_rows: usize,
+    /// Number of columns in the matrix.
     pub num_cols: usize,
     /// `(row, col, value)` for every non-zero entry.
     pub entries: Vec<(usize, usize, ArkFr)>,
@@ -51,8 +53,11 @@ pub struct Section3Witness {
     pub b_primary: SparseTriple,
     /// Primary R1CS C matrix (COO)
     pub c_primary: SparseTriple,
+    /// Number of R1CS constraints.
     pub num_cons: usize,
+    /// Number of witness variables.
     pub num_vars: usize,
+    /// Number of public I/O variables.
     pub num_io: usize,
 }
 
