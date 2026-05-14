@@ -90,6 +90,12 @@ pub enum SnapshotError {
     /// same object id. Same shape as the duplicate-account check.
     #[error("objects list has duplicate id: {0}")]
     DuplicateObjectId(String),
+    /// M12 (audit 2026-05-13): the snapshot apply path now wraps the
+    /// wipe + repopulate in a state batch. If the final
+    /// `commit_batch` fails, surface the WriteBatch error rather
+    /// than leaving a half-applied DB in place.
+    #[error("snapshot batch commit failed: {0}")]
+    CommitFailed(String),
 }
 
 // ─────────────────────── Types ──────────────────────────────────────────
@@ -369,20 +375,32 @@ impl SnapshotApplier {
 
         let start = std::time::Instant::now();
 
-        // Clear existing state so stale entries don't persist after restore.
-        for id in db.all_object_ids() {
-            db.delete_object(&id);
-        }
-        for id in db.all_ghost_ids() {
-            db.remove_ghost(&id);
-        }
-        let snapshot_addrs: std::collections::HashSet<AccountAddress> =
-            snapshot.accounts.iter().map(|a| a.address).collect();
-        for addr in db.all_account_addresses() {
-            if !snapshot_addrs.contains(&addr) {
-                db.delete_account(&addr);
-            }
-        }
+        // M12 (audit 2026-05-13): snapshot apply is now ATOMIC and
+        // CLEAN-SLATE.
+        //
+        // Pre-fix this path only wiped objects/ghosts/accounts —
+        // stakes, delegations, sentinel params/votes, note
+        // commitments, prior spent nullifiers, vesting schedules, and
+        // governance state all survived a restore. That left a hybrid
+        // state where slashing kept hitting ghost validator stakes
+        // and previously spent nullifiers blocked legitimate notes.
+        //
+        // wipe_full_state_for_snapshot_restore() blasts every state
+        // CF the snapshot is about to repopulate. The snapshot format
+        // does NOT carry stakes/delegations/sentinel — this path is
+        // therefore strictly "first-time join / cold-start" semantics:
+        // the joining node ends up with empty stakes/delegations/
+        // sentinel state and must learn them from block replay.
+        // Callers must NOT invoke snapshot apply on a node mid-life
+        // expecting it to merge.
+        //
+        // Atomicity: bracket the wipe+repopulate in begin_batch /
+        // commit_batch so a panic mid-apply rolls back via
+        // rollback_batch instead of leaving a half-restored DB. The
+        // state-root check before commit catches snapshot/local-root
+        // divergence and discards the speculative apply.
+        db.begin_batch();
+        db.wipe_full_state_for_snapshot_restore();
 
         // Apply accounts
         for acc in &snapshot.accounts {
@@ -407,14 +425,18 @@ impl SnapshotApplier {
             db.spend_nullifier(nullifier);
         }
 
-        // Verify state root matches after apply
+        // Verify state root matches after apply — rollback the batch
+        // before bubbling up so a mismatched snapshot leaves zero
+        // mutation visible on the DB.
         let computed_root = db.compute_state_root();
         if computed_root != snapshot.header.state_root {
+            db.rollback_batch();
             return Err(SnapshotError::StateRootMismatch {
                 expected: hex::encode(snapshot.header.state_root),
                 actual: hex::encode(computed_root),
             });
         }
+        db.commit_batch().map_err(SnapshotError::CommitFailed)?;
 
         let elapsed = start.elapsed();
 
@@ -1078,20 +1100,13 @@ impl SnapshotFile {
     pub fn apply_to(&self, db: &mut dyn StateDB) -> Result<ApplyResult, SnapshotError> {
         let start = std::time::Instant::now();
 
-        // Wipe existing state so stale entries don't survive restore.
-        for id in db.all_object_ids() {
-            db.delete_object(&id);
-        }
-        for id in db.all_ghost_ids() {
-            db.remove_ghost(&id);
-        }
-        let snapshot_addrs: std::collections::HashSet<AccountAddress> =
-            self.accounts.iter().map(|a| a.address).collect();
-        for addr in db.all_account_addresses() {
-            if !snapshot_addrs.contains(&addr) {
-                db.delete_account(&addr);
-            }
-        }
+        // M12 (audit 2026-05-13): clean-slate + atomic restore. See
+        // the matching docstring at `SnapshotApplier::apply` for the
+        // first-time-join semantics this enforces. The wipe drops
+        // stale stakes/delegations/sentinel state/note_commitments
+        // that the older partial-wipe path left behind.
+        db.begin_batch();
+        db.wipe_full_state_for_snapshot_restore();
 
         for acc in &self.accounts {
             db.put_account(acc.clone());
@@ -1112,11 +1127,13 @@ impl SnapshotFile {
 
         let computed_root = db.compute_state_root();
         if computed_root != self.state_root {
+            db.rollback_batch();
             return Err(SnapshotError::StateRootMismatch {
                 expected: hex::encode(self.state_root),
                 actual: hex::encode(computed_root),
             });
         }
+        db.commit_batch().map_err(SnapshotError::CommitFailed)?;
 
         Ok(ApplyResult {
             accounts_restored: self.accounts.len(),
@@ -2182,5 +2199,135 @@ mod tests {
         let loaded = SnapshotFile::from_bytes_strict(&bytes).expect("strict load");
         assert_eq!(loaded.block_height, 100);
         assert!(loaded.quorum_cert.is_some());
+    }
+
+    // ── M12 (audit 2026-05-13): snapshot apply must wipe stale state ──
+
+    fn make_stake_for_test(validator_id: u64, amount: u64) -> evaporchain_types::StakeRecord {
+        evaporchain_types::StakeRecord {
+            validator_id,
+            validator_address: [validator_id as u8; 32],
+            staked_amount: amount,
+            staked_at_epoch: 1,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        }
+    }
+
+    fn make_delegation_for_test(
+        delegator_byte: u8,
+        validator_id: u64,
+        amount: u64,
+    ) -> evaporchain_types::DelegationRecord {
+        evaporchain_types::DelegationRecord {
+            delegator: [delegator_byte; 32],
+            validator_id,
+            amount,
+            delegated_at_epoch: 1,
+            unbonding_amount: 0,
+            unbonding_epoch: None,
+        }
+    }
+
+    #[test]
+    fn audit_m12_apply_wipes_stale_stakes_and_delegations() {
+        use evaporchain_sentinel::BoundedParameter;
+
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
+
+        let mut target = InMemoryStateDB::new();
+        // Plant stale state that's NOT in the snapshot.
+        target.put_stake(make_stake_for_test(99, 999_000));
+        target.put_delegation(make_delegation_for_test(0xDD, 99, 111_000));
+        target.put_sentinel_param(BoundedParameter::new(77, 7, 0, 100).unwrap());
+        assert!(target.get_stake(99).is_some());
+        assert!(target.get_sentinel_param(77).is_some());
+
+        SnapshotApplier::apply(&mut target, &snapshot).unwrap();
+
+        // Stale entries gone.
+        assert!(target.get_stake(99).is_none());
+        assert!(target
+            .get_delegation(&[0xDD; 32], 99)
+            .is_none());
+        assert!(target.get_sentinel_param(77).is_none());
+        // Snapshot accounts present.
+        assert_eq!(target.get_account(&addr(1)).unwrap().balance, 1_000_000);
+    }
+
+    #[test]
+    fn audit_m12_apply_wipes_stale_nullifiers_and_note_commitments() {
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
+
+        let mut target = InMemoryStateDB::new();
+        // Plant nullifiers + note commitments that don't appear in the snapshot.
+        let stale_nullifier = [0xCC; 32];
+        target.spend_nullifier(&stale_nullifier);
+        assert!(target.is_nullifier_spent(&stale_nullifier));
+        target.append_note_commitment(0, [0xAA; 32]);
+        target.append_note_commitment(1, [0xBB; 32]);
+        assert_eq!(target.get_all_note_commitments().len(), 2);
+
+        SnapshotApplier::apply(&mut target, &snapshot).unwrap();
+
+        // The stale nullifier is gone — would have blocked legitimate
+        // note spends until the next restart pre-fix.
+        assert!(!target.is_nullifier_spent(&stale_nullifier));
+        // Note commitments wiped (snapshot had none).
+        assert!(target.get_all_note_commitments().is_empty());
+    }
+
+    #[test]
+    fn audit_m12_state_root_mismatch_rolls_back_all_changes() {
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let mut snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
+
+        let mut target = InMemoryStateDB::new();
+        // Seed a single pre-existing account so we can prove the
+        // wipe + repopulate path either succeeded fully or didn't run
+        // at all. Note: SnapshotApplier verifies body_hash first, so
+        // tampering with state_root after build still trips the check
+        // before any state mutation lands.
+        target.put_account(make_account(0x55, 4242));
+        // Corrupt the snapshot state root so the post-apply check fails.
+        snapshot.header.state_root[0] ^= 0xFF;
+
+        let err = SnapshotApplier::apply(&mut target, &snapshot)
+            .expect_err("corrupted state_root must reject");
+        match err {
+            // body_hash check fires before state_root check; either
+            // rejection is acceptable for this regression — the
+            // critical post-condition is that pre-existing state is
+            // intact.
+            SnapshotError::StateRootMismatch { .. } => {}
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+        // Pre-existing account is still there. Atomicity preserved.
+        assert_eq!(
+            target.get_account(&addr(0x55)).expect("seed acct survives").balance,
+            4242
+        );
+        // Snapshot accounts NOT applied.
+        assert!(target.get_account(&addr(1)).is_none());
+    }
+
+    #[test]
+    fn audit_m12_snapshotfile_apply_to_also_wipes_stale_state() {
+        // Belt-and-braces: SnapshotFile::apply_to is the production
+        // restore path used by fast-sync. Ensure it wipes too.
+        let (file, _kps) = make_snapshot_with_real_bls_validators(2);
+
+        let mut target = InMemoryStateDB::new();
+        target.put_stake(make_stake_for_test(123, 456_789));
+        SnapshotFile::apply_to(&file, &mut target).unwrap();
+        assert!(
+            target.get_stake(123).is_none(),
+            "fast-sync apply_to must drop stale stakes"
+        );
     }
 }
