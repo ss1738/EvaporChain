@@ -13,7 +13,7 @@
 ///   G2[64..128] = X.c1
 ///   G2[128..192]= Y.c0
 ///   G2[192..256]= Y.c1
-
+///
 /// Encode a raw uncompressed G1 point (96 bytes) into EIP-2537 format (128 bytes).
 ///
 /// Returns `None` if `raw` is not exactly 96 bytes.

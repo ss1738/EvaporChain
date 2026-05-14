@@ -23,6 +23,7 @@
 //!
 //! The output schema is intentionally minimal — only `crc` is
 //! emitted, so this file is not a full PoseidonConstants dump.
+#![allow(clippy::doc_overindented_list_items)]
 
 use std::env;
 use std::fs;

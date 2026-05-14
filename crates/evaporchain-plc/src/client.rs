@@ -3,6 +3,7 @@
 //! Tracks the most recent barcode, accepts new blocks if they
 //! prove `d_B(prev, curr) ≤ bd_max` and the barcode hash
 //! matches the block header's commitment.
+#![allow(clippy::doc_overindented_list_items)]
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -76,6 +77,7 @@ impl LightClient {
     ///    header's `barcode_hash`.
     /// 3. The bottleneck distance from `current_barcode` to the
     ///    new barcode does not exceed `header.bd_max`.
+    ///
     /// On success, advances the state.
     pub fn ingest(
         &mut self,

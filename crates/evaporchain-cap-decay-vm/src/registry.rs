@@ -3,6 +3,7 @@
 //! Pure-function semantics: every operation takes `&mut self` and
 //! returns `Result<_, RegistryError>` deterministically. The
 //! chain wraps this with whatever durability layer it uses.
+#![allow(clippy::doc_lazy_continuation)]
 
 use std::collections::BTreeMap;
 
@@ -125,6 +126,7 @@ impl CapRegistry {
     /// caller. This preserves the invariant that "only the root
     /// issuer can revoke." Caller cannot revoke a capability they
     /// merely attenuated from someone else.
+    #[allow(clippy::too_many_arguments)]
     pub fn attenuate(
         &mut self,
         caller: [u8; 32],

@@ -37,6 +37,8 @@
 
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::ptr_arg)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 use ark_ff::PrimeField;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;

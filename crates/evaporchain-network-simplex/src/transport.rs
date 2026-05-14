@@ -13,6 +13,7 @@
 //! V2 handles arbitrary cost matrices that defeat V1's greedy (test
 //! `_v2::tests::adversarial_3x3_where_greedy_underperforms` for a
 //! concrete example).
+#![allow(clippy::doc_lazy_continuation)]
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

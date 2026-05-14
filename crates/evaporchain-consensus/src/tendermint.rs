@@ -2730,6 +2730,7 @@ impl TendermintConsensus {
     /// - settlement mode is `"enforce"` and the block's refund set
     ///   matches the chain's expected set exactly (every required
     ///   refund present, no extras, payloads byte-equal).
+    ///
     /// Returns a `RefundValidationError` describing the violation
     /// otherwise. Phase 3.5 will pair `MissingRefund` with a
     /// proposer-slash.
@@ -3166,6 +3167,7 @@ impl TendermintConsensus {
     ///      `from_head` to `lca` (the deferred B.1 snapshot work).
     ///   2. Applies the blocks in `forward_path` in order, calling
     ///      `db.execute_block` for each.
+    ///
     /// Splitting the planning from the execution lets the planning
     /// be pure (testable without a StateDB) and keeps the executor
     /// integration localised to B.2.
@@ -3265,10 +3267,8 @@ impl TendermintConsensus {
     ///      the LCA's captured state if `rollback_required`. Errors
     ///      as `RestoreFailed`.
     ///   3. For each `block_id in plan.forward_path`:
-    ///      a. `block_lookup(block_id)` — fetch the block. Errors
-    ///         as `BlockNotFound`.
-    ///      b. `block_apply(db, &block)` — execute. Errors as
-    ///         `ApplyFailed { block, msg }`.
+    ///      a. `block_lookup(block_id)` — fetch; `Err(BlockNotFound)` if absent.
+    ///      b. `block_apply(db, &block)` — execute; `Err(ApplyFailed)` on failure.
     ///
     /// **Atomicity caveat (Phase B.4 follow-up):** if step 3 fails
     /// midway, the StateDB is in a partial state — at the LCA plus
@@ -3348,6 +3348,7 @@ impl TendermintConsensus {
     /// `RollbackFailed` variant is returned if the rollback ITSELF
     /// fails — in that case the StateDB is in an undefined state
     /// and the operator must intervene.
+    #[allow(clippy::too_many_arguments)]
     pub fn replay_and_apply_atomic<F1, F2>(
         &self,
         db: &mut dyn evaporchain_state::db::StateDB,

@@ -2,6 +2,8 @@
 //!
 //! Walks a [`Term`] and produces a [`Certificate`] iff every loop
 //! carries a syntactic termination witness.
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 
 use thiserror::Error;
 

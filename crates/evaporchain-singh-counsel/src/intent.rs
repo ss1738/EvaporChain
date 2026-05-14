@@ -1,4 +1,6 @@
 //! `Intent` — one chat-derived wallet action + grammar validation.
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -75,6 +77,7 @@ pub struct Intent {
 impl Intent {
     /// Construct an intent, applying grammar checks at construction.
     /// The chain calls this; chat-to-intent layer is upstream.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: IntentId,
         holder: [u8; 32],

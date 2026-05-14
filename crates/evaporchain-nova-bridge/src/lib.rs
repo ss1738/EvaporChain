@@ -101,6 +101,8 @@
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 
 pub mod circuit_builder;
 pub mod compress_ark;

@@ -42,6 +42,8 @@
 //! ## Module map
 //!
 //! - [`token`] — [`HeirloomNft`] state machine.
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 
 pub mod token;
 

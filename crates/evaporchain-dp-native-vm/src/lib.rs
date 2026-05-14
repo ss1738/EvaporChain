@@ -53,6 +53,7 @@
 //!   ChaCha for validator-determinism.
 //! - [`composition`] — basic + advanced composition theorems +
 //!   the witness types `BasicComposition` / `AdvancedComposition`.
+#![allow(clippy::doc_lazy_continuation)]
 
 pub mod budget;
 pub mod composition;

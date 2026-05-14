@@ -1,5 +1,7 @@
 //! `SealedLetter` — the on-chain record. Status transitions
 //! `Sealed` → `Opened` only; never re-sealed.
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 
 use evaporchain_types::{AccountAddress, Epoch};
 use serde::{Deserialize, Serialize};
@@ -52,6 +54,7 @@ pub struct SealedLetter {
 }
 
 impl SealedLetter {
+    #[allow(clippy::too_many_arguments)]
     pub fn seal(
         id: LetterId,
         sender: AccountAddress,

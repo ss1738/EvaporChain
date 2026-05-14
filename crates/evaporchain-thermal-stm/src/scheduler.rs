@@ -18,6 +18,8 @@
 //! Validator-determinism: the output is a pure function of the
 //! input batch + initial state. Two validators see the same
 //! commits / aborts in the same order.
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 
 use std::collections::{BTreeMap, BTreeSet};
 

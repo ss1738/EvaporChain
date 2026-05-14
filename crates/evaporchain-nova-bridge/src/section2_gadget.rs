@@ -53,6 +53,7 @@
 //! 3. **Makes the port a one-line swap.** When the neptune constants
 //!    are ported, the only diff is the `PoseidonConfig` argument.
 //!    No structural refactor.
+#![allow(clippy::doc_overindented_list_items)]
 
 use ark_bn254::Fr as Bn254Fr;
 use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
@@ -303,6 +304,7 @@ pub fn enforce_neptune_sponge_primary(
 /// expansion (`r_U_secondary.absorb_in_ro` — `comm_W`, `comm_E`,
 /// `u`, `X[..]`). At this gadget level the caller supplies it as
 /// an opaque slice; the exact encoding choice is part of Section 3.
+#[allow(clippy::too_many_arguments)]
 pub fn enforce_section_2_primary(
     cs: ConstraintSystemRef<Bn254Fr>,
     config: &PoseidonConfig<Bn254Fr>,
