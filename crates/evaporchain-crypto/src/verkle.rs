@@ -44,10 +44,29 @@ fn generators() -> &'static Vec<Ep> {
 }
 
 /// Convert 32 bytes to a Pallas scalar field element (Fq).
+///
+/// **Bias note (L1 audit 2026-05-13):** the function masks the top 2 bits
+/// of the last byte (`repr[31] &= 0x3F`), restricting the input to the
+/// 254-bit subspace. Pallas Fq's modulus is `2^254 + ε` where `ε ≈
+/// 4.56 × 10^37`. So a uniformly-random 32-byte input maps to a Fq
+/// element uniformly distributed over `[0, 2^254)`. The deviation from
+/// uniform over the full `[0, modulus)` is bounded by `ε / 2^254 ≈
+/// 1.5 × 10^-39` — well below any practical security margin for the
+/// generator-derivation and leaf-hashing contexts where this is used.
+///
+/// **L1 hardening:** the pre-fix `unwrap_or(Fq::ONE)` fallback collapsed
+/// out-of-range inputs to `Fq::ONE`, which would have made multiple
+/// distinct hash outputs map to the same scalar — silently breaking
+/// injectivity. The fallback is dead today (the 254-bit mask
+/// guarantees `repr < modulus`), but `expect` makes the invariant
+/// loud: any future caller that bypasses the mask trips a panic
+/// instead of silently collapsing.
 fn bytes_to_scalar(bytes: &[u8; 32]) -> Fq {
     let mut repr = *bytes;
-    repr[31] &= 0x3F; // ensure < field modulus
-    Fq::from_repr(repr).unwrap_or(Fq::ONE)
+    repr[31] &= 0x3F; // ensure < field modulus (254-bit subspace)
+    Fq::from_repr(repr).expect(
+        "bytes_to_scalar invariant: after `repr[31] &= 0x3F` the value is < Fq modulus",
+    )
 }
 
 /// Hash a curve point to 32 bytes (serialize affine coordinates).
@@ -1102,5 +1121,61 @@ mod proptests {
             }
             prop_assert_eq!(trie.len(), unique_keys.len());
         }
+    }
+
+    // ── L1 (audit 2026-05-13): bytes_to_scalar hardening ──
+
+    /// Determinism: same input → same scalar.
+    #[test]
+    fn audit_l1_bytes_to_scalar_is_deterministic() {
+        let input = [0x42u8; 32];
+        let a = bytes_to_scalar(&input);
+        let b = bytes_to_scalar(&input);
+        assert_eq!(a, b);
+    }
+
+    /// All-ones input does NOT panic — the mask drops it to the
+    /// 254-bit subspace which is provably < Fq. This pins the
+    /// invariant that `expect` documents.
+    #[test]
+    fn audit_l1_bytes_to_scalar_all_ones_does_not_panic() {
+        let input = [0xFFu8; 32];
+        let scalar = bytes_to_scalar(&input);
+        // Sanity: result is non-zero (the 254-bit value 0x3FFF...FFFF is non-zero).
+        assert!(!bool::from(scalar.is_zero()));
+    }
+
+    /// Distinct inputs that differ only outside the masked bits must
+    /// still produce distinct scalars when the unmasked bytes differ.
+    /// Pre-fix: under `unwrap_or(Fq::ONE)` an attacker could craft
+    /// inputs that landed in the collapse branch; with `expect` the
+    /// branch is unreachable, so this test exists to pin the
+    /// distinct-input → distinct-scalar contract on representative
+    /// values.
+    #[test]
+    fn audit_l1_bytes_to_scalar_distinct_inputs_distinct_scalars() {
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        a[0] = 1;
+        b[0] = 2;
+        let sa = bytes_to_scalar(&a);
+        let sb = bytes_to_scalar(&b);
+        assert_ne!(sa, sb);
+    }
+
+    /// The top 2 bits of `repr[31]` are silently masked. Confirm that
+    /// inputs differing only in those bits map to the SAME scalar
+    /// (intentional — documents the bias source).
+    #[test]
+    fn audit_l1_bytes_to_scalar_masks_top_2_bits() {
+        let mut base = [0xABu8; 32];
+        base[31] = 0x3F; // already masked
+        let mut high = base;
+        high[31] = 0xFF; // top 2 bits set → must be masked off
+        assert_eq!(
+            bytes_to_scalar(&base),
+            bytes_to_scalar(&high),
+            "top 2 bits of byte 31 must be masked (254-bit subspace)"
+        );
     }
 }

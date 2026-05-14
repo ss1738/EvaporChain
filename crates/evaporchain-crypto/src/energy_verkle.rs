@@ -43,10 +43,19 @@ fn generators() -> &'static Vec<Ep> {
     })
 }
 
+/// Convert 32 bytes to a Pallas scalar field element (Fq).
+///
+/// L1 (audit 2026-05-13): same shape as `verkle::bytes_to_scalar`.
+/// See that function's docstring for the bias bound (≈ 1.5 × 10⁻³⁹
+/// from uniformity over the full Fq range) and the `expect` rationale
+/// — the masked value is provably < modulus, so the fallback is dead
+/// but loud rather than silently collapsing to `Fq::ONE`.
 fn bytes_to_scalar(bytes: &[u8; 32]) -> Fq {
     let mut repr = *bytes;
-    repr[31] &= 0x3F;
-    Fq::from_repr(repr).unwrap_or(Fq::ONE)
+    repr[31] &= 0x3F; // ensure < field modulus (254-bit subspace)
+    Fq::from_repr(repr).expect(
+        "bytes_to_scalar invariant: after `repr[31] &= 0x3F` the value is < Fq modulus",
+    )
 }
 
 fn point_to_bytes(point: &Ep) -> [u8; 32] {
@@ -2004,5 +2013,38 @@ mod proptests {
             }
             prop_assert!(!EnergyVerkleTrie::verify_multi(&mp, &root));
         }
+    }
+
+    // ── L1 (audit 2026-05-13): bytes_to_scalar hardening (mirror of verkle.rs) ──
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_is_deterministic() {
+        let input = [0x77u8; 32];
+        assert_eq!(bytes_to_scalar(&input), bytes_to_scalar(&input));
+    }
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_all_ones_does_not_panic() {
+        let input = [0xFFu8; 32];
+        let scalar = bytes_to_scalar(&input);
+        assert!(!bool::from(scalar.is_zero()));
+    }
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_distinct_inputs_distinct_scalars() {
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        a[0] = 1;
+        b[0] = 2;
+        assert_ne!(bytes_to_scalar(&a), bytes_to_scalar(&b));
+    }
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_masks_top_2_bits() {
+        let mut base = [0xABu8; 32];
+        base[31] = 0x3F;
+        let mut high = base;
+        high[31] = 0xFF;
+        assert_eq!(bytes_to_scalar(&base), bytes_to_scalar(&high));
     }
 }
