@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 12) — Audit F1 closed; panic/crash path sweep
+
+**Focus:** Panic paths in HTTP handler hot paths — `.lock().unwrap()` mutex poison + unguarded `.unwrap()` on fallible operations
+**Commits shipped:** 1 (`c809ae41`)
+**Deliverables:**
+- F1a (HIGH, 27 sites): All 27 raw `.lock().unwrap()` in api.rs HTTP handlers replaced with poison-tolerant `.unwrap_or_else(|p| { warn; p.into_inner() })`. The `safe_lock()` helper already existed; these callers bypassed it.
+- F1b (HIGH): `post_swap_execute` `.find().unwrap()` after `.any()` check — replaced with `match` + JSON error response
+- F1c (HIGH): `BlockDA::new().unwrap()` in 2 DA handlers — replaced with `match` + INTERNAL_SERVER_ERROR response
+- F2 sweep: All `Vec::with_capacity(n)` from network input already protected by caps (MAX_SYNC_BATCH=100, MAX_SHARD_QUERIES=256)
+**Empirical results:** 234 node tests pass / 1 pre-existing env-race flakey
+**What's next:** Next audit class — serialization safety, or check remaining MAINNET_READINESS lanes
+**Blockers / open questions:** none
+**Cross-references:** `c809ae41`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 11) — Audit E5/E6 closed; access control sweep complete
 
 **Focus:** Remaining medium-priority access control and timing side-channel findings
