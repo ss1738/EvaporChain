@@ -54,6 +54,13 @@ const MAX_STACK_DEPTH: usize = 1024;
 const MAX_LOOP_ITERATIONS: u64 = 100_000;
 /// Maximum string length in bytes to prevent OOM via concatenation.
 const MAX_STRING_LEN: usize = 1_048_576; // 1 MiB
+/// L8 (audit 2026-05-13): hard cap on `Op::EmitEvent` topic_count.
+/// Solidity allows 4 indexed topics; we're generous at 64. Caps the
+/// pop loop + memory allocation in the EmitEvent arm. Bytecode
+/// specifying a topic_count past this is rejected with
+/// `ScriptError::Runtime` rather than panicking on
+/// usize-overflow / OOM.
+const MAX_EVENT_TOPICS: usize = 64;
 /// Maximum entries in a single map to prevent OOM.
 const MAX_MAP_ENTRIES: usize = 10_000;
 /// Maximum elements in a single array to prevent OOM.
@@ -694,9 +701,30 @@ impl EvaporVM {
                 }
 
                 Op::EmitEvent { name, topic_count } => {
-                    self.charge_gas(GAS_EMIT_EVENT)?;
+                    // L8 (audit 2026-05-13): pre-fix `let total = tc
+                    // + 1` was an unchecked usize add and `tc` had
+                    // no upper bound. Dead today (the EvaporScript
+                    // compiler never emits Op::EmitEvent with a huge
+                    // topic_count) but a foot-gun for any future
+                    // codepath that constructs bytecode directly —
+                    // tc=usize::MAX wraps the addition, and a large
+                    // tc burns memory via the Vec::with_capacity.
+                    // Cap + checked_add closes both ends.
                     let tc = *topic_count;
-                    let total = tc + 1; // topics + 1 data value
+                    if tc > MAX_EVENT_TOPICS {
+                        return Err(ScriptError::Runtime(format!(
+                            "EmitEvent topic_count {tc} exceeds MAX_EVENT_TOPICS ({MAX_EVENT_TOPICS})"
+                        )));
+                    }
+                    let total = tc.checked_add(1).ok_or_else(|| {
+                        ScriptError::Runtime(
+                            "EmitEvent topic_count overflowed usize".into(),
+                        )
+                    })?;
+                    // Size-scale the gas charge so a near-cap event
+                    // doesn't ride for the flat `GAS_EMIT_EVENT = 20`.
+                    let scaled = GAS_EMIT_EVENT.saturating_add(total as u64);
+                    self.charge_gas(scaled)?;
                     let mut values = Vec::with_capacity(total);
                     for _ in 0..total {
                         values.push(self.pop()?);
@@ -2295,6 +2323,71 @@ contract WithStateArray {
             Value::Array(arr) => assert_eq!(arr[0], Value::U64(999)),
             other => panic!("expected array, got {other:?}"),
         }
+    }
+
+    // ── L8 (audit 2026-05-13): Op::EmitEvent safety ──
+
+    /// `topic_count > MAX_EVENT_TOPICS` is rejected at runtime
+    /// (cleanly errors rather than allocating a giant Vec).
+    #[test]
+    fn audit_l8_emit_event_rejects_oversize_topic_count() {
+        let ops = vec![
+            // Push something so pop is well-formed if we got past the cap check.
+            Op::Push(Value::U64(0)),
+            Op::EmitEvent {
+                name: "Spam".into(),
+                topic_count: MAX_EVENT_TOPICS + 1,
+            },
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err());
+        let err = format!("{:?}", result.unwrap_err());
+        assert!(
+            err.contains("MAX_EVENT_TOPICS"),
+            "expected cap-exceeded error, got: {err}"
+        );
+    }
+
+    /// usize::MAX as topic_count must surface as the checked-add error
+    /// (not panic on overflow). Belt-and-braces — the cap check above
+    /// already catches values >= cap+1; this proves the second guard
+    /// for the cap-equals-usize::MAX hypothetical (impossible today
+    /// since the cap < usize::MAX, but the checked_add stays as
+    /// defense-in-depth).
+    #[test]
+    fn audit_l8_emit_event_topic_count_overflow_rejected() {
+        let ops = vec![
+            Op::EmitEvent {
+                name: "Spam".into(),
+                topic_count: usize::MAX,
+            },
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err());
+    }
+
+    /// Normal-size EmitEvent still works (sanity).
+    #[test]
+    fn audit_l8_emit_event_normal_topic_count_works() {
+        let ops = vec![
+            Op::Push(Value::U64(1)), // topic[0]
+            Op::Push(Value::U64(2)), // topic[1]
+            Op::Push(Value::Str("payload".into())), // data
+            Op::EmitEvent {
+                name: "Ok".into(),
+                topic_count: 2,
+            },
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        assert_eq!(r.structured_events.len(), 1);
+        assert_eq!(r.structured_events[0].name, "Ok");
+        assert_eq!(r.structured_events[0].topics.len(), 2);
+        assert_eq!(r.structured_events[0].data.len(), 1);
     }
 
     // ── M15 (audit 2026-05-13): size-scaled gas for hash() + to_string() ──
