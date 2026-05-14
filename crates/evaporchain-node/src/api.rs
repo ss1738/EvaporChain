@@ -3319,7 +3319,14 @@ pub struct HbctSeedDemoResp {
     pub detail: String,
 }
 
-async fn post_hbct_seed_demo(State(state): State<Arc<ApiState>>) -> Json<HbctSeedDemoResp> {
+async fn post_hbct_seed_demo(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Json<HbctSeedDemoResp> {
+    // Audit E5: seed endpoints write demo state; admin-gate to prevent pollution.
+    if let Err(_) = require_admin_auth(&headers) {
+        return Json(HbctSeedDemoResp { status: "error", minted_positions: 0, detail: "unauthorized".into() });
+    }
     // Realistic-shaped demo positions. Locations are GB BMU codes +
     // German bidding zone; holders are deterministic stand-ins.
     let positions: &[(&str, u64, u64, u8)] = &[
@@ -3503,8 +3510,13 @@ pub struct HbctTickResp {
 
 async fn post_hbct_tick(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<HbctTickReq>,
 ) -> Json<HbctTickResp> {
+    // Audit E5: auto-burn tick is a state mutation; admin-gate to prevent unauthorized burns.
+    if let Err(_) = require_admin_auth(&headers) {
+        return Json(HbctTickResp { entries_removed: 0, mwh_burnt: 0 });
+    }
     let mut book = safe_lock(&state.hbct_book);
     let outcome = evaporchain_hbct::auto_burn_at_slot_close(&mut book, req.current_epoch);
     Json(HbctTickResp {
@@ -3774,7 +3786,14 @@ pub struct SentinelSeedDemoResp {
     pub detail: String,
 }
 
-async fn post_sentinel_seed_demo(State(state): State<Arc<ApiState>>) -> Json<SentinelSeedDemoResp> {
+async fn post_sentinel_seed_demo(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Json<SentinelSeedDemoResp> {
+    // Audit E5: governance demo seed writes to state; admin-gate.
+    if let Err(_) = require_admin_auth(&headers) {
+        return Json(SentinelSeedDemoResp { status: "error", registered: vec![], detail: "unauthorized".into() });
+    }
     // (id, current, min, max). Realistic-shaped chain knobs.
     let params: &[(u32, u64, u64, u64)] = &[
         (1, 30_000_000, 5_000_000, 100_000_000), // block gas limit
@@ -3827,8 +3846,13 @@ pub struct SentinelSeedVotesResp {
 
 async fn post_sentinel_seed_votes(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(q): Json<SentinelSeedVotesQuery>,
 ) -> Json<SentinelSeedVotesResp> {
+    // Audit E5: governance vote seeding writes to state; admin-gate.
+    if let Err(_) = require_admin_auth(&headers) {
+        return Json(SentinelSeedVotesResp { status: "error", votes_recorded: 0, detail: "unauthorized".into() });
+    }
     // Deterministic vote slate: 3 demo validators, each voting for a
     // target near the parameter's max (to make drift visible upward).
     let validators: &[u64] = &[101, 102, 103];
@@ -12691,14 +12715,12 @@ async fn post_oracle_ingest(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    // Constant-time comparison to prevent timing side-channel on the API key
-    let key_match = provided.len() == expected.len() && {
-        let mut acc = 0u8;
-        for (a, b) in provided.as_bytes().iter().zip(expected.as_bytes()) {
-            acc |= a ^ b;
-        }
-        acc == 0
-    };
+    // Audit E6: use subtle::ConstantTimeEq to prevent length-leaking timing
+    // side-channel. The old implementation short-circuits on length mismatch,
+    // allowing an attacker to enumerate the key length in O(1) requests.
+    // subtle::ConstantTimeEq compares length AND content in constant time.
+    use subtle::ConstantTimeEq;
+    let key_match = bool::from(provided.as_bytes().ct_eq(expected.as_bytes()));
     if !key_match {
         return Json(TxResultResponse {
             success: false,
