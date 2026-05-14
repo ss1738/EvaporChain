@@ -618,11 +618,27 @@ impl RocksDBStateDB {
         }
     }
 
+    /// J3 (audit 2026-05-14): route through `pending_batch` when one
+    /// is active so the trie snapshot lands atomically with the
+    /// block's account/object writes. The pre-fix `self.db.put_cf`
+    /// call wrote directly to disk regardless of batch state — a
+    /// failed `commit_batch` would roll back in-memory accounts /
+    /// objects via the undo log, but the trie snapshot on disk had
+    /// already moved forward to the post-batch view. On restart,
+    /// `build_energy_trie` would reconcile against the (rolled-back)
+    /// account/object state and diverge from the orphaned trie blob.
     fn persist_trie(&self) {
-        let cf = self.cf(CF_TRIE);
         let bytes = self.trie.to_bytes();
-        if let Err(e) = self.db.put_cf(cf, TRIE_SNAPSHOT_KEY, bytes) {
-            fatal_persistence_error("write_trie_snapshot_to_rocksdb", e);
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_TRIE).unwrap();
+            batch.put_cf(cf, TRIE_SNAPSHOT_KEY, bytes);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_TRIE);
+            if let Err(e) = self.db.put_cf(cf, TRIE_SNAPSHOT_KEY, bytes) {
+                fatal_persistence_error("write_trie_snapshot_to_rocksdb", e);
+            }
         }
     }
 
@@ -1460,31 +1476,51 @@ impl StateDB for RocksDBStateDB {
 /// Call this after any block execution that modifies accounts via get_account_mut()
 /// or get_or_create_account() followed by balance/nonce changes.
 impl RocksDBStateDB {
+    /// J3 (audit 2026-05-14): write only the dirty accounts, and
+    /// route them through `persist_account` (which buffers into
+    /// `pending_batch` when one is active). The pre-fix
+    /// implementation walked `self.accounts.values()` — every
+    /// in-memory account on every block — and called
+    /// `self.db.put_cf` directly, bypassing `pending_batch`.
+    /// Production callers (`node/src/main.rs:4420 / 5532 / 6271`)
+    /// invoke `flush_*` BETWEEN `begin_batch` and `commit_batch`,
+    /// so the direct writes landed on disk before commit_batch.
+    /// A failing `commit_batch` (`rollback_batch` via J2) reverted
+    /// the in-memory accounts but the flushed disk state was
+    /// already past the boundary — silent divergence between
+    /// in-memory rolled-back state and on-disk forward state.
+    ///
+    /// Routing through `persist_account` makes the flush
+    /// transactional: writes buffer into `pending_batch` and land
+    /// atomically with `commit_batch` (or get discarded on
+    /// `rollback_batch`). Iterating `dirty_accounts` only also
+    /// fixes write-amplification — pre-fix every block re-wrote
+    /// every account regardless of whether it changed.
     pub fn flush_accounts(&mut self) {
-        let cf = self.cf(CF_ACCOUNTS);
-        for account in self.accounts.values() {
-            let value = match bincode::serialize(account) {
-                Ok(v) => v,
-                Err(e) => fatal_persistence_error("flush_serialize_account", e),
-            };
-            if let Err(e) = self.db.put_cf(cf, account.address, value) {
-                fatal_persistence_error("flush_account_to_rocksdb", e);
-            }
+        let dirty: Vec<Account> = self
+            .dirty_accounts
+            .iter()
+            .filter_map(|addr| self.accounts.get(addr).cloned())
+            .collect();
+        for account in &dirty {
+            self.persist_account(account);
         }
         self.sync_dirty_to_trie();
         self.persist_trie();
     }
 
+    /// J3 (audit 2026-05-14): see `flush_accounts` — same fix
+    /// applied to the object-flush path, routing through
+    /// `persist_object` (batch-aware) and iterating only
+    /// `dirty_objects`.
     pub fn flush_objects(&mut self) {
-        let cf = self.cf(CF_OBJECTS);
-        for obj in self.objects.values() {
-            let value = match bincode::serialize(obj) {
-                Ok(v) => v,
-                Err(e) => fatal_persistence_error("flush_serialize_object", e),
-            };
-            if let Err(e) = self.db.put_cf(cf, obj.id, value) {
-                fatal_persistence_error("flush_object_to_rocksdb", e);
-            }
+        let dirty: Vec<StateObject> = self
+            .dirty_objects
+            .iter()
+            .filter_map(|id| self.objects.get(id).cloned())
+            .collect();
+        for obj in &dirty {
+            self.persist_object(obj);
         }
         self.sync_dirty_to_trie();
         self.persist_trie();
@@ -1608,6 +1644,49 @@ mod tests {
             500
         );
         assert!(db.get_account(&make_account(2, 0).address).is_none());
+    }
+
+    /// J3 (audit 2026-05-14): regression — after `flush_accounts`
+    /// and `flush_objects` route through `pending_batch`, a
+    /// `rollback_batch` must undo their writes ON DISK as well as
+    /// in-memory. Pre-fix the flush_* paths called `self.db.put_cf`
+    /// directly, so rollback left the disk with the post-flush
+    /// (rolled-forward) view while the in-memory state was reverted.
+    /// We verify the disk side by re-opening the DB after rollback.
+    #[test]
+    fn test_flush_then_rollback_disk_state_matches_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.put_object(make_obj(1, 100));
+            db.put_account(make_account(1, 500));
+
+            db.begin_batch();
+            // mutate via get_*_mut → flagged dirty but not yet
+            // persisted; pre-J3 these were caught by flush_*
+            // bypassing the batch.
+            if let Some(obj) = db.get_object_mut(&make_obj(1, 0).id) {
+                obj.energy = 9999;
+            }
+            if let Some(acct) = db.get_account_mut(&make_account(1, 0).address) {
+                acct.balance = 9999;
+            }
+            db.flush_accounts();
+            db.flush_objects();
+            db.rollback_batch();
+        }
+        // Reopen — on-disk state must match the PRE-batch values.
+        let db = RocksDBStateDB::open(dir.path()).unwrap();
+        assert_eq!(
+            db.get_object(&make_obj(1, 0).id).unwrap().energy,
+            100,
+            "flush+rollback must not leak the rolled-back object write to disk — J3 regression"
+        );
+        assert_eq!(
+            db.get_account(&make_account(1, 0).address).unwrap().balance,
+            500,
+            "flush+rollback must not leak the rolled-back account write to disk — J3 regression"
+        );
     }
 
     #[test]
