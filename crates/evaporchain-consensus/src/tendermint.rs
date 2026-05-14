@@ -2342,6 +2342,17 @@ impl TendermintConsensus {
             // multiple violation buckets to get non-trivial entropy.
             // Phase 3.5d ships the wiring; entropy-based amount
             // tuning is operator follow-up.
+            //
+            // M18 (audit 2026-05-13): the `[count, 1]` shape is
+            // intentional and direction-pinned. As `count` grows
+            // (more violations observed) the distribution becomes
+            // near-deterministic → entropy drops → slash drops.
+            // This is the doctrine "chain pays attention to cases
+            // that are hard / noisy / few-observation". The
+            // alternate "more violations → more slash" reading is
+            // NOT what this code does. See the M18 monotonicity
+            // proptests in evaporchain-entropic-slashing for the
+            // pinned direction.
             let amount = match evaporchain_entropic_slashing::entropic_slash(stake, &[count, 1]) {
                 Ok(v) => v,
                 Err(_) => 0,
