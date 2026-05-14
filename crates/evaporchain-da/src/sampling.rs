@@ -21,6 +21,12 @@ pub enum SamplingError {
     NoShards,
     #[error("insufficient samples: got {got}, need {need}")]
     InsufficientSamples { got: usize, need: usize },
+    /// NN1 (audit 2026-05-14 re-audit): the responder shipped a
+    /// different number of responses than the client issued
+    /// queries. Structurally invalid — sample-verify cannot bind
+    /// responses to queries without a 1-to-1 pairing.
+    #[error("query/response count mismatch: {queries} queries, {responses} responses")]
+    QueryResponseMismatch { queries: usize, responses: usize },
 }
 
 /// A query for a specific shard sample.
@@ -248,10 +254,32 @@ impl DASampler {
         queries
     }
 
-    /// Verify a set of sample responses against a DA proof.
-    /// Returns Ok(true) if all samples are valid.
+    /// Verify a set of sample responses against a DA proof, **bound to
+    /// the queries the client actually issued**.
+    ///
+    /// NN1 (audit 2026-05-14 re-audit, CRITICAL): pre-fix this function
+    /// did not take `queries`. A withholding validator who held any K
+    /// shards could answer every K-of-N sample request with the same K
+    /// shards regardless of which N positions the light client asked
+    /// about — the response's `proof.leaf_index` was self-declared by
+    /// the responder and never compared back to the client's query.
+    /// That broke the foundational DAS guarantee ("withholding X% of
+    /// shards is detected with probability `1 − (1−X)^K`"): the
+    /// detection prob collapsed to 1.0 only when the attacker had no
+    /// shards at all.
+    ///
+    /// Post-fix:
+    /// - `queries.len() == responses.len()` is required.
+    /// - Each `responses[i].proof.leaf_index` must equal
+    ///   `queries[i].shard_index`. The Merkle path then chains that
+    ///   leaf_index → root, so the response is bound end-to-end to
+    ///   the requested index.
+    /// - Returns `Ok(true)` only when every (query, response) pair
+    ///   passes; an index mismatch yields `Ok(false)` (the response
+    ///   set is unsafe to count as available).
     pub fn verify_samples(
         proof: &DAProof,
+        queries: &[SampleQuery],
         responses: &[SampleResponse],
         min_samples: usize,
     ) -> Result<bool, SamplingError> {
@@ -261,8 +289,30 @@ impl DASampler {
                 need: min_samples,
             });
         }
+        // NN1: 1-to-1 binding. A responder that drops or reorders
+        // entries is rejected at the structural level before any
+        // crypto runs.
+        if queries.len() != responses.len() {
+            return Err(SamplingError::QueryResponseMismatch {
+                queries: queries.len(),
+                responses: responses.len(),
+            });
+        }
 
-        for response in responses {
+        for (q, response) in queries.iter().zip(responses.iter()) {
+            // NN1: the responder's claimed leaf_index must match
+            // exactly the index the client asked for. The Merkle
+            // verify below would have caught a leaf_index that
+            // didn't chain to the root — but it would NOT have
+            // caught a substitution of "I sent you index 7 instead
+            // of the index 11 you asked for", because the Merkle
+            // proof for index 7 verifies correctly against the
+            // root. The query-binding check is the closure of that
+            // gap.
+            if response.proof.leaf_index != q.shard_index {
+                return Ok(false);
+            }
+
             // Verify shard hash
             let computed_hash: [u8; 32] = blake3::hash(&response.shard.data).into();
             if computed_hash != response.shard.hash {
@@ -290,6 +340,7 @@ impl DASampler {
     /// responses are bad rather than just "something failed".
     pub fn verify_samples_batch(
         proof: &DAProof,
+        queries: &[SampleQuery],
         responses: &[SampleResponse],
         min_samples: usize,
     ) -> Result<BatchVerifyResult, SamplingError> {
@@ -299,14 +350,31 @@ impl DASampler {
                 need: min_samples,
             });
         }
+        // NN1 (audit 2026-05-14 re-audit): same query-binding fix as
+        // `verify_samples` — without 1:1 pairing the batch verifier
+        // would happily accept index-substituted responses too.
+        if queries.len() != responses.len() {
+            return Err(SamplingError::QueryResponseMismatch {
+                queries: queries.len(),
+                responses: responses.len(),
+            });
+        }
 
         let mut invalid_indices: Vec<usize> = Vec::new();
         let mut verified_count: usize = 0;
 
         // Pre-check: all responses must reference the correct commitment root,
-        // and shard hashes must match their data.
-        for (i, response) in responses.iter().enumerate() {
+        // shard hashes must match their data, AND the proof's leaf_index
+        // must match the requested query (NN1).
+        for (i, (q, response)) in queries.iter().zip(responses.iter()).enumerate() {
             verified_count += 1;
+
+            // NN1: query-binding — same substitution defense as the
+            // non-batch path.
+            if response.proof.leaf_index != q.shard_index {
+                invalid_indices.push(i);
+                continue;
+            }
 
             // Check shard data integrity.
             let computed_hash: [u8; 32] = blake3::hash(&response.shard.data).into();
@@ -534,7 +602,7 @@ mod tests {
             .collect();
 
         // Verify all samples
-        let result = DASampler::verify_samples(&da_proof, &responses, 4).unwrap();
+        let result = DASampler::verify_samples(&da_proof, &queries, &responses, 4).unwrap();
         assert!(result);
     }
 
@@ -543,7 +611,7 @@ mod tests {
         let shards = make_test_shards();
         let da_proof = DASampler::compute_commitment(&shards).unwrap();
 
-        let result = DASampler::verify_samples(&da_proof, &[], 4);
+        let result = DASampler::verify_samples(&da_proof, &[], &[], 4);
         assert!(result.is_err());
     }
 
@@ -557,14 +625,99 @@ mod tests {
         // Keep original hash so it mismatches
         let proof = DASampler::generate_proof(&shards, 0).unwrap();
 
+        let queries = vec![SampleQuery { block_number: 1, shard_index: 0 }];
         let responses = vec![SampleResponse {
             shard: bad_shard,
             proof,
             attestation_signature: None,
             attester_public_key: None,
         }];
-        let result = DASampler::verify_samples(&da_proof, &responses, 1).unwrap();
+        let result = DASampler::verify_samples(&da_proof, &queries, &responses, 1).unwrap();
         assert!(!result);
+    }
+
+    // ── NN1 (audit 2026-05-14 re-audit): query-binding regression ──
+
+    /// Pre-fix exploit: client asks for indices {3, 5, 7}; attacker
+    /// returns valid Merkle proofs for indices {0, 1, 2}. Pre-fix
+    /// `verify_samples` returned `Ok(true)` because each proof's
+    /// `leaf_index` chained correctly to the root for the index
+    /// the responder ACTUALLY sent. Post-fix the per-pair
+    /// `proof.leaf_index == queries[i].shard_index` check rejects
+    /// on the first substitution.
+    #[test]
+    fn audit_nn1_index_substitution_rejected() {
+        let shards = make_test_shards();
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+        let n_shards = shards.len();
+        assert!(n_shards >= 4);
+
+        // Client wants the LAST 3 shards.
+        let want: Vec<usize> = (n_shards - 3..n_shards).collect();
+        let queries: Vec<SampleQuery> = want
+            .iter()
+            .map(|&i| SampleQuery { block_number: 1, shard_index: i })
+            .collect();
+        // Attacker has indices 0..3 and substitutes those responses.
+        let substitute: Vec<SampleResponse> = (0..3)
+            .map(|i| SampleResponse {
+                shard: shards[i].clone(),
+                proof: DASampler::generate_proof(&shards, i).unwrap(),
+                attestation_signature: None,
+                attester_public_key: None,
+            })
+            .collect();
+        assert_ne!(want, vec![0, 1, 2], "fixture sanity");
+
+        let result = DASampler::verify_samples(&da_proof, &queries, &substitute, 3).unwrap();
+        assert!(
+            !result,
+            "NN1: substituted index proofs must NOT count as valid sample responses"
+        );
+    }
+
+    /// `queries.len() != responses.len()` returns the new
+    /// `QueryResponseMismatch` error, not a silent `Ok(false)`.
+    #[test]
+    fn audit_nn1_count_mismatch_is_structural_error() {
+        let shards = make_test_shards();
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+        let queries = vec![
+            SampleQuery { block_number: 1, shard_index: 0 },
+            SampleQuery { block_number: 1, shard_index: 1 },
+        ];
+        let responses = vec![SampleResponse {
+            shard: shards[0].clone(),
+            proof: DASampler::generate_proof(&shards, 0).unwrap(),
+            attestation_signature: None,
+            attester_public_key: None,
+        }];
+        let err = DASampler::verify_samples(&da_proof, &queries, &responses, 1).unwrap_err();
+        assert!(matches!(err, SamplingError::QueryResponseMismatch { .. }));
+    }
+
+    /// Matching queries-and-responses still return `Ok(true)`
+    /// (sanity that the new binding check doesn't false-reject).
+    #[test]
+    fn audit_nn1_matching_queries_pass() {
+        let shards = make_test_shards();
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+        let indices = vec![0usize, 2, 4, 6];
+        let queries: Vec<SampleQuery> = indices
+            .iter()
+            .map(|&i| SampleQuery { block_number: 1, shard_index: i })
+            .collect();
+        let responses: Vec<SampleResponse> = indices
+            .iter()
+            .map(|&i| SampleResponse {
+                shard: shards[i].clone(),
+                proof: DASampler::generate_proof(&shards, i).unwrap(),
+                attestation_signature: None,
+                attester_public_key: None,
+            })
+            .collect();
+        let result = DASampler::verify_samples(&da_proof, &queries, &responses, 4).unwrap();
+        assert!(result);
     }
 
     #[test]
@@ -605,7 +758,11 @@ mod tests {
             })
             .collect();
 
-        let batch_result = DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
+        let queries: Vec<SampleQuery> = (0..shards.len())
+            .map(|i| SampleQuery { block_number: 1, shard_index: i })
+            .collect();
+        let batch_result =
+            DASampler::verify_samples_batch(&da_proof, &queries, &responses, 1).unwrap();
         assert!(batch_result.all_valid);
         assert_eq!(batch_result.verified_count, shards.len());
         assert!(batch_result.invalid_indices.is_empty());
@@ -643,7 +800,11 @@ mod tests {
         // Tamper the data of response[3] so hash check fails.
         responses[3].shard.data[0] ^= 0xFF;
 
-        let batch_result = DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
+        let queries: Vec<SampleQuery> = (0..shards.len())
+            .map(|i| SampleQuery { block_number: 1, shard_index: i })
+            .collect();
+        let batch_result =
+            DASampler::verify_samples_batch(&da_proof, &queries, &responses, 1).unwrap();
         assert!(!batch_result.all_valid);
         assert!(batch_result.invalid_indices.contains(&3));
     }
@@ -700,7 +861,12 @@ mod tests {
                 attester_public_key: None,
             },
         ];
-        let batch_result = DASampler::verify_samples_batch(&da_proof_a, &responses, 1).unwrap();
+        let queries = vec![
+            SampleQuery { block_number: 1, shard_index: 0 },
+            SampleQuery { block_number: 1, shard_index: 0 },
+        ];
+        let batch_result =
+            DASampler::verify_samples_batch(&da_proof_a, &queries, &responses, 1).unwrap();
         assert!(!batch_result.all_valid);
         // Index 1 should be invalid (wrong root).
         assert!(batch_result.invalid_indices.contains(&1));
@@ -797,7 +963,7 @@ mod tests {
 
         // InsufficientSamples { got, need }
         let da_proof = DASampler::compute_commitment(&shards).unwrap();
-        let err = DASampler::verify_samples(&da_proof, &[], 4).unwrap_err();
+        let err = DASampler::verify_samples(&da_proof, &[], &[], 4).unwrap_err();
         match err {
             SamplingError::InsufficientSamples { got, need } => {
                 assert_eq!(got, 0);

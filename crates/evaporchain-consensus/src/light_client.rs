@@ -61,19 +61,50 @@ impl DASVerifier {
         DASampler::generate_queries(block_number, total_shards, num_samples, seed)
     }
 
-    /// Verify shard sample responses against a block's data_root.
+    /// Verify shard sample responses against a block's data_root,
+    /// **bound to the queries the client actually issued**.
     ///
-    /// Each response contains shard data + Merkle proof. The verifier checks:
-    /// 1. Shard hash matches the data (not tampered)
-    /// 2. Merkle proof verifies against data_root
-    /// 3. Sufficient samples pass (≥ MIN_DA_SAMPLES)
+    /// NN1 (audit 2026-05-14 re-audit, CRITICAL): pre-fix this
+    /// function did not take `queries`. A withholding validator
+    /// could answer any K sample requests with any K shards it
+    /// happened to hold, regardless of which positions the client
+    /// asked about. Post-fix the responder's claimed
+    /// `proof.leaf_index` must match the requested
+    /// `queries[i].shard_index` at the same position — Merkle
+    /// proof then chains that bound leaf_index to the root.
+    ///
+    /// The verifier checks per pair:
+    /// 1. `responses[i].proof.leaf_index == queries[i].shard_index`
+    ///    (query-binding — the NN1 fix)
+    /// 2. Shard hash matches the data
+    /// 3. Merkle proof verifies against data_root
+    ///
+    /// Returns `Available` iff at least MIN_DA_SAMPLES pairs pass
+    /// all three checks. A `queries.len() != responses.len()`
+    /// mismatch is treated as `Unavailable` (no pair can be
+    /// bound).
     pub fn verify_samples(
         data_root: &[u8; 32],
+        queries: &[SampleQuery],
         responses: &[SampleResponse],
     ) -> DAVerificationResult {
+        // NN1: structural 1-to-1 binding before any per-pair check.
+        if queries.len() != responses.len() {
+            return DAVerificationResult::Unavailable {
+                valid: 0,
+                required: MIN_DA_SAMPLES,
+            };
+        }
+
         let mut valid_count = 0;
 
-        for response in responses {
+        for (q, response) in queries.iter().zip(responses.iter()) {
+            // NN1: query-binding — the responder cannot substitute
+            // a different index than what the client asked for.
+            if response.proof.leaf_index != q.shard_index {
+                continue;
+            }
+
             // Check shard hash integrity
             let computed_hash: [u8; 32] = blake3::hash(&response.shard.data).into();
             if computed_hash != response.shard.hash {
@@ -108,10 +139,11 @@ impl DASVerifier {
     /// Returns `NoDataRoot` if the block has no DA commitment (empty block).
     pub fn verify_block_da(
         data_root: Option<&[u8; 32]>,
+        queries: &[SampleQuery],
         responses: &[SampleResponse],
     ) -> DAVerificationResult {
         match data_root {
-            Some(root) => Self::verify_samples(root, responses),
+            Some(root) => Self::verify_samples(root, queries, responses),
             None => DAVerificationResult::NoDataRoot,
         }
     }
@@ -672,20 +704,24 @@ mod tests {
     #[test]
     fn test_das_verifier_valid_samples() {
         use evaporchain_da::block_da::BlockDA;
+        use evaporchain_da::sampling::SampleQuery;
 
         let da = BlockDA::new().unwrap();
         let data = b"light client DAS verification test data";
         let package = da.encode_block(data).unwrap();
         let data_root = package.header.commitment_root;
 
-        // Generate valid sample responses (at least MIN_DA_SAMPLES)
+        // Generate valid sample responses (at least MIN_DA_SAMPLES) +
+        // matching queries (NN1: queries must bind 1:1 to responses).
+        let mut queries = Vec::new();
         let mut responses = Vec::new();
         for i in 0..6 {
-            let response = da.prove_shard(&package, i % package.shards.len()).unwrap();
-            responses.push(response);
+            let idx = i % package.shards.len();
+            queries.push(SampleQuery { block_number: 1, shard_index: idx });
+            responses.push(da.prove_shard(&package, idx).unwrap());
         }
 
-        let result = DASVerifier::verify_samples(&data_root, &responses);
+        let result = DASVerifier::verify_samples(&data_root, &queries, &responses);
         assert_eq!(
             result,
             DAVerificationResult::Available {
@@ -697,6 +733,7 @@ mod tests {
     #[test]
     fn test_das_verifier_insufficient_samples() {
         use evaporchain_da::block_da::BlockDA;
+        use evaporchain_da::sampling::SampleQuery;
 
         let da = BlockDA::new().unwrap();
         let data = b"test data for insufficient sampling";
@@ -704,11 +741,14 @@ mod tests {
         let data_root = package.header.commitment_root;
 
         // Only 2 samples — below MIN_DA_SAMPLES (4)
+        let queries: Vec<SampleQuery> = (0..2)
+            .map(|i| SampleQuery { block_number: 1, shard_index: i })
+            .collect();
         let responses: Vec<SampleResponse> = (0..2)
             .map(|i| da.prove_shard(&package, i).unwrap())
             .collect();
 
-        let result = DASVerifier::verify_samples(&data_root, &responses);
+        let result = DASVerifier::verify_samples(&data_root, &queries, &responses);
         assert_eq!(
             result,
             DAVerificationResult::Unavailable {
@@ -721,6 +761,7 @@ mod tests {
     #[test]
     fn test_das_verifier_tampered_shard_rejected() {
         use evaporchain_da::block_da::BlockDA;
+        use evaporchain_da::sampling::SampleQuery;
 
         let da = BlockDA::new().unwrap();
         let data = b"tamper detection test";
@@ -728,14 +769,18 @@ mod tests {
         let data_root = package.header.commitment_root;
 
         // Get valid responses then tamper one
-        let mut responses: Vec<SampleResponse> = (0..5)
-            .map(|i| da.prove_shard(&package, i % package.shards.len()).unwrap())
-            .collect();
+        let mut queries = Vec::new();
+        let mut responses: Vec<SampleResponse> = Vec::new();
+        for i in 0..5 {
+            let idx = i % package.shards.len();
+            queries.push(SampleQuery { block_number: 1, shard_index: idx });
+            responses.push(da.prove_shard(&package, idx).unwrap());
+        }
 
         // Tamper with the first shard's data
         responses[0].shard.data[0] ^= 0xFF;
 
-        let result = DASVerifier::verify_samples(&data_root, &responses);
+        let result = DASVerifier::verify_samples(&data_root, &queries, &responses);
         // One tampered sample fails, but 4 valid ones still pass
         assert_eq!(
             result,
@@ -748,17 +793,21 @@ mod tests {
     #[test]
     fn test_das_verifier_wrong_data_root() {
         use evaporchain_da::block_da::BlockDA;
+        use evaporchain_da::sampling::SampleQuery;
 
         let da = BlockDA::new().unwrap();
         let data = b"wrong root test";
         let package = da.encode_block(data).unwrap();
 
         let wrong_root = [0xAA; 32];
+        let queries: Vec<SampleQuery> = (0..5)
+            .map(|i| SampleQuery { block_number: 1, shard_index: i % package.shards.len() })
+            .collect();
         let responses: Vec<SampleResponse> = (0..5)
             .map(|i| da.prove_shard(&package, i % package.shards.len()).unwrap())
             .collect();
 
-        let result = DASVerifier::verify_samples(&wrong_root, &responses);
+        let result = DASVerifier::verify_samples(&wrong_root, &queries, &responses);
         assert_eq!(
             result,
             DAVerificationResult::Unavailable {
@@ -768,9 +817,93 @@ mod tests {
         );
     }
 
+    // ── NN1 (audit 2026-05-14 re-audit): DAS query-binding ──
+
+    /// The pre-fix exploit shape: a withholding validator holds
+    /// shards {0, 1, 2} and answers a client query for {3, 7, 11}
+    /// with the shards it actually has. Pre-fix the client's
+    /// `verify_samples` accepted this (each response's
+    /// `proof.leaf_index` chained correctly to the root for the
+    /// shard the responder actually sent). Post-fix the
+    /// query-binding check rejects on the first index mismatch.
+    #[test]
+    fn audit_nn1_withholding_substitution_rejected() {
+        use evaporchain_da::block_da::BlockDA;
+        use evaporchain_da::sampling::SampleQuery;
+
+        let da = BlockDA::new().unwrap();
+        let data = b"NN1 query-binding regression";
+        let package = da.encode_block(data).unwrap();
+        let data_root = package.header.commitment_root;
+        let n_shards = package.shards.len();
+        assert!(n_shards >= 4, "test requires >=4 shards");
+
+        // Client issues queries for indices that the attacker does
+        // NOT hold (pretend the attacker holds shards 0..K and the
+        // client asks for the LAST K).
+        let want_indices: Vec<usize> =
+            (n_shards.saturating_sub(5)..n_shards).collect();
+        let queries: Vec<SampleQuery> = want_indices
+            .iter()
+            .map(|&i| SampleQuery { block_number: 1, shard_index: i })
+            .collect();
+        // Attacker substitutes responses from indices 0..5 it has.
+        let substitute_indices: Vec<usize> =
+            (0..queries.len()).collect();
+        let responses: Vec<SampleResponse> = substitute_indices
+            .iter()
+            .map(|&i| da.prove_shard(&package, i).unwrap())
+            .collect();
+        assert_ne!(want_indices, substitute_indices, "test fixture sanity");
+
+        let result = DASVerifier::verify_samples(&data_root, &queries, &responses);
+        // Pre-fix: this would return Available. Post-fix every
+        // pair's index check fails, so 0 valid → Unavailable.
+        match result {
+            DAVerificationResult::Unavailable { valid, required } => {
+                assert_eq!(
+                    valid, 0,
+                    "no index-substituted response should count as valid"
+                );
+                assert_eq!(required, MIN_DA_SAMPLES);
+            }
+            other => panic!("NN1 regression: substitution should be rejected, got {other:?}"),
+        }
+    }
+
+    /// `queries.len() != responses.len()` is a structural reject —
+    /// the verifier cannot bind responses to queries without a
+    /// 1-to-1 pairing.
+    #[test]
+    fn audit_nn1_count_mismatch_unavailable() {
+        use evaporchain_da::block_da::BlockDA;
+        use evaporchain_da::sampling::SampleQuery;
+
+        let da = BlockDA::new().unwrap();
+        let package = da.encode_block(b"count mismatch test").unwrap();
+        let data_root = package.header.commitment_root;
+
+        let queries = vec![
+            SampleQuery { block_number: 1, shard_index: 0 },
+            SampleQuery { block_number: 1, shard_index: 1 },
+            SampleQuery { block_number: 1, shard_index: 2 },
+        ];
+        // Only 2 responses — missing the third.
+        let responses: Vec<SampleResponse> = (0..2)
+            .map(|i| da.prove_shard(&package, i).unwrap())
+            .collect();
+
+        match DASVerifier::verify_samples(&data_root, &queries, &responses) {
+            DAVerificationResult::Unavailable { valid, .. } => {
+                assert_eq!(valid, 0);
+            }
+            other => panic!("expected Unavailable on count mismatch, got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_das_verifier_no_data_root() {
-        let result = DASVerifier::verify_block_da(None, &[]);
+        let result = DASVerifier::verify_block_da(None, &[], &[]);
         assert_eq!(result, DAVerificationResult::NoDataRoot);
     }
 
@@ -806,7 +939,8 @@ mod tests {
             .collect();
 
         // 4. Light client verifies samples against data_root from block header
-        let result = DASVerifier::verify_block_da(Some(&data_root), &responses);
+        // NN1: pass the queries too so the verifier can bind responses to them.
+        let result = DASVerifier::verify_block_da(Some(&data_root), &queries, &responses);
         assert_eq!(
             result,
             DAVerificationResult::Available {

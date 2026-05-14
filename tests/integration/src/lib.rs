@@ -1915,7 +1915,7 @@ mod da_integration {
             })
             .collect();
 
-        let valid = DASampler::verify_samples(&da_proof, &responses, 4)
+        let valid = DASampler::verify_samples(&da_proof, &queries, &responses, 4)
             .expect("verify_samples must succeed with 4 valid responses");
         assert!(
             valid,
@@ -1951,7 +1951,11 @@ mod da_integration {
             },
         ];
 
-        let batch = DASampler::verify_samples_batch(&da_proof, &responses, 1)
+        let queries = vec![
+            evaporchain_da::SampleQuery { block_number: 1, shard_index: 0 },
+            evaporchain_da::SampleQuery { block_number: 1, shard_index: 1 },
+        ];
+        let batch = DASampler::verify_samples_batch(&da_proof, &queries, &responses, 1)
             .expect("batch_verify must not error");
         assert!(
             !batch.all_valid,
@@ -1978,7 +1982,8 @@ mod da_integration {
         }];
 
         // min_samples=4 but only 1 provided
-        let err = DASampler::verify_samples(&da_proof, &responses, 4);
+        let queries = vec![evaporchain_da::SampleQuery { block_number: 1, shard_index: 0 }];
+        let err = DASampler::verify_samples(&da_proof, &queries, &responses, 4);
         assert!(err.is_err(), "insufficient samples must return Err");
     }
 
