@@ -2488,11 +2488,17 @@ impl TendermintConsensus {
         // OTHER tips' precommits for the same validator at the
         // same round; if any disagrees with this precommit's
         // block_hash, increment the equivocation counter.
-        let this_round = self
-            .dag_round_states
-            .get(&tip)
-            .map(|rs| rs.round)
-            .unwrap_or(0);
+        //
+        // NC4 (re-audit 2026-05-14): the per-tip `RoundState.round`
+        // field is the round at which the entry was first created
+        // (see `RoundState::new(self.round_state.round)` at the
+        // `.or_insert_with` site below). For the current call,
+        // `this_round` is the consensus's live round
+        // (`self.round_state.round`) — NOT the tip's stored round,
+        // since the entry for `tip` may not exist yet. The filter
+        // `rs.round != this_round` then meaningfully excludes
+        // round-stale per-tip entries from the equivocation scan.
+        let this_round = self.round_state.round;
         let mut equivocated = false;
         for (other_tip, rs) in &self.dag_round_states {
             if *other_tip == tip {
@@ -2515,10 +2521,11 @@ impl TendermintConsensus {
                 .or_insert(0) += 1;
         }
 
+        let current_round = self.round_state.round;
         let rs = self
             .dag_round_states
             .entry(tip)
-            .or_insert_with(|| RoundState::new(0));
+            .or_insert_with(|| RoundState::new(current_round));
         rs.precommits.insert(validator_id, block_hash);
         if !signature.is_empty() {
             rs.precommit_bls_sigs.insert(validator_id, signature);
@@ -9758,6 +9765,46 @@ mod tests {
         tc.record_dag_precommit([0xAA; 32], 42, Some([0xAB; 32]), vec![]);
         tc.record_dag_precommit([0xBB; 32], 42, Some([0xAB; 32]), vec![]);
         assert!(tc.cross_fork_equivocations().is_empty());
+    }
+
+    /// NC4 (re-audit 2026-05-14) — regression: per-tip `RoundState`
+    /// entries created inside `record_dag_precommit` must record the
+    /// *actual* consensus round (`self.round_state.round`), NOT a
+    /// hard-coded 0. Before the fix, every entry was created via
+    /// `RoundState::new(0)`, which made the round-filter inside the
+    /// cross-fork equivocation scan dead code and silently no-op'd
+    /// any future round-scoped logic (GC, per-round metrics).
+    ///
+    /// Drive the consensus into a non-zero round, call
+    /// `record_dag_precommit` for a fresh tip, and assert the new
+    /// `dag_round_states` entry carries `round == N`.
+    #[test]
+    fn audit_nc4_round_state_records_actual_round() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+
+        // Drive consensus into round 7 (any N ≥ 1 exercises the bug).
+        let n: u32 = 7;
+        tc.round_state = RoundState::new(n);
+
+        let tip = [0xEE; 32];
+        // Sanity: no per-tip entry exists yet.
+        assert!(!tc.dag_round_states.contains_key(&tip));
+
+        tc.record_dag_precommit(tip, 42, Some([0xAB; 32]), vec![]);
+
+        // New per-tip entry must record the live round.
+        let entry = tc
+            .dag_round_states
+            .get(&tip)
+            .expect("record_dag_precommit must insert a per-tip RoundState");
+        assert_eq!(
+            entry.round, n,
+            "per-tip RoundState.round must equal self.round_state.round at \
+             insertion time (NC4); got {} expected {}",
+            entry.round, n,
+        );
     }
 
     /// Phase 4.3 (Decision 3) — `cross_fork_equivocations` starts
