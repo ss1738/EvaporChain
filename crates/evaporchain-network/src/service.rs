@@ -267,11 +267,14 @@ impl PeerBanList {
             Ok(data) => match serde_json::from_str::<PeerBanFile>(&data) {
                 Ok(file) => {
                     let now = now_ms();
+                    // Audit A3 (2026-05-14): cap remaining time at 2× BAN_DURATION so
+                    // a corrupted or tampered entry cannot produce an enormous Instant.
+                    let max_remaining_ms = BAN_DURATION.as_millis() as u64 * 2;
                     for (peer_b58, until_ms) in file.banned {
                         if until_ms > now {
                             if let Ok(pid) = peer_b58.parse::<PeerId>() {
-                                let remaining = Duration::from_millis(until_ms - now);
-                                banned.insert(pid, Instant::now() + remaining);
+                                let clamped = (until_ms - now).min(max_remaining_ms);
+                                banned.insert(pid, Instant::now() + Duration::from_millis(clamped));
                             }
                         }
                     }
@@ -289,24 +292,45 @@ impl PeerBanList {
     }
 
     /// L3: persist current bans to disk. Best-effort — failures log warn.
+    ///
+    /// Audit A1 (2026-05-14): writes are atomic — serialize to a tmp file,
+    /// fsync, then rename onto `path`. A crash mid-`fs::write` previously
+    /// left a half-written JSON; the next start logged "malformed ban file"
+    /// and silently re-admitted every peer we just banned. Mirrors the same
+    /// pattern as BanList::save() in banlist.rs.
     fn save(&self) {
         let path = match &self.ban_path {
             Some(p) => p,
             None => return,
         };
-        let now_wall = now_ms();
         let now_inst = Instant::now();
+        let now_wall = now_ms();
         let mut file = PeerBanFile::default();
         for (peer, expiry) in &self.banned {
             if *expiry > now_inst {
                 let millis_left = expiry.duration_since(now_inst).as_millis() as u64;
-                file.banned.insert(peer.to_base58(), now_wall + millis_left);
+                // Audit A2 (2026-05-14): saturating_add prevents u64 overflow
+                // when millis_left is very large (e.g. corrupted or far-future expiry).
+                file.banned.insert(peer.to_base58(), now_wall.saturating_add(millis_left));
             }
         }
-        match serde_json::to_string(&file) {
+        match serde_json::to_vec(&file) {
             Ok(data) => {
-                if let Err(e) = std::fs::write(path, data) {
+                let tmp = path.with_extension("json.tmp");
+                let result: std::io::Result<()> = (|| {
+                    use std::io::Write;
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let mut f = std::fs::File::create(&tmp)?;
+                    f.write_all(&data)?;
+                    f.sync_all()?;
+                    std::fs::rename(&tmp, path)?;
+                    Ok(())
+                })();
+                if let Err(e) = result {
                     warn!("PeerBanList: failed to save ban file {:?}: {}", path, e);
+                    let _ = std::fs::remove_file(&tmp);
                 }
             }
             Err(e) => warn!("PeerBanList: failed to serialise ban file: {}", e),
@@ -3019,6 +3043,46 @@ mod tests {
             !file.banned.contains_key(&peer.to_base58()),
             "expired peer must be pruned from file"
         );
+    }
+
+        #[test]
+    fn audit_a1_crash_safe_write_produces_valid_json() {
+        // Verify atomic write: the file on disk must always be valid JSON.
+        // We call save() with active bans and ensure the persisted file parses.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bans.peers.json");
+        let peer = PeerId::random();
+        let mut bl = PeerBanList::new_with_path(path.clone());
+        for _ in 0..BAN_THRESHOLD {
+            bl.record_violation(peer);
+        }
+        // File must exist and be valid JSON after save.
+        let data = std::fs::read_to_string(&path).unwrap();
+        let file: PeerBanFile = serde_json::from_str(&data).unwrap();
+        assert!(file.banned.contains_key(&peer.to_base58()), "ban must be in file");
+        // No tmp file should remain.
+        assert!(!path.with_extension("json.tmp").exists(), "tmp file must not remain");
+    }
+
+    #[test]
+    fn audit_a2_far_future_until_ms_is_clamped_on_load() {
+        // Audit A2+A3: a persisted entry with until_ms = u64::MAX must be
+        // clamped to 2×BAN_DURATION, not produce an enormous Instant offset.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bans.peers.json");
+        let peer = PeerId::random();
+        // Write a file with until_ms = u64::MAX (tampered / corrupted).
+        let file = PeerBanFile {
+            banned: [(peer.to_base58(), u64::MAX)].into_iter().collect(),
+        };
+        std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
+        let mut bl = PeerBanList::new_with_path(path);
+        // The peer must be banned (non-expired) but the in-memory Instant must
+        // not be astronomically far in the future.
+        assert!(bl.is_banned(&peer), "peer with far-future ban must still be loaded as banned");
+        let expiry = bl.banned[&peer];
+        let max_allowed = std::time::Instant::now() + BAN_DURATION * 2 + std::time::Duration::from_secs(5);
+        assert!(expiry <= max_allowed, "expiry must be clamped to ~2×BAN_DURATION");
     }
 
         // ── Sybil-resistance state ──────────────────────────────────────────
