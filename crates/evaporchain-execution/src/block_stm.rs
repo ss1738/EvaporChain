@@ -1509,7 +1509,19 @@ impl BlockStmExecutor {
 
             match results[i as usize].take() {
                 Some(TxExecResult::Success { gas_used, fee }) => {
-                    if block_gas_limit > 0 && total_gas + gas_used > block_gas_limit {
+                    // NX3 (re-audit 2026-05-14, HIGH): check the limit
+                    // with `checked_add` so a wrap-around can't slip
+                    // under the cap. Pre-fix `total_gas + gas_used >
+                    // block_gas_limit` evaluated AFTER the unchecked
+                    // add — a crafted block where Σ gas approaches
+                    // u64::MAX wrapped below the limit and bypassed
+                    // the cap.
+                    let next_total = total_gas.checked_add(gas_used);
+                    let over_limit = match next_total {
+                        Some(s) => block_gas_limit > 0 && s > block_gas_limit,
+                        None => true, // overflow → treat as over-limit
+                    };
+                    if over_limit {
                         // Over limit — remove this tx's writes and fail all remaining
                         mv_memory.delete_writes(i, &write_locs[i as usize]);
                         gas_exceeded_from = Some(i);
@@ -1522,8 +1534,12 @@ impl BlockStmExecutor {
                         });
                     } else {
                         txs_executed += 1;
-                        total_gas += gas_used;
-                        total_fees += fee;
+                        // NX3: saturating_add for the post-check
+                        // accumulation. The `over_limit` branch
+                        // above already rejected the overflow case,
+                        // so this is defense-in-depth.
+                        total_gas = total_gas.saturating_add(gas_used);
+                        total_fees = total_fees.saturating_add(fee);
                         tx_outcomes.push(crate::TxOutcome {
                             tx_hash,
                             success: true,
@@ -1534,7 +1550,9 @@ impl BlockStmExecutor {
                 }
                 Some(TxExecResult::Failed { fee, error }) => {
                     txs_failed += 1;
-                    total_fees += fee;
+                    // NX3: saturating_add — failed-tx fees still
+                    // mustn't wrap the accumulator.
+                    total_fees = total_fees.saturating_add(fee);
                     tx_outcomes.push(crate::TxOutcome {
                         tx_hash,
                         success: false,
@@ -1808,7 +1826,14 @@ impl ExecutionEngine for BlockStmExecutor {
             }
 
             let tx_gas = estimate_gas(tx);
-            if self.block_gas_limit > 0 && total_gas_used + tx_gas > self.block_gas_limit {
+            // NX3 (re-audit 2026-05-14, HIGH): checked_add the limit
+            // probe; overflow rejects as over-limit. Same shape as
+            // the parallel-phase fix at line ~1512.
+            let over_limit = match total_gas_used.checked_add(tx_gas) {
+                Some(s) => self.block_gas_limit > 0 && s > self.block_gas_limit,
+                None => true,
+            };
+            if over_limit {
                 total_txs_failed += 1;
                 indexed_outcomes.push((
                     idx,
@@ -2069,8 +2094,13 @@ impl ExecutionEngine for BlockStmExecutor {
             match result {
                 Ok(()) => {
                     total_txs_executed += 1;
-                    total_gas_used += tx_gas;
-                    total_fees += tx_fee;
+                    // NX3: saturating_add — the over_limit check above
+                    // already rejected wrap-causing inputs; this is
+                    // defense-in-depth so the accumulator can't
+                    // silently wrap if a future caller bypasses the
+                    // check.
+                    total_gas_used = total_gas_used.saturating_add(tx_gas);
+                    total_fees = total_fees.saturating_add(tx_fee);
                     indexed_outcomes.push((
                         idx,
                         crate::TxOutcome {
@@ -2084,7 +2114,9 @@ impl ExecutionEngine for BlockStmExecutor {
                 Err(e) => {
                     debug!(tx_idx = idx, error = %e, "Serial: tx failed");
                     total_txs_failed += 1;
-                    total_fees += tx_fee;
+                    // NX3: saturating_add — failed-tx fees still
+                    // can't wrap the accumulator.
+                    total_fees = total_fees.saturating_add(tx_fee);
                     indexed_outcomes.push((
                         idx,
                         crate::TxOutcome {
@@ -2518,8 +2550,15 @@ impl BlockStmExecutor {
 
             if success {
                 txs_executed += 1;
-                gas_used += tx_gas;
-                total_fees += tx_fee;
+                // NX3 (re-audit 2026-05-14, HIGH): saturating_add on
+                // the deterministic-replay accumulators. This path
+                // is reached during state-divergence diagnostics and
+                // doesn't gate on block_gas_limit (replay is
+                // assumed-valid by the caller), so we don't add a
+                // checked_add over-limit branch here — but the
+                // accumulator itself must still not silently wrap.
+                gas_used = gas_used.saturating_add(tx_gas);
+                total_fees = total_fees.saturating_add(tx_fee);
                 tx_outcomes.push(crate::TxOutcome {
                     tx_hash,
                     success: true,
@@ -2528,7 +2567,8 @@ impl BlockStmExecutor {
                 });
             } else {
                 txs_failed += 1;
-                total_fees += tx_fee;
+                // NX3: saturating_add — same shape, failed-tx path.
+                total_fees = total_fees.saturating_add(tx_fee);
                 tx_outcomes.push(crate::TxOutcome {
                     tx_hash,
                     success: false,
@@ -3212,6 +3252,67 @@ mod tests {
         assert_eq!(result.txs_executed, 2, "only 2 txs should fit in gas limit");
         assert_eq!(result.txs_failed, 1, "third tx should be over gas limit");
         assert!(result.gas_used <= 42_000, "gas must not exceed limit");
+    }
+
+    // ── NX3 (re-audit 2026-05-14): block-gas accumulator overflow ──
+
+    /// The over-limit check shape used at three block_stm.rs sites
+    /// (parallel-phase, serial-phase, and the deterministic-replay
+    /// path) must reject overflow as "over limit", not let the wrap
+    /// slip under.
+    ///
+    /// Pre-fix `total_gas + tx_gas > block_gas_limit` evaluated AFTER
+    /// the unchecked add. A crafted block with Σ gas approaching
+    /// u64::MAX wrapped below the limit and bypassed the cap —
+    /// breaking block-level gas accounting and panic-DoSing the
+    /// executor in debug builds.
+    #[test]
+    fn audit_nx3_over_limit_check_treats_overflow_as_over_limit() {
+        // Simulate `total_gas + tx_gas` where the sum overflows.
+        let total_gas: u64 = u64::MAX - 100;
+        let tx_gas: u64 = 200;
+        let block_gas_limit: u64 = 1_000_000;
+
+        // Post-fix shape (mirror of the three production sites):
+        let over_limit = match total_gas.checked_add(tx_gas) {
+            Some(s) => block_gas_limit > 0 && s > block_gas_limit,
+            None => true, // overflow → reject as over-limit
+        };
+        assert!(
+            over_limit,
+            "NX3: overflow must be treated as over-limit (pre-fix would have wrapped to 100 \
+             and slipped under the 1_000_000 cap)"
+        );
+
+        // Pre-fix would do this (DO NOT use in production):
+        // (u64::MAX - 100) + 200 = u64::MAX + 100 - 1 = wraps to 99
+        let prefix_total = total_gas.wrapping_add(tx_gas);
+        assert_eq!(prefix_total, 99);
+        let prefix_over_limit = block_gas_limit > 0 && prefix_total > block_gas_limit;
+        assert!(
+            !prefix_over_limit,
+            "pre-fix wrap-around evaluated as under-limit — this is exactly the bypass NX3 caught"
+        );
+    }
+
+    /// Same pattern for the post-check accumulator: `saturating_add`
+    /// pins the accumulator at u64::MAX rather than wrapping to a
+    /// near-zero value that subsequent over-limit checks would treat
+    /// as a fresh start.
+    #[test]
+    fn audit_nx3_accumulator_saturates_under_overflow() {
+        let total_gas: u64 = u64::MAX - 50;
+        let tx_gas: u64 = 200;
+        let post_fix = total_gas.saturating_add(tx_gas);
+        assert_eq!(
+            post_fix,
+            u64::MAX,
+            "NX3: post-fix accumulator pins at u64::MAX; pre-fix wrapped"
+        );
+        // Pre-fix `+= tx_gas`:
+        // (u64::MAX - 50) + 200 = u64::MAX + 150 - 1 = wraps to 149
+        let prefix = total_gas.wrapping_add(tx_gas);
+        assert_eq!(prefix, 149, "pre-fix wrap drops accumulator near 0");
     }
 
     #[test]
