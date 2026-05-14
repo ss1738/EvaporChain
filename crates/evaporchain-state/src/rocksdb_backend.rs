@@ -1037,8 +1037,31 @@ impl StateDB for RocksDBStateDB {
         let key = trie_key_for_account(addr);
         self.trie.delete(&key);
         self.dirty_accounts.remove(addr);
-        let cf = self.db.cf_handle("accounts").unwrap();
-        let _ = self.db.delete_cf(cf, addr);
+        // AUDIT_2026_05_13 M9 closure. Pre-fix called `db.delete_cf(cf,
+        // addr)` directly to disk. Proposer-side speculative execution
+        // (`begin_batch → delete_account → rollback_batch`) restored
+        // the in-memory `self.accounts` map from undo but left the
+        // on-disk record permanently gone. On the next restart,
+        // `RocksDBStateDB::open` reloaded from disk and the account
+        // was missing — state divergence from the consensus-mandated
+        // root.
+        //
+        // Fix: route through `pending_batch` like
+        // `delete_object_disk` (rocksdb_backend.rs:529). When a batch
+        // is active, the delete is buffered; `commit_batch` flushes
+        // it, `rollback_batch` discards it. The on-disk lifecycle
+        // now mirrors the in-memory one.
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_ACCOUNTS).unwrap();
+            batch.delete_cf(cf, addr);
+        } else {
+            drop(guard);
+            let cf = self.db.cf_handle(CF_ACCOUNTS).unwrap();
+            if let Err(e) = self.db.delete_cf(cf, addr) {
+                fatal_persistence_error("delete_account_from_rocksdb", e);
+            }
+        }
         self.accounts.remove(addr)
     }
 
@@ -2485,4 +2508,80 @@ mod tests {
         assert!(db2.has_data());
     }
 
+    // ─── AUDIT_2026_05_13 M9 regression ───────────────────────────────
+
+    #[test]
+    fn audit_m9_delete_account_in_speculative_batch_survives_rollback_on_restart() {
+        // Pre-fix: `delete_account` called `db.delete_cf` directly.
+        // `begin_batch → delete_account → rollback_batch` would
+        // restore the in-memory map but leave on-disk gone. Restart
+        // reloaded from disk → account missing → state divergence.
+        // Post-fix routes through `pending_batch`; rollback discards
+        // the buffered delete; restart reloads the account.
+        let dir = tempfile::tempdir().unwrap();
+        let addr: AccountAddress = [0x77; 32];
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.put_account(Account {
+                address: addr,
+                balance: 9_999,
+                nonce: 3,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 0,
+                vesting: None,
+            });
+            // Open a speculative batch, delete the account, then
+            // rollback.
+            db.begin_batch();
+            let removed = db.delete_account(&addr);
+            assert!(
+                removed.is_some(),
+                "delete_account should return Some during begin_batch"
+            );
+            db.rollback_batch();
+            // After rollback, in-memory should still see the account.
+            let in_mem = db
+                .get_account(&addr)
+                .expect("in-memory map must restore from undo log");
+            assert_eq!(in_mem.balance, 9_999);
+            assert_eq!(in_mem.nonce, 3);
+        }
+        // Reopen the DB — on-disk should NOT have been deleted (the
+        // batched delete was rolled back, never flushed).
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        let reloaded = db2
+            .get_account(&addr)
+            .expect("on-disk account must survive rollback_batch");
+        assert_eq!(reloaded.balance, 9_999);
+        assert_eq!(reloaded.nonce, 3);
+    }
+
+    #[test]
+    fn audit_m9_delete_account_committed_batch_actually_deletes() {
+        // Soundness lower bound: a delete inside a batch that is then
+        // COMMITTED (not rolled back) must reach disk normally.
+        let dir = tempfile::tempdir().unwrap();
+        let addr: AccountAddress = [0x88; 32];
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.put_account(Account {
+                address: addr,
+                balance: 4_242,
+                nonce: 1,
+                storage_deposit: 0,
+                storage_bytes: 0,
+                last_touched_epoch: 0,
+                vesting: None,
+            });
+            db.begin_batch();
+            db.delete_account(&addr);
+            db.commit_batch().expect("commit_batch must succeed");
+        }
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        assert!(
+            db2.get_account(&addr).is_none(),
+            "committed delete must persist to disk"
+        );
+    }
 }
