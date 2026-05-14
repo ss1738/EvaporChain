@@ -25,12 +25,9 @@
 //! # Status caveat
 //!
 //! The proof is over `NovaVerifierCircuit::dummy()` — Sections
-//! 2 and 3 are still TODO in `generate_constraints`, and the
-//! committed-hash placeholders are zero. This proof is
-//! L1-verifier-cryptographically-valid but proves a trivial
-//! statement. The same binary structure produces a real proof
-//! the moment those blockers close (swap `dummy()` for
-//! `circuit_builder::build_circuit_from_fixture(&rs)`).
+//! Sections 2+3 are wired in `generate_constraints` but gated
+//! on `section2/3.is_some()`; dummy() omits both so this proof
+//! covers the Section 1 structural gate only.
 
 use std::env;
 use std::fs;

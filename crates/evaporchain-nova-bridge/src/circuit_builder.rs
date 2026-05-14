@@ -127,11 +127,10 @@ mod tests {
     /// from `l_u_secondary.X[..2]` via serde reflection),
     /// synthesises with arkworks, and confirms `cs.is_satisfied()`.
     ///
-    /// Caveat per module docstring: Section 2 in-circuit re-hash is
-    /// still TODO, so the proof binds the witness to a specific
-    /// accumulator state but doesn't yet verify Nova-soundness in
-    /// circuit. That gap closes when Section 2 wires up — the same
-    /// `build_circuit_from_fixture` call site keeps working.
+    /// Sections 2+3 are wired when witnesses are attached via
+    /// `with_section2` / `with_section3`. This test uses
+    /// `build_circuit_from_fixture` alone (no sections), so only
+    /// the Section 1 structural gate is active.
     #[test]
     fn fixture_to_circuit_to_satisfied_cs() {
         let rs = generate_fixture(2).expect("generate 2-step fixture");

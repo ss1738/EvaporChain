@@ -198,14 +198,10 @@ mod tests {
     /// setup → prove → verify(true). Pins that all three wrappers
     /// agree on the circuit shape.
     ///
-    /// The dummy witness has zero hash placeholders, but Section
-    /// 2/3 are still TODO in `generate_constraints`, so no
-    /// constraint actually consumes those values — the proof is
-    /// valid today. When Section 2/3 wire up, this test will
-    /// either still pass (if the in-circuit re-hash agrees on
-    /// `committed_hash_* == 0`) or fail (and the swap-in point
-    /// is `circuit_builder::build_circuit_from_fixture(&rs)` with
-    /// real values).
+    /// The dummy witness has zero hash placeholders. Sections 2+3
+    /// are wired and gated on `section2/3.is_some()`. The dummy
+    /// circuit (no section witnesses attached) verifies the
+    /// Section 1 structural gate only.
     #[test]
     fn prove_and_verify_dummy_round_trip_accepts() {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(101);

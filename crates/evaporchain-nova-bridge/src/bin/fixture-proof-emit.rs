@@ -39,11 +39,10 @@
 //!
 //! The proof now BINDS to a specific Nova accumulator state
 //! (the committed hashes flow from the real fixture). Sections
-//! 2 and 3 are still TODO in `generate_constraints` though, so
-//! the proof doesn't yet enforce Nova-soundness in circuit — a
-//! prover with arbitrary `committed_hash_*` values could
-//! generate a proof against THOSE values. Closing that gap is
-//! the BESPOKE Section 2 + 3 work.
+//! Sections 2+3 are wired and gated on `section2/3.is_some()`.
+//! This binary uses `build_circuit_from_fixture` without attaching
+//! section witnesses, so only Section 1 is active. Use
+//! `build_circuit_with_section2/3` for full verification.
 
 use std::env;
 use std::fs;
