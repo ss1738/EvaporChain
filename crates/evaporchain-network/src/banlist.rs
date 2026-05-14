@@ -179,6 +179,18 @@ impl BanList {
     /// `fs::write` left a half-written JSON; the next start logged
     /// "ban list parse error … starting empty" and silently dropped
     /// every active ban, re-admitting the attackers we just ejected.
+    ///
+    /// NN5 (re-audit 2026-05-14): durability of the *rename* itself.
+    /// L7 fsyncs the tmp file's *content* but not the parent
+    /// directory's entry-table after `rename`. POSIX `rename` commits
+    /// the directory entry to disk only after a subsequent
+    /// `fsync(dir)`. A power loss between the rename returning and
+    /// the next implicit dir-sync can revert the rename — dropping
+    /// the new ban set even though the tmp file was fully fsynced.
+    /// B1/B2 closed this for `faucet` and `singh_pools` but the
+    /// network bucket missed it; NN5 lands the same fix here. Plus
+    /// the tmp-cleanup-on-rename-failure that `PeerBanList::save`
+    /// already has, for parity.
     pub fn save(&mut self, path: &Path) -> std::io::Result<()> {
         self.cleanup_expired();
         if let Some(parent) = path.parent() {
@@ -197,7 +209,25 @@ impl BanList {
             f.write_all(&json)?;
             f.sync_all()?;
         }
-        std::fs::rename(&tmp_path, path)?;
+        match std::fs::rename(&tmp_path, path) {
+            Ok(()) => {}
+            Err(e) => {
+                // NN5: leave no orphan tmp on rename failure.
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(e);
+            }
+        }
+        // NN5: fsync the parent dir so the rename itself is
+        // durable past a power-loss window.
+        if let Some(parent) = path.parent() {
+            // Best-effort — some filesystems (tmpfs) reject the
+            // open-for-sync on a dir; ignore those, but log
+            // unexpected errors. The rename has at least made it
+            // to the OS page cache by the time we get here.
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
         Ok(())
     }
 }
