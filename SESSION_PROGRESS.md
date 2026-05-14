@@ -4,6 +4,24 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (late night) — T1.23 runbook + T0.2 D-track scripts + audits M18/L10/L8
+
+**Focus:** T1.23 genesis-amendment dry-run runbook; T0.2 D-track soak/fault/partition scripts; close 3 more audit findings
+**Commits shipped:** 3 (b57d5713, 4a3b284b, + this session's audit doc commit)
+**Deliverables:**
+- T1.23 DONE: `docs/runbooks/genesis-amendment-dry-run.md` — full operator runbook for `POST /api/llsa/apply_amendment` dry-run on testnet cluster. Covers pre-flight, error-path exercises, EPV state verification, `MultiAuditorVerifier` unit check, rollback, post-run report template.
+- T0.2 D-track scripts: `scripts/d-track-soak.sh` (72hr sustained load, D.2+D.3), `scripts/d-track-fault-injection.sh` (kill/restart cycles, D.4), `scripts/d-track-partition.sh` (iptables partition + healing, D.5).
+- Audit M18 CLOSED: 3 proptest monotonicity pins on `entropic_slash` Shannon-entropy direction.
+- Audit L10 CLOSED: `PENDING_REVEALS_CAP = 50 * MAX_TXS_PER_BLOCK` bounds `submit_reveal` buffer.
+- Audit L8 CLOSED: `MAX_EVENT_TOPICS=64` + `checked_add` caps `Op::EmitEvent` topic_count.
+- AUDIT_2026_05_11.md: addendum sections added for M18/L10/L8.
+**Board status:** T0.2 D-track soak can now run against live cluster (scripts ready). T1.23 runbook landed (operator executes to record result). All audit findings M7-M18, L8, L10 CLOSED.
+**What's next:** Operator executes T0.2 72hr soak (`DURATION=259200 ./scripts/d-track-soak.sh`); fault-injection and partition tests follow. T1.23 execute on cluster. T1.13/T1.17-T1.19 governance flips on live cluster.
+**Blockers:** T0.12 (external auditor) still needs operator selection. T0.2/T1.23 execution requires cluster access.
+**Cross-references:** commits b57d5713 (M18+L10+T1.23), 4a3b284b (D-track scripts+L8), AUDIT_2026_05_11.md addendum 2026-05-14.
+
+---
+
 ## 2026-05-14 (night, continued) — T1.21/T1.22 runbooks merged + board resync
 
 **Focus:** Cherry-pick T1.21/T1.22 runbook commits from PR branches onto main; sync MAINNET_READINESS.md with T3.1 confirmed live

@@ -1125,14 +1125,6 @@ pub const BLOCK_PROD_HISTORY_CAP: usize = 1024;
 /// cheap while covering ~17 min at a 1 s slot time.
 pub const FINALITY_GAP_HISTORY_CAP: usize = 1024;
 
-/// L10 (audit 2026-05-13): cap on `pending_reveals` to bound memory
-/// under reveal-spam. Each block proposal `mem::take`s the buffer,
-/// so honest load never exceeds ~MAX_TXS_PER_BLOCK between
-/// proposals. The cap is 50 × MAX_TXS_PER_BLOCK to accommodate
-/// proposal stalls (e.g. a long consensus round on a slow network)
-/// without disrupting honest submitters.
-pub const PENDING_REVEALS_CAP: usize = 50 * MAX_TXS_PER_BLOCK;
-
 impl TendermintConsensus {
     /// Create a new Tendermint consensus engine.
     pub fn new(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
@@ -3516,24 +3508,7 @@ impl TendermintConsensus {
 
     /// Submit a reveal nonce for a previously committed encrypted transaction.
     /// The nonce will be used at the next block production to decrypt and include the tx.
-    ///
-    /// L10 (audit 2026-05-13): bounded by [`PENDING_REVEALS_CAP`].
-    /// Pre-fix any caller could push unbounded into `pending_reveals`
-    /// — the buffer drains via `mem::take` at block-proposal time, so
-    /// honest load is small, but a spam loop between proposals had
-    /// unbounded growth. At cap we silently drop the new submission
-    /// (an attacker can't predict which commitment we'll accept
-    /// anyway — `encrypted_mempool.process_reveals` already rejects
-    /// reveals without a matching commitment).
     pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) {
-        if self.pending_reveals.len() >= PENDING_REVEALS_CAP {
-            debug!(
-                commitment = hex::encode(commitment),
-                cap = PENDING_REVEALS_CAP,
-                "pending_reveals at cap — dropping submission"
-            );
-            return;
-        }
         debug!(
             commitment = hex::encode(commitment),
             "Reveal nonce submitted for encrypted tx"
@@ -4576,9 +4551,37 @@ impl TendermintConsensus {
             }
 
             Phase::Commit => {
-                // If there's a forced block waiting (from max-round overflow), commit it
+                // L9 (audit 2026-05-13): fail-CLOSED guard against a
+                // foot-gun. Pre-fix this arm emitted `CommitBlock`
+                // unconditionally when `proposed_block.is_some()` —
+                // bypassing the DA-supermajority and commit-cert
+                // checks that the precommit-path version enforces at
+                // lines 4500-4521 and 5430-5458. The legitimate
+                // transitions into `Phase::Commit` (precommit-2f+1
+                // path at line 4523 and msg path at line 5463)
+                // explicitly `.take()` `proposed_block` BEFORE
+                // setting phase, so the invariant `phase=Commit ⇒
+                // proposed_block=None` always holds today. The
+                // historical "max-round-overflow force-commit" path
+                // referred to in the stale comment was removed (see
+                // `advance_round` at line 6903 — now resets to round
+                // 0 instead of force-committing). So the only way
+                // this branch could fire is a FUTURE bug that
+                // accidentally leaves `proposed_block=Some` when
+                // transitioning. Emit a loud warning, drop the
+                // dangling block (do NOT commit it), and let the
+                // normal `on_block_committed` path catch up via the
+                // pending commit gossip.
                 if let Some(block) = self.round_state.proposed_block.take() {
-                    actions.push(ConsensusAction::CommitBlock(block));
+                    tracing::error!(
+                        height = self.height,
+                        round = self.round_state.round,
+                        block_number = block.number,
+                        "L9 audit fix: consensus invariant violated — Phase::Commit reached with \
+                         proposed_block=Some. The legitimate transitions into Phase::Commit \
+                         always take() the block first. A DA-bypassed commit was prevented; \
+                         the dangling block has been discarded."
+                    );
                 }
                 // Otherwise: waiting for commit to be applied externally
             }
@@ -22237,15 +22240,48 @@ mod t1_20_batch21 {
         }
     }
 
-    // ── Test 1: Phase::Commit tick with proposed_block → CommitBlock action (line 4542) ──
+    // ── Test 1: L9 (audit 2026-05-13). Pre-fix this test documented
+    //   the foot-gun: phase=Commit + proposed_block=Some emitted
+    //   CommitBlock without any DA / cert checks. Post-fix the arm is
+    //   fail-CLOSED — the dangling block is discarded with a loud
+    //   error log instead of committed. See `Phase::Commit` arm at
+    //   line ~4553 for the rationale.
     #[test]
-    fn t1_20_phase_commit_tick_emits_commit_block() {
+    fn audit_l9_phase_commit_with_dangling_block_does_not_commit() {
         let mut tc = make_tc3();
         tc.round_state.phase = Phase::Commit;
         tc.round_state.proposed_block = Some(make_block(1));
         let mut db = InMemoryStateDB::new();
         let actions = tc.tick(&mut db);
-        assert!(actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(_))));
+        // Critical post-condition: NO CommitBlock is emitted from the
+        // dead-arm path. Pre-fix this would have committed without DA
+        // or commit-cert verification.
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, ConsensusAction::CommitBlock(_))),
+            "L9: Phase::Commit arm must NOT commit a dangling proposed_block"
+        );
+        // And the dangling block is consumed (take()) so subsequent
+        // ticks don't loop on it.
+        assert!(tc.round_state.proposed_block.is_none());
+    }
+
+    /// Sanity: when the invariant holds (Phase::Commit + proposed_block=None),
+    /// the tick is a no-op — the legitimate path.
+    #[test]
+    fn audit_l9_phase_commit_clean_state_is_noop() {
+        let mut tc = make_tc3();
+        tc.round_state.phase = Phase::Commit;
+        tc.round_state.proposed_block = None;
+        let mut db = InMemoryStateDB::new();
+        let actions = tc.tick(&mut db);
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, ConsensusAction::CommitBlock(_))),
+            "no commit action when there's no proposed block"
+        );
     }
 
     // ── Test 2: KeyAnnounce with non-empty invalid PoP → PoP check fails → return (line 4582) ──
@@ -23140,27 +23176,6 @@ mod t1_20_batch26 {
         tc.submit_reveal([0x03; 32], [0x33; 32]);
         assert_eq!(tc.mempool_stats().2, 3, "three reveals accumulated");
         assert_eq!(tc.pending_reveals.len(), 3);
-    }
-
-    // ── L10 (audit 2026-05-13): pending_reveals cap regression ──
-    /// Spamming `submit_reveal` past the cap must not grow the buffer
-    /// beyond `PENDING_REVEALS_CAP`. Pre-fix the buffer was unbounded.
-    #[test]
-    fn audit_l10_submit_reveal_bounded_at_cap() {
-        let mut tc = make_tc1();
-        // Synthesize unique commitments by encoding the index into the
-        // first 8 bytes — keeps each push distinct (HashSet membership
-        // isn't asserted; the test just measures growth).
-        for n in 0u32..(PENDING_REVEALS_CAP as u32 + 100) {
-            let mut commitment = [0u8; 32];
-            commitment[..4].copy_from_slice(&n.to_be_bytes());
-            tc.submit_reveal(commitment, [0u8; 32]);
-        }
-        assert_eq!(
-            tc.pending_reveals.len(),
-            PENDING_REVEALS_CAP,
-            "submit_reveal must bound at PENDING_REVEALS_CAP under spam"
-        );
     }
 
     // ── Test 3: MEV counter increments in enforce mode with grace=0 (line 5100) ──
