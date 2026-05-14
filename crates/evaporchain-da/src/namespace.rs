@@ -66,11 +66,38 @@ pub struct NmtLeaf {
 }
 
 /// An internal node in the NMT carries namespace range + hash.
+///
+/// ─── NN4 (re-audit 2026-05-14) ─────────────────────────────────────────────
+/// Empty-child detection MUST be structural, not hash-equality.
+///
+/// The previous design used `hash == [0u8; 32]` as the "empty" sentinel.
+/// `internal()` excluded empty children from the parent's namespace range
+/// while still folding their bytes into the parent hash. An attacker who
+/// could grind a real leaf whose `Blake3(0x00 || ns || data_hash)` collides
+/// with `[0; 32]` (2^256 brute-force; structurally weak, not infeasible
+/// for a future adversary with primitive-level attacks on Blake3) could
+/// construct a *real-but-invisible* leaf: a namespace covered by the tree
+/// that the parent's `(min_namespace, max_namespace)` range claims is
+/// absent. This forges namespace-absence proofs.
+///
+/// The fix: `is_empty` is now an explicit `bool` flag — a structural
+/// sentinel that cannot collide with Blake3 output. The flag is authoritative;
+/// the bytes of `hash` no longer carry the empty signal.
+///
+/// Serde: `is_empty` deserializes with `#[serde(default)] = false` so any
+/// pre-fix serialized NMT round-trips correctly (non-empty nodes never
+/// carried this flag — defaulting to `false` is the correct semantics).
+/// ───────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NmtNode {
     pub min_namespace: NamespaceId,
     pub max_namespace: NamespaceId,
     pub hash: [u8; 32],
+    /// Structural empty-sentinel. `true` iff this node is a padding/empty
+    /// slot inserted by tree construction. Never set on a real leaf or
+    /// real internal node. See NN4 doc-comment on this struct.
+    #[serde(default)]
+    pub is_empty: bool,
 }
 
 impl NmtNode {
@@ -84,15 +111,22 @@ impl NmtNode {
             min_namespace: namespace,
             max_namespace: namespace,
             hash: hasher.finalize().into(),
+            is_empty: false,
         }
     }
 
+    /// NN4: structural empty-check. Reads the `is_empty` flag rather than
+    /// hash-comparing. A node with `hash == [0; 32]` AND `is_empty == false`
+    /// (e.g. a maliciously-ground real leaf) reports `false` here — the
+    /// attacker cannot smuggle a real leaf past the parent-range check.
     fn is_empty(&self) -> bool {
-        self.hash == [0u8; 32]
+        self.is_empty
     }
 
     fn internal(left: &NmtNode, right: &NmtNode) -> Self {
-        // Handle empty children: empty nodes don't contribute to namespace range
+        // NN4: structural empty-check (was hash-comparison). The flag is
+        // authoritative; an attacker grinding `hash == [0; 32]` on a real
+        // leaf no longer escapes the parent namespace-range fold.
         let min_namespace = if left.is_empty() {
             right.min_namespace
         } else {
@@ -117,14 +151,19 @@ impl NmtNode {
             min_namespace,
             max_namespace,
             hash: hasher.finalize().into(),
+            is_empty: false,
         }
     }
 
+    /// Empty padding node. `is_empty == true` is authoritative — the hash
+    /// bytes don't matter (kept as `[0; 32]` for historical determinism of
+    /// the parent-hash fold, but never read for emptiness detection).
     fn empty() -> Self {
         Self {
             min_namespace: NAMESPACE_MAX,
             max_namespace: NAMESPACE_MIN,
             hash: [0u8; 32],
+            is_empty: true,
         }
     }
 }
@@ -276,14 +315,19 @@ impl NamespaceMerkleTree {
 
     /// Get the root node (namespace range + hash).
     pub fn root(&self) -> &NmtNode {
+        // NN4: fallback uses the structural empty sentinel (is_empty: true)
+        // for a tree with no layers. Callers detecting "no root" should
+        // prefer `root().is_empty` over hash-comparison.
+        static EMPTY_ROOT: NmtNode = NmtNode {
+            min_namespace: NAMESPACE_MAX,
+            max_namespace: NAMESPACE_MIN,
+            hash: [0u8; 32],
+            is_empty: true,
+        };
         self.layers
             .last()
             .and_then(|l| l.first())
-            .unwrap_or(&NmtNode {
-                min_namespace: NAMESPACE_MAX,
-                max_namespace: NAMESPACE_MIN,
-                hash: [0u8; 32],
-            })
+            .unwrap_or(&EMPTY_ROOT)
     }
 
     /// Get blob commitments (namespace + hash for each blob).
@@ -792,6 +836,125 @@ mod tests {
         assert!(
             NamespaceMerkleTree::verify_namespace_proof(&proof),
             "below-min absence proof must verify"
+        );
+    }
+
+    // ─── NN4 regression: structural empty-sentinel ─────────────────────────
+    //
+    // Audit NN4 (re-audit 2026-05-14): `is_empty()` previously checked
+    // `self.hash == [0u8; 32]`. An attacker who could grind a real leaf
+    // whose `Blake3(0x00 || ns || data_hash)` collides with `[0; 32]`
+    // (structural collision, not value collision) could smuggle a real
+    // leaf past the parent's namespace-range fold and forge namespace-
+    // absence proofs. Fix: structural `is_empty: bool` flag, authoritative
+    // over hash-bytes.
+
+    /// NN4 — a node with `hash == [0; 32]` AND `is_empty == false` must
+    /// report `is_empty()` = false. This is the exact attack shape:
+    /// a real-but-hash-grinds-to-zero leaf is NOT empty.
+    #[test]
+    fn audit_nn4_empty_sentinel_distinguishes_zero_hash_leaf() {
+        // Hand-construct a node mimicking a maliciously-ground real leaf:
+        // hash collides with [0; 32] but the structural flag says non-empty.
+        let attacker_leaf = NmtNode {
+            min_namespace: ns(7),
+            max_namespace: ns(7),
+            hash: [0u8; 32], // collision with old sentinel
+            is_empty: false, // structural truth: this is a real leaf
+        };
+        assert!(
+            !attacker_leaf.is_empty(),
+            "NN4: zero-hash real leaf must NOT be reported as empty"
+        );
+
+        // And the converse: a real empty padding node has is_empty == true,
+        // even though its hash is also [0; 32] — but now the flag, not the
+        // hash, is what `is_empty()` reads.
+        let real_empty = NmtNode::empty();
+        assert!(real_empty.is_empty(), "NN4: empty() must report empty");
+        assert_eq!(real_empty.hash, [0u8; 32]);
+    }
+
+    /// NN4 — `internal()` must read the structural flag, not hash bytes.
+    /// Build an internal node from a (zero-hash real leaf, empty padding)
+    /// pair and assert the real leaf's namespace IS reflected in the
+    /// parent range. Under the old hash-based check, the zero-hash leaf
+    /// would have been silently excluded and its namespace forgotten.
+    #[test]
+    fn audit_nn4_internal_uses_structural_emptiness() {
+        // Real left leaf (with hash forced to [0; 32] to simulate a
+        // grinding attack — in reality `leaf()` would never produce
+        // this, but we construct it explicitly to prove the parent
+        // range no longer cares about hash bytes).
+        let real_left_zero_hash = NmtNode {
+            min_namespace: ns(3),
+            max_namespace: ns(3),
+            hash: [0u8; 32],
+            is_empty: false,
+        };
+        // Right padding (true empty).
+        let padding_right = NmtNode::empty();
+
+        let parent = NmtNode::internal(&real_left_zero_hash, &padding_right);
+
+        // Parent range MUST include namespace 3 from the real left leaf.
+        // Under the old design, hash==[0;32] would have caused the left
+        // child to be treated as empty and the parent would inherit the
+        // right child's (inverted) sentinel range — forging absence of ns 3.
+        assert_eq!(
+            parent.min_namespace,
+            ns(3),
+            "NN4: real zero-hash leaf must contribute to parent.min_namespace"
+        );
+        assert_eq!(
+            parent.max_namespace,
+            ns(3),
+            "NN4: real zero-hash leaf must contribute to parent.max_namespace"
+        );
+        // Sanity: internal() always emits is_empty == false.
+        assert!(!parent.is_empty());
+
+        // Converse: two real leaves with one true-empty padding on the
+        // right of a real leaf should still see the real leaf's range.
+        let real_a = NmtNode::leaf(ns(5), &[0xAA; 32]);
+        let parent_real_then_pad = NmtNode::internal(&real_a, &NmtNode::empty());
+        assert_eq!(parent_real_then_pad.min_namespace, ns(5));
+        assert_eq!(parent_real_then_pad.max_namespace, ns(5));
+
+        // And two true-empty padding children: parent inherits empty
+        // range (inverted sentinel) but `is_empty()` itself is false
+        // because internal() always emits non-empty.
+        let two_empties =
+            NmtNode::internal(&NmtNode::empty(), &NmtNode::empty());
+        assert_eq!(two_empties.min_namespace, NAMESPACE_MAX);
+        assert_eq!(two_empties.max_namespace, NAMESPACE_MIN);
+        assert!(!two_empties.is_empty());
+    }
+
+    /// NN4 — serde round-trip: a serialized payload from BEFORE the fix
+    /// (no `is_empty` field) must deserialize cleanly with `is_empty`
+    /// defaulting to `false`. This is the upgrade-safety guarantee.
+    #[test]
+    fn audit_nn4_serde_backwards_compatible_default_is_empty_false() {
+        // JSON without the is_empty field — what a pre-NN4 serialized
+        // NmtNode looked like on the wire.
+        let legacy_json = r#"{
+            "min_namespace": [0,0,0,0,0,0,0,7],
+            "max_namespace": [0,0,0,0,0,0,0,7],
+            "hash": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        }"#;
+        let decoded: NmtNode = serde_json::from_str(legacy_json)
+            .expect("legacy NmtNode JSON must deserialize");
+        // Default must be false — a pre-fix non-empty node had no flag,
+        // so the safe default is "non-empty" (the structurally honest
+        // interpretation of legacy data).
+        assert!(
+            !decoded.is_empty,
+            "NN4: legacy serialized NmtNode must default to is_empty=false"
+        );
+        assert!(
+            !decoded.is_empty(),
+            "NN4: legacy NmtNode is_empty() must also be false"
         );
     }
 }
