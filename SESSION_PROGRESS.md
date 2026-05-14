@@ -4,6 +4,21 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 7) — Audit C1 closed; BFT quorum u64 overflow
+
+**Focus:** Fix BFT quorum threshold overflow — `stake_quorum_threshold()` multiplied u64 total by 2 before dividing, wrapping when total > u64::MAX/2
+**Commits shipped:** 1 (`5fc4debf`)
+**Deliverables:**
+- C1 (HIGH): `stake_quorum_threshold()` in `tendermint.rs` — replaced `(total * 2).div_ceil(3)` with `((total as u128 * 2 + 2) / 3) as u64`. An adversary controlling ≥1/3 of total stake near u64::MAX could trivially satisfy quorum on a wrapped threshold. Light-client verification path already used u128 for the same arithmetic.
+- 1 regression test: `audit_c1_quorum_threshold_no_overflow_near_u64_max` — verifies `total = u64::MAX/2 + 1` produces correct threshold `6_148_914_691_236_517_206` (not 0 from overflow)
+- AUDIT_2026_05_11.md: C1 row added as CLOSED
+**Empirical results:** `cargo test -p evaporchain-consensus` — 940 passed / 0 failed
+**What's next:** Continue audit sweep — check remaining arithmetic paths in consensus/execution for similar u64 overflow risks
+**Blockers / open questions:** none
+**Cross-references:** `5fc4debf`, `AUDIT_2026_05_11.md`
+
+---
+
 ## 2026-05-14 (session 6) — Audit B1/B2 closed; fsync gap sweep
 
 **Focus:** Sweep all `fs::write` persistence paths for missing fsync — same class as A1 (PeerBanList)
