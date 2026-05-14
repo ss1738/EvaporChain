@@ -6,6 +6,37 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-14 (afternoon) — T0.10 Ph2.5 VerkleProofVerifier.sol DONE
+
+**Focus:** Phase 2.5 — on-chain Groth16 BN254 verifier smoke test
+**Commits shipped:** 1 (16323be6)
+**Deliverables:**
+- smoke-fixture-emit.rs (NEW): setup(seed=0)+prove(seed=0) on dummy circuit → verkle_proof_smoke.json (256-byte EIP-197 proof + 4 public inputs + VK with alpha/beta/gamma/delta/IC[5]).
+- VerkleProofVerifier.sol (NEW): Groth16 BN254 verifier. Constructor takes VK bytes (G1=64B, G2=128B). verify(proof,publicInputs) fills uint256[24] buffer with 4 pairing pairs; EIP-196 ecAdd/ecMul for vk_x; EIP-197 ecPairing for final check. Stack-too-deep avoided by inline assembly + indexed array fill.
+- VerkleProofVerifier.t.sol (NEW): 5 Foundry tests — real proof accepted (303k gas), tampered PI rejected, tampered proof byte rejected (try/catch for on-curve vs off-curve), wrong lengths revert.
+- verkle_proof_smoke.json (NEW): committed deterministic seed-0 fixture.
+**Results:** 5/5 new VerkleProofVerifier tests + 58 pre-existing = 63/63 forge tests pass. 130/0/19 nova-bridge lib tests unchanged.
+**Key engineering decision:** Stack-too-deep (24 params) fixed by filling `uint256[24] memory inp` in `_pairingCheck` using inline assembly for calldata and storage reads per-pair, not passing all 24 params as a function call.
+**What's next:** T0.10 closure — MAINNET_READINESS.md update; then T0.12 (audit kickoff) or T1.14 (round-trip integration).
+**Cross-references:** commit 16323be6, prior fix 69fd4198.
+
+---
+
+## 2026-05-14 (afternoon) — T0.10 Ph2.2 Section 3 native row check FIXED
+
+**Focus:** Debug and fix Section 3 primary RelaxedR1CS native row check failure
+**Commits shipped:** 1 (69fd4198)
+**Root cause:** `r_U_primary.X[0/1]` parsed with wrong endianness. `EvmCompatSerde`'s BE reversal is gated on the `evm` feature flag; nova-bridge doesn't enable it. Without `evm`, all primary scalars (W, E, u, X) serialize as 64-char LE hex — but X was being parsed by `parse_evm_compat_scalar` (BE), producing wrong field elements. Row 10001 failed: `4797... != 1989...`.
+**Fix:** Swap both X parse calls to `parse_le_hex_scalar`; remove dead `parse_evm_compat_scalar`.
+**Verification:**
+- `extract_native_check_passes_for_real_fixture` (#[ignore]) → PASS (num_cons=10003 all rows satisfied)
+- `build_circuit_with_section3_synthesizes_and_is_satisfied` (#[ignore]) → PASS
+- Full lib suite: 130 passed / 0 failed / 19 ignored
+**What's next:** T0.10 Ph2.5 Solidity smoke test (VerkleProofVerifier.sol).
+**Cross-references:** commit 69fd4198, prior 21a96580.
+
+---
+
 ## 2026-05-14 (morning) — T0.10 Ph2.2 Section 3 primary RelaxedR1CS row check WIRED
 
 **Focus:** Wire Section 3 primary RelaxedR1CS satisfiability into NovaVerifierCircuit::generate_constraints

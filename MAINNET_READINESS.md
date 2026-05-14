@@ -114,7 +114,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 | T0.7 | Mempool + signature DoS hardening | ✅ **DONE** — all 7 vectors: V1-V4 in `dos_resistance.rs`; V5 fork-spam (`0e976f4`/`mcc_phase_d.rs`); V6 ShardSample (`8c59fad`). Runbook V4+V5 ops sections added. `tests/dos/` harness committed. Cluster soak requires T3.1. done-as-of: 2026-05-13 | NETWORK + EXECUTION |
 | T0.8 | Light-client / fast-sync against malicious snapshots | ✅ **DONE** — all 5 lane-spec adversarial fixtures shipped in `crates/evaporchain-state/tests/adversarial_snapshots.rs` and green on Mini 1 release 2026-05-11 (`adversarial_t08_forged_integrity_hash_rejected_via_missing_quorum_cert`, `..._stale_quorum_cert_from_different_snapshot_rejected`, `..._duplicate_validator_ids_in_set_rejected`, `..._truncated_zstd_payload_rejects`, `..._partial_state_withhold_nullifier_rejected_via_cert`). Covers sub-tasks 1 (5 fixtures), 2 (quorum-cert verification), 3 (integrity-hash chain validation), 4 (partial-state-withhold). | NETWORK |
 | T0.9 | Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM) | ✅ **DONE** — all 8 sub-tasks shipped. D-finish resolved (`Params<halo2_proofs::pasta::EqAffine>` = vesta::Affine IS the right verifier curve for an Fp-circuit; resolution comment at `circuit_v2.rs:997-1011`). `VerkleProverV2::{setup, prove_v2, verify_v2}` (lines 1019-1104) wire `keygen_vk` + `keygen_pk` + `create_proof` + `verify_proof` over the EccVerkleStepCircuit. Headline test `prove_v2_and_verify_v2_round_trip` re-verified green on Mini 1 release 2026-05-11 (77.40s end-to-end, k=11 IPA params). Crate is gated behind `--features v2-ecc`; default build remains V1 Poseidon path until T0.10 pulls V2 through. Earlier 2026-05-09 green run preserved in memory `evaporchain_t0_9_d_finish_done.md`. | BRIDGE-RUST |
-| T0.10 | `VerkleProofVerifier.sol` Groth16 wrap | 🟡 OPEN (unblocked 2026-05-11 by T0.9 ✅) — wraps the V2 IPA proof in a Groth16 envelope so the on-chain Solidity verifier can pin-verify the same `VerkleProofV2` JSON the Rust side produces. | BRIDGE-SOL |
+| T0.10 | `VerkleProofVerifier.sol` Groth16 wrap | ✅ **DONE** — Phases 2.1-2.5 all shipped. `VerkleProofVerifier.sol` (EIP-196/197 Groth16 BN254 verifier) + `smoke-fixture-emit` binary + 5 Foundry tests (63/63 green). `16323be6` 2026-05-14. | BRIDGE-SOL |
 | T0.11 | Cross-chain replay protection hardening (dispatcher) | ✅ DONE (ee2ebba) — L1 finalization-depth gate (12 blocks); 46/46 forge tests pass on-host | BRIDGE-SOL |
 | T0.11b | Extend finalization-depth gate to StateMembershipAttester | ✅ DONE (b74e72d) — symmetric defense w/ T0.11; 48/48 forge tests pass on-host | BRIDGE-SOL |
 | T0.12 | External security audit kickoff + remediation | 🔴 BLOCKED on operator (auditor selection) | wide |
@@ -417,7 +417,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.10 — `VerkleProofVerifier.sol` Groth16 wrap
 
-**Status:** 🟡 IN PROGRESS — Phases 2.1-2.4 done (commit `be5d0c40`); Phase 2.5 (Solidity smoke test) open
+**Status:** ✅ DONE — All phases 2.1-2.5 shipped. Commit `16323be6` 2026-05-14.
 **Surface:** BRIDGE-SOL, BRIDGE-RUST (`crates/evaporchain-nova-bridge/`)
 **Depends on:** T0.9 ✅
 **Effort:** ~3 days remaining (Phase 2.5 + final wiring)
@@ -428,8 +428,8 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 - Phase 2.2-sponge-framing ✅ — `enforce_neptune_sponge_primary` byte-correct vs neptune (2026-05-13). Root cause: pre_sparse_mds transpose. Both parity tests pass. SCAFFOLD_VERSION=phase-2.6-operational.
 - Phase 2.3-skeleton ✅ — chain adapter stub
 - Phase 2.4 ✅ — Groth16 wrapper (groth16_wrapper, compress_ark, eip197, scalar_adapter, l_u_secondary_extract)
-- Phase 2.2-section-3 🔴 OPEN — RelaxedR1CS in-circuit satisfiability
-- Phase 2.5 🔴 OPEN — Solidity smoke test (VerkleProofVerifier.sol)
+- Phase 2.2-section-3 ✅ — RelaxedR1CS in-circuit satisfiability (21a96580 + 69fd4198 2026-05-14)
+- Phase 2.5 ✅ — Solidity smoke test: VerkleProofVerifier.sol + 5 Foundry tests (16323be6 2026-05-14)
 
 **Goal:** On-chain consumer of the Phase 4 V2 IVC proofs. Groth16-on-BN254 wrapping the CompressedSNARK output.
 
