@@ -5880,6 +5880,14 @@ impl TendermintConsensus {
             self.last_effective_params = Some(ep);
         }
 
+        // Audit M1 (2026-05-15): prune cross_fork_equivocations on epoch change.
+        // Without this, the map grows unbounded as validators are slashed or
+        // rotated out — one stale entry per historical validator ID, forever.
+        // Retain only IDs still registered in the active validator set.
+        if block.epoch != self.epoch {
+            self.cross_fork_equivocations
+                .retain(|&v_id, _| self.validator_set.get(v_id).is_some());
+        }
         self.epoch = block.epoch;
         self.mempool.set_epoch(block.epoch);
         self.current_state_root = state_root;
