@@ -590,8 +590,21 @@ impl PrivacyExecutor {
             }
         }
 
-        // 6. Verify balance binding
-        let sum_in: u64 = tx.input_amounts.iter().sum();
+        // 6. Verify balance binding.
+        //
+        // AUDIT_2026_05_13 M13 closure: pre-fix used `iter().sum::<u64>()`
+        // which panics on overflow in debug builds and silently wraps in
+        // release. A peer-serialized tx with `input_amounts =
+        // [u64::MAX, 2]` would crash any validator running `cargo run`
+        // without `--release` (panic-DoS) and produce a wrapped sum in
+        // release that the downstream Pedersen binding check has to
+        // reject — defense-in-depth becomes the only line.
+        // Post-fix: explicit checked_add returning BalanceOverflow.
+        let sum_in: u64 = tx
+            .input_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
         let change_total = sum_in.saturating_sub(tx.amount);
         if !verify_balance_binding(
             &tx.balance_binding,
@@ -814,9 +827,18 @@ impl PrivacyExecutor {
             }
         }
 
-        // 8. Verify balance binding and conservation
-        let sum_in: u64 = tx.input_amounts.iter().sum();
-        let sum_out: u64 = tx.output_amounts.iter().sum();
+        // 8. Verify balance binding and conservation.
+        // AUDIT_2026_05_13 M13: same checked-sum protection as Unshield.
+        let sum_in: u64 = tx
+            .input_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
+        let sum_out: u64 = tx
+            .output_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
         if !verify_balance_binding(
             &tx.balance_binding,
             sum_in,
