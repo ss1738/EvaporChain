@@ -4,6 +4,24 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 19) — Audit M1 closed; memory/resource sweep
+
+**Focus:** M-class memory/resource management — unbounded allocations, recursive stack, long-lived leaks
+**Commits shipped:** 1 (`589ad2dd`)
+**Deliverables:**
+- M1 CLOSED (MEDIUM): `cross_fork_equivocations: HashMap<u64, u64>` in `tendermint.rs:851` had no pruning — entries for slashed/rotated validators accumulated indefinitely. Fix: epoch-boundary `retain(|&v_id, _| validator_set.get(v_id).is_some())` prunes stale IDs at each epoch transition; O(active_validators) cost
+- M2 (stack overflow): PASS — VM stack depth capped at 1024; call depth at 8 (EvaporScript) / 64 (execution); Light-Cone DAG traversal uses explicit Vec queues (no Rust recursion)
+- M3 (tokio resource leak): PASS — fire-and-forget spawns acceptable; Tokio runtime cleanup handles shutdown
+- M4 (DA Vec capacity from untrusted input): PASS — `reconstruct_from_samples` not on a network-facing path; Vec bounds would panic before OOM
+- All other bounded structures confirmed: `pending_reveals` (1,250), `dag_round_states` (LRU cap 4), `encrypted_mempool` (10K+10K), `mev_observations` (1,024), `proposals_seen` (height-pruned)
+**Empirical results:** 942/942 consensus tests pass
+**Decisions made:** K3-2 (nonce mempool gap) accepted as LOW risk — no DB in mempool, per-account cap + execution-layer nonce check are adequate; L3 (blake3 domain sep) is false-positive — `blake3(pk)` is consistent convention across 8+ sites with ML-DSA pk fixed at 1952 bytes
+**What's next:** N-class sweep (network protocol security — P2P message validation, peer banning, sybil scoring edge cases)
+**Blockers / open questions:** MacBook + Mini 1 branch drift is a recurring issue — stale WIP branches need cleanup
+**Cross-references:** `AUDIT_2026_05_11.md` — M1 row; commit `589ad2dd`
+
+---
+
 ## 2026-05-14 (session 18) — Audit K-remainder + L-class: both clean
 
 **Focus:** K-remainder (K2/K3) + L-class (crypto primitive misuse)
