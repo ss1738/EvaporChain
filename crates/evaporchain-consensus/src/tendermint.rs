@@ -4096,7 +4096,13 @@ impl TendermintConsensus {
         // With 3 equal-stake validators (total=3000) this gives 2000, so any
         // 2-of-3 combination reaches quorum. Using `total*2/3 + 1` = 2001 would
         // demand all three validators — impossible if any one times out or lags.
-        (total * 2).div_ceil(3)
+        //
+        // Audit C1 (2026-05-14): use u128 to prevent `total * 2` from overflowing
+        // u64 when total > u64::MAX / 2. The light-client verification path at
+        // consensus_types::ValidatorSet::verify_commit already uses u128 for the same
+        // arithmetic (line ~892). div_ceil(3) = (x + 2) / 3 for unsigned x.
+        // Result always fits in u64 because (total * 2 / 3) <= total <= u64::MAX.
+        ((total as u128 * 2 + 2) / 3) as u64
     }
 
     /// Who is the proposer for the current height/round?
@@ -22138,6 +22144,34 @@ mod t1_20_batch20 {
     fn t1_20_stake_quorum_threshold_empty_vs_returns_max() {
         let tc = TendermintConsensus::new_for_test(1, 5, ValidatorSet::new());
         assert_eq!(tc.stake_quorum_threshold(), u64::MAX);
+    }
+
+    #[test]
+    fn audit_c1_quorum_threshold_no_overflow_near_u64_max() {
+        // Audit C1: stake_quorum_threshold must not overflow when total_stake
+        // approaches u64::MAX / 2. With u64 arithmetic, `total * 2` would wrap;
+        // with u128 it computes correctly.
+        //
+        // With total = u64::MAX / 2 + 1 = 9_223_372_036_854_775_808:
+        //   correct threshold = ceil(2 * 9_223_372_036_854_775_808 / 3)
+        //                     = ceil(18_446_744_073_709_551_616 / 3)
+        //                     = ceil(6_148_914_691_236_517_205.33...)
+        //                     = 6_148_914_691_236_517_206
+        // With u64 overflow: (9_223_372_036_854_775_808 * 2) wraps to 0,
+        //   then div_ceil(3) = 0, making the threshold trivially satisfied.
+        let large_stake = u64::MAX / 2 + 1;
+        let expected = ((large_stake as u128 * 2 + 2) / 3) as u64;
+        assert_eq!(expected, 6_148_914_691_236_517_206);
+
+        // Build a minimal ValidatorSet with one validator holding large_stake.
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, large_stake, [1u8; 32]));
+        let tc = TendermintConsensus::new_for_test(1, 5, vs);
+        assert_eq!(
+            tc.stake_quorum_threshold(),
+            expected,
+            "quorum threshold must use u128 arithmetic to avoid overflow"
+        );
     }
 
     // ── Test 7: mortis_cert_preview returns None when mortis is triggered (line 1564) ──
