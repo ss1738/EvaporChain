@@ -12039,7 +12039,7 @@ async fn healthz() -> impl IntoResponse {
 }
 
 async fn readyz(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let block_history = state.block_history.lock().unwrap();
+    let block_history = state.block_history.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let has_blocks = !block_history.is_empty();
     let tip_height = block_history.back().map(|b| b.number).unwrap_or(0);
     drop(block_history);
@@ -14291,11 +14291,20 @@ async fn post_swap_execute(
 
         if from_is_token {
             // Deduct from the token balance.
-            let token = store
+            // Audit F1: use expect() with diagnostic; from_is_token guard above
+            // guarantees the token exists, but avoid silent unwrap panics.
+            let token = match store
                 .tokens
                 .iter_mut()
                 .find(|t| t.symbol.to_ascii_uppercase() == from_upper)
-                .unwrap();
+            {
+                Some(t) => t,
+                None => return Json(TxResultResponse {
+                    success: false,
+                    message: format!("internal: from_token {} not found after is_token check", from_upper),
+                    tx_hash: None,
+                }),
+            };
             token.tick_decay(epoch);
             let bal = token.balances.entry(holder_key.clone()).or_insert(0);
             if *bal < req.amount {
@@ -14320,11 +14329,19 @@ async fn post_swap_execute(
 
         if to_is_token {
             // Credit the to_token balance.
-            let token = store
+            // Audit F1: safe match; to_is_token guard above guarantees existence.
+            let token = match store
                 .tokens
                 .iter_mut()
                 .find(|t| t.symbol.to_ascii_uppercase() == to_upper)
-                .unwrap();
+            {
+                Some(t) => t,
+                None => return Json(TxResultResponse {
+                    success: false,
+                    message: format!("internal: to_token {} not found after is_token check", to_upper),
+                    tx_hash: None,
+                }),
+            };
             token.tick_decay(epoch);
             let bal = token.balances.entry(holder_key.clone()).or_insert(0);
             *bal = bal.saturating_add(amount_out);
@@ -14394,7 +14411,7 @@ fn oracle_rate(state: &ApiState, from: &str, to: &str) -> f64 {
     }
 
     let (from_usd, to_usd) = if let Some(ref ob) = state.oracle_bridge {
-        let bridge = ob.lock().unwrap();
+        let bridge = ob.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
         let f = if from_u == "EVAP" {
             bridge
                 .get_twap("evap_usd")
@@ -16505,7 +16522,7 @@ async fn get_frontier_status(State(state): State<Arc<ApiState>>) -> impl IntoRes
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
-    let fs = fs_arc.lock().unwrap();
+    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let health = fs.energy_trie.health();
     let poha_dist = fs.poha.temperature_distribution();
 
@@ -16543,7 +16560,7 @@ async fn get_lazy_eval(
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
-    let fs = fs_arc.lock().unwrap();
+    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
 
     if let Some(object_id_hex) = params.object_id {
         let Ok(bytes) = hex::decode(&object_id_hex) else {
@@ -16609,7 +16626,7 @@ struct LazyEvalParams {
 // ─────────────── Data Availability Sampling ───────────────────────────────
 
 async fn get_da_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let store = state.da_store.lock().unwrap();
+    let store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let blocks_with_da: Vec<u64> = store.keys().cloned().collect();
     let total = blocks_with_da.len();
     let latest = blocks_with_da.last().copied();
@@ -16625,7 +16642,7 @@ async fn get_da_sample(
     State(state): State<Arc<ApiState>>,
     Path((block, shard_index)): Path<(u64, usize)>,
 ) -> impl IntoResponse {
-    let store = state.da_store.lock().unwrap();
+    let store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -16643,7 +16660,11 @@ async fn get_da_sample(
         ).into_response();
     }
 
-    let da = evaporchain_da::block_da::BlockDA::new().unwrap();
+    // Audit F1: BlockDA::new() failure crashes the node; return error response instead.
+    let da = match evaporchain_da::block_da::BlockDA::new() {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("DA init failed: {e}")}))).into_response(),
+    };
     match da.prove_shard(package, shard_index) {
         Ok(response) => Json(serde_json::json!({
             "block": block,
@@ -16671,7 +16692,7 @@ async fn get_da_light_sample(
     State(state): State<Arc<ApiState>>,
     Path(block): Path<u64>,
 ) -> impl IntoResponse {
-    let store = state.da_store.lock().unwrap();
+    let store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -16689,7 +16710,11 @@ async fn get_da_light_sample(
         seed.as_bytes(),
     );
 
-    let da = evaporchain_da::block_da::BlockDA::new().unwrap();
+    // Audit F1: BlockDA::new() failure crashes the node; return error response instead.
+    let da = match evaporchain_da::block_da::BlockDA::new() {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("DA init failed: {e}")}))).into_response(),
+    };
     let mut samples = Vec::new();
     let mut all_valid = true;
 
@@ -16727,7 +16752,7 @@ async fn get_da_cell_sample(
     State(state): State<Arc<ApiState>>,
     Path((block, row, col)): Path<(u64, usize, usize)>,
 ) -> impl IntoResponse {
-    let store = state.da_2d_store.lock().unwrap();
+    let store = state.da_2d_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -16786,7 +16811,7 @@ async fn get_da_2d_header(
     State(state): State<Arc<ApiState>>,
     Path(block): Path<u64>,
 ) -> impl IntoResponse {
-    let store = state.da_2d_store.lock().unwrap();
+    let store = state.da_2d_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -16813,7 +16838,7 @@ async fn get_da_2d_light_sample(
     State(state): State<Arc<ApiState>>,
     Path(block): Path<u64>,
 ) -> impl IntoResponse {
-    let store = state.da_2d_store.lock().unwrap();
+    let store = state.da_2d_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let Some(package) = store.get(&block) else {
         return (
             StatusCode::NOT_FOUND,
@@ -16894,7 +16919,7 @@ async fn get_evaporation_da_proof(
         }
     };
 
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let Some(ghost) = db.get_ghost(&object_id) else {
         return (
             StatusCode::NOT_FOUND,
@@ -16903,7 +16928,7 @@ async fn get_evaporation_da_proof(
             .into_response();
     };
 
-    let da_store = state.da_store.lock().unwrap();
+    let da_store = state.da_store.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
 
     let evap_epoch = ghost.evaporated_at;
     let candidate_blocks: Vec<_> = da_store.keys().copied().collect();
@@ -16975,7 +17000,7 @@ async fn get_poha_certificate(
         )
             .into_response();
     };
-    let fs = fs_arc.lock().unwrap();
+    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
 
     if let Some(cert) = fs.poha.get(block_number) {
         let temp = cert.temperature();
@@ -17018,7 +17043,7 @@ async fn get_poha_certificates(State(state): State<Arc<ApiState>>) -> impl IntoR
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
-    let fs = fs_arc.lock().unwrap();
+    let fs = fs_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let dist = fs.poha.temperature_distribution();
 
     let certs: Vec<_> = fs
@@ -17112,7 +17137,7 @@ async fn post_submit_encrypted_tx(
     };
 
     {
-        let mut pool = state.encrypted_mempool.lock().unwrap();
+        let mut pool = state.encrypted_mempool.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
         pool.submit_encrypted(enc_tx);
     }
 
@@ -17122,7 +17147,7 @@ async fn post_submit_encrypted_tx(
             "success": true,
             "message": "encrypted transaction submitted",
             "commitment": body.commitment,
-            "reveal_epoch": current_epoch + state.encrypted_mempool.lock().unwrap().reveal_delay(),
+            "reveal_epoch": current_epoch + state.encrypted_mempool.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() }).reveal_delay(),
         })),
     )
 }
@@ -17160,7 +17185,7 @@ async fn post_reveal_encrypted_tx(
         safe_lock(&state.consensus).epoch()
     };
 
-    let mut pool = state.encrypted_mempool.lock().unwrap();
+    let mut pool = state.encrypted_mempool.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let revealed = pool.process_reveals(current_epoch, &[(commitment, nonce)]);
 
     if revealed.is_empty() {
@@ -17181,7 +17206,7 @@ async fn post_reveal_encrypted_tx(
 }
 
 async fn get_encrypted_mempool_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let pool = state.encrypted_mempool.lock().unwrap();
+    let pool = state.encrypted_mempool.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let (encrypted, plaintext) = pool.pending_count();
     Json(serde_json::json!({
         "encrypted_pending": encrypted,
@@ -17204,7 +17229,7 @@ fn hex_to_32(s: &str) -> Option<[u8; 32]> {
 // ─────────────────── Light Client ────────────────────────────────────────
 
 async fn get_light_client_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let lc = state.light_client.lock().unwrap();
+    let lc = state.light_client.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let latest = lc.latest_trusted_height();
     Json(serde_json::json!({
         "latest_trusted_height": latest,
@@ -17245,7 +17270,7 @@ async fn post_verify_header(
         }
     };
 
-    let lc = state.light_client.lock().unwrap();
+    let lc = state.light_client.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let trusted = lc.trusted_state_at(body.height);
     match trusted {
         Some(ts) => {
@@ -17272,7 +17297,7 @@ async fn get_trusted_header(
     State(state): State<Arc<ApiState>>,
     Path(height): Path<u64>,
 ) -> impl IntoResponse {
-    let lc = state.light_client.lock().unwrap();
+    let lc = state.light_client.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     match lc.trusted_state_at(height) {
         Some(ts) => Json(serde_json::json!({
             "found": true,
@@ -17297,7 +17322,7 @@ async fn get_trusted_header(
 
 async fn get_weak_subjectivity_checkpoint(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     if let Some(ref tc_arc) = state.tendermint {
-        let tc = tc_arc.lock().unwrap();
+        let tc = tc_arc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
         let ws_period = tc.weak_subjectivity_period();
         let trusted = tc.trusted_checkpoint();
         let latest = tc.latest_checkpoint();
@@ -17328,7 +17353,7 @@ async fn get_weak_subjectivity_checkpoint(State(state): State<Arc<ApiState>>) ->
 }
 
 async fn get_finality(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let ft = state.finality_tracker.lock().unwrap();
+    let ft = state.finality_tracker.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     let latest = ft.latest_finalized_height();
     let stats = ft.stats(100);
     let latest_proof = ft.generate_proof(latest);
@@ -17358,7 +17383,7 @@ async fn get_finality_proof(
     State(state): State<Arc<ApiState>>,
     Path(height): Path<u64>,
 ) -> impl IntoResponse {
-    let ft = state.finality_tracker.lock().unwrap();
+    let ft = state.finality_tracker.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     match ft.generate_proof(height) {
         Some(proof) => Json(serde_json::json!({
             "found": true,
@@ -17390,7 +17415,7 @@ async fn get_finality_proof(
 ///   newest first, sourced from the consensus engine's ring buffer.
 async fn get_finality_gap(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let (unfinalised, worst_ms, recent) = if let Some(tc) = &state.tendermint {
-        let tc = tc.lock().unwrap();
+        let tc = tc.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
         (
             tc.unfinalised_tail(),
             tc.worst_unfinalised_gap_ms(),
@@ -17478,7 +17503,7 @@ async fn get_bridge_finalized_headers(
         .unwrap_or(0);
 
     let latest_finalized = {
-        let ft = state.finality_tracker.lock().unwrap();
+        let ft = state.finality_tracker.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
         ft.latest_finalized_height()
     };
 
@@ -17667,7 +17692,7 @@ async fn get_bridge_validators(
 }
 
 async fn get_sync_snapshot_info(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let info = state.snapshot_info.lock().unwrap();
+    let info = state.snapshot_info.lock().unwrap_or_else(|p| { tracing::warn!("Recovered poisoned lock"); p.into_inner() });
     match *info {
         Some((height, state_root, data_len)) => Json(serde_json::json!({
             "available": true,
