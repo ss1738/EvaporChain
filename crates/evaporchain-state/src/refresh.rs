@@ -89,23 +89,42 @@ impl RefreshEngine {
             return Err(RefreshError::ZeroEnergy);
         }
 
-        // Check if it exists as a ghost
-        let ghost = db
-            .remove_ghost(object_id)
-            .ok_or_else(|| RefreshError::ObjectNotFound(hex::encode(object_id)))?;
+        // J1 (audit 2026-05-14): validate resurrection is possible
+        // BEFORE mutating state. The previous implementation called
+        // `db.remove_ghost(object_id)` first, then `?`-bailed on
+        // `original_data.is_none()` — but `remove_ghost` on the
+        // RocksDB backend issues `delete_ghost_disk(id)` and removes
+        // the in-memory record, so a compact ghost (no retained
+        // `original_data`) was permanently destroyed even though the
+        // tx returned `Err(DataNotAvailable)`. `SimpleExecutor::execute_block`
+        // only reverts sender balance/nonce on tx failure
+        // (lib.rs:3274-3281), so the ghost stayed gone on disk and
+        // the object became unresurrectable forever — silent state
+        // divergence from a doctrine standpoint.
+        //
+        // Peek first; remove only when the ghost actually carries
+        // the data we need to reconstruct.
+        let (owner, evaporated_at, original_half_life, data) = {
+            let ghost = db
+                .get_ghost(object_id)
+                .ok_or_else(|| RefreshError::ObjectNotFound(hex::encode(object_id)))?;
+            let data = ghost
+                .original_data
+                .clone()
+                .ok_or_else(|| RefreshError::DataNotAvailable(hex::encode(object_id)))?;
+            (ghost.owner, ghost.evaporated_at, ghost.original_half_life, data)
+        };
 
-        // Recover original data from ghost or fail if compact ghost
-        let data = ghost
-            .original_data
-            .ok_or_else(|| RefreshError::DataNotAvailable(hex::encode(object_id)))?;
+        // All validation passed — safe to destructively remove the ghost.
+        db.remove_ghost(object_id);
 
         // Reconstruct the object with fresh energy
         let resurrected = StateObject {
-            id: ghost.object_id,
-            owner: ghost.owner,
+            id: *object_id,
+            owner,
             energy: energy_deposit,
-            half_life: ghost.original_half_life.unwrap_or(100),
-            created_at: ghost.evaporated_at,
+            half_life: original_half_life.unwrap_or(100),
+            created_at: evaporated_at,
             last_refreshed: current_epoch,
             state: ObjectState::Resurrected,
             grace_epoch: None,
@@ -237,6 +256,38 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         let result = RefreshEngine::resurrect(&mut db, &obj_id(99), 100, 0);
         assert!(result.is_err());
+    }
+
+    /// J1 (audit 2026-05-14): a failed resurrect on a *compact*
+    /// ghost (one with `original_data: None`) must NOT destroy the
+    /// ghost record. Previously, `remove_ghost` was called before
+    /// the `original_data` check, so a single Refresh tx targeting
+    /// such a ghost permanently destroyed it on disk.
+    #[test]
+    fn test_resurrect_compact_ghost_preserves_ghost_on_failure() {
+        let mut db = InMemoryStateDB::new();
+        db.put_ghost(GhostRecord {
+            object_id: obj_id(7),
+            owner: [0u8; 32],
+            evaporated_at: 100,
+            data_hash: [0u8; 32],
+            original_data: None, // compact ghost — no retained data
+            mmr_position: None,
+            original_half_life: Some(50),
+        });
+        assert_eq!(db.ghost_count(), 1);
+
+        let result = RefreshEngine::resurrect(&mut db, &obj_id(7), 500, 150);
+        assert!(matches!(result, Err(RefreshError::DataNotAvailable(_))));
+
+        // The critical invariant: the ghost must still be there.
+        assert_eq!(
+            db.ghost_count(),
+            1,
+            "compact ghost was destroyed by a failed resurrect — J1 regression"
+        );
+        assert!(db.get_ghost(&obj_id(7)).is_some());
+        assert!(db.get_object(&obj_id(7)).is_none());
     }
 
     #[test]
