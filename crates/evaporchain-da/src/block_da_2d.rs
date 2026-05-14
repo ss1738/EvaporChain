@@ -309,6 +309,12 @@ pub const NS_REFRESH: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 3];
 pub const NS_DEFERRED: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 4];
 pub const NS_BLOB: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 5];
 pub const NS_SHIELDED: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 6];
+/// NN2 (re-audit 2026-05-14): contract-related txs.
+pub const NS_CONTRACT: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 7];
+/// NN2: validator-set operations.
+pub const NS_VALIDATOR_OPS: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 8];
+/// NN2: governance + system meta.
+pub const NS_GOVERNANCE: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 9];
 pub const NS_SYSTEM: NamespaceId = [0, 0, 0, 0, 0, 0, 0, 0xFF];
 
 /// Tag a transaction's serialized bytes with its namespace.
@@ -320,7 +326,55 @@ pub fn namespace_for_tx_type(tx_type: &str) -> NamespaceId {
         "deferred" => NS_DEFERRED,
         "blob" => NS_BLOB,
         "shielded_transfer" => NS_SHIELDED,
+        "contract" => NS_CONTRACT,
+        "validator_ops" => NS_VALIDATOR_OPS,
+        "governance" => NS_GOVERNANCE,
         _ => NS_SYSTEM,
+    }
+}
+
+/// NN2 (re-audit 2026-05-14): variant-based namespace mapper.
+///
+/// Pre-NN2 `build_block_da_inputs` flattened every non-Blob tx
+/// into namespace `[0;8]`, making the NMT root over per-namespace
+/// buckets useless (every namespace except NS_BLOB returned the
+/// same "not in block" answer).
+///
+/// This function maps each `Transaction` variant to its
+/// doctrinally-correct namespace so NMT-by-namespace queries can
+/// answer "give me all transfers in block N" with meaningful
+/// inclusion / absence proofs.
+///
+/// Wired into `build_block_da_inputs_by_type` below. The legacy
+/// `build_block_da_inputs` remains bit-compat. Flipping
+/// production callers is a coordinated hard fork (block NMT root
+/// changes for any block with ≥1 non-Blob tx).
+pub fn tx_namespace(tx: &evaporchain_types::Transaction) -> NamespaceId {
+    use evaporchain_types::Transaction as T;
+    match tx {
+        T::Transfer(_) => NS_TRANSFER,
+        T::Refresh(_) => NS_REFRESH,
+        T::CreateObject(_) => NS_CREATE_OBJECT,
+        T::Deferred(_) => NS_DEFERRED,
+        T::Blob(blob_tx) => {
+            let mut ns = [0u8; 8];
+            ns.copy_from_slice(&blob_tx.namespace_id.to_be_bytes());
+            ns
+        }
+        T::Shield(_) | T::Unshield(_) | T::PrivateTransfer(_) => NS_SHIELDED,
+        T::DeployContract(_)
+        | T::CallContract(_)
+        | T::DeployScript(_)
+        | T::CallScript(_)
+        | T::UpgradeContract(_) => NS_CONTRACT,
+        T::ValidatorStake(_)
+        | T::ValidatorExit(_)
+        | T::ValidatorClaimStake(_)
+        | T::Delegate(_)
+        | T::Undelegate(_)
+        | T::RotateValidatorKey(_)
+        | T::ClaimDelegation(_) => NS_VALIDATOR_OPS,
+        T::Governance(_) | T::MultiSig(_) | T::UserOp(_) | T::Refund(_) => NS_GOVERNANCE,
     }
 }
 
@@ -357,6 +411,43 @@ pub fn build_block_da_inputs(
             };
             let mut namespace = [0u8; 8];
             namespace.copy_from_slice(&ns_id.to_be_bytes());
+            NamespacedBlob { namespace, data }
+        })
+        .collect();
+    Some((tx_bytes, blobs))
+}
+
+/// NN2 (re-audit 2026-05-14): variant-mapped namespacing entry point.
+///
+/// Same shape as `build_block_da_inputs` but each non-Blob tx is
+/// assigned a meaningful namespace via [`tx_namespace`]. The legacy
+/// `build_block_da_inputs` flattens every non-Blob tx into
+/// namespace `[0;8]`, which makes the NMT root over blobs useless
+/// for per-namespace queries.
+///
+/// **Hard-fork warning.** Switching production callers from
+/// `build_block_da_inputs` to this one changes every block's NMT
+/// root (any block with ≥1 non-Blob tx). The matrix `data_root`
+/// stays identical (it's a function of `tx_bytes` only), but the
+/// NMT root field in the package header changes. Plan the cutover
+/// via a governance flag (e.g. `block_da_namespace_mode =
+/// "legacy" | "by_type"`) so all validators flip at the same
+/// height.
+pub fn build_block_da_inputs_by_type(
+    txs: &[evaporchain_types::Transaction],
+) -> Option<(Vec<u8>, Vec<NamespacedBlob>)> {
+    if txs.is_empty() {
+        return None;
+    }
+    let tx_bytes = serde_json::to_vec(txs).ok()?;
+    let blobs: Vec<NamespacedBlob> = txs
+        .iter()
+        .map(|tx| {
+            let namespace = tx_namespace(tx);
+            let data = match tx {
+                evaporchain_types::Transaction::Blob(blob_tx) => blob_tx.data.clone(),
+                _ => serde_json::to_vec(tx).unwrap_or_default(),
+            };
             NamespacedBlob { namespace, data }
         })
         .collect();
@@ -413,6 +504,137 @@ mod tests {
     fn build_block_da_inputs_returns_none_for_empty_txs() {
         let txs: Vec<evaporchain_types::Transaction> = vec![];
         assert!(build_block_da_inputs(&txs).is_none());
+    }
+
+    // ── NN2 (re-audit 2026-05-14): variant-mapped namespacing ──
+
+    fn make_transfer_nn2(seed: u8) -> evaporchain_types::Transaction {
+        use evaporchain_types::{Transaction, TransferTx};
+        Transaction::Transfer(TransferTx {
+            from: [seed; 32],
+            to: [seed.wrapping_add(1); 32],
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        })
+    }
+
+    #[test]
+    fn audit_nn2_by_type_assigns_transfer_namespace() {
+        let txs = vec![make_transfer_nn2(0x11)];
+        let (_, blobs) = build_block_da_inputs_by_type(&txs).unwrap();
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(blobs[0].namespace, NS_TRANSFER);
+        let (_, legacy_blobs) = build_block_da_inputs(&txs).unwrap();
+        assert_eq!(legacy_blobs[0].namespace, [0u8; 8]);
+    }
+
+    #[test]
+    fn audit_nn2_variant_mapper_covers_major_variants() {
+        use evaporchain_types::{
+            BlobTx, CreateObjectTx, DeferredTx, RefreshTx, Transaction,
+        };
+        let transfer = make_transfer_nn2(0x01);
+        let refresh = Transaction::Refresh(RefreshTx {
+            object_id: [0x02; 32],
+            energy_deposit: 100,
+            signature: None,
+            public_key: None,
+        });
+        let create = Transaction::CreateObject(CreateObjectTx {
+            creator: [0x03; 32],
+            object_id: [0x33; 32],
+            energy: 1000,
+            half_life: 1000,
+            data: vec![1, 2, 3],
+            decay_curve: None,
+            lad_mode: None,
+            signature: None,
+            public_key: None,
+        });
+        let inner_bytes = serde_json::to_vec(&make_transfer_nn2(0x04)).unwrap();
+        let deferred = Transaction::Deferred(DeferredTx {
+            submitter: [0x04; 32],
+            nonce: 0,
+            deposit: 100,
+            guards: vec![],
+            inner_tx_bytes: inner_bytes,
+            gas_limit: 1_000_000,
+            signature: None,
+            public_key: None,
+        });
+        let blob = Transaction::Blob(BlobTx {
+            submitter: [0x05; 32],
+            namespace_id: 0xABCDEF0123456789u64,
+            data: vec![9, 9, 9],
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+
+        assert_eq!(tx_namespace(&transfer), NS_TRANSFER);
+        assert_eq!(tx_namespace(&refresh), NS_REFRESH);
+        assert_eq!(tx_namespace(&create), NS_CREATE_OBJECT);
+        assert_eq!(tx_namespace(&deferred), NS_DEFERRED);
+        assert_eq!(
+            tx_namespace(&blob),
+            0xABCDEF0123456789u64.to_be_bytes()
+        );
+    }
+
+    #[test]
+    fn audit_nn2_by_type_block_has_per_variant_namespaces() {
+        use evaporchain_types::{RefreshTx, Transaction};
+        let txs = vec![
+            make_transfer_nn2(0x11),
+            Transaction::Refresh(RefreshTx {
+                object_id: [0x22; 32],
+                energy_deposit: 100,
+                signature: None,
+                public_key: None,
+            }),
+            make_transfer_nn2(0x33),
+        ];
+        let (_, blobs) = build_block_da_inputs_by_type(&txs).unwrap();
+        assert_eq!(blobs.len(), 3);
+        assert_eq!(blobs[0].namespace, NS_TRANSFER);
+        assert_eq!(blobs[1].namespace, NS_REFRESH);
+        assert_eq!(blobs[2].namespace, NS_TRANSFER);
+
+        // NMT root (not matrix data_root) MUST differ between
+        // legacy and by-type — the hard-fork implication.
+        let da2d = BlockDA2D::new();
+        let (tb_legacy, blobs_legacy) = build_block_da_inputs(&txs).unwrap();
+        let (tb_by_type, blobs_by_type) = build_block_da_inputs_by_type(&txs).unwrap();
+        // tx_bytes IS identical → matrix data_root is identical.
+        assert_eq!(tb_legacy, tb_by_type);
+        let pkg_legacy = da2d
+            .encode_block_with_blobs(&tb_legacy, &blobs_legacy)
+            .unwrap();
+        let pkg_by_type = da2d
+            .encode_block_with_blobs(&tb_by_type, &blobs_by_type)
+            .unwrap();
+        let nmt_legacy = pkg_legacy.header.nmt_root.expect("legacy emits NMT root");
+        let nmt_by_type = pkg_by_type.header.nmt_root.expect("by-type emits NMT root");
+        assert_ne!(
+            nmt_legacy.hash, nmt_by_type.hash,
+            "NN2: by-type vs legacy must produce different NMT roots"
+        );
+        assert_eq!(nmt_legacy.min_namespace, [0u8; 8]);
+        assert_eq!(nmt_legacy.max_namespace, [0u8; 8]);
+        assert_eq!(nmt_by_type.min_namespace, NS_TRANSFER);
+        assert_eq!(nmt_by_type.max_namespace, NS_REFRESH);
+    }
+
+    #[test]
+    fn audit_nn2_legacy_path_is_bit_compat() {
+        let txs = vec![make_transfer_nn2(0xAA), make_transfer_nn2(0xBB)];
+        let (_, blobs) = build_block_da_inputs(&txs).unwrap();
+        for b in &blobs {
+            assert_eq!(b.namespace, [0u8; 8]);
+        }
     }
 
     #[test]
