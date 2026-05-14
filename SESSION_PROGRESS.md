@@ -4,6 +4,23 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 15) — Audit I1 closed (CRITICAL); signature–address binding
+
+**Focus:** Signature verification address binding — pk→sender check missing across all tx types
+**Commits shipped:** 1 (`2dcf98ad`)
+**Deliverables:**
+- I1 CLOSED (CRITICAL): `verify_tx_signature` (execution layer) and `validate_submission` (mempool) both called `HybridVerifier::verify(msg, sig, pk)` but never checked `blake3(pk) == tx.from/caller/deployer`; attacker could construct `tx.from=victim`, sign with their own keypair, and pass verification — draining the victim's balance or hijacking any account operation
+- Fix: after `HybridVerifier::verify` passes, derive `blake3(pk)` and compare against `tx.sender()` — which already exists on `Transaction` and covers all 25 tx types; two special cases: MultiSig (script-derived address — skip binding), UserOp (tx-level sig is always from `tx.sender`, not the paymaster)
+- Regression test `audit_i1_forged_sender_rejected`: forged Transfer (`tx.from=victim`, signed by attacker key) rejected with `txs_failed=1`; attacker receives 0; victim retains balance
+- I2 (OCC nonce race) and I3 (nonce ordering) assessed as false positives — OCC commit-time conflict detection covers nonce races by design; balance deduction + nonce increment are sequential with no error path between them
+**Empirical results:** execution + consensus test suites pass (541 execution tests, 5 consensus tests)
+**Decisions made:** UserOp special-case: `tx.sender` is the binding address regardless of paymaster field; MultiSig: script-derived address excluded from pk binding
+**What's next:** J-class sweep (state consistency — evaporation/refresh race conditions, state-branch fork isolation)
+**Blockers / open questions:** Mini 1 disk pressure recurring (228GB at 99% after each test run); consensus test bin links exhaust space
+**Cross-references:** `AUDIT_2026_05_11.md` — I1 row; commit `2dcf98ad`
+
+---
+
 ## 2026-05-14 (session 14) — Audit H1 closed; input-validation sweep
 
 **Focus:** API-layer string field length caps — method names and source code
