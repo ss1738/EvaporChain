@@ -4,6 +4,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-14 (session 4) — Audit L3 closed; PeerBanList cross-restart persistence
+
+**Focus:** Implement audit L3 — PeerBanList was in-memory only; banned PeerIds forgotten on restart
+**Commits shipped:** 1 (`46d4a95f`)
+**Deliverables:**
+- `crates/evaporchain-network/src/service.rs` — 155 lines added:
+  - `PeerBanFile` (Serialize/Deserialize) — `BTreeMap<base58, until_ms>` on-disk shape
+  - `ban_path: Option<PathBuf>` field on `PeerBanList`
+  - `new_with_path()` — loads non-expired entries; silent on missing, warns on malformed
+  - `save()` — serializes active bans as wall-clock millis; best-effort, logs warn
+  - `gc()` — calls `save()` after any prune
+  - `record_violation()` — calls `save()` immediately on new ban
+  - Event-loop constructor derives sibling path `<stem>.peers.json` from `ban_list_path`
+  - 5 regression tests: persist-across-restart, expired-dropped-on-load, missing-file-empty, malformed-file-empty, gc-persists-after-pruning
+- Previous ghost commit `1de2154e` had only `Cargo.toml +1` (service.rs changes were lost via `git restore`); this commit is the real fix
+**Empirical results:** `cargo test -p evaporchain-network` — 100 passed / 0 failed (up from 95; +5 L3 tests)
+**Decisions made:**
+- Wall-clock `until_ms` (unix millis) in file; converts to `Instant` at load time via `now_ms() + remaining`
+- Sibling-path convention: `bans.json` → `bans.peers.json` (one config entry serves both IP ban list and PeerId ban list)
+**What's next:**
+- Pick next open mainnet code lane (check MAINNET_READINESS.md for 🟡 OPEN items)
+**Blockers / open questions:** none for this lane
+**Cross-references:** `46d4a95f`
+
+---
+
 ## 2026-05-14 (session 3) — T0.2 D.1 code-complete; doc lint zero
 
 **Focus:** Write D.1 adversarial sweep script; drive workspace to zero clippy warnings (doc lints included)
