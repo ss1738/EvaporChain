@@ -4,7 +4,7 @@
 //!   - `r_W_primary.W`  — primary witness vector (BN254 Fr, 64-char LE hex)
 //!   - `r_W_primary.E`  — primary error vector   (BN254 Fr, 64-char LE hex)
 //!   - `r_U_primary.u`  — relaxation scalar       (BN254 Fr, 64-char LE hex)
-//!   - `r_U_primary.X`  — 2 public hash inputs    (BN254 Fr, EvmCompatSerde hex)
+//!   - `r_U_primary.X`  — 2 public hash inputs    (BN254 Fr, 64-char LE hex)
 //!   - `r1cs_shape_primary` — A, B, C sparse matrices (BN254 Fr, 64-char LE hex)
 //!
 //! The in-circuit check verifies for every constraint row `i`:
@@ -139,9 +139,9 @@ pub fn extract_section3_witness(
     let ru = &rs_val["r_U_primary"];
     let u_primary = parse_le_hex_scalar(&ru["u"])
         .map_err(|e| ExtractError::MissingField(format!("r_U_primary.u: {e}")))?;
-    let x0 = parse_evm_compat_scalar(&ru["X"][0])
+    let x0 = parse_le_hex_scalar(&ru["X"][0])
         .map_err(|e| ExtractError::MissingField(format!("r_U_primary.X[0]: {e}")))?;
-    let x1 = parse_evm_compat_scalar(&ru["X"][1])
+    let x1 = parse_le_hex_scalar(&ru["X"][1])
         .map_err(|e| ExtractError::MissingField(format!("r_U_primary.X[1]: {e}")))?;
 
     // ── r1cs_shape_primary ─────────────────────────────────────────────────
@@ -217,17 +217,6 @@ fn parse_le_hex_scalar(v: &serde_json::Value) -> Result<ArkFr, String> {
     Ok(ArkFr::from_le_bytes_mod_order(&bytes))
 }
 
-/// EvmCompatSerde hex: BE bytes, with or without `0x` prefix.
-fn parse_evm_compat_scalar(v: &serde_json::Value) -> Result<ArkFr, String> {
-    let s = v.as_str().ok_or_else(|| format!("expected string, got {v:?}"))?;
-    let clean = s.trim_start_matches("0x");
-    let hex_bytes = hex::decode(clean).map_err(|e| format!("hex decode: {e}"))?;
-    let n = hex_bytes.len().min(32);
-    let mut bytes = [0u8; 32];
-    bytes[32 - n..].copy_from_slice(&hex_bytes[hex_bytes.len() - n..]);
-    bytes.reverse(); // BE → LE
-    Ok(ArkFr::from_le_bytes_mod_order(&bytes))
-}
 
 fn parse_usize_vec(v: &serde_json::Value) -> Result<Vec<usize>, String> {
     let arr = v.as_array().ok_or("expected JSON array for usize vec")?;
@@ -315,4 +304,5 @@ mod tests {
             .expect("primary RelaxedR1CS rows must be satisfied");
         println!("Section 3 native row check: PASS");
     }
+
 }
