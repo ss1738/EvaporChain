@@ -300,7 +300,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 | 2 — Genesis-amendment to bump 0 → 1 | ⏳ OPERATIONAL | needs T3.1 cluster + governance ride |
 | 3 — Fork-epoch gate (legacy db ↔ PNT bounded window) | ✅ DONE | `privacy_exec.rs:261` (`is_double_spend`); wired in both `execute_unshield` (line ~503) and `execute_private_transfer` (line ~722) |
 | 4 — PNT phase auto-advance cadence | ✅ INFRA DONE | `tick_pnt_phase` at `privacy_exec.rs:196`; default `PNT_DEFAULT_PHASE_INTERVAL_EPOCHS = 100`; cadence tuning is operational |
-| 5 — Adversarial spend-evict-respend test | ⏳ OPEN | needs Mini cargo verification; must include anchor-mechanism interaction |
+| 5 — Adversarial spend-evict-respend test | ✅ DONE | `privacy_exec.rs:2168` + `privacy_exec.rs:2296`; both green on Mini 1 2026-05-14 (`pnt_v1_respend_after_window_eviction_rejected_via_anchor` + Stage-1 companion). |
 | 6 — Storage size benchmark | ⏳ OPEN | needs live cluster (T3.1) |
 
 **Security-model audit (paired with this lane):** the bounded-window PNT *requires* an anchor mechanism for soundness — otherwise nullifiers that age out of the window become re-spendable. Confirmed at `privacy_exec.rs:493,712`: every shield/transfer tx must reference `tx.anchor == self.engine.merkle_root()`. Notes whose source root is older than the chain's current root cannot be spent regardless of nullifier window. **PNT bounded window + anchor enforcement are jointly secure**; either alone would be unsound.
@@ -400,7 +400,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.9 — Bridge Phase 4 full V2 (Halo2 EccChip in-circuit Pallas MSM)
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE — all 8 sub-tasks shipped; `VerkleProverV2::prove_v2_and_verify_v2_round_trip` green on Mini 1 (77.40s, k=11 IPA). Gated behind `--features v2-ecc`.
 **Surface:** BRIDGE-RUST
 **Depends on:** none
 **Effort:** 2-3 weeks
@@ -444,7 +444,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T0.11 — Cross-chain replay protection hardening
 
-**Status:** 🟡 OPEN
+**Status:** ✅ DONE (ee2ebba) — L1 finalization-depth gate (12 blocks); 46/46 forge tests pass on-host.
 **Surface:** BRIDGE-SOL
 **Depends on:** none
 **Effort:** 1 week
