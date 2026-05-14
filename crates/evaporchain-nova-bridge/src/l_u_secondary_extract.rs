@@ -104,8 +104,11 @@ pub enum ExtractError {
     /// off-chain.
     #[error("R1CS shape parameter `{name}` = {value} exceeds cap {cap}")]
     ShapeTooLarge {
+        /// Which shape field was over the cap (`num_cons`, `num_vars`, `num_io`).
         name: &'static str,
+        /// The over-cap value parsed from the dump.
         value: usize,
+        /// The hard cap applied by `extract_section3_witness`.
         cap: usize,
     },
 }
