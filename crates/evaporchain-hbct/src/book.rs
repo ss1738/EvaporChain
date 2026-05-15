@@ -30,6 +30,16 @@ pub enum BookError {
         available: u64,
         amount: u64,
     },
+    /// SUB-N3 (audit 2026-05-15): the recipient's balance would
+    /// overflow u64 on credit. Layer-0 conservation requires the
+    /// credit to land in full; if u64 can't hold it, the transfer
+    /// is rejected before any mutation.
+    #[error("recipient {recipient:?} balance overflow: {existing} + {amount} > u64::MAX")]
+    RecipientOverflow {
+        recipient: AccountAddress,
+        existing: u64,
+        amount: u64,
+    },
 }
 
 impl HbctBook {
@@ -47,6 +57,17 @@ impl HbctBook {
 
     /// Transfer `amount` MWh of capacity at `(location, slot)` from
     /// `from` to `to`.
+    ///
+    /// SUB-N3 (audit 2026-05-15): pre-validate the credit side
+    /// (recipient's new balance) BEFORE any debit. The previous
+    /// implementation debited `from` unconditionally then credited
+    /// `to` with `saturating_add` — if `to`'s balance was near
+    /// `u64::MAX`, the credit silently clipped while the full debit
+    /// landed. Net effect: total MWh on the books decreased,
+    /// breaking the Layer-0 conservation invariant. The fix uses
+    /// `checked_add` on the credit, fails with `RecipientOverflow`
+    /// before mutating either side, so the transfer is atomic at
+    /// the conservation level.
     pub fn transfer(
         &mut self,
         location: &DeliveryLocation,
@@ -67,14 +88,25 @@ impl HbctBook {
                 amount,
             });
         }
+        // SUB-N3: read recipient's existing balance + verify the
+        // credit fits in u64 BEFORE touching `from`.
+        let to_key = (location.clone(), slot, to);
+        let to_existing = *self.entries.get(&to_key).unwrap_or(&0);
+        let to_new = to_existing
+            .checked_add(amount)
+            .ok_or(BookError::RecipientOverflow {
+                recipient: to,
+                existing: to_existing,
+                amount,
+            })?;
+
+        // Now safe to mutate both sides.
         if avail == amount {
             self.entries.remove(&from_key);
         } else {
             *self.entries.get_mut(&from_key).unwrap() -= amount;
         }
-        let to_key = (location.clone(), slot, to);
-        let to_slot = self.entries.entry(to_key).or_insert(0);
-        *to_slot = to_slot.saturating_add(amount);
+        self.entries.insert(to_key, to_new);
         Ok(())
     }
 
@@ -203,5 +235,68 @@ mod tests {
         b.mint(token(1, 100, 30)).unwrap();
         b.mint(token(1, 100, 20)).unwrap();
         assert_eq!(b.balance(&b"BMU-1".to_vec(), 100, addr(1)), 50);
+    }
+
+    /// SUB-N3 (audit 2026-05-15) regression: transfer must reject
+    /// the operation when crediting the recipient would overflow u64.
+    /// Pre-fix the debit landed in full while the credit clipped via
+    /// `saturating_add`, silently deleting MWh from the chain-wide
+    /// supply — a Layer-0 conservation break.
+    #[test]
+    fn sub_n3_transfer_rejects_recipient_overflow_atomic() {
+        let mut b = HbctBook::new();
+        let loc: DeliveryLocation = b"BMU-1".to_vec();
+        // Sender holds 100 MWh.
+        b.mint(token(1, 100, 100)).unwrap();
+        // Pre-seed recipient at u64::MAX - 50 (close to overflow).
+        let to_key = (loc.clone(), 100u64, addr(2));
+        b.entries.insert(to_key, u64::MAX - 50);
+
+        let total_before: u128 = b.entries.values().map(|v| *v as u128).sum();
+
+        // Transfer 100 → recipient_new = u64::MAX-50 + 100 = overflow.
+        let err = b
+            .transfer(&loc, 100, addr(1), addr(2), 100)
+            .expect_err("must reject");
+        assert!(
+            matches!(err, BookError::RecipientOverflow { .. }),
+            "SUB-N3: expected RecipientOverflow, got {err:?}"
+        );
+
+        // Atomicity: NEITHER side has been mutated.
+        let total_after: u128 = b.entries.values().map(|v| *v as u128).sum();
+        assert_eq!(
+            total_before, total_after,
+            "SUB-N3: failed transfer must NOT mutate any balance \
+             (conservation invariant)"
+        );
+        assert_eq!(
+            b.balance(&loc, 100, addr(1)),
+            100,
+            "SUB-N3: sender balance must be unchanged after rejection"
+        );
+        assert_eq!(
+            b.balance(&loc, 100, addr(2)),
+            u64::MAX - 50,
+            "SUB-N3: recipient balance must be unchanged after rejection"
+        );
+    }
+
+    /// SUB-N3: normal transfer (no overflow) still conserves total
+    /// MWh exactly — sender debit equals recipient credit.
+    #[test]
+    fn sub_n3_normal_transfer_conserves_total() {
+        let mut b = HbctBook::new();
+        let loc: DeliveryLocation = b"BMU-1".to_vec();
+        b.mint(token(1, 100, 30)).unwrap();
+        b.mint(token(2, 100, 70)).unwrap(); // recipient pre-existing balance
+        let total_before: u128 = b.entries.values().map(|v| *v as u128).sum();
+
+        b.transfer(&loc, 100, addr(1), addr(2), 10).unwrap();
+
+        let total_after: u128 = b.entries.values().map(|v| *v as u128).sum();
+        assert_eq!(total_before, total_after, "SUB-N3: total MWh must conserve");
+        assert_eq!(b.balance(&loc, 100, addr(1)), 20);
+        assert_eq!(b.balance(&loc, 100, addr(2)), 80);
     }
 }
