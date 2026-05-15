@@ -4,6 +4,20 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 30) — X-class audit sweep: G1 CRITICAL + G2 HIGH + G3/O2 MEDIUM closed
+
+**Focus:** EvaporScript VM execution security — gas metering, step limit, external call gas, string literal OOM, re-entrancy, storage isolation, arithmetic, map/array bounds
+**Commits shipped:** 1 (`43ece4f5`)
+**Deliverables:**
+- X-G1 (CRITICAL) CLOSED: `charge_gas()` uses `checked_add`; wrapping gas bypass prevented
+- X-G2 (HIGH) CLOSED: step counter uses `checked_add`; wrapping step-limit bypass prevented
+- X-G3 (MEDIUM) CLOSED: external call gas accumulation uses `checked_add` + re-check vs gas_limit
+- X-O2 (MEDIUM) CLOSED: `read_string()` capped at `MAX_STRING_LITERAL = 65536` bytes; OOM prevented
+- X-R1, X-S1, X-M1, X-A1, X-E1 confirmed CLEAN (re-entrancy, isolation, caps, arithmetic, deploy validation)
+**Empirical results:** `cargo test -p evaporchain-script` — 277 passed, 0 failed
+**What's next:** Y-class sweep — yield/reward/emission security (staking rewards overflow, emission schedule manipulation, slash accounting)
+**Cross-references:** AUDIT_2026_05_11.md (X-class addendum), commit `43ece4f5`
+
 ## 2026-05-15 (session 29) — W-class audit sweep: W1 + W2 closed
 
 **Focus:** Wallet/key management security — BLS key loading, passphrase exposure, file permission TOCTOU, EVPL format coverage, zeroization, key rotation, KeyAnnounce PoP
