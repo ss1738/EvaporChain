@@ -49,6 +49,21 @@ pub enum CompactionReason {
     BelowEnergyThreshold { total_energy: u64, threshold: u64 },
 }
 
+/// Domain-separation tag for `ShardCompactionProof::compute_hash`.
+///
+/// SH-COMPACT-2: prevents cross-domain collisions where another
+/// hash input — `CrossShardReceipt::receipt_hash`,
+/// `EnergyVerkleTrie` leaf hashes, MMR nullifier leaves, etc. —
+/// could be parsed by an attacker as a valid compaction proof
+/// (or vice versa). Matches the DST pattern already in use for
+/// `bls_portable` PoP, MMR (H4), `deriveAddress` (L2), and the
+/// HashToCurve domain (L6/L7).
+///
+/// The trailing NUL is intentional: it forces every well-formed
+/// input to begin with a 38-byte fixed prefix that no other
+/// EvaporChain hash domain can naturally produce.
+pub const SHARD_COMPACTION_PROOF_DST: &[u8] = b"EVAPORCHAIN_V1_SHARD_COMPACTION_PROOF\0";
+
 /// Proof that a shard compaction was valid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardCompactionProof {
@@ -62,6 +77,7 @@ pub struct ShardCompactionProof {
 impl ShardCompactionProof {
     pub fn compute_hash(&self) -> [u8; 32] {
         let mut data = Vec::new();
+        data.extend_from_slice(SHARD_COMPACTION_PROOF_DST);
         data.extend_from_slice(&self.source_shard.0.to_le_bytes());
         data.extend_from_slice(&self.target_shard.0.to_le_bytes());
         data.extend_from_slice(&self.objects_reassigned.to_le_bytes());
@@ -231,6 +247,46 @@ mod tests {
         let p1 = compact_shard(ShardId(0), ShardId(1), &health);
         let p2 = compact_shard(ShardId(0), ShardId(1), &health);
         assert_eq!(p1.proof_hash, p2.proof_hash);
+    }
+
+    /// SH-COMPACT-2 regression: `compute_hash` prepends
+    /// `SHARD_COMPACTION_PROOF_DST` to the BLAKE3 input. The hash
+    /// must differ from a domainless BLAKE3 over the same fields,
+    /// proving the DST is actually mixed in. Without DST another
+    /// BLAKE3 hash over the same 4-field tuple shape could
+    /// collide (e.g. a future cross-shard receipt that happened
+    /// to share the field layout).
+    #[test]
+    fn sh_compact_2_compute_hash_includes_dst() {
+        let proof = ShardCompactionProof {
+            source_shard: ShardId(3),
+            target_shard: ShardId(2),
+            objects_reassigned: 17,
+            energy_at_compaction: 42,
+            proof_hash: [0u8; 32],
+        };
+        let with_dst = proof.compute_hash();
+
+        // What the hash WOULD have been pre-DST.
+        let mut bare = Vec::new();
+        bare.extend_from_slice(&proof.source_shard.0.to_le_bytes());
+        bare.extend_from_slice(&proof.target_shard.0.to_le_bytes());
+        bare.extend_from_slice(&proof.objects_reassigned.to_le_bytes());
+        bare.extend_from_slice(&proof.energy_at_compaction.to_le_bytes());
+        let without_dst = *blake3::hash(&bare).as_bytes();
+
+        assert_ne!(
+            with_dst, without_dst,
+            "DST must be mixed into the hash — domainless input would collide"
+        );
+
+        // Pin the DST value itself so a refactor that renames the
+        // constant is forced to update this test, surfacing the
+        // protocol-version change.
+        assert_eq!(
+            SHARD_COMPACTION_PROOF_DST,
+            b"EVAPORCHAIN_V1_SHARD_COMPACTION_PROOF\0"
+        );
     }
 
     #[test]
