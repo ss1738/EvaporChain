@@ -192,14 +192,34 @@ fn fatal_persist_err(op: &str, r: Result<(), String>) {
 
 fn write_secret_file(path: impl AsRef<std::path::Path>, data: &[u8]) {
     let path = path.as_ref();
-    if let Err(e) = std::fs::write(path, data) {
-        eprintln!("Failed to write secret file {}: {}", path.display(), e);
-        return;
-    }
+    // Audit W-002 (2026-05-15): create the file with 0600 atomically so
+    // there is no TOCTOU window between create (0644 by default) and chmod.
+    // Without this an attacker on the same host can read secret bytes
+    // between the two syscalls.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+        {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(data) {
+                    eprintln!("Failed to write secret file {}: {}", path.display(), e);
+                }
+            }
+            Err(e) => eprintln!("Failed to open secret file {}: {}", path.display(), e),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = std::fs::write(path, data) {
+            eprintln!("Failed to write secret file {}: {}", path.display(), e);
+        }
     }
 }
 
@@ -2982,12 +3002,23 @@ async fn main() -> Result<()> {
                             "{} \x1b[31mFailed to encrypt BLS key ({}); falling back to plaintext\x1b[0m",
                             node_tag, e
                         );
-                        write_secret_file(path, sk);
+                        // Audit W-001 (2026-05-15): wrap plaintext bytes with EVPL
+                        // magic prefix so detect_bls_key_format classifies them as
+                        // BLS_EVPL_PLAINTEXT, not BLS_LEGACY (raw 32-byte blob).
+                        match evaporchain_crypto::bls_key_store::format_plaintext_for_disk(sk) {
+                            Ok(wrapped) => write_secret_file(path, &wrapped),
+                            Err(_) => write_secret_file(path, sk), // extreme fallback
+                        }
                     }
                 }
             }
             None => {
-                write_secret_file(path, sk);
+                // Audit W-001 (2026-05-15): same EVPL-plaintext wrapping for the
+                // no-passphrase path.
+                match evaporchain_crypto::bls_key_store::format_plaintext_for_disk(sk) {
+                    Ok(wrapped) => write_secret_file(path, &wrapped),
+                    Err(_) => write_secret_file(path, sk), // extreme fallback
+                }
                 eprintln!(
                     "{} \x1b[33mWARNING: BLS validator key written in plaintext.\x1b[0m \
                          Set {} to enable encrypted-at-rest storage.",
