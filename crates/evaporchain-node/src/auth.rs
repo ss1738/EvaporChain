@@ -7,6 +7,7 @@ use chacha20poly1305::{
 };
 use evaporchain_crypto::signatures::MlDsaKeypair;
 use rand::Rng;
+use subtle::ConstantTimeEq;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -192,7 +193,19 @@ pub fn authenticate(headers: &HeaderMap, sessions: &Sessions) -> Result<i64, Str
         .ok_or("Missing authorization token")?;
 
     let sessions = sessions.lock().unwrap();
-    let (user_id, created) = sessions.get(token).ok_or("Invalid or expired token")?;
+    // Audit C-AUTH-001 (2026-05-15): HashMap::get uses non-constant-time
+    // equality, leaking timing information about whether a guessed token
+    // exists.  Linear scan with ConstantTimeEq prevents timing oracle.
+    // (Tokens are 128-char hex so brute-force is infeasible, but we apply
+    // the same pattern used by require_admin_auth for consistency.)
+    let found = sessions.iter().find(|(stored_tok, _)| {
+        let a = stored_tok.as_bytes();
+        let b = token.as_bytes();
+        a.len() == b.len() && bool::from(a.ct_eq(b))
+    });
+    let (user_id, created) = found
+        .map(|(_, v)| v)
+        .ok_or("Invalid or expired token")?;
 
     if created.elapsed().as_secs() > SESSION_TTL_SECS {
         return Err("Token expired".into());

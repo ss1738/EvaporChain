@@ -20,6 +20,10 @@ mod decaying_dao;
 pub use decaying_dao::{DaoProposal, DaoProposalStatus, DecayingDaoState};
 
 const MAX_CONTRACT_STATE_BYTES: usize = 1_048_576; // 1 MB per contract
+// Audit C-RULE-001 (2026-05-15): cap rules per contract to bound O(n) rule
+// evaluation cost in call() and tick().  Without this an adversarial contract
+// with 10,000+ rules stalls the executor on every block tick.
+const MAX_RULES_PER_CONTRACT: usize = 100;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Errors
@@ -560,6 +564,14 @@ impl ContractEngine {
         // — whitespace and key-ordering differences may differ by a few
         // bytes. Saturating arithmetic in the credit-back path absorbs
         // any drift.
+        if rules.len() > MAX_RULES_PER_CONTRACT {
+            return Err(ContractError::DeployFailed(format!(
+                "too many rules: {} (max {})",
+                rules.len(),
+                MAX_RULES_PER_CONTRACT
+            )));
+        }
+
         let storage_bytes_charged = serde_json::to_string(&params)
             .map(|s| s.len() as u64)
             .unwrap_or(0);
@@ -4485,5 +4497,67 @@ mod tests {
 
         let r = eng.call(id, "get_callbacks", &serde_json::json!({}), &addr(3), 0);
         assert!(r.is_ok());
+    }
+
+    // Audit C-RULE-001 (2026-05-15): adversarial deploy with more than
+    // MAX_RULES_PER_CONTRACT rules must be rejected at deploy time.
+    #[test]
+    fn test_deploy_too_many_rules_rejected() {
+        let mut eng = engine();
+        let rules: Vec<Rule> = (0..=MAX_RULES_PER_CONTRACT)
+            .map(|_| Rule {
+                trigger: RuleTrigger::OnTransfer,
+                condition: RuleCondition::Always,
+                action: RuleAction::CostEnergy(1),
+            })
+            .collect();
+        let result = eng.deploy(
+            ContractTemplate::DecayingToken,
+            serde_json::json!({
+                "name": "AttackCoin",
+                "symbol": "ATK",
+                "total_supply": 1000,
+                "decay_half_life": 100,
+                "owner": addr_hex(1),
+            }),
+            rules,
+            addr(1),
+            10000,
+            100,
+            0,
+        );
+        assert!(
+            matches!(result, Err(ContractError::DeployFailed(_))),
+            "expected DeployFailed for too many rules"
+        );
+    }
+
+    // Confirm exactly MAX_RULES_PER_CONTRACT rules are accepted.
+    #[test]
+    fn test_deploy_max_rules_accepted() {
+        let mut eng = engine();
+        let rules: Vec<Rule> = (0..MAX_RULES_PER_CONTRACT)
+            .map(|_| Rule {
+                trigger: RuleTrigger::OnTransfer,
+                condition: RuleCondition::Always,
+                action: RuleAction::CostEnergy(1),
+            })
+            .collect();
+        let result = eng.deploy(
+            ContractTemplate::DecayingToken,
+            serde_json::json!({
+                "name": "MaxCoin",
+                "symbol": "MAX",
+                "total_supply": 1000,
+                "decay_half_life": 100,
+                "owner": addr_hex(1),
+            }),
+            rules,
+            addr(1),
+            10000,
+            100,
+            0,
+        );
+        assert!(result.is_ok(), "exactly MAX_RULES_PER_CONTRACT should be accepted");
     }
 }
