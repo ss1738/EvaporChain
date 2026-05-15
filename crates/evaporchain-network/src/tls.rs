@@ -230,6 +230,16 @@ impl PeerAuthority {
             .contains(peer)
     }
 
+    /// N3 (audit 2026-05-15): expose the enforcing-mode flag so the
+    /// swarm event loop can gate validator-only recovery behaviour
+    /// (e.g. auto-unban-on-connect) on permissioned-mode operation.
+    /// In permissionless mode `is_authorized` returns `true` for all
+    /// peers, so it cannot be used as a sole "this is a validator"
+    /// signal — callers must also check `is_enforcing()`.
+    pub fn is_enforcing(&self) -> bool {
+        self.enforcing
+    }
+
     pub fn add_peer(&self, peer: PeerId) {
         if self.enforcing {
             let mut list = self.allowlist.write().unwrap_or_else(|p| p.into_inner());
@@ -338,6 +348,27 @@ mod tests {
         let kp = Keypair::generate_ed25519();
         let peer = kp.public().to_peer_id();
         assert!(auth.is_authorized(&peer));
+    }
+
+    /// N3 (audit 2026-05-15): `is_enforcing()` distinguishes
+    /// permissioned from permissionless mode. Required so the swarm
+    /// event loop can gate validator-only recovery actions (auto-
+    /// unban-on-connect, in particular) on permissioned operation —
+    /// `is_authorized` alone returns `true` for every peer in
+    /// permissionless mode and cannot be used as a "this is a
+    /// validator" signal.
+    #[test]
+    fn t_n3_is_enforcing_reports_mode_correctly() {
+        let permissionless = PeerAuthority::permissionless();
+        assert!(!permissionless.is_enforcing(), "permissionless must report enforcing = false");
+
+        let permissioned = PeerAuthority::with_allowlist(vec![]);
+        assert!(permissioned.is_enforcing(), "with_allowlist must report enforcing = true");
+
+        let permissioned_with_peer = PeerAuthority::with_allowlist(vec![
+            Keypair::generate_ed25519().public().to_peer_id(),
+        ]);
+        assert!(permissioned_with_peer.is_enforcing());
     }
 
     #[test]

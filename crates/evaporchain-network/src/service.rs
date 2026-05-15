@@ -895,6 +895,30 @@ impl SybilState {
         Ok(())
     }
 
+    /// N4 (audit 2026-05-15): total-cap gate for inbound connections
+    /// that arrived over a transport without an IP component (memory
+    /// transport, Unix socket, certain exotic libp2p stacks). Per-IP
+    /// / per-subnet / ban checks all key on `IpAddr` and so are
+    /// unavailable here — but the absolute memory bound on
+    /// concurrent connections (`max_inbound_connections`) MUST still
+    /// apply, otherwise a no-IP attacker can establish unlimited
+    /// peers with cheap-to-mint PeerIds and starve the node.
+    ///
+    /// Production deployments run TCP/IP over Tailscale, so this
+    /// path is unreachable in practice; the explicit gate is
+    /// defence-in-depth for test fixtures, in-process integration
+    /// runs, and future transport additions.
+    pub fn try_admit_inbound_no_ip(
+        &mut self,
+        current_total: usize,
+    ) -> Result<(), RejectionReason> {
+        if current_total >= self.config.max_inbound_connections {
+            self.rejections.record(RejectionReason::TotalCap);
+            return Err(RejectionReason::TotalCap);
+        }
+        Ok(())
+    }
+
     /// Record a successful connection.
     ///
     /// Lane R.3: a successful handshake is a fresh slate. Reset score
@@ -2127,6 +2151,50 @@ impl P2pNetworkService {
                                             continue;
                                         }
                                     }
+                                } else {
+                                    // N4 (audit 2026-05-15): the connection
+                                    // arrived over a transport without an IP
+                                    // (memory transport, Unix socket, exotic
+                                    // libp2p stacks). Per-IP / per-subnet /
+                                    // ban checks all key on `IpAddr` and so
+                                    // are unavailable here — but the
+                                    // absolute memory bound on concurrent
+                                    // connections (`max_inbound_connections`)
+                                    // MUST still apply, otherwise a no-IP
+                                    // attacker can establish unlimited peers
+                                    // with cheap-to-mint PeerIds and starve
+                                    // the node. Production deployments run
+                                    // TCP/IP over Tailscale, so this path is
+                                    // unreachable in practice; the explicit
+                                    // gate is defence-in-depth for test
+                                    // fixtures + future transport additions.
+                                    let total = swarm.connected_peers().count();
+                                    let admit = sybil_state_inner.write().map(|mut s| {
+                                        s.try_admit_inbound_no_ip(total)
+                                    });
+                                    match admit {
+                                        Ok(Ok(())) => {
+                                            warn!(
+                                                "network: admitted no-IP inbound from peer {peer_id} \
+                                                 (transport has no Ip4/Ip6 multiaddr component — \
+                                                 per-IP/subnet/ban gates skipped, total-cap applies)"
+                                            );
+                                        }
+                                        Ok(Err(reason)) => {
+                                            warn!(
+                                                "network: rejected no-IP inbound from peer {peer_id} \
+                                                 reason={}_limit_exceeded",
+                                                reason.label()
+                                            );
+                                            let _ = swarm.disconnect_peer_id(peer_id);
+                                            continue;
+                                        }
+                                        Err(_) => {
+                                            warn!("sybil_state lock poisoned during no-IP admit; rejecting {peer_id}");
+                                            let _ = swarm.disconnect_peer_id(peer_id);
+                                            continue;
+                                        }
+                                    }
                                 }
                                 let count = swarm.connected_peers().count();
                                 peer_count_inner.store(count, Ordering::Relaxed);
@@ -3190,6 +3258,48 @@ mod tests {
         let mut s = SybilState::new(cfg, None);
         let ip = ipv4(10, 0, 0, 1);
         assert_eq!(s.try_admit_inbound(ip, 5), Err(RejectionReason::TotalCap));
+    }
+
+    /// N4 (audit 2026-05-15): `try_admit_inbound_no_ip` applies the
+    /// total cap even for transports without an IP component
+    /// (memory/Unix/exotic). Pre-fix, no-IP connections skipped the
+    /// `if let Some(ip)` block entirely — no total-cap, no
+    /// record_connect, no score tracking — letting a cheap-PeerId
+    /// attacker open unlimited connections on a non-IP transport.
+    #[test]
+    fn test_n4_no_ip_admit_under_cap_succeeds() {
+        let cfg = SybilConfig {
+            max_connections_per_ip: 100,
+            max_connections_per_subnet: 100,
+            max_inbound_connections: 5,
+            peer_ban_duration_secs: 60,
+            trusted_validator_ips: HashSet::new(),
+        };
+        let mut s = SybilState::new(cfg, None);
+        assert!(s.try_admit_inbound_no_ip(0).is_ok());
+        assert!(s.try_admit_inbound_no_ip(4).is_ok());
+    }
+
+    #[test]
+    fn test_n4_no_ip_admit_at_cap_rejects() {
+        let cfg = SybilConfig {
+            max_connections_per_ip: 100,
+            max_connections_per_subnet: 100,
+            max_inbound_connections: 5,
+            peer_ban_duration_secs: 60,
+            trusted_validator_ips: HashSet::new(),
+        };
+        let mut s = SybilState::new(cfg, None);
+        assert_eq!(
+            s.try_admit_inbound_no_ip(5),
+            Err(RejectionReason::TotalCap),
+            "no-IP admit must respect total cap"
+        );
+        assert_eq!(
+            s.try_admit_inbound_no_ip(100),
+            Err(RejectionReason::TotalCap),
+            "no-IP admit must respect total cap regardless of overshoot"
+        );
     }
 
     /// Bug-B regression: trusted validator IPs bypass the per-IP and

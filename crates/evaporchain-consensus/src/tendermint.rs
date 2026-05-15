@@ -5005,6 +5005,30 @@ impl TendermintConsensus {
                     return actions;
                 }
 
+                // Audit Q3 (2026-05-15): reject proposals with timestamps more
+                // than 30 seconds in the future.  Without this guard a proposer
+                // can set block.timestamp = year_2050 and validators would accept
+                // it, causing epoch-derived energy decay calculations to explode.
+                // Pattern matches MockConsensus::validate_block_header.
+                {
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    const MAX_FUTURE_SECS: u64 = 30;
+                    if block.timestamp > now_secs.saturating_add(MAX_FUTURE_SECS) {
+                        warn!(
+                            height = height,
+                            round = round,
+                            block_ts = block.timestamp,
+                            now = now_secs,
+                            max_future = MAX_FUTURE_SECS,
+                            "Rejected proposal: timestamp too far in the future"
+                        );
+                        return actions;
+                    }
+                }
+
                 let hash = Self::block_hash(&block);
 
                 // ── Equivocation Detection ──
@@ -23482,6 +23506,108 @@ mod t1_20_batch26 {
             tc.mev_missing_refund_violations.get(&1).copied().unwrap_or(0),
             0,
             "observe mode must not increment violation counter"
+        );
+    }
+}
+
+#[cfg(test)]
+mod audit_q3_timestamp_bounds {
+    //! Adversarial tests for Audit Q3 (2026-05-15): block timestamp
+    //! future-bound check.  A proposer setting block.timestamp to a
+    //! far-future value must be rejected before the block reaches the
+    //! execution layer, preventing energy-decay manipulation.
+
+    use super::*;
+
+    fn make_vs() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1_000, [1u8; 32]));
+        vs
+    }
+
+    fn make_block_with_ts(number: u64, timestamp: u64) -> Block {
+        Block {
+            number, epoch: 0, parent_hash: [0u8; 32],
+            state_root: [0u8; 32], transactions: vec![],
+            producer_id: Some(1), timestamp,
+            chain_id: String::new(), commit_certificate: None,
+            nova_proof: None, anchor_hash: None, vrf_output: None,
+            vrf_proof: None, data_root: None, da_row_roots: vec![],
+            da_col_roots: vec![], blob_commitments: vec![],
+            da_certificate: None, state_function_commitment: None,
+            oracle_state_root: None, shard_count: None,
+            protocol_version: 0, state_root_version: 0,
+            submit_epoch_hints: vec![], parents: vec![],
+            post_state_root: None,
+        }
+    }
+
+    fn has_prevote_action(actions: &[ConsensusAction]) -> bool {
+        actions.iter().any(|a| {
+            matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. }))
+        })
+    }
+
+    /// A proposal with timestamp 1 year in the future must be rejected.
+    /// Without the Q3 guard this would be accepted and propagated to
+    /// execution, inflating energy-decay epoch calculations.
+    #[test]
+    fn audit_q3_far_future_timestamp_rejected() {
+        let mut tc = TendermintConsensus::new_for_test(1, 5, make_vs());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // 1 year in the future — far outside the 30-second window
+        let future_ts = now + 365 * 24 * 3600;
+        let block = make_block_with_ts(1, future_ts);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        // A rejected proposal produces no Prevote action
+        assert!(
+            !has_prevote_action(&actions),
+            "far-future timestamp proposal must not produce a prevote"
+        );
+    }
+
+    /// A proposal with timestamp exactly 30 seconds in the future is at
+    /// the boundary — must not trigger the guard (guard rejects > 30s).
+    #[test]
+    fn audit_q3_timestamp_at_boundary_accepted() {
+        let mut tc = TendermintConsensus::new_for_test(1, 5, make_vs());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Exactly at the 30-second limit — must be accepted
+        let block = make_block_with_ts(1, now + 30);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        // Should produce actions (not silently dropped by future-ts guard)
+        assert!(
+            !actions.is_empty(),
+            "timestamp at 30-second boundary must not be rejected by the future-ts guard"
+        );
+    }
+
+    /// A proposal with timestamp 31 seconds in the future is just over
+    /// the boundary — must be rejected.
+    #[test]
+    fn audit_q3_timestamp_just_over_boundary_rejected() {
+        let mut tc = TendermintConsensus::new_for_test(1, 5, make_vs());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let block = make_block_with_ts(1, now + 31);
+        let actions = tc.on_message(ConsensusMessage::Proposal {
+            height: 1, round: 0, block, proposer_id: 1,
+        });
+        assert!(
+            !has_prevote_action(&actions),
+            "timestamp 31 seconds in future must be rejected by the future-ts guard"
         );
     }
 }
