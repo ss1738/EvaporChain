@@ -634,8 +634,24 @@ impl PrivacyExecutor {
             }
         }
 
-        // 6. Verify balance binding
-        let sum_in: u64 = tx.input_amounts.iter().sum();
+        // 6. Verify balance binding.
+        //
+        // PRIV-N3 (audit 2026-05-15): the previous `iter().sum::<u64>()`
+        // panicked in debug / wrapped in release on overflow. An
+        // attacker who owned the blindings could craft an
+        // `input_amounts` list whose u64 sum wrapped to a small
+        // value, then compute a matching `balance_binding`. The
+        // wrap made `sum_in < tx.amount` pass at L650 and the
+        // unshield would credit `tx.amount` despite the inputs not
+        // covering it — Layer-0 conservation break. Debug builds
+        // turned the same input into a validator-crash DoS.
+        // `try_fold(0u64, checked_add)` surfaces overflow as
+        // `BalanceOverflow` before any side effect.
+        let sum_in: u64 = tx
+            .input_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
         let change_total = sum_in.saturating_sub(tx.amount);
         if !verify_balance_binding(
             &tx.balance_binding,
@@ -858,9 +874,24 @@ impl PrivacyExecutor {
             }
         }
 
-        // 8. Verify balance binding and conservation
-        let sum_in: u64 = tx.input_amounts.iter().sum();
-        let sum_out: u64 = tx.output_amounts.iter().sum();
+        // 8. Verify balance binding and conservation.
+        //
+        // PRIV-N3 (audit 2026-05-15): same overflow class as the
+        // unshield path above — `iter().sum::<u64>()` wraps on
+        // attacker-controlled inputs. The `sum_out.checked_add(tx.fee)`
+        // check at L878 catches some cases but only AFTER the sums
+        // themselves have already wrapped silently. Surface overflow
+        // at sum time.
+        let sum_in: u64 = tx
+            .input_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
+        let sum_out: u64 = tx
+            .output_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
         if !verify_balance_binding(
             &tx.balance_binding,
             sum_in,
@@ -1290,6 +1321,214 @@ mod tests {
         assert_eq!(db.get_account(&receiver).unwrap().balance, 5_000);
         assert_eq!(db.get_shielded_pool_balance(), 0);
         assert!(db.is_nullifier_spent(&tx.input_nullifiers[0]));
+    }
+
+    /// PRIV-N3 (audit 2026-05-15) regression: `input_amounts.iter().sum()`
+    /// must surface `BalanceOverflow` when the inputs overflow u64,
+    /// NOT wrap silently. Pre-fix an attacker who owned the blindings
+    /// could craft inputs summing to a wrapped small value, compute
+    /// a matching balance_binding, and pass `sum_in < tx.amount`.
+    ///
+    /// Test strategy: construct a 2-input unshield where each input
+    /// has a self-consistent `(amount, value_commitment, blinding)`
+    /// tuple (so the upstream `verify_opening` per-input checks
+    /// pass), and `amounts.iter().sum::<u64>()` overflows. The
+    /// inputs reference the same on-chain note (legal upstream —
+    /// both Merkle proofs verify); the duplicate nullifier would be
+    /// caught downstream, but the overflow check fires FIRST.
+    #[test]
+    fn priv_n3_unshield_input_sum_overflow_rejected() {
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        // Shield a second distinct note so we have two DIFFERENT
+        // nullifiers (the in-tx duplicate-nullifier check at L595
+        // rejects identical ones before our sum check fires).
+        let note2 = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            1_000,
+            1,
+            test_blinding(11),
+            test_blinding(21),
+            test_blinding(98),
+        );
+
+        let single = build_real_unshield(&executor, &note, receiver, 5_000);
+        let part2 = build_real_unshield(&executor, &note2, receiver, 1_000);
+        // Forge 2-input fixture. Each per-input array carries
+        // distinct entries; input_amounts is replaced with
+        // [u64::MAX, 1] and value_commitments are recomputed to
+        // open consistently against the tampered amounts (so
+        // verify_opening passes per input).
+        let amt0 = u64::MAX;
+        let amt1 = 1u64;
+        let bl0 = test_blinding(91);
+        let bl1 = test_blinding(92);
+        let vc0 = Commitment::commit(amt0, &bl0).0;
+        let vc1 = Commitment::commit(amt1, &bl1).0;
+        let tx = UnshieldTx {
+            input_amounts: vec![amt0, amt1],
+            input_blindings: vec![bl0, bl1],
+            input_value_commitments: vec![vc0, vc1],
+            input_nullifiers: vec![single.input_nullifiers[0], part2.input_nullifiers[0]],
+            input_note_commitments: vec![
+                single.input_note_commitments[0],
+                part2.input_note_commitments[0],
+            ],
+            input_merkle_proofs: vec![
+                single.input_merkle_proofs[0].clone(),
+                part2.input_merkle_proofs[0].clone(),
+            ],
+            ..single
+        };
+        let err = executor
+            .execute_unshield(&mut db, &tx)
+            .expect_err("must reject overflow");
+        assert!(
+            matches!(err, PrivacyExecError::BalanceOverflow),
+            "PRIV-N3: expected BalanceOverflow on input-sum overflow, got {err:?}"
+        );
+    }
+
+    /// PRIV-N3: same overflow check on the private-transfer path.
+    #[test]
+    fn priv_n3_private_transfer_input_sum_overflow_rejected() {
+        let sender = test_addr(1);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        let note2 = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            1_000,
+            1,
+            test_blinding(11),
+            test_blinding(21),
+            test_blinding(98),
+        );
+
+        let single = build_real_transfer(
+            &executor,
+            &note,
+            &[4_900],
+            &[test_blinding(30)],
+            100,
+        );
+        let part2 = build_real_transfer(
+            &executor,
+            &note2,
+            &[900],
+            &[test_blinding(40)],
+            100,
+        );
+        // 2-input forgery: distinct nullifiers, self-consistent
+        // per-input openings.
+        let amt0 = u64::MAX;
+        let amt1 = 1u64;
+        let bl0 = test_blinding(81);
+        let bl1 = test_blinding(82);
+        let vc0 = Commitment::commit(amt0, &bl0).0;
+        let vc1 = Commitment::commit(amt1, &bl1).0;
+        let tx = PrivateTransferTx {
+            input_amounts: vec![amt0, amt1],
+            input_blindings: vec![bl0, bl1],
+            input_value_commitments: vec![vc0, vc1],
+            input_nullifiers: vec![single.input_nullifiers[0], part2.input_nullifiers[0]],
+            input_note_commitments: vec![
+                single.input_note_commitments[0],
+                part2.input_note_commitments[0],
+            ],
+            input_merkle_proofs: vec![
+                single.input_merkle_proofs[0].clone(),
+                part2.input_merkle_proofs[0].clone(),
+            ],
+            ..single
+        };
+        let err = executor
+            .execute_private_transfer(&mut db, &tx)
+            .expect_err("must reject overflow");
+        assert!(
+            matches!(err, PrivacyExecError::BalanceOverflow),
+            "PRIV-N3: expected BalanceOverflow on input-sum overflow, got {err:?}"
+        );
+    }
+
+    /// PRIV-N3: same overflow check on the private-transfer output side.
+    #[test]
+    fn priv_n3_private_transfer_output_sum_overflow_rejected() {
+        let sender = test_addr(1);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        // 2-output forgery: opening passes for each output (commits
+        // are recomputed), sum overflows on the new outputs.
+        let single = build_real_transfer(
+            &executor,
+            &note,
+            &[2_400, 2_500],
+            &[test_blinding(31), test_blinding(32)],
+            100,
+        );
+        let oamt0 = u64::MAX;
+        let oamt1 = 1u64;
+        let obl0 = test_blinding(71);
+        let obl1 = test_blinding(72);
+        let oc0 = Commitment::commit(oamt0, &obl0).0;
+        let oc1 = Commitment::commit(oamt1, &obl1).0;
+        let tx = PrivateTransferTx {
+            output_amounts: vec![oamt0, oamt1],
+            output_blindings: vec![obl0, obl1],
+            output_commitments: vec![oc0, oc1],
+            ..single
+        };
+        let err = executor
+            .execute_private_transfer(&mut db, &tx)
+            .expect_err("must reject overflow");
+        assert!(
+            matches!(err, PrivacyExecError::BalanceOverflow),
+            "PRIV-N3: expected BalanceOverflow on output-sum overflow, got {err:?}"
+        );
     }
 
     #[test]
