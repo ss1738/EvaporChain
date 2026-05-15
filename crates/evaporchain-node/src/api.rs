@@ -5725,8 +5725,25 @@ pub struct LlsaApplyAmendmentReq {
 
 async fn post_llsa_apply_amendment(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<LlsaApplyAmendmentReq>,
 ) -> Json<serde_json::Value> {
+    // R4 (audit 2026-05-15): LLSA = Layer-7 chain-self-amendment.
+    // `apply_amendment(...)` mutates `state.epv_registry` (the
+    // binding EPV registry that drives chain-version governance)
+    // via `AlwaysAcceptVerifier` — any well-formed amendment is
+    // accepted without signature/proof verification. Pre-fix this
+    // route had no auth gate, so any internet peer could:
+    //   - register a new chain version with arbitrary `seed_energy`,
+    //   - drift the LLSA invariant chain (next amendment's
+    //     `expected_invariant` reads the registry's HEAD),
+    //   - effectively run governance unilaterally on every
+    //     unprotected validator.
+    //
+    // Admin-gate it; mirrors the `post_governance_param` fix in R2.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     use evaporchain_llsa::proof::{AlwaysAcceptVerifier, LlsaProof};
     use evaporchain_llsa::{apply_amendment, Amendment};
 
