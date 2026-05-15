@@ -7744,6 +7744,31 @@ impl TendermintConsensus {
             warn!(block = block.number, "DA certificate has zero attestations");
             return false;
         }
+        // Audit N4 (2026-05-15): bind cert to a valid block-number window.
+        // DA certs are normally attached to the next proposal after the certified block
+        // (try_attach_pending_da_certificate looks back up to 10 blocks), so
+        // cert.block_number <= block.number in all valid cases.
+        // Guards: (a) cert.block_number > block.number → cert for a future block
+        // that hasn't been proposed yet — impossible under honest operation, signals
+        // a replay of a stolen pre-built cert; (b) cert too stale → DA guarantee expired.
+        const DA_CERT_MAX_LAG: u64 = 12; // 10 lookback window + 2 rounding margin
+        if cert.block_number > block.number {
+            warn!(
+                block = block.number,
+                cert_block = cert.block_number,
+                "DA certificate block_number is for a future block — future-cert attack"
+            );
+            return false;
+        }
+        if cert.block_number < block.number.saturating_sub(DA_CERT_MAX_LAG) {
+            warn!(
+                block = block.number,
+                cert_block = cert.block_number,
+                "DA certificate is too stale (beyond DA_CERT_MAX_LAG={})",
+                DA_CERT_MAX_LAG
+            );
+            return false;
+        }
         // C-09 FIX: Verify all BLS signatures on attestations and recompute
         // attested_stake from attestation data. Without this, a forged certificate
         // with fabricated attested_stake and garbage signatures would be accepted.
