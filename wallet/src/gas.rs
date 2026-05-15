@@ -125,6 +125,12 @@ impl GasEstimator {
             // gas estimator's match was never updated. Refund txs
             // are protocol-issued and cost the same as Transfer.
             Transaction::Refund(_) => GAS_TRANSFER,
+            // DeployTemplate landed in evaporchain-types but the
+            // wallet gas estimator's match was never updated —
+            // unblocks `cargo build --workspace`. Cost mirrors
+            // `evaporchain-consensus/src/mempool.rs::estimate_tx_size`:
+            // base 50_000 + 50 per param byte.
+            Transaction::DeployTemplate(tx) => 50_000 + 50 * tx.params.len() as u64,
         }
     }
 
