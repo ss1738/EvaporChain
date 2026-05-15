@@ -541,6 +541,12 @@ fn constant_fold(opcodes: &mut Vec<Op>) -> bool {
     changed
 }
 
+/// SCR-N7 (audit 2026-05-15): hard cap on the size of a string
+/// literal produced by `fold_binop`'s `+` arm. Matches the VM's
+/// runtime `MAX_STRING_LITERAL` so compile-time and runtime
+/// semantics agree.
+pub const MAX_FOLD_STRING_LEN: usize = 65_536;
+
 fn fold_binop(a: &Value, b: &Value, op: BinOp) -> Option<Value> {
     match (a, b, op) {
         (Value::U64(x), Value::U64(y), BinOp::Add) => Some(Value::U64(x.saturating_add(*y))),
@@ -559,6 +565,19 @@ fn fold_binop(a: &Value, b: &Value, op: BinOp) -> Option<Value> {
         (Value::Bool(x), Value::Bool(y), BinOp::Eq) => Some(Value::Bool(x == y)),
         (Value::Bool(x), Value::Bool(y), BinOp::Neq) => Some(Value::Bool(x != y)),
         (Value::Str(x), Value::Str(y), BinOp::Add) => {
+            // SCR-N7 (audit 2026-05-15): refuse to fold a string
+            // concat when the result would exceed
+            // `MAX_FOLD_STRING_LEN`. Two 64 KiB string literals
+            // concatenated by `+` then folded into a single 128 KiB
+            // Push (and chained further by repeat `+` folds) would
+            // amplify compile-time RAM unboundedly. The runtime VM's
+            // `MAX_STRING_LITERAL` (64 KiB) is the legitimate ceiling;
+            // we cap the folded result there too, returning `None`
+            // when oversized so the compiler emits an explicit Add
+            // opcode (and the runtime's string-grow check fires).
+            if x.len().saturating_add(y.len()) > MAX_FOLD_STRING_LEN {
+                return None;
+            }
             let mut s = x.clone();
             s.push_str(y);
             Some(Value::Str(s))

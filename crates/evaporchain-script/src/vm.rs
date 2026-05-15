@@ -841,8 +841,44 @@ impl EvaporVM {
                     if max == 0 {
                         return Err(ScriptError::Runtime("random_range: max must be > 0".into()));
                     }
-                    let raw = u64::from_le_bytes(ctx.vrf_randomness[..8].try_into().unwrap());
-                    self.push(Value::U64(raw % max))?;
+                    // SCR-N6 (audit 2026-05-15): rejection sampling
+                    // to eliminate modulo bias for non-power-of-two
+                    // `max`. The naive `raw % max` over-weights the
+                    // first `u64::MAX % max` outputs — for max=3 the
+                    // first two indices are ~2x more likely than the
+                    // third. Deterministic (no consensus issue) but
+                    // a lottery/raffle contract drawing from N=3
+                    // would see biased outcomes. We re-derive
+                    // randomness from chained blake3 of
+                    // vrf_randomness + an iteration counter until the
+                    // sample falls within the unbiased range. Bounded
+                    // by `MAX_REJECTION_ITERS = 64` (probability of
+                    // 64 consecutive rejections is < 2^-64 for any
+                    // reasonable `max`).
+                    const MAX_REJECTION_ITERS: u32 = 64;
+                    let zone = u64::MAX - (u64::MAX % max);
+                    let mut iter: u32 = 0;
+                    let value = loop {
+                        let mut h = blake3::Hasher::new();
+                        h.update(b"EvaporChain_RandomRange_Reject_v1");
+                        h.update(&ctx.vrf_randomness);
+                        h.update(&iter.to_le_bytes());
+                        let derived = h.finalize();
+                        let raw = u64::from_le_bytes(
+                            derived.as_bytes()[..8].try_into().unwrap(),
+                        );
+                        if raw < zone || iter >= MAX_REJECTION_ITERS {
+                            // Fallback at hard iteration cap: accept
+                            // the biased sample. With probability
+                            // < 2^-64 over the iter range this branch
+                            // is unreachable in practice; the explicit
+                            // cap ensures the VM cannot loop forever
+                            // on adversarial VRF inputs.
+                            break raw % max;
+                        }
+                        iter += 1;
+                    };
+                    self.push(Value::U64(value))?;
                 }
 
                 Op::CallExternal { arg_count } => {

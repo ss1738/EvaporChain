@@ -206,7 +206,20 @@ pub enum NovaVerifyError {
     EnergyBelowMinimum { got: u128, min: u128 },
     #[error("Nova proving error: {0}")]
     Proving(String),
+    /// SUB-N9 (audit 2026-05-15): proof_bytes exceeds the verify-
+    /// time cap. Without a pre-flight, a multi-MB blob over the
+    /// wire forces `bincode::deserialize` to allocate before failing
+    /// — a light-client DoS vector.
+    #[error("proof_bytes length {got} exceeds cap {cap}")]
+    ProofTooLarge { got: usize, cap: usize },
 }
+
+/// SUB-N9: cap on `NovaFoldedInstance.proof_bytes` length passed
+/// to `verify_nova_folded`. Real Nova compressed proofs at the
+/// arity-8 / k=11 IPA shape used by EvaporChain are well under
+/// 256 KiB; this ceiling is generous and bounds the deserialize
+/// allocation under any adversarial input.
+pub const MAX_NOVA_PROOF_BYTES: usize = 256 * 1024;
 
 /// Phase 4.4 — light-client verifier. Takes only the
 /// `NovaFoldedInstance` + the preprocessed `vk_bytes` + the chain
@@ -227,6 +240,14 @@ pub fn verify_nova_folded(
         });
     }
 
+    // SUB-N9: pre-flight length cap so an oversized blob fails fast
+    // instead of forcing bincode to allocate before erroring.
+    if instance.proof_bytes.len() > MAX_NOVA_PROOF_BYTES {
+        return Err(NovaVerifyError::ProofTooLarge {
+            got: instance.proof_bytes.len(),
+            cap: MAX_NOVA_PROOF_BYTES,
+        });
+    }
     let proof: CompressedProof = bincode::deserialize(&instance.proof_bytes)
         .map_err(|e| NovaVerifyError::Deserialize(format!("{:?}", e)))?;
 

@@ -193,9 +193,26 @@ impl EncryptedMempool {
     /// Submit an encrypted transaction (commit phase). Returns `true`
     /// if accepted, `false` if rejected because the encrypted pool is
     /// at `MAX_ENCRYPTED_PENDING` (T0.7 vector 4 — reveal flood
-    /// admission cap).
+    /// admission cap) OR because the commitment is already in the
+    /// pool (PRIV-N6 dedup).
+    ///
+    /// PRIV-N6 (audit 2026-05-15): without dedup, an attacker could
+    /// submit the same envelope `MAX_ENCRYPTED_PENDING` times to
+    /// crowd out honest commits; ordering by commitment then yields
+    /// N copies of the same slot. The O(n) linear scan here is fine
+    /// at the 10k cap (~10k pointer compares per submit ≈ μs); a
+    /// HashSet would be faster but adds a parallel data structure
+    /// to keep in sync — not worth the complexity for the current
+    /// envelope shape.
     pub fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) -> bool {
         if self.pending_encrypted.len() >= MAX_ENCRYPTED_PENDING {
+            return false;
+        }
+        if self
+            .pending_encrypted
+            .iter()
+            .any(|e| e.commitment == encrypted_tx.commitment)
+        {
             return false;
         }
         self.pending_encrypted.push(encrypted_tx);
@@ -797,15 +814,21 @@ mod tests {
         let tx = dummy_tx(0);
         let nonce = [0u8; 32];
 
-        // Fill to capacity — every submit accepts.
-        for _ in 0..MAX_ENCRYPTED_PENDING {
-            let enc = encrypt_transaction(&tx, &nonce, 1);
+        // Fill to capacity — every submit accepts. Each envelope
+        // must carry a distinct nonce so PRIV-N6 dedup-by-commitment
+        // doesn't filter the flood prematurely.
+        for i in 0..MAX_ENCRYPTED_PENDING {
+            let mut distinct_nonce = nonce;
+            distinct_nonce[..8].copy_from_slice(&(i as u64).to_le_bytes());
+            let enc = encrypt_transaction(&tx, &distinct_nonce, 1);
             assert!(pool.submit_encrypted(enc), "below cap must accept");
         }
         assert_eq!(pool.pending_count().0, MAX_ENCRYPTED_PENDING);
 
-        // The (cap+1)-th is rejected.
-        let over = encrypt_transaction(&tx, &nonce, 1);
+        // The (cap+1)-th — a freshly-derived envelope — is rejected.
+        let mut over_nonce = nonce;
+        over_nonce[..8].copy_from_slice(&(MAX_ENCRYPTED_PENDING as u64).to_le_bytes());
+        let over = encrypt_transaction(&tx, &over_nonce, 1);
         assert!(
             !pool.submit_encrypted(over),
             "at-cap commit must be rejected (T0.7 vector 4 — reveal-flood DoS)"

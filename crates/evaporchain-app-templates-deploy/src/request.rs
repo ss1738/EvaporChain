@@ -48,7 +48,22 @@ pub enum RequestError {
     ParamsNotObject,
     #[error("params canonical encoding exceeds u32 max bytes")]
     ParamsTooLarge,
+    /// SUB-N10 (audit 2026-05-15): canonical-JSON-serialised params
+    /// exceed the construction cap. `signing_bytes` already u32-caps,
+    /// but constructing the DeployRequest with a 100 MB nested-JSON
+    /// `params` blob would force the canonical encoder to walk the
+    /// whole tree (and a downstream MaterialiseInstruction would
+    /// carry it) before that ceiling is reached. Cap up front in
+    /// `new()` to fail fast.
+    #[error("params canonical encoding length {got} exceeds cap {cap}")]
+    ParamsExceedsConstructionCap { got: usize, cap: usize },
 }
+
+/// SUB-N10: construction-time cap on the canonical-JSON-encoded
+/// params payload. Matches `MAX_INIT_CALLDATA` (dispatch-level) at
+/// 64 KiB — generous for every legitimate template, tight enough
+/// that pathological inputs fail at request-build time.
+pub const MAX_DEPLOY_PARAMS_BYTES: usize = 64 * 1024;
 
 /// One deploy request — a fully-specified intention to materialise
 /// `template_class` with `params` on behalf of `deployer`.
@@ -81,6 +96,14 @@ impl DeployRequest {
         }
         if !params.is_object() {
             return Err(RequestError::ParamsNotObject);
+        }
+        // SUB-N10: pre-flight canonical-encoded length cap.
+        let encoded_len = canonical_json_bytes(&params).len();
+        if encoded_len > MAX_DEPLOY_PARAMS_BYTES {
+            return Err(RequestError::ParamsExceedsConstructionCap {
+                got: encoded_len,
+                cap: MAX_DEPLOY_PARAMS_BYTES,
+            });
         }
         Ok(Self {
             template_class,
