@@ -5,8 +5,28 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use tracing::warn;
 
 use super::shard_assignment::ShardId;
+
+/// Cap on outstanding (sent-but-not-yet-acknowledged) cross-shard
+/// messages in `CrossShardRouter`. The router tracks every `send()`
+/// in `pending_receipts` and only removes entries on `acknowledge()`.
+/// If the destination shard never returns receipts, the map grows
+/// unbounded — a slow-burn DoS vector when the V1.5 sharding path
+/// is wired to consensus.
+///
+/// 65,536 was chosen as a small enough hard ceiling (~13 MB worst
+/// case at ~200 B/message) to bound memory, while large enough to
+/// absorb realistic per-block cross-shard burst rates (a 256-shard
+/// chain at 50 cross-shard tx per shard per block stays well under).
+pub const MAX_PENDING_RECEIPTS: usize = 1 << 16;
+
+/// Per-destination-shard queue cap. `drain_for_shard` removes the
+/// queue wholesale, so a shard whose validator never drains will
+/// accumulate every message bound for it. Same FIFO-eviction rule
+/// applies.
+pub const MAX_PER_SHARD_QUEUE: usize = 1 << 14;
 
 /// A message from one shard to another.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,11 +86,49 @@ impl CrossShardRouter {
 
     pub fn send(&mut self, mut msg: CrossShardMessage) -> u64 {
         msg.id = self.next_id;
-        self.next_id += 1;
+        // Use saturating arithmetic to avoid debug-mode panic at the
+        // u64 boundary; on real chains the next-id space is far from
+        // exhausting u64 but it's still cleaner than `+= 1`.
+        self.next_id = self.next_id.saturating_add(1);
         let id = msg.id;
         let to = msg.to_shard;
+
+        // SH-CROSS-1: FIFO-evict the oldest outstanding pending receipt
+        // when the cap is hit. `pending_receipts` is a `BTreeMap<u64, _>`
+        // ordered by ascending send-time id, so `pop_first` is exactly
+        // the oldest. Operator visibility via `tracing::warn!` so a
+        // pathological flood is observable (under-acknowledged
+        // destination, dropped acks, or unbounded burst).
+        if self.pending_receipts.len() >= MAX_PENDING_RECEIPTS {
+            if let Some((evicted_id, _)) = self.pending_receipts.pop_first() {
+                warn!(
+                    target: "evaporchain_sharding::cross_shard",
+                    evicted_id,
+                    cap = MAX_PENDING_RECEIPTS,
+                    "pending_receipts cap hit; evicted oldest outstanding entry"
+                );
+            }
+        }
+
+        // Per-destination queue cap. `drain_for_shard` deletes the
+        // entry wholesale; an undrained shard could otherwise hold an
+        // unbounded VecDeque. FIFO-evict from the front (oldest first)
+        // so the freshest cross-shard intent survives.
+        let queue = self.queues.entry(to).or_default();
+        if queue.len() >= MAX_PER_SHARD_QUEUE {
+            if let Some(evicted) = queue.pop_front() {
+                warn!(
+                    target: "evaporchain_sharding::cross_shard",
+                    to_shard = to.0,
+                    evicted_id = evicted.id,
+                    cap = MAX_PER_SHARD_QUEUE,
+                    "per-shard queue cap hit; evicted oldest queued message"
+                );
+            }
+        }
+
         self.pending_receipts.insert(id, msg.clone());
-        self.queues.entry(to).or_default().push_back(msg);
+        queue.push_back(msg);
         id
     }
 
@@ -353,6 +411,112 @@ mod tests {
         assert_ne!(root, solo1);
         assert_ne!(root, solo2);
         assert_ne!(solo1, solo2);
+    }
+
+    /// SH-CROSS-1 regression: `pending_receipts` is bounded by
+    /// `MAX_PENDING_RECEIPTS`. Sending one over the cap evicts the
+    /// oldest entry (FIFO) — the count stays at the cap.
+    #[test]
+    fn sh_cross_1_pending_receipts_is_bounded() {
+        let mut router = CrossShardRouter::new();
+        // Cheaper test: directly seed pending_receipts at the cap to
+        // avoid actually queueing MAX_PENDING_RECEIPTS messages.
+        for i in 0..MAX_PENDING_RECEIPTS as u64 {
+            router.pending_receipts.insert(
+                i,
+                CrossShardMessage {
+                    id: i,
+                    from_shard: ShardId(0),
+                    to_shard: ShardId(1),
+                    target_object: [0u8; 20],
+                    payload: MessagePayload::Transfer {
+                        from: [0u8; 20],
+                        amount: 0,
+                    },
+                    target_energy: 0,
+                    timestamp: 0,
+                },
+            );
+        }
+        router.next_id = MAX_PENDING_RECEIPTS as u64;
+        assert_eq!(router.pending_receipts.len(), MAX_PENDING_RECEIPTS);
+
+        // One more send must evict the oldest (id=0) and keep count
+        // at the cap.
+        let new_id = router.send(make_msg(0, 2, 100));
+        assert_eq!(
+            router.pending_receipts.len(),
+            MAX_PENDING_RECEIPTS,
+            "pending count must remain at the cap, not grow"
+        );
+        assert!(
+            !router.pending_receipts.contains_key(&0),
+            "oldest pending entry (id=0) must have been evicted"
+        );
+        assert!(
+            router.pending_receipts.contains_key(&new_id),
+            "newly sent message must be retained"
+        );
+    }
+
+    /// SH-CROSS-1 regression: a single destination shard whose
+    /// queue is never drained does not grow beyond
+    /// `MAX_PER_SHARD_QUEUE`. Per-shard FIFO eviction at the front.
+    #[test]
+    fn sh_cross_1_per_shard_queue_is_bounded() {
+        let mut router = CrossShardRouter::new();
+        // Pre-fill the destination queue to the cap (cheaper than
+        // calling send() that many times — same effect on the
+        // internal queue).
+        let dest = ShardId(7);
+        let q = router.queues.entry(dest).or_default();
+        for i in 0..MAX_PER_SHARD_QUEUE as u64 {
+            q.push_back(CrossShardMessage {
+                id: i,
+                from_shard: ShardId(0),
+                to_shard: dest,
+                target_object: [0u8; 20],
+                payload: MessagePayload::Transfer {
+                    from: [0u8; 20],
+                    amount: 0,
+                },
+                target_energy: 0,
+                timestamp: 0,
+            });
+        }
+        router.next_id = MAX_PER_SHARD_QUEUE as u64;
+        assert_eq!(router.queue_depth(dest), MAX_PER_SHARD_QUEUE);
+
+        // Sending one more must evict the front (oldest queued) and
+        // keep queue at cap.
+        router.send(make_msg(0, dest.0, 999));
+        assert_eq!(
+            router.queue_depth(dest),
+            MAX_PER_SHARD_QUEUE,
+            "per-shard queue must remain at the cap"
+        );
+    }
+
+    /// SH-CROSS-1: `next_id` uses saturating arithmetic. Hitting
+    /// u64::MAX must not panic in debug, and the next send must
+    /// stay at u64::MAX (the ID space is effectively exhausted,
+    /// not corrupted).
+    #[test]
+    fn sh_cross_1_next_id_saturates() {
+        let mut router = CrossShardRouter::new();
+        router.next_id = u64::MAX - 1;
+        let id1 = router.send(make_msg(0, 1, 100));
+        assert_eq!(id1, u64::MAX - 1);
+        let id2 = router.send(make_msg(0, 1, 100));
+        // Saturating: next_id was u64::MAX, msg.id=u64::MAX, then
+        // saturating_add stays at u64::MAX.
+        assert_eq!(id2, u64::MAX);
+        let id3 = router.send(make_msg(0, 1, 100));
+        // Third send: msg.id was u64::MAX (collision with id2);
+        // pending_receipts inserts at the same key so we have one
+        // entry. Documents the saturation contract — not a
+        // pretty-state guarantee, just no-panic.
+        assert_eq!(id3, u64::MAX);
     }
 
     /// T1.20 — `receipts_root` odd-count case pads the last leaf with
