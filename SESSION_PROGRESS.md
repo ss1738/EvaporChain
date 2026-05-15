@@ -4,6 +4,43 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 41) — AUDIT_2026_05_15.md punch-list cleared: final 5 items in 3 PRs
+
+**Focus:** Close the last actionable code findings from `AUDIT_2026_05_15.md` — GEN-N5, SUB-N8, DRIFT-N4, PRIV-N5, GEN-N3 — and resolve a pre-existing test regression introduced when PRIV-N6 dedup landed.
+**Commits shipped:** 4 across 3 open PRs (#334 / #335 / #336)
+**Deliverables:**
+- **PR #334** (`audit/final-cleanup-gen5-sub8-drift4`) — final-cleanup bundle:
+  - **GEN-N5** — `ARGON2_T_COST` 3 → 4 in `crates/evaporchain-crypto/src/bls_key_store.rs` (OWASP 2026 / RFC 9106 "second-recommendation" tier for high-value secrets; validator BLS sk is the most sensitive local secret).
+  - **SUB-N8** — `DeployEventLog::prune_before_height(threshold)` in `crates/evaporchain-app-templates-eventlog/src/log.rs` — drops the strict-prefix below threshold and evicts pruned `event_id`s from the `seen` index. 4 new tests covering prefix-drop + seen-eviction, below-first no-op, above-last full-drop, post-prune monotone-on-append.
+  - **DRIFT-N4** — `block.protocol_version < MIN_SUPPORTED_PROTOCOL_VERSION` dead comparison at `tendermint.rs:5055`. Kept the structure (so a future hard-fork only bumps the constant) but annotated with `#[allow(unused_comparisons)]` + paragraph explaining the dead-by-design intent.
+- **PR #335** (`audit/priv-n5-aad-binding`) — PRIV-N5 encrypted-mempool hardening:
+  - AEAD AAD binding for `(submitted_epoch, nonce_hash)` in `crates/evaporchain-consensus/src/encrypted_mempool.rs` — closes the "gossip relay rewrites `submitted_epoch` to defer `reveal_at`" attack. AAD = `EVAPORCHAIN_V1_MEV_AAD\0 || submitted_epoch (LE u64) || nonce_hash`.
+  - Structural `derived_admission_id()` over `(DST || submitted_epoch || nonce_hash || len-prefixed ciphertext)` — closes the gap where PRIV-N6 commitment-only dedup missed the "intact ciphertext, tampered commitment-field" duplicate. `submit_encrypted` now dedups against BOTH the claimed commitment AND the derived admission-id.
+  - 7 new tests + companion fix to `encrypted_pool_rejects_when_at_capacity` (which broke on main when PRIV-N6 commitment-dedup landed but the parallel `dos_resistance::dos_v4_..._fires_on_flood` test was the only one fixed; in-module test still used a constant nonce).
+- **PR #336** (`audit/gen-n3-canonical-genesis-bind`) — GEN-N3 canonical genesis hash binding:
+  - `GenesisConfig::canonical_genesis_hash()` = `BLAKE3(EVAPORCHAIN_V1_GENESIS_HASH\0 || canonical_signing_bytes())` in `crates/evaporchain-types/src/genesis.rs`.
+  - `initialize_genesis` now computes `state_root = BLAKE3(EVAPORCHAIN_V1_GENESIS_BIND\0 || raw_db_state_root || canonical_genesis_hash)` in `crates/evaporchain-execution/src/genesis.rs`. Closes the silent-fork-at-height-0 risk where two nodes with diverging configs (different `chain_id`, tokenomics, validator set, `genesis_time`, bootstrap peers, coordinator pk) but identical on-chain account allocations could produce the same `state_root` and silently fork at the first attestation.
+  - 7 new tests proving state_root divergence under every config-field change + DST-prefix sanity + full-config determinism.
+
+**Empirical results:**
+- PR #334: 30/30 eventlog, 10/10 crypto bls_key_store, consensus check clean — all green on Mini 1.
+- PR #335: 28/28 encrypted_mempool (lib), 6/6 dos_resistance (integration) — all green on Mini 1.
+- PR #336: 38/38 evaporchain-types::genesis, 26/26 evaporchain-execution::genesis (lib), **557/557 evaporchain-execution full lib**, **945/945 evaporchain-consensus full lib** — all green on Mini 1. No regression from the state-root formula change (no tests had pinned specific genesis-state-root hex values; the binding is fully deterministic).
+
+**Decisions made:**
+- GEN-N3 binding is unconditional (no `is_mainnet` gate). Mainnet hasn't launched, so no historical state_root needs preservation; the protection should apply to every chain.
+- PRIV-N5 keeps both commitment-dedup (PRIV-N6) and admission-id-dedup as defense-in-depth — the O(2n) linear scan at MAX_ENCRYPTED_PENDING=10k is still microseconds.
+- DRIFT-N4 kept the dead `<` comparison structure intact for forward compat (future hard-fork bumps `MIN_SUPPORTED_PROTOCOL_VERSION` and the check becomes live with no new wiring) rather than deleting it.
+
+**What's next:**
+- AUDIT_2026_05_15.md fully closed in code (only DRIFT-N5/N6/N7 doc-only items remain, not code-actionable).
+- MAINNET_READINESS.md has zero pure-code OPEN lanes — every remaining 🟡 OPEN lane is OPS-ONLY (cluster soak / operator runbook).
+- Natural next: **fresh end-to-end audit run to surface the next round of findings**. The codebase has accumulated significant changes since 2026-05-15's audit and a new pass is warranted.
+
+**Blockers / open questions:** Three open PRs awaiting merge (#334, #335, #336). All green on Mini 1; no operator decisions needed.
+
+**Cross-references:** AUDIT_2026_05_15.md (now fully closed in code); PR #334, #335, #336; commits 424af770 (final-cleanup), e850083e (PRIV-N5 + test fix), c4f66858 (GEN-N3).
+
 ## 2026-05-15 (session 40) --- WIP audit branch flush: 7 branches merged to main
 
 **Focus:** Merge accumulated WIP audit branches to main; fix SCR-N1 compile errors
