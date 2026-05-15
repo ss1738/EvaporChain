@@ -10,12 +10,45 @@
 //!
 //! Uses AES-256-GCM for encryption and BLAKE3 for commitments.
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_types::Transaction;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+// PRIV-N5 (audit 2026-05-15) domain-separation tags.
+//
+// `MEV_AAD` is bound into the AES-256-GCM AEAD so that any post-seal
+// tamper of `submitted_epoch` or `nonce_hash` flips the auth tag and
+// the envelope refuses to decrypt at reveal time. Without this, a
+// gossip relay could rewrite `submitted_epoch` to push `reveal_at`
+// forward indefinitely (the envelope just sits in the pool — the
+// AEAD doesn't currently bind it).
+//
+// `MEV_ADM` is the structural admission-id: a hash over the fields
+// the validator can actually re-derive at admission
+// (`encrypted_payload`, `nonce_hash`, `submitted_epoch`). It is
+// independent of the claimed `commitment` field. The commitment-
+// based dedup (PRIV-N6) is kept for the standard duplicate case;
+// the admission-id dedup catches the case where an attacker leaves
+// ciphertext intact but tampers the `commitment` field to bypass
+// PRIV-N6's check (and consume a pool slot under a freshly-claimed
+// commitment hash).
+const MEV_AAD_DST: &[u8] = b"EVAPORCHAIN_V1_MEV_AAD\0";
+const MEV_ADM_DST: &[u8] = b"EVAPORCHAIN_V1_MEV_ADM\0";
+
+/// Build the AEAD AAD bound to an encrypted envelope's
+/// `(submitted_epoch, nonce_hash)` pair.  Used by both encrypt and
+/// decrypt — they must agree byte-for-byte or the AEAD tag check
+/// fails.  Layout: `DST || submitted_epoch (LE u64) || nonce_hash`.
+fn build_mev_aad(submitted_epoch: u64, nonce_hash: &[u8; 32]) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(MEV_AAD_DST.len() + 8 + 32);
+    aad.extend_from_slice(MEV_AAD_DST);
+    aad.extend_from_slice(&submitted_epoch.to_le_bytes());
+    aad.extend_from_slice(nonce_hash);
+    aad
+}
 
 // ─────────────────────── Errors ──────────────────────────────────────────
 
@@ -46,6 +79,27 @@ pub struct EncryptedTransaction {
     pub nonce_hash: [u8; 32],
     /// Epoch when this transaction was submitted.
     pub submitted_epoch: u64,
+}
+
+impl EncryptedTransaction {
+    /// PRIV-N5 (audit 2026-05-15): structural admission-id over the
+    /// fields the validator can re-derive locally.  Independent of
+    /// the claimed `commitment` field, so an attacker who keeps the
+    /// ciphertext intact but rewrites `commitment` cannot bypass
+    /// admission dedup.
+    pub fn derived_admission_id(&self) -> [u8; 32] {
+        let mut input = Vec::with_capacity(
+            MEV_ADM_DST.len() + 8 + 32 + self.encrypted_payload.len() + 8,
+        );
+        input.extend_from_slice(MEV_ADM_DST);
+        input.extend_from_slice(&self.submitted_epoch.to_le_bytes());
+        input.extend_from_slice(&self.nonce_hash);
+        // length-prefix the payload so it can't collide with the
+        // adjacent fields under variable-length concatenation.
+        input.extend_from_slice(&(self.encrypted_payload.len() as u64).to_le_bytes());
+        input.extend_from_slice(&self.encrypted_payload);
+        blake3_hash(&input)
+    }
 }
 
 /// Transaction envelope — can hold plaintext, encrypted, or revealed tx.
@@ -92,8 +146,20 @@ pub fn encrypt_transaction(
     // Use first 12 bytes of nonce hash as GCM nonce
     let nonce_hash = blake3_hash(nonce);
     let gcm_nonce = Nonce::from_slice(&nonce_hash[..12]);
+    // PRIV-N5 (audit 2026-05-15): bind submitted_epoch + nonce_hash
+    // into the AEAD via additional authenticated data. Tampering with
+    // either field post-seal flips the GCM tag and decryption fails
+    // at reveal — closing the "rewrite submitted_epoch to defer
+    // reveal_at indefinitely" attack on gossiped envelopes.
+    let aad = build_mev_aad(current_epoch, &nonce_hash);
     let encrypted_payload = cipher
-        .encrypt(gcm_nonce, plaintext_bytes.as_ref())
+        .encrypt(
+            gcm_nonce,
+            Payload {
+                msg: plaintext_bytes.as_ref(),
+                aad: aad.as_ref(),
+            },
+        )
         .expect("encryption should not fail");
 
     EncryptedTransaction {
@@ -121,8 +187,18 @@ pub fn verify_and_decrypt(
         .map_err(|e| MevError::DecryptionFailed(e.to_string()))?;
     let gcm_nonce = Nonce::from_slice(&encrypted.nonce_hash[..12]);
 
+    // PRIV-N5: reconstruct the AAD from the envelope's claimed
+    // `(submitted_epoch, nonce_hash)`. If either field was tampered
+    // post-seal, the AEAD tag check fails here.
+    let aad = build_mev_aad(encrypted.submitted_epoch, &encrypted.nonce_hash);
     let plaintext_bytes = cipher
-        .decrypt(gcm_nonce, encrypted.encrypted_payload.as_ref())
+        .decrypt(
+            gcm_nonce,
+            Payload {
+                msg: encrypted.encrypted_payload.as_ref(),
+                aad: aad.as_ref(),
+            },
+        )
         .map_err(|e| MevError::DecryptionFailed(e.to_string()))?;
 
     // Verify commitment
@@ -191,19 +267,32 @@ impl EncryptedMempool {
     }
 
     /// Submit an encrypted transaction (commit phase). Returns `true`
-    /// if accepted, `false` if rejected because the encrypted pool is
-    /// at `MAX_ENCRYPTED_PENDING` (T0.7 vector 4 — reveal flood
-    /// admission cap) OR because the commitment is already in the
-    /// pool (PRIV-N6 dedup).
+    /// if accepted, `false` if rejected because:
+    /// - the encrypted pool is at `MAX_ENCRYPTED_PENDING` (T0.7
+    ///   vector 4 — reveal flood admission cap), OR
+    /// - the claimed commitment is already in the pool
+    ///   (PRIV-N6 dedup), OR
+    /// - the structural admission-id collides with an existing
+    ///   envelope (PRIV-N5 admission re-derive).
     ///
     /// PRIV-N6 (audit 2026-05-15): without dedup, an attacker could
     /// submit the same envelope `MAX_ENCRYPTED_PENDING` times to
     /// crowd out honest commits; ordering by commitment then yields
-    /// N copies of the same slot. The O(n) linear scan here is fine
-    /// at the 10k cap (~10k pointer compares per submit ≈ μs); a
-    /// HashSet would be faster but adds a parallel data structure
-    /// to keep in sync — not worth the complexity for the current
-    /// envelope shape.
+    /// N copies of the same slot.
+    ///
+    /// PRIV-N5 (audit 2026-05-15): commitment-only dedup misses the
+    /// "intact ciphertext, tampered commitment-field" duplicate. An
+    /// attacker who replays the same `(encrypted_payload, nonce_hash,
+    /// submitted_epoch)` with a fresh-looking but fake `commitment`
+    /// passes PRIV-N6's check and consumes a fresh slot.  Dedup by
+    /// `derived_admission_id()` (which doesn't read the claimed
+    /// commitment) closes that gap.
+    ///
+    /// The O(n) linear scans here are fine at the 10k cap
+    /// (~20k pointer compares per submit ≈ μs); a `HashSet<[u8;32]>`
+    /// would be faster but adds a parallel data structure to keep in
+    /// sync — not worth the complexity for the current envelope
+    /// shape.
     pub fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) -> bool {
         if self.pending_encrypted.len() >= MAX_ENCRYPTED_PENDING {
             return false;
@@ -212,6 +301,14 @@ impl EncryptedMempool {
             .pending_encrypted
             .iter()
             .any(|e| e.commitment == encrypted_tx.commitment)
+        {
+            return false;
+        }
+        let incoming_admission_id = encrypted_tx.derived_admission_id();
+        if self
+            .pending_encrypted
+            .iter()
+            .any(|e| e.derived_admission_id() == incoming_admission_id)
         {
             return false;
         }
@@ -892,5 +989,153 @@ mod tests {
             Err(MevError::CommitmentMismatch { .. }) => {}
             other => panic!("expected CommitmentMismatch, got {:?}", other),
         }
+    }
+
+    // ─────────── PRIV-N5 (audit 2026-05-15): AAD binding + admission re-derive ───────────
+
+    /// PRIV-N5: tampering with `submitted_epoch` after seal must
+    /// fail the AEAD tag check (DecryptionFailed), not silently
+    /// allow late-revealed txs.  Without AAD binding, an attacker
+    /// who controls a gossip relay could rewrite `submitted_epoch`
+    /// to push `reveal_at = submitted_epoch + reveal_delay` past
+    /// the user's intended reveal window.
+    #[test]
+    fn priv_n5_tampered_submitted_epoch_fails_decryption() {
+        let nonce = random_nonce();
+        let tx = dummy_tx(42);
+        let mut enc = encrypt_transaction(&tx, &nonce, 100);
+
+        // Move the envelope to a later "submission" epoch.
+        enc.submitted_epoch = 100_000;
+
+        let r = verify_and_decrypt(&enc, &nonce);
+        match r {
+            Err(MevError::DecryptionFailed(_)) => {}
+            other => panic!(
+                "expected DecryptionFailed from AAD tag mismatch, got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// PRIV-N5: tampering with `nonce_hash` after seal must also
+    /// fail decryption.  `nonce_hash` doubles as the GCM nonce
+    /// prefix and is part of the bound AAD — flipping it breaks
+    /// both.  The AAD bind in particular guarantees the failure
+    /// even if the GCM nonce coincidentally aligned.
+    #[test]
+    fn priv_n5_tampered_nonce_hash_fails_decryption() {
+        let nonce = random_nonce();
+        let tx = dummy_tx(42);
+        let mut enc = encrypt_transaction(&tx, &nonce, 100);
+
+        enc.nonce_hash[0] ^= 0xFF;
+
+        let r = verify_and_decrypt(&enc, &nonce);
+        // Could surface as NonceHashMismatch (caught first) OR
+        // DecryptionFailed if the mismatch slips past the early
+        // check on a degenerate fixture. Both are acceptable —
+        // both reject.
+        match r {
+            Err(MevError::NonceHashMismatch) | Err(MevError::DecryptionFailed(_)) => {}
+            other => panic!("expected rejection, got {:?}", other),
+        }
+    }
+
+    /// PRIV-N5: untampered envelope still round-trips under AAD.
+    /// Sanity that AAD binding didn't break the happy path.
+    #[test]
+    fn priv_n5_untampered_envelope_decrypts() {
+        let nonce = random_nonce();
+        let tx = dummy_tx(42);
+        let enc = encrypt_transaction(&tx, &nonce, 100);
+        let decrypted = verify_and_decrypt(&enc, &nonce).unwrap();
+        let orig_bytes = serde_json::to_vec(&tx).unwrap();
+        let dec_bytes = serde_json::to_vec(&decrypted).unwrap();
+        assert_eq!(orig_bytes, dec_bytes);
+    }
+
+    /// PRIV-N5: structural admission-id is independent of the
+    /// claimed `commitment` field.  Two envelopes that differ
+    /// only in the (attacker-tampered) commitment field MUST
+    /// produce the same admission-id.
+    #[test]
+    fn priv_n5_admission_id_ignores_commitment_field() {
+        let nonce = random_nonce();
+        let tx = dummy_tx(42);
+        let enc = encrypt_transaction(&tx, &nonce, 100);
+        let id_a = enc.derived_admission_id();
+
+        let mut tampered = enc.clone();
+        tampered.commitment[0] ^= 0xFF;
+        let id_b = tampered.derived_admission_id();
+
+        assert_eq!(id_a, id_b, "admission_id must not depend on commitment");
+    }
+
+    /// PRIV-N5: different `submitted_epoch` MUST produce a
+    /// different admission-id.  Catches an honest user resubmitting
+    /// at a new epoch (correctly admitted) vs. a duplicate replay
+    /// (correctly rejected) and vice-versa.
+    #[test]
+    fn priv_n5_admission_id_depends_on_submitted_epoch() {
+        let nonce = random_nonce();
+        let tx = dummy_tx(42);
+        let enc_a = encrypt_transaction(&tx, &nonce, 100);
+        let enc_b = encrypt_transaction(&tx, &nonce, 101);
+
+        assert_ne!(
+            enc_a.derived_admission_id(),
+            enc_b.derived_admission_id(),
+            "different epoch must change admission_id"
+        );
+    }
+
+    /// PRIV-N5: submit_encrypted rejects an envelope whose
+    /// `commitment` field has been tampered but whose ciphertext,
+    /// nonce_hash, and submitted_epoch are intact (PRIV-N6's
+    /// commitment-only dedup would miss this).
+    #[test]
+    fn priv_n5_submit_rejects_commitment_tampered_duplicate() {
+        let mut pool = EncryptedMempool::new(2);
+        let nonce = random_nonce();
+        let tx = dummy_tx(42);
+        let enc = encrypt_transaction(&tx, &nonce, 100);
+
+        assert!(pool.submit_encrypted(enc.clone()));
+
+        // Same ciphertext + nonce_hash + epoch, but attacker tampers
+        // the claimed commitment so PRIV-N6's commitment-dedup
+        // wouldn't catch it.
+        let mut tampered = enc.clone();
+        tampered.commitment[0] ^= 0xFF;
+
+        assert!(
+            !pool.submit_encrypted(tampered),
+            "admission-id dedup must reject commitment-tampered duplicate"
+        );
+        assert_eq!(pool.pending_count().0, 1);
+    }
+
+    /// PRIV-N5: legitimate resubmission at a *new* submitted_epoch
+    /// must be accepted (admission-id differs).  This guards
+    /// against over-rejection of users who re-encrypt for a fresh
+    /// commit window.
+    #[test]
+    fn priv_n5_submit_accepts_resubmit_at_new_epoch() {
+        let mut pool = EncryptedMempool::new(2);
+        let tx = dummy_tx(42);
+        let nonce_1 = random_nonce();
+        let nonce_2 = random_nonce();
+
+        let enc_a = encrypt_transaction(&tx, &nonce_1, 100);
+        let enc_b = encrypt_transaction(&tx, &nonce_2, 200);
+
+        assert!(pool.submit_encrypted(enc_a));
+        assert!(
+            pool.submit_encrypted(enc_b),
+            "fresh re-encryption at later epoch must be admitted"
+        );
+        assert_eq!(pool.pending_count().0, 2);
     }
 }
