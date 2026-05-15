@@ -4,6 +4,19 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 33) — Contract rule engine + API auth sweep: C-RULE-001 + C-AUTH-001 MEDIUM closed
+
+**Focus:** Contract rule engine DoS (unbounded rule iteration) + session token timing oracle in node API auth
+**Commits shipped:** 1 (`68017a2e`)
+**Deliverables:**
+- C-RULE-001 (MEDIUM) CLOSED: `MAX_RULES_PER_CONTRACT = 100` enforced at deploy; returns `DeployFailed` on excess; prevents O(n) rule evaluation DoS per block tick. 2 adversarial tests added (over-limit rejected, exact-limit accepted).
+- C-AUTH-001 (MEDIUM) CLOSED: `authenticate()` replaced `HashMap::get(token)` with constant-time linear scan using `subtle::ConstantTimeEq`, matching the pattern already used by `require_admin_auth`.
+- C-PRIV-001, C-INT-001, C-REENT-001, C-AUTH-002, C-AUTH-003 all confirmed CLEAN (privilege checks, overflow guards, no cross-contract reentrance, auth rate limits, governance gate).
+- Nova IVC proving path audit: ALL CLEAN (soundness, state root binding, energy fold integrity, checkpoint gate, VK pinning, ZK leakage, DoS gating, fold queue bounds).
+**Empirical results:** `cargo test -p evaporchain-contracts` — 98 passed, 0 failed; `cargo test -p evaporchain-node` — 241 passed, 0 failed
+**What's next:** All mainnet code lanes and A-Z + C-class audit sweeps complete. Remaining work is OPS-ONLY: D-track cluster soak (T0.2), slashing-at-scale soak (T0.6), PNT governance flip (T0.5), key rotation runbooks (T1.17/18/19).
+**Cross-references:** AUDIT_2026_05_11.md (C-class addendum), commit `68017a2e`
+
 ## 2026-05-15 (session 32) — Z-class audit sweep: Z-WAL-001 MEDIUM closed (WAL length silent truncation)
 
 **Focus:** Serialization/deserialization security, WAL codec, network message size bounds, zero-copy unsafe, DAG traversal depth, schema version gating

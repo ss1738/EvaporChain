@@ -291,6 +291,16 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
                 return Err(invariant("SSM", "fragment must be non-empty"));
             }
         }
+        // RefreshMarket landed in TypedInit but the bind invariant
+        // table was never extended — unblocks
+        // `cargo build --workspace`. The RefreshMarket init config
+        // is owned by `evaporchain-refresh-market`; its on-construct
+        // validation already runs in `init_refresh_market`, so the
+        // bind step here is a no-op acknowledging the variant. Add
+        // primitive-specific checks once the market substrate
+        // surfaces config invariants that warrant pre-flight
+        // rejection (e.g. zero-half-life market shouldn't deploy).
+        TypedInit::RefreshMarket(_) => {}
     }
 
     Ok(Bound(typed))
