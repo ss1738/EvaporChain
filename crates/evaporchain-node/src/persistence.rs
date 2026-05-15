@@ -1147,6 +1147,7 @@ fn tx_type_name(tx: &Transaction) -> &'static str {
         Transaction::Undelegate(_) => "undelegate",
         Transaction::RotateValidatorKey(_) => "rotate_validator_key",
         Transaction::ClaimDelegation(_) => "claim_delegation",
+        Transaction::DeployTemplate(_) => "deploy_template",
         Transaction::Refund(_) => "refund",
     }
 }
@@ -1180,6 +1181,7 @@ fn tx_sender_hex(tx: &Transaction) -> Option<String> {
         Transaction::Undelegate(t) => Some(addr_hex(&t.delegator)),
         Transaction::RotateValidatorKey(t) => Some(addr_hex(&t.validator_address)),
         Transaction::ClaimDelegation(t) => Some(addr_hex(&t.delegator)),
+        Transaction::DeployTemplate(t) => Some(addr_hex(&t.deployer)),
         Transaction::Refund(t) => Some(addr_hex(&t.attacker)),
     }
 }
