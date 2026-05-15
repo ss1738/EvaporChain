@@ -4,6 +4,21 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 37) — VM paradigm + tier-3 substrate sweep: PLC-1 LOW closed
+
+**Focus:** total-evaporscript, cap-decay-vm, dp-native-vm, thermal-stm, plc, ew-twap security audit
+**Commits shipped:** 1 (`12723a44`)
+**Deliverables:**
+- PLC-1 (LOW) CLOSED: `midpoint(b, d)` at plc/bottleneck.rs:129 had no guard against `d < b`; `Bar::new` enforces the invariant but no assertion at use site. Added `debug_assert!(d >= b)`. 42/42 plc tests pass.
+- total-evaporscript: CLEAN — termination enforced at type level via CFG analysis; no runtime arithmetic bugs.
+- cap-decay-vm: CLEAN — CapabilityId is BLAKE3(issuer‖nonce‖authority); structural revocation walks parent chain transitively.
+- dp-native-vm: CLEAN — budget is spend-only; checked_add guards in both admits/consume; no decrement API.
+- thermal-stm: CLEAN — strict total order comparator prevents deadlock; duplicate-id rejected; aborted txs write nothing.
+- ew-twap: EW-001 FALSE POSITIVE — comment at oracle.rs:109-110 already documents the u128→u64 downcast invariant; sum_energy=0 gated.
+**Empirical results:** 42/42 plc tests pass, 0 fail
+**What's next:** Remaining substrate crates: sddc/sfsv/shlm launch dApps, app-templates pipeline (deploy/materialise/engine/bind/fees/receipt/eventlog), epa-mmr, paymaster edge cases.
+**Cross-references:** AUDIT_2026_05_11.md (VM+tier-3 addendum), commit `12723a44`
+
 ## 2026-05-15 (session 36) — Sharding + fee-controller sweep: CROSS-SHARD-001 HIGH closed
 
 **Focus:** Cross-shard message execution arithmetic, payload size caps, message-ID replay, fee controller PID safety
