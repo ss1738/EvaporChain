@@ -37,6 +37,17 @@ fn invariant(primitive: &'static str, what: &'static str) -> BindError {
 
 /// Validate per-primitive invariants on a `TypedInit`. Returns
 /// `Bound(typed)` on success.
+/// SUB-N4 (audit 2026-05-15): per-field upper bounds that complement
+/// the dispatch-level `MAX_INIT_CALLDATA` cap (SUB-N2). The dispatch
+/// guard rejects multi-MB calldata at the serde_json layer; these
+/// inline caps reject pathological-but-legal-shape configs (e.g. a
+/// 1 MB predicate, a million-rung ladder) that would otherwise pass
+/// dispatch and persist on-chain as instance state forever.
+pub const MAX_PREDICATE_LEN: usize = 4 * 1024;
+pub const MAX_VERB_OR_OBJECT_LEN: usize = 256;
+pub const MAX_FRAGMENT_LEN: usize = 4 * 1024;
+pub const MAX_LADDER_RUNGS: usize = 64;
+
 pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
     match &typed {
         // ── NFT lane ────────────────────────────────────────────────
@@ -132,6 +143,12 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
             if c.predicate.is_empty() {
                 return Err(invariant("SFSV", "predicate must be non-empty"));
             }
+            if c.predicate.len() > MAX_PREDICATE_LEN {
+                return Err(invariant(
+                    "SFSV",
+                    "predicate exceeds MAX_PREDICATE_LEN",
+                ));
+            }
             if c.release_epoch == 0 {
                 return Err(invariant("SFSV", "release_epoch must be > 0"));
             }
@@ -151,8 +168,17 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
             if c.verb.is_empty() {
                 return Err(invariant("SCL", "verb must be non-empty"));
             }
+            if c.verb.len() > MAX_VERB_OR_OBJECT_LEN {
+                return Err(invariant("SCL", "verb exceeds MAX_VERB_OR_OBJECT_LEN"));
+            }
             if c.object.is_empty() {
                 return Err(invariant("SCL", "object must be non-empty"));
+            }
+            if c.object.len() > MAX_VERB_OR_OBJECT_LEN {
+                return Err(invariant(
+                    "SCL",
+                    "object exceeds MAX_VERB_OR_OBJECT_LEN",
+                ));
             }
             if c.duration_epochs == 0 {
                 return Err(invariant("SCL", "duration_epochs must be > 0"));
@@ -204,6 +230,12 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
         TypedInit::SinghLineage(c) => {
             if c.ladder.is_empty() {
                 return Err(invariant("Singh-Lineage", "ladder must be non-empty"));
+            }
+            if c.ladder.len() > MAX_LADDER_RUNGS {
+                return Err(invariant(
+                    "Singh-Lineage",
+                    "ladder exceeds MAX_LADDER_RUNGS",
+                ));
             }
             // days strictly increasing
             for w in c.ladder.windows(2) {
@@ -280,6 +312,9 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
             if c.fragment.is_empty() {
                 return Err(invariant("SGB", "fragment must be non-empty"));
             }
+            if c.fragment.len() > MAX_FRAGMENT_LEN {
+                return Err(invariant("SGB", "fragment exceeds MAX_FRAGMENT_LEN"));
+            }
         }
         TypedInit::Sbav(c) => {
             if c.reg_count == 0 {
@@ -289,6 +324,9 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
         TypedInit::Ssm(c) => {
             if c.fragment.is_empty() {
                 return Err(invariant("SSM", "fragment must be non-empty"));
+            }
+            if c.fragment.len() > MAX_FRAGMENT_LEN {
+                return Err(invariant("SSM", "fragment exceeds MAX_FRAGMENT_LEN"));
             }
         }
         // RefreshMarket landed in TypedInit but the bind invariant

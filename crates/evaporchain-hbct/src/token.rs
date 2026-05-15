@@ -38,7 +38,19 @@ pub enum TokenError {
         hour_slot: u64,
         issued_at_epoch: u64,
     },
+    /// SUB-N5 (audit 2026-05-15): delivery_location length exceeds
+    /// the per-token cap. Real BMU codes (UK GB-electricity market
+    /// equivalent of a "delivery point identifier") are <= 64 bytes
+    /// in every jurisdiction we anchor on; capping here prevents an
+    /// admin / fee-payer from minting a token with a 1 MB
+    /// delivery_location that then lives forever as the BTreeMap key
+    /// in `HbctBook::entries`.
+    #[error("delivery_location length {got} exceeds cap {cap}")]
+    LocationTooLong { got: usize, cap: usize },
 }
+
+/// SUB-N5: hard cap on `delivery_location` in `HbctToken::new`.
+pub const MAX_DELIVERY_LOCATION_LEN: usize = 64;
 
 impl HbctToken {
     pub fn new(
@@ -50,6 +62,12 @@ impl HbctToken {
     ) -> Result<Self, TokenError> {
         if delivery_location.is_empty() {
             return Err(TokenError::EmptyLocation);
+        }
+        if delivery_location.len() > MAX_DELIVERY_LOCATION_LEN {
+            return Err(TokenError::LocationTooLong {
+                got: delivery_location.len(),
+                cap: MAX_DELIVERY_LOCATION_LEN,
+            });
         }
         if mwh_amount == 0 {
             return Err(TokenError::ZeroMwh);

@@ -24,7 +24,22 @@ pub enum LightConeError {
     AlreadyInserted(BlockId),
     #[error("block {block:?} references missing parent {parent:?}")]
     MissingParent { block: BlockId, parent: BlockId },
+    /// SUB-N6 (audit 2026-05-15): block.parents exceeds the
+    /// multi-parent doctrine cap. Without this guard, a single
+    /// crafted block with 1M parents (32 B each = 32 MB) inflates
+    /// DAG memory and forces O(N×M) clone+sort across the entire
+    /// causal-past walk in `decay_lamport::block_lamport_clock` /
+    /// `concurrency::is_antichain`.
+    #[error("block {0:?} has too many parents: {1} > MAX_PARENTS_PER_BLOCK")]
+    TooManyParents(BlockId, usize),
 }
+
+/// SUB-N6: hard cap on the number of parents a Light-Cone block
+/// may reference. Matches the multi-parent doctrine documented in
+/// `LIGHT_CONE_FULL_DAG_PLAN.md`. Empirically a block reaching this
+/// cap is already pathological — a 16-way join captures any
+/// realistic concurrent-fork merge.
+pub const MAX_PARENTS_PER_BLOCK: usize = 16;
 
 impl LightCone {
     pub fn new() -> Self {
@@ -76,6 +91,14 @@ impl LightCone {
     pub fn insert(&mut self, block: Block) -> Result<(), LightConeError> {
         if self.blocks.contains_key(&block.id) {
             return Err(LightConeError::AlreadyInserted(block.id));
+        }
+        // SUB-N6: pre-flight the parents-length cap before touching
+        // anything else so a crafted oversized block fails fast.
+        if block.parents.len() > MAX_PARENTS_PER_BLOCK {
+            return Err(LightConeError::TooManyParents(
+                block.id,
+                block.parents.len(),
+            ));
         }
         for parent in &block.parents {
             if !self.blocks.contains_key(parent) {

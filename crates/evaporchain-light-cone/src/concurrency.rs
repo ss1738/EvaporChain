@@ -45,6 +45,15 @@ pub fn is_concurrent(lc: &LightCone, a: BlockId, b: BlockId) -> bool {
 /// precommits. The full predicate lives in tendermint.rs; this
 /// helper is the substrate primitive.
 pub fn is_antichain(lc: &LightCone, set: &[BlockId]) -> bool {
+    // SUB-N7 (audit 2026-05-15): the algorithm is O(n²) over `set`
+    // and each pair calls `comparable` which is O(n) on the DAG —
+    // total O(n³). A public RPC accepting unbounded `set` is a CPU-
+    // DoS surface. The legitimate antichain on a typical chain is
+    // ≤ a handful of leaves; cap at 64 so an attacker can't burn
+    // validator CPU by submitting a 10k-element set.
+    if set.len() > MAX_ANTICHAIN_INPUT {
+        return false;
+    }
     for i in 0..set.len() {
         for j in (i + 1)..set.len() {
             if comparable(lc, set[i], set[j]) {
@@ -54,6 +63,12 @@ pub fn is_antichain(lc: &LightCone, set: &[BlockId]) -> bool {
     }
     true
 }
+
+/// SUB-N7: hard cap on the input slice to `is_antichain`. Sized for
+/// the legitimate antichain on a real chain (a handful of leaves +
+/// margin); pathological inputs return `false` without doing the
+/// O(n³) walk.
+pub const MAX_ANTICHAIN_INPUT: usize = 64;
 
 /// Phase 4.2 — minimal closing antichain at the current DAG state.
 /// Returns the DAG's leaves: every leaf is concurrent with every
