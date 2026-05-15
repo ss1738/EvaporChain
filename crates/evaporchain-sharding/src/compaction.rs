@@ -71,11 +71,29 @@ impl ShardCompactionProof {
 }
 
 /// Find compaction candidates from a set of shard health metrics.
+///
+/// Dead-pair dedup: when both halves of an XOR-paired pair (e.g.
+/// shard 0 and shard 1) are dead, the naive loop would emit two
+/// contradictory candidates — `{shard: 0, merge_into: 1}` *and*
+/// `{shard: 1, merge_into: 0}`. A consumer that applies both would
+/// produce conflicting `ShardCompactionProof`s pointing at each
+/// other. To prevent this, when the neighbour is also dead in the
+/// same batch we emit exactly one candidate: the higher-ID shard
+/// merging into the lower-ID survivor. Solo-dead and cold-with-live
+/// cases are unaffected (they merge into the alive neighbour).
 pub fn find_candidates(healths: &[ShardHealth], energy_threshold: u64) -> Vec<CompactionCandidate> {
     let mut candidates = Vec::new();
     for health in healths {
         if health.is_dead() {
             let merge_into = neighbor_shard(health.shard_id);
+            // Dead-pair dedup: skip the lower-ID half so the higher-ID
+            // iteration emits the canonical (higher-into-lower) candidate.
+            let neighbor_also_dead = healths
+                .iter()
+                .any(|h| h.shard_id == merge_into && h.is_dead());
+            if neighbor_also_dead && health.shard_id.0 < merge_into.0 {
+                continue;
+            }
             candidates.push(CompactionCandidate {
                 shard: health.shard_id,
                 merge_into,
@@ -325,6 +343,94 @@ mod tests {
             }
             ref other => panic!("expected BelowEnergyThreshold, got {other:?}"),
         }
+    }
+
+    /// SH-COMPACT-1 regression: when both halves of an XOR-paired
+    /// pair are dead, `find_candidates` must NOT emit two
+    /// contradictory candidates pointing at each other. The fix
+    /// emits exactly one (the higher-ID shard merging into the
+    /// lower-ID survivor) so consumers don't generate conflicting
+    /// `ShardCompactionProof`s. Pre-fix this test would fail
+    /// because both shard 0 → 1 and shard 1 → 0 candidates were
+    /// emitted.
+    #[test]
+    fn sh_compact_1_dead_pair_emits_single_canonical_candidate() {
+        let healths = vec![
+            ShardHealth {
+                shard_id: ShardId(0),
+                total_objects: 50,
+                live_objects: 0,
+                total_energy: 0,
+                avg_half_life: 0,
+            },
+            ShardHealth {
+                shard_id: ShardId(1),
+                total_objects: 50,
+                live_objects: 0,
+                total_energy: 0,
+                avg_half_life: 0,
+            },
+        ];
+        let candidates = find_candidates(&healths, 100);
+        assert_eq!(
+            candidates.len(),
+            1,
+            "dead pair must emit exactly one candidate, not two contradictory ones"
+        );
+        // Canonical direction: higher-ID (1) merges into lower-ID (0).
+        assert_eq!(candidates[0].shard, ShardId(1));
+        assert_eq!(candidates[0].merge_into, ShardId(0));
+        assert!(matches!(
+            candidates[0].reason,
+            CompactionReason::AllEvaporated
+        ));
+    }
+
+    /// SH-COMPACT-1: solo-dead shard (neighbour alive) must still
+    /// emit a candidate pointing at the alive neighbour. Confirms
+    /// the dedup gate doesn't suppress legitimate single-side
+    /// dead-shard compactions.
+    #[test]
+    fn sh_compact_1_solo_dead_emits_into_alive_neighbor() {
+        let healths = vec![
+            make_health(0, 100, 50_000), // alive
+            ShardHealth {
+                shard_id: ShardId(1),
+                total_objects: 50,
+                live_objects: 0,
+                total_energy: 0,
+                avg_half_life: 0,
+            },
+        ];
+        let candidates = find_candidates(&healths, 100);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].shard, ShardId(1));
+        assert_eq!(candidates[0].merge_into, ShardId(0));
+    }
+
+    /// SH-COMPACT-1: a batch with multiple dead pairs must emit
+    /// one canonical candidate per pair, not 2N. Two pairs ({0,1}
+    /// and {2,3}) → two candidates, not four.
+    #[test]
+    fn sh_compact_1_two_dead_pairs_emit_two_canonical_candidates() {
+        let mk_dead = |id: u16| ShardHealth {
+            shard_id: ShardId(id),
+            total_objects: 50,
+            live_objects: 0,
+            total_energy: 0,
+            avg_half_life: 0,
+        };
+        let healths = vec![mk_dead(0), mk_dead(1), mk_dead(2), mk_dead(3)];
+        let candidates = find_candidates(&healths, 100);
+        assert_eq!(candidates.len(), 2, "two dead pairs → two candidates");
+        // Pair {0, 1}: 1 → 0
+        // Pair {2, 3}: 3 → 2
+        let mut pairs: Vec<_> = candidates
+            .iter()
+            .map(|c| (c.shard.0, c.merge_into.0))
+            .collect();
+        pairs.sort();
+        assert_eq!(pairs, vec![(1, 0), (3, 2)]);
     }
 
     /// T1.20 — `compute_hash` must commit to every field on the
