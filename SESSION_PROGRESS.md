@@ -4,6 +4,18 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 35) — CLI keygen + sybil sweep: CLI-PASS-001 + CLI-KDF-001 MEDIUM closed
+
+**Focus:** CLI BLS keygen passphrase + Argon2id KDF key zeroization; network sybil-scoring audit
+**Commits shipped:** 1 (`e7a25629`)
+**Deliverables:**
+- CLI-PASS-001 (MEDIUM) CLOSED: `cmd_encrypt_bls_key` / `cmd_decrypt_bls_key` now wrap passphrase `Vec<u8>` in `Zeroizing<_>`; bytes overwritten on all exit paths including early error returns.
+- CLI-KDF-001 (MEDIUM) CLOSED: Argon2id-derived `[u8; 32]` key in `encrypt_bls_secret_with_aad` / `decrypt_bls_secret_with_aad` wrapped in `Zeroizing::new(kdf(...)?)` — cleared before OS dealloc even if cipher-init fails.
+- Sybil scoring: 7 checks all CLEAN — disconnect/reconnect state, idle-penalty skip for offline peers, eviction sampling, score decay, ban atomicity, CHSH weighting, peer-count ceiling.
+**Empirical results:** 83/83 CLI tests pass; 69/69 crypto tests pass; 0 failures
+**What's next:** All major code surfaces now swept (A-Z, contracts, auth, proving, bridge, oracle, MCP, CLI, network sybil). Consider paymaster edge cases, cross-shard message replay, or sharding audit as final sweep.
+**Cross-references:** AUDIT_2026_05_11.md (CLI+Network addendum), commit `e7a25629`
+
 ## 2026-05-15 (session 34) — MCP + Bridge + Oracle sweep: MCP-AUTH-001 HIGH closed
 
 **Focus:** MCP server 26-tool surface, ETH bridge Solidity + Rust, BFT oracle — security sweep
