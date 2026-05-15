@@ -4,6 +4,20 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 36) — Sharding + fee-controller sweep: CROSS-SHARD-001 HIGH closed
+
+**Focus:** Cross-shard message execution arithmetic, payload size caps, message-ID replay, fee controller PID safety
+**Commits shipped:** 1 (`2c929a32`)
+**Deliverables:**
+- CROSS-SHARD-001 (HIGH) CLOSED: `execute_cross_shard_messages` at execution/lib.rs:3051 used bare `+=` on receiver u64 balance; wraps silently in release mode. Fixed to `saturating_add`. Adversarial canary `test_cross_shard_transfer_receiver_balance_saturates` added; 4/4 cross-shard tests pass.
+- CROSS-SHARD-002 (LOW) ACKNOWLEDGED: unbounded `String` in `Query`/`Eviction` payload variants; no external API accepts these from untrusted network today; flag for when p2p cross-shard messaging is wired.
+- CROSS-SHARD-003 ACKNOWLEDGED: in-memory-only `next_id` counter resets on restart — known design limitation of experimental crate.
+- CROSS-SHARD-004 FALSE POSITIVE: energy-based ordering is intentional and documented in code comment.
+- Fee controller: ALL CLEAN — i128 arithmetic, Lyapunov saturating_mul, divide-by-zero guards, Y-FEE-001 fix confirmed present.
+**Empirical results:** 4/4 cross-shard tests pass, 0 fail
+**What's next:** All major surfaces swept. Remaining candidates: VM paradigm crates (total-evaporscript, cap-decay-vm, dp-native-vm), substrate tier-3 (thermal-stm, plc, ew-twap), or paymaster edge cases in execution.
+**Cross-references:** AUDIT_2026_05_11.md (Sharding+fee-controller addendum), commit `2c929a32`
+
 ## 2026-05-15 (session 35) — CLI keygen + sybil sweep: CLI-PASS-001 + CLI-KDF-001 MEDIUM closed
 
 **Focus:** CLI BLS keygen passphrase + Argon2id KDF key zeroization; network sybil-scoring audit
