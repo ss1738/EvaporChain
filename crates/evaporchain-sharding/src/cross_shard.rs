@@ -28,6 +28,20 @@ pub const MAX_PENDING_RECEIPTS: usize = 1 << 16;
 /// applies.
 pub const MAX_PER_SHARD_QUEUE: usize = 1 << 14;
 
+/// Domain-separation tag for `CrossShardReceipt::receipt_hash` leaf
+/// hashes. SH-CROSS-2: prevents cross-domain collisions where an
+/// attacker could craft a hash preimage that parses as a valid
+/// receipt under another EvaporChain hash domain (Verkle leaves,
+/// MMR leaves, compaction-proof hashes, etc.).
+pub const RECEIPT_LEAF_DST: &[u8] = b"EVAPORCHAIN_V1_CROSS_SHARD_RECEIPT_LEAF\0";
+
+/// Domain-separation tag for `receipts_root` internal Merkle nodes.
+/// SH-CROSS-2: distinct from `RECEIPT_LEAF_DST` so an attacker cannot
+/// craft a leaf preimage that hashes to the same value as an internal
+/// node — the H2/Verkle internal-vs-leaf attack class translated to
+/// the cross-shard receipt tree.
+pub const RECEIPT_INTERNAL_DST: &[u8] = b"EVAPORCHAIN_V1_CROSS_SHARD_RECEIPT_INTERNAL\0";
+
 /// A message from one shard to another.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CrossShardMessage {
@@ -62,6 +76,7 @@ pub struct CrossShardReceipt {
 impl CrossShardReceipt {
     pub fn receipt_hash(&self) -> [u8; 32] {
         let mut data = Vec::new();
+        data.extend_from_slice(RECEIPT_LEAF_DST);
         data.extend_from_slice(&self.message_id.to_le_bytes());
         data.extend_from_slice(&self.from_shard.0.to_le_bytes());
         data.extend_from_slice(&self.to_shard.0.to_le_bytes());
@@ -158,6 +173,14 @@ impl CrossShardRouter {
     }
 
     /// Compute Merkle root of all pending receipts for block header inclusion.
+    ///
+    /// SH-CROSS-2: leaf hashes carry `RECEIPT_LEAF_DST`; internal-node
+    /// combines carry `RECEIPT_INTERNAL_DST`. Distinct DSTs make it
+    /// infeasible for an attacker to craft a leaf preimage that
+    /// collides with an internal-node hash (the Verkle internal-vs-leaf
+    /// attack class translated to this Merkle tree). For single-receipt
+    /// input, no internal combine runs and the root is exactly the
+    /// leaf hash — `test_receipts_root_single` remains green.
     pub fn receipts_root(receipts: &[CrossShardReceipt]) -> [u8; 32] {
         if receipts.is_empty() {
             return [0u8; 32];
@@ -173,6 +196,7 @@ impl CrossShardRouter {
             let mut next = Vec::new();
             for chunk in current.chunks(2) {
                 let mut combined = Vec::new();
+                combined.extend_from_slice(RECEIPT_INTERNAL_DST);
                 combined.extend_from_slice(&chunk[0]);
                 if chunk.len() > 1 {
                     combined.extend_from_slice(&chunk[1]);
@@ -287,6 +311,98 @@ mod tests {
         router.send(make_msg(1, 3, 200));
         assert_eq!(router.queue_depth(ShardId(3)), 2);
         assert_eq!(router.queue_depth(ShardId(0)), 0);
+    }
+
+    /// SH-CROSS-2 regression: `receipt_hash` prepends
+    /// `RECEIPT_LEAF_DST`. The hash must differ from a domainless
+    /// BLAKE3 over the same 43-byte field concatenation, proving the
+    /// DST is mixed in.
+    #[test]
+    fn sh_cross_2_receipt_hash_includes_leaf_dst() {
+        let r = CrossShardReceipt {
+            message_id: 7,
+            from_shard: ShardId(1),
+            to_shard: ShardId(2),
+            success: true,
+            result_hash: [0x55; 32],
+            processed_at: 100,
+        };
+        let with_dst = r.receipt_hash();
+
+        // What the hash WOULD have been pre-DST.
+        let mut bare = Vec::new();
+        bare.extend_from_slice(&r.message_id.to_le_bytes());
+        bare.extend_from_slice(&r.from_shard.0.to_le_bytes());
+        bare.extend_from_slice(&r.to_shard.0.to_le_bytes());
+        bare.push(r.success as u8);
+        bare.extend_from_slice(&r.result_hash);
+        let without_dst = *blake3::hash(&bare).as_bytes();
+
+        assert_ne!(
+            with_dst, without_dst,
+            "leaf DST must be mixed into receipt_hash"
+        );
+        // Pin the exact DST byte string.
+        assert_eq!(
+            RECEIPT_LEAF_DST,
+            b"EVAPORCHAIN_V1_CROSS_SHARD_RECEIPT_LEAF\0"
+        );
+    }
+
+    /// SH-CROSS-2 regression: `receipts_root` internal-node combines
+    /// prepend `RECEIPT_INTERNAL_DST`. For a 2-receipt input the root
+    /// is one internal-node hash; that hash must differ from a
+    /// domainless BLAKE3 over the same 64-byte leaf concatenation.
+    /// Pins the leaf-vs-internal separation.
+    #[test]
+    fn sh_cross_2_receipts_root_internal_nodes_include_internal_dst() {
+        let r1 = CrossShardReceipt {
+            message_id: 1,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success: true,
+            result_hash: [0xAA; 32],
+            processed_at: 10,
+        };
+        let r2 = CrossShardReceipt {
+            message_id: 2,
+            from_shard: ShardId(0),
+            to_shard: ShardId(2),
+            success: false,
+            result_hash: [0xBB; 32],
+            processed_at: 20,
+        };
+        let root = CrossShardRouter::receipts_root(&[r1.clone(), r2.clone()]);
+
+        // What an attacker-controlled "internal node" without DST
+        // would produce.
+        let mut bare = Vec::new();
+        bare.extend_from_slice(&r1.receipt_hash());
+        bare.extend_from_slice(&r2.receipt_hash());
+        let domainless_internal = *blake3::hash(&bare).as_bytes();
+
+        assert_ne!(
+            root, domainless_internal,
+            "internal DST must be mixed into the Merkle internal-node hash"
+        );
+        assert_eq!(
+            RECEIPT_INTERNAL_DST,
+            b"EVAPORCHAIN_V1_CROSS_SHARD_RECEIPT_INTERNAL\0"
+        );
+    }
+
+    /// SH-CROSS-2: leaf and internal DSTs must themselves differ —
+    /// the H2 attack class is "leaf preimage that hashes to an
+    /// internal-node value". Using the same DST for both would
+    /// silently re-introduce the collision surface.
+    #[test]
+    fn sh_cross_2_leaf_and_internal_dsts_are_distinct() {
+        assert_ne!(
+            RECEIPT_LEAF_DST, RECEIPT_INTERNAL_DST,
+            "leaf and internal DSTs must be distinct or the H2 \
+             attack class re-opens (attacker crafts a leaf preimage \
+             whose BLAKE3 image matches an internal-node hash)"
+        );
     }
 
     #[test]
