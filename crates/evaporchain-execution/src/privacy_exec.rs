@@ -585,7 +585,16 @@ impl PrivacyExecutor {
                 return Err(PrivacyExecError::MerkleProofAnchorMismatch { index: i });
             }
             // The leaf in the Merkle tree is the note commitment (not the value commitment).
-            if !verify_merkle_proof(&tx.input_note_commitments[i], &proof) {
+            //
+            // PRIV-N1 (audit 2026-05-15): pass the verifier's trusted
+            // tree depth so an attacker can't submit `siblings: vec![]`
+            // with `leaf_index: 0` + `input_note_commitment = anchor`
+            // and have the verify loop pass for any chosen amount.
+            if !verify_merkle_proof(
+                &tx.input_note_commitments[i],
+                &proof,
+                self.engine.note_tree.depth(),
+            ) {
                 return Err(PrivacyExecError::InvalidMerkleProof { index: i });
             }
         }
@@ -801,7 +810,13 @@ impl PrivacyExecutor {
             if proof.root != tx.anchor {
                 return Err(PrivacyExecError::MerkleProofAnchorMismatch { index: i });
             }
-            if !verify_merkle_proof(&tx.input_note_commitments[i], &proof) {
+            // PRIV-N1 (audit 2026-05-15): pass the verifier's trusted
+            // tree depth — see the unshield path comment above.
+            if !verify_merkle_proof(
+                &tx.input_note_commitments[i],
+                &proof,
+                self.engine.note_tree.depth(),
+            ) {
                 return Err(PrivacyExecError::InvalidMerkleProof { index: i });
             }
         }
