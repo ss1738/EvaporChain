@@ -172,6 +172,7 @@ mod adversarial_tests {
                 round: 0,
                 block: block2,
                 proposer_id: 1, // same proposer
+                bls_signature: None,
             };
 
             // Deliver both proposals to node 2 — it should detect equivocation

@@ -133,6 +133,11 @@ pub enum ConsensusMessage {
         round: u32,
         block: Block,
         proposer_id: u64,
+        // Audit V2 (2026-05-15): BLS signature over
+        // bls_vote_message(chain_id, height, round, Some(block_hash), "proposal").
+        // Binds the proposal to the proposer's key at the application layer.
+        // None accepted during migration; future upgrade will enforce.
+        bls_signature: Option<Vec<u8>>,
     },
     /// Validator votes for a block hash (or None for nil vote).
     Prevote {
@@ -4323,14 +4328,24 @@ impl TendermintConsensus {
                     && self.round_state.proposed_block.is_none()
                 {
                     if let Some(proposal) = self.create_proposal(db) {
+                        // Audit V2 (2026-05-15): compute hash before constructing
+                        // the Proposal so we can sign it and embed the BLS signature.
+                        let proposal_hash = Self::block_hash(&proposal);
+                        let proposal_bls_sig = self.bls_sign_vote(
+                            self.height,
+                            self.round_state.round,
+                            &Some(proposal_hash),
+                            "proposal",
+                        );
                         let msg = ConsensusMessage::Proposal {
                             height: self.height,
                             round: self.round_state.round,
                             block: proposal.clone(),
                             proposer_id: self.my_id,
+                            bls_signature: proposal_bls_sig,
                         };
                         self.round_state.proposed_block = Some(proposal.clone());
-                        self.round_state.proposed_hash = Some(Self::block_hash(&proposal));
+                        self.round_state.proposed_hash = Some(proposal_hash);
                         // Consensus-1 (re-audit 2026-05-02): observe
                         // OUR OWN proposal here too. The follower
                         // path observes incoming proposals at
@@ -4839,6 +4854,7 @@ impl TendermintConsensus {
                 round,
                 block,
                 proposer_id,
+                bls_signature,
             } => {
                 // Verify proposer is legitimate for this round
                 let expected_proposer = self.proposer_for_round(height, round).map(|v| v.id);
@@ -5049,6 +5065,44 @@ impl TendermintConsensus {
                 }
 
                 let hash = Self::block_hash(&block);
+
+                // Audit V2 (2026-05-15): verify BLS signature binding the proposal
+                // to the proposer's key.  Without this check any gossip peer can
+                // forge a Proposal with the expected proposer_id and honest
+                // validators will vote on the fabricated block.
+                {
+                    if let Some(v) = self.validator_set.get(proposer_id) {
+                        if let Some(ref pk_bytes) = v.bls_public_key {
+                            let pk = BlsPublicKey(pk_bytes.clone());
+                            let msg_bytes = Self::bls_vote_message(
+                                &self.chain_id, height, round, &Some(hash), "proposal",
+                            );
+                            match &bls_signature {
+                                Some(sig_bytes) => {
+                                    let sig = BlsSignature(sig_bytes.clone());
+                                    if !BlsVerifier::verify(&msg_bytes, &sig, &pk) {
+                                        warn!(
+                                            height = height,
+                                            round = round,
+                                            validator = proposer_id,
+                                            "Rejected proposal: invalid BLS signature"
+                                        );
+                                        return actions;
+                                    }
+                                }
+                                None => {
+                                    warn!(
+                                        height = height,
+                                        round = round,
+                                        validator = proposer_id,
+                                        "Proposal missing BLS signature (migration warning)"
+                                    );
+                                    // Accept during migration window
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // ── Equivocation Detection ──
                 // Track proposals per (height, round). If the same proposer sends
@@ -8796,6 +8850,7 @@ mod tests {
             round: 0,
             block,
             proposer_id: *wrong_id,
+            bls_signature: None,
         };
 
         let actions = tc.on_message(fake_proposal);
@@ -8871,6 +8926,7 @@ mod tests {
                 round: 0,
                 block,
                 proposer_id,
+                bls_signature: None,
             }
         };
 
@@ -14186,6 +14242,7 @@ mod tests {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         };
 
         let actions = tc.on_message(proposal);
@@ -14563,6 +14620,7 @@ mod tests {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         };
 
         let actions = tc.on_message(msg);
@@ -14618,6 +14676,7 @@ mod tests {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         };
 
         let actions = tc.on_message(msg);
@@ -14674,6 +14733,7 @@ mod tests {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         };
 
         let actions = tc.on_message(msg);
@@ -15617,6 +15677,7 @@ mod vrf_tests {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         };
 
         // Non-proposer should reject the invalid VRF proof
@@ -17078,6 +17139,7 @@ mod da_tests {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         };
         let actions = tc_receiver.on_message(proposal_msg);
 
@@ -19276,6 +19338,7 @@ mod t1_20_batch6 {
             round: 0,
             block: make_block_at(1, 1),
             proposer_id: 99,
+            bls_signature: None,
         });
         assert!(actions.is_empty());
     }
@@ -19490,6 +19553,7 @@ mod t1_20_batch7 {
             round,
             block,
             proposer_id: 1,
+            bls_signature: None,
         });
         assert!(actions.is_empty(), "too-many-txs proposal must be rejected");
     }
@@ -19508,6 +19572,7 @@ mod t1_20_batch7 {
             round,
             block,
             proposer_id: 1,
+            bls_signature: None,
         });
         assert!(actions.is_empty(), "chain-id mismatch must be rejected");
     }
@@ -19526,6 +19591,7 @@ mod t1_20_batch7 {
             round,
             block,
             proposer_id: 1,
+            bls_signature: None,
         });
         assert!(actions.is_empty(), "gas-exceeded proposal must be rejected");
     }
@@ -20598,6 +20664,7 @@ mod t1_20_batch12 {
             round: 0,
             block: block_b,
             proposer_id,
+            bls_signature: None,
         });
         let has_nil_prevote = actions.iter().any(|a| {
             matches!(
@@ -20667,6 +20734,7 @@ mod t1_20_batch12 {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         });
         let has_prevote = actions.iter().any(|a| {
             matches!(
@@ -21321,7 +21389,7 @@ mod t1_20_batch15 {
             public_key: None,
         })];
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id,
+            height: 1, round: 0, block, proposer_id, bls_signature: None,
         });
         // Rejected → no commit action, phase stays at Propose
         assert!(actions.iter().all(|a| !matches!(a, ConsensusAction::CommitBlock(_))));
@@ -21845,6 +21913,7 @@ mod t1_20_batch18 {
             round: 0,
             block,
             proposer_id: 1,
+            bls_signature: None,
         });
         // Refund missing → MissingRefund → counter for validator 1 bumped
         assert_eq!(
@@ -22792,6 +22861,7 @@ mod t1_20_batch22 {
             round: 0,
             block,
             proposer_id,
+            bls_signature: None,
         };
         let actions = tc.on_message(msg);
         // Rejected at line 4909; no prevote or other action emitted.
@@ -23186,7 +23256,7 @@ mod t1_20_batch25 {
         let mut block = make_block(2);
         block.state_root = [0u8; 32];
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         assert!(!actions.iter().any(|a| matches!(
             a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
@@ -23201,7 +23271,7 @@ mod t1_20_batch25 {
         tc.locked_block = Some(block.clone());
         tc.locked_round = Some(0);
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         let voted_some = actions.iter().any(|a| matches!(
             a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })
@@ -23216,7 +23286,7 @@ mod t1_20_batch25 {
         tc.set_trusted_checkpoint(8, [1u8; 32], [0u8; 32]);
         let block = make_block(3);
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         assert!(!actions.iter().any(|a| matches!(
             a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
@@ -23235,7 +23305,7 @@ mod t1_20_batch25 {
         let mut block = make_block(1);
         block.da_certificate = Some(cert_bytes);
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         assert!(!actions.iter().any(|a| matches!(
             a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
@@ -23255,7 +23325,7 @@ mod t1_20_batch25 {
         block.da_row_roots = vec![[0xff; 32]];
         block.da_col_roots = vec![[0xff; 32]];
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         assert!(!actions.iter().any(|a| matches!(
             a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
@@ -23409,7 +23479,7 @@ mod t1_20_batch26 {
         );
         tc.mev_observations.push_back(dummy_mev_obs(0, 0, 100));
         tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block: make_block(1), proposer_id: 1,
+            height: 1, round: 0, block: make_block(1), proposer_id: 1, bls_signature: None,
         });
         assert_eq!(
             tc.mev_missing_refund_violations.get(&1).copied().unwrap_or(0),
@@ -23431,7 +23501,7 @@ mod t1_20_batch26 {
         tc.mev_observations.push_back(dummy_mev_obs(0, 0, 50));
         for _ in 0..5 {
             tc.on_message(ConsensusMessage::Proposal {
-                height: 1, round: 0, block: make_block(1), proposer_id: 1,
+                height: 1, round: 0, block: make_block(1), proposer_id: 1, bls_signature: None,
             });
         }
         assert_eq!(
@@ -23519,7 +23589,7 @@ mod t1_20_batch26 {
         );
         tc.mev_observations.push_back(dummy_mev_obs(0, 0, 100));
         tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block: make_block(1), proposer_id: 1,
+            height: 1, round: 0, block: make_block(1), proposer_id: 1, bls_signature: None,
         });
         assert_eq!(
             tc.mev_missing_refund_violations.get(&1).copied().unwrap_or(0),
@@ -23581,7 +23651,7 @@ mod audit_q3_timestamp_bounds {
         let future_ts = now + 365 * 24 * 3600;
         let block = make_block_with_ts(1, future_ts);
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         // A rejected proposal produces no Prevote action
         assert!(
@@ -23602,7 +23672,7 @@ mod audit_q3_timestamp_bounds {
         // Exactly at the 30-second limit — must be accepted
         let block = make_block_with_ts(1, now + 30);
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         // Should produce actions (not silently dropped by future-ts guard)
         assert!(
@@ -23622,7 +23692,7 @@ mod audit_q3_timestamp_bounds {
             .as_secs();
         let block = make_block_with_ts(1, now + 31);
         let actions = tc.on_message(ConsensusMessage::Proposal {
-            height: 1, round: 0, block, proposer_id: 1,
+            height: 1, round: 0, block, proposer_id: 1, bls_signature: None,
         });
         assert!(
             !has_prevote_action(&actions),
