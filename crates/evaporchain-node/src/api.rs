@@ -2026,8 +2026,26 @@ pub struct PatronageImmuneResp {
 /// credit and pre-funds the covenant. Object gains eviction immunity.
 async fn post_patronage_pledge(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<PatronagePledgeReq>,
 ) -> Json<PatronagePledgeResp> {
+    // R6 (audit 2026-05-15): the request takes `namespace_id_hex`
+    // from the body and `pledge(...)` drains
+    // `state.patronage_pool` via `pool.payout(namespace_id, …)`.
+    // Pre-fix any peer could pledge against any namespace and
+    // drain that namespace's pool credit. Admin-gate it; this is
+    // a placeholder pending the user-level `require_tx_auth`
+    // wiring (patronage is end-user-facing by design; that
+    // refactor is downstream of the operator-multisig contract).
+    if require_admin_auth(&headers).is_err() {
+        return Json(PatronagePledgeResp {
+            status: "error",
+            object_id_hex: req.object_id_hex,
+            pre_funded: 0,
+            expires_epoch: 0,
+            detail: "unauthorized: admin gate required".into(),
+        });
+    }
     let obj_bytes = match hex::decode(&req.object_id_hex) {
         Ok(b) => b,
         Err(_) => {
@@ -2089,8 +2107,21 @@ async fn post_patronage_pledge(
 /// into the global patronage pool credit. Increments patronage_score.
 async fn post_patronage_honour(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<PatronageActionReq>,
 ) -> Json<PatronageHonourResp> {
+    // R6 (audit 2026-05-15): honour releases one epoch's donation
+    // from a covenant any peer could otherwise drive forward on
+    // behalf of the actual object owner. Admin-gate; see
+    // `post_patronage_pledge` for context.
+    if require_admin_auth(&headers).is_err() {
+        return Json(PatronageHonourResp {
+            status: "error",
+            donated: 0,
+            patronage_score: 0,
+            detail: "unauthorized: admin gate required".into(),
+        });
+    }
     let obj_bytes = match hex::decode(&req.object_id_hex) {
         Ok(b) => b,
         Err(_) => {
@@ -2132,8 +2163,17 @@ async fn post_patronage_honour(
 /// pre-funded surplus back to the namespace pool credit.
 async fn post_patronage_revoke(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<PatronageActionReq>,
 ) -> Json<serde_json::Value> {
+    // R6 (audit 2026-05-15): revoke terminates a covenant any peer
+    // could otherwise destroy on behalf of the actual object
+    // owner, also refunding `pre_funded` surplus back to the
+    // namespace pool credit (asymmetric impact). Admin-gate; see
+    // `post_patronage_pledge` for context.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     let obj_bytes = match hex::decode(&req.object_id_hex) {
         Ok(b) => b,
         Err(_) => {
