@@ -250,6 +250,10 @@ const MAX_PLAINTEXT_PENDING: usize = 10_000;
 pub struct EncryptedMempool {
     /// Encrypted transactions waiting for reveal.
     pending_encrypted: Vec<EncryptedTransaction>,
+    /// O(1) commitment-dedup index (PRIV-N6).
+    seen_commitments: std::collections::HashSet<[u8; 32]>,
+    /// O(1) admission-id-dedup index (PRIV-N5).
+    seen_admission_ids: std::collections::HashSet<[u8; 32]>,
     /// Standard plaintext transactions.
     pending_plaintext: Vec<Transaction>,
     /// Number of epochs between commit and reveal.
@@ -261,6 +265,8 @@ impl EncryptedMempool {
     pub fn new(reveal_delay: u64) -> Self {
         Self {
             pending_encrypted: Vec::new(),
+            seen_commitments: std::collections::HashSet::new(),
+            seen_admission_ids: std::collections::HashSet::new(),
             pending_plaintext: Vec::new(),
             reveal_delay,
         }
@@ -294,24 +300,21 @@ impl EncryptedMempool {
     /// sync — not worth the complexity for the current envelope
     /// shape.
     pub fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) -> bool {
+        // Cap check first (cheapest).
         if self.pending_encrypted.len() >= MAX_ENCRYPTED_PENDING {
             return false;
         }
-        if self
-            .pending_encrypted
-            .iter()
-            .any(|e| e.commitment == encrypted_tx.commitment)
-        {
+        // O(1) commitment dedup (PRIV-N6).
+        if self.seen_commitments.contains(&encrypted_tx.commitment) {
             return false;
         }
+        // O(1) admission-id dedup (PRIV-N5).
         let incoming_admission_id = encrypted_tx.derived_admission_id();
-        if self
-            .pending_encrypted
-            .iter()
-            .any(|e| e.derived_admission_id() == incoming_admission_id)
-        {
+        if self.seen_admission_ids.contains(&incoming_admission_id) {
             return false;
         }
+        self.seen_commitments.insert(encrypted_tx.commitment);
+        self.seen_admission_ids.insert(incoming_admission_id);
         self.pending_encrypted.push(encrypted_tx);
         true
     }
@@ -408,6 +411,9 @@ impl EncryptedMempool {
                 remaining.push(enc);
             }
         }
+        // Rebuild the O(1) dedup indices to match the surviving pool.
+        self.seen_commitments = remaining.iter().map(|e| e.commitment).collect();
+        self.seen_admission_ids = remaining.iter().map(|e| e.derived_admission_id()).collect();
         self.pending_encrypted = remaining;
 
         // Drain plaintext pool too
