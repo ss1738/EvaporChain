@@ -4,6 +4,19 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 34) — MCP + Bridge + Oracle sweep: MCP-AUTH-001 HIGH closed
+
+**Focus:** MCP server 26-tool surface, ETH bridge Solidity + Rust, BFT oracle — security sweep
+**Commits shipped:** 1 (`b2123dc6`)
+**Deliverables:**
+- MCP-AUTH-001 (HIGH) CLOSED: startup probe fires POST /api/faucet without auth token; warns loudly if node returns non-401, catching the misconfiguration where token is set on MCP side but not enforced on node side. 74 MCP tests pass.
+- MCP-INJECT (MEDIUM) ACKNOWLEDGED: blockchain JSON embedded in AI context is JSON-structurally safe; semantic prompt injection requires compromised local node. Acceptable trust boundary.
+- ETH bridge: ALL CLEAN/FALSE POSITIVE — agent's "CRITICAL replay" is not exploitable because L1 storage reverts atomically (fired/headers/acceptedAt all revert together) + 12-block gate + BFT quorum. CEI order correct. MMR bagging matches producer.
+- Oracle: ALL CLEAN — TWAP has ≥3 entry guard, median is always the primary value, BLS sigs + quorum + outlier rejection all enforced.
+**Empirical results:** `cargo test -p evaporchain-mcp` — 74 passed, 0 failed
+**What's next:** All major code surfaces audited (A-Z, contracts, auth, proving, bridge, oracle, MCP). Consider sharding cross-shard message replay or paymaster edge cases as final sweep.
+**Cross-references:** AUDIT_2026_05_11.md (MCP+Bridge+Oracle addendum), commit `b2123dc6`
+
 ## 2026-05-15 (session 33) — Contract rule engine + API auth sweep: C-RULE-001 + C-AUTH-001 MEDIUM closed
 
 **Focus:** Contract rule engine DoS (unbounded rule iteration) + session token timing oracle in node API auth
