@@ -270,6 +270,10 @@ impl Lexer {
 
     fn read_string(&mut self) -> Result<String, ScriptError> {
         // Opening quote already consumed
+        // Audit O2 (2026-05-15): cap string literal length.  The 1M-token limit
+        // does not bound a single token's size; an adversarial contract with a
+        // multi-MiB string literal allocates unbounded memory during tokenisation.
+        const MAX_STRING_LITERAL: usize = 65_536; // 64 KiB per literal
         let mut s = String::new();
         loop {
             match self.advance() {
@@ -287,7 +291,18 @@ impl Lexer {
                         })
                     }
                 },
-                Some(c) => s.push(c),
+                Some(c) => {
+                    if s.len() >= MAX_STRING_LITERAL {
+                        return Err(ScriptError::Parse {
+                            line: self.line,
+                            message: format!(
+                                "string literal too large: {} bytes (max {MAX_STRING_LITERAL})",
+                                s.len()
+                            ),
+                        });
+                    }
+                    s.push(c);
+                }
                 None => {
                     return Err(ScriptError::Parse {
                         line: self.line,

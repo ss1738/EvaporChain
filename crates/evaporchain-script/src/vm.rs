@@ -171,7 +171,13 @@ impl EvaporVM {
     }
 
     fn charge_gas(&mut self, cost: u64) -> Result<(), ScriptError> {
-        self.gas_used += cost;
+        // Audit G1 (2026-05-15): use checked_add to prevent overflow wrap-around.
+        // Without this, gas_used near u64::MAX + a large cost wraps to near-zero,
+        // allowing unbounded execution past the gas limit.
+        self.gas_used = self.gas_used.checked_add(cost).ok_or(ScriptError::GasLimitExceeded {
+            used: u64::MAX,
+            limit: self.gas_limit,
+        })?;
         if self.gas_used > self.gas_limit {
             return Err(ScriptError::GasLimitExceeded {
                 used: self.gas_used,
@@ -224,7 +230,14 @@ impl EvaporVM {
             }
 
             // Hard step limit: prevents infinite loops independent of gas accounting.
-            self.step_count += 1;
+            // Audit G2 (2026-05-15): checked_add prevents overflow wrap-around that
+            // would reset step_count to near-zero and bypass the instruction limit.
+            self.step_count = self.step_count.checked_add(1).ok_or(
+                ScriptError::StepLimitExceeded {
+                    steps: u64::MAX,
+                    limit: MAX_STEPS,
+                }
+            )?;
             if self.step_count > MAX_STEPS {
                 return Err(ScriptError::StepLimitExceeded {
                     steps: self.step_count,
@@ -868,7 +881,22 @@ impl EvaporVM {
                             ctx.call_depth + 1,
                             gas_remaining,
                         )?;
-                        self.gas_used += gas_used;
+                        // Audit G3 (2026-05-15): checked_add + re-check after
+                        // external call returns its gas consumption.  Without this, a
+                        // callee returning a large gas_used can wrap the caller's
+                        // gas_used to near-zero, bypassing the gas limit.
+                        self.gas_used = self.gas_used.checked_add(gas_used).ok_or(
+                            ScriptError::GasLimitExceeded {
+                                used: u64::MAX,
+                                limit: self.gas_limit,
+                            }
+                        )?;
+                        if self.gas_used > self.gas_limit {
+                            return Err(ScriptError::GasLimitExceeded {
+                                used: self.gas_used,
+                                limit: self.gas_limit,
+                            });
+                        }
                         self.structured_events.extend(events);
                         self.push(return_val)?;
                     } else {

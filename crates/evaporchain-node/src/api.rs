@@ -4009,8 +4009,27 @@ async fn post_sentinel_seed_votes(
 
 async fn post_sentinel_register_param(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<SentinelRegisterParamReq>,
 ) -> Json<HbctActionResp> {
+    // R9 (audit 2026-05-15): commit `d8e81d29` titled
+    // "audit R5: add admin auth gate to sentinel register_param
+    // and vote endpoints" actually only contained R1
+    // (parse_hex32 length-cap) changes per its diff. Both
+    // sentinel endpoints stayed unauthenticated. Same regression
+    // class as R2 / E1 — commit title claims one thing, actual
+    // diff does another.
+    //
+    // E4 (CRITICAL) intent: governance parameter registration must
+    // be operator-only. Pre-fix any peer could inject arbitrary
+    // parameter_ids with unbounded min/max/current values into
+    // the chain's Sentinel registry.
+    if require_admin_auth(&headers).is_err() {
+        return Json(HbctActionResp {
+            status: "error",
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let p = match evaporchain_sentinel::BoundedParameter::new(
         req.parameter_id,
         req.current,
@@ -4035,8 +4054,22 @@ async fn post_sentinel_register_param(
 
 async fn post_sentinel_vote(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<SentinelVoteReq>,
 ) -> Json<HbctActionResp> {
+    // R9 (audit 2026-05-15): same regression as
+    // `post_sentinel_register_param` — the R5 commit never
+    // actually patched this endpoint. E4 (CRITICAL) intent:
+    // pre-fix any peer could impersonate any validator_id and
+    // cast votes, overwriting legitimate validator signals for
+    // parameter adjustment (the chain's Sentinel registry has
+    // one-vote-per-validator replace logic).
+    if require_admin_auth(&headers).is_err() {
+        return Json(HbctActionResp {
+            status: "error",
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let mut db = safe_lock(&state.db);
     if db.get_sentinel_param(req.parameter_id).is_none() {
         return Json(HbctActionResp {
