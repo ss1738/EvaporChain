@@ -4661,8 +4661,29 @@ pub struct MevDisputeResp {
 /// dispute MUST coordinate via governance multisig today.
 async fn post_mev_dispute(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(q): Json<MevDisputeQuery>,
 ) -> Json<MevDisputeResp> {
+    // R5 (audit 2026-05-15): the handler's own doc declares
+    // "Operators who need cluster-level dispute MUST coordinate via
+    // governance multisig today" — meaning the endpoint is
+    // operator-only by design. Pre-fix it had no auth check, so any
+    // internet peer could call `tc.dispute_observation` on any
+    // validator and prevent that validator from emitting refund Txs
+    // for a flagged MEV observation. Each validator runs an
+    // independent suppression list; an attacker can hit them in
+    // parallel and chain-wide-suppress refund flow despite the
+    // documented operator-coordination requirement.
+    //
+    // Admin-gate it so the multisig-coordination model the doc
+    // promises actually holds. Refund-emission behaviour is
+    // unchanged for the authorised path.
+    if require_admin_auth(&headers).is_err() {
+        return Json(MevDisputeResp {
+            status: "error",
+            detail: "unauthorized: admin gate required".into(),
+        });
+    }
     let tc_arc = match state.tendermint.as_ref() {
         Some(tc) => tc.clone(),
         None => {
