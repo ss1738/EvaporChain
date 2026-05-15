@@ -4,6 +4,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 20) — Audit N4 (CRITICAL) + N6 (HIGH) closed; network protocol sweep
+
+**Focus:** N-class network protocol security — P2P validation, DA cert binding, mDNS auth
+**Commits shipped:** 2 (`2a3997a8`, `0317a855`)
+**Deliverables:**
+- N4 CLOSED (CRITICAL): `verify_da_certificate` checked BLS sigs + supermajority but never checked `cert.block_number` against the block being verified; an attacker could reuse a valid DA cert from block X to falsely certify data availability for block X+N, or replay an expired cert indefinitely. Fix: reject `cert.block_number > block.number` (future-cert attack) and `cert.block_number < block.number - 12` (stale cert). Note: cert is for a *past* block attached to current proposal — cert.block_number may equal block.number (same-block cert) in early chain scenarios
+- N6 CLOSED (HIGH, low exposure): mDNS discovery called `add_explicit_peer` before `ConnectionEstablished` auth check; LAN peer could pollute gossipsub routing table in the auth gap. Fix: `peer_authority.is_authorized` check before `add_explicit_peer`. mDNS is disabled by default
+- N1 (gossip type confusion): PASS — topic-hash dispatch is strict; mistyped message fails deserialization and peer is banned
+- N2 (sybil score reset): PASS — reconnect gives 0 score, not positive; useful-work actions (valid blocks) are the only score source
+- N3 (ban evasion): PASS — bans are IP-keyed, not PeerId-keyed
+- N5 (block sync OOM): PASS — `MAX_SYNC_BATCH=100` enforced on both serving and receiving side
+**Empirical results:** 942/942 consensus + 102/102 network tests pass
+**Decisions made:** N4 allows cert.block_number == block.number (valid for genesis / same-block certs); future-cert check is `>` not `>=`
+**What's next:** O-class sweep (oracle / external data feed security — price manipulation, feed staleness, oracle key compromise)
+**Blockers / open questions:** Mini 1 had a Cargo.toml merge conflict from nova-bridge vs eth-bridge; resolved by keeping both entries
+**Cross-references:** `AUDIT_2026_05_11.md` — N4, N6 rows; commits `2a3997a8`, `0317a855`
+
+---
+
 ## 2026-05-15 (session 19) — Audit M1 closed; memory/resource sweep
 
 **Focus:** M-class memory/resource management — unbounded allocations, recursive stack, long-lived leaks
