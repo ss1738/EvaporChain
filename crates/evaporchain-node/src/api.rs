@@ -2391,8 +2391,17 @@ pub struct AttractorReq {
 /// authoritative fork-choice between MCC and Singh-Attractor.
 async fn post_governance_fork_choice_mode(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<ForkChoiceAmendReq>,
 ) -> Json<serde_json::Value> {
+    // R2 (audit 2026-05-15): E1 (CRITICAL) closure resurrection — see
+    // `post_governance_param` for context. Switching the
+    // authoritative fork-choice (`MccForkChoice` ↔
+    // `SinghAttractorForkChoice`) without operator approval flips
+    // the chain's branch-selection rule mid-block.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     let attractors: Vec<evaporchain_singh_attractor::Attractor> = req
         .attractors
         .unwrap_or_default()
@@ -2563,8 +2572,17 @@ struct CartelAlarmRunReq {
 
 async fn post_cartel_alarm_run_gate(
     State(_state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<CartelAlarmRunReq>,
 ) -> Json<serde_json::Value> {
+    // R2 (audit 2026-05-15): E2 (HIGH) closure resurrection — see
+    // `post_governance_param` for context. The Bell-CHSH gate is
+    // CPU-expensive (synthesizes cartel samples + Pearson χ² +
+    // compute_chsh_s); without auth a single attacker can flood
+    // requests and saturate the validator's executor thread.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     use evaporchain_causal_chsh::{
         chsh::compute_chsh_s,
         extract_chsh_samples,
@@ -2640,8 +2658,22 @@ async fn post_cartel_alarm_run_gate(
 
 async fn post_governance_param(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<GovernanceParamReq>,
 ) -> Json<serde_json::Value> {
+    // R2 (audit 2026-05-15): E1 (CRITICAL) closure resurrection.
+    // The original E1 commit (`284f3fe4`) only patched
+    // `post_sentinel_tick`; the governance / cartel-alarm / HBCT
+    // handlers that the same commit message claimed to gate were
+    // never actually touched. Without this check, any internet
+    // user could POST `/api/governance/param` to flip
+    // `conservation_enforcement`, `block_source_mode`,
+    // `parent_acceptance_mode`, `lambda_fold_mode`, etc.
+    // mid-consensus — i.e., flip authoritative chain semantics
+    // without operator approval.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     if let Some(tc_arc) = &state.tendermint {
         let mut tc = safe_lock(tc_arc);
         match tc.governance_set_param(&req.key, &req.value) {
@@ -3404,8 +3436,19 @@ async fn post_hbct_seed_demo(
 
 async fn post_hbct_mint(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<HbctMintReq>,
 ) -> Json<HbctActionResp> {
+    // R2 (audit 2026-05-15): E3 (CRITICAL) closure resurrection — see
+    // `post_governance_param`. HBCT mint creates new capacity tokens
+    // with no on-chain debit; without auth, any internet user could
+    // mint unlimited HBCT and break the chain's economic invariant.
+    if require_admin_auth(&headers).is_err() {
+        return Json(HbctActionResp {
+            status: "error",
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let holder = match parse_hex32(&req.holder_hex) {
         Ok(a) => a,
         Err(e) => {
@@ -3445,8 +3488,16 @@ async fn post_hbct_mint(
 
 async fn post_hbct_transfer(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<HbctTransferReq>,
 ) -> Json<HbctActionResp> {
+    // R2 (audit 2026-05-15): E3 (CRITICAL) — see `post_hbct_mint`.
+    if require_admin_auth(&headers).is_err() {
+        return Json(HbctActionResp {
+            status: "error",
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let from = match parse_hex32(&req.from_hex) {
         Ok(a) => a,
         Err(e) => {
@@ -3486,8 +3537,16 @@ async fn post_hbct_transfer(
 
 async fn post_hbct_burn(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<HbctBurnReq>,
 ) -> Json<HbctActionResp> {
+    // R2 (audit 2026-05-15): E3 (CRITICAL) — see `post_hbct_mint`.
+    if require_admin_auth(&headers).is_err() {
+        return Json(HbctActionResp {
+            status: "error",
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let holder = match parse_hex32(&req.holder_hex) {
         Ok(a) => a,
         Err(e) => {
@@ -8813,8 +8872,20 @@ async fn get_sentinel_all(State(state): State<Arc<ApiState>>) -> Json<Vec<Sentin
 
 async fn post_hbct_settle(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<HbctBalanceQuery>,
 ) -> Json<HbctSettleResp> {
+    // R2 (audit 2026-05-15): E3 (CRITICAL) — see `post_hbct_mint`.
+    // Settlement burns capacity tokens; without auth, an attacker
+    // can force-settle any holder's position.
+    if require_admin_auth(&headers).is_err() {
+        return Json(HbctSettleResp {
+            status: "error",
+            settled_mwh: 0,
+            burnt_excess: 0,
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let holder = match parse_hex32(&req.holder_hex) {
         Ok(a) => a,
         Err(e) => {
