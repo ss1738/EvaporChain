@@ -1821,7 +1821,18 @@ impl P2pNetworkService {
                                 }
                                 let from = request.from_height;
                                 if request.from_height > request.to_height {
-                                    warn!("Peer {peer} sent invalid sync range: {}..{}", request.from_height, request.to_height);
+                                    // N2 (audit 2026-05-15): record a peer
+                                    // violation for malformed sync range.
+                                    // Every other malformed-request handler in
+                                    // this loop (gossipsub deserialize failure,
+                                    // shard-sample over cap, malformed sync
+                                    // response, oversized gossip) does this;
+                                    // the BlockSync request handler was the
+                                    // lone exception, so a peer could flood
+                                    // invalid-range requests indefinitely
+                                    // without ever crossing BAN_THRESHOLD.
+                                    warn!("Peer {peer} sent invalid sync range: {}..{} — recording violation", request.from_height, request.to_height);
+                                    ban_list.record_violation(peer);
                                     continue;
                                 }
                                 let to = request.to_height.min(from + MAX_SYNC_BATCH);

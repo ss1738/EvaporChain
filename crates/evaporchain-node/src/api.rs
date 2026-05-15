@@ -920,6 +920,12 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
             "type": "claim_delegation",
             "validator_id": t.validator_id,
         }),
+        Transaction::DeployTemplate(t) => serde_json::json!({
+            "type": "deploy_template",
+            "deployer": format!("0x{}", hex::encode(&t.deployer[..4])),
+            "template_class": t.template_class,
+            "nonce": t.nonce,
+        }),
         Transaction::Refund(t) => serde_json::json!({
             "type": "refund",
             "source_block_height": t.source_block_height,
@@ -1552,6 +1558,10 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::ClaimDelegation(c) => {
             c.signature = Some(sig);
             c.public_key = Some(pk);
+        }
+        Transaction::DeployTemplate(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
         }
         // Refund is protocol-issued; signing is a no-op.
         Transaction::Refund(_) => {}
@@ -12831,12 +12841,23 @@ async fn get_oracle_feed(
         let value = bridge.get_value(&key);
         let twap = bridge.get_twap(&key);
         let proof = bridge.generate_proof(&key);
+        // Audit O1 (2026-05-15): include last_updated + age_secs so callers can
+        // detect stale data. Previously the response had no timestamp, making it
+        // impossible for clients to know whether the price was fresh or hours old.
+        let last_updated = bridge.get_last_updated(&key);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let age_secs = last_updated.map(|t| now.saturating_sub(t));
         Json(serde_json::json!({
             "key": key,
             "value": value,
             "twap": twap,
             "has_proof": proof.is_some(),
             "proof_hash": proof.map(|p| hex::encode(p.proof_hash)),
+            "last_updated": last_updated,
+            "age_secs": age_secs,
         }))
     } else {
         Json(serde_json::json!({ "error": "oracle not active" }))
@@ -18888,6 +18909,7 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::Undelegate(_) => 40_000,
         Transaction::RotateValidatorKey(_) => 80_000,
         Transaction::ClaimDelegation(_) => 30_000,
+        Transaction::DeployTemplate(_) => 200_000,
         Transaction::Refund(_) => 5_000,
     }
 }
@@ -19343,6 +19365,22 @@ pub fn tx_records_from_block_with_outcomes(
                     status: status.clone(),
                     error: error.clone(),
                 },
+                Transaction::DeployTemplate(tx) => TxRecord {
+                    hash,
+                    tx_type: "deploy_template".to_string(),
+                    from: account_full(&tx.deployer),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: Some(format!("class=0x{:08x}", tx.template_class)),
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: status.clone(),
+                    error: error.clone(),
+                },
                 Transaction::Refund(tx) => TxRecord {
                     hash,
                     tx_type: "refund".to_string(),
@@ -19701,7 +19739,12 @@ mod faucet_rate_limit_tests {
     use axum::http::HeaderMap;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::Mutex;
     use std::time::Instant;
+
+    // Serialises tests that read/write EVAPORCHAIN_TRUSTED_PROXY_DEPTH so
+    // parallel test threads don't race on the process-wide env var.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     const TEST_CAP: usize = 100_000;
 
@@ -19848,7 +19891,7 @@ mod faucet_rate_limit_tests {
     /// spoofing. The direct TCP peer is the only trusted source.
     #[test]
     fn client_ip_ignores_x_forwarded_for_by_default() {
-        // Make sure no test elsewhere has set the env var.
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
         let mut h = HeaderMap::new();
         h.insert(
@@ -19865,6 +19908,7 @@ mod faucet_rate_limit_tests {
     /// No `X-Forwarded-For` → fall through to `ConnectInfo`.
     #[test]
     fn client_ip_falls_back_to_connect_info() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
         let h = HeaderMap::new();
         let direct = SocketAddr::new(ip(10, 0, 0, 9), 4444);
@@ -19876,6 +19920,7 @@ mod faucet_rate_limit_tests {
     /// fallback constant rather than a panic.
     #[test]
     fn client_ip_unresolved_falls_back_to_unspecified() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
         let h = HeaderMap::new();
         let resolved = client_ip_from(&h, None);
@@ -19888,6 +19933,7 @@ mod faucet_rate_limit_tests {
     /// ignored.
     #[test]
     fn client_ip_with_depth_one_uses_rightmost_entry() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH", "1");
         let mut h = HeaderMap::new();
         // Attacker prefixes "9.9.9.9, " in front; the operator's proxy

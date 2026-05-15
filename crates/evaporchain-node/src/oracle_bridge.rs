@@ -141,6 +141,12 @@ impl OracleBridge {
         self.state.get_twap(key)
     }
 
+    /// Audit O1 (2026-05-15): expose last_updated so the API can include
+    /// age metadata in responses, letting callers detect stale data.
+    pub fn get_last_updated(&self, key: &str) -> Option<u64> {
+        self.state.get(key).map(|e| e.last_updated)
+    }
+
     pub fn generate_proof(&self, key: &str) -> Option<OracleInclusionProof> {
         OracleInclusionProof::generate(&self.state, key)
     }
