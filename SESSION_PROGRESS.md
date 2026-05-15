@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 24) — Audit R5 (CRITICAL) closed; R-class sweep complete
+
+**Focus:** R-class — RPC/API surface, deserialization security, JSON parsing, HTTP hardening
+**Commits shipped:** 1 (`d8e81d29`)
+**Deliverables:**
+- R5 CLOSED (CRITICAL): `POST /api/sentinel/register_param` and `POST /api/sentinel/vote` had no auth despite identical sibling endpoints (tick, seed_demo) having `require_admin_auth`. Unauthenticated callers could inject arbitrary governance parameters or impersonate validators to cast sentinel votes. Both handlers now gate with `require_admin_auth`. 241 node tests pass.
+- R1 (unbounded deserialization): CLEAN — 2MB HTTP body limit + 4MB gossip pre-check before serde
+- R2 (JSON number overflow): CLEAN — standard serde handles overflow gracefully
+- R3 (recursive JSON): CLEAN — typed struct deserialization only, no freeform `Value` from user input
+- R4 (path injection): CLEAN — path params validated via typed hex parse before any DB/file access
+- R6 (CORS): CLEAN — explicit allow-list, wildcard `*` actively refused at startup
+- R7 (WebSocket DoS): CLEAN — 4096 subscriber cap enforced in `ws.rs`
+**What's next:** S-class sweep (state/storage security, RocksDB integrity)
+**Blockers / open questions:** None
+**Cross-references:** `AUDIT_2026_05_11.md` rows R5, R1/2/3/4/6/7
+
 ## 2026-05-15 (session 23) — Audit Q3 (CRITICAL) closed; Q-class sweep complete
 
 **Focus:** Q-class — block production ordering, proposer selection, epoch transitions, timing attacks
