@@ -5047,12 +5047,23 @@ impl TendermintConsensus {
 
                 // Audit U3 (2026-05-15): reject proposals whose protocol_version
                 // is below the minimum this binary supports.  Without this check a
-                // malicious proposer can submit version-0 blocks to bypass all
+                // malicious proposer can submit a stale version block to bypass all
                 // version-gated logic (new opcodes, governance flags, etc.).
-                // MIN_SUPPORTED = 0 today; bump when a mandatory hard-fork ships.
+                //
+                // DRIFT-N4 (audit 2026-05-15): `block.protocol_version` is `u8`
+                // and `MIN_SUPPORTED_PROTOCOL_VERSION` is currently `0`, so the
+                // strict `<` comparison is a no-op (always false for an
+                // unsigned type vs. `0`).  Keeping the structure here means a
+                // future hard-fork only needs to bump the constant — no new
+                // code path to wire up — but the comparison is intentionally
+                // dead until that bump happens.  Use `#[allow(...)]` to
+                // silence the clippy/rustc `unused_comparisons` lint without
+                // hiding the intent.
                 {
                     const MIN_SUPPORTED_PROTOCOL_VERSION: u8 = 0;
-                    if block.protocol_version < MIN_SUPPORTED_PROTOCOL_VERSION {
+                    #[allow(unused_comparisons)]
+                    let below_min = block.protocol_version < MIN_SUPPORTED_PROTOCOL_VERSION;
+                    if below_min {
                         warn!(
                             height = height,
                             round = round,
