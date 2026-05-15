@@ -3814,8 +3814,24 @@ pub struct HbctSettleResp {
 /// notification, OR replaces the trait impl wholesale.
 async fn post_hbct_seed_attestation(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<HbctSeedAttestationReq>,
 ) -> Json<HbctActionResp> {
+    // R10 (audit 2026-05-15): R2 admin-gated the four HBCT
+    // mint/transfer/burn/settle handlers, but the oracle that
+    // SETTLEMENT READS from was left unprotected. Pre-fix any
+    // peer could `push` an `OracleAttestation` with
+    // attacker-controlled `delivery_location`, `hour_slot`,
+    // `holder`, `mwh_delivered`, `attested_at_epoch` —
+    // poisoning the oracle so any holder appears to have
+    // delivered any MWh in any location/slot. Settle then reads
+    // those fabricated attestations as truth. Admin-only.
+    if require_admin_auth(&headers).is_err() {
+        return Json(HbctActionResp {
+            status: "error",
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let holder = match parse_hex32(&req.holder_hex) {
         Ok(a) => a,
         Err(e) => {
