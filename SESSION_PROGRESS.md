@@ -4,6 +4,23 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 25) — S-class audit sweep: all clean
+
+**Focus:** State/storage security — RocksDB integrity, WAL crash recovery, snapshot poisoning, ghost growth, concurrent access, write batch atomicity
+**Commits shipped:** 0 (no code changes needed)
+**Deliverables:**
+- S1 (storage key collision): CLEAN — separate RocksDB column families + content-addressed trie keys (BLAKE3 with domain prefix)
+- S2 (snapshot poisoning): CLEAN — quorum-cert (2f+1 BLS aggregate) + body-hash + post-apply state-root dual verification; rollback on mismatch
+- S3 (WAL replay ordering): CLEAN — RocksDB native WriteBatch WAL provides crash atomicity; evaporchain custom WAL module exists but is not wired (unnecessary layer, not a gap)
+- S4 (unbounded ghost growth): CLEAN — `prune_before_height(epoch-1000)` called at main.rs:5090,6365 on every block epoch > 1000
+- S5 (state root commitment timing): CLEAN — `save_full_block` (block+cert) before `commit_batch` (state); C3 audit fix confirmed in place
+- S6 (concurrent state access): CLEAN — Block-STM MVCC + OCC conflict detection; no race conditions possible
+- S7 (write batch atomicity): CLEAN — all multi-key state mutations inside single `WriteBatch`; RocksDB WAL handles crash atomicity
+**Decisions made:** Evaporchain custom WAL module is unwired dead code — RocksDB provides the same guarantee natively; not worth wiring
+**What's next:** T-class sweep (cryptographic primitive security — key generation, signature aggregation, VRF)
+**Blockers / open questions:** None
+**Cross-references:** `AUDIT_2026_05_11.md` row S1..S7
+
 ## 2026-05-15 (session 24) — Audit R5 (CRITICAL) closed; R-class sweep complete
 
 **Focus:** R-class — RPC/API surface, deserialization security, JSON parsing, HTTP hardening
