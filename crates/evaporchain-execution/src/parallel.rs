@@ -4904,4 +4904,269 @@ mod tests {
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_failed, 1, "invalid DeployScript source must fail");
     }
+
+    // ─── T1.20 Batch 1: coverage push for parallel.rs ──────────────────
+    //
+    // Targets the largest uncovered chunks reported by `cargo llvm-cov`:
+    //   L294-547 — OverlayStateDB::StateDB trait stubs (~250 LOC)
+    //   L854-955 — ParallelExecutor::new_with_sig_verification_for_test
+    //              + new_with_sig_verification + new_production (~100 LOC)
+    //   L645-676 — ParallelExecutor::new + tick_lyapunov_fee_state (~30 LOC)
+    //   L721-743 — apply_proposer_priority_bonus (None-accumulator
+    //              branch) (~20 LOC)
+    //   L302-313 — empty_verkle_proof helper (~10 LOC)
+    //   L2485-2495 — analyze_parallelism (~10 LOC)
+    //
+    // These are unit-shape tests that touch each surface once. They
+    // don't validate business correctness end-to-end (the
+    // `test_*_partition_*` / `test_execute_*` suite above already
+    // covers behaviour) — they pin the existence and basic shape of
+    // each method so future refactors break visibly here.
+
+    /// T1.20 — OverlayStateDB::StateDB trait surface. Touches every
+    /// stub method body so the ~80% of overlay's StateDB impl that
+    /// the partition-execution path never invokes is structurally
+    /// exercised. Pre-fix coverage of these stubs was ~0%.
+    #[test]
+    fn t1_20_overlay_statedb_full_trait_surface() {
+        use evaporchain_state::db::StateDB;
+        let mut overlay = OverlayStateDB::new();
+        let a = addr(1);
+        let o = obj_id(2);
+
+        // Account stubs.
+        assert!(overlay.get_account(&a).is_none());
+        assert!(overlay.get_account_mut(&a).is_none());
+        let acct = Account {
+            address: a,
+            balance: 100,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        };
+        overlay.put_account(acct.clone());
+        assert!(overlay.get_account(&a).is_some());
+        assert_eq!(overlay.delete_account(&a).unwrap().address, a);
+        let _ = overlay.get_or_create_account(&a);
+        assert_eq!(overlay.all_account_addresses().len(), 1);
+
+        // Object stubs.
+        assert!(overlay.get_object(&o).is_none());
+        assert!(overlay.get_object_mut(&o).is_none());
+        // put_object / delete_object are exercised by the populate_from
+        // path in other tests; just confirm shape via the trait.
+        assert!(overlay.delete_object(&o).is_none());
+        assert_eq!(overlay.all_object_ids().len(), 0);
+        assert_eq!(overlay.object_count(), 0);
+
+        // Ghost stubs.
+        assert!(overlay.get_ghost(&o).is_none());
+        assert!(overlay.remove_ghost(&o).is_none());
+        assert_eq!(overlay.all_ghost_ids().len(), 0);
+        assert_eq!(overlay.ghost_count(), 0);
+
+        // Hash / trie / proof stubs — all return constants.
+        assert_eq!(overlay.compute_state_root(), [0u8; 32]);
+        assert_eq!(overlay.prune_before_height(0), 0);
+        assert_eq!(overlay.compress_cold_subtrees(), 0);
+        let _health = overlay.trie_health();
+        let proof = overlay.prove_account(&a);
+        assert_eq!(proof.key, [0u8; 32]);
+        let proof = overlay.prove_object(&o);
+        assert_eq!(proof.depth, 0);
+        let proof = overlay.prove_at_key(&[0u8; 32]);
+        assert_eq!(proof.commitments.len(), 0);
+        assert_eq!(overlay.trie_snapshot().len(), 0);
+        assert!(overlay.load_trie_snapshot(&[]).is_ok());
+
+        // Privacy stubs.
+        overlay.put_note_tree_root([1u8; 32]);
+        assert_eq!(overlay.get_note_tree_root(), [0u8; 32]);
+        assert!(!overlay.spend_nullifier(&[0u8; 32]));
+        assert!(!overlay.is_nullifier_spent(&[0u8; 32]));
+        assert_eq!(overlay.nullifier_count(), 0);
+        assert_eq!(overlay.all_nullifiers().len(), 0);
+        overlay.put_shielded_pool_balance(100);
+        assert_eq!(overlay.get_shielded_pool_balance(), 0);
+        overlay.put_note_count(5);
+        assert_eq!(overlay.get_note_count(), 0);
+        overlay.append_note_commitment(0, [0u8; 32]);
+        assert_eq!(overlay.get_all_note_commitments().len(), 0);
+
+        // Stake / delegation stubs.
+        assert!(overlay.get_stake(0).is_none());
+        assert!(overlay.remove_stake(0).is_none());
+        assert_eq!(overlay.all_stakes().len(), 0);
+        assert!(overlay.get_delegation(&a, 0).is_none());
+        assert!(overlay.remove_delegation(&a, 0).is_none());
+        assert_eq!(overlay.delegations_for_validator(0).len(), 0);
+        assert_eq!(overlay.delegations_for_delegator(&a).len(), 0);
+        assert_eq!(overlay.all_delegations().len(), 0);
+
+        // Governance stubs.
+        assert!(overlay.get_proposal(0).is_none());
+        assert_eq!(overlay.all_proposals().len(), 0);
+        assert!(overlay.get_governance_param("any-key").is_none());
+        overlay.put_governance_param("k".to_string(), "v".to_string());
+
+        // Snapshot stubs.
+        overlay.commit_state_snapshot(0);
+        assert!(overlay.get_account_at_height(&a, 0).is_none());
+        assert!(overlay.get_object_at_height(&o, 0).is_none());
+        assert!(overlay.earliest_snapshot_height().is_none());
+        assert!(overlay.latest_snapshot_height().is_none());
+        overlay.prune_snapshots_before(0);
+    }
+
+    /// T1.20 — populate_from with each AccessKey variant. Pre-fix the
+    /// ContractEngine / ScriptEngine / PrivacyEngine / TemporalEngine
+    /// arms (L291-297) were uncovered because no test passed those
+    /// access keys directly into the populate-from path.
+    #[test]
+    fn t1_20_overlay_populate_from_all_access_keys() {
+        let mut base = InMemoryStateDB::new();
+        fund_account(&mut base, 1, 1000);
+        let mut overlay = OverlayStateDB::new();
+        let keys = vec![
+            AccessKey::Account(addr(1)),
+            AccessKey::Object(obj_id(7)), // not present — exercises None arm
+            AccessKey::ContractEngine,
+            AccessKey::ScriptEngine,
+            AccessKey::PrivacyEngine,
+            AccessKey::TemporalEngine,
+        ];
+        overlay.populate_from(&base, &keys);
+        // Account was pulled in.
+        use evaporchain_state::db::StateDB;
+        assert!(overlay.get_account(&addr(1)).is_some());
+        // Engine keys are no-ops; nothing else lands.
+        assert_eq!(overlay.object_count(), 0);
+        assert_eq!(overlay.ghost_count(), 0);
+    }
+
+    /// T1.20 — ParallelExecutor constructor variants. Pre-fix all
+    /// three sig-verification + production constructors were
+    /// uncovered (~100 LOC of field-by-field struct construction).
+    #[test]
+    fn t1_20_executor_constructors_all_variants() {
+        let _e1 = ParallelExecutor::new(50);
+        let _e2 = ParallelExecutor::new_with_sig_verification(50);
+        let _e3 = ParallelExecutor::new_with_sig_verification_for_test(50);
+        // new_production wants a real PidFeeController.
+        let fc = fees::PidFeeController::default_config();
+        let _e4 = ParallelExecutor::new_production(50, fc, 1_000_000);
+    }
+
+    /// T1.20 — apply_proposer_priority_bonus None-accumulator branch
+    /// (L740-742). Default executor has `reward_accumulator: None`
+    /// so the bonus path returns 0. Pre-fix this arm was uncovered.
+    #[test]
+    fn t1_20_apply_proposer_priority_bonus_none_branch() {
+        let mut ex = ParallelExecutor::new(50);
+        let mut db = InMemoryStateDB::new();
+        let producer = addr(9);
+        let bonus = ex.apply_proposer_priority_bonus(
+            &mut db, &producer, 1, 1_000_000, 1,
+        );
+        assert_eq!(
+            bonus, 0,
+            "no reward accumulator → zero priority bonus credited"
+        );
+    }
+
+    /// T1.20 — empty_verkle_proof helper (L302-313). Internal helper
+    /// that was only invoked via the OverlayStateDB stub paths, so
+    /// removing those calls would have silently dropped its
+    /// coverage; this anchors the helper's existence directly.
+    #[test]
+    fn t1_20_empty_verkle_proof_helper_shape() {
+        let p = empty_verkle_proof();
+        assert_eq!(p.key, [0u8; 32]);
+        assert!(p.value.is_none());
+        assert_eq!(p.depth, 0);
+        assert!(p.commitments.is_empty());
+        assert!(p.path_indices.is_empty());
+        assert!(p.siblings.is_empty());
+        assert!(p.energy_path.is_empty());
+        assert!(!p.hit_compressed);
+    }
+
+    /// T1.20 — analyze_parallelism public helper at L2485. Reports
+    /// `(total_txs, partition_count, parallelism_ratio)` for a tx
+    /// batch. Pre-fix only the empty-batch early-return (L2487) was
+    /// reached.
+    #[test]
+    fn t1_20_analyze_parallelism_basic_shape() {
+        // Empty: early-return at L2487. Tuple is
+        // `(num_partitions, max_partition_size, ratio)`.
+        let (n, m, r) = analyze_parallelism(&[]);
+        assert_eq!((n, m), (0, 0));
+        assert_eq!(r, 0.0);
+
+        // Two independent transfers → 2 partitions of size 1; ratio
+        // = txs/max_size = 2/1 = 2.0 (perfect parallelism).
+        let txs = vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: addr(3),
+                to: addr(4),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            }),
+        ];
+        let (n, m, r) = analyze_parallelism(&txs);
+        assert_eq!(n, 2, "independent transfers → 2 partitions");
+        assert_eq!(m, 1, "each partition holds 1 tx");
+        assert!((r - 2.0).abs() < 0.001, "ratio = 2/1 = 2.0");
+
+        // Two conflicting transfers (share account 2) → 1 partition
+        // of size 2; ratio = 2/2 = 1.0 (no parallelism gain).
+        let txs = vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: addr(2),
+                to: addr(3),
+                amount: 50,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+                mev_refund_eligible: None,
+            }),
+        ];
+        let (n, m, r) = analyze_parallelism(&txs);
+        assert_eq!(n, 1, "conflicting transfers → 1 partition");
+        assert_eq!(m, 2, "the single partition holds both txs");
+        assert!((r - 1.0).abs() < 0.001, "ratio = 2/2 = 1.0");
+    }
+
+    /// T1.20 — tick_lyapunov_fee_state (L685-705). Default executor
+    /// has the genesis Lyapunov state; ticking should advance it
+    /// without erroring on a non-zero gas_used + 1 epoch elapsed.
+    #[test]
+    fn t1_20_tick_lyapunov_fee_state_basic() {
+        let mut ex = ParallelExecutor::new(50);
+        let result = ex.tick_lyapunov_fee_state(1000, 1);
+        assert!(result.is_ok(), "tick should not error on benign inputs");
+    }
 }
