@@ -134,6 +134,15 @@ pub struct EvaporVM {
     /// (e.g. a refresh hook bumping a counter while a callee triggers
     /// another refresh on the same object).
     in_lifecycle_hook: bool,
+    /// SCR-N1 (audit 2026-05-15): contract_id whose bytecode this VM
+    /// is currently executing. Set by the dispatcher
+    /// (`call_with_vm_gas` / `ContractCallRouter::call_external`) so
+    /// `Op::CallExternal` can pass the *calling contract's* identity
+    /// to the callee — not the original EOA. `0` means "top-level
+    /// call from EOA"; the VM then passes `ctx.caller` (the EOA)
+    /// unchanged, which matches the previous behaviour and keeps
+    /// test fixtures backward-compatible.
+    pub(crate) executing_contract_id: u64,
 }
 
 impl EvaporVM {
@@ -149,6 +158,7 @@ impl EvaporVM {
             step_count: 0,
             memory_used: 0,
             in_lifecycle_hook: false,
+            executing_contract_id: 0,
         }
     }
 
@@ -872,11 +882,27 @@ impl EvaporVM {
                     let gas_remaining = self.gas_limit.saturating_sub(self.gas_used);
 
                     if let Some(ext) = external.as_mut() {
+                        // SCR-N1 (audit 2026-05-15): when this VM is
+                        // executing inside a known contract (id != 0),
+                        // the callee's `caller` MUST be this
+                        // contract's identity address — NOT
+                        // `ctx.caller` (which is the original EOA).
+                        // Otherwise any `require(caller == owner)`
+                        // gate on the callee is trivially bypassable
+                        // by any user routing through this contract.
+                        // Top-level / test-fixture path (id = 0)
+                        // preserves the old behaviour for backward
+                        // compatibility.
+                        let nested_caller = if self.executing_contract_id != 0 {
+                            crate::contract_address(self.executing_contract_id)
+                        } else {
+                            ctx.caller
+                        };
                         let (return_val, events, gas_used) = ext.call_external(
                             contract_id,
                             &method,
                             args,
-                            ctx.caller,
+                            nested_caller,
                             ctx.epoch,
                             ctx.call_depth + 1,
                             gas_remaining,
@@ -1178,6 +1204,13 @@ impl EvaporVM {
     }
 
     /// Execute with full options including cross-contract call support.
+    ///
+    /// SCR-N1: callers wanting the cross-contract `caller` identity to
+    /// be propagated correctly should use [`Self::execute_full_with_self`]
+    /// and pass the contract_id this bytecode belongs to. This entry
+    /// point keeps `executing_contract_id = 0` for backward
+    /// compatibility — top-level test fixtures and lifecycle hooks
+    /// continue to pass `ctx.caller` unchanged to nested calls.
     pub fn execute_full(
         bytecode: &EvaporBytecode,
         method: &str,
@@ -1185,9 +1218,29 @@ impl EvaporVM {
         state: HashMap<String, Value>,
         ctx: &ExecutionContext,
         gas_limit: u64,
+        external: Option<&mut dyn ExternalCaller>,
+    ) -> Result<ScriptCallResult, ScriptError> {
+        Self::execute_full_with_self(bytecode, method, args, state, ctx, gas_limit, external, 0)
+    }
+
+    /// SCR-N1 (audit 2026-05-15): identical to [`execute_full`] but
+    /// records `executing_contract_id` on the VM so `Op::CallExternal`
+    /// can pass the *calling contract's* identity to the callee. Used
+    /// by `ScriptEngine::call_with_vm_gas` (top-level dispatch) and
+    /// `ContractCallRouter::call_external` (nested dispatch).
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_full_with_self(
+        bytecode: &EvaporBytecode,
+        method: &str,
+        args: Vec<Value>,
+        state: HashMap<String, Value>,
+        ctx: &ExecutionContext,
+        gas_limit: u64,
         mut external: Option<&mut dyn ExternalCaller>,
+        executing_contract_id: u64,
     ) -> Result<ScriptCallResult, ScriptError> {
         let mut vm = Self::new(state, gas_limit);
+        vm.executing_contract_id = executing_contract_id;
         // M6 (audit 2026-05-02): mark hook entry so `Op::CallExternal`
         // will refuse to dispatch — closes the lifecycle re-entrancy
         // window where `on_grace`/`on_refresh`/`on_evaporate` could
