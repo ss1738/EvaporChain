@@ -524,17 +524,49 @@ impl PrivateTransferWitness {
 
 // ─── Balance Binding Verification ─────────────────────────────────────────
 
-/// Compute a balance binding hash from the given amounts and blinding factors.
-/// `binding = Poseidon(sum_in || sum_out || fee || input_blindings... || output_blindings...)`
+/// PRIV-N4 (audit 2026-05-15): tx-kind discriminant for
+/// `compute_balance_binding`. Without this tag, a binding computed
+/// for an `UnshieldTx{amount=A, change_total=C}` was bit-identical
+/// to a binding for a `PrivateTransferTx{fee=A, sum_out=C}` over
+/// the same blindings — a cross-type replay/grinding surface when
+/// an attacker controls overlapping blinding sets (e.g. self-loop
+/// transfer back to the same address).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BalanceBindingKind {
+    Unshield,
+    PrivateTransfer,
+}
+
+impl BalanceBindingKind {
+    /// Domain-separation bytes prepended to the Poseidon preimage.
+    /// Trailing NUL makes the prefix unambiguous against any free-
+    /// form binding-style hash that might share the same shape.
+    fn dst(self) -> &'static [u8] {
+        match self {
+            BalanceBindingKind::Unshield => b"EVAPORCHAIN_V1_BB_UNSHIELD\0",
+            BalanceBindingKind::PrivateTransfer => b"EVAPORCHAIN_V1_BB_XFER\0",
+        }
+    }
+}
+
+/// Compute a balance binding hash from the given amounts and blinding
+/// factors, tagged with the originating transaction kind.
+///
+/// `binding = Poseidon(KIND_DST || sum_in || sum_out || fee_or_amount
+///                     || input_blindings... || output_blindings...)`
 pub fn compute_balance_binding(
+    kind: BalanceBindingKind,
     sum_in: u64,
     sum_out: u64,
     fee: u64,
     input_blindings: &[[u8; 32]],
     output_blindings: &[[u8; 32]],
 ) -> [u8; 32] {
-    let mut preimage =
-        Vec::with_capacity(24 + 32 * (input_blindings.len() + output_blindings.len()));
+    let dst = kind.dst();
+    let mut preimage = Vec::with_capacity(
+        dst.len() + 24 + 32 * (input_blindings.len() + output_blindings.len()),
+    );
+    preimage.extend_from_slice(dst);
     preimage.extend_from_slice(&sum_in.to_le_bytes());
     preimage.extend_from_slice(&sum_out.to_le_bytes());
     preimage.extend_from_slice(&fee.to_le_bytes());
@@ -547,17 +579,19 @@ pub fn compute_balance_binding(
     poseidon_hash(&preimage)
 }
 
-/// Verify that a balance binding hash matches the claimed amounts and blindings.
-/// Returns `true` if `binding == Poseidon(sum_in || sum_out || fee || all_blindings...)`.
+/// Verify that a balance binding hash matches the claimed kind +
+/// amounts + blindings.
 pub fn verify_balance_binding(
     binding: &[u8; 32],
+    kind: BalanceBindingKind,
     sum_in: u64,
     sum_out: u64,
     fee: u64,
     input_blindings: &[[u8; 32]],
     output_blindings: &[[u8; 32]],
 ) -> bool {
-    let expected = compute_balance_binding(sum_in, sum_out, fee, input_blindings, output_blindings);
+    let expected =
+        compute_balance_binding(kind, sum_in, sum_out, fee, input_blindings, output_blindings);
     *binding == expected
 }
 
@@ -1444,39 +1478,76 @@ mod tests {
     fn test_balance_binding_correct() {
         let ib = [test_blinding(1), test_blinding(2)];
         let ob = [test_blinding(3)];
-        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
-        assert!(verify_balance_binding(&binding, 1000, 900, 100, &ib, &ob));
+        let binding =
+            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
+        assert!(verify_balance_binding(
+            &binding,
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            900,
+            100,
+            &ib,
+            &ob
+        ));
     }
 
     #[test]
     fn test_balance_binding_wrong_fee() {
         let ib = [test_blinding(1)];
         let ob = [test_blinding(2)];
-        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
+        let binding =
+            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
         // Wrong fee
-        assert!(!verify_balance_binding(&binding, 1000, 900, 50, &ib, &ob));
+        assert!(!verify_balance_binding(
+            &binding,
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            900,
+            50,
+            &ib,
+            &ob
+        ));
     }
 
     #[test]
     fn test_balance_binding_wrong_amounts() {
         let ib = [test_blinding(1)];
         let ob = [test_blinding(2)];
-        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
+        let binding =
+            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
         // Wrong sum_in
-        assert!(!verify_balance_binding(&binding, 999, 900, 100, &ib, &ob));
+        assert!(!verify_balance_binding(
+            &binding,
+            BalanceBindingKind::PrivateTransfer,
+            999,
+            900,
+            100,
+            &ib,
+            &ob
+        ));
         // Wrong sum_out
-        assert!(!verify_balance_binding(&binding, 1000, 901, 100, &ib, &ob));
+        assert!(!verify_balance_binding(
+            &binding,
+            BalanceBindingKind::PrivateTransfer,
+            1000,
+            901,
+            100,
+            &ib,
+            &ob
+        ));
     }
 
     #[test]
     fn test_balance_binding_wrong_blindings() {
         let ib = [test_blinding(1)];
         let ob = [test_blinding(2)];
-        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
+        let binding =
+            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
         // Tampered input blinding
         let tampered_ib = [test_blinding(99)];
         assert!(!verify_balance_binding(
             &binding,
+            BalanceBindingKind::PrivateTransfer,
             1000,
             900,
             100,
@@ -1487,6 +1558,7 @@ mod tests {
         let tampered_ob = [test_blinding(99)];
         assert!(!verify_balance_binding(
             &binding,
+            BalanceBindingKind::PrivateTransfer,
             1000,
             900,
             100,
@@ -1499,8 +1571,59 @@ mod tests {
     fn test_balance_binding_deterministic() {
         let ib = [test_blinding(5)];
         let ob = [test_blinding(6), test_blinding(7)];
-        let b1 = compute_balance_binding(500, 400, 100, &ib, &ob);
-        let b2 = compute_balance_binding(500, 400, 100, &ib, &ob);
+        let b1 =
+            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 500, 400, 100, &ib, &ob);
+        let b2 =
+            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 500, 400, 100, &ib, &ob);
         assert_eq!(b1, b2);
+    }
+
+    /// PRIV-N4 (audit 2026-05-15) regression: a binding computed
+    /// for Unshield must NOT verify against the same numeric tuple
+    /// + blindings under the PrivateTransfer kind. Pre-fix, the
+    /// shared Poseidon preimage left these two interchangeable —
+    /// an attacker controlling the blindings could replay a
+    /// PrivateTransfer binding as the Unshield binding for the
+    /// same `(sum_in, change_total/sum_out, fee/amount)` shape.
+    #[test]
+    fn priv_n4_balance_binding_unshield_vs_xfer_distinct() {
+        let ib = [test_blinding(1)];
+        let ob = [test_blinding(2)];
+
+        let b_unshield =
+            compute_balance_binding(BalanceBindingKind::Unshield, 1000, 900, 100, &ib, &ob);
+        let b_xfer =
+            compute_balance_binding(BalanceBindingKind::PrivateTransfer, 1000, 900, 100, &ib, &ob);
+
+        assert_ne!(
+            b_unshield, b_xfer,
+            "PRIV-N4: same tuple under different tx kinds must produce DIFFERENT bindings"
+        );
+
+        // Cross-kind verification must fail in both directions.
+        assert!(
+            !verify_balance_binding(
+                &b_unshield,
+                BalanceBindingKind::PrivateTransfer,
+                1000,
+                900,
+                100,
+                &ib,
+                &ob
+            ),
+            "PRIV-N4: Unshield binding must not verify as PrivateTransfer"
+        );
+        assert!(
+            !verify_balance_binding(
+                &b_xfer,
+                BalanceBindingKind::Unshield,
+                1000,
+                900,
+                100,
+                &ib,
+                &ob
+            ),
+            "PRIV-N4: PrivateTransfer binding must not verify as Unshield"
+        );
     }
 }
