@@ -5590,7 +5590,33 @@ pub struct DemoResetResp {
 /// parameter, and every recorded Sentinel vote slate. Does NOT touch
 /// chain state (accounts, stake, blocks, eulogy trie, mortis monitor) —
 /// those are real chain history and not safe to wipe via API.
-async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetResp> {
+async fn post_demo_reset(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Json<DemoResetResp> {
+    // R3 (audit 2026-05-15): the dashboard-demo-reset endpoint
+    // wipes `state.hbct_book.entries` (capacity tokens) AND every
+    // `db.put_sentinel_votes(p.id, Vec::new())` for every Sentinel
+    // parameter. The doc claims "demo-mutable state" but the route
+    // is exposed unconditionally on every node, so on a live
+    // validator any internet-reachable peer can erase the
+    // capacity-token book and Sentinel vote slate. Chain state
+    // (accounts, stake, blocks) is intentionally untouched, but
+    // HBCT + Sentinel are real state with real economic and
+    // governance significance.
+    //
+    // Mirrors the pattern E5 (`7ef31cee`) applied to the four
+    // seed/tick admin endpoints. EVAPORCHAIN_ADMIN_KEY env var
+    // must be set; unset key fails closed with 503 via C1.
+    if require_admin_auth(&headers).is_err() {
+        return Json(DemoResetResp {
+            status: "error",
+            cleared_hbct_entries: 0,
+            cleared_sentinel_params: 0,
+            cleared_sentinel_votes: 0,
+            detail: "unauthorized: admin gate required".to_string(),
+        });
+    }
     let cleared_hbct_entries = {
         let mut book = safe_lock(&state.hbct_book);
         let n = book.entries.len();
