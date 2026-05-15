@@ -376,13 +376,20 @@ pub async fn login(
                 user: None,
             })
         }
-        Err(e) => {
+        Err(_e) => {
+            // R14 (audit 2026-05-15): do not reflect raw DB error
+            // text to the client — `rusqlite::Error` can include
+            // filesystem paths, schema names, and internal state
+            // useful for fingerprinting / pivoting. Canonicalise
+            // to the same "Invalid email or password" message the
+            // Ok(None) branch returns, matching `login`'s existing
+            // anti-email-enumeration discipline.
             return Json(LoginResp {
                 success: false,
-                message: format!("Error: {e}"),
+                message: "Invalid email or password".into(),
                 token: None,
                 user: None,
-            })
+            });
         }
     };
 
@@ -489,7 +496,8 @@ pub async fn get_me(
     match state.user_db.get_user_by_id(user_id) {
         Ok(Some(user)) => Json(serde_json::json!({"success": true, "user": user})),
         Ok(None) => Json(serde_json::json!({"success": false, "message": "User not found"})),
-        Err(e) => Json(serde_json::json!({"success": false, "message": e})),
+        // R14 (audit 2026-05-15): don't reflect raw DB error to client.
+        Err(_e) => Json(serde_json::json!({"success": false, "message": "Lookup failed. Try again."})),
     }
 }
 
@@ -546,9 +554,10 @@ pub async fn create_wallet(
                 public_key: Some(public_key),
             })
         }
-        Err(e) => Json(WalletResp {
+        // R14 (audit 2026-05-15): don't reflect raw DB error to client.
+        Err(_e) => Json(WalletResp {
             success: false,
-            message: e,
+            message: "Wallet creation failed. Try again.".into(),
             address: None,
             public_key: None,
         }),
@@ -566,7 +575,8 @@ pub async fn list_wallets(
 
     match state.user_db.list_wallets(user_id) {
         Ok(wallets) => Json(serde_json::json!({"success": true, "wallets": wallets})),
-        Err(e) => Json(serde_json::json!({"success": false, "message": e})),
+        // R14 (audit 2026-05-15): don't reflect raw DB error.
+        Err(_e) => Json(serde_json::json!({"success": false, "message": "Wallet list failed. Try again."})),
     }
 }
 
@@ -581,7 +591,8 @@ pub async fn get_activity(
 
     match state.user_db.get_activity(user_id, 50) {
         Ok(entries) => Json(serde_json::json!({"success": true, "activity": entries})),
-        Err(e) => Json(serde_json::json!({"success": false, "message": e})),
+        // R14 (audit 2026-05-15): don't reflect raw DB error.
+        Err(_e) => Json(serde_json::json!({"success": false, "message": "Activity lookup failed. Try again."})),
     }
 }
 
