@@ -5029,6 +5029,25 @@ impl TendermintConsensus {
                     }
                 }
 
+                // Audit U3 (2026-05-15): reject proposals whose protocol_version
+                // is below the minimum this binary supports.  Without this check a
+                // malicious proposer can submit version-0 blocks to bypass all
+                // version-gated logic (new opcodes, governance flags, etc.).
+                // MIN_SUPPORTED = 0 today; bump when a mandatory hard-fork ships.
+                {
+                    const MIN_SUPPORTED_PROTOCOL_VERSION: u8 = 0;
+                    if block.protocol_version < MIN_SUPPORTED_PROTOCOL_VERSION {
+                        warn!(
+                            height = height,
+                            round = round,
+                            block_pv = block.protocol_version,
+                            min = MIN_SUPPORTED_PROTOCOL_VERSION,
+                            "Rejected proposal: protocol_version below minimum supported"
+                        );
+                        return actions;
+                    }
+                }
+
                 let hash = Self::block_hash(&block);
 
                 // ── Equivocation Detection ──

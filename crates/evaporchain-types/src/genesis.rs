@@ -423,7 +423,11 @@ impl GenesisConfig {
             errors.push("must have at least one validator".into());
         }
 
-        // Validators must meet minimum stake
+        // Validators must meet minimum stake; total must not overflow u64.
+        // Audit U7 (2026-05-15): an unchecked sum of individually-valid
+        // stakes can exceed u64::MAX, wrapping the quorum threshold to near
+        // zero and making BFT agreement trivially satisfiable.
+        let mut total_stake: u128 = 0;
         for v in &self.validators {
             if v.stake < self.chain_params.min_validator_stake {
                 errors.push(format!(
@@ -431,6 +435,13 @@ impl GenesisConfig {
                     v.id, v.name, v.stake, self.chain_params.min_validator_stake
                 ));
             }
+            total_stake += v.stake as u128;
+        }
+        if total_stake > u64::MAX as u128 {
+            errors.push(format!(
+                "total validator stake {} exceeds u64::MAX — quorum threshold would overflow",
+                total_stake
+            ));
         }
 
         // No duplicate validator IDs
