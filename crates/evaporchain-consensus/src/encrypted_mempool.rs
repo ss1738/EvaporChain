@@ -811,18 +811,22 @@ mod tests {
     #[test]
     fn encrypted_pool_rejects_when_at_capacity() {
         let mut pool = EncryptedMempool::new(1);
-        let tx = dummy_tx(0);
-        let nonce = [0u8; 32];
 
-        // Fill to capacity — every submit accepts.
-        for _ in 0..MAX_ENCRYPTED_PENDING {
+        // Fill to capacity — unique nonces so PRIV-N6 dedup doesn't fire.
+        for i in 0..MAX_ENCRYPTED_PENDING {
+            let tx = dummy_tx(i as u64);
+            let mut nonce = [0u8; 32];
+            nonce[..8].copy_from_slice(&(i as u64).to_le_bytes());
             let enc = encrypt_transaction(&tx, &nonce, 1);
             assert!(pool.submit_encrypted(enc), "below cap must accept");
         }
         assert_eq!(pool.pending_count().0, MAX_ENCRYPTED_PENDING);
 
-        // The (cap+1)-th is rejected.
-        let over = encrypt_transaction(&tx, &nonce, 1);
+        // The (cap+1)-th is rejected — unique nonce so the cap gate fires.
+        let tx_over = dummy_tx(MAX_ENCRYPTED_PENDING as u64 + 1);
+        let mut nonce_over = [0u8; 32];
+        nonce_over[..8].copy_from_slice(&(MAX_ENCRYPTED_PENDING as u64 + 1).to_le_bytes());
+        let over = encrypt_transaction(&tx_over, &nonce_over, 1);
         assert!(
             !pool.submit_encrypted(over),
             "at-cap commit must be rejected (T0.7 vector 4 — reveal-flood DoS)"
