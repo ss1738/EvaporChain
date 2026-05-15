@@ -293,8 +293,15 @@ fn dos_v4_encrypted_mempool_admission_cap_fires_on_flood() {
     let mut accepted = 0usize;
     let mut rejected = 0usize;
     for i in 0..flood_count {
-        let nonce_byte = (i % 256) as u8;
-        let enc = make_encrypted(nonce_byte, 0);
+        // Use full i spread into nonce to ensure PRIV-N6 dedup sees unique commitments.
+        let nonce = {
+            let mut n = [0u8; 32];
+            let b = (i as u64).to_le_bytes();
+            n[..8].copy_from_slice(&b);
+            n
+        };
+        let tx = make_transfer(1, i as u64);
+        let enc = encrypt_transaction(&tx, &nonce, 0);
         if pool.submit_encrypted(enc) {
             accepted += 1;
         } else {
