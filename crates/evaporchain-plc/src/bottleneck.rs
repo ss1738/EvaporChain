@@ -126,6 +126,9 @@ fn absdiff(a: u64, b: u64) -> u64 {
 
 fn midpoint(b: u64, d: u64) -> u64 {
     // Floor of the midpoint, computed without overflow.
+    // Precondition: d >= b (enforced by Bar::new; debug_assert guards
+    // against future regressions where a bar bypasses construction).
+    debug_assert!(d >= b, "bar death must be >= birth (d={d}, b={b})");
     b + (d - b) / 2
 }
 
