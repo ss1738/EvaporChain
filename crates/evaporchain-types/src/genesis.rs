@@ -614,6 +614,27 @@ impl GenesisConfig {
         // exact bytes that were signed.
         serde_json::to_vec(&clone).expect("GenesisConfig is always JSON-serializable")
     }
+
+    /// GEN-N3 (audit 2026-05-15): canonical hash of the full genesis
+    /// config, domain-separated.  Used by `initialize_genesis` to bind
+    /// every config field into the genesis `state_root` — without
+    /// this, two nodes claiming to run "the same chain" with diverging
+    /// configs (different `chain_id`, validator set, tokenomics, etc.)
+    /// can produce identical state roots if their on-chain account
+    /// allocations happen to match, and the chain silently forks at
+    /// height 0.
+    ///
+    /// Hash input: `EVAPORCHAIN_V1_GENESIS_HASH\0 || canonical_signing_bytes()`.
+    /// The DST guarantees the genesis-hash output cannot collide with
+    /// any unrelated BLAKE3 hash in the protocol.
+    pub fn canonical_genesis_hash(&self) -> [u8; 32] {
+        const GENESIS_HASH_DST: &[u8] = b"EVAPORCHAIN_V1_GENESIS_HASH\0";
+        let signing = self.canonical_signing_bytes();
+        let mut input = Vec::with_capacity(GENESIS_HASH_DST.len() + signing.len());
+        input.extend_from_slice(GENESIS_HASH_DST);
+        input.extend_from_slice(&signing);
+        *blake3::hash(&input).as_bytes()
+    }
 }
 
 // ─────────────────────── Tests ──────────────────────────────────────────────
