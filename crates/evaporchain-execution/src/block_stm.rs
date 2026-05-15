@@ -4057,4 +4057,252 @@ mod tests {
         assert_eq!(db.get_account(&addr(41)).unwrap().balance, 1_000);
     }
 
+    // ─── T1.20 Batch 1: TxView read/write surface coverage ──────────
+    //
+    // The largest uncovered chunks in block_stm.rs (per cargo llvm-cov)
+    // are the read/write helpers on `TxView` (L280-558, ~280 LOC):
+    // read_balance, read_nonce, read_object, read_ghost,
+    // read_storage_deposit, read_storage_bytes, write_account,
+    // write_storage_fields, write_object, delete_object, write_ghost,
+    // remove_ghost, checkpoint_after_fees, revert_to_fee_checkpoint,
+    // flush_writes.
+    //
+    // These methods are exercised indirectly via execute_tx, but only
+    // the happy-path branches of each method get hit there — the
+    // local-overlay-hit branches (e.g. read after write returns the
+    // local value, not the MVMemory or base-db value) and the
+    // MVMemory-hit branches (read sees an earlier tx's write) need
+    // direct unit drive. This test drives every branch.
+
+    /// T1.20 — TxView full read/write surface, every branch (local
+    /// overlay / MVMemory / base DB) exercised once. Pins the
+    /// MVCC layering contract: local writes shadow MVMemory, MVMemory
+    /// shadows base DB.
+    #[test]
+    fn t1_20_tx_view_full_read_write_surface() {
+        let mut db = InMemoryStateDB::new();
+        // Base DB has a funded account with deposit/bytes filled
+        // and an object.
+        db.put_account(Account {
+            address: addr(1),
+            balance: 1_000,
+            nonce: 7,
+            storage_deposit: 500,
+            storage_bytes: 42,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        db.put_object(StateObject {
+            id: obj_id(9),
+            owner: addr(1),
+            energy: 100,
+            half_life: 10,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![],
+            decay_curve: None,
+            lad_mode: None,
+        });
+        db.put_ghost(GhostRecord {
+            object_id: obj_id(11),
+            owner: addr(1),
+            evaporated_at: 5,
+            data_hash: [0xAA; 32],
+            original_data: None,
+            mmr_position: None,
+            original_half_life: None,
+        });
+
+        let mv = MVMemory::new();
+
+        // ── Pass 1: read each from base DB, asserting fallback paths.
+        {
+            let mut view = TxView::new(0, 0, &mv, &db);
+
+            // read_balance — base DB fallback (L331).
+            assert_eq!(view.read_balance(&addr(1)).unwrap(), 1_000);
+            // read_balance for unknown address — None branch.
+            assert_eq!(view.read_balance(&addr(2)).unwrap(), 0);
+
+            // read_nonce — base DB fallback (L356).
+            assert_eq!(view.read_nonce(&addr(1)).unwrap(), 7);
+            // read_nonce unknown.
+            assert_eq!(view.read_nonce(&addr(2)).unwrap(), 0);
+
+            // read_object — base DB fallback (L391).
+            assert!(view.read_object(&obj_id(9)).unwrap().is_some());
+            // read_object for unknown id — None branch (L391, None).
+            assert!(view.read_object(&obj_id(42)).unwrap().is_none());
+
+            // read_ghost — base DB fallback (L426).
+            assert!(view.read_ghost(&obj_id(11)).unwrap().is_some());
+            // read_ghost unknown.
+            assert!(view.read_ghost(&obj_id(42)).unwrap().is_none());
+
+            // read_storage_deposit — base DB fallback (L478).
+            assert_eq!(view.read_storage_deposit(&addr(1)).unwrap(), 500);
+            // read_storage_deposit unknown.
+            assert_eq!(view.read_storage_deposit(&addr(2)).unwrap(), 0);
+
+            // read_storage_bytes — base DB fallback (L505).
+            assert_eq!(view.read_storage_bytes(&addr(1)).unwrap(), 42);
+            // read_storage_bytes unknown.
+            assert_eq!(view.read_storage_bytes(&addr(2)).unwrap(), 0);
+        }
+
+        // ── Pass 2: write locally, then re-read to hit local-overlay
+        //    branches (L313-314, L338-339, L367, L401, L458-459, L485-486).
+        {
+            let mut view = TxView::new(0, 0, &mv, &db);
+
+            // Write account → re-read sees local value.
+            view.write_account(addr(1), 9_999, 13, 100);
+            assert_eq!(view.read_balance(&addr(1)).unwrap(), 9_999);
+            assert_eq!(view.read_nonce(&addr(1)).unwrap(), 13);
+
+            // Write storage fields → re-read sees local values.
+            view.write_storage_fields(addr(1), 777, 88);
+            assert_eq!(view.read_storage_deposit(&addr(1)).unwrap(), 777);
+            assert_eq!(view.read_storage_bytes(&addr(1)).unwrap(), 88);
+
+            // Write a new object → re-read sees it.
+            let new_obj = StateObject {
+                id: obj_id(33),
+                owner: addr(1),
+                energy: 555,
+                half_life: 7,
+                created_at: 1,
+                last_refreshed: 1,
+                state: ObjectState::Active,
+                grace_epoch: None,
+                data: vec![],
+                decay_curve: None,
+                lad_mode: None,
+            };
+            view.write_object(new_obj.clone());
+            let fetched = view.read_object(&obj_id(33)).unwrap();
+            assert!(fetched.is_some());
+
+            // Delete an object → re-read returns None via the
+            // local_objects_deleted short-circuit (L364).
+            view.delete_object(obj_id(33));
+            assert!(view.read_object(&obj_id(33)).unwrap().is_none());
+
+            // Write a new ghost → re-read sees it.
+            let new_ghost = GhostRecord {
+                object_id: obj_id(55),
+                owner: addr(1),
+                evaporated_at: 10,
+                data_hash: [0xBB; 32],
+                original_data: None,
+                mmr_position: None,
+                original_half_life: None,
+            };
+            view.write_ghost(new_ghost.clone());
+            assert!(view.read_ghost(&obj_id(55)).unwrap().is_some());
+
+            // Remove a ghost → re-read returns None via the
+            // local_ghosts_removed short-circuit (L399).
+            view.remove_ghost(obj_id(55));
+            assert!(view.read_ghost(&obj_id(55)).unwrap().is_none());
+        }
+
+        // ── Pass 3: checkpoint + revert — covers
+        //    revert_to_fee_checkpoint body (L271-308, ~40 LOC).
+        {
+            let mut view = TxView::new(0, 0, &mv, &db);
+            // Fee phase: deduct from balance.
+            view.write_account(addr(1), 900, 8, 50);
+            view.checkpoint_after_fees();
+            // Execution phase: more writes that will be reverted.
+            view.write_account(addr(1), 100, 99, 50);
+            view.write_storage_fields(addr(1), 222, 33);
+            let new_obj = StateObject {
+                id: obj_id(77),
+                owner: addr(1),
+                energy: 1,
+                half_life: 1,
+                created_at: 0,
+                last_refreshed: 0,
+                state: ObjectState::Active,
+                grace_epoch: None,
+                data: vec![],
+                decay_curve: None,
+                lad_mode: None,
+            };
+            view.write_object(new_obj);
+
+            // Revert — fee write must survive, execution writes must
+            // disappear. revert_to_fee_checkpoint also rebuilds
+            // local_accounts from the surviving write_buffer.
+            view.revert_to_fee_checkpoint();
+            assert_eq!(
+                view.read_balance(&addr(1)).unwrap(),
+                900,
+                "fee write must survive revert"
+            );
+            assert_eq!(
+                view.read_nonce(&addr(1)).unwrap(),
+                8,
+                "fee nonce must survive revert"
+            );
+            // Object created post-checkpoint is gone: locally absent,
+            // so read falls through to base DB (which doesn't have
+            // obj_id(77) either) → None.
+            assert!(view.read_object(&obj_id(77)).unwrap().is_none());
+        }
+
+        // ── Pass 4: MVMemory-hit branch. Tx 0 writes via flush_writes,
+        //    tx 1 reads and sees tx 0's MVMemory write (L319-324,
+        //    L344-349, etc).
+        let mv_for_pass4 = MVMemory::new();
+        {
+            let mut view0 = TxView::new(0, 0, &mv_for_pass4, &db);
+            view0.write_account(addr(7), 5_555, 3, 60);
+            let new_obj = StateObject {
+                id: obj_id(88),
+                owner: addr(7),
+                energy: 1_000,
+                half_life: 100,
+                created_at: 0,
+                last_refreshed: 0,
+                state: ObjectState::Active,
+                grace_epoch: None,
+                data: vec![],
+                decay_curve: None,
+                lad_mode: None,
+            };
+            view0.write_object(new_obj);
+            // delete_object then re-write would also hit the
+            // local_objects_deleted-remove branch in write_object
+            // (L529). Cover it separately:
+            view0.delete_object(obj_id(99));
+            let resurrected = StateObject {
+                id: obj_id(99),
+                owner: addr(7),
+                energy: 1,
+                half_life: 1,
+                created_at: 0,
+                last_refreshed: 0,
+                state: ObjectState::Active,
+                grace_epoch: None,
+                data: vec![],
+                decay_curve: None,
+                lad_mode: None,
+            };
+            view0.write_object(resurrected);
+            let _ = view0.flush_writes(); // moves into MVMemory.
+        }
+        {
+            // Tx 1 reads addr(7)'s balance — MVMemory has tx 0's
+            // write; the read_set must record the Some(version) form.
+            let mut view1 = TxView::new(1, 0, &mv_for_pass4, &db);
+            assert_eq!(view1.read_balance(&addr(7)).unwrap(), 5_555);
+            assert_eq!(view1.read_nonce(&addr(7)).unwrap(), 3);
+            // Tx 0 wrote obj_id(88); tx 1 should see it via MVMemory.
+            assert!(view1.read_object(&obj_id(88)).unwrap().is_some());
+        }
+    }
 }
