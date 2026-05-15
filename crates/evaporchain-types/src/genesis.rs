@@ -408,6 +408,14 @@ pub struct GenesisCheckpoint {
     pub block_hash: String,
 }
 
+/// GEN-N4 (audit 2026-05-15): bootstrap-DoS caps on genesis-config
+/// list lengths. A coordinator-signed genesis with millions of
+/// zero-stake validators or accounts would otherwise force every
+/// node to allocate proportional in-memory state on cold start.
+/// Both ceilings sit far above any realistic mainnet shape.
+pub const MAX_GENESIS_VALIDATORS: usize = 10_000;
+pub const MAX_GENESIS_ACCOUNTS: usize = 1_000_000;
+
 impl GenesisConfig {
     /// Validate the genesis configuration for internal consistency.
     pub fn validate(&self) -> Result<(), Vec<String>> {
@@ -421,6 +429,21 @@ impl GenesisConfig {
         // Must have at least one validator
         if self.validators.is_empty() {
             errors.push("must have at least one validator".into());
+        }
+        // GEN-N4: cap validator/account counts.
+        if self.validators.len() > MAX_GENESIS_VALIDATORS {
+            errors.push(format!(
+                "validators.len() = {} exceeds MAX_GENESIS_VALIDATORS = {}",
+                self.validators.len(),
+                MAX_GENESIS_VALIDATORS,
+            ));
+        }
+        if self.accounts.len() > MAX_GENESIS_ACCOUNTS {
+            errors.push(format!(
+                "accounts.len() = {} exceeds MAX_GENESIS_ACCOUNTS = {}",
+                self.accounts.len(),
+                MAX_GENESIS_ACCOUNTS,
+            ));
         }
 
         // Validators must meet minimum stake; total must not overflow u64.

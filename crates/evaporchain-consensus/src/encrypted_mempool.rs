@@ -193,9 +193,26 @@ impl EncryptedMempool {
     /// Submit an encrypted transaction (commit phase). Returns `true`
     /// if accepted, `false` if rejected because the encrypted pool is
     /// at `MAX_ENCRYPTED_PENDING` (T0.7 vector 4 — reveal flood
-    /// admission cap).
+    /// admission cap) OR because the commitment is already in the
+    /// pool (PRIV-N6 dedup).
+    ///
+    /// PRIV-N6 (audit 2026-05-15): without dedup, an attacker could
+    /// submit the same envelope `MAX_ENCRYPTED_PENDING` times to
+    /// crowd out honest commits; ordering by commitment then yields
+    /// N copies of the same slot. The O(n) linear scan here is fine
+    /// at the 10k cap (~10k pointer compares per submit ≈ μs); a
+    /// HashSet would be faster but adds a parallel data structure
+    /// to keep in sync — not worth the complexity for the current
+    /// envelope shape.
     pub fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) -> bool {
         if self.pending_encrypted.len() >= MAX_ENCRYPTED_PENDING {
+            return false;
+        }
+        if self
+            .pending_encrypted
+            .iter()
+            .any(|e| e.commitment == encrypted_tx.commitment)
+        {
             return false;
         }
         self.pending_encrypted.push(encrypted_tx);
