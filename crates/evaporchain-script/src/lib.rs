@@ -1234,7 +1234,7 @@ contract Boss {
     fn scr_n1_cross_contract_caller_is_callee_identity_not_eoa() {
         let target_src = r#"
 contract Target {
-    state { last_caller: address = 0x0 }
+    state { last_caller: address }
     fn record() -> u64 {
         self.last_caller = caller()
         return 1
@@ -1250,16 +1250,16 @@ contract Proxy {
 }
 "#;
         let mut engine = ScriptEngine::new();
-        engine.set_vrf_randomness([0u8; 32]);
+        engine.vrf_randomness = [0u8; 32];
 
         let creator: AccountAddress = [0xCC; 32];
         let eoa: AccountAddress = [0xEE; 32]; // some random EOA
 
         let target_id = engine
-            .deploy(target_src.to_string(), creator, 1, 1000, 100)
+            .deploy(target_src, creator, 1, 1000, 100)
             .unwrap();
         let proxy_id = engine
-            .deploy(proxy_src.to_string(), creator, 1, 1000, 100)
+            .deploy(proxy_src, creator, 1, 1000, 100)
             .unwrap();
 
         // EOA calls Proxy.pass_through(target_id) → Proxy calls
