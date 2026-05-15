@@ -1752,6 +1752,27 @@ impl P2pNetworkService {
                                         acceptance = MessageAcceptance::Ignore;
                                         skip = true;
                                     }
+                                } else {
+                                    // N5 (audit 2026-05-15): under
+                                    // `ValidationMode::Strict` libp2p
+                                    // guarantees `message.source` is
+                                    // `Some(_)` (signed messages only).
+                                    // If we ever see `None`, an unsigned
+                                    // message has slipped through the
+                                    // gossipsub validation pipeline —
+                                    // libp2p invariant violation. Treat
+                                    // it as a policy drop and propagate
+                                    // `Reject` to the propagation source
+                                    // so libp2p stops re-relaying it.
+                                    // Pre-fix the unsourced message
+                                    // skipped rate-limit + ban and was
+                                    // still deserialized + dispatched to
+                                    // tx/block/consensus channels.
+                                    debug!(
+                                        "Gossip message with source=None — Strict-mode invariant breached, dropping"
+                                    );
+                                    acceptance = MessageAcceptance::Reject;
+                                    skip = true;
                                 }
                                 if !skip {
                                     gc_counter += 1;
