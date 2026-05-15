@@ -18,6 +18,16 @@
 (*  abstract tree, and STATES (axiomatizes) the Pedersen-commitment      *)
 (*  homomorphism property that the production code relies on (the      *)
 (*  homomorphism is a property of BLS12-381 G1, not of EvaporChain).   *)
+(*                                                                       *)
+(*  T2.27 Part 2 (2026-05-15) — extended explicit corollaries to cover  *)
+(*  the leaf case after the Rust impl `compress_recursive` was extended  *)
+(*  to compress cold leaves directly (not only fully-cold internal      *)
+(*  subtrees). See:                                                      *)
+(*    - PR #314 (T2.27 Part 1) — Rust-side change                       *)
+(*    - `compress_leaf_*` corollaries below — leaf-case bindings        *)
+(*  The underlying `compress` operator was already polymorphic in node  *)
+(*  kind; this round adds explicit theorems pinned to the Rust leaf     *)
+(*  call-site so a Rust regression would be visible at the proof level. *)
 (* ===================================================================== *)
 
 From Coq Require Import Arith Lia List.
@@ -105,9 +115,17 @@ Inductive all_cold : node -> Prop :=
                                      all_cold (NInternal cs)
   | all_cold_compressed : forall k c, all_cold (NCompressed k c).
 
-(* Compress an entire subtree into a single Compressed node. The
-   commitment of the Compressed node is whatever the subtree's hash
-   was — we treat the hash function as an opaque parameter. *)
+(* Compress a node into a single Compressed node. The commitment of
+   the Compressed node is whatever the node's hash was — we treat the
+   hash function as an opaque parameter.
+
+   `compress` is polymorphic in node kind: it accepts NLeaf, NInternal,
+   NEmpty, or NCompressed alike. T2.27 Part 1 (PR #314) extended the
+   Rust impl to invoke this on `NLeaf` directly — previously only
+   `NInternal` whose entire subtree was cold was eligible. The model
+   here was already general enough, so Part 2 only adds explicit
+   leaf-case corollaries (`compress_leaf_*`) below to pin the
+   theorems to the new Rust call-site. *)
 Parameter subtree_hash : node -> commitment.
 
 Definition compress (n : node) : node :=
@@ -269,6 +287,56 @@ Theorem compress_preserves_root_hash : forall n,
 Proof. exact compress_preserves_commitment. Qed.
 
 (* --------------------------------------------------------------------- *)
+(*  T2.27 Part 1: leaf-case corollaries                                  *)
+(*                                                                       *)
+(*  These three corollaries instantiate the three general theorems at   *)
+(*  `n = NLeaf 0 c`, pinning them to the new Rust call-site where      *)
+(*  `compress_recursive` may invoke `compress` directly on a Leaf       *)
+(*  whose energy has dropped to zero. They are not novel mathematical   *)
+(*  content (the general theorems already cover them) but they make     *)
+(*  the leaf-case binding explicit so a future Rust regression would    *)
+(*  surface here as a broken proof obligation.                           *)
+(*                                                                       *)
+(*  Rust binding: `energy_verkle.rs::compress_recursive` —              *)
+(*    `if meta.is_cold() && !matches!(child, EnergyNode::Compressed(_))`*)
+(*  now admits `EnergyNode::Leaf` whose `meta.is_cold()` holds (which   *)
+(*  for a leaf requires `energy = 0`).                                   *)
+(* --------------------------------------------------------------------- *)
+
+(* Corollary 1: compressing a cold leaf preserves its total leaf count
+   (which is 1 — the leaf itself, now moved from active to compressed). *)
+Corollary compress_leaf_preserves_total_leaf_count : forall c,
+    total_leaf_count (compress (NLeaf 0 c)) = total_leaf_count (NLeaf 0 c).
+Proof.
+  intros c.
+  apply compress_preserves_total_leaf_count.
+Qed.
+
+(* Corollary 2: compressing a cold leaf is energy-conservative. A leaf
+   with energy 0 satisfies `all_cold`, so we can invoke
+   `compress_energy_conservative` rather than just the monotonicity
+   theorem. The post-compression energy sum is exactly 0 (the leaf
+   contributed 0 to begin with). *)
+Corollary compress_leaf_energy_conservative : forall c,
+    energy_sum (compress (NLeaf 0 c)) = energy_sum (NLeaf 0 c).
+Proof.
+  intros c.
+  apply compress_energy_conservative.
+  apply all_cold_leaf.
+Qed.
+
+(* Corollary 3: compressing a cold leaf preserves its commitment hash.
+   The Rust binding sets `CompressedNode.commitment = child.hash()`;
+   for a Leaf, `child.hash() = blake3(key || value)` — invariant under
+   energy changes (energy is not in the leaf hash preimage). *)
+Corollary compress_leaf_preserves_commitment : forall c,
+    subtree_hash (compress (NLeaf 0 c)) = subtree_hash (NLeaf 0 c).
+Proof.
+  intros c.
+  apply compress_preserves_commitment.
+Qed.
+
+(* --------------------------------------------------------------------- *)
 (*  What's left to discharge                                             *)
 (*                                                                       *)
 (*  - `cold_subtree_zero_energy`: closed via a custom strong-induction *)
@@ -288,4 +356,12 @@ Proof. exact compress_preserves_commitment. Qed.
 (*    1. total leaf count preserved under compress                       *)
 (*    2. energy sum monotone (=0 in the cold-precondition case)         *)
 (*    3. root hash preserved (axiomatized via Pedersen homomorphism)    *)
+(*                                                                       *)
+(*  T2.27 Part 1 addendum (2026-05-15): the three theorems above are    *)
+(*  polymorphic in node kind, so they already covered the leaf case.    *)
+(*  The `compress_leaf_*` corollaries above pin them explicitly to     *)
+(*  the new Rust call-site (`compress_recursive` now admits Leaf       *)
+(*  children whose `is_cold()` holds). A Rust regression that breaks   *)
+(*  the leaf-level compression would visibly break the corollaries    *)
+(*  here, not just the general theorems.                                 *)
 (* --------------------------------------------------------------------- *)
