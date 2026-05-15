@@ -10,6 +10,7 @@ evaporchain-types = { path = "../evaporchain-types" }
 serde = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
