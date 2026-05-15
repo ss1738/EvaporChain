@@ -99,10 +99,45 @@ async fn main() -> anyhow::Result<()> {
 
     let client = reqwest::Client::new();
     let ctx = protocol::Context {
-        node_url,
-        client,
-        api_token,
+        node_url: node_url.clone(),
+        client: client.clone(),
+        api_token: api_token.clone(),
     };
+
+    // MCP-AUTH-001 (2026-05-15): Startup probe — if a token is configured,
+    // fire a POST to /api/faucet WITHOUT the token and verify the node returns
+    // 401. If the node returns anything other than 401, node-side auth is not
+    // enforcing and MCP write-tools are effectively unauthenticated.
+    // We warn (not abort) so dev-mode nodes (no auth configured) still work.
+    if api_token.is_some() && require_auth {
+        let probe_url = format!("{}/api/faucet", node_url);
+        // Intentionally omit Authorization header to test node enforcement.
+        let probe = client
+            .post(&probe_url)
+            .header("Content-Type", "application/json")
+            .body(r#"{"address":"0x0000000000000000000000000000000000000000000000000000000000000000"}"#)
+            .send()
+            .await;
+        match probe {
+            Ok(resp) if resp.status() == 401 => {
+                eprintln!("evaporchain-mcp: node-side auth probe OK (401 enforced)");
+            }
+            Ok(resp) => {
+                eprintln!(
+                    "evaporchain-mcp: WARNING — node-side auth probe returned {} \
+                     (expected 401). EVAPORCHAIN_MCP_API_TOKEN may not be set on the \
+                     node. Write-tools are effectively unauthenticated.",
+                    resp.status()
+                );
+            }
+            Err(e) => {
+                // Node not reachable yet — non-fatal, warn and continue.
+                eprintln!(
+                    "evaporchain-mcp: node-side auth probe failed (node not ready?): {e}"
+                );
+            }
+        }
+    }
 
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();

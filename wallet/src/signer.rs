@@ -278,6 +278,13 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         }
         // Refund is protocol-issued — no caller signature to set.
         Transaction::Refund(_) => {}
+        // DeployTemplate landed in evaporchain-types but the
+        // wallet signer's match was never updated — same
+        // single-signer shape as DeployContract / DeployScript.
+        Transaction::DeployTemplate(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
     }
 }
 

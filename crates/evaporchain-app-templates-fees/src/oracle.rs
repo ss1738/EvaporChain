@@ -59,6 +59,12 @@ pub fn base_fee(typed: &TypedInit) -> u64 {
         }
         TypedInit::GalleryForgets(_) => SURCHARGE_CULTURAL,
         TypedInit::Sgb(_) | TypedInit::Sbav(_) | TypedInit::Ssm(_) => SURCHARGE_PARADIGM,
+        // RefreshMarket landed in TypedInit but the fee oracle's
+        // surcharge table was never extended. Treat as a
+        // marketplace-class template (matches Sddc / Sfsv / Shlm /
+        // Scl / Sap) since it's the per-namespace refresh-credit
+        // market layer.
+        TypedInit::RefreshMarket(_) => SURCHARGE_MARKETPLACE,
     };
     BASE_DEPLOY_FEE.saturating_add(surcharge)
 }
