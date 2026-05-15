@@ -4,6 +4,18 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 28) — V-class audit sweep: V2 HIGH closed
+
+**Focus:** DA/network validation security — equivocation, DA cert verification, shard assignment, Proposal message authentication
+**Commits shipped:** 1 (`a866d3aa`)
+**Deliverables:**
+- V2 (HIGH) CLOSED: `bls_signature: Option<Vec<u8>>` added to `ConsensusMessage::Proposal`; proposer signs over `bls_vote_message(chain_id, h, r, hash, "proposal")`; receiver verifies against proposer BLS pubkey before equivocation check; None warned (not rejected) during migration window
+- V1, V3, V4, V5, V6 confirmed CLEAN (DA proof verified at consumer, DA cert BLS checked, equivocation detected+slashed, shard assignment deterministic, Prevote/Precommit BLS verified)
+- V7 ACKNOWLEDGED: PoHA aggregate signature is design-incomplete (empty sigs in production); no forgery possible; deferred to PoHA V2
+**Empirical results:** `cargo test -p evaporchain-consensus` — all tests pass; `cargo build -p evaporchain-node` clean
+**What's next:** W-class sweep — wallet/key management security (key derivation, BLS key format handling, passphrase exposure, key rotation)
+**Cross-references:** AUDIT_2026_05_11.md (V-class addendum), commit `a866d3aa`
+
 ## 2026-05-15 (session 27) — U-class audit sweep: U3 + U7 closed
 
 **Focus:** Upgrade/migration security — protocol-version gating, genesis total stake overflow, hard-fork replay, key migration
