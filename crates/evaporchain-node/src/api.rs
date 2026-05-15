@@ -7352,8 +7352,21 @@ pub struct EpvPruneReq {
 
 async fn post_epv_register(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<EpvRegisterReq>,
 ) -> Json<serde_json::Value> {
+    // R7 (audit 2026-05-15): `post_epv_register` mutates
+    // `state.epv_registry` directly via `reg.register(version)`
+    // with attacker-supplied (`id`, `seed_energy`,
+    // `activated_epoch`). That is the SAME registry that
+    // `post_llsa_apply_amendment` (R4) gates with admin-auth — but
+    // via a parallel route that bypasses the LLSA invariant
+    // proof-binding entirely. Even with R4 in place, an attacker
+    // could register new chain versions through this endpoint
+    // without any proof at all. Severity matches R4 (CRITICAL).
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     use evaporchain_epv::ProtocolVersion;
     let mut reg = safe_lock(&state.epv_registry);
     let v = ProtocolVersion::new(req.id, req.seed_energy, req.activated_epoch);
@@ -7398,8 +7411,14 @@ async fn get_epv_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::
 
 async fn post_epv_prune(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<EpvPruneReq>,
 ) -> Json<serde_json::Value> {
+    // R7 (audit 2026-05-15): `prune_evaporated` mutates
+    // `state.epv_registry` — see `post_epv_register` for context.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_epv::prune_evaporated;
     let lambda_safe = req.lambda_epochs.max(1);
@@ -7529,8 +7548,16 @@ pub struct DsnFoldReq {
 
 async fn post_dsn_fold_nullifier(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<DsnFoldReq>,
 ) -> Json<serde_json::Value> {
+    // R7 (audit 2026-05-15): `window.fold_nullifier(...)` mutates
+    // the chain's DSN (Decay-Stamped Nullifier) accumulator —
+    // poisoning the aggregate root with attacker-controlled 32-byte
+    // nullifiers and inflating `total_count`. Validator-only.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     let nullifier_bytes = match hex::decode(&req.nullifier_hex) {
         Ok(b) if b.len() == 32 => {
             let mut arr = [0u8; 32];
@@ -7552,7 +7579,16 @@ async fn post_dsn_fold_nullifier(
     }))
 }
 
-async fn post_dsn_advance_window(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+async fn post_dsn_advance_window(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    // R7 (audit 2026-05-15): advancing the DSN window invalidates
+    // the current epoch's nullifier-correlation view — breaks
+    // privacy-pool semantics if abused. Validator-only.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     let mut window = safe_lock(&state.dsn_window);
     window.advance_window();
     Json(serde_json::json!({
