@@ -57,7 +57,19 @@ pub fn initialize_genesis(
             vesting: ga.vesting,
         };
         db.put_account(account);
-        total_allocated += ga.balance;
+        // GEN-N2 (audit 2026-05-15): checked_add — a coordinator-signed
+        // genesis whose account balances sum past `u64::MAX` would wrap
+        // `total_allocated` and break downstream emission-cap reads. The
+        // sum can't overflow in any realistic tokenomics, but a
+        // compromised coordinator constructing a poisoned genesis can
+        // engineer it.
+        total_allocated = total_allocated.checked_add(ga.balance).ok_or_else(|| {
+            format!(
+                "genesis: sum of account balances overflows u64 \
+                 (last addition {} would overflow {})",
+                ga.balance, total_allocated
+            )
+        })?;
     }
 
     // 3. Create genesis objects

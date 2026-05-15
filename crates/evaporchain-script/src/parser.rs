@@ -1135,7 +1135,20 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ScriptError> {
-        match self.peek() {
+        // SCR-N5 (audit 2026-05-15): bump expr_depth on entry so a
+        // source with ~50k consecutive `!` or `-` tokens (well under
+        // the 1M token cap) cannot recurse past Rust's ~8 MiB stack
+        // and abort the process during deploy parsing. Matches the
+        // same guard `parse_expr` uses for binary operators.
+        self.expr_depth += 1;
+        if self.expr_depth > MAX_EXPR_DEPTH {
+            self.expr_depth -= 1;
+            return Err(ScriptError::Parse {
+                line: self.line(),
+                message: format!("expression nesting depth exceeds maximum ({MAX_EXPR_DEPTH})"),
+            });
+        }
+        let result = match self.peek() {
             Token::Not => {
                 self.advance();
                 let expr = self.parse_unary()?;
@@ -1153,7 +1166,9 @@ impl Parser {
                 })
             }
             _ => self.parse_primary(),
-        }
+        };
+        self.expr_depth -= 1;
+        result
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ScriptError> {
