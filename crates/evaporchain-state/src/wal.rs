@@ -98,9 +98,20 @@ impl WriteAheadLog {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let checksum = blake3::hash(&payload);
 
+        // Audit Z-WAL-001 (2026-05-15): length field is u32; guard explicitly so
+        // a pathologically large mutation batch returns Err rather than silently
+        // truncating the length, which would produce an unrecoverable WAL entry
+        // (the BLAKE3 checksum would catch it on read, but the write-side should
+        // fail loudly).  Block gas limits make > 4GB impossible in practice.
+        let len: u32 = payload.len().try_into().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("WAL entry too large: {} bytes (max {})", payload.len(), u32::MAX),
+            )
+        })?;
+
         self.file.write_all(&height.to_le_bytes())?;
         self.file.write_all(&pre_state_root)?;
-        let len = payload.len() as u32;
         self.file.write_all(&len.to_le_bytes())?;
         self.file.write_all(&payload)?;
         self.file.write_all(checksum.as_bytes())?;

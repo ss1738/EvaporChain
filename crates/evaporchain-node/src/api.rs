@@ -11694,6 +11694,24 @@ async fn post_deploy_contract(
     if let Err(resp) = require_tx_auth(&headers, &state, false) {
         return resp;
     }
+    // R13 (audit 2026-05-15): H1 audit added a 256B cap on
+    // `req.method` for `post_call_contract` / `post_call_script`,
+    // and 64KB on `req.source_code` for `post_deploy_script`. The
+    // same input-validation class was missed on
+    // `post_deploy_contract.req.template` — an authenticated user
+    // could submit a multi-MB template name (up to the 2MB body
+    // cap) and force per-byte work through tx hashing + mempool
+    // accounting before the template-name match short-circuits at
+    // execution time. Contract templates are short identifiers
+    // (DecayingToken, MortalNFT, ThermodynamicEscrow, …); 256B is
+    // generous for any real one.
+    if req.template.len() > 256 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "template name too long (max 256 bytes)".into(),
+            tx_hash: None,
+        });
+    }
     let deployer_addr = addr_from_byte(req.deployer);
     // Admission pre-check (TOKENOMICS finding #1 follow-up; pairs with
     // the create_object pre-check at b54ef9a). Executor deducts
