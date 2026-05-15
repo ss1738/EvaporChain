@@ -2316,8 +2316,25 @@ pub struct SanovSlashReq {
 /// or "downtime" (KL-divergence proportional to miss rate).
 async fn post_sanov_slash(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<SanovSlashReq>,
 ) -> Json<SanovSlashResp> {
+    // R8 (audit 2026-05-15): `tc.sanov_slash_equivocation` and
+    // `tc.sanov_slash_downtime` deduct stake from
+    // `validator_id` (attacker-controlled). Pre-fix any peer
+    // could slash any validator at any time without any
+    // misbehaviour evidence — direct attack on stake bookkeeping.
+    // Validator-only operator endpoint (slashing decisions are
+    // either consensus-automatic via the precommit machinery or
+    // operator-multisig out-of-band).
+    if require_admin_auth(&headers).is_err() {
+        return Json(SanovSlashResp {
+            status: "error",
+            validator_id: req.validator_id,
+            slash_amount: 0,
+            detail: "unauthorized: admin gate required".into(),
+        });
+    }
     if let Some(tc_arc) = &state.tendermint {
         let mut tc = safe_lock(tc_arc);
         let (slash_amount, detail) = match req.slash_type.as_str() {
@@ -5742,8 +5759,17 @@ pub struct PntInsertReq {
 
 async fn post_pnt_insert(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<PntInsertReq>,
 ) -> Json<serde_json::Value> {
+    // R8 (audit 2026-05-15): `pnt.insert_nullifier(n)` mutates
+    // the chain's PNT (Privacy Note Tree) accumulator with an
+    // attacker-supplied 32-byte nullifier. Same shape as the
+    // R7 DSN fold — poisons the accumulator and inflates phase
+    // membership counts. Validator-only.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     let n = match hex::decode(&req.nullifier_hex) {
         Ok(b) if b.len() == 32 => {
             let mut a = [0u8; 32];
@@ -5767,7 +5793,16 @@ async fn post_pnt_insert(
     }
 }
 
-async fn post_pnt_advance_phase(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+async fn post_pnt_advance_phase(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    // R8 (audit 2026-05-15): advancing the PNT phase rolls the
+    // privacy-pool nullifier-correlation window — same shape as
+    // R7 dsn_advance_window. Validator-only.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     let mut pnt = safe_lock(&state.pnt);
     pnt.advance_phase();
     Json(serde_json::json!({
@@ -5843,8 +5878,19 @@ pub struct FeeControllerStepReq {
 
 async fn post_fee_controller_step(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<FeeControllerStepReq>,
 ) -> Json<serde_json::Value> {
+    // R8 (audit 2026-05-15): mutates `state.fee_state` via
+    // `*fs = new_state` (the chain's Singh-Lyapunov PID fee
+    // controller). Pre-fix any peer could step the controller
+    // forward with arbitrary `gas_used` and `epochs_elapsed`,
+    // skewing the base fee off the consensus-driven cadence.
+    // Validator-only — the consensus path drives it on
+    // commit_block.
+    if let Err((_, err_json)) = require_admin_auth(&headers) {
+        return err_json;
+    }
     use evaporchain_fee_controller::{base_fee, FeeController, FeeControllerParams};
     let params = FeeControllerParams::default_genesis();
     let mut fs = safe_lock(&state.fee_state);
