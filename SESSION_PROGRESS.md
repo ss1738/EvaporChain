@@ -4,6 +4,20 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 31) — Y-class audit sweep: Y-FEE-001 MEDIUM closed (governance clamp panic)
+
+**Focus:** Governance parameter validation, PID fee controller safety, reward/slash accounting, emission schedule, MEV refund, economic invariants
+**Commits shipped:** 1 (`02c0bd6d`)
+**Deliverables:**
+- Y-FEE-001 (MEDIUM) CLOSED: `base_fee_floor`/`base_fee_ceiling` now bounded at 1T in `validate_param_value`; `apply_governance_params` resets both to defaults with `warn!` if floor > ceiling after DB load — prevents `PidFeeController::clamp()` panic that would crash node at block production
+- Added `tracing::warn` to execution crate import list (was missing)
+- 3 new bounds tests: cap edge, over-cap, non-numeric inputs — all pass
+- Y-FEE-002 FALSE POSITIVE: `fee_response_ppm` not in `GOVERNABLE_PARAM_KEYS`; no attack surface
+- Y-R1, Y-E1, Y-D1, Y-MEV confirmed CLEAN (reward/slash saturating math, emission cap, delegation symmetry, MEV refund checked arithmetic)
+**Empirical results:** `cargo test -p evaporchain-execution` — 547 passed, 0 failed
+**What's next:** Z-class sweep — zero-copy / serialization / codec security
+**Cross-references:** AUDIT_2026_05_11.md (Y-class addendum), commit `02c0bd6d`
+
 ## 2026-05-15 (session 30) — X-class audit sweep: G1 CRITICAL + G2 HIGH + G3/O2 MEDIUM closed
 
 **Focus:** EvaporScript VM execution security — gas metering, step limit, external call gas, string literal OOM, re-entrancy, storage isolation, arithmetic, map/array bounds
