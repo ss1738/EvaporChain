@@ -958,14 +958,28 @@ impl SybilState {
 
     /// Adjust score by `delta` and return `Some(ip)` to soft-ban iff
     /// the threshold has been crossed for the first time.
+    ///
+    /// N1 (audit 2026-05-15): the "first time" half of the contract
+    /// was documented but not enforced. Pre-fix, every subsequent
+    /// negative-delta call below threshold also returned `Some(ip)`,
+    /// so the production idle-tick caller (`service.rs` ~1565,
+    /// 5-minute periodic sweep) re-fired `ban_ip` on every tick for
+    /// an already-deeply-negative peer until disconnect.
+    /// `ban_ip` calls `bans.save()` which is an atomic temp-rename
+    /// with an fsync, so the bug surfaced as disk-write amplification
+    /// proportional to (peers-below-threshold × idle-tick-rate).
+    /// The repeat-firings also extended the ban duration on every
+    /// tick (each `add_ban` resets `until_ms` if the new value is
+    /// larger), which is benign but unintended.
     pub fn adjust_score(&mut self, peer_id: &PeerId, delta: i32) -> Option<IpAddr> {
         let entry = self.scores.entry(*peer_id).or_default();
+        let was_above_threshold = entry.score >= SCORE_BAN_THRESHOLD;
         entry.score = entry.score.saturating_add(delta);
         entry.last_seen_ms = now_ms();
         if delta < 0 {
             entry.infractions = entry.infractions.saturating_add(1);
         }
-        if entry.score < SCORE_BAN_THRESHOLD {
+        if entry.score < SCORE_BAN_THRESHOLD && was_above_threshold {
             return self.peer_ips.get(peer_id).map(|(ip, _)| *ip);
         }
         None
@@ -3268,6 +3282,37 @@ mod tests {
         // A subsequent admit attempt is now refused with reason=banned.
         let result = s.try_admit_inbound(ip, 0);
         assert_eq!(result, Err(RejectionReason::Banned));
+    }
+
+    /// N1 (audit 2026-05-15): `adjust_score` must return `Some(ip)`
+    /// only on the FIRST crossing of `SCORE_BAN_THRESHOLD`, per its
+    /// doc contract. Pre-fix, the doc said "first time" but the code
+    /// returned `Some(ip)` on every below-threshold call — so the
+    /// production 5-min idle-tick re-fired `ban_ip → bans.save()`
+    /// (atomic-rename + fsync) on every tick for an already-banned
+    /// peer until disconnect. Regression: pin first-time semantics +
+    /// silence on repeat below-threshold calls.
+    #[test]
+    fn test_n1_adjust_score_returns_none_after_first_crossing() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(192, 0, 2, 71);
+        let pid = PeerId::random();
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(pid, ip);
+
+        // First crossing — peer goes from 0 to -150 (below -100).
+        let triggered = s.adjust_score(&pid, -150);
+        assert_eq!(triggered, Some(ip), "first crossing must trigger ban");
+
+        // Subsequent negative deltas while already below threshold
+        // must return None — caller invariant is one ban per crossing.
+        assert_eq!(s.adjust_score(&pid, -1), None, "second tick below threshold must NOT re-trigger");
+        assert_eq!(s.adjust_score(&pid, -1), None, "third tick below threshold must NOT re-trigger");
+        assert_eq!(s.adjust_score(&pid, -50), None, "deeper drop while already below must NOT re-trigger");
+
+        // Sanity: the score did move downward across the silent calls.
+        let score_now = s.scores.get(&pid).map(|e| e.score).unwrap_or(0);
+        assert!(score_now <= -200, "score must continue tracking infractions silently; got {score_now}");
     }
 
     #[test]
