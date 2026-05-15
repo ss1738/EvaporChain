@@ -2075,12 +2075,29 @@ impl P2pNetworkService {
                                     // the cluster can recover without
                                     // operator restart. We've already
                                     // confirmed `peer_id` is authorized.
-                                    if let Ok(mut s) = sybil_state_inner.write() {
-                                        if s.bans.is_banned(&ip) {
-                                            warn!(
-                                                "network: auto-unbanning {ip} for authorized peer {peer_id} (Lane R.1 recovery)"
-                                            );
-                                            s.unban_ip(&ip);
+                                    //
+                                    // N3 (audit 2026-05-15): only fire
+                                    // the auto-unban in PERMISSIONED
+                                    // mode. In permissionless mode
+                                    // (`PeerAuthority::permissionless()`)
+                                    // `is_authorized` returns `true` for
+                                    // every peer, so the previous
+                                    // unconditional auto-unban completely
+                                    // defeated `bans.json`: any reconnect
+                                    // from a banned IP cleared its ban.
+                                    // Lane R.1 recovery intent is
+                                    // validator-only, and `is_authorized`
+                                    // alone cannot distinguish "in the
+                                    // validator allowlist" from "any peer
+                                    // in permissionless mode".
+                                    if peer_authority.is_enforcing() {
+                                        if let Ok(mut s) = sybil_state_inner.write() {
+                                            if s.bans.is_banned(&ip) {
+                                                warn!(
+                                                    "network: auto-unbanning {ip} for authorized peer {peer_id} (Lane R.1 recovery)"
+                                                );
+                                                s.unban_ip(&ip);
+                                            }
                                         }
                                     }
                                     let total = swarm.connected_peers().count();
