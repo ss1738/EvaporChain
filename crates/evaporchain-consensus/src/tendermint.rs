@@ -4694,22 +4694,44 @@ impl TendermintConsensus {
             }
 
             if let Some(vi) = self.validator_set.get_mut(validator_id) {
-                if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key)
-                {
-                    vi.bls_public_key = Some(bls_public_key.clone());
-                    vi.bls_pop = if proof_of_possession.is_empty() {
-                        None
-                    } else {
-                        Some(proof_of_possession.clone())
-                    };
-                    vi.pop_verified = !proof_of_possession.is_empty();
-                    info!(
-                        validator = validator_id,
-                        pk_prefix = %hex::encode(&bls_public_key[..8]),
-                        pop_verified = vi.pop_verified,
-                        "Registered BLS public key from peer"
-                    );
+                // GEN-N1 (audit 2026-05-15): only ADMIT a fresh-key
+                // registration if the validator currently has no
+                // registered key. Overwriting an already-registered
+                // key requires a continuity proof signed by the
+                // currently-registered key — that path is handled by
+                // `apply_validator_key_rotations` (driven by a
+                // `RotateValidatorKey` transaction with both the
+                // old-key signature and the new-key PoP). Without
+                // this gate, any off-path attacker who can gossip
+                // could replace a genesis-anchored BLS key with one
+                // they control: PoP on the NEW key alone proves
+                // they control the new key, NOT that the legitimate
+                // validator authorised the rotation.
+                if vi.bls_public_key.is_some() {
+                    if vi.bls_public_key.as_ref() != Some(bls_public_key) {
+                        warn!(
+                            validator = validator_id,
+                            new_pk_prefix = %hex::encode(&bls_public_key[..8]),
+                            "REJECTED KeyAnnounce: validator already has a registered BLS key. \
+                             Use RotateValidatorKey (with old-key signature) for continuity-bound rotation."
+                        );
+                    }
+                    return actions;
                 }
+                // First registration (key was None) — admit.
+                vi.bls_public_key = Some(bls_public_key.clone());
+                vi.bls_pop = if proof_of_possession.is_empty() {
+                    None
+                } else {
+                    Some(proof_of_possession.clone())
+                };
+                vi.pop_verified = !proof_of_possession.is_empty();
+                info!(
+                    validator = validator_id,
+                    pk_prefix = %hex::encode(&bls_public_key[..8]),
+                    pop_verified = vi.pop_verified,
+                    "Registered BLS public key from peer (first registration)"
+                );
             }
             return actions;
         }

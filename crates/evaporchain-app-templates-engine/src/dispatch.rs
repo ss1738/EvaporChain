@@ -68,12 +68,39 @@ pub enum EngineError {
     UnknownTemplate(u32),
     #[error("typed init parse failed: {0}")]
     ParseFailed(String),
+    /// SUB-N2 (audit 2026-05-15): init_calldata exceeds the
+    /// per-deploy cap. Without this guard, every per-template
+    /// `parse()` calls `serde_json::from_slice(calldata)` with no
+    /// length pre-flight — a multi-MB calldata forces parse-tree
+    /// allocation in the contract engine BEFORE any gas charge
+    /// fires (gas is computed per-deploy at the fee-oracle level
+    /// which sits downstream of materialise).
+    #[error("init_calldata length {got} exceeds cap {cap}")]
+    CalldataTooLarge { got: usize, cap: usize },
 }
+
+/// SUB-N2 (audit 2026-05-15): hard cap on `init_calldata.len()`
+/// enforced at the dispatch level BEFORE any per-template
+/// `serde_json::from_slice` runs. 64 KiB is far above legitimate
+/// template configs (the largest variable-shape templates —
+/// `Singh-Lineage` ladders and `Sgb` fragments — top out at a few
+/// hundred bytes in practice) and well below the byte-cost-per-deploy
+/// the fee oracle's per-byte surcharge prices in (`PER_FRAGMENT_BYTE`
+/// = 4 gas/byte → 64 KiB ≈ 256k gas, still under MAX_TX_GAS).
+pub const MAX_INIT_CALLDATA: usize = 64 * 1024;
 
 /// Dispatch an instruction to the right typed handler.
 pub fn materialise(instr: &MaterialiseInstruction) -> Result<TypedInit, EngineError> {
     let cls = instr.template_class;
     let cd = instr.init_calldata.as_slice();
+    // SUB-N2: pre-flight length check. Surfaces oversized calldata
+    // as a typed error before any per-template parse() allocates.
+    if cd.len() > MAX_INIT_CALLDATA {
+        return Err(EngineError::CalldataTooLarge {
+            got: cd.len(),
+            cap: MAX_INIT_CALLDATA,
+        });
+    }
 
     let typed = if cls == SINGH_SABI {
         TypedInit::SinghSabi(init_singh_sabi::parse(cd).map_err(parse_err)?)
