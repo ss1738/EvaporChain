@@ -5091,13 +5091,27 @@ impl TendermintConsensus {
                                     }
                                 }
                                 None => {
+                                    // DRIFT-N3 (audit 2026-05-15): the
+                                    // earlier "Accept during migration
+                                    // window" branch was a gossip-
+                                    // forgery vector. Any peer could
+                                    // fabricate a Proposal with the
+                                    // expected proposer_id and no BLS
+                                    // signature; honest validators
+                                    // accepted on a warn-only path,
+                                    // then voted on the fabricated
+                                    // block. Match the prevote /
+                                    // precommit semantics: when the
+                                    // proposer has a registered BLS
+                                    // pk, a missing signature is fatal
+                                    // for this Proposal.
                                     warn!(
                                         height = height,
                                         round = round,
                                         validator = proposer_id,
-                                        "Proposal missing BLS signature (migration warning)"
+                                        "Rejected proposal: missing BLS signature (proposer has registered BLS key)"
                                     );
-                                    // Accept during migration window
+                                    return actions;
                                 }
                             }
                         }
@@ -14345,6 +14359,80 @@ mod tests {
         assert!(tc
             .bls_sign_vote(1, 0, &Some([1u8; 32]), "prevote")
             .is_some());
+    }
+
+    /// DRIFT-N3 (audit 2026-05-15) regression: when the proposer has
+    /// a registered BLS public key, a `Proposal` message arriving
+    /// with `bls_signature: None` MUST be rejected. Pre-fix the
+    /// handler accepted it on a warn-only path ("Accept during
+    /// migration window") — a gossip-forgery vector where any peer
+    /// could fabricate a Proposal with the expected proposer_id and
+    /// honest validators would vote on the fabricated block.
+    #[test]
+    fn drift_n3_proposal_without_bls_signature_rejected_when_proposer_has_key() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut tc = make_bls_consensus(1, ids);
+
+        // Determine who the proposer should be for height/round.
+        let proposer = tc
+            .proposer_for_round(tc.height, 0)
+            .expect("proposer must exist")
+            .id;
+
+        // Build a fake proposal from the legitimate proposer, but
+        // with bls_signature: None. The proposer has a registered
+        // BLS key in this validator set, so the BLS-check arm fires.
+        let block = Block {
+            number: tc.height,
+            epoch: 1,
+            parent_hash: tc.parent_hash,
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: Some(proposer),
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+            post_state_root: None,
+        };
+        let fake_proposal = ConsensusMessage::Proposal {
+            height: tc.height,
+            round: 0,
+            block,
+            proposer_id: proposer,
+            bls_signature: None,
+        };
+
+        let actions = tc.on_message(fake_proposal);
+
+        // No prevote must be emitted in response. Pre-fix this
+        // would emit a prevote (the proposal was accepted on warn).
+        let any_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+            )
+        });
+        assert!(
+            !any_prevote,
+            "DRIFT-N3: proposal with bls_signature=None from a BLS-keyed proposer \
+             must NOT trigger a prevote (would be gossip-forgeable)"
+        );
     }
 
     #[test]
