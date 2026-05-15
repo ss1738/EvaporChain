@@ -260,6 +260,27 @@ pub struct ExecutionContext {
 /// Maximum cross-contract call depth to prevent unbounded recursion.
 pub const MAX_CALL_DEPTH: u8 = 8;
 
+/// SCR-N1 (audit 2026-05-15): derive a deterministic identity address
+/// for a script contract from its u64 `contract_id`. Used by the VM
+/// when invoking cross-contract calls so the callee sees its caller as
+/// the *calling contract*, not the original EOA — without this, any
+/// contract-level `require(caller == owner)` gate is bypassable by
+/// routing through an intermediate contract.
+///
+/// DST `EVAPORCHAIN_V1_SCRIPT_CONTRACT_ID\0` distinguishes this hash
+/// from every other AccountAddress derivation on the chain so a
+/// contract's identity can't collide with any EOA-style address.
+pub const CONTRACT_ID_DST: &[u8] = b"EVAPORCHAIN_V1_SCRIPT_CONTRACT_ID\0";
+
+/// Derive the 32-byte identity address for a script contract by hashing
+/// its u64 id under the contract-id DST.
+pub fn contract_address(contract_id: u64) -> AccountAddress {
+    let mut preimage = Vec::with_capacity(CONTRACT_ID_DST.len() + 8);
+    preimage.extend_from_slice(CONTRACT_ID_DST);
+    preimage.extend_from_slice(&contract_id.to_le_bytes());
+    *blake3::hash(&preimage).as_bytes()
+}
+
 /// Callback for cross-contract calls. The ScriptEngine implements this
 /// so the VM can invoke other contracts during execution.
 pub trait ExternalCaller: Send {
@@ -450,7 +471,11 @@ impl ExternalCaller for ContractCallRouter {
         };
 
         self.active_calls.insert(contract_id);
-        let result = vm::EvaporVM::execute_full(
+        // SCR-N1: tag the inner VM with `executing_contract_id =
+        // contract_id` so any further nested call from this contract
+        // passes `contract_address(contract_id)` as the callee's
+        // caller — not `caller` (which is the parent's identity).
+        let result = vm::EvaporVM::execute_full_with_self(
             &bytecode,
             method,
             args,
@@ -458,6 +483,7 @@ impl ExternalCaller for ContractCallRouter {
             &ctx,
             gas_remaining,
             Some(self),
+            contract_id,
         );
         self.active_calls.remove(&contract_id);
         let result = result?;
@@ -827,7 +853,10 @@ impl ScriptEngine {
 
         let mut router = ContractCallRouter::from_engine(self);
         router.active_calls.insert(contract_id);
-        let result = vm::EvaporVM::execute_full(
+        // SCR-N1: top-level dispatch tags the VM with the contract_id
+        // so cross-contract calls from this contract correctly
+        // propagate the calling contract's identity (not the EOA).
+        let result = vm::EvaporVM::execute_full_with_self(
             &bytecode,
             method,
             args,
@@ -835,6 +864,7 @@ impl ScriptEngine {
             &ctx,
             vm_gas_limit,
             Some(&mut router),
+            contract_id,
         );
         router.active_calls.remove(&contract_id);
         let result = result?;
@@ -1193,6 +1223,90 @@ contract Boss {
             .unwrap();
         assert_eq!(result.return_value, Value::U64(50));
         assert!(result.gas_used > 0);
+    }
+
+    /// SCR-N1 (audit 2026-05-15) regression: when contract A calls
+    /// contract B, B's `caller` built-in MUST report A's identity
+    /// address — NOT the original EOA that called A. Pre-fix, B saw
+    /// `caller == EOA`, so any `require(caller == owner)` gate B
+    /// has was bypassable by any user routing through A.
+    #[test]
+    fn scr_n1_cross_contract_caller_is_callee_identity_not_eoa() {
+        let target_src = r#"
+contract Target {
+    state { last_caller: address = 0x0 }
+    fn record() -> u64 {
+        self.last_caller = caller()
+        return 1
+    }
+}
+"#;
+        let proxy_src = r#"
+contract Proxy {
+    state {}
+    fn pass_through(target: u64) -> u64 {
+        return call_contract(target, "record", 0)
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        engine.set_vrf_randomness([0u8; 32]);
+
+        let creator: AccountAddress = [0xCC; 32];
+        let eoa: AccountAddress = [0xEE; 32]; // some random EOA
+
+        let target_id = engine
+            .deploy(target_src.to_string(), creator, 1, 1000, 100)
+            .unwrap();
+        let proxy_id = engine
+            .deploy(proxy_src.to_string(), creator, 1, 1000, 100)
+            .unwrap();
+
+        // EOA calls Proxy.pass_through(target_id) → Proxy calls
+        // Target.record(). Target.last_caller must be the proxy's
+        // identity address, not the EOA.
+        engine
+            .call(
+                proxy_id,
+                "pass_through",
+                vec![Value::U64(target_id)],
+                eoa,
+                10,
+            )
+            .unwrap();
+
+        let target = engine.contracts.get(&target_id).unwrap();
+        let last_caller = match target.state.get("last_caller").unwrap() {
+            Value::Address(a) => *a,
+            other => panic!("expected Address, got {other:?}"),
+        };
+        let expected_proxy_address = contract_address(proxy_id);
+        assert_eq!(
+            last_caller, expected_proxy_address,
+            "SCR-N1: callee must see calling contract's identity \
+             ({:x?}…), not the EOA ({:x?}…)",
+            &expected_proxy_address[..4],
+            &eoa[..4]
+        );
+        assert_ne!(
+            last_caller, eoa,
+            "SCR-N1: callee must NOT see the original EOA as caller"
+        );
+    }
+
+    /// SCR-N1: `contract_address` is deterministic + collision-resistant
+    /// across distinct contract ids.
+    #[test]
+    fn scr_n1_contract_address_distinct_per_id() {
+        let a = contract_address(1);
+        let b = contract_address(2);
+        let c = contract_address(1);
+        assert_eq!(a, c, "contract_address must be deterministic");
+        assert_ne!(a, b, "distinct ids must map to distinct addresses");
+        // DST prefix in the preimage means contract addresses can't
+        // collide with a domainless `blake3(id_bytes)` derivation.
+        let domainless: AccountAddress = *blake3::hash(&1u64.to_le_bytes()).as_bytes();
+        assert_ne!(a, domainless, "DST must be mixed into the address");
     }
 }
 
