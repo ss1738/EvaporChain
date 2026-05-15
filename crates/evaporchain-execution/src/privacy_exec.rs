@@ -12,7 +12,8 @@
 //!   - State is synced back to StateDB (note tree root, nullifiers, pool balance)
 
 use evaporchain_proving::privacy::{
-    verify_balance_binding, verify_merkle_proof, Commitment, MerkleProof, Nullifier, PrivacyEngine,
+    verify_balance_binding, verify_merkle_proof, BalanceBindingKind, Commitment, MerkleProof,
+    Nullifier, PrivacyEngine,
 };
 use evaporchain_state::db::StateDB;
 use evaporchain_types::{MerkleProofData, PrivateTransferTx, ShieldTx, UnshieldTx};
@@ -634,11 +635,23 @@ impl PrivacyExecutor {
             }
         }
 
-        // 6. Verify balance binding
-        let sum_in: u64 = tx.input_amounts.iter().sum();
+        // 6. Verify balance binding.
+        //
+        // PRIV-N3 (audit 2026-05-15): checked_add on the input sum
+        // so an attacker can't wrap u64 silently.
+        let sum_in: u64 = tx
+            .input_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
         let change_total = sum_in.saturating_sub(tx.amount);
+        // PRIV-N4 (audit 2026-05-15): the Unshield kind tag binds
+        // this verification to the Unshield tx shape — a binding
+        // computed for a PrivateTransfer over the same numeric
+        // tuple + blindings is now rejected here.
         if !verify_balance_binding(
             &tx.balance_binding,
+            BalanceBindingKind::Unshield,
             sum_in,
             change_total,
             tx.amount,
@@ -858,11 +871,23 @@ impl PrivacyExecutor {
             }
         }
 
-        // 8. Verify balance binding and conservation
-        let sum_in: u64 = tx.input_amounts.iter().sum();
-        let sum_out: u64 = tx.output_amounts.iter().sum();
+        // 8. Verify balance binding and conservation.
+        //
+        // PRIV-N3: checked_add on each sum (see unshield path above).
+        // PRIV-N4: bind verification to the PrivateTransfer tx kind.
+        let sum_in: u64 = tx
+            .input_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
+        let sum_out: u64 = tx
+            .output_amounts
+            .iter()
+            .try_fold(0u64, |acc, &x| acc.checked_add(x))
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
         if !verify_balance_binding(
             &tx.balance_binding,
+            BalanceBindingKind::PrivateTransfer,
             sum_in,
             sum_out,
             tx.fee,
@@ -974,6 +999,7 @@ impl Default for PrivacyExecutor {
 mod tests {
     use super::*;
     use evaporchain_proving::privacy::compute_balance_binding;
+    use evaporchain_proving::privacy::BalanceBindingKind;
     use evaporchain_proving::privacy::{Commitment, Nullifier};
     use evaporchain_state::InMemoryStateDB;
     use evaporchain_types::{Account, AccountAddress};
@@ -1062,7 +1088,14 @@ mod tests {
         let merkle_proof = executor.get_merkle_proof(note.tree_index).unwrap();
         let nullifier = Nullifier::derive(&note.spending_secret, &Commitment(note.note_commitment));
         let binding =
-            compute_balance_binding(note.amount, 0, unshield_amount, &[note.blinding], &[]);
+            compute_balance_binding(
+                BalanceBindingKind::Unshield,
+                note.amount,
+                0,
+                unshield_amount,
+                &[note.blinding],
+                &[],
+            );
         UnshieldTx {
             to,
             amount: unshield_amount,
@@ -1102,6 +1135,7 @@ mod tests {
 
         let sum_out: u64 = output_amounts.iter().sum();
         let binding = compute_balance_binding(
+            BalanceBindingKind::PrivateTransfer,
             input_note.amount,
             sum_out,
             fee,
@@ -2172,8 +2206,14 @@ mod tests {
                                       // Recompute output commitment for the inflated amount so it passes commitment check
         tx.output_commitments[0] = Commitment::commit(6_000, &test_blinding(30)).0;
         // Recompute balance binding for the inflated values
-        tx.balance_binding =
-            compute_balance_binding(5_000, 6_000, 100, &[note.blinding], &[test_blinding(30)]);
+        tx.balance_binding = compute_balance_binding(
+            BalanceBindingKind::PrivateTransfer,
+            5_000,
+            6_000,
+            100,
+            &[note.blinding],
+            &[test_blinding(30)],
+        );
 
         let err = executor.execute_private_transfer(&mut db, &tx).unwrap_err();
         assert!(matches!(err, PrivacyExecError::UnshieldBalanceMismatch));
@@ -2237,7 +2277,14 @@ mod tests {
         let bob_spending_secret = test_blinding(88);
         let bob_nullifier =
             Nullifier::derive(&bob_spending_secret, &Commitment(bob_note_commitment));
-        let bob_binding = compute_balance_binding(30_000, 0, 30_000, &[bob_blind], &[]);
+        let bob_binding = compute_balance_binding(
+            BalanceBindingKind::Unshield,
+            30_000,
+            0,
+            30_000,
+            &[bob_blind],
+            &[],
+        );
 
         let unshield_tx = UnshieldTx {
             to: bob,
