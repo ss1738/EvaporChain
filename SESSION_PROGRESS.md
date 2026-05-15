@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 23) — Audit Q3 (CRITICAL) closed; Q-class sweep complete
+
+**Focus:** Q-class — block production ordering, proposer selection, epoch transitions, timing attacks
+**Commits shipped:** 1 (`fde3a871`)
+**Deliverables:**
+- Q3 CLOSED (CRITICAL): `block.timestamp` had no upper-bound check; proposer could set year-2050 timestamp, accepted by all validators, inflating energy-decay epoch calculations. Fix: `MAX_FUTURE_SECS=30` guard after monotonicity check in Proposal handler. 3 adversarial tests added. 945 consensus tests pass.
+- Q1 (proposer selection): CLEAN — VRF verified when present; hash-based selection deterministic-but-unpredictable
+- Q2 (epoch boundary race): CLEAN — validator set updates atomic at epoch boundary; no ordering inconsistency
+- Q4 (empty block MEV): CLEAN — downtime slashing + energy-stamped priority; antichain mode governance-gated
+- Q5 (validator set update race, slashing): CLEAN — equivocation slash fires before finality accounting
+- Q6 (reward overflow): CLEAN — saturating arithmetic throughout; per-block atomicity
+- Q7 (NIL vote liveness): CLEAN — timeout-driven round advancement; 500-miss downtime slashing
+**What's next:** R-class sweep (RPC/API surface, serialization security)
+**Blockers / open questions:** None
+**Cross-references:** `AUDIT_2026_05_11.md` rows Q3, Q1/2/4..7
+
 ## 2026-05-15 (session 22) — P-class audit sweep: all clean
 
 **Focus:** Privacy execution, nullifiers, ZK proof integration, UserOp privilege, governance bounds, EvaporScript privilege
