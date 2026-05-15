@@ -4,6 +4,18 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 29) — W-class audit sweep: W1 + W2 closed
+
+**Focus:** Wallet/key management security — BLS key loading, passphrase exposure, file permission TOCTOU, EVPL format coverage, zeroization, key rotation, KeyAnnounce PoP
+**Commits shipped:** 1 (`94ca9873`)
+**Deliverables:**
+- W1 (MEDIUM) CLOSED: plaintext BLS fallback paths now call `format_plaintext_for_disk()` so new writes land in canonical EVPL-plaintext format
+- W2 (MEDIUM) CLOSED: `write_secret_file` now uses `OpenOptions::new().mode(0o600)` on Unix — file created 0600 atomically, no TOCTOU window
+- W3/W4/W5/W6/W7/W8 confirmed CLEAN (zeroization, single-entry detection, passphrase gating, key rotation continuity, KeyAnnounce PoP, no mnemonic)
+**Empirical results:** `cargo test -p evaporchain-node` — 241 passed, 0 failed
+**What's next:** X-class sweep — execution/EVM compatibility security (gas metering, opcode bounds, contract isolation, re-entrancy in EvaporScript)
+**Cross-references:** AUDIT_2026_05_11.md (W-class addendum), commit `94ca9873`
+
 ## 2026-05-15 (session 28) — V-class audit sweep: V2 HIGH closed
 
 **Focus:** DA/network validation security — equivocation, DA cert verification, shard assignment, Proposal message authentication
