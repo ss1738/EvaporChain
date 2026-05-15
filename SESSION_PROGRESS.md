@@ -4,6 +4,23 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 22) — P-class audit sweep: all clean
+
+**Focus:** Privacy execution, nullifiers, ZK proof integration, UserOp privilege, governance bounds, EvaporScript privilege
+**Commits shipped:** 0 (no code changes needed)
+**Deliverables:**
+- P1 (nullifier double-spend): CLEAN — layered check (execution + PNT shadow-tracking); PNT Stage 1 wired
+- P2 (output commitment integrity): CLEAN — all commitments validated before note-tree insertion
+- P3 (shield/unshield amount binding): CLEAN — cryptographically enforced via balance_binding + Poseidon
+- P4 (ZK proof verification): FUNCTIONAL — commitment-based design; energy decay proofs epoch-bounded; no stubbing flags
+- P5 (UserOp privilege): CLEAN — serial-only + paymaster sig + inner-tx allowlist; no nesting
+- P6 (governance parameter bounds): CLEAN — enum allowlist + numeric range checks on all parameters
+- P7 (EvaporScript privilege): CLEAN — lifecycle hook reentrancy guard active; no privileged opcodes
+**Decisions made:** Energy decay proof full ZK circuit verification deferred to Stage 2; documented
+**What's next:** Q-class sweep (block production ordering, epoch transition security)
+**Blockers / open questions:** None
+**Cross-references:** `AUDIT_2026_05_11.md` row P1..P7
+
 ## 2026-05-15 (session 21) — Audit O1 closed; DeployTemplate match arms; env-race fix
 
 **Focus:** O-class oracle security + pre-existing compile blocker (DeployTemplate variant)
