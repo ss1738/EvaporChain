@@ -905,21 +905,36 @@ mod tests {
     // the validator's memory. Cap added here + tested below.
 
     /// Hitting MAX_ENCRYPTED_PENDING rejects further commits.
+    ///
+    /// PRIV-N5/PRIV-N6 (audit 2026-05-15): commitment-dedup +
+    /// admission-id-dedup both reject identical envelopes, so the
+    /// flood loop must vary the nonce across iterations to produce
+    /// unique commitments / admission-ids and reach the cap.
+    /// (Companion fix to commit 6360fcc5 which covered the parallel
+    /// `dos_resistance::dos_v4_..._fires_on_flood` test.)
     #[test]
     fn encrypted_pool_rejects_when_at_capacity() {
         let mut pool = EncryptedMempool::new(1);
         let tx = dummy_tx(0);
-        let nonce = [0u8; 32];
 
-        // Fill to capacity — every submit accepts.
-        for _ in 0..MAX_ENCRYPTED_PENDING {
+        // Fill to capacity — every submit accepts. Use a unique
+        // 32-byte nonce per iteration so commitments don't collide
+        // with PRIV-N6 dedup / admission-ids don't collide with
+        // PRIV-N5 dedup.
+        for i in 0..MAX_ENCRYPTED_PENDING {
+            let mut nonce = [0u8; 32];
+            nonce[..8].copy_from_slice(&(i as u64).to_le_bytes());
             let enc = encrypt_transaction(&tx, &nonce, 1);
             assert!(pool.submit_encrypted(enc), "below cap must accept");
         }
         assert_eq!(pool.pending_count().0, MAX_ENCRYPTED_PENDING);
 
-        // The (cap+1)-th is rejected.
-        let over = encrypt_transaction(&tx, &nonce, 1);
+        // The (cap+1)-th is rejected (under-cap dedup wouldn't fire
+        // because we use a fresh nonce here too — only the cap can
+        // reject this one).
+        let mut over_nonce = [0u8; 32];
+        over_nonce[..8].copy_from_slice(&(MAX_ENCRYPTED_PENDING as u64).to_le_bytes());
+        let over = encrypt_transaction(&tx, &over_nonce, 1);
         assert!(
             !pool.submit_encrypted(over),
             "at-cap commit must be rejected (T0.7 vector 4 — reveal-flood DoS)"
