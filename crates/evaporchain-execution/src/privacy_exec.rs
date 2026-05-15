@@ -323,6 +323,48 @@ impl PrivacyExecutor {
         // Catch up the count + epoch trackers so subsequent privacy
         // ops know how many notes already exist.
         self.engine.set_epoch(self.current_epoch);
+
+        // PRIV-N2 (audit 2026-05-15): repopulate the in-memory
+        // nullifier_set + PNT live window from persisted state. Without
+        // this, after any restart on `protocol_version >= 1`:
+        //   - `engine.nullifier_set` is empty
+        //   - `pnt.window` is empty
+        //   - `is_double_spend()` reads `pnt.is_spent_in_window()` (v1+
+        //     path) — returns false for every previously-spent
+        //     nullifier
+        //   - every prior unshield/private-transfer can be replayed by
+        //     anyone with the original ZK proof
+        //
+        // Restoration policy: insert every persisted nullifier into
+        // BOTH the canonical unbounded set AND the PNT current phase.
+        // This is over-conservative for the PNT (we may retain a
+        // nullifier past the point its original phase would have been
+        // evicted by `advance_phase`) but it defends against the
+        // replay attack with zero false negatives. The PNT's
+        // subsequent `advance_phase` calls in normal block flow will
+        // age these out over time.
+        let persisted_nullifiers = db.all_nullifiers();
+        let mut nullifiers_restored = 0usize;
+        for nf in &persisted_nullifiers {
+            let n = evaporchain_proving::privacy::Nullifier(*nf);
+            // `spend` returns false if already inserted; that's only
+            // possible if `all_nullifiers` returned a duplicate, which
+            // would itself be a state corruption — silent here, the
+            // PRIV-N2 invariant is satisfied either way.
+            let _ = self.engine.nullifier_set.spend(&n);
+            // PNT insert may surface `DoubleSpend` for the same reason;
+            // best-effort restoration, log + continue if so.
+            if let Err(e) = self.pnt.insert_nullifier(*nf) {
+                tracing::warn!(
+                    error = ?e,
+                    "PrivacyExecutor::restore_from_db: PNT insert returned error \
+                     (likely duplicate from db.all_nullifiers) — continuing"
+                );
+            } else {
+                nullifiers_restored += 1;
+            }
+        }
+
         // Verify the rebuilt root matches the persisted root. An empty
         // commitment set with a zero root is the legitimate fresh-node
         // case and must not error.
@@ -342,8 +384,10 @@ impl PrivacyExecutor {
         }
         tracing::info!(
             commitments = restored,
-            "PrivacyExecutor: restored {} note commitments from disk; root verified",
+            nullifiers = nullifiers_restored,
+            "PrivacyExecutor: restored {} note commitments + {} nullifiers from disk; root verified",
             restored,
+            nullifiers_restored,
         );
         Ok(restored)
     }
@@ -2298,6 +2342,81 @@ mod tests {
             msg.contains("rebuilt root"),
             "expected mismatch error, got: {msg}"
         );
+    }
+
+    /// PRIV-N2 (audit 2026-05-15) regression: `restore_from_db` must
+    /// repopulate BOTH the canonical unbounded nullifier set AND the
+    /// PNT live window from `db.all_nullifiers()`. Pre-fix, after
+    /// restart on `protocol_version >= 1`, `is_double_spend()` reads
+    /// `pnt.is_spent_in_window()` (the v1+ path) — which returns
+    /// false for every previously-spent nullifier because the PNT
+    /// was reconstructed empty. Every prior unshield can replay.
+    #[test]
+    fn priv_n2_restore_from_db_repopulates_nullifier_set_and_pnt_window() {
+        // Pretend a prior chain run spent these nullifiers and persisted
+        // them to the DB. After restart, restore_from_db must re-establish
+        // the in-memory state so v1+ replay protection holds.
+        let mut db = InMemoryStateDB::new();
+        let nf_a = [0xAAu8; 32];
+        let nf_b = [0xBBu8; 32];
+        let nf_c = [0xCCu8; 32];
+        // Mark them as spent in the persisted set (simulating a
+        // previous chain run).
+        assert!(db.spend_nullifier(&nf_a));
+        assert!(db.spend_nullifier(&nf_b));
+        assert!(db.spend_nullifier(&nf_c));
+
+        // Fresh PrivacyExecutor (simulating a restart). nullifier_set
+        // and pnt are both empty.
+        let mut exec = PrivacyExecutor::with_depth(4);
+        assert_eq!(exec.engine.nullifier_set.len(), 0);
+        assert_eq!(exec.pnt.live_count(), 0);
+
+        // Restore.
+        exec.restore_from_db(&db)
+            .expect("restore from db should succeed");
+
+        // Canonical unbounded set: all three present.
+        for nf in &[nf_a, nf_b, nf_c] {
+            let n = evaporchain_proving::privacy::Nullifier(*nf);
+            assert!(
+                exec.engine.nullifier_set.is_spent(&n),
+                "PRIV-N2: nullifier_set must contain persisted nullifier {:x?}",
+                &nf[..4]
+            );
+        }
+        // PNT live window: all three present, defending the v1+ path.
+        for nf in &[nf_a, nf_b, nf_c] {
+            assert!(
+                exec.pnt.is_spent_in_window(nf),
+                "PRIV-N2: PNT live window must contain persisted nullifier {:x?}",
+                &nf[..4]
+            );
+        }
+        assert_eq!(
+            exec.pnt.live_count(),
+            3,
+            "PRIV-N2: PNT must have 3 nullifiers post-restore"
+        );
+
+        // The replay scenario: flip to v1, attempt a double-spend
+        // check on a persisted nullifier — must report spent.
+        exec.set_protocol_version(1);
+        assert!(
+            exec.is_double_spend(&db, &nf_a),
+            "PRIV-N2: previously-spent nullifier must be reported spent under v1+ after restart"
+        );
+    }
+
+    /// PRIV-N2: empty persisted nullifier set is the legitimate
+    /// fresh-node case and must not error.
+    #[test]
+    fn priv_n2_restore_from_db_no_nullifiers_is_fine() {
+        let mut exec = PrivacyExecutor::with_depth(4);
+        let db = InMemoryStateDB::new();
+        exec.restore_from_db(&db).expect("fresh restore should succeed");
+        assert_eq!(exec.engine.nullifier_set.len(), 0);
+        assert_eq!(exec.pnt.live_count(), 0);
     }
 
     /// T0.5 sub-task 5 — adversarial spend-evict-respend test.
