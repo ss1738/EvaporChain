@@ -558,17 +558,47 @@ impl EnergyVerkleTrie {
                     count += Self::compress_recursive(child);
                 }
 
-                // Then check if any children are now compressible
+                // Then check if any children are now compressible.
+                //
+                // T2.27 Part 1 (2026-05-15): extended to compress cold
+                // leaves directly, not only fully-cold internal
+                // subtrees. The previous discriminator
+                //   `if let EnergyNode::Internal(_) = child { ... }`
+                // left dead leaves expanded indefinitely when their
+                // sibling slots in the parent internal node still held
+                // hot leaves — so the leaf-level cold tail of a sparse
+                // dead-key distribution never collapsed. Sparse-cold
+                // is the dominant decay shape on a real chain (one
+                // dead account next to many live ones), so this was
+                // the largest gap in `compress_cold`'s coverage.
+                //
+                // The three Coq invariants in
+                // `research/coq/EnergyVerkleCompression.v` continue to
+                // hold for the leaf case:
+                //  - `compress_preserves_commitment` — `CompressedNode
+                //    .commitment = child.hash()` is set from the same
+                //    `child.hash()` regardless of whether `child` is
+                //    `Leaf` or `Internal`, so the parent's recomputed
+                //    commitment over the children slot is byte-identical.
+                //  - `compress_preserves_total_leaf_count` — a `Leaf`
+                //    contributes `meta.leaf_count = 1`, which is
+                //    exactly the `leaf_count` we copy into the
+                //    `CompressedNode`, so the total is preserved.
+                //  - `compress_energy_sum_monotone` — `is_cold()` is
+                //    the precondition; for a `Leaf`, `is_cold` already
+                //    requires `energy = 0`, so the post-compression
+                //    `max_energy = 0` is monotone non-increasing.
+                //
+                // We explicitly skip `Compressed(_)` children to avoid
+                // re-wrapping a compressed node in another compressed
+                // node (would inflate `leaf_count` accounting).
                 let children_to_compress: Vec<u8> = internal
                     .children
                     .iter()
                     .filter_map(|(&idx, child)| {
                         let meta = child.meta();
-                        // Compress internal nodes where all leaves are dead
-                        if meta.is_cold() {
-                            if let EnergyNode::Internal(_) = child {
-                                return Some(idx);
-                            }
+                        if meta.is_cold() && !matches!(child, EnergyNode::Compressed(_)) {
+                            return Some(idx);
                         }
                         None
                     })
@@ -1835,6 +1865,121 @@ mod tests {
         let count = trie.update_energy_batch(&updates);
         assert_eq!(count, 5);
         assert_eq!(trie.root_meta().max_energy, 0);
+    }
+
+    // ── T2.27 Part 1: leaf-level compression regression tests ──
+    //
+    // Before T2.27 Part 1, `compress_recursive` would only compress a
+    // child slot when the child was itself an `Internal` node and its
+    // whole subtree was cold. That left dead leaves expanded
+    // indefinitely whenever their parent slot still had hot siblings —
+    // i.e. the sparse-cold case, which dominates real decay shapes
+    // (one dead account next to many live ones). These tests pin the
+    // extended behaviour.
+
+    #[test]
+    fn t2_27_isolated_cold_leaf_compresses() {
+        // 4 leaves, all direct children of the root internal node
+        // (each `make_key(i)` differs at byte 0 so they occupy
+        // distinct top-level slots). Kill exactly one leaf; the other
+        // three remain hot. Before the fix this yielded 0
+        // compressions; after the fix the cold leaf collapses to a
+        // `Compressed` node directly.
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..4u8 {
+            trie.insert(make_key(i), make_value(i), 1000, 100, 0);
+        }
+        trie.update_energy(&make_key(0), 0, 50);
+
+        let count = trie.compress_cold();
+        assert!(
+            count >= 1,
+            "isolated cold leaf must compress directly; got {} compressions",
+            count
+        );
+        assert_eq!(
+            trie.compressed_leaf_count(),
+            1,
+            "exactly one leaf should be marked compressed"
+        );
+        // Hot siblings must remain live (still gettable).
+        for i in 1..4u8 {
+            assert_eq!(
+                trie.get(&make_key(i)),
+                Some(make_value(i)),
+                "hot sibling {} was destroyed by leaf-level compression",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn t2_27_leaf_compression_preserves_root() {
+        // Mechanized invariant `compress_preserves_commitment` from
+        // `research/coq/EnergyVerkleCompression.v` — extended to the
+        // leaf case. `CompressedNode.commitment = leaf.hash()` and
+        // `Leaf::hash()` is `blake3(key || value)`, which is invariant
+        // under energy changes. So killing energy then compressing
+        // must produce the same root as before the kill.
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..6u8 {
+            trie.insert(make_key(i), make_value(i), 1000, 100, 0);
+        }
+        let root_before = trie.root();
+
+        // Kill two non-adjacent leaves (sparse-cold distribution).
+        trie.update_energy(&make_key(1), 0, 50);
+        trie.update_energy(&make_key(4), 0, 50);
+        let root_after_kill = trie.root();
+        assert_eq!(
+            root_before, root_after_kill,
+            "energy decay must not change root commitment"
+        );
+
+        let _ = trie.compress_cold();
+        let root_after_compress = trie.root();
+        assert_eq!(
+            root_before, root_after_compress,
+            "leaf-level compression must preserve root commitment"
+        );
+        assert_eq!(trie.compressed_leaf_count(), 2);
+    }
+
+    #[test]
+    fn t2_27_double_compress_is_idempotent() {
+        // Second compression pass must not re-wrap already-compressed
+        // children (would double-count `leaf_count` in the aggregate
+        // and break `compress_preserves_total_leaf_count`).
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..4u8 {
+            trie.insert(make_key(i), make_value(i), 1000, 100, 0);
+        }
+        trie.update_energy(&make_key(0), 0, 50);
+        trie.update_energy(&make_key(2), 0, 50);
+
+        let first = trie.compress_cold();
+        let compressed_after_first = trie.compressed_leaf_count();
+        let total_leaves_after_first = trie.len() + trie.compressed_leaf_count() as usize;
+
+        let second = trie.compress_cold();
+        let compressed_after_second = trie.compressed_leaf_count();
+        let total_leaves_after_second = trie.len() + trie.compressed_leaf_count() as usize;
+
+        assert!(first >= 2, "first pass must compress both cold leaves");
+        assert_eq!(
+            second, 0,
+            "second pass must be a no-op; got {} extra compressions",
+            second
+        );
+        assert_eq!(
+            compressed_after_first, compressed_after_second,
+            "compressed leaf count must be stable across re-runs"
+        );
+        assert_eq!(
+            total_leaves_after_first, total_leaves_after_second,
+            "total leaf count (active + compressed) must be conserved"
+        );
+        assert_eq!(total_leaves_after_first, 4);
     }
 }
 
