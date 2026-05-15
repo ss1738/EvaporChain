@@ -724,6 +724,15 @@ fn addr_from_byte(b: u8) -> [u8; 32] {
 /// `addr_from_byte` explicitly.
 pub fn parse_hex_address(s: &str) -> Result<[u8; 32], String> {
     let clean = s.strip_prefix("0x").unwrap_or(s);
+    // R1 (audit 2026-05-15): see `parse_hex32` for context. Reject
+    // oversized hex strings BEFORE `hex::decode` allocates an
+    // output Vec proportional to input length.
+    if clean.len() > 64 {
+        return Err(format!(
+            "address must be exactly 32 bytes (64 hex chars), got {} chars",
+            clean.len()
+        ));
+    }
     let bytes = hex::decode(clean).map_err(|_| "invalid hex address".to_string())?;
     if bytes.len() != 32 {
         return Err(format!(
@@ -3307,7 +3316,20 @@ pub struct HbctActionResp {
 }
 
 fn parse_hex32(s: &str) -> Result<[u8; 32], String> {
-    let bytes = hex::decode(s.trim_start_matches("0x")).map_err(|e| e.to_string())?;
+    // R1 (audit 2026-05-15): reject obviously-oversized input
+    // before `hex::decode` allocates an output Vec proportional
+    // to `stripped.len() / 2`. 23 call sites accept path-params
+    // or body fields that go through this helper; capping at the
+    // only valid length (64 hex chars = 32 bytes) eliminates the
+    // per-request allocation amplification regardless of upstream
+    // URL / body caps. The post-decode `bytes.len() != 32` check
+    // already rejected non-32-byte inputs functionally; this is
+    // the same check moved earlier on the string-length side.
+    let stripped = s.trim_start_matches("0x");
+    if stripped.len() > 64 {
+        return Err(format!("expected ≤64 hex chars, got {}", stripped.len()));
+    }
+    let bytes = hex::decode(stripped).map_err(|e| e.to_string())?;
     if bytes.len() != 32 {
         return Err(format!("expected 32 bytes, got {}", bytes.len()));
     }
@@ -21271,5 +21293,63 @@ mod singh_pool_helpers {
         // can run with None. Must short-circuit cleanly.
         let loaded = load_pools(None);
         assert!(loaded.is_empty(), "None data_dir → empty map");
+    }
+}
+
+/// R1 (audit 2026-05-15): regression tests for `parse_hex32` /
+/// `parse_hex_address` length-cap. Both helpers used to call
+/// `hex::decode(s)` on attacker-supplied input before checking
+/// length, allocating an output Vec proportional to input size.
+/// 23 path-param + body-field call sites go through these helpers
+/// across `api.rs`. The cap rejects oversized input upfront so the
+/// allocation never happens.
+#[cfg(test)]
+mod r1_parse_hex_length_cap {
+    use super::{parse_hex32, parse_hex_address};
+
+    #[test]
+    fn parse_hex32_rejects_oversized_input_before_decode() {
+        // 1 MB of hex chars — would allocate 500 KB inside hex::decode
+        // pre-fix. Post-fix, the length check fails fast.
+        let oversized = "0".repeat(1_000_000);
+        let err = parse_hex32(&oversized).expect_err("oversized input must fail");
+        assert!(
+            err.contains("expected ≤64 hex chars"),
+            "error must cite the length cap, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_hex32_accepts_exact_64_chars() {
+        let valid = "0".repeat(64);
+        assert!(parse_hex32(&valid).is_ok());
+    }
+
+    #[test]
+    fn parse_hex32_accepts_64_chars_with_0x_prefix() {
+        let valid = format!("0x{}", "0".repeat(64));
+        assert!(parse_hex32(&valid).is_ok());
+    }
+
+    #[test]
+    fn parse_hex32_rejects_too_short() {
+        let short = "0".repeat(60);
+        assert!(parse_hex32(&short).is_err());
+    }
+
+    #[test]
+    fn parse_hex_address_rejects_oversized_input_before_decode() {
+        let oversized = "0".repeat(1_000_000);
+        let err = parse_hex_address(&oversized).expect_err("oversized input must fail");
+        assert!(
+            err.contains("got 1000000 chars"),
+            "error must cite the input length, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_hex_address_accepts_exact_64_chars() {
+        let valid = "0".repeat(64);
+        assert!(parse_hex_address(&valid).is_ok());
     }
 }
