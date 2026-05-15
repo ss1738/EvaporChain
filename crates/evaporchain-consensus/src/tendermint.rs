@@ -1976,7 +1976,7 @@ impl TendermintConsensus {
             ("fork_choice_mode", "mcc"),
             ("parent_acceptance_mode", "linear"),
             ("block_source_mode", "fifo"),
-            ("conservation_enforcement", "observe"),
+            ("conservation_enforcement", "enforce"),
             ("lambda_fold_mode", "hash_chain"),
             ("cartel_alarm_mode", "observe"),
             // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 4 (lane T0.3) —
@@ -19021,7 +19021,7 @@ mod t1_20_batch5 {
         assert_eq!(snap.get("fork_choice_mode").map(|s| s.as_str()), Some("mcc"));
         assert_eq!(snap.get("parent_acceptance_mode").map(|s| s.as_str()), Some("linear"));
         assert_eq!(snap.get("block_source_mode").map(|s| s.as_str()), Some("fifo"));
-        assert_eq!(snap.get("conservation_enforcement").map(|s| s.as_str()), Some("observe"));
+        assert_eq!(snap.get("conservation_enforcement").map(|s| s.as_str()), Some("enforce"));
         assert_eq!(snap.get("lambda_fold_mode").map(|s| s.as_str()), Some("hash_chain"));
     }
 
