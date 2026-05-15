@@ -3048,7 +3048,7 @@ impl SimpleExecutor {
                         // Cross-shard transfer mutates sender balance.
                         from_acct.last_touched_epoch = epoch;
                         let to_acct = db.get_or_create_account(&to_addr);
-                        to_acct.balance += *amount;
+                        to_acct.balance = to_acct.balance.saturating_add(*amount);
                         // ...and receiver balance.
                         to_acct.last_touched_epoch = epoch;
                         let mut h = blake3::Hasher::new();
@@ -6485,6 +6485,52 @@ contract Looper {
         assert_eq!(receipts.len(), 1);
         assert!(!receipts[0].success);
         assert_eq!(db.get_account(&from_addr).unwrap().balance, 100);
+    }
+
+    /// CROSS-SHARD-001 (audit 2026-05-15): receiver balance must saturate at
+    /// u64::MAX rather than wrapping to 0 when a transfer would overflow.
+    #[test]
+    fn test_cross_shard_transfer_receiver_balance_saturates() {
+        use evaporchain_sharding::cross_shard::{CrossShardMessage, MessagePayload};
+        use evaporchain_sharding::shard_assignment::ShardId;
+
+        let mut executor = SimpleExecutor::new_for_test(100);
+        let mut db = InMemoryStateDB::new();
+
+        let from_addr = addr(1);
+        let from_acct = db.get_or_create_account(&from_addr);
+        from_acct.balance = 1_000;
+
+        let to_addr = addr(2);
+        let to_acct = db.get_or_create_account(&to_addr);
+        to_acct.balance = u64::MAX; // receiver already at max
+
+        let mut from_20 = [0u8; 20];
+        from_20.copy_from_slice(&from_addr[..20]);
+        let mut to_20 = [0u8; 20];
+        to_20.copy_from_slice(&to_addr[..20]);
+
+        let msg = CrossShardMessage {
+            id: 0,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            target_object: to_20,
+            payload: MessagePayload::Transfer {
+                from: from_20,
+                amount: 500,
+            },
+            target_energy: 100,
+            timestamp: 1,
+        };
+
+        let receipts = executor.execute_cross_shard_messages(&mut db, vec![msg], 10);
+        assert!(receipts[0].success, "transfer should succeed");
+        // With saturating_add: u64::MAX + 500 saturates to u64::MAX, not 0.
+        assert_eq!(
+            db.get_account(&to_addr).unwrap().balance,
+            u64::MAX,
+            "receiver balance must saturate at u64::MAX, not wrap"
+        );
     }
 
     #[test]
