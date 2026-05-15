@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 40) --- WIP audit branch flush: 7 branches merged to main
+
+**Focus:** Merge accumulated WIP audit branches to main; fix SCR-N1 compile errors
+**Commits shipped:** ~14 (merge commits + SCR-N1 fix; tip 2de3b9c4)
+**Deliverables:**
+- SH-COMPACT-1: dead-pair dedup in ShardCompactor::find_candidates
+- SH-COMPACT-2: DST for ShardCompactionProof::compute_hash
+- SH-CROSS-1: MAX_PENDING_RECEIPTS=64K + MAX_PER_SHARD_QUEUE=16K caps
+- SH-CROSS-2: RECEIPT_LEAF_DST + RECEIPT_INTERNAL_DST DSTs in receipt Merkle tree
+- PAY-RATE-LIMITER-1: bounded RateLimiter bucket map in paymaster
+- SCR-N1: Op::CallExternal passes calling-contract identity as nested caller
+- PRIV-N2: restore nullifiers + PNT window on startup in privacy_exec.rs
+**Empirical results:** 550/550 execution, 70/70 sharding, 56/56 paymaster, 134/134 script pass
+**What's next:** Workspace-wide sweep; any remaining WIP branches
+**Cross-references:** AUDIT_2026_05_11.md session 40 addendum; 5c70f38f..2de3b9c4
+
 ## 2026-05-15 (session 39) — T1.13: conservation_enforcement default promoted to "enforce"
 
 **Focus:** Last remaining code lane in MAINNET_READINESS.md — flip conservation_enforcement default
