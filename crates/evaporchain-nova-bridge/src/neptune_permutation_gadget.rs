@@ -901,6 +901,7 @@ pub fn enforce_state_eq<F: PrimeField>(
 mod tests {
     use super::*;
     use ark_bn254::Fr as Bn254Fr;
+    use ark_r1cs_std::alloc::AllocVar;
     use ark_r1cs_std::R1CSVar;
     use ark_relations::r1cs::ConstraintSystem;
 
