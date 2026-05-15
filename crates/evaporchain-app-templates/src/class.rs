@@ -48,6 +48,11 @@ pub const SFSV_VAULT: TemplateClass = TemplateClass(0x0001_0102);
 pub const SHLM_BOUNTY: TemplateClass = TemplateClass(0x0001_0103);
 pub const SCL_LEASE: TemplateClass = TemplateClass(0x0001_0104);
 pub const SAP_AQ: TemplateClass = TemplateClass(0x0001_0105);
+/// Refresh-Market — AMM-priced rent per state object. Per
+/// `research/INVENTION_STACK.md` §4.1 row 7: the chain's primary
+/// economic activity. Each namespace declares max-slots capacity +
+/// base coefficient; per-epoch rent = `base × (used + 1)² / capacity²`.
+pub const REFRESH_MARKET_NAMESPACE: TemplateClass = TemplateClass(0x0001_0106);
 
 // Wallet UX lane (these are *contract-deployable* knobs the wallet
 // can attach; the wallet UI itself is off-chain frontend code)
@@ -88,6 +93,7 @@ mod tests {
             SHLM_BOUNTY,
             SCL_LEASE,
             SAP_AQ,
+            REFRESH_MARKET_NAMESPACE,
             SINGH_TRIAGE_CONTRACT,
             SINGH_HEARTBEAT_PULSE,
             SINGH_LINEAGE_POLICY,

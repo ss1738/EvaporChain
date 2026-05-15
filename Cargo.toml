@@ -134,7 +134,11 @@ members = [
     "crates/evaporchain-mcp",
     "crates/evaporchain-oracle",
     "crates/evaporchain-sharding",
+
     "crates/evaporchain-nova-bridge",
+
+    "crates/evaporchain-eth-bridge",
+
     "prototypes/fold-a-block",
     "wallet",
     "tests/integration",

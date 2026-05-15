@@ -17,6 +17,10 @@ lambda_fold_nova = [
     "evaporchain-lambda-fold/nova",
 ]
 
+[[bin]]
+name = "repair-meta"
+path = "src/repair_meta.rs"
+
 [[bench]]
 name = "core_benchmarks"
 harness = false
@@ -27,6 +31,9 @@ evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-state = { path = "../evaporchain-state" }
 evaporchain-consensus = { path = "../evaporchain-consensus" }
 evaporchain-execution = { path = "../evaporchain-execution" }
+# Tier 0 — app-templates pipeline (BACKEND_INTEGRATION_BACKLOG.md).
+# Used by `/api/templates/catalogue` to enumerate registered primitives.
+evaporchain-app-templates = { path = "../evaporchain-app-templates" }
 evaporchain-proving = { path = "../evaporchain-proving", features = ["test-utils"] }
 evaporchain-network = { path = "../evaporchain-network" }
 evaporchain-da = { path = "../evaporchain-da" }

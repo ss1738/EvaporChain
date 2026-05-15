@@ -688,9 +688,10 @@ fn execute_tx(
         | Transaction::Shield(_)
         | Transaction::Unshield(_)
         | Transaction::PrivateTransfer(_)
-        | Transaction::Deferred(_) => {
+        | Transaction::Deferred(_)
+        | Transaction::DeployTemplate(_) => {
             Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "contract/script/privacy/deferred txs execute in serial phase".into(),
+                "contract/script/privacy/deferred/template txs execute in serial phase".into(),
             )))
         }
         Transaction::Blob(blob) => {
@@ -809,6 +810,13 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::ClaimDelegation(_) => crate::GAS_CLAIM_DELEGATION,
         // Refund is protocol-issued; gas charged at issuance time.
         Transaction::Refund(_) => GAS_TRANSFER,
+        Transaction::DeployTemplate(tx) => {
+            const GAS_DEPLOY_TEMPLATE_BASE: u64 = 50_000;
+            const GAS_DEPLOY_TEMPLATE_PER_BYTE: u64 = 50;
+            GAS_DEPLOY_TEMPLATE_BASE.saturating_add(
+                GAS_DEPLOY_TEMPLATE_PER_BYTE.saturating_mul(tx.params.len() as u64),
+            )
+        }
     }
 }
 

@@ -579,6 +579,10 @@ impl Mempool {
             Transaction::ClaimDelegation(_) => 30_000,
             // Refund is protocol-issued; transfer-equivalent gas.
             Transaction::Refund(_) => 21_000,
+            // Tier 0: app-templates DeployTemplate. Quote matches
+            // the executor's per-byte schedule (50 + 50/byte) so
+            // mempool accounting agrees with execution.
+            Transaction::DeployTemplate(t) => 50_000 + 50 * t.params.len() as u64,
         }
     }
 
@@ -768,6 +772,13 @@ impl Mempool {
             }
             // Refund: attacker (32) + victim (32) + amount (8) + reason hash (32).
             Transaction::Refund(_) => 32 + 32 + 8 + 32,
+            // DeployTemplate: 32 (deployer) + 4 (template_class) + 8 (nonce)
+            // + 8 (epoch) + len(params) + sig/pubkey.
+            Transaction::DeployTemplate(t) => {
+                32 + 4 + 8 + 8 + t.params.len()
+                    + t.signature.as_ref().map_or(0, |s| s.len())
+                    + t.public_key.as_ref().map_or(0, |p| p.len())
+            }
         }
     }
 }

@@ -28,10 +28,10 @@ use evaporchain_app_templates::class::*;
 use evaporchain_app_templates_materialise::MaterialiseInstruction;
 
 use crate::{
-    init_childkey, init_gallery_forgets, init_mayfly, init_mnemochain, init_sap, init_sbav,
-    init_scl, init_sddc, init_sfsv, init_sgb, init_shlm, init_singh_heartbeat, init_singh_lineage,
-    init_singh_migrant, init_singh_posthuma, init_singh_resonance, init_singh_sabi,
-    init_singh_triage, init_ssm, init_witnessfit,
+    init_childkey, init_gallery_forgets, init_mayfly, init_mnemochain, init_refresh_market,
+    init_sap, init_sbav, init_scl, init_sddc, init_sfsv, init_sgb, init_shlm,
+    init_singh_heartbeat, init_singh_lineage, init_singh_migrant, init_singh_posthuma,
+    init_singh_resonance, init_singh_sabi, init_singh_triage, init_ssm, init_witnessfit,
 };
 
 /// Typed init configs — one variant per registered template. The
@@ -59,6 +59,7 @@ pub enum TypedInit {
     Sgb(init_sgb::InitConfig),
     Sbav(init_sbav::InitConfig),
     Ssm(init_ssm::InitConfig),
+    RefreshMarket(init_refresh_market::InitConfig),
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -114,6 +115,8 @@ pub fn materialise(instr: &MaterialiseInstruction) -> Result<TypedInit, EngineEr
         TypedInit::Sbav(init_sbav::parse(cd).map_err(parse_err)?)
     } else if cls == SSM_GAME_SEMANTICS {
         TypedInit::Ssm(init_ssm::parse(cd).map_err(parse_err)?)
+    } else if cls == REFRESH_MARKET_NAMESPACE {
+        TypedInit::RefreshMarket(init_refresh_market::parse(cd).map_err(parse_err)?)
     } else {
         return Err(EngineError::UnknownTemplate(cls.0));
     };

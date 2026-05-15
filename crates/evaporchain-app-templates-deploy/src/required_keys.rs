@@ -15,10 +15,10 @@
 
 use evaporchain_app_templates::{
     class::{
-        CHILDKEY_LETTER, GALLERY_FORGETS, MAYFLY, MNEMOCHAIN_CARD, SAP_AQ, SBAV_RUNTIME, SCL_LEASE,
-        SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY, SINGH_HEARTBEAT_PULSE,
-        SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA, SINGH_RESONANCE, SINGH_SABI,
-        SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, WITNESSFIT_STREAK,
+        CHILDKEY_LETTER, GALLERY_FORGETS, MAYFLY, MNEMOCHAIN_CARD, REFRESH_MARKET_NAMESPACE,
+        SAP_AQ, SBAV_RUNTIME, SCL_LEASE, SDDC_AUCTION, SFSV_VAULT, SGB_TYPE_SYSTEM, SHLM_BOUNTY,
+        SINGH_HEARTBEAT_PULSE, SINGH_LINEAGE_POLICY, SINGH_MIGRANT, SINGH_POSTHUMA,
+        SINGH_RESONANCE, SINGH_SABI, SINGH_TRIAGE_CONTRACT, SSM_GAME_SEMANTICS, WITNESSFIT_STREAK,
     },
     TemplateClass,
 };
@@ -58,6 +58,7 @@ pub fn required_keys_for(class: TemplateClass) -> &'static [&'static str] {
             "max_aq_per_window",
             "window_epochs",
         ],
+        c if c == REFRESH_MARKET_NAMESPACE => &["id_hex", "capacity", "base_rent"],
         // ── Wallet UX lane ────────────────────────────────────────
         c if c == SINGH_TRIAGE_CONTRACT => &["horizon_today", "horizon_tomorrow", "horizon_week"],
         c if c == SINGH_HEARTBEAT_PULSE => &[

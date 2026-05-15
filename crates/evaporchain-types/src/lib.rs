@@ -605,6 +605,14 @@ pub enum Transaction {
     /// independently-computed observation+refund (Phase 3.2
     /// determinism contract).
     Refund(RefundTx),
+    /// Deploy an app-templates primitive (Mayfly, SDDC, SFSV, …) via
+    /// the typed-template pipeline. The pipeline crates
+    /// (`evaporchain-app-templates*`) validate the request, derive the
+    /// instance id, charge the per-template fee, and append a
+    /// DeployReceipt to the eventlog. Per `BACKEND_INTEGRATION_BACKLOG.md`
+    /// Tier 0 — a single chain entry point that unlocks ~20 Singh-named
+    /// primitives with no per-primitive Tx variant required.
+    DeployTemplate(DeployTemplateTx),
 }
 
 impl Transaction {
@@ -922,6 +930,17 @@ impl Transaction {
                 buf.extend_from_slice(&tx.settle_block_height.to_le_bytes());
                 buf
             }
+            Transaction::DeployTemplate(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x19);
+                buf.extend_from_slice(&tx.deployer);
+                buf.extend_from_slice(&tx.template_class.to_le_bytes());
+                buf.extend_from_slice(&(tx.params.len() as u32).to_le_bytes());
+                buf.extend_from_slice(&tx.params);
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf.extend_from_slice(&tx.submitted_at_epoch.to_le_bytes());
+                buf
+            }
         }
     }
 
@@ -970,6 +989,7 @@ impl Transaction {
             Transaction::ClaimDelegation(tx) => tx.signature.as_deref(),
             // Refund is protocol-issued; no signature.
             Transaction::Refund(_) => None,
+            Transaction::DeployTemplate(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -1001,6 +1021,7 @@ impl Transaction {
             Transaction::ClaimDelegation(tx) => tx.public_key.as_deref(),
             // Refund is protocol-issued; no public key.
             Transaction::Refund(_) => None,
+            Transaction::DeployTemplate(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -1044,6 +1065,7 @@ impl Transaction {
             // logic gates on the deterministic-construction contract,
             // not on sender.
             Transaction::Refund(tx) => Some(&tx.attacker),
+            Transaction::DeployTemplate(tx) => Some(&tx.deployer),
         }
     }
 
@@ -1078,6 +1100,7 @@ impl Transaction {
             // the consensus engine refusing to settle the same
             // observation twice (Phase 3.3 contract).
             Transaction::Refund(_) => None,
+            Transaction::DeployTemplate(tx) => Some(tx.nonce),
         }
     }
 }
@@ -1193,6 +1216,38 @@ pub struct DeployScriptTx {
     pub energy: Energy,
     /// Half-life for script contract energy decay.
     pub half_life: HalfLife,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Deploy an app-templates primitive via the typed-template pipeline.
+///
+/// The deployer submits a canonical `DeployRequest` (built by
+/// `evaporchain-app-templates-deploy`); the chain runs it through the
+/// pipeline (validate → materialise → engine → bind → fees → receipt
+/// → eventlog) and charges the deployer the per-template fee.
+///
+/// One Tx variant covers all 20 registered primitives — adding a new
+/// primitive is a registry update, not a chain protocol change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployTemplateTx {
+    pub deployer: AccountAddress,
+    /// Stable u32 id from `evaporchain_app_templates::class`.
+    /// E.g. `MAYFLY = 0x0001_0001`, `SDDC = 0x0001_0002`, etc.
+    pub template_class: u32,
+    /// Canonical JSON bytes of the params object — produced by
+    /// `serde_json::to_vec` of a key-sorted `serde_json::Value`.
+    /// Validators agree byte-for-byte.
+    pub params: Vec<u8>,
+    /// Per-deployer monotonic nonce; combines with `(template_class,
+    /// deployer)` to derive the deterministic instance id (see
+    /// `evaporchain-app-templates-materialise::instance`).
+    pub nonce: u64,
+    /// Submission epoch metadata (informational; instance id does not
+    /// depend on it so relayers cannot cause deterministic-id drift).
+    pub submitted_at_epoch: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

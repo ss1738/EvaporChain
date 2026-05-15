@@ -911,6 +911,10 @@ mod tests {
             }
             // Refund is protocol-issued — no caller signature to set.
             Transaction::Refund(_) => {}
+            Transaction::DeployTemplate(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
         }
     }
 

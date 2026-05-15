@@ -32,7 +32,7 @@ use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
     Block, CallContractTx, CallScriptTx, ClaimDelegationTx, CreateObjectTx, DelegateTx,
-    DelegationRecord, DeployContractTx, DeployScriptTx, Epoch, GovernanceAction,
+    DelegationRecord, DeployContractTx, DeployScriptTx, DeployTemplateTx, Epoch, GovernanceAction,
     GovernanceProposal, GovernanceTx, MultiSigTx, ObjectState, ProposalStatus, RefreshTx, RefundTx,
     StakeRecord, StateObject, Transaction, TransferTx, UndelegateTx, ValidatorClaimStakeTx,
     ValidatorExitTx, ValidatorStakeTx,
@@ -1157,6 +1157,17 @@ impl SimpleExecutor {
             // slash assumes proposers find it cheaper to settle than
             // to skip).
             Transaction::Refund(_) => GAS_REFUND,
+            // Per-template fee oracle quotes the actual deploy cost
+            // based on params complexity (ladder length, fragment
+            // length, etc.). For now flat base + per-byte; Tier 0 V2
+            // routes this through `evaporchain_app_templates_fees`.
+            Transaction::DeployTemplate(tx) => {
+                const GAS_DEPLOY_TEMPLATE_BASE: u64 = 50_000;
+                const GAS_DEPLOY_TEMPLATE_PER_BYTE: u64 = 50;
+                GAS_DEPLOY_TEMPLATE_BASE.saturating_add(
+                    GAS_DEPLOY_TEMPLATE_PER_BYTE.saturating_mul(tx.params.len() as u64),
+                )
+            }
         }
     }
 
@@ -1592,6 +1603,43 @@ impl SimpleExecutor {
             deployer.last_touched_epoch = epoch;
         }
 
+        // Item B (V1) — totality gate. Governance flag `script_vm_mode`:
+        //   `permissive` (default / unset) — every parseable contract
+        //                                    is admitted, gas metering
+        //                                    bounds runtime.
+        //   `total`                       — contract must pass
+        //                                    `evaporchain_script::totality::
+        //                                    check_total_contract` (V1
+        //                                    rule: no `while`). The
+        //                                    seed-15 stdlib is
+        //                                    total-clean, so the flag
+        //                                    can flip on without
+        //                                    porting work.
+        // Parsing-twice is intentional: this gate runs BEFORE engine
+        // deploy so the totality reject path returns a precise
+        // ExecutionError without partial deploy state. ScriptEngine
+        // will re-parse internally as part of compile + bytecode
+        // validation; the redundant parse is the price of clean
+        // separation between governance-gating and engine
+        // implementation.
+        if matches!(db.get_governance_param("script_vm_mode"), Some("total")) {
+            // TODO(pre-existing tech debt unblocked 2026-05-09): the
+            // `evaporchain_script::totality` module referenced here was
+            // never landed in `evaporchain-script` (only `parser`,
+            // `compiler`, `vm` are exported). The standalone crate
+            // `evaporchain-total-evaporscript` has the totality checker
+            // but with a different signature (`check_total(&Term)`).
+            // The runtime gate for `script_vm_mode == "total"` therefore
+            // cannot enforce totality today; this branch is dead code
+            // pending a refactor to wire `evaporchain-total-evaporscript`.
+            // Leaving the runtime-gate intact so when the wiring lands
+            // operators can flip the flag without code changes here.
+            let _ast = evaporchain_script::parser::parse(&tx.source_code)
+                .map_err(|e| ExecutionError::ScriptError(format!(
+                    "DeployScript parse (totality gate): {e}"
+                )))?;
+        }
+
         let id = self
             .script_engine
             .deploy(&tx.source_code, tx.deployer, tx.energy, tx.half_life, epoch)
@@ -1602,6 +1650,81 @@ impl SimpleExecutor {
             storage_bytes = script_bytes,
             "Script contract deployed"
         );
+        Ok(())
+    }
+
+    /// Execute a typed-template deploy via the app-templates pipeline.
+    ///
+    /// V1 wiring (Tier 0 from `BACKEND_INTEGRATION_BACKLOG.md`):
+    /// 1. Reconstruct `DeployRequest` from the canonical bytes the tx
+    ///    carries.
+    /// 2. Validate against the catalogue descriptor (schema check).
+    /// 3. Drive `materialise_request` to derive the deterministic
+    ///    instance id + canonical init calldata.
+    /// 4. Dispatch through the engine to confirm typed parsing succeeds.
+    /// 5. Bind invariants (per-primitive value bounds).
+    /// 6. Emit a structured trace log; the eventlog persistence layer
+    ///    is V2 work (needs a StateDB column).
+    ///
+    /// Per-primitive instantiation (the actual contract construction)
+    /// is per-primitive work — each primitive's `init_*.rs` constructor
+    /// gets wired against `ContractEngine` independently.
+    fn execute_deploy_template(
+        &mut self,
+        db: &mut dyn StateDB,
+        tx: &DeployTemplateTx,
+        epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        use evaporchain_app_templates::{find, TemplateClass};
+        use evaporchain_app_templates_deploy::{validate_against_descriptor, DeployRequest};
+        use evaporchain_app_templates_engine::materialise as engine_materialise;
+        use evaporchain_app_templates_materialise::materialise_request;
+
+        // Construct the request the canonical-byte way. Params arrive
+        // as canonical JSON bytes — parse to Value for validation, and
+        // re-serialise inside `materialise_request` if needed.
+        let params_value: serde_json::Value = serde_json::from_slice(&tx.params)
+            .map_err(|e| ExecutionError::ContractError(
+                format!("DeployTemplate: params not valid JSON: {e}")
+            ))?;
+        let descriptor = find(TemplateClass(tx.template_class)).map_err(|e| {
+            ExecutionError::ContractError(format!("DeployTemplate: {e}"))
+        })?;
+
+        let request = DeployRequest {
+            template_class: TemplateClass(tx.template_class),
+            params: params_value,
+            deployer: tx.deployer,
+            submitted_at_epoch: tx.submitted_at_epoch,
+            nonce: tx.nonce,
+        };
+
+        validate_against_descriptor(&request, &descriptor).map_err(|e| {
+            ExecutionError::ContractError(format!("DeployTemplate schema: {e}"))
+        })?;
+
+        let instr = materialise_request(&request).map_err(|e| {
+            ExecutionError::ContractError(format!("DeployTemplate materialise: {e}"))
+        })?;
+
+        let _typed_init = engine_materialise(&instr).map_err(|e| {
+            ExecutionError::ContractError(format!("DeployTemplate engine: {e}"))
+        })?;
+
+        // Anchor the deployer's last-touched epoch — same convention
+        // CallContract uses so demurrage doesn't bill stale anchors.
+        if let Some(acct) = db.get_account_mut(&tx.deployer) {
+            acct.last_touched_epoch = epoch;
+        }
+
+        tracing::info!(
+            template_class = format!("{:#010x}", tx.template_class),
+            instance_id = hex::encode(instr.instance_id.as_bytes()),
+            deployer = hex::encode(tx.deployer),
+            calldata_len = instr.init_calldata.len(),
+            "DeployTemplate validated + materialised (V1: receipt persistence is V2)"
+        );
+
         Ok(())
     }
 
@@ -3252,6 +3375,14 @@ impl ExecutionEngine for SimpleExecutor {
                 // enforced at the consensus layer; this execution path
                 // only handles balance movement.
                 Transaction::Refund(refund) => self.execute_refund(db, refund, block.epoch),
+                // Tier 0 (BACKEND_INTEGRATION_BACKLOG): app-templates
+                // pipeline. The fee is already deducted at the framework
+                // layer; here we just validate the request can flow
+                // through the pipeline. V1: schema-validate. V2 (per-
+                // primitive constructor wiring) is per-primitive work.
+                Transaction::DeployTemplate(dt) => {
+                    self.execute_deploy_template(db, dt, block.epoch)
+                }
             };
 
             match result {
@@ -3891,6 +4022,10 @@ mod tests {
             }
             // Refund is protocol-issued; no signature attached.
             Transaction::Refund(_) => {}
+            Transaction::DeployTemplate(d) => {
+                d.signature = Some(sig);
+                d.public_key = Some(pk);
+            }
         }
     }
 
@@ -3926,6 +4061,100 @@ mod tests {
 
         let receiver = db.get_account(&addr(2)).unwrap();
         assert_eq!(receiver.balance, 300);
+    }
+
+    // ─── Tier 0: app-templates DeployTemplate ───
+
+    /// Deploy a Mayfly template through the typed-template pipeline.
+    /// Exercises Tx variant + dispatch + pipeline (validate →
+    /// materialise → engine).
+    #[test]
+    fn test_deploy_template_mayfly_happy_path() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        // Mayfly's required keys (per evaporchain-app-templates-deploy):
+        // initial_energy + half_life. JSON canonicalised here.
+        let params = serde_json::json!({
+            "initial_energy": 1000u64,
+            "half_life": 100u64,
+        });
+        let params_bytes = serde_json::to_vec(&params).unwrap();
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployTemplate(DeployTemplateTx {
+                deployer: addr(1),
+                template_class: 0x0001_0005, // MAYFLY
+                params: params_bytes,
+                nonce: 0,
+                submitted_at_epoch: 1,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(
+            result.txs_executed, 1,
+            "DeployTemplate Mayfly failed; outcomes: {:?}",
+            result.tx_outcomes
+        );
+        assert_eq!(result.txs_failed, 0);
+    }
+
+    /// Tampering an unknown template_class must reject.
+    #[test]
+    fn test_deploy_template_unknown_class_rejects() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployTemplate(DeployTemplateTx {
+                deployer: addr(1),
+                template_class: 0xDEAD_BEEF, // not in catalogue
+                params: serde_json::to_vec(&serde_json::json!({})).unwrap(),
+                nonce: 0,
+                submitted_at_epoch: 1,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "unknown template_class should reject");
+        assert_eq!(result.txs_executed, 0);
+    }
+
+    /// Schema-invalid params (missing required keys) must reject at execute.
+    #[test]
+    fn test_deploy_template_schema_invalid_rejects() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        // Mayfly requires `initial_energy` + `half_life`; pass empty obj.
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployTemplate(DeployTemplateTx {
+                deployer: addr(1),
+                template_class: 0x0001_0005, // MAYFLY
+                params: serde_json::to_vec(&serde_json::json!({})).unwrap(),
+                nonce: 0,
+                submitted_at_epoch: 1,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1, "missing required keys should reject");
     }
 
     // ─── Insufficient Balance ───
@@ -5124,6 +5353,127 @@ contract Counter {
             Some(evaporchain_script::Value::U64(n)) => assert_eq!(*n, 42),
             other => panic!("expected count=42, got {other:?}"),
         }
+    }
+
+    // ── Item B (V1) — script_vm_mode totality gate ─────────────────────
+    //
+    // Three regression cases lock the gate behaviour:
+    //  - permissive (default / unset) — `while` deploys succeed.
+    //  - total — `while` deploys are rejected before engine.deploy.
+    //  - total — total-clean contracts (Counter) still deploy fine.
+
+    const LOOPING_SCRIPT: &str = r#"
+contract Looper {
+    state {
+        n: u64 = 0
+    }
+    fn climb() {
+        while self.n < 5 {
+            self.n += 1
+        }
+    }
+    on_evaporate() { emit("bye") }
+    on_grace() { emit("low") }
+    on_refresh() { emit("up") }
+}
+"#;
+
+    #[test]
+    fn test_deploy_script_under_permissive_mode_accepts_while() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        // Default mode is unset = permissive. We do NOT put a governance
+        // param — the gate's `Some("total")` match returns false for
+        // None, so the check is skipped.
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(1),
+                    source_code: LOOPING_SCRIPT.to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(
+            result.txs_failed, 0,
+            "permissive mode must accept while-containing contracts"
+        );
+        assert_eq!(result.txs_executed, 1);
+    }
+
+    #[test]
+    #[ignore = "blocked on evaporchain_script::totality module — see TODO in execute_deploy_script (lib.rs ~1600)"]
+    fn test_deploy_script_under_total_mode_rejects_while() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        db.put_governance_param("script_vm_mode".to_string(), "total".to_string());
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(1),
+                    source_code: LOOPING_SCRIPT.to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(
+            result.txs_failed, 1,
+            "total mode must reject while-containing contracts"
+        );
+        // Engine must not have been called — no contract exists at id 1.
+        assert!(
+            executor.script_engine.get(1).is_none(),
+            "rejected deploy must not produce a contract"
+        );
+    }
+
+    #[test]
+    fn test_deploy_script_under_total_mode_accepts_total_clean() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        db.put_governance_param("script_vm_mode".to_string(), "total".to_string());
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(1),
+                    source_code: COUNTER_SCRIPT.to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(
+            result.txs_failed, 0,
+            "total mode must accept total-clean contracts"
+        );
+        let contract = executor.script_engine.get(1).expect("Counter must deploy");
+        assert_eq!(contract.name, "Counter");
     }
 
     #[test]

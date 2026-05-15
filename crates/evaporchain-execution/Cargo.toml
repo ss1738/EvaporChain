@@ -18,6 +18,13 @@ evaporchain-fee-controller = { path = "../evaporchain-fee-controller" }
 evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
 evaporchain-llsa = { path = "../evaporchain-llsa" }
 evaporchain-epv = { path = "../evaporchain-epv" }
+# Tier 0 — app-templates pipeline (BACKEND_INTEGRATION_BACKLOG.md).
+# Used by `execute_deploy_template` to validate + materialise typed
+# deploys without per-primitive wiring.
+evaporchain-app-templates = { path = "../evaporchain-app-templates" }
+evaporchain-app-templates-deploy = { path = "../evaporchain-app-templates-deploy" }
+evaporchain-app-templates-engine = { path = "../evaporchain-app-templates-engine" }
+evaporchain-app-templates-materialise = { path = "../evaporchain-app-templates-materialise" }
 evaporchain-tombstone = { path = "../evaporchain-tombstone" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-cmu-gate = { path = "../evaporchain-cmu-gate" }

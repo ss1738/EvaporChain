@@ -122,6 +122,15 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             "evaporchain-sap",
         )
         .expect("SAP descriptor is constant"),
+        TemplateDescriptor::new(
+            REFRESH_MARKET_NAMESPACE,
+            "Refresh-Market (Namespace Rent)",
+            "Marketplace",
+            json!({"id_hex": "00", "capacity": 1000, "base_rent": 100}),
+            "Per-namespace AMM rent. Quadratic in utilisation: empty pays floor; full pays ~base. The chain's primary economic activity.",
+            "evaporchain-refresh-market",
+        )
+        .expect("RefreshMarket descriptor is constant"),
         // ── Wallet UX lane ──────────────────────────────────────────
         TemplateDescriptor::new(
             SINGH_TRIAGE_CONTRACT,
@@ -288,12 +297,12 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_lists_20_templates() {
+    fn catalogue_lists_21_templates() {
         // Anti-regression: dropping a primitive accidentally would
-        // shrink the catalogue. 20 corresponds to the 20 net-new
-        // application crates this session.
+        // shrink the catalogue. 20 was the original Singh-named set;
+        // 21 includes RefreshMarket added 2026-05-09 (Tier 1 backlog).
         let cat = catalogue();
-        assert_eq!(cat.len(), 20);
+        assert_eq!(cat.len(), 21);
     }
 
     #[test]

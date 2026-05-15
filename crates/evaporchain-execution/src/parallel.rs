@@ -145,6 +145,14 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
                 AccessKey::Account(tx.victim),
             ]
         }
+        // DeployTemplate touches the deployer account (fee deduction)
+        // and the global app-templates eventlog. The eventlog isn't a
+        // tracked AccessKey yet (V2 work), so we conservatively put
+        // these in the serial bucket via the fall-through below; this
+        // arm exists to keep extract_access_keys exhaustive.
+        Transaction::DeployTemplate(tx) => {
+            vec![AccessKey::Account(tx.deployer)]
+        }
     }
 }
 
@@ -1033,6 +1041,13 @@ impl ParallelExecutor {
             // rationale (Phase 3.5d stake-slash assumes proposers
             // find settling cheaper than skipping).
             Transaction::Refund(_) => GAS_REFUND,
+            Transaction::DeployTemplate(tx) => {
+                const GAS_DEPLOY_TEMPLATE_BASE: u64 = 50_000;
+                const GAS_DEPLOY_TEMPLATE_PER_BYTE: u64 = 50;
+                GAS_DEPLOY_TEMPLATE_BASE.saturating_add(
+                    GAS_DEPLOY_TEMPLATE_PER_BYTE.saturating_mul(tx.params.len() as u64),
+                )
+            }
         }
     }
 
@@ -1231,6 +1246,9 @@ impl ParallelExecutor {
                 )),
                 Transaction::Refund(_) => Err(ExecutionError::ContractError(
                     "refund txs execute in serial phase".into(),
+                )),
+                Transaction::DeployTemplate(_) => Err(ExecutionError::ContractError(
+                    "DeployTemplate txs execute in serial phase".into(),
                 )),
             };
 
@@ -1550,7 +1568,10 @@ impl ExecutionEngine for ParallelExecutor {
                 // it in the parallel pool would silently drop rotations.
                 | Transaction::RotateValidatorKey(_)
                 // Refund is protocol-issued and serial.
-                | Transaction::Refund(_) => serial_txs.push((i, tx)),
+                | Transaction::Refund(_)
+                // DeployTemplate touches the global app-templates
+                // eventlog → serial pool.
+                | Transaction::DeployTemplate(_) => serial_txs.push((i, tx)),
                 _ => parallel_txs.push((i, tx)),
             }
         }

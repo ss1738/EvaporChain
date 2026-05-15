@@ -329,7 +329,7 @@ impl std::fmt::Display for GovernanceParamError {
         match self {
             Self::UnknownKey(k) => write!(
                 f,
-                "unknown governance soft-fork key: {k:?} (allowlist: parent_acceptance_mode, block_source_mode, conservation_enforcement, lambda_fold_mode, cartel_alarm_mode)"
+                "unknown governance soft-fork key: {k:?} (allowlist: parent_acceptance_mode, block_source_mode, conservation_enforcement, lambda_fold_mode, cartel_alarm_mode, script_vm_mode)"
             ),
             Self::InvalidValue { key, value, permitted } => write!(
                 f,
@@ -1291,6 +1291,17 @@ impl TendermintConsensus {
             "block_source_mode" => &["fifo", "antichain"],
             "conservation_enforcement" => &["observe", "enforce"],
             "lambda_fold_mode" => &["hash_chain", "nova"],
+            // Item B (V1) of the smart-contract layer: structural-totality
+            // gate at DeployScript admission. `permissive` (default)
+            // accepts every parseable contract; `total` rejects any
+            // program that doesn't pass `evaporchain_script::totality::
+            // check_total_contract` — i.e. any program containing a
+            // mainline `while` (V1 ruleset). The seed-15 stdlib in
+            // `contracts/evaporscript/` is total-clean, so the flag can
+            // flip on without porting work. V1.5 will accept BoundedWhile
+            // patterns (strict-decrement detection) and recognise more
+            // total constructs without breaking V1 callers.
+            "script_vm_mode" => &["permissive", "total"],
             // Phase 3.4 of CROOKS_MEV_INTEGRATION_PLAN.md —
             // `crooks_mev_settlement_mode` chooses between
             // observe-only (default) and enforce (validators reject
@@ -5617,11 +5628,14 @@ impl TendermintConsensus {
             self.decay_all_boltzmann_stakes(block.epoch);
         }
 
-        // Derive parent hash for next block
+        // Derive parent hash for next block.
+        // Use block.state_root (consensus-agreed, from block header) not the
+        // locally-computed state_root, so diverged executors stay on the
+        // canonical parent-hash chain instead of forking.
         let mut hash_input = Vec::new();
         hash_input.extend_from_slice(&block.number.to_le_bytes());
         hash_input.extend_from_slice(&block.epoch.to_le_bytes());
-        hash_input.extend_from_slice(&state_root);
+        hash_input.extend_from_slice(&block.state_root);
         hash_input.extend_from_slice(&block.parent_hash);
         self.parent_hash = blake3_hash(&hash_input);
 
