@@ -4,6 +4,21 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 32) — Z-class audit sweep: Z-WAL-001 MEDIUM closed (WAL length silent truncation)
+
+**Focus:** Serialization/deserialization security, WAL codec, network message size bounds, zero-copy unsafe, DAG traversal depth, schema version gating
+**Commits shipped:** 1 (`bfb6532a`)
+**Deliverables:**
+- Z-WAL-001 (MEDIUM) CLOSED: WAL `begin_block` write path used `as u32` cast; now uses `try_into()` returning explicit `io::Err` if batch > 4GB — prevents silent length truncation (BLAKE3 checksum on read already caught corruption, but write now fails loudly)
+- Z-NET-001 CLEAN: network deserialization size caps (4MB gossip, 512KB consensus) enforced *before* `serde_json::from_slice`; bounded allocation confirmed
+- Z-VER-001 CLEAN: protocol version gated in consensus handler via U3 fix (same session); correct architecture
+- Z-DAG-001 CLEAN: DAG traversal depth capped at 1,000,000 in Light Cone ancestry walk
+- Z-UNS-001 CLEAN: ML-DSA unsafe block has compile-time + runtime layout guards
+- Z-SIG-001 CLEAN: consensus message signature check ordering is correct
+**Empirical results:** `cargo test -p evaporchain-state` — 246+5 passed, 0 failed
+**What's next:** Alphabetical sweep complete (U→Z). Consider remaining backlog items from earlier rounds or a targeted sweep of the `evaporchain-proving` Nova IVC path.
+**Cross-references:** AUDIT_2026_05_11.md (Z-class addendum), commit `bfb6532a`
+
 ## 2026-05-15 (session 31) — Y-class audit sweep: Y-FEE-001 MEDIUM closed (governance clamp panic)
 
 **Focus:** Governance parameter validation, PID fee controller safety, reward/slash accounting, emission schedule, MEV refund, economic invariants
