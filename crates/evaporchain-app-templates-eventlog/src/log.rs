@@ -93,6 +93,31 @@ impl DeployEventLog {
         &self.receipts
     }
 
+    /// SUB-N8 (audit 2026-05-15): drop all receipts strictly below
+    /// `threshold_height` and evict their event_ids from the seen
+    /// index. The log is append-only for an indexer's purposes, but
+    /// memory growth is unbounded over chain lifetime — operators
+    /// who have archived old receipts off-box can call this to
+    /// reclaim heap. Returns the number of receipts pruned.
+    ///
+    /// Monotone height invariant is preserved: pruning only drops a
+    /// prefix, never touches order of survivors. `since` / `range`
+    /// queries that span the pruned region simply return what's
+    /// left.
+    pub fn prune_before_height(&mut self, threshold_height: u64) -> usize {
+        let cut = self
+            .receipts
+            .partition_point(|r| r.block_height < threshold_height);
+        if cut == 0 {
+            return 0;
+        }
+        for r in &self.receipts[..cut] {
+            self.seen.remove(&r.event_id());
+        }
+        self.receipts.drain(..cut);
+        cut
+    }
+
     /// Rebuild the seen-set from the receipts vec. Used after
     /// deserialising (since `seen` is `#[serde(skip)]`).
     pub fn rebuild_index(&mut self) {
@@ -274,6 +299,74 @@ mod tests {
         // accept a NEW receipt past its tail.
         back.append(receipt(0x33, 102, 3)).unwrap();
         assert_eq!(back.len(), 3);
+    }
+
+    #[test]
+    fn prune_drops_prefix_and_evicts_seen() {
+        // SUB-N8: prune below threshold drops the prefix, keeps
+        // suffix, and evicts pruned event_ids from `seen` so the
+        // exact same receipt can be re-appended later (e.g. on a
+        // chain re-org of the still-live tail). Survivors keep
+        // monotone-height invariant.
+        let mut log = DeployEventLog::new();
+        for (i, h) in (100..110).enumerate() {
+            log.append(receipt(i as u8, h, i as u8 + 1)).unwrap();
+        }
+        assert_eq!(log.len(), 10);
+
+        let pruned = log.prune_before_height(105);
+        assert_eq!(pruned, 5);
+        assert_eq!(log.len(), 5);
+        assert_eq!(log.all()[0].block_height, 105);
+        assert_eq!(log.all()[4].block_height, 109);
+
+        // Re-appending a pruned-height receipt fails on monotonicity
+        // (we're past it), but the event_id eviction is observable
+        // by being able to append a NEW receipt with the same event
+        // bytes at a survivor height — which can't actually collide
+        // by construction. Instead, sanity-check `seen` size matches
+        // surviving receipts.
+        assert_eq!(log.seen.len(), 5);
+    }
+
+    #[test]
+    fn prune_below_first_is_noop() {
+        let mut log = DeployEventLog::new();
+        log.append(receipt(0x11, 100, 1)).unwrap();
+        log.append(receipt(0x22, 101, 2)).unwrap();
+        let pruned = log.prune_before_height(50);
+        assert_eq!(pruned, 0);
+        assert_eq!(log.len(), 2);
+    }
+
+    #[test]
+    fn prune_above_last_drops_everything() {
+        let mut log = DeployEventLog::new();
+        log.append(receipt(0x11, 100, 1)).unwrap();
+        log.append(receipt(0x22, 101, 2)).unwrap();
+        let pruned = log.prune_before_height(200);
+        assert_eq!(pruned, 2);
+        assert!(log.is_empty());
+        assert_eq!(log.seen.len(), 0);
+        // After full prune, a fresh receipt at a fresh height appends fine.
+        log.append(receipt(0x33, 250, 3)).unwrap();
+        assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn prune_preserves_monotone_invariant_for_appends() {
+        // Survivors still enforce monotone height on subsequent appends.
+        let mut log = DeployEventLog::new();
+        for (i, h) in (100..105).enumerate() {
+            log.append(receipt(i as u8, h, i as u8 + 1)).unwrap();
+        }
+        log.prune_before_height(103);
+        // last surviving height is 104; can't append below that
+        let err = log.append(receipt(0xff, 103, 99)).unwrap_err();
+        assert!(matches!(err, AppendError::NonMonotoneHeight { .. }));
+        // but appending at 104 (same as last) or above works
+        log.append(receipt(0xfe, 104, 100)).unwrap();
+        log.append(receipt(0xfd, 200, 101)).unwrap();
     }
 
     #[test]

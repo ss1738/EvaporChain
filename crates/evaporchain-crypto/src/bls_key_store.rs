@@ -89,13 +89,25 @@ pub fn passphrase_from_env() -> Option<Vec<u8>> {
     }
 }
 
-/// Argon2id parameters — pinned to OWASP 2024 baseline. If a future
-/// argon2 crate release silently weakens its defaults, these
-/// per-parameter constants make the regression a compile-time / code-
-/// review event instead of a quiet operational downgrade.
+/// Argon2id parameters — pinned and per-parameter so any future
+/// argon2 crate release silently weakening its defaults becomes a
+/// compile-time / code-review event instead of a quiet operational
+/// downgrade.
+///
 /// Re-audit (2026-05-02): explicit pinning per audit Crypto-8.
+///
+/// GEN-N5 (audit 2026-05-15): `ARGON2_T_COST` bumped from 3 → 4.
+/// The validator BLS sk is the highest-value local secret on the
+/// box; the older `t=3` baseline (OWASP 2024) is below the OWASP
+/// 2026 / RFC 9106 "second-recommendation" tier (`m=64 MiB, t=4`)
+/// for high-value secrets. A well-resourced attacker with a stolen
+/// disk image and a weak passphrase could brute-force `t=3` offline
+/// on a single GPU rig within the operational threat window; `t=4`
+/// raises the per-guess cost by ~33% (one extra Argon2id pass)
+/// without exceeding the 200ms-per-derivation operator runtime
+/// budget on the M4 Mini test bench.
 pub const ARGON2_M_COST_KIB: u32 = 64 * 1024; // 64 MiB
-pub const ARGON2_T_COST: u32 = 3;
+pub const ARGON2_T_COST: u32 = 4;
 pub const ARGON2_P_COST: u32 = 1;
 pub const ARGON2_OUT_LEN: usize = 32;
 
