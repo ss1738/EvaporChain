@@ -228,11 +228,46 @@ impl NoteTree {
     pub fn size(&self) -> usize {
         self.next_leaf
     }
+
+    /// PRIV-N1 (audit 2026-05-15): tree-depth getter so chain-side
+    /// `verify_merkle_proof` callers can pass the trusted depth and
+    /// reject proofs whose `siblings.len()` doesn't match it.
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
 }
 
 /// Verify a Merkle membership proof.
+///
+/// PRIV-N1 (audit 2026-05-15): `expected_depth` MUST come from a
+/// trusted source (the verifier's local `NoteTree`) — it's not part
+/// of the attacker-controlled proof. Without this bind, a proof
+/// with `siblings: vec![]` + `leaf_index: 0` lets the loop run
+/// zero iterations, reducing verification to `leaf == proof.root`.
+/// An attacker submitting an unshield with
+/// `input_note_commitment[i] = current_anchor` then passes the
+/// Merkle check and mints unlimited from the shielded pool.
+///
+/// Invariants enforced:
+///  - `proof.siblings.len() == expected_depth`
+///  - `proof.leaf_index < (1 << expected_depth)`
 #[allow(clippy::manual_is_multiple_of)]
-pub fn verify_merkle_proof(leaf: &[u8; 32], proof: &MerkleProof) -> bool {
+pub fn verify_merkle_proof(
+    leaf: &[u8; 32],
+    proof: &MerkleProof,
+    expected_depth: usize,
+) -> bool {
+    if proof.siblings.len() != expected_depth {
+        return false;
+    }
+    if expected_depth >= usize::BITS as usize {
+        return false;
+    }
+    let max_leaves: usize = 1usize << expected_depth;
+    if proof.leaf_index >= max_leaves {
+        return false;
+    }
+
     let mut current = *leaf;
     let mut idx = proof.leaf_index;
 
@@ -448,9 +483,18 @@ impl PrivateTransferWitness {
         let anchor = self.inputs[0].merkle_proof.root;
         let mut input_nullifiers = Vec::with_capacity(self.inputs.len());
         for input in &self.inputs {
-            // Verify Merkle proof
+            // Verify Merkle proof.
+            //
+            // PRIV-N1: prover-side sanity uses the prover's own claim
+            // (`siblings.len()`) as the expected depth — this is not
+            // a security boundary (the prover trusts their own
+            // witness shape); the chain-side check in
+            // `evaporchain-execution::privacy_exec` uses the
+            // verifier's local NoteTree depth, which is what defends
+            // against the empty-siblings attack.
             let note_commitment = input.note.commitment();
-            if !verify_merkle_proof(&note_commitment.0, &input.merkle_proof) {
+            let claimed_depth = input.merkle_proof.siblings.len();
+            if !verify_merkle_proof(&note_commitment.0, &input.merkle_proof, claimed_depth) {
                 return Err(PrivacyError::InvalidMerkleProof);
             }
             // Verify commitment opens correctly
@@ -1020,7 +1064,7 @@ mod tests {
         assert_eq!(idx, 0);
 
         let proof = tree.prove(0).unwrap();
-        assert!(verify_merkle_proof(&c.0, &proof));
+        assert!(verify_merkle_proof(&c.0, &proof, tree.depth()));
     }
 
     #[test]
@@ -1042,7 +1086,7 @@ mod tests {
             let c = Commitment::commit(i * 100, &test_blinding(i as u8));
             let proof = tree.prove(i as usize).unwrap();
             assert!(
-                verify_merkle_proof(&c.0, &proof),
+                verify_merkle_proof(&c.0, &proof, tree.depth()),
                 "proof failed for leaf {}",
                 i
             );
@@ -1060,7 +1104,65 @@ mod tests {
 
         let proof = tree.prove(0).unwrap();
         // Proof for leaf 0 should NOT verify with leaf 1's data
-        assert!(!verify_merkle_proof(&c2.0, &proof));
+        assert!(!verify_merkle_proof(&c2.0, &proof, tree.depth()));
+    }
+
+    /// PRIV-N1 (audit 2026-05-15) regression: a proof with zero
+    /// siblings must NOT verify against any non-trivial tree, even
+    /// if the supplied leaf equals the supplied root. Pre-fix,
+    /// `MerkleProof { siblings: vec![], leaf_index: 0, root: X }`
+    /// would let an attacker set `leaf = X` (the current anchor)
+    /// and pass `verify_merkle_proof` → unlimited shielded-pool mint.
+    #[test]
+    fn priv_n1_verify_rejects_empty_siblings_when_depth_nonzero() {
+        let mut tree = NoteTree::new(4); // depth = 4
+        let c = Commitment::commit(1000, &test_blinding(1));
+        tree.insert(&c).unwrap();
+        let anchor = tree.root();
+
+        let forged = MerkleProof {
+            siblings: vec![],
+            leaf_index: 0,
+            root: anchor,
+        };
+        assert!(
+            !verify_merkle_proof(&anchor, &forged, tree.depth()),
+            "PRIV-N1: empty-siblings proof must be rejected when expected_depth > 0"
+        );
+    }
+
+    /// PRIV-N1: a proof whose `leaf_index >= 2^depth` must be rejected.
+    #[test]
+    fn priv_n1_verify_rejects_out_of_range_leaf_index() {
+        let mut tree = NoteTree::new(3); // capacity = 8
+        let c = Commitment::commit(1000, &test_blinding(1));
+        tree.insert(&c).unwrap();
+        let mut proof = tree.prove(0).unwrap();
+        proof.leaf_index = 8; // == 1 << 3, out of range
+        assert!(
+            !verify_merkle_proof(&c.0, &proof, tree.depth()),
+            "PRIV-N1: out-of-range leaf_index must be rejected"
+        );
+    }
+
+    /// PRIV-N1: a proof whose `siblings.len()` is positive but less
+    /// than `expected_depth` must be rejected.
+    #[test]
+    fn priv_n1_verify_rejects_short_proof() {
+        let mut tree = NoteTree::new(4); // depth = 4
+        let c = Commitment::commit(1000, &test_blinding(1));
+        tree.insert(&c).unwrap();
+
+        let proof = tree.prove(0).unwrap();
+        let truncated = MerkleProof {
+            siblings: proof.siblings[..2].to_vec(),
+            leaf_index: 0,
+            root: proof.root,
+        };
+        assert!(
+            !verify_merkle_proof(&c.0, &truncated, tree.depth()),
+            "PRIV-N1: short proof must be rejected"
+        );
     }
 
     #[test]
