@@ -132,7 +132,7 @@ pub use scalar_adapter::{
     ark_fr_to_primary, ark_fr_to_secondary_lossy, primary_to_ark_fr, secondary_to_ark_fr_lossy,
     PrimaryScalar, SecondaryScalar,
 };
-pub use neptune_dump_parser::parse_dump;
+pub use neptune_dump_parser::{parse_dump, expected_crc_len, extract_compressed_round_constants};
 pub use verifier_circuit::NovaVerifierCircuit;
 
 /// Marker constant. Phase progression for the bridge crate:
