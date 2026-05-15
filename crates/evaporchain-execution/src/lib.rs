@@ -38,7 +38,7 @@ use evaporchain_types::{
     ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Errors that can occur during transaction execution.
 #[derive(Debug, Error)]
@@ -425,7 +425,18 @@ fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
         "base_fee_floor" | "base_fee_ceiling" => value
             .parse::<u64>()
             .map_err(|_| format!("{} must be a non-negative integer", key))
-            .map(|_| ()),
+            .and_then(|v| {
+                // Audit Y-FEE-001 (2026-05-15): unbounded u64 accepted here feeds
+                // directly into PidFeeController::{min,max}_base_fee.  If floor > ceiling
+                // after any governance call, fees.rs:.clamp(min_base_fee, max_base_fee)
+                // panics and kills the node at block-production time.  Cap both fields and
+                // cross-validate order in apply_param_update().
+                if v <= 1_000_000_000_000 {
+                    Ok(())
+                } else {
+                    Err(format!("{key} must be ≤ 1_000_000_000_000 (1 trillion)"))
+                }
+            }),
         "target_gas_utilization" => value
             .parse::<f64>()
             .map_err(|_| "target_gas_utilization must be a float".to_string())
@@ -2921,6 +2932,21 @@ impl SimpleExecutor {
                 if let Ok(ceiling) = val.parse::<u64>() {
                     fc.max_base_fee = ceiling;
                 }
+            }
+            // Audit Y-FEE-001 (2026-05-15): cross-validate floor ≤ ceiling after
+            // both are applied.  Governance can set them independently via separate
+            // proposals; if floor > ceiling the subsequent .clamp(min, max) in
+            // fees.rs panics and kills the node.  Revert to safe values instead.
+            if fc.min_base_fee > fc.max_base_fee {
+                warn!(
+                    floor = fc.min_base_fee,
+                    ceiling = fc.max_base_fee,
+                    "base_fee_floor > base_fee_ceiling after governance apply; \
+                     reverting both to defaults to prevent PidFeeController clamp() panic"
+                );
+                // Reset to PidFeeController::default_config() values (100, 1_000_000).
+                fc.min_base_fee = 100;
+                fc.max_base_fee = 1_000_000;
             }
             if let Some(val) = db.get_governance_param("target_gas_utilization") {
                 if let Ok(target) = val.parse::<f64>() {
@@ -7157,6 +7183,24 @@ contract Looper {
         assert!(validate_param_value("target_gas_utilization", "0.5").is_ok());
         assert!(validate_param_value("target_gas_utilization", "1.5").is_err());
         assert!(validate_param_value("target_gas_utilization", "-0.1").is_err());
+    }
+
+    // Audit Y-FEE-001 (2026-05-15): validate_param_value must reject values
+    // above 1_000_000_000_000 for fee floor/ceiling to prevent feeding an
+    // arbitrarily large u64 into PidFeeController which causes clamp() panic
+    // when floor > ceiling.
+    #[test]
+    fn test_validate_param_value_base_fee_bounds() {
+        // Within cap — OK
+        assert!(validate_param_value("base_fee_floor", "1000000000000").is_ok());
+        assert!(validate_param_value("base_fee_ceiling", "1000000000000").is_ok());
+        // At cap edge — OK
+        assert!(validate_param_value("base_fee_floor", "0").is_ok());
+        // Exceeds 1 trillion cap — rejected
+        assert!(validate_param_value("base_fee_floor", "1000000000001").is_err());
+        assert!(validate_param_value("base_fee_ceiling", "18446744073709551615").is_err()); // u64::MAX
+        // Non-numeric — rejected
+        assert!(validate_param_value("base_fee_floor", "infinity").is_err());
     }
 
     #[test]

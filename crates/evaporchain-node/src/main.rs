@@ -3602,6 +3602,9 @@ async fn main() -> Result<()> {
             sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
             login_rate_limit: Mutex::new(std::collections::HashMap::new()),
             register_rate_limit: Mutex::new((0, std::time::Instant::now())),
+            // R11 (audit 2026-05-15): per-email rate limit for the
+            // verify-email endpoint. See `auth::AuthState`.
+            verify_rate_limit: Mutex::new(std::collections::HashMap::new()),
         });
 
         // Initialize or restore DeFi stores

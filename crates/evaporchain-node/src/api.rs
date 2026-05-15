@@ -18067,6 +18067,14 @@ async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoRes
 
 /// `GET /api/snapshot/download/:height` — streams the `.zst` blob for
 /// the given height. 404 if not present.
+///
+/// R12 (audit 2026-05-15): streams via `tokio::fs::File` +
+/// `ReaderStream` in 64KB chunks instead of buffering the whole
+/// blob into RAM. Pre-fix the handler did `std::fs::read(&path)`,
+/// which materialised a GB-scale chain snapshot in memory before
+/// responding — a few concurrent downloads OOM'd the node. The
+/// streaming path keeps per-request memory at ~64KB regardless of
+/// snapshot size.
 async fn get_snapshot_download(
     State(state): State<Arc<ApiState>>,
     Path(height): Path<u64>,
@@ -18075,11 +18083,22 @@ async fn get_snapshot_download(
         Some(p) => p,
         None => return (StatusCode::NOT_FOUND, "snapshot dir not configured").into_response(),
     };
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
         Err(_) => return (StatusCode::NOT_FOUND, "snapshot not found").into_response(),
     };
-    let len = bytes.len();
+    let len = match file.metadata().await {
+        Ok(m) => m.len(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "snapshot metadata read failed",
+            )
+                .into_response()
+        }
+    };
+    let stream = tokio_util::io::ReaderStream::with_capacity(file, 64 * 1024);
+    let body = axum::body::Body::from_stream(stream);
     (
         StatusCode::OK,
         [
@@ -18089,7 +18108,7 @@ async fn get_snapshot_download(
             ),
             (axum::http::header::CONTENT_LENGTH, len.to_string()),
         ],
-        bytes,
+        body,
     )
         .into_response()
 }
