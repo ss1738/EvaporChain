@@ -27,6 +27,16 @@ pub struct AuthState {
     pub login_rate_limit: Mutex<HashMap<String, (u32, Instant)>>,
     /// Registration rate limiter: IP not available, so limit by global counter per window.
     pub register_rate_limit: Mutex<(u32, Instant)>,
+    /// R11 (audit 2026-05-15): verify-email rate limiter:
+    /// email -> (attempt_count, first_attempt_time). Required to
+    /// stop brute-force against the 6-digit verification code.
+    /// `user_db.verify_email` is SQL-safe (prepared statement) but
+    /// the underlying `UPDATE users SET email_verified = 1 WHERE
+    /// email = ? AND verification_code = ? AND email_verified = 0`
+    /// allows unlimited attempts against an unverified account.
+    /// 10^6 / 2 ≈ 500K attempts to brute-force on average;
+    /// without this gate that takes <1 minute at 10k req/s.
+    pub verify_rate_limit: Mutex<HashMap<String, (u32, Instant)>>,
 }
 
 // ── Request / Response types ──
@@ -407,10 +417,33 @@ pub async fn verify_email(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<VerifyEmailReq>,
 ) -> Json<GenericResp> {
-    match state
-        .user_db
-        .verify_email(&req.email.trim().to_lowercase(), &req.code)
+    let email = req.email.trim().to_lowercase();
+
+    // R11 (audit 2026-05-15): rate-limit per email — pattern
+    // mirrors `login` at auth.rs:325. Max 10 attempts per email
+    // per 15 minutes; window resets on first attempt after expiry.
+    // Without this gate, the 6-digit verification code is
+    // brute-forceable in seconds.
     {
+        let mut limits = state.verify_rate_limit.lock().unwrap();
+        let entry = limits.entry(email.clone()).or_insert((0, Instant::now()));
+        if entry.1.elapsed().as_secs() > 900 {
+            *entry = (0, Instant::now());
+        }
+        entry.0 += 1;
+        if entry.0 > 10 {
+            return Json(GenericResp {
+                success: false,
+                message: "Too many verification attempts. Try again in 15 minutes.".into(),
+            });
+        }
+        // Evict old entries (mirror login's bound).
+        if limits.len() > 10_000 {
+            limits.retain(|_, (_, t)| t.elapsed().as_secs() < 900);
+        }
+    }
+
+    match state.user_db.verify_email(&email, &req.code) {
         Ok(true) => Json(GenericResp {
             success: true,
             message: "Email verified!".into(),
@@ -419,9 +452,15 @@ pub async fn verify_email(
             success: false,
             message: "Invalid verification code".into(),
         }),
-        Err(e) => Json(GenericResp {
+        Err(_e) => Json(GenericResp {
             success: false,
-            message: format!("Error: {e}"),
+            // R11 (audit 2026-05-15): do not reflect raw DB error
+            // text to the client — the underlying `rusqlite::Error`
+            // can include filesystem paths, schema names, and
+            // internal state useful for fingerprinting / pivoting.
+            // Same sanitisation pattern as `login`'s
+            // "Invalid email or password" canonicalisation.
+            message: "Verification failed. Try again.".into(),
         }),
     }
 }
