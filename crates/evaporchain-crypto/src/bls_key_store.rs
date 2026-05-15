@@ -21,6 +21,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use rand::RngCore;
+use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 4] = b"EVK1";
 /// Crypto-6 (re-audit 2026-05-02): magic header for the new
@@ -149,9 +150,9 @@ pub fn encrypt_bls_secret_with_aad(
     rand::rngs::OsRng.fill_bytes(&mut salt);
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
 
-    let key = kdf(passphrase, &salt)?;
+    let key = Zeroizing::new(kdf(passphrase, &salt)?);
     let cipher =
-        XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
+        XChaCha20Poly1305::new_from_slice(&*key).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, Payload { msg: secret, aad })
@@ -195,9 +196,9 @@ pub fn decrypt_bls_secret_with_aad(
     let nonce_bytes = &blob[MAGIC.len() + SALT_LEN..MAGIC.len() + SALT_LEN + NONCE_LEN];
     let ciphertext = &blob[MAGIC.len() + SALT_LEN + NONCE_LEN..];
 
-    let key = kdf(passphrase, salt)?;
+    let key = Zeroizing::new(kdf(passphrase, salt)?);
     let cipher =
-        XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
+        XChaCha20Poly1305::new_from_slice(&*key).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
         .decrypt(

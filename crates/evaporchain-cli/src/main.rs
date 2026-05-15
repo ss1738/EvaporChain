@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use evaporchain_crypto::{BlsKeypair, MlDsaKeypair, VrfKeypair};
 use evaporchain_execution::genesis::{initialize_genesis, load_genesis_config};
@@ -4269,7 +4270,7 @@ fn write_secret_file_0600(path: &str, data: &[u8]) -> Result<()> {
 }
 
 fn cmd_encrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) -> Result<()> {
-    let pass = resolve_passphrase(passphrase)?;
+    let pass = Zeroizing::new(resolve_passphrase(passphrase)?);
     let secret = std::fs::read(in_file).with_context(|| format!("Failed to read {}", in_file))?;
     if secret.len() != 32 {
         anyhow::bail!(
@@ -4299,7 +4300,7 @@ fn cmd_encrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) 
 }
 
 fn cmd_decrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) -> Result<()> {
-    let pass = resolve_passphrase(passphrase)?;
+    let pass = Zeroizing::new(resolve_passphrase(passphrase)?);
     let blob = std::fs::read(in_file).with_context(|| format!("Failed to read {}", in_file))?;
     // H5: try AAD-bound decrypt first (current write format), fall
     // back to legacy empty-AAD for blobs from before deployment.
