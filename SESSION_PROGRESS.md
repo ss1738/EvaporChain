@@ -4,6 +4,28 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 39) — T1.13: conservation_enforcement default promoted to "enforce"
+
+**Focus:** Last remaining code lane in MAINNET_READINESS.md — flip conservation_enforcement default
+**Commits shipped:** 1 (76d95590)
+**Deliverables:**
+- `tendermint.rs` line 1979: `("conservation_enforcement", "observe")` → `"enforce"`
+- Snapshot test `t1_20_governance_flags_snapshot_includes_defaults` updated to expect `"enforce"`
+- 945/945 consensus tests pass on Mini 1
+- T1.13 marked ✅ DONE in MAINNET_READINESS.md
+**Empirical results:** `cargo test -p evaporchain-consensus`: 945 pass, 0 fail, 2 ignored
+**Decisions made:**
+- Line 8987 (in `test_governance_set_param_accepts_all_allowlisted_pairs`) left as `"observe"` — it lists valid values, not defaults; both "observe" and "enforce" remain valid governance params
+- `t1_20_governance_flags_snapshot_override_wins_over_default` test unchanged — still valid (overriding to "enforce" when already defaulting to "enforce" exercises the override path)
+**What's next:** All code lanes in MAINNET_READINESS.md are ✅ DONE. Remaining items are OPS-ONLY:
+  1. T0.2: D-track adversarial scripts on live cluster
+  2. T0.5: Governance flip `block.protocol_version` 0→1 on live cluster
+  3. T0.6: Slashing-at-scale cluster soak
+  4. T1.13 operator step: POST `conservation_enforcement=enforce` via governance API on live cluster (binaries already default it)
+  5. T0.12: External security audit kickoff
+**Blockers / open questions:** None code-side. All remaining items require operator on a live cluster.
+**Cross-references:** `MAINNET_READINESS.md` T1.13 lane; commit 76d95590
+
 ## 2026-05-15 (session 38) — Launch dApps + app-templates + EPA-MMR sweep: 11 crates CLEAN
 
 **Focus:** sddc, sfsv, shlm, app-templates pipeline (7 crates), epa-mmr — security audit
