@@ -4,6 +4,21 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 38) — Launch dApps + app-templates + EPA-MMR sweep: 11 crates CLEAN
+
+**Focus:** sddc, sfsv, shlm, app-templates pipeline (7 crates), epa-mmr — security audit
+**Commits shipped:** 0 (no patches required)
+**Deliverables:**
+- All 11 crates CLEAN — zero critical/high/medium/low findings.
+- SDDC: price arithmetic uses u128 intermediates; one-time settle prevents double-spend.
+- SFSV: VaultStatus::Released gate prevents double-payout; transfer_claim requires current holder.
+- SHLM: credential monotonicity enforced; freshness uses u128 intermediates; bounty filter pre-clear.
+- App-templates pipeline: canonical JSON deterministic; two-phase validation; exhaustive dispatch over all 20 templates; saturating_add on fees; monotone eventlog heights; HashSet duplicate detection; rebuild_index() documented.
+- EPA-MMR: floor check at proof.rs:139 fires BEFORE hash chain; root is pure function of leaves; domain-separated LEAF/INNER/PEAK_BAG tags; update_energy invalidates old proofs by design.
+**Empirical results:** No regressions (no code changes); all prior test suites remain green.
+**What's next:** Full workspace audit sweep is now complete across all major crates. Consider a final pass on paymaster edge cases in execution, or move to mainnet-readiness board (MAINNET_READINESS.md lane review).
+**Cross-references:** AUDIT_2026_05_11.md (Launch dApps + app-templates + EPA-MMR addendum)
+
 ## 2026-05-15 (session 37) — VM paradigm + tier-3 substrate sweep: PLC-1 LOW closed
 
 **Focus:** total-evaporscript, cap-decay-vm, dp-native-vm, thermal-stm, plc, ew-twap security audit
