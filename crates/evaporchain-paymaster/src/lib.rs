@@ -447,6 +447,24 @@ struct Bucket {
 const IDLE_GC_THRESHOLD: Duration = Duration::from_secs(600);
 const GC_INTERVAL: Duration = Duration::from_secs(60);
 
+/// PAY-RATE-LIMITER-1: hard cap on the per-sender bucket map. Without
+/// it, an attacker who issues 1 sponsor request per fresh
+/// `AccountAddress` (2^160 possible values) grows `buckets`
+/// monotonically — GC only drops entries idle ≥10 min, so a sustained
+/// flood with fresh senders never trips that threshold and OOMs the
+/// paymaster.
+///
+/// At cap, NEW senders are denied service (treated as rate-limited);
+/// EXISTING senders continue to refill and consume normally. The cap
+/// is self-healing: as idle senders age past `IDLE_GC_THRESHOLD`, GC
+/// frees slots and new senders can re-occupy.
+///
+/// 1 << 20 = 1,048,576 buckets ≈ 80 MB worst case (HashMap entry
+/// overhead ~80 B per entry); a generous ceiling that comfortably
+/// fits a Hetzner-class server's RAM budget without leaking memory
+/// under sybil pressure.
+pub const MAX_RATE_LIMIT_BUCKETS: usize = 1 << 20;
+
 impl RateLimiter {
     fn new(rps: f64, burst: u32) -> Self {
         Self {
@@ -473,10 +491,23 @@ impl RateLimiter {
             self.last_gc = now;
         }
         let burst = self.burst as f64;
-        let bucket = self.buckets.entry(sender).or_insert(Bucket {
-            tokens: burst,
-            last_refill: now,
-        });
+        // PAY-RATE-LIMITER-1: check the cap BEFORE entry() so we don't
+        // create a fresh bucket for the (1M+1)th unique sender. Existing
+        // senders (Occupied) always service successfully — only new
+        // senders are denied at the cap.
+        let at_cap = self.buckets.len() >= MAX_RATE_LIMIT_BUCKETS;
+        let bucket = match self.buckets.entry(sender) {
+            std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                if at_cap {
+                    return false;
+                }
+                v.insert(Bucket {
+                    tokens: burst,
+                    last_refill: now,
+                })
+            }
+        };
         let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
         bucket.tokens = (bucket.tokens + elapsed * self.rps).min(burst);
         bucket.last_refill = now;
@@ -3421,5 +3452,110 @@ mod tests {
             None,
         );
         assert!(!disabled.enabled());
+    }
+
+    /// PAY-RATE-LIMITER-1 regression: `try_consume` for a NEW sender
+    /// past `MAX_RATE_LIMIT_BUCKETS` is rejected without growing the
+    /// map. The bucket count stays at the cap. Pre-fix, the map would
+    /// grow indefinitely under a unique-sender flood.
+    #[test]
+    fn pay_rate_limiter_1_new_senders_past_cap_are_denied() {
+        let mut rl = RateLimiter::new(10.0, 5);
+        // Pre-fill at the cap by directly seeding the buckets map —
+        // calling try_consume MAX_RATE_LIMIT_BUCKETS times would be
+        // ~1M ops and unnecessarily slow for a regression test.
+        let burst = rl.burst as f64;
+        let now = Instant::now();
+        for i in 0u32..MAX_RATE_LIMIT_BUCKETS as u32 {
+            let mut sender = [0u8; 32];
+            sender[..4].copy_from_slice(&i.to_le_bytes());
+            sender[28] = 0x55; // distinguish from later padding pattern
+            rl.buckets.insert(
+                sender,
+                Bucket {
+                    tokens: burst,
+                    last_refill: now,
+                },
+            );
+        }
+        assert_eq!(rl.buckets.len(), MAX_RATE_LIMIT_BUCKETS);
+
+        // A FRESH sender (one not already in the map) must be denied.
+        let fresh = [0xFFu8; 32]; // byte[28]=0xFF != 0x55 padding mark.
+        assert!(!rl.buckets.contains_key(&fresh));
+        let allowed = rl.try_consume(fresh);
+        assert!(
+            !allowed,
+            "new sender past the cap must be rate-limited (denied)"
+        );
+        assert_eq!(
+            rl.buckets.len(),
+            MAX_RATE_LIMIT_BUCKETS,
+            "map size must remain at the cap, not grow"
+        );
+        assert!(
+            !rl.buckets.contains_key(&fresh),
+            "denied sender must not have a bucket created"
+        );
+    }
+
+    /// PAY-RATE-LIMITER-1: an EXISTING sender at the cap continues to
+    /// service normally — only new senders are denied. Confirms the
+    /// cap doesn't break legitimate users when an attacker has
+    /// saturated the map.
+    #[test]
+    fn pay_rate_limiter_1_existing_sender_at_cap_still_works() {
+        let mut rl = RateLimiter::new(10.0, 5);
+        let burst = rl.burst as f64;
+        let now = Instant::now();
+        let legit = [0xAAu8; 32];
+        rl.buckets.insert(
+            legit,
+            Bucket {
+                tokens: burst,
+                last_refill: now,
+            },
+        );
+        // Pad the map up to the cap (minus the legit entry).
+        for i in 0u32..(MAX_RATE_LIMIT_BUCKETS - 1) as u32 {
+            let mut sender = [0u8; 32];
+            sender[..4].copy_from_slice(&i.to_le_bytes());
+            sender[28] = 0x55; // distinguish from later padding pattern
+            sender[19] = 0x01; // avoid collision with the legit key
+            rl.buckets.insert(
+                sender,
+                Bucket {
+                    tokens: burst,
+                    last_refill: now,
+                },
+            );
+        }
+        assert_eq!(rl.buckets.len(), MAX_RATE_LIMIT_BUCKETS);
+
+        // The legit sender must still be able to consume.
+        assert!(
+            rl.try_consume(legit),
+            "existing sender at the cap must still be servicable"
+        );
+        // And a new one must be denied.
+        let fresh = [0xBBu8; 32];
+        assert!(
+            !rl.try_consume(fresh),
+            "new sender at the cap must be denied"
+        );
+    }
+
+    /// PAY-RATE-LIMITER-1: `try_consume` early-returns true when the
+    /// limiter is disabled (rps == 0), bypassing the cap entirely.
+    /// Anti-regression — confirms the cap check sits inside the
+    /// enabled() path.
+    #[test]
+    fn pay_rate_limiter_1_disabled_limiter_ignores_cap() {
+        let mut rl = RateLimiter::new(0.0, 0); // disabled
+        // Even with no buckets, a fresh sender must be allowed.
+        let fresh = [0x11u8; 32];
+        assert!(rl.try_consume(fresh));
+        // And the cap path is never entered, so the map stays empty.
+        assert_eq!(rl.buckets.len(), 0);
     }
 }
