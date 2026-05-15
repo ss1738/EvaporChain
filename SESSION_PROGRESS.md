@@ -4,6 +4,18 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 27) — U-class audit sweep: U3 + U7 closed
+
+**Focus:** Upgrade/migration security — protocol-version gating, genesis total stake overflow, hard-fork replay, key migration
+**Commits shipped:** 1 (`8501469b`)
+**Deliverables:**
+- U3 (HIGH) CLOSED: `MIN_SUPPORTED_PROTOCOL_VERSION` check in Tendermint proposal handler before `block_hash`; rejects `protocol_version < 0` to prevent version-bypass attacks
+- U7 (MEDIUM) CLOSED: `total_stake: u128` accumulator in `genesis.rs:validate()`; errors if `total > u64::MAX` to prevent quorum threshold wrap-to-zero
+- U1, U2, U4, U5, U6 confirmed CLEAN
+**Empirical results:** `cargo test -p evaporchain-consensus -p evaporchain-types` — 126 passed, 0 failed
+**What's next:** V-class sweep — DA/network validation security (vote-equivocation, DA sampling manipulation, shard assignment)
+**Cross-references:** AUDIT_2026_05_11.md (U-class addendum), commit `8501469b`
+
 ## 2026-05-15 (session 25) — S-class audit sweep: all clean
 
 **Focus:** State/storage security — RocksDB integrity, WAL crash recovery, snapshot poisoning, ghost growth, concurrent access, write batch atomicity
