@@ -1194,6 +1194,81 @@ contract Boss {
         assert_eq!(result.return_value, Value::U64(50));
         assert!(result.gas_used > 0);
     }
+
+    /// SCR-N1 (audit 2026-05-15) regression: when contract A calls
+    /// contract B, B's `caller` built-in MUST report A's identity
+    /// address — NOT the original EOA that called A. Pre-fix, B saw
+    /// `caller == EOA`, so any `require(caller == owner)` gate B
+    /// has was bypassable by any user routing through A.
+    #[test]
+    fn scr_n1_cross_contract_caller_is_callee_identity_not_eoa() {
+        let target_src = r#"
+contract Target {
+    state { last_caller: address = 0x0 }
+    fn record() -> u64 {
+        self.last_caller = caller()
+        return 1
+    }
+}
+"#;
+        let proxy_src = r#"
+contract Proxy {
+    state {}
+    fn pass_through(target: u64) -> u64 {
+        return call_contract(target, "record", 0)
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator: AccountAddress = [0xCC; 32];
+        let eoa: AccountAddress = [0xEE; 32];
+
+        let target_id = engine.deploy(target_src, creator, 1000, 100, 1).unwrap();
+        let proxy_id = engine.deploy(proxy_src, creator, 1000, 100, 1).unwrap();
+
+        // EOA calls Proxy.pass_through(target_id) → Proxy calls
+        // Target.record(). Target.last_caller must be the proxy's
+        // identity address, not the EOA.
+        engine
+            .call(
+                proxy_id,
+                "pass_through",
+                vec![Value::U64(target_id)],
+                eoa,
+                10,
+            )
+            .unwrap();
+
+        let target = engine.contracts.get(&target_id).unwrap();
+        let last_caller = match target.state.get("last_caller").unwrap() {
+            Value::Address(a) => *a,
+            other => panic!("expected Address, got {other:?}"),
+        };
+        let expected_proxy_address = contract_address(proxy_id);
+        assert_eq!(
+            last_caller, expected_proxy_address,
+            "SCR-N1: callee must see calling contract's identity, not the EOA"
+        );
+        assert_ne!(
+            last_caller, eoa,
+            "SCR-N1: callee must NOT see the original EOA as caller"
+        );
+    }
+
+    /// SCR-N1: `contract_address` is deterministic + collision-resistant
+    /// across distinct contract ids.
+    #[test]
+    fn scr_n1_contract_address_distinct_per_id() {
+        let a = contract_address(1);
+        let b = contract_address(2);
+        let c = contract_address(1);
+        assert_eq!(a, c, "contract_address must be deterministic");
+        assert_ne!(a, b, "distinct ids must map to distinct addresses");
+        // DST prefix in the preimage means contract addresses can't
+        // collide with a domainless `blake3(id_bytes)` derivation.
+        let domainless: AccountAddress = *blake3::hash(&1u64.to_le_bytes()).as_bytes();
+        assert_ne!(a, domainless, "DST must be mixed into the address");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════

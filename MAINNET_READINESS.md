@@ -123,7 +123,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
-| T1.13 | Promote conservation audit gating → mandatory | 🟡 OPEN — T0.1 ✅, T3.1 ✅; operator must POST conservation_enforcement=enforce via governance API on live cluster | CONSENSUS |
+| T1.13 | Promote conservation audit gating → mandatory | ✅ DONE (76d95590) — default changed to "enforce"; snapshot test updated; 945 consensus tests pass | CONSENSUS |
 | T1.14 | Phase 2 round-trip test (proposer-stamp == validator-apply) | ✅ DONE (9191e87) — 3 tests appended end-of-file; build verification deferred | CONSENSUS |
 | T1.15 | Paymaster Finding 1 — per-key in-flight locking | ✅ DONE (1f8c50a2) — inflight_locks per-key Mutex serialises concurrent retries; concurrent_same_key_retries_dont_double_allocate passes | PAYMASTER |
 | T1.16 | Internal audit findings reconciliation sweep | ✅ DONE (7f36b46) — `AUDIT_RECONCILIATION_2026-05-09.md` + opcode-count drift fix | AUDIT-SWEEP |
@@ -476,7 +476,7 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 
 ### T1.13 — Promote conservation audit gating → mandatory
 
-**Status:** 🔴 BLOCKED on T0.1
+**Status:** ✅ DONE (76d95590)
 **Surface:** CONSENSUS
 **Depends on:** T0.1
 **Effort:** 1 day
@@ -484,6 +484,8 @@ Operator already authorized the switch in this session arc. Fold into T3.1's run
 **Goal:** Once Layer 4 changes block-acceptance semantics, revisit the `conservation_enforcement` flag and make it always-on (default `"enforce"`). Source: `DOCTRINE_PUNCH_LIST.md` Layer 4 sequel item.
 
 **Files touched:** `crates/evaporchain-consensus/src/tendermint.rs` (defaults table)
+
+**done-as-of:** 76d95590 — line 1979 `"observe"→"enforce"`; snapshot test at line 19024 updated; 945/945 consensus tests pass on Mini 1 (2026-05-15).
 
 ---
 
