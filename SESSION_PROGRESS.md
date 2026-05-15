@@ -4,6 +4,22 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-15 (session 21) — Audit O1 closed; DeployTemplate match arms; env-race fix
+
+**Focus:** O-class oracle security + pre-existing compile blocker (DeployTemplate variant)
+**Commits shipped:** 1 (`baeed499`)
+**Deliverables:**
+- O1 CLOSED: `get_oracle_feed` now returns `last_updated` + `age_secs`; `oracle_bridge.get_last_updated()` helper added
+- O3 ACCEPTED: `FreshnessConfig::price_feed()` already enforces `min_sources: 2`; config risk, no code fix
+- O5 ACKNOWLEDGED: `oracle_state_root` not yet consensus-verified; design-level tracking item
+- Fixed `Transaction::DeployTemplate` non-exhaustive match arms at 6 sites in `api.rs` + `persistence.rs` — unblocked `cargo test -p evaporchain-node` (was E0004 compile failure)
+- Fixed env-var race in `faucet_rate_limit_tests` — 4 `EVAPORCHAIN_TRUSTED_PROXY_DEPTH` tests now share `static Mutex<()>` guard
+**Empirical results:** 235/235 `evaporchain-node` tests pass; 63/63 `evaporchain-oracle` tests pass
+**Decisions made:** O3 accepted as config risk (not code bug); O5 deferred to post-mainnet oracle trie work
+**What's next:** P-class sweep (privacy/privacy-exec), Q-class (governance parameter security)
+**Blockers / open questions:** None
+**Cross-references:** `AUDIT_2026_05_11.md` rows O1/O3/O5
+
 ## 2026-05-15 (session 20) — Audit N4 (CRITICAL) + N6 (HIGH) closed; network protocol sweep
 
 **Focus:** N-class network protocol security — P2P validation, DA cert binding, mDNS auth
