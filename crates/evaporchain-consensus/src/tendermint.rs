@@ -4723,16 +4723,27 @@ impl TendermintConsensus {
                                 return actions;
                             }
                             Some(csig) => {
-                                // Verify that the continuity sig is a valid PoP
-                                // produced by the EXISTING (old) key, proving
-                                // the announcer controls the old key.
-                                if !crate::validator_set::ValidatorSet::verify_pop(
-                                    existing_pk,
-                                    csig,
+                                // GEN-N1 fix (correct): verify that continuity_sig
+                                // is sign(old_sk, new_pk_bytes, BLS_ROTATION_DST).
+                                // This binds the proof to the specific new key being
+                                // installed — a standard PoP (sign(old_sk, old_pk_bytes,
+                                // BLS_POP_DST)) is NOT accepted because it is replayable
+                                // across any rotation attempt. verify_rotation_continuity
+                                // uses BLS_ROTATION_DST so old PoPs cannot be reused.
+                                let old_pk_obj =
+                                    evaporchain_crypto::signatures::BlsPublicKey(
+                                        existing_pk.clone(),
+                                    );
+                                let csig_obj =
+                                    evaporchain_crypto::signatures::BlsSignature(csig.clone());
+                                if !evaporchain_crypto::signatures::BlsVerifier::verify_rotation_continuity(
+                                    &old_pk_obj,
+                                    bls_public_key,
+                                    &csig_obj,
                                 ) {
                                     warn!(
                                         validator = validator_id,
-                                        "REJECTED BLS key overwrite: continuity_sig failed (not a valid PoP by the existing key)"
+                                        "REJECTED BLS key overwrite: continuity_sig failed verify_rotation_continuity (GEN-N1)"
                                     );
                                     return actions;
                                 }
@@ -22836,6 +22847,74 @@ mod t1_20_batch21 {
             tc.validator_set.get(1).unwrap().bls_public_key.as_deref(),
             Some(&original_pk[..]),
             "GEN-N1: key overwrite without continuity_sig must be rejected"
+        );
+    }
+
+    #[test]
+    fn gen_n1_replay_old_pop_as_continuity_sig_rejected() {
+        // GEN-N1 (audit 2026-05-15) — replay prevention:
+        // A standard PoP (sign(old_sk, old_pk_bytes, BLS_POP_DST)) is
+        // replayable across rotation attempts. The handler must use
+        // verify_rotation_continuity (BLS_ROTATION_DST, message = new_pk_bytes),
+        // which rejects a reused old PoP as the continuity_sig.
+        use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsVerifier};
+
+        let old_kp = BlsKeypair::generate();
+        let old_pk = old_kp.public_key();
+        let old_pk_bytes = old_pk.0.clone();
+        // Valid PoP of old key (what the validator originally submitted at registration).
+        let old_pop = old_kp.proof_of_possession();
+        // Valid PoP verifies against old_pk.
+        assert!(BlsVerifier::verify_proof_of_possession(&old_pk, &old_pop));
+
+        let new_kp = BlsKeypair::generate();
+        let new_pk = new_kp.public_key();
+        let new_pk_bytes = new_pk.0.clone();
+        let new_pop = new_kp.proof_of_possession();
+
+        let mut tc = make_tc3();
+
+        // Register old key (empty PoP accepted in test env — PoP check is skipped for empty).
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: old_pk_bytes.clone(),
+            proof_of_possession: vec![],
+            continuity_sig: None,
+        });
+        assert_eq!(
+            tc.validator_set.get(1).unwrap().bls_public_key.as_deref(),
+            Some(&old_pk_bytes[..]),
+        );
+
+        // Attempt rotation using the old PoP as the continuity_sig — this is the
+        // replay attack. The old PoP signs old_pk_bytes under BLS_POP_DST; but
+        // verify_rotation_continuity expects sign(old_sk, new_pk_bytes, BLS_ROTATION_DST).
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: new_pk_bytes.clone(),
+            proof_of_possession: new_pop.0.clone(),
+            continuity_sig: Some(old_pop.0.clone()), // replayed old PoP
+        });
+        // Must be rejected — key unchanged.
+        assert_eq!(
+            tc.validator_set.get(1).unwrap().bls_public_key.as_deref(),
+            Some(&old_pk_bytes[..]),
+            "GEN-N1: old PoP must not be accepted as continuity_sig (replay attack)"
+        );
+
+        // Now supply a proper rotation continuity sig (sign(old_sk, new_pk_bytes, BLS_ROTATION_DST)).
+        let valid_csig = old_kp.sign_rotation_continuity(&new_pk_bytes);
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: new_pk_bytes.clone(),
+            proof_of_possession: new_pop.0.clone(),
+            continuity_sig: Some(valid_csig.0.clone()),
+        });
+        // Must succeed — key rotated.
+        assert_eq!(
+            tc.validator_set.get(1).unwrap().bls_public_key.as_deref(),
+            Some(&new_pk_bytes[..]),
+            "GEN-N1: valid rotation continuity sig must allow key rotation"
         );
     }
 
