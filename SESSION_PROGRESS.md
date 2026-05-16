@@ -4,6 +4,26 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night+2) — Fix script emit() events and /api/scripts Tendermint routing
+
+**Focus:** Close two silent bugs blocking EvaporScript event observability on a live Tendermint-mode cluster.
+**Commits shipped:** 1 (`14de46b6`)
+**Deliverables:**
+- **Bug #2 fixed (parallel.rs):** `BlockStmExecutor` serial `CallScript` arm was calling `.map(|_| ())` on the `ScriptCallResult`, discarding all `structured_events` (emit() calls). Added `pending_events: Vec<(u64, ContractEvent)>` local in Phase 6; the `.map(|result| { … })` closure now extends it. Drained into `BlockExecutionResult.contract_events` at block end — `index_contract_events_from_exec` can now persist them.
+- **Bug #1 fixed (api.rs):** `get_scripts`, `get_script`, and `get_script_abi` all queried `state.consensus.executor.script_engine` (MockConsensus), which is always empty in Tendermint mode. All three handlers now check `state.tendermint` first and delegate to `TendermintConsensus.script_engine()` when present; fall back to MockConsensus for non-TC mode.
+- **Compilation:** `cargo check -p evaporchain-execution -p evaporchain-node` clean on Mini 1 (1 pre-existing dead_code warn, no new errors).
+- **Tests:** `cargo test -p evaporchain-execution` → 559 passed, 0 failed on Mini 1.
+
+**Empirical results:**
+- FutureSelfVault full lifecycle was already validated in the previous session: Deploy (block 452) → set_terms (block 837, release_epoch=845) → try_payout (block 1449, epoch 1447 > 845) all `finalised` ✅. These two fixes mean the "vault payout" emit() event will now appear in `/api/contract/:id/events` and `/api/scripts` will list live contracts on a Tendermint-mode node.
+
+**What's next:**
+- Boot a fresh devnet on Mini 1 (with `--no-da-enforcement`), deploy `future_self_vault.es`, call `set_terms` + `try_payout`, and confirm "vault payout" event appears in `GET /api/contract/:id/events`
+- Fix pre-existing `test_genesis_ceremony_full_flow` failure (parallel tempdir collision in evaporchain-cli)
+- CHANGELOG.md entries for these two fixes
+
+**Cross-references:** `crates/evaporchain-execution/src/parallel.rs`, `crates/evaporchain-node/src/api.rs`, commit `14de46b6`
+
 ## 2026-05-16 (night+1) — EvaporScript contracts for SDDC, SFSV, and SHLM dApps
 
 **Focus:** Write the three missing on-chain EvaporScript contracts for the dApp layer — closing the biggest gap identified in the 5-agent audit (Rust dApp scaffolds complete, zero .es contracts).
