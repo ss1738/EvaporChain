@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-decay-bound-auction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-bound sealed-bid auction substrate primitive. Auctions end on energy-decay deadline rather than block height — auctions that never reach reserve evaporate cleanly. Commit-reveal bids with chain_id + auction_id binding (NX4 audit pattern). Built on evaporchain-sddc; companion to contracts/evaporscript/sealed_bid_auction.es reference."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+blake3            = { workspace = true }
+serde             = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+proptest    = "1"
+serde_json  = { workspace = true }

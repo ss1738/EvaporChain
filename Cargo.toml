@@ -75,6 +75,7 @@ members = [
     "crates/evaporchain-sddc",
     "crates/evaporchain-sfsv",
     "crates/evaporchain-shlm",
+    "crates/evaporchain-decay-bound-auction",
     "crates/evaporchain-singh-sabi",
     "crates/evaporchain-singh-migrant",
     "crates/evaporchain-singh-triage",
