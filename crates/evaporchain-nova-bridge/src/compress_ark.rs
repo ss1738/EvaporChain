@@ -302,4 +302,87 @@ mod tests {
             }
         }
     }
+
+    // ─── Coverage push (2026-05-16): lift compress_ark.rs from ~32% ───
+
+    fn identity_n(n: usize) -> Vec<Vec<Fr>> {
+        (0..n)
+            .map(|i| (0..n).map(|j| Fr::from(if i == j { 1u64 } else { 0u64 })).collect())
+            .collect()
+    }
+
+    /// Round 0 is plain ARK (not inverse-MDS-transformed) — sanity check.
+    #[test]
+    fn first_round_is_plain_ark() {
+        let id = identity_n(4);
+        let plain_ark: Vec<Fr> = (10..26).map(|i| Fr::from(i as u64)).collect();
+        let out = compress_first_full_rounds(&plain_ark, &id, 4, 4);
+        for i in 0..4 {
+            assert_eq!(out[i], Fr::from((10 + i) as u64));
+        }
+    }
+
+    /// `compress_first_full_rounds` panics if `plain_ark` is shorter
+    /// than `half_full_rounds * width`.
+    #[test]
+    #[should_panic(expected = "plain_ark too short")]
+    fn compress_first_panics_on_short_plain_ark() {
+        let id = identity_n(4);
+        let too_short: Vec<Fr> = vec![Fr::from(0u64); 8]; // need 16 for half=4, width=4
+        compress_first_full_rounds(&too_short, &id, 4, 4);
+    }
+
+    /// `compress_first_full_rounds` panics if the inverse_mds matrix
+    /// width doesn't match the declared `width` parameter.
+    #[test]
+    #[should_panic(expected = "inverse_mds must be width×width")]
+    fn compress_first_panics_on_inverse_mds_wrong_size() {
+        let wrong = identity_n(3); // declared width=4 below
+        let plain_ark: Vec<Fr> = vec![Fr::from(0u64); 16];
+        compress_first_full_rounds(&plain_ark, &wrong, 4, 4);
+    }
+
+    /// `half_full_rounds = 1` is degenerate: output = first row only,
+    /// no inverse-MDS application.
+    #[test]
+    fn compress_first_half_one_returns_plain_round_only() {
+        let id = identity_n(4);
+        let plain_ark: Vec<Fr> = (0..16).map(|i| Fr::from(i as u64)).collect();
+        let out = compress_first_full_rounds(&plain_ark, &id, 4, 1);
+        assert_eq!(out.len(), 4);
+        for i in 0..4 {
+            assert_eq!(out[i], Fr::from(i as u64));
+        }
+    }
+
+    /// `compress_full` produces exactly `full_rounds * width +
+    /// partial_rounds` entries.
+    #[test]
+    fn compress_full_output_length_invariant() {
+        let id = identity_n(4);
+        // width=4, full=2, partial=1 → total_rounds=3, need 12 plain_ark
+        let plain_ark: Vec<Fr> = (0..16).map(|i| Fr::from(i as u64)).collect();
+        let out = compress_full(&plain_ark, &id, 4, 2, 1);
+        // expected = 2*4 + 1 = 9
+        assert_eq!(out.len(), 9);
+    }
+
+    /// `compress_full` panics on short plain_ark.
+    #[test]
+    #[should_panic(expected = "plain_ark too short")]
+    fn compress_full_panics_on_short_plain_ark() {
+        let id = identity_n(4);
+        // full=2, partial=1, width=4 → need ≥ 12, give 4.
+        let plain_ark: Vec<Fr> = vec![Fr::from(0u64); 4];
+        compress_full(&plain_ark, &id, 4, 2, 1);
+    }
+
+    /// `compress_full` panics on inverse_mds row-count mismatch.
+    #[test]
+    #[should_panic(expected = "inverse_mds must be width×width")]
+    fn compress_full_panics_on_inverse_mds_wrong_size() {
+        let wrong = identity_n(3);
+        let plain_ark: Vec<Fr> = vec![Fr::from(0u64); 16];
+        compress_full(&plain_ark, &wrong, 4, 2, 1);
+    }
 }
