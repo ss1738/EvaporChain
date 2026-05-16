@@ -1082,11 +1082,15 @@ impl StateDB for RocksDBStateDB {
         // delete through pending_batch when a batch is active.  Pre-
         // fix the direct `self.db.delete_cf` committed immediately
         // and survived `rollback_batch`, leaving an account ghosted
-        // on disk while in-memory was restored.
-        let cf = self.db.cf_handle("accounts").unwrap();
-        if let Some(ref mut batch) = self.pending_batch {
+        // on disk while in-memory was restored.  Pattern mirrors
+        // `delete_object_disk` (lib.rs:543).
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle("accounts").unwrap();
             batch.delete_cf(cf, addr);
         } else {
+            drop(guard);
+            let cf = self.db.cf_handle("accounts").unwrap();
             let _ = self.db.delete_cf(cf, addr);
         }
         self.accounts.remove(addr)

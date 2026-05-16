@@ -128,20 +128,44 @@ fn commit_internal(children: &BTreeMap<u8, Node>) -> Ep {
     commitment
 }
 
+/// H2 (audit 2026-05-16): leaf-vs-internal domain separation.
+///
+/// Pre-fix `node_hash` for a leaf computed `BLAKE3(key || value)` —
+/// a 64-byte preimage of `[u8; 32] || [u8; 32]`.  An internal node's
+/// hash is `point_to_bytes(commit_internal(children))` — a 32-byte
+/// serialization of a Pallas Ep point.  Under untagged hashing the
+/// two preimage shapes are technically disjoint by length, but a
+/// future encoder change or composition with an attacker-controlled
+/// outer hash could surface a collision-class.  Tag both inputs so
+/// the protocol explicitly enforces the leaf/internal distinction.
+const VERKLE_LEAF_DST: &[u8] = b"EvaporChain_Verkle_Leaf_v1\0";
+const VERKLE_INTERNAL_DST: &[u8] = b"EvaporChain_Verkle_Internal_v1\0";
+
 /// Compute the hash/commitment of a node.
 fn node_hash(node: &Node) -> [u8; 32] {
     match node {
         Node::Empty => [0u8; 32],
         Node::Leaf(leaf) => {
-            // Hash(key || value) for leaf commitment
-            let mut data = Vec::with_capacity(64);
+            // Hash(VERKLE_LEAF_DST || key || value) for leaf commitment.
+            let mut data =
+                Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&leaf.key);
             data.extend_from_slice(&leaf.value);
             *blake3::hash(&data).as_bytes()
         }
         Node::Internal(internal) => {
+            // Hash(VERKLE_INTERNAL_DST || point_bytes(commitment)).
+            // The point_to_bytes alone is unambiguous within the
+            // protocol, but DST-prefixing makes it explicit and
+            // collision-free under composition.
             let commitment = commit_internal(&internal.children);
-            point_to_bytes(&commitment)
+            let point_bytes = point_to_bytes(&commitment);
+            let mut data =
+                Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            data.extend_from_slice(VERKLE_INTERNAL_DST);
+            data.extend_from_slice(&point_bytes);
+            *blake3::hash(&data).as_bytes()
         }
     }
 }
