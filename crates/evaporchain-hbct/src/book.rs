@@ -30,6 +30,10 @@ pub enum BookError {
         available: u64,
         amount: u64,
     },
+    /// SUB-N3 (audit 2026-05-15): transfer would overflow recipient's balance.
+    /// Rejected *before* debiting `from` so Layer-0 conservation is preserved.
+    #[error("transfer would overflow recipient balance")]
+    RecipientOverflow,
 }
 
 impl HbctBook {
@@ -67,14 +71,24 @@ impl HbctBook {
                 amount,
             });
         }
+        // SUB-N3 (audit 2026-05-15): verify the recipient won't overflow
+        // BEFORE debiting `from`. `saturating_add` on the credit side
+        // silently clips while the debit still lands → total MWh decreases,
+        // breaking Layer-0 conservation.
+        let to_key = (location.clone(), slot, to);
+        let to_current = self.entries.get(&to_key).copied().unwrap_or(0);
+        to_current
+            .checked_add(amount)
+            .ok_or(BookError::RecipientOverflow)?;
+
+        // Both checks passed — mutate safely.
         if avail == amount {
             self.entries.remove(&from_key);
         } else {
             *self.entries.get_mut(&from_key).unwrap() -= amount;
         }
-        let to_key = (location.clone(), slot, to);
         let to_slot = self.entries.entry(to_key).or_insert(0);
-        *to_slot = to_slot.saturating_add(amount);
+        *to_slot = to_current + amount; // overflow confirmed impossible above
         Ok(())
     }
 
@@ -203,5 +217,44 @@ mod tests {
         b.mint(token(1, 100, 30)).unwrap();
         b.mint(token(1, 100, 20)).unwrap();
         assert_eq!(b.balance(&b"BMU-1".to_vec(), 100, addr(1)), 50);
+    }
+
+    #[test]
+    fn sub_n3_transfer_to_near_max_rejected_without_state_change() {
+        // SUB-N3 (audit 2026-05-15): if recipient's balance is near u64::MAX,
+        // `saturating_add` would clip the credit while the debit still lands,
+        // silently destroying MWh (conservation break). The fix uses
+        // `checked_add` and rejects BEFORE touching `from`.
+        let mut b = HbctBook::new();
+        let loc = b"BMU-1".to_vec();
+        let from = addr(1);
+        let to = addr(2);
+
+        // Mint sender with 10 MWh.
+        b.mint(token(1, 100, 10)).unwrap();
+
+        // Force recipient to u64::MAX - 5 via direct map insertion
+        // (no public API reaches this value, which is the whole point).
+        let to_key = (loc.clone(), 100u64, to);
+        b.entries.insert(to_key, u64::MAX - 5);
+
+        let from_before = b.balance(&loc, 100, from);
+        let to_before = b.balance(&loc, 100, to);
+
+        // Transfer 10 would overflow recipient (u64::MAX - 5 + 10 wraps).
+        let err = b.transfer(&loc, 100, from, to, 10).unwrap_err();
+        assert_eq!(err, BookError::RecipientOverflow);
+
+        // Neither balance must have changed — no conservation loss.
+        assert_eq!(
+            b.balance(&loc, 100, from),
+            from_before,
+            "sender must not be debited on overflow-rejected transfer"
+        );
+        assert_eq!(
+            b.balance(&loc, 100, to),
+            to_before,
+            "recipient must not be credited on overflow-rejected transfer"
+        );
     }
 }
