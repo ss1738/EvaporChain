@@ -150,7 +150,20 @@ install_systemd_service() {
         API_FLAGS="--api --api-port 3000"
     fi
 
-    cat > /tmp/evaporchain.service << SERVICEEOF
+    # DEPLOY-1 (audit 2026-05-16): write the systemd unit to a
+    # mktemp file with 0600 perms instead of a predictable, world-
+    # readable /tmp path.  Pre-fix any local user on the host could
+    # read --data-dir, API port, env vars, and binary path during
+    # the brief window between `cat >` and `sudo mv`.  mktemp gives
+    # us atomic creation owned by the invoking user; the trap
+    # cleans up if the script dies mid-build.
+    local SVCTMP
+    SVCTMP=$(mktemp -t evaporchain-svc.XXXXXX)
+    chmod 600 "$SVCTMP"
+    # shellcheck disable=SC2064
+    trap "rm -f '$SVCTMP'" EXIT
+
+    cat > "$SVCTMP" << SERVICEEOF
 [Unit]
 Description=EvaporChain Testnet Node ${NODE_NUM}
 After=network.target
@@ -174,7 +187,8 @@ Environment=RUST_LOG=info
 WantedBy=multi-user.target
 SERVICEEOF
 
-    sudo mv /tmp/evaporchain.service /etc/systemd/system/evaporchain.service
+    sudo mv "$SVCTMP" /etc/systemd/system/evaporchain.service
+    trap - EXIT
     sudo systemctl daemon-reload
     sudo systemctl enable evaporchain
     sudo systemctl start evaporchain
