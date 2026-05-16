@@ -138,8 +138,8 @@ fn commit_internal(children: &BTreeMap<u8, Node>) -> Ep {
 /// future encoder change or composition with an attacker-controlled
 /// outer hash could surface a collision-class.  Tag both inputs so
 /// the protocol explicitly enforces the leaf/internal distinction.
-const VERKLE_LEAF_DST: &[u8] = b"EvaporChain_Verkle_Leaf_v1\0";
-const VERKLE_INTERNAL_DST: &[u8] = b"EvaporChain_Verkle_Internal_v1\0";
+pub(crate) const VERKLE_LEAF_DST: &[u8] = b"EvaporChain_Verkle_Leaf_v1\0";
+pub(crate) const VERKLE_INTERNAL_DST: &[u8] = b"EvaporChain_Verkle_Internal_v1\0";
 
 /// Compute the hash/commitment of a node.
 fn node_hash(node: &Node) -> [u8; 32] {
@@ -431,8 +431,10 @@ impl VerkleTrie {
                 // Empty trie: root should be the empty hash
                 return *expected_root == [0u8; 32];
             }
-            // Single leaf at root (no internal nodes): verify leaf hash = root
-            let mut data = Vec::with_capacity(64);
+            // Single leaf at root (no internal nodes): verify leaf hash = root.
+            // H2: LEAF DST prefix matches node_hash() for leaves.
+            let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&proof.key);
             data.extend_from_slice(proof.value.as_ref().unwrap());
             let leaf_hash = *blake3::hash(&data).as_bytes();
@@ -446,10 +448,11 @@ impl VerkleTrie {
             return false;
         }
 
-        // Reconstruct the leaf hash
+        // Reconstruct the leaf hash (H2: LEAF DST matches node_hash()).
         let leaf_hash = match &proof.value {
             Some(value) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&proof.key);
                 data.extend_from_slice(value);
                 *blake3::hash(&data).as_bytes()
@@ -489,7 +492,12 @@ impl VerkleTrie {
                 commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
-            current_hash = point_to_bytes(&commitment);
+            // H2: INTERNAL DST matches node_hash() for internal nodes.
+            let pt = point_to_bytes(&commitment);
+            let mut t = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            t.extend_from_slice(VERKLE_INTERNAL_DST);
+            t.extend_from_slice(&pt);
+            current_hash = *blake3::hash(&t).as_bytes();
         }
 
         // The reconstructed root should match
