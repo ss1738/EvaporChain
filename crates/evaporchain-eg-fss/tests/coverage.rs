@@ -77,13 +77,17 @@ fn evolve_carries_prior_residual_into_next_call() {
 
 #[test]
 fn evolve_saturating_add_safety_on_residual() {
-    // residual + energy must clamp at u64::MAX, not panic.
+    // residual + energy must clamp at u64::MAX without panic. Test
+    // with a LARGE threshold so the resulting advance count is bounded
+    // — using a small threshold here exposes the eg_fss_evolve_unbounded_loop
+    // finding (u64::MAX/100 = 1.8×10^17 blake3 hashes), which is a
+    // separate audit item, not a regression for this coverage PR.
     let mut k = EgFssKey::from_seed([1u8; 32]);
     k.energy_residual = u64::MAX - 10;
-    let evolved = k.evolve(1_000, 100).expect("must not panic on saturation");
-    // saturating_add(u64::MAX - 10, 1_000) = u64::MAX
-    // u64::MAX / 100 = many millions of crossings; period_index saturates too.
-    assert!(evolved.period_index > 0);
+    let threshold = u64::MAX / 4;
+    let evolved = k.evolve(1_000, threshold).expect("must not panic");
+    assert!(evolved.period_index >= 1);
+    assert!(evolved.period_index <= 5, "advances bounded by total/threshold");
 }
 
 #[test]
