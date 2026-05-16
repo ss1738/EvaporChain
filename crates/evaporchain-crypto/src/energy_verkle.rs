@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
+use crate::verkle::{VERKLE_INTERNAL_DST, VERKLE_LEAF_DST};
+
 // ─────────────────────── Constants ───────────────────────────────────────
 
 const WIDTH: usize = 256;
@@ -759,10 +761,16 @@ impl EnergyVerkleTrie {
             return false;
         }
         if proof.depth == 0 {
+            // C1: hit_compressed=true with no commitment chain is a forgery path -- reject.
+            if proof.hit_compressed {
+                return false;
+            }
             if proof.value.is_none() {
                 return *expected_root == [0u8; 32];
             }
-            let mut data = Vec::with_capacity(64);
+            // H2: LEAF DST matches EnergyNode leaf node_hash.
+            let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&proof.key);
             data.extend_from_slice(proof.value.as_ref().unwrap());
             let leaf_hash = *blake3::hash(&data).as_bytes();
@@ -776,10 +784,11 @@ impl EnergyVerkleTrie {
             return false;
         }
 
-        // Reconstruct leaf hash
+        // Reconstruct leaf hash (H2: LEAF DST).
         let leaf_hash = match &proof.value {
             Some(value) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&proof.key);
                 data.extend_from_slice(value);
                 *blake3::hash(&data).as_bytes()
@@ -802,7 +811,12 @@ impl EnergyVerkleTrie {
                 commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
-            current_hash = point_to_bytes(&commitment);
+            // H2: INTERNAL DST matches node_hash() for internal nodes.
+            let pt = point_to_bytes(&commitment);
+            let mut t = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            t.extend_from_slice(VERKLE_INTERNAL_DST);
+            t.extend_from_slice(&pt);
+            current_hash = *blake3::hash(&t).as_bytes();
         }
 
         current_hash == *expected_root
@@ -1465,10 +1479,10 @@ mod tests {
             energy.insert(key, value, 1000, 100, 0);
         }
 
-        assert_eq!(
+        assert_ne!(
             standard.root(),
             energy.root(),
-            "EnergyVerkleTrie must produce the same root as standard VerkleTrie"
+            "EnergyVerkleTrie must produce a DIFFERENT root than standard VerkleTrie (H3: distinct generators)"
         );
     }
 
