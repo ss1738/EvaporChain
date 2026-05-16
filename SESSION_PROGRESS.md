@@ -4,6 +4,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night+3) — Close app-templates SFSV schema drift (3-fix cascade)
+
+**Focus:** Full app-templates pipeline (`deploy`→`materialise`→`engine`→`bind`→`fees`→`receipt`→`eventlog`) was broken by schema drift between the old SFSV string-predicate format and the new InitConfig struct that mirrors `future_self_vault.es`.
+**Commits shipped:** 3 (oracle.rs → catalogue.rs → required_keys.rs)
+**Deliverables:**
+- **`oracle.rs` fix** — `fees::oracle` referenced `c.predicate.len()` (string field); new `InitConfig` has `predicate_type: u64`. Switched to `c.future_self.len()`.
+- **`catalogue.rs` fix** — SFSV `default_params` still used old JSON `{"deposit":..,"predicate":"epoch_reached","release_epoch":..}`; updated to `{"future_self":"0x00","predicate_type":0,"release_param":10000,"deposit_amount":1000}`.
+- **`required_keys.rs` fix** — `required_keys_for(SFSV_VAULT)` still listed `&["deposit","predicate","release_epoch"]`; updated to `&["future_self","predicate_type","release_param","deposit_amount"]`. This is what `DeployRequest::new()` schema-validates against before materialise runs.
+- **Verification** — all 8 app-templates crates green on Mini 1 (`every_catalogue_default_binds` passes; total 164+ tests, 0 failed). Full workspace suite running.
+
+**Root cause pattern:** 3-point schema contract (catalogue default_params / required_keys list / InitConfig struct) must all move together. The InitConfig was updated for the .es contract; the other two were not. Anti-regression test `every_catalogue_default_binds` is the correct gate — it caught both mismatches.
+
+**What's next:**
+- Full workspace test result (running on Mini 1)
+- Live devnet smoke test: deploy `future_self_vault.es`, confirm `emit()` events in `/api/contract/:id/events` after the parallel.rs fix
+- `GET /api/scripts` listing on Tendermint-mode node (confirm api.rs fix)
+
+**Cross-references:** `crates/evaporchain-app-templates-fees/src/oracle.rs`, `crates/evaporchain-app-templates/src/catalogue.rs`, `crates/evaporchain-app-templates-deploy/src/required_keys.rs`, commits `9270fb83`, `7d54e784`
+
 ## 2026-05-16 (night+2) — Fix script emit() events and /api/scripts Tendermint routing
 
 **Focus:** Close two silent bugs blocking EvaporScript event observability on a live Tendermint-mode cluster.
