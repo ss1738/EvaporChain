@@ -12,12 +12,20 @@
     Static server: python3 -m http.server -d crates/evaporchain-sfsv/ui 8080
     With node:     ./scripts/launch-devnet.sh & then open this file
 
-  ## API surface used
-    POST /api/tx/deploy-script             — Lock step: deploys .es contract
-    POST /api/tx/call-script               — Lock step: set_terms(); reclaim: try_payout()
-    GET  /api/tx/:hash                     — Status polling
-    GET  /api/contract/by-deploy/:hash     — Resolve contract addr post-deploy
-    GET  /api/contract/:addr/state         — Live vault state
+  ## API surface used (source-verified vs crates/evaporchain-node/src/api.rs)
+    POST /api/tx/deploy-script   — DeployScriptRequest{deployer:u8,source_code,energy,half_life}
+    POST /api/tx/call-script     — CallScriptRequest{caller:u8,contract_id:u64,method,args,epoch}
+                                   args = Vec<evaporchain_script::Value> (externally-tagged:
+                                   address ⇒ {"Address":[b0..b31]}, u64 ⇒ {"U64":n})
+    GET  /api/tx/:hash           — status poll; carries .contract_id after deploy
+    GET  /api/contract/:id       — live vault; logical state under .state (tagged Value map)
+    GET  /api/status             — chain epoch (.epoch) + reachability probe
+
+  NOTE: deployer/caller are u8 devnet account indices (node maps i ⇒
+  addr_from_byte(i) = [i,0,…,0]); index 0 = genesis-funded faucet
+  account. There is NO /api/version, /api/contract/by-deploy/:hash,
+  or /api/contract/:addr/state — those were spec guesses; corrected
+  here against source (see VERIFICATION_2026_05_16.md "LIVE E2E PASS").
 
   ## Forkability
     See ../README.md "Fork recipe" — this file ports verbatim to any
@@ -207,8 +215,8 @@
       <input id="auth-token" type="text" placeholder="EVAPORCHAIN_TX_TOKEN" />
     </div>
     <div>
-      <label for="caller-addr">Caller address (32-byte hex)</label>
-      <input id="caller-addr" type="text" placeholder="0x…" />
+      <label for="caller-addr">Caller account index (u8 · 0 = genesis-funded faucet)</label>
+      <input id="caller-addr" type="number" min="0" max="255" placeholder="0" value="0" />
     </div>
   </div>
   <button id="probe-btn" class="secondary">Probe node</button>
@@ -217,8 +225,8 @@
 
 <section>
   <h2><span class="num">1</span> Lock</h2>
-  <label for="future-self">Future-self / beneficiary address</label>
-  <input id="future-self" type="text" placeholder="0x… (defaults to caller)" />
+  <label for="future-self">Future-self / beneficiary account index (u8 · defaults to caller)</label>
+  <input id="future-self" type="number" min="0" max="255" placeholder="(defaults to caller)" />
 
   <div class="row">
     <div>
@@ -256,8 +264,8 @@
 
 <section>
   <h2><span class="num">2</span> Reclaim</h2>
-  <label for="contract-addr">Contract address</label>
-  <input id="contract-addr" type="text" placeholder="0x… (filled after Lock)" />
+  <label for="contract-addr">Contract id (u64 · filled after Lock)</label>
+  <input id="contract-addr" type="text" placeholder="(filled after Lock)" />
   <button id="reclaim-btn">Try reclaim (try_payout)</button>
   <div id="reclaim-result"></div>
 </section>
@@ -376,20 +384,39 @@
   probeBtn.addEventListener("click", async () => {
     probeResult.innerHTML = "";
     try {
-      const v = await apiCall("/api/version");
-      probeResult.innerHTML = `<div class="log">Reachable. version=${escapeHtml(JSON.stringify(v))}</div>`;
+      const v = await apiCall("/api/status");
+      probeResult.innerHTML = `<div class="log">Reachable. ${escapeHtml(
+        JSON.stringify({ chain: v.chain_name, version: v.version,
+                         height: v.block_height, epoch: v.epoch }))}</div>`;
     } catch (e) {
       showErr(probeResult, "Cannot reach node: " + e.message);
     }
   });
+
+  // ── Source-verified helpers ─────────────────────────────────────
+  // Node maps a u8 account index i ⇒ addr_from_byte(i) = [i,0,…,0]
+  // (32 bytes). An `.es` `address` arg is the externally-tagged
+  // Value::Address — {"Address":[b0,…,b31]}.
+  const addrBytes = (idx) => {
+    const a = new Array(32).fill(0);
+    a[0] = Number(idx) & 0xff;
+    return a;
+  };
+  const tagU64  = (n) => ({ U64: Number(n) });
+  const tagAddr = (idx) => ({ Address: addrBytes(idx) });
+  const getEpoch = async () => {
+    try { return Number((await apiCall("/api/status")).epoch) || 0; }
+    catch (e) { return 0; }
+  };
 
   // ── Lock flow ────────────────────────────────────────────────────
   lockBtn.addEventListener("click", async () => {
     lockResult.innerHTML = "";
     lockBtn.disabled = true;
     try {
-      if (!callerEl.value) throw new Error("caller address required");
-      const fs = futureSelfEl.value || callerEl.value;
+      if (callerEl.value === "") throw new Error("caller account index required");
+      const callerIdx = Number(callerEl.value);
+      const fsIdx = futureSelfEl.value === "" ? callerIdx : Number(futureSelfEl.value);
 
       // Step 1: deploy script.
       // The .es source is FETCHED from the workspace via a relative
@@ -404,7 +431,7 @@
       const deploy = await apiCall("/api/tx/deploy-script", {
         method: "POST",
         body: JSON.stringify({
-          deployer: callerEl.value,
+          deployer: callerIdx,
           source_code: src,
           energy: Number(energyEl.value),
           half_life: Number(halfLifeEl.value),
@@ -415,28 +442,34 @@
       }
       log(`Deploy tx: ${deploy.tx_hash}`);
 
-      // Step 2: resolve contract addr (chain indexer link).
-      const addr = await pollContractAddr(deploy.tx_hash);
-      contractEl.value = addr;
+      // Step 2: poll /api/tx/:hash until finalised; contract_id is
+      // carried on the tx status (no by-deploy index endpoint exists).
+      const cid = await pollContractId(deploy.tx_hash);
+      contractEl.value = String(cid);
       persist();
-      log(`Contract deployed: ${addr}`);
+      log(`Contract deployed: id=${cid}`);
 
-      // Step 3: set_terms.
+      // Step 3: set_terms — args are externally-tagged Value:
+      // [Address(future_self), U64(predicate), U64(release), U64(deposit)].
       log("POST /api/tx/call-script (set_terms)");
       const seal = await apiCall("/api/tx/call-script", {
         method: "POST",
         body: JSON.stringify({
-          caller: callerEl.value,
-          contract: addr,
+          caller: callerIdx,
+          contract_id: cid,
           method: "set_terms",
-          args: [fs, Number(predicateEl.value), Number(releaseEl.value), Number(depositEl.value)],
+          args: [ tagAddr(fsIdx), tagU64(predicateEl.value),
+                  tagU64(releaseEl.value), tagU64(depositEl.value) ],
+          epoch: await getEpoch(),
         }),
       });
       if (!seal.success) {
         throw new Error("set_terms rejected: " + (seal.message || "(no message)"));
       }
+      // A finalised tx is the seal proof; a `rejected` state means an
+      // `.es` set_terms require() reverted (e.g. caller != owner).
       log(`Sealed: ${seal.tx_hash}`);
-      lockResult.innerHTML = `<div class="log">✓ Vault locked at ${escapeHtml(addr)}</div>`;
+      lockResult.innerHTML = `<div class="log">✓ Vault locked — contract id ${escapeHtml(String(cid))}</div>`;
     } catch (e) {
       showErr(lockResult, e.message);
     } finally {
@@ -444,17 +477,28 @@
     }
   });
 
-  // Poll the chain's deploy-by-hash index for up to 60s.
-  const pollContractAddr = async (hash) => {
+  // Poll /api/tx/:hash until included/finalised; the deploy tx status
+  // carries .contract_id (verified: api.rs post_deploy_script / tx
+  // status). No by-deploy index endpoint exists.
+  const pollContractId = async (hash) => {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       try {
-        const r = await apiCall("/api/contract/by-deploy/" + hash);
-        if (r.contract_addr) return r.contract_addr;
-      } catch (e) { /* keep polling */ }
+        const r = await apiCall("/api/tx/" + hash);
+        if (r.state === "rejected") {
+          throw new Error("deploy tx rejected: " + (r.error || "(no error)"));
+        }
+        if ((r.state === "included" || r.state === "finalised") &&
+            r.contract_id != null) {
+          return r.contract_id;
+        }
+      } catch (e) {
+        if (/rejected/.test(e.message)) throw e;
+        /* otherwise keep polling */
+      }
       await new Promise((r) => setTimeout(r, 2000));
     }
-    throw new Error("deploy not indexed within 60s");
+    throw new Error("deploy not finalised within 60s");
   };
 
   // ── Reclaim flow ────────────────────────────────────────────────
@@ -462,26 +506,30 @@
     reclaimResult.innerHTML = "";
     reclaimBtn.disabled = true;
     try {
-      if (!callerEl.value) throw new Error("caller address required");
-      const addr = contractEl.value;
-      if (!addr) throw new Error("contract address required");
+      if (callerEl.value === "") throw new Error("caller account index required");
+      const cid = Number(contractEl.value);
+      if (!Number.isFinite(cid) || contractEl.value === "")
+        throw new Error("contract id required");
 
       log("POST /api/tx/call-script (try_payout)");
       const r = await apiCall("/api/tx/call-script", {
         method: "POST",
         body: JSON.stringify({
-          caller: callerEl.value,
-          contract: addr,
+          caller: Number(callerEl.value),
+          contract_id: cid,
           method: "try_payout",
           args: [],
+          epoch: await getEpoch(),
         }),
       });
       if (!r.success) {
-        throw new Error("try_payout rejected: " + (r.message || "(no message)"));
+        throw new Error("try_payout submit failed: " + (r.message || "(no message)"));
       }
+      // .es try_payout require()s the predicate; until it trips the tx
+      // lands `rejected` — that is expected. Retry until it finalises.
       log(`Reclaim tx: ${r.tx_hash}`);
-      reclaimResult.innerHTML = `<div class="log">✓ Reclaim submitted (${escapeHtml(r.tx_hash)}).
-Watch the state panel for released=true.</div>`;
+      reclaimResult.innerHTML = `<div class="log">✓ try_payout submitted (${escapeHtml(r.tx_hash)}).
+Until the predicate trips it will be rejected — retry; the state panel flips to released on success.</div>`;
     } catch (e) {
       showErr(reclaimResult, e.message);
     } finally {
@@ -490,30 +538,53 @@ Watch the state panel for released=true.</div>`;
   });
 
   // ── Live state poll ─────────────────────────────────────────────
+  // Unwrap an externally-tagged evaporchain_script::Value.
+  // {"Bool":true}→true · {"U64":n}→n · {"Address":[…]}→0x… · bare→bare.
+  const untag = (v) => {
+    if (v == null || typeof v !== "object") return v;
+    if ("Bool" in v) return v.Bool;
+    if ("U64" in v) return v.U64;
+    if ("Str" in v) return v.Str;
+    if ("Address" in v)
+      return "0x" + v.Address.map((b) => b.toString(16).padStart(2, "0")).join("");
+    return v;
+  };
+
   const refresh = async () => {
-    const addr = contractEl.value;
-    if (!addr) return;
+    const cid = contractEl.value;
+    if (cid === "") return;
+    const pill = $("s-status");
+    let c;
     try {
-      const s = await apiCall("/api/contract/" + addr + "/state");
-      $("s-contract").textContent     = addr;
-      $("s-epoch").textContent        = s.epoch_now ?? "—";
-      $("s-energy").textContent       = s.energy ?? "—";
-      $("s-pred").textContent         = s.predicate_satisfied ?? "—";
-      $("s-released-at").textContent  = s.payout_at ?? (s.released ? "?" : "—");
-      $("s-holder").textContent       = s.holder ?? "—";
-      const pill = $("s-status");
-      if (s.released === true || s.released === 1) {
+      c = await apiCall("/api/contract/" + cid);
+    } catch (e) {
+      // A finalised try_payout retires the instance (.es §lifecycle-4),
+      // so a post-payout 404 is the terminal "released" state, not an
+      // error. Distinguish that from a transient poll failure.
+      if (/HTTP 404|not found/i.test(e.message)) {
+        $("s-contract").textContent = cid + " (retired post-payout)";
         pill.textContent = "released";
         pill.className = "pill released";
-      } else if (s.sealed === true || s.sealed === 1) {
-        pill.textContent = "locked";
-        pill.className = "pill locked";
-      } else {
-        pill.textContent = "unsealed";
-        pill.className = "pill unknown";
       }
-    } catch (e) {
-      // silent on poll error — keep the last good values
+      return; // transient: keep last good values
+    }
+    const st = c.state || {};
+    const released = untag(st.released) === true;
+    const sealed   = untag(st.sealed) === true;
+    let epochNow = "—";
+    try { epochNow = (await apiCall("/api/status")).epoch ?? "—"; } catch (e) {}
+    $("s-contract").textContent    = cid;
+    $("s-epoch").textContent       = epochNow;
+    $("s-energy").textContent      = c.energy ?? "—";
+    $("s-pred").textContent        = released ? "yes (released)" : "—";
+    $("s-released-at").textContent = released ? (untag(st.payout_at) ?? "?") : "—";
+    $("s-holder").textContent      = untag(st.holder) ?? "—";
+    if (released) {
+      pill.textContent = "released"; pill.className = "pill released";
+    } else if (sealed) {
+      pill.textContent = "locked";   pill.className = "pill locked";
+    } else {
+      pill.textContent = "unsealed"; pill.className = "pill unknown";
     }
   };
   refreshBtn.addEventListener("click", refresh);

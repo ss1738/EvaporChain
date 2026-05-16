@@ -207,4 +207,27 @@ mod tests {
         let err = list_for_sale(&mut v, addr(0xBB), id(3), 600, 60, 10, 400, 100).unwrap_err();
         assert_eq!(err, MarketError::NotCurrentHolder);
     }
+
+    #[test]
+    fn settle_secondary_routes_through_onchain_guard_when_released() {
+        // §5-A wiring invariant: settle_secondary transfers the claim via
+        // the on-chain `record_sale` guard, NOT a bare transfer that
+        // bypasses it. Same bid/auction params as
+        // `settle_secondary_clears_and_transfers_claim` (proven to clear
+        // at epoch 50) — but the vault is released BEFORE settlement, so
+        // the SDDC clear succeeds yet `record_sale` rejects (NotLocked)
+        // and that surfaces as MarketError::VaultTransfer. Pins that an
+        // off-chain clear cannot move a released vault's claim.
+        let mut v = locked_vault(0xAA, 0xBB);
+        let mut a = list_for_sale(&mut v, addr(0xBB), id(1), 1000, 100, 20, 0, 100).unwrap();
+        let bid = Bid::new(addr(0xCC), 600, 30, 50).unwrap();
+        v.mark_released(addr(0xBB), 40); // released between listing and settle
+        let err = settle_secondary(&mut v, &mut a, &[bid], 50).unwrap_err();
+        assert!(
+            matches!(err, MarketError::VaultTransfer(VaultError::NotLocked)),
+            "settle must route through record_sale's on-chain guard \
+             (released ⇒ NotLocked ⇒ VaultTransfer), got {err:?}"
+        );
+        assert_eq!(v.current_holder(), None, "claim not transferred off a released vault");
+    }
 }
