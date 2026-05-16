@@ -4,7 +4,7 @@
 
 ## In-CI regression suite
 
-`crates/evaporchain-consensus/tests/dos_resistance.rs` — 6 tests covering Vectors 1-4. V5 in `mcc_phase_d.rs`. V6 (ShardSample) in `service.rs`. All 7 vectors enumerated in `MAINNET_READINESS.md` T0.7 have at least one CI test:
+`crates/evaporchain-consensus/tests/dos_resistance.rs` — 6 tests covering 4 of the 7 vectors enumerated in `MAINNET_READINESS.md` T0.7:
 
 | Vector | Test | What it locks |
 |---|---|---|
@@ -75,43 +75,6 @@ Pass criteria:
 - That sender's account-tx-count caps at 64 immediately
 - Remaining bandwidth (10K − 64 = 9936 slots) stays available for other senders
 - A second client at 100 tx/s from a different sender achieves baseline acceptance rate
-
-
-### Vector 4 — encrypted mempool reveal flood
-
-Drive MAX_ENCRYPTED_PENDING (10,000) commitments plus an overflow flood, then drive rapid-cycling reveal epochs:
-
-```bash
-# Step 1: fill the encrypted-pending slot budget (should cap at 10_000; overflow rejected)
-scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 500 --duration 30m --encrypted
-
-# Step 2: fast-cycle reveal epochs so commitments expire without being revealed
-scripts/dos-flood.sh --target 100.119.53.101:8081 --rate 200 --duration 30m --encrypted --fast-expire
-```
-
-> ⚠ **Implementation note:** `dos-flood.sh` does not yet implement `--encrypted` or `--fast-expire`. The unit tests (`dos_v4_*`) already lock the admission gate and expiry logic. The cluster-acceptance harness for V4 requires implementing encrypted-submission endpoints in `dos-flood.sh` (calls `POST /api/mempool/submit_encrypted`). Add to T3.1 cluster prep.
-
-Pass criteria:
-- `pending_encrypted` count never exceeds `MAX_ENCRYPTED_PENDING = 10_000`
-- Overflow submissions return `429 Too Many Requests` or equivalent rejection
-- After epoch advance, unrevealed commitments are flushed by `process_reveals`; no ghost commitments remain
-- CPU stays bounded; no quadratic cost from sequential reveal scans
-
-### Vector 5 — DAG fork-spam (multi-validator)
-
-V5 is a multi-validator correctness test — not a throughput flood. Operator procedure for cluster:
-
-```bash
-# On one Mini: start a malicious-fork injector against 2 validators simultaneously
-scripts/dos-flood.sh --target 100.119.53.101:8081 --forks 50 --duration 30m --multi-validator
-```
-
-> ⚠ **Implementation note:** `--forks` mode is not yet in `dos-flood.sh`. The CI suite (`t0_7_v5_dag_fork_spam_convergence_across_4_validators`, `t0_7_v5_fork_spam_ordering_independence` in `mcc_phase_d.rs`) locks the algorithmic invariants. Cluster-level verification requires driving proposals from 4 different validator nodes simultaneously, which is only meaningful once T3.1 (5-node cluster) is live.
-
-Pass criteria:
-- `GET /api/chain` on all 4 validators shows the same `candidate_heads` digest within 2 Tendermint rounds of the fork injection stopping
-- `propose_parents` len is bounded by `light_cone_max_concurrent_forks = 4` (check via `GET /api/dag/heads`)
-- No validator is stuck in a minority fork for more than 3 rounds
 
 ### Vector 6 — ShardSample request flood
 

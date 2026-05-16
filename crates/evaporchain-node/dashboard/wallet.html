@@ -515,10 +515,24 @@ a{color:var(--cyan);text-decoration:none}
     <button class="btn btn-ghost" style="margin-top:8px" onclick="sendBack()">Cancel</button>
   </div>
   <div id="send-step-3" style="display:none;text-align:center">
-    <div class="success-check">&#10003;</div>
-    <div style="font-size:16px;font-weight:700;margin-bottom:6px">Transaction Sent</div>
+    <div class="success-check" id="sc-check">&#10003;</div>
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px" id="sc-title">Transaction Sent</div>
     <div style="font-size:13px;color:var(--muted);margin-bottom:8px" id="sc-msg">Queued for next block</div>
-    <div style="font-size:11px;color:var(--dim);font-family:'JetBrains Mono',monospace;word-break:break-all;padding:8px;background:var(--surface);border-radius:8px;margin-bottom:20px" id="sc-hash"></div>
+    <div style="position:relative;margin-bottom:20px">
+      <div style="font-size:11px;color:var(--dim);font-family:'JetBrains Mono',monospace;word-break:break-all;padding:8px 40px 8px 8px;background:var(--surface);border-radius:8px" id="sc-hash"></div>
+      <button onclick="copyTxHash()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--cyan);cursor:pointer;font-size:14px" aria-label="Copy tx hash" title="Copy">&#128203;</button>
+    </div>
+    <div id="sc-status-bar" style="display:none;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:6px">
+        <span id="sc-s1" style="color:var(--cyan)">Sent</span>
+        <span id="sc-s2">Mempool</span>
+        <span id="sc-s3">Included</span>
+        <span id="sc-s4">Finalised</span>
+      </div>
+      <div style="height:4px;background:var(--surface);border-radius:2px;overflow:hidden">
+        <div id="sc-progress-bar" style="height:100%;background:var(--cyan);border-radius:2px;transition:width 0.4s ease;width:25%"></div>
+      </div>
+    </div>
     <button class="btn btn-ghost" onclick="closeSheets()">Done</button>
   </div>
   <div id="send-error" class="alert alert-error" style="margin-top:12px"></div>
@@ -1578,10 +1592,11 @@ function updateSendMax(){
   if(hint) hint.textContent = 'Available: '+bal.toLocaleString()+' EVAP';
 }
 
+const GAS_TRANSFER = 0; // testnet: 0 fee; set to 21000 when mainnet fee schedule activates
 function setMaxAmount(){
   const from = $('s-from')?.value;
   const bal = from ? (walletBalances[from]||0) : 0;
-  $('s-amount').value = bal;
+  $('s-amount').value = Math.max(0, bal - GAS_TRANSFER);
 }
 
 function sendReview(){
@@ -1602,6 +1617,11 @@ function sendReview(){
 function showSendErr(m){ const err=$('send-error'); err.textContent=m; err.style.display='block'; }
 function sendBack(){ $('send-step-2').style.display='none'; $('send-step-1').style.display='block'; $('send-error').style.display='none'; }
 
+function copyTxHash(){
+  const hash = $('sc-hash').dataset.hash;
+  if(hash){ navigator.clipboard.writeText(hash); toast('Tx hash copied!'); }
+}
+
 async function sendConfirm(){
   const from=$('s-from').value, to=$('s-to').value.trim(), amount=parseInt($('s-amount').value);
   const err=$('send-error'); err.style.display='none';
@@ -1616,17 +1636,53 @@ async function sendConfirm(){
   const d = await api('POST','/api/tx/transfer',{from, to, amount, nonce});
   if(d.success){
     $('send-step-2').style.display='none';
-    $('sc-msg').textContent=d.message||'Queued for next block';
-    $('sc-hash').textContent=d.tx_hash||'';
-    $('sc-hash').style.display=d.tx_hash?'block':'none';
+    $('sc-msg').textContent='Queued for next block';
+    $('sc-check').textContent='✓';
+    $('sc-title').textContent='Transaction Sent';
+    const hash = d.tx_hash||'';
+    $('sc-hash').textContent=hash;
+    $('sc-hash').dataset.hash=hash;
     $('send-step-3').style.display='block';
+    if(hash){ $('sc-status-bar').style.display='block'; pollTxStatus(hash,0); }
     toast('Transaction sent!');
-    setTimeout(()=>loadWallets(),2000);
+    setTimeout(()=>{ loadWallets(); loadActivity(); },2000);
   } else {
     err.textContent=d.message; err.style.display='block';
     $('send-step-2').style.display='none'; $('send-step-1').style.display='block';
   }
   btn.disabled=false; btn.textContent='Confirm & Send';
+}
+
+async function pollTxStatus(hash, attempts){
+  if(attempts > 20) return; // stop after ~40s
+  try{
+    const d = await api('GET','/api/tx/'+hash);
+    const state = d.state||'pending';
+    const stateMap = {pending:25, mempool:50, included:75, finalised:100, rejected:100};
+    const pct = stateMap[state] || 25;
+    $('sc-progress-bar').style.width = pct+'%';
+    const labels = {pending:'Submitting…', mempool:'In mempool…', included:'Included in block', finalised:'Finalised ✓', rejected:'Rejected'};
+    $('sc-msg').textContent = labels[state] || state;
+    if(state==='finalised'){
+      $('sc-progress-bar').style.background='var(--green,#22c55e)';
+      ['sc-s1','sc-s2','sc-s3','sc-s4'].forEach(id=>$( id).style.color='var(--green,#22c55e)');
+      loadWallets();
+      return;
+    }
+    if(state==='rejected'){
+      $('sc-progress-bar').style.background='var(--red,#ef4444)';
+      $('sc-msg').style.color='var(--red,#ef4444)';
+      return;
+    }
+    // advance step indicators
+    const steps = ['sc-s1','sc-s2','sc-s3','sc-s4'];
+    const stepIdx = {pending:0, mempool:1, included:2, finalised:3};
+    const cur = stepIdx[state]||0;
+    steps.forEach((id,i)=>{ $(id).style.color=i<=cur?'var(--cyan)':'var(--dim)'; });
+    setTimeout(()=>pollTxStatus(hash, attempts+1), 2000);
+  }catch(e){
+    setTimeout(()=>pollTxStatus(hash, attempts+1), 3000);
+  }
 }
 
 // ═══════ RECEIVE / QR ═══════
@@ -1652,6 +1708,7 @@ function switchTab(idx){
   $('tab-bar').style.setProperty('--tab-w',(100/tabCount)+'%');
   $('tab-bar').style.setProperty('--tab-x',(idx*(100/tabCount))+'%');
 
+  if(idx===1){ loadActivity(); }
   // Render portfolio charts when tab becomes visible
   if(idx===2){
     balanceHistory = getBalanceHistory();

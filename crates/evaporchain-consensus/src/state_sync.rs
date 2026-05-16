@@ -1869,3 +1869,28 @@ mod tests {
     }
 
 }
+
+    #[test]
+    fn t1_20_tip_response_same_peer_updates_and_builds_consensus() {
+        // Peer 1 first reports height 50, then updates to height 200.
+        // Peer 2 also reports 200. Agreement should fire at height 200, not 50.
+        let mut sync = StateSyncManager::new(0);
+        let _ = sync.start();
+
+        // Peer 1 first report
+        sync.on_message(1, SyncMessage::TipResponse { height: 50, block_hash: [50u8; 32] });
+        // Peer 1 updates to 200
+        sync.on_message(1, SyncMessage::TipResponse { height: 200, block_hash: [200u8; 32] });
+        // Peer 2 agrees at 200 → agreement
+        let actions = sync.on_message(2, SyncMessage::TipResponse { height: 200, block_hash: [200u8; 32] });
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                SyncAction::Broadcast {
+                    message: SyncMessage::SnapshotMetadataRequest { height: 200 }
+                }
+            )),
+            "consensus at 200, not stale 50"
+        );
+    }
+}
