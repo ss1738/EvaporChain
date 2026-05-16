@@ -4,65 +4,6 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
-## 2026-05-16 (night+6) — SHLM e2e integration tests shipped; doctrine triplet closed
-
-**Focus:** SHLM (Singh Skill Half-Life Market) doctrine §4.2 e2e integration test gap.
-**Commits shipped:** 1 (8938c153)
-**Deliverables:**
-- `crates/evaporchain-shlm/tests/e2e.rs`: 12 integration tests, AI-era recruiting market fixture
-  - Python (hl=100) vs COBOL (hl=1000) skill class doctrine comparison
-  - Alice clears Python bounty at submission-locked price 105_000 (epoch 50)
-  - Bob (elapsed=150, freshness_score=375 < 600) excluded by eligibility filter pre-SDDC
-  - Carol clears COBOL bounty at price 150_000 (epoch 100)
-  - Dave (level=200 < min_level=300) excluded by level gate
-  - Doctrine claim proven: COBOL retains 1.5x more freshness than Python at same elapsed
-  - Winner price locked at submission epoch (not clearing epoch)
-  - Credential refresh restores eligibility for previously-stale candidate
-  - Adversarial: refresh backdating rejected, class-mismatch rejected, zero-salary/zero-min-level rejected
-**Empirical results:**
-- 12/12 SHLM e2e tests pass on Mini 1 (0 failed, 0.00s)
-- 32 SHLM unit+proptest tests pass (unchanged baseline)
-**Decisions made:**
-- freshness_tolerance (lambda_tolerance in SDDC) must be >= bounty.min_freshness (lot_lambda) to clear
-- eligibility filter runs at submitted_at not epoch_now — freshness evaluated at bid submission time
-**What's next:**
-- Remaining doctrine triplet gaps: evaporchain-sddc, evaporchain-sfsv vault state machine
-- Then remaining §A5.2 substrate crates: singh-sabi, singh-migrant, singh-posthuma, singh-heir, etc.
-- Full workspace test run to confirm no regressions
-**Blockers / open questions:** None
-**Cross-references:** CHANGELOG.md, commit 8938c153, prior SAP (461b8d72), coordinator (4e45db35)
-
-## 2026-05-16 (night+5) — SFSV coordinator binary shipped; VM paradigm doctrine gap closed
-
-**Focus:** SFSV off-chain coordinator binary (path to Paper 1) + all VM paradigm e2e integration tests.
-**Commits shipped:** 3 (52a92b6, 859db56, f424974)
-**Deliverables:**
-- `evaporchain-sfsv-coordinator` crate: off-chain SDDC auctioneer binary
-  - `poller.rs`: polls `/api/scripts` for SFSV vault listings (method heuristic)
-  - `auctioneer.rs`: off-chain auction state machine, SDDC clearing, bid book
-  - `bid_server.rs`: Axum HTTP server accepting `POST /bid` bids via mpsc channel
-  - `node.rs`: thin reqwest client wrapping node API (epoch, scripts, call-script, wait-finalised)
-  - `main.rs`: 2-second coordinator loop (discover → drain bids → clear → record_sale → wait finality)
-  - `tests/coordinator_integration.rs`: 5 integration tests (two-listing clear, unknown contract, zero-price adversarial, expired listing, resale chain)
-- VM paradigm doctrine §4.2 gap closed:
-  - `total-evaporscript/tests/e2e.rs`: 6 tests, sealed-auction settlement fixture (nested BoundedFor + BoundedWhile)
-  - `cap-decay-vm/tests/e2e.rs`: 11 tests, 3-level storage delegation chain (company→dept→developer)
-  - `dp-native-vm/tests/e2e.rs`: 11 tests, salary analytics pipeline (5-query budget cliff)
-**Empirical results:**
-- All 5 coordinator integration tests green on Mini 1
-- All 28 VM paradigm e2e tests green (6+11+11)
-- `cargo check -p evaporchain-sfsv-coordinator` compiles clean (warnings only)
-**Decisions made:**
-- SDDC clearing uses `price_at(bid.submitted_at)` not `price_at(epoch_now)` — bids lock price at submission time
-- Coordinator V1 uses method-name heuristic (`list_for_sale` + `record_sale`) to identify SFSV vaults
-- `lot_lambda=0` in coordinator V1 (accepts all lambda-tolerant bids); real deployment reads from `.es` state
-**What's next:**
-1. Wire coordinator into MAINNET_READINESS.md as DONE (SFSV lane)
-2. Run full workspace test suite on Mini 1 to check for regressions from this branch
-3. SFSV release-binary build (`--release`) + README/runbook for Paper 1
-**Blockers / open questions:** None.
-**Cross-references:** commits 52a92b6 (paradigm tests + smoke fix), 859db56 (lib target + int tests), f424974 (SDDC pricing fix)
-
 ## 2026-05-16 (night+4) — SFSV smoke test green: Bug #1 + Bug #2 empirically confirmed
 
 **Focus:** Live devnet smoke test confirming the two architectural fixes (api.rs Bug #1, parallel.rs Bug #2) work end-to-end.
