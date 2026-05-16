@@ -137,8 +137,67 @@ impl Default for GhostBridgeBuilder {
 
 // ─── Verification ───────────────────────────────────────────────────────
 
+/// Verify a ghost-bridge proof.  Fail-CLOSED on attestation: callers
+/// MUST supply the active validator set via
+/// `verify_ghost_bridge_proof_with_keys`.  Calling this no-args
+/// variant returns `attestation_valid = false`, the safe default.
+///
+/// For test fixtures and explicitly-trusted light-client paths that
+/// want to skip BLS attestation, use
+/// `verify_ghost_bridge_proof_unsafe_no_attestation` — its name is
+/// loud on purpose.
 pub fn verify_ghost_bridge_proof(proof: &GhostBridgeProof) -> GhostBridgeVerification {
     verify_ghost_bridge_proof_with_keys(proof, None)
+}
+
+/// H8 (audit 2026-05-16): unsafe no-attestation variant.  Returns
+/// `attestation_valid = true` whenever the proof is *structurally*
+/// valid (≥2 unique validator sigs of ≥48 bytes, matching state
+/// roots), with NO BLS signature verification.
+///
+/// **Only legitimate callers:**
+///   - test fixtures that don't carry a BLS keypair
+///   - light-client modes where the caller has already established
+///     a separate trusted attestation path
+///
+/// Pre-H8 the bare `verify_ghost_bridge_proof` had this behaviour
+/// implicitly — a fail-OPEN gap.  Exposing it as a loudly-named
+/// explicit opt-in ensures no production caller reaches it
+/// accidentally.
+#[allow(clippy::field_reassign_with_default)]
+pub fn verify_ghost_bridge_proof_unsafe_no_attestation(
+    proof: &GhostBridgeProof,
+) -> GhostBridgeVerification {
+    let mut checks = GhostBridgeVerification::default();
+
+    checks.ghost_valid = proof.ghost.data_hash != [0u8; 32];
+    checks.mmr_inclusion_valid = verify_mmr_path(
+        &proof.mmr_inclusion.leaf_hash,
+        proof.mmr_inclusion.leaf_index,
+        &proof.mmr_inclusion.proof_hashes,
+        &proof.mmr_inclusion.mmr_root,
+    );
+
+    let structural_valid = proof.state_root_proof.validator_signatures.len() >= 2
+        && proof.state_root_proof.state_root == proof.state_root
+        && has_unique_validator_ids(&proof.state_root_proof.validator_signatures)
+        && proof
+            .state_root_proof
+            .validator_signatures
+            .iter()
+            .all(|sig| !sig.signature.is_empty() && sig.signature.len() >= 48);
+    checks.attestation_valid = structural_valid;
+
+    checks.state_root_matches = proof.state_root == proof.state_root_proof.state_root;
+    checks.nonce_valid = proof.bridge_nonce > 0;
+
+    checks.overall_valid = checks.ghost_valid
+        && checks.mmr_inclusion_valid
+        && checks.attestation_valid
+        && checks.state_root_matches
+        && checks.nonce_valid;
+
+    checks
 }
 
 #[allow(clippy::field_reassign_with_default)]
@@ -296,6 +355,29 @@ impl GhostBridgeRegistry {
         Ok(())
     }
 
+    /// H8 (audit 2026-05-16): test/light-client-only entry that
+    /// bypasses BLS attestation verification.  Mirrors
+    /// `verify_ghost_bridge_proof_unsafe_no_attestation`.  DO NOT
+    /// reach for this from a production codepath that has access to
+    /// validator pubkeys — call `register` (after
+    /// `with_validator_keys`) instead.
+    #[doc(hidden)]
+    pub fn register_unsafe_no_attestation(
+        &mut self,
+        proof: GhostBridgeProof,
+    ) -> Result<(), &'static str> {
+        if self.processed_nonces.contains(&proof.bridge_nonce) {
+            return Err("bridge nonce already processed (replay)");
+        }
+        let verification = verify_ghost_bridge_proof_unsafe_no_attestation(&proof);
+        if !verification.overall_valid {
+            return Err("ghost bridge proof verification failed");
+        }
+        self.processed_nonces.push(proof.bridge_nonce);
+        self.active_bridges.push(proof);
+        Ok(())
+    }
+
     pub fn bridges_for_chain(&self, chain_id: u64) -> Vec<&GhostBridgeProof> {
         self.active_bridges
             .iter()
@@ -368,7 +450,11 @@ mod tests {
     fn test_build_and_verify_bridge_proof() {
         let ghost = make_ghost(1, 50);
         let proof = make_bridge_proof(ghost, 42);
-        let result = verify_ghost_bridge_proof(&proof);
+        // H8 (audit 2026-05-16): bare `verify_ghost_bridge_proof`
+        // is fail-CLOSED on attestation.  Test fixture has no real
+        // BLS sigs, so use the explicit unsafe variant that exercises
+        // only the structural-validity path.
+        let result = verify_ghost_bridge_proof_unsafe_no_attestation(&proof);
         assert!(result.ghost_valid);
         assert!(result.mmr_inclusion_valid);
         assert!(result.attestation_valid);
@@ -422,9 +508,13 @@ mod tests {
         let mut registry = GhostBridgeRegistry::new();
         let ghost = make_ghost(1, 50);
         let proof = make_bridge_proof(ghost, 42);
-        assert!(registry.register(proof.clone()).is_ok());
+        // H8 (audit 2026-05-16): tests exercise the replay-detection
+        // and chain-filter paths, not the BLS attestation path.
+        // Use the unsafe variant so the structurally-valid fixture
+        // (no real BLS sigs) is admitted.
+        assert!(registry.register_unsafe_no_attestation(proof.clone()).is_ok());
         assert_eq!(registry.bridge_count(), 1);
-        assert!(registry.register(proof).is_err());
+        assert!(registry.register_unsafe_no_attestation(proof).is_err());
     }
 
     #[test]
@@ -442,8 +532,8 @@ mod tests {
             p.bridge_nonce = 2;
             p
         };
-        registry.register(p1).unwrap();
-        registry.register(p2).unwrap();
+        registry.register_unsafe_no_attestation(p1).unwrap();
+        registry.register_unsafe_no_attestation(p2).unwrap();
         assert_eq!(registry.bridges_for_chain(42).len(), 1);
         assert_eq!(registry.bridges_for_chain(99).len(), 1);
         assert_eq!(registry.bridges_for_chain(0).len(), 0);
