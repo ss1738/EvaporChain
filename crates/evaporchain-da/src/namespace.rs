@@ -441,11 +441,14 @@ impl NamespaceMerkleTree {
                 if !sib.is_empty() && sib.min_namespace > sib.max_namespace {
                     return false;
                 }
-                // AUDIT C2 Stage A: a sibling with a non-default range
-                // must also carry a non-zero hash. Pre-fix, a sibling
-                // could carry meaningful namespace metadata + a zero
-                // hash, opening another forgery path.
-                if !sib.is_empty() && sib.hash == [0u8; 32] {
+                // AUDIT C2 Stage A: a sibling with non-default namespace range
+                // but a zero hash is a forgery — it claims a real subtree but
+                // commits to nothing. `is_empty()` is defined by hash==zero, so
+                // `!is_empty() && hash==zero` is a tautological contradiction;
+                // guard on namespace metadata instead.
+                if sib.hash == [0u8; 32]
+                    && (sib.min_namespace != NAMESPACE_MIN || sib.max_namespace != NAMESPACE_MIN)
+                {
                     return false;
                 }
             }
