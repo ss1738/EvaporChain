@@ -22860,7 +22860,7 @@ mod t1_20_batch21 {
         use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsVerifier};
 
         let old_kp = BlsKeypair::generate();
-        let old_pk = old_kp.public_key();
+        let old_pk = old_kp.public_key_bytes();
         let old_pk_bytes = old_pk.0.clone();
         // Valid PoP of old key (what the validator originally submitted at registration).
         let old_pop = old_kp.proof_of_possession();
@@ -22868,7 +22868,7 @@ mod t1_20_batch21 {
         assert!(BlsVerifier::verify_proof_of_possession(&old_pk, &old_pop));
 
         let new_kp = BlsKeypair::generate();
-        let new_pk = new_kp.public_key();
+        let new_pk = new_kp.public_key_bytes();
         let new_pk_bytes = new_pk.0.clone();
         let new_pop = new_kp.proof_of_possession();
 
