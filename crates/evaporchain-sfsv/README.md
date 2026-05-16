@@ -12,38 +12,42 @@ A vault locks an energy-denominated deposit on behalf of the creator's *future s
 
 ## Status
 
-| Surface | Tests | Status |
+| Surface | Coverage | Status |
 |---|---|---|
-| `src/vault.rs` | 8 unit | shipped |
-| `src/predicate.rs` | 6 unit + 2 proptests | shipped |
-| `src/payout.rs` | 5 unit | shipped |
-| `src/market.rs` | 6 unit | shipped |
-| `tests/adversarial.rs` | 17 (§8 threat model) | shipped (PR #355) |
-| `tests/predicate_inlining_parity.rs` | 9 (`.es` drift detector) | shipped (PR #356) |
-| `scripts/deploy-sfsv.sh` | dry-run validated | shipped (PR #357) |
-| **Total** | **51 tests** | **v1.0 in flight** |
+| `src/predicate.rs` | model (a): `EnergyDecaysBelow { threshold }` over engine-supplied live `contract_energy` (refresh-aware) | reconciled · VERIFIED GREEN (Mini 1) |
+| `src/payout.rs` | 3-arg `payout(vault, epoch_now, contract_energy)` | reconciled · VERIFIED GREEN |
+| `src/vault.rs` | vault FSM + on-chain listing state machine (`list_for_sale`/`cancel_listing`/`record_sale`) | VERIFIED GREEN |
+| `src/market.rs` | SDDC shim; settle routes through the on-chain `record_sale` guard (7 tests) | VERIFIED GREEN |
+| `tests/adversarial.rs` | 22 (§8 threat model + refresh-aware + §8.6 listing adversaries) | VERIFIED GREEN |
+| `tests/predicate_inlining_parity.rs` | 9 (`.es`↔Rust predicate drift detector) | VERIFIED GREEN |
+| `tests/listing_parity.rs` | NEW — `.es`↔Rust listing-guard parity (`§5-A`) | VERIFIED GREEN |
+| `scripts/deploy-sfsv.sh` | full lifecycle **live-e2e PASS** on a node (deploy → set_terms → predicate-gated try_payout → directly-observed `released`) | live-verified |
 
-Source of truth for business logic: `contracts/evaporscript/future_self_vault.es` (282 LOC). This crate is the substrate-side mirror — the `.es` contract executes on-chain; this crate is the Rust API used by the execution layer, test harness, and SDDC marketplace.
+Source of truth for business logic: `contracts/evaporscript/future_self_vault.es` (the on-chain contract; this crate is its substrate-side mirror — used by the execution layer, test harness, and SDDC marketplace). `.es`↔Rust parity is machine-enforced by the two `*_parity.rs` suites. Full record: `VERIFICATION_2026_05_16.md`.
 
 ---
 
 ## Quick start
 
 ```bash
-# Run the substrate-crate test suite (all 51 tests, ~0.0s)
+# Run the substrate-crate test suite
 cargo test -p evaporchain-sfsv
 
 # Validate the deploy runbook without touching the network
 ./scripts/deploy-sfsv.sh --dry-run \
-    --deployer-addr 0xdeadbeef \
-    --future-self   0xcafef00d
+    --deployer 0 --future-self 2 \
+    --predicate 0 --release-param 200
 
-# Execute against a live node
+# Execute against a live node. deployer/caller are u8 devnet account
+# indices (node maps i -> addr_from_byte(i)); index 0 is the
+# genesis-funded faucet account. Auth: register+login mints a session
+# token (testnet auto-verifies) -> pass it as --token.
 ./scripts/deploy-sfsv.sh \
     --node http://127.0.0.1:9001 \
-    --deployer-addr "$DEPLOYER_ADDR" \
     --token "$EVAPORCHAIN_TX_TOKEN" \
-    --predicate 0 --release-param 200
+    --deployer 0 --future-self 2 \
+    --predicate 0 --release-param 200 \
+    --energy 1000000 --half-life 1000000 --deposit 1000
 ```
 
 ---
@@ -71,16 +75,15 @@ use evaporchain_sfsv::predicate::{Predicate, PredicateContext, evaluate};
 
 // EpochReached: releases when chain epoch ≥ release_epoch.
 let p = Predicate::EpochReached { release_epoch: 1_000 };
-assert!(evaluate(&p, PredicateContext { epoch_now: 1_000 }));
+assert!(evaluate(&p, PredicateContext { epoch_now: 1_000, contract_energy: 0 }));
 
-// EnergyDecaysBelow: releases when the contract's live energy < threshold.
-// Frozen-formula parameters; the chain's `energy_at_epoch` does the decay math.
-let p = Predicate::EnergyDecaysBelow {
-    initial_energy: 1_000_000,
-    half_life: HalfLife::from(64u64),
-    created_at_epoch: 0,
-    threshold: 100,
-};
+// EnergyDecaysBelow (model (a)): a pure comparison over the
+// engine-supplied LIVE contract energy — no frozen formula. The chain
+// decays the vault's own energy (refresh-aware); the predicate just
+// compares it. Restores the invariant that the predicate reads the
+// same physical energy the evaporation engine maintains.
+let p = Predicate::EnergyDecaysBelow { threshold: 100 };
+assert!(evaluate(&p, PredicateContext { epoch_now: 0, contract_energy: 99 }));
 ```
 
 ### Vault
@@ -105,20 +108,25 @@ assert_eq!(v.current_holder(), Some(future_self_addr));
 ```rust
 use evaporchain_sfsv::payout::{payout, PayoutError};
 
-let result = payout(&mut v, /* epoch_now */ 100)?;
+// payout takes the engine-supplied live contract energy as the 3rd
+// arg (model (a)) — the same value the predicate compares against.
+let result = payout(&mut v, /* epoch_now */ 100, /* contract_energy */ 0)?;
 assert_eq!(result.paid_to, future_self_addr);
 assert_eq!(result.amount, 1_000);
 
 // Double-payout is rejected.
-let err = payout(&mut v, 101).unwrap_err();
+let err = payout(&mut v, 101, 0).unwrap_err();
 assert_eq!(err, PayoutError::AlreadyReleased);
 ```
 
 ### Secondary market (SDDC)
 
 ```rust
-use evaporchain_sfsv::market::{open_listing, settle_secondary};
-// See src/market.rs for the full Dutch-clearing surface.
+use evaporchain_sfsv::market::{list_for_sale, settle_secondary};
+// list_for_sale opens an SDDC auction AND mirrors the on-chain
+// listing (vault.list_for_sale guards). settle_secondary runs
+// Dutch clearing and routes the claim transfer through the on-chain
+// record_sale guard. See src/market.rs for the full surface.
 ```
 
 ---
@@ -177,7 +185,7 @@ The viral-demo purpose (`SFSV_ARCHITECTURE.md §1.3`) is satisfied when a third-
 
 | Version | Surface | Status |
 |---|---|---|
-| v1.0 | Reference impl: 25 base + 17 adversarial + 9 parity tests + deploy runbook | 3/5 gaps closed |
+| v1.0 | Reference impl: model-(a) crate + 22 adversarial + 9 predicate-parity + listing-parity + deploy runbook (live-e2e PASS) + TS view (#359) | §10.2 gaps: #1–#4 closed + verified; #5 (this README) corrected — in-browser UX pass + main-fold remain |
 | v1.1 | VDF-anchored EpochReached predicate (§5.3) + Lambda-Fold batch release (§5.7) | not started |
 | v1.5 | Threshold m-of-n future-self (§5.4) + forward-secure rotating claim (§5.6) | not started |
 | v2.0 | Witness-encrypted beneficiary (§5.5) + lattice-based threshold migration | research |
