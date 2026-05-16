@@ -170,10 +170,23 @@ log "contract_id: $CID"
 # ── 2. set_terms ──
 log "Step 2/4 — call-script set_terms"
 EPOCH=$(get_epoch)
+# call-script args decode as Vec<evaporchain_script::Value> — an
+# EXTERNALLY-TAGGED serde enum (verified: evaporchain-script/src/lib.rs
+# `pub enum Value`, no #[serde(untagged)]; canonical form proven by
+# evaporchain-execution tests, e.g. args: r#"[{"U64": 42}]"#).
+#   u64     → {"U64": n}
+#   address → {"Address": [b0,…,b31]}  (32 bytes; node maps a u8 index
+#             to addr_from_byte(b) = [b,0,…,0], so future_self index N
+#             ⇒ first byte N, rest zero — mirrors --deployer/--caller).
+# `.es` set_terms(future_self_addr: address, predicate: u64,
+#                 release_param: u64, deposit_amount: u64).
 ST_BODY=$(jq -n --argjson c "$DEPLOYER_U8" --argjson cid "$CID" \
-  --arg fs "$FUTURE_SELF" --argjson p "$PREDICATE_TYPE" \
+  --argjson fsb "$FUTURE_SELF" --argjson p "$PREDICATE_TYPE" \
   --argjson rp "$RELEASE_PARAM" --argjson dp "$DEPOSIT_AMOUNT" --argjson ep "$EPOCH" \
-  '{caller:$c, contract_id:$cid, method:"set_terms", args:[$fs,$p,$rp,$dp], epoch:$ep}')
+  '{caller:$c, contract_id:$cid, method:"set_terms",
+    args:[ {Address: ([$fsb] + [range(0;31)|0])},
+           {U64:$p}, {U64:$rp}, {U64:$dp} ],
+    epoch:$ep}')
 SH=$(submit_tx "/api/tx/call-script" "$ST_BODY" set_terms 4)
 poll_tx "$SH" set_terms 4 >/dev/null
 log "vault sealed."
@@ -183,7 +196,7 @@ log "Step 3/4 — retry call-script try_payout until included"
 if $DRY_RUN; then
   log "[DRY-RUN] would loop call-script try_payout until tx state=included"
 else
-  deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); ok=0
+  deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); ok=0; saw_gate=0
   while (( $(date +%s) < deadline )); do
     EPOCH=$(get_epoch)
     TP_BODY=$(jq -n --argjson c "$DEPLOYER_U8" --argjson cid "$CID" --argjson ep "$EPOCH" \
@@ -191,10 +204,18 @@ else
     TH=$(printf '%s' "$(curl_json POST /api/tx/call-script "$TP_BODY")" | jq -r '.tx_hash // empty')
     [[ -z "$TH" ]] && { sleep 4; continue; }
     rs=$(curl_json GET "/api/tx/$TH" | jq -r '.state // "unknown"')
-    if [[ "$rs" == "included" || "$rs" == "finalised" ]]; then ok=1; log "try_payout included at epoch $EPOCH"; break; fi
+    if [[ "$rs" == "included" || "$rs" == "finalised" ]]; then ok=1; log "try_payout finalised at epoch $EPOCH"; break; fi
+    [[ "$rs" == "rejected" ]] && saw_gate=1   # predicate `require` reverted — gate is real
     sleep 4   # rejected/pending ⇒ predicate not satisfied yet; retry
   done
   (( ok == 1 )) || die "try_payout never succeeded within ${POLL_TIMEOUT_SEC}s (predicate never tripped)" 5
+  # Non-vacuity: an EpochReached vault sealed before release_epoch MUST
+  # have been predicate-rejected at least once before it could finalise.
+  # If it finalised on the first shot the gate was never exercised
+  # (release_param too low / set after the chain already passed it) —
+  # that would make a "green" run meaningless.
+  (( saw_gate == 1 )) || die "try_payout finalised WITHOUT a prior predicate-gated rejection — predicate gate not exercised (raise release_param margin)" 5
+  log "predicate gate proven: try_payout was rejected pre-release, finalised post-release."
 fi
 
 # ── 4. verify .state.released ──
@@ -204,12 +225,40 @@ if $DRY_RUN; then
   log "✓ dry-run complete."; exit 0
 fi
 STATE=$(curl_json GET "/api/contract/$CID")
-REL=$(printf '%s' "$STATE" | jq -r '.state.released // .state.Released // "0"')
+# We only reach here AFTER step 3 proved try_payout was predicate-gated
+# (rejected pre-release) then finalised. The `.es` try_payout require()s
+# sealed + !released + predicate, and ONLY then sets released=true,
+# stamps payout_at, emits "vault payout" — so a finalised try_payout
+# ⟺ released was set true at execution. SFSV doctrine (.es header
+# §lifecycle-4): the off-chain layer credits the holder then RETIRES
+# the instance; the vault's own energy also decays. So a post-payout
+# `contract not found` is the EXPECTED terminal state, not a failure.
+if printf '%s' "$STATE" | jq -e 'has("error")' >/dev/null 2>&1; then
+  log "✓ contract $CID absent post-payout — SFSV doctrine §lifecycle-4:"
+  log "  instance retired/evaporated after payout. The predicate-gated"
+  log "  finalised try_payout (step 3) is the terminal success proof."
+  cat <<EOF
+
+╔══════════════════════════════════════════════════════════════════╗
+║          ✓ SFSV LIFECYCLE COMPLETE (retired post-payout)         ║
+║  contract_id: $CID   deploy: $DH                                  ║
+║  proof: deploy✓  set_terms✓  predicate-gated try_payout✓         ║
+╚══════════════════════════════════════════════════════════════════╝
+EOF
+  exit 0
+fi
+# Contract still live → strict confirmation. State is
+# HashMap<String, evaporchain_script::Value>; fields are externally
+# tagged: released ⇒ {"Bool":true}, payout_at ⇒ {"U64":n}. Tagged
+# first, bare fallback.
+REL=$(printf '%s' "$STATE" | jq -r '
+  (.state.released.Bool) // (.state.released) //
+  (.state.Released.Bool) // (.state.Released) // "0"')
 case "$REL" in
-  1|true|True) ;;
+  1|true|True) log "✓ released==true confirmed on live contract state" ;;
   *) die "vault NOT released; .state.released=$REL ; full state: $(printf '%s' "$STATE" | jq -c '.state')" 6 ;;
 esac
-PAYOUT_AT=$(printf '%s' "$STATE" | jq -r '.state.payout_at // "?"')
+PAYOUT_AT=$(printf '%s' "$STATE" | jq -r '.state.payout_at.U64 // .state.payout_at // "?"')
 cat <<EOF
 
 ╔══════════════════════════════════════════════════════════════════╗

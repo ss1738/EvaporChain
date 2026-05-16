@@ -204,3 +204,53 @@ CallScriptRequest { caller: u8, contract_id: u64, method: String, args: serde_js
 
 ### Honest status — SPEC COMPLETE
 All request schemas **source-verified**; OQ1/OQ2/OQ3 all **resolved from source**; the released-observation design is settled (retry-idempotent-try_payout + `.state.released`, no extra endpoint). **This spec is implementation-ready with zero remaining guesses.** What remains is purely: (a) rewrite `deploy-sfsv.sh` to this spec, and (b) run it against a live `evaporchain-node` Mini devnet — both gated on single-session coordination + a clean Mini, not on any unknown. The reconciliation itself is VERIFIED GREEN; this completes the e2e-runbook design.
+
+## ✅ LIVE E2E PASS — Task #5 — 2026-05-16
+
+`deploy-sfsv.sh` (corrected, local-only) ran end-to-end against a **live isolated single-node devnet** on Mini 1 (`127.0.0.1:8099`; `--mock-consensus --mock-prove`, `/tmp` data-dir, `peer_count:0` — zero cluster contact; a parallel session's smoke node, reused not provisioned). Full lifecycle on a real chain:
+
+| Step | Result |
+|---|---|
+| deploy-script (11,248 B `.es`) | finalised, `contract_id:4`, gas 150000 |
+| set_terms (tagged-Value args) | **finalised** — all 5 `.es` `require()`s passed |
+| try_payout | **7 predicate-gated rejections** (epochs 2585–2610 < release 2610) → **finalised at epoch 2614** (≥ release) |
+| verify | `/api/contract/:id` → 404 (see CORRECTION below — devnet limitation, not retirement) |
+
+> **CORRECTION (2026-05-16, from the #6 investigation):** the step-4 404 was **NOT** "instance retired post-payout per `.es` §lifecycle-4" as first written below. Root-caused during #6: this `--mock-consensus` devnet **never surfaces script contracts** via `GET /api/contract/:id` or `/api/contracts` — a *just-finalised* deploy is `contract not found` within 1 s, with `/api/contracts` empty, node uptime monotonic (no restart, PID stable). Script tx **execution is real** (the 7 predicate-gated rejections → finalise exactly at `release_epoch` cannot be faked — the `.es` genuinely ran), but the API-queried `contract_engine` is not populated on this devnet config. The #5 **PASS still stands** (deploy ✓, set_terms ✓, predicate-gated finalised try_payout ✓ — the lifecycle executed); only the *explanation of the 404* was wrong. `released==true` remains soundly inferential (below); it is simply unobservable here for a devnet reason, not a payout-retirement reason.
+
+**Two real bugs the live e2e caught (both fixed in the local script; not in the spec above):**
+1. **call-script args were bare positionals** (`["2",0,1606,1000]`). Node decodes `tx.args` as `Vec<evaporchain_script::Value>` — an **externally-tagged** serde enum. Correct form: `[{"Address":[b0..b31]},{"U64":n},…]` (32-byte addr = `addr_from_byte`: `[idx,0×31]`). Canonical form proven by `evaporchain-execution` tests (`args: r#"[{"U64": 42}]"#`). Without this, set_terms always `rejected`.
+2. **verify step asserted bare `.state.released`** — state is `HashMap<String,Value>`, fields externally-tagged (`{"Bool":true}`). Fixed: tagged-aware read + a **non-vacuity guard** (must observe ≥1 predicate-`rejected` before the finalised try_payout, else fail — prevents a tautological green) + tolerate a post-payout `/api/contract/:id` 404. (NB: the 404 cause was later corrected — see CORRECTION above: it's a `--mock-consensus` devnet limitation, *not* payout-retirement. The tolerate-404 branch is still correct behavior; only its rationale changed.)
+
+**Auth/funding facts (source-verified, needed to drive any auth-enabled node):** tx routes gate on `require_tx_auth` → session token; register **auto-verifies on testnet** (`auth.rs:323`), login doesn't gate on `verified` → register→login mints a 128-char bearer. Genesis pre-seeds the **all-zeros faucet** (`addr_from_byte(0)`, balance `u64::MAX/2`); `addr_from_byte(1..)` are NOT funded → use `--deployer 0` to skip the admin-key-gated faucet.
+
+**`released==true` is proven *inferentially*, not by a direct state read:** `.es` `try_payout`'s only success path is `require(sealed) → require(!released) → require(predicate) → released=true; payout_at; emit`. A finalised try_payout that was *previously predicate-rejected* (non-vacuity guard enforces this) ⟹ released was set. No live `released` read is obtainable on this devnet (script contracts aren't surfaced via `/api/contract/:id` here — see CORRECTION) — so this is a sound proof from source + the predicate-gated tx transition, not an observed field. Honest, non-overclaimed PASS.
+
+**CAVEAT (carry forward):** the corrected `deploy-sfsv.sh` lives **only on the MacBook working copy**. `origin/main` still has the old #357 mis-shaped version; the Mini working tree was `git checkout`-restored to HEAD after every run (no commit — multi-session shared tree, not this session's call to land it). The fix must be folded into the repo by a coordinated session along with the §10.1/§10.2/README drift.
+
+## ✅ TS VIEW (#359) E2E — Task #6 — 2026-05-16
+
+`crates/evaporchain-sfsv/ui/index.html` (533-line single-file dApp UI) was **written to the same mis-shaped API as the old #357 script, plus 3 nonexistent endpoints** — i.e. demo-only, could not complete a single op against a real node. Verified against source (`api.rs`) + the live Mini-1 node. Defects found & fixed (local-only edit; parallel-session-owned file — same no-commit discipline as the script):
+
+| # | Defect (original UI) | Fix (source-verified) |
+|---|---|---|
+| 1 | `deployer:` hex string | `u8` index (Number) |
+| 2 | `caller:` hex string | `u8` index (Number) |
+| 3 | `contract:` key + addr | `contract_id: <u64>` |
+| 4 | `args:[fs,n,n,n]` bare | tagged `[{Address:[…32]},{U64:…}]` |
+| 5 | no `epoch` on call-script | `epoch:` from `/api/status` |
+| 6 | `GET /api/contract/by-deploy/:hash` (no such route) | poll `/api/tx/:hash` → `.contract_id` |
+| 7 | `GET /api/contract/:addr/state` (no such route) | `GET /api/contract/:id` |
+| 8 | `s.released` etc. (untagged, no `.state`) | `untag(s.state.released)` (`{Bool:true}`→true; Address→0x…) |
+| 9 | probe `GET /api/version` (no such route) | `GET /api/status` |
+
+**Live-node verification of the corrected UI's exact JS-built request bodies** (curl mirror, `127.0.0.1:8099`):
+- deploy (`deployer:0` as Number, unique energy) → **finalised, fresh `contract_id`** ✓
+- `pollContractId` (poll `/api/tx/:hash` → `.contract_id`) → resolved ✓
+- set_terms (`caller:0`, `contract_id`, **UI's exact tagged args** `[{Address:[0×32]},{U64:0},{U64:rp},{U64:1000}]`, `epoch`) → **FINALISED — UI tagged args accepted** ✓ (the central fix; identical encoding to the #5 PASS)
+- try_payout body shape = the #5-verified shape (`caller` u8, `contract_id`, `args:[]`, `epoch`) — predicate-gate already proven in #5
+- probe → `/api/status` reachable ✓
+
+**Not positively verifiable on this devnet (node limitation, NOT a UI defect):** the UI's `refresh()` reads `GET /api/contract/:id` and `untag`s `.state.*`. The request shape is source-correct and the 404 branch is handled as terminal — but this `--mock-consensus` devnet **does not surface script contracts** via that endpoint (a just-finalised deploy 404s; `/api/contracts` empty; node uptime monotonic / no restart). So the positive state-render path is shape-correct + failure-path-handled, but unobservable here for the same devnet reason as the #5 CORRECTION. A real-consensus node (or a node whose API contract_engine is populated) is needed to see a live `released` render; the UI code itself is now source-faithful.
+
+**Honest #6 verdict:** every UI **write-path** body (deploy, set_terms w/ tagged args, try_payout) is **live-verified** against the node; the **read-path** is source-correct + fail-safe but unobservable on this devnet. The UI is no longer demo-only — it speaks the verified API. **In-browser DOM/UX was NOT exercised from this headless environment** (stated, not claimed). Same CAVEAT as #5: fix is MacBook-local only; fold into the repo with the §10.x/README drift in a coordinated session.
