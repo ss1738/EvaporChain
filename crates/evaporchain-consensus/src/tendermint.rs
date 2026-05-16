@@ -168,6 +168,15 @@ pub enum ConsensusMessage {
         /// Prevents rogue-key attacks on aggregate signatures.
         #[serde(default)]
         proof_of_possession: Vec<u8>,
+        /// GEN-N1 (audit 2026-05-15): continuity-of-control signature.
+        /// Required when this validator ALREADY has a registered BLS key.
+        /// Must be a PoP produced by the currently-registered (old) key.
+        /// Proves the announcer controls the old key and is authorising
+        /// the rotation. Without this, any gossip peer can replace a
+        /// genesis-anchored key with one they control.
+        /// Absent for first-time registrations (no existing key).
+        #[serde(default)]
+        continuity_sig: Option<Vec<u8>>,
     },
     /// Validator attests to data availability for a committed block.
     DAAttestation {
@@ -3469,6 +3478,8 @@ impl TendermintConsensus {
 
     /// Generate a KeyAnnounce message for broadcasting our BLS public key
     /// along with a proof-of-possession (prevents rogue-key attacks).
+    /// `continuity_sig` is `None` for first-time announcements; key
+    /// rotations must supply a PoP by the old key (GEN-N1).
     pub fn make_key_announce(&self) -> Option<ConsensusMessage> {
         self.bls_keypair
             .as_ref()
@@ -3476,6 +3487,7 @@ impl TendermintConsensus {
                 validator_id: self.my_id,
                 bls_public_key: kp.public_key_bytes().0.clone(),
                 proof_of_possession: kp.proof_of_possession().0.clone(),
+                continuity_sig: None, // first-time; rotations set this via governance tx
             })
     }
 
@@ -4668,6 +4680,7 @@ impl TendermintConsensus {
             validator_id,
             ref bls_public_key,
             ref proof_of_possession,
+            ref continuity_sig,
         } = msg
         {
             if bls_public_key.len() != 48 {
@@ -4694,6 +4707,40 @@ impl TendermintConsensus {
             }
 
             if let Some(vi) = self.validator_set.get_mut(validator_id) {
+                // GEN-N1 (audit 2026-05-15): if a key is already registered and
+                // the announced key differs, require a continuity signature from
+                // the EXISTING key. Without this any gossip peer can overwrite
+                // a genesis-anchored BLS key with one they control.
+                if let Some(ref existing_pk) = vi.bls_public_key.clone() {
+                    if existing_pk != bls_public_key {
+                        // Key rotation: continuity signature is mandatory.
+                        match continuity_sig {
+                            None => {
+                                warn!(
+                                    validator = validator_id,
+                                    "REJECTED BLS key overwrite: continuity_sig required when rotating a registered key (GEN-N1)"
+                                );
+                                return actions;
+                            }
+                            Some(csig) => {
+                                // Verify that the continuity sig is a valid PoP
+                                // produced by the EXISTING (old) key, proving
+                                // the announcer controls the old key.
+                                if !crate::validator_set::ValidatorSet::verify_pop(
+                                    existing_pk,
+                                    csig,
+                                ) {
+                                    warn!(
+                                        validator = validator_id,
+                                        "REJECTED BLS key overwrite: continuity_sig failed (not a valid PoP by the existing key)"
+                                    );
+                                    return actions;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key)
                 {
                     vi.bls_public_key = Some(bls_public_key.clone());
@@ -19396,6 +19443,7 @@ mod t1_20_batch6 {
             validator_id: 1,
             bls_public_key: vec![0u8; 10], // must be 48 — length check fires
             proof_of_possession: vec![],
+            continuity_sig: None,
         });
         assert!(actions.is_empty());
     }
@@ -19772,6 +19820,7 @@ mod t1_20_batch7 {
             validator_id: 1,
             bls_public_key: key.clone(),
             proof_of_possession: vec![],
+            continuity_sig: None,
         });
         assert!(actions.is_empty());
         // Key must now be registered on validator 1
@@ -19996,6 +20045,7 @@ mod t1_20_batch8 {
             validator_id: 1,
             bls_public_key: registered_key,
             proof_of_possession: vec![],
+            continuity_sig: None,
         });
         // Send attestation claiming a DIFFERENT key — must be rejected.
         let different_key = vec![0xBBu8; 48];
@@ -20256,6 +20306,7 @@ mod t1_20_batch9 {
             validator_id: 1,
             bls_public_key: vec![0xAAu8; 48],
             proof_of_possession: vec![0u8; 96],
+            continuity_sig: None,
         });
         assert!(
             actions.is_empty(),
@@ -21012,6 +21063,7 @@ mod t1_20_batch13 {
             validator_id: 1,
             bls_public_key: vec![0u8; 48],
             proof_of_possession: vec![0u8; 48],
+            continuity_sig: None,
         };
         assert_eq!(msg.height(), 0);
     }
@@ -21030,6 +21082,7 @@ mod t1_20_batch13 {
             validator_id: 2,
             bls_public_key: vec![0u8; 48],
             proof_of_possession: vec![],
+            continuity_sig: None,
         };
         assert_eq!(msg.round(), 0);
     }
@@ -21749,6 +21802,7 @@ mod t1_20_batch16 {
             validator_id: 1,
             bls_public_key: bls_key.clone(),
             proof_of_possession: vec![],
+            continuity_sig: None,
         });
         assert_eq!(tc.validator_set.get(1).unwrap().bls_public_key.as_ref(), Some(&bls_key));
     }
@@ -22502,6 +22556,7 @@ mod t1_20_batch20 {
             validator_id: 7,
             bls_public_key: vec![0u8; 48],
             proof_of_possession: vec![],
+            continuity_sig: None,
         };
         assert_eq!(msg.height(), 0);
         assert_eq!(msg.round(), 0);
@@ -22722,6 +22777,7 @@ mod t1_20_batch21 {
             validator_id: 1,
             bls_public_key: vec![0x11u8; 48],
             proof_of_possession: vec![0u8; 96], // invalid BLS PoP → verify fails → line 4582
+            continuity_sig: None,
         };
         let actions = tc.on_message(msg);
         assert!(actions.is_empty());
@@ -22738,10 +22794,49 @@ mod t1_20_batch21 {
             validator_id: 1,
             bls_public_key: pk.clone(),
             proof_of_possession: vec![],
+            continuity_sig: None,
         };
         let _ = tc.on_message(msg);
         // Closing braces 4601-4602 passed; key is now registered.
         assert_eq!(tc.validator_set.get(1).unwrap().bls_public_key.as_deref(), Some(&pk[..]));
+    }
+
+    #[test]
+    fn gen_n1_key_overwrite_without_continuity_sig_rejected() {
+        // GEN-N1 (audit 2026-05-15): overwriting a registered BLS key
+        // must require a continuity signature from the OLD key. Without
+        // this, any gossip peer can replace a genesis-anchored key.
+        let mut tc = make_tc3();
+        let original_pk = vec![0xAAu8; 48];
+        let attacker_pk = vec![0xBBu8; 48];
+
+        // First-time registration succeeds (no existing key).
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: original_pk.clone(),
+            proof_of_possession: vec![],
+            continuity_sig: None,
+        });
+        assert_eq!(
+            tc.validator_set.get(1).unwrap().bls_public_key.as_deref(),
+            Some(&original_pk[..]),
+            "initial key must be registered"
+        );
+
+        // Attempt overwrite with a different key but no continuity_sig.
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: attacker_pk.clone(),
+            proof_of_possession: vec![],
+            continuity_sig: None, // attacker can't produce this without old sk
+        });
+
+        // Key must remain the original — overwrite rejected.
+        assert_eq!(
+            tc.validator_set.get(1).unwrap().bls_public_key.as_deref(),
+            Some(&original_pk[..]),
+            "GEN-N1: key overwrite without continuity_sig must be rejected"
+        );
     }
 
     // ── Test 4: Prevote for past height → early return (line 5209) ──
