@@ -4,6 +4,65 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (session 43) — Fresh 5-agent audit + 10-closure regression replay + canary script
+
+**Focus:** Fresh end-to-end 5-agent audit round on top of session 42's main HEAD, triage findings, close every actionable one in code, and land a regression-gate to prevent the regression class from recurring.
+
+**Commits shipped:** 3 PRs cut + opened (#337, #338, #339).  Some are still awaiting merge as of the end of this session.
+
+**Empirical findings from the 2026-05-16 audit round (5 parallel agents):**
+
+The agent that audited CONSENSUS reported one CRITICAL finding (`CONS-DRIFT-N3` regressed).  Verification on main HEAD showed it was real: `tendermint.rs:5093-5113` had the warn-only `"Accept during migration window"` branch with no `return actions` — the fix that shipped 2026-05-15 as commit `392027ec` had been silently overwritten.  Sweeping further found **9 more verified live regressions** of admin-gate fixes on `crates/evaporchain-node/src/api.rs`:
+
+- R3 — `post_demo_reset`
+- R4 — `post_llsa_apply_amendment`
+- R6 — `post_patronage_{pledge, honour, revoke}` (3)
+- R7 — `post_epv_register`, `post_epv_prune`, `post_dsn_fold_nullifier`, `post_dsn_advance_window` (4)
+
+`git blame` traced each affected function back to the original feature commit (`a3169de1`, `a866d3aa`, …) — the audit-fix commits never reached current main HEAD's blame.  Root cause: a large memento-contracts merge (`b8630ff4`) on the night of 2026-05-15 carried the files in at their pre-fix state and the merge resolved in favour of the substrate branch.
+
+**Deliverables:**
+
+- **PR #337** (`regression/replay-r-series-drift-n3`) — cherry-picked 5 original commits (`392027ec`, `1765b5ee`, `55a7bb9b`, `b50f0c80`, `0a21083a`) to re-apply all 10 closures.  953/953 evaporchain-consensus lib tests pass on Mini 1 (DRIFT-N3 regression test included).  Node compiles clean.
+- **PR #338** (`audit/round-2-defensive-bundle`) — round-2 defensive findings, zero wire-format change:
+  - CONS-B1 — `assert!(chain_id_bytes.len() < 256)` in `bls_vote_message` (catches misconfigured genesis at startup rather than silently truncating the u8 length prefix).
+  - CONS-A1 — `debug_assert!(matches!(phase, "proposal" | "prevote" | "precommit"))` in `bls_vote_message` (codifies the call-site invariant that `phase` is one of three fixed literals).
+  - PARSER-1 — `MAX_SOURCE_BYTES = 1 MiB` pre-flight in EvaporScript `parse` and `tokenize` (closes lex-time memory amplification window above the 1M token cap).  Dropped BIND-2 from the bundle: false positive (cap already at `bind.rs:234`).
+  - 7 new tests, all green on Mini 1.
+- **PR #339** (`ops/audit-canary-script`) — `scripts/audit-canaries.sh` regression-gate, 26 canaries covering R3/R4/R5/R6/R7/R8/R9/R10 admin-gates, DRIFT-N3 negative, GEN-N3/PRIV-N5 DSTs, CONS-A1/B1/PARSER-1 asserts, GEN-N5 Argon2 parameter.  Wired into `make check`; opt-in pre-commit hook at `scripts/hooks/pre-commit.sample`.  On current main: 13/26 pass + 13 FAIL (the 13 failures are the closures still on PR #337 and #338).
+
+**Other audit findings handled inline:**
+
+- PRIV-N5 (PRIVACY agent CRITICAL) — false positive: PR #335 already shipped via session 42's chain consolidation.  Canary script confirms `EVAPORCHAIN_V1_MEV_AAD\0` and `EVAPORCHAIN_V1_MEV_ADM\0` DSTs are present on main HEAD.
+- APP-T-1, EV-SCRIPT-1, BIND-2 — all false positives (already capped or by-design behaviour).
+- EXEC/STATE-DB agent: returned "nothing found" but the surface (rocksdb_backend, sync, state_sync, block_stm, paymaster) is too large to claim clean in 5 minutes.  A targeted deep-dive re-audit launched at end-of-session.
+
+**Decisions made:**
+
+- PR #337 is a pure `git cherry-pick` of the 5 original commits — no new logic, just regression replay.  The cherry-pick was clean (no conflicts).
+- PR #338 chose fail-fast asserts over re-encoding `bls_vote_message`'s wire format.  Wire-format change would invalidate every existing BLS signature on chain; the asserts catch the misuse case without breaking signatures.
+- The canary script's primitives (`canary`, `canary_negative`, `canary_function_contains`) are bash + grep + awk on purpose: no Rust dependency, no toolchain pinning, runs in pre-commit hook within milliseconds.
+- The original DRIFT-N3 commit message specifically called out drift-class (commit-message-vs-diff drift) as a recommendation for a pre-commit hook gate.  This regression batch validates that recommendation; PR #339 implements it.
+
+**What's next:**
+
+- Awaiting operator merge of #337 (10 critical regressions), #338 (3 defensive), #339 (canary gate).  Once all three land, `make check` returns 26/26 green.
+- Deep-dive re-audit of EXEC/STATE-DB/SYNC/PAYMASTER surface launched at end-of-session — outcome will surface as the next "what's next" entry.
+- Beyond that: `MAINNET_READINESS.md` has zero pure-code OPEN lanes left.  Remaining items are OPS-only (cluster soak, operator runbook execution, external audit kickoff).
+
+**Blockers / open questions:**
+
+- A single large merge with "audit-N silently dropped" behaviour can happen again unless `make check` (with `audit-canaries`) gates the merge.  Recommend wiring `make check` into the GitHub Actions CI workflow on the PR-merge path so the canary gate is non-bypassable.
+- "Chain consolidation" merges from parallel Claude sessions need a coordination mechanism beyond commit-message drift detection — possibly a `MERGES.md` ledger that each session edits atomically.
+
+**Cross-references:**
+
+- PR #337: https://github.com/ss1738/EvaporChain/pull/337
+- PR #338: https://github.com/ss1738/EvaporChain/pull/338
+- PR #339: https://github.com/ss1738/EvaporChain/pull/339
+- AUDIT_2026_05_15.md (closed) + the 2026-05-16 audit findings inline in PR descriptions
+- Commits: `2afc2abf` (DRIFT-N3 replay), `798be598..18b2db33` (R3/R4/R6/R7 replays), `618d5963` (CONS-A1/B1/PARSER-1), `3eb5313f` (audit-canaries.sh)
+
 ## 2026-05-16 (session 42) — WIP batch flush + PRIV-N5 HashSet perf fix + chain consolidation
 
 **Focus:** Merge 2 accumulated WIP audit batches (MEDIUMs + LOWs), resolve test regressions introduced by PRIV-N6/N5 dedup, upgrade EncryptedMempool dedup to O(1) HashSet, consolidate diverged branches.
