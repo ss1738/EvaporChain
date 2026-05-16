@@ -12326,57 +12326,81 @@ async fn post_upgrade_contract(
 }
 
 async fn get_scripts(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
-    let c = safe_lock(&state.consensus);
-    let scripts = c.executor.script_engine.list();
-    let list: Vec<serde_json::Value> = scripts
-        .iter()
-        .map(|sc| {
-            serde_json::json!({
-                "id": sc.id,
-                "name": sc.name,
-                "creator": account_name(&sc.creator),
-                "energy": sc.energy,
-                "half_life": sc.half_life,
-                "created_epoch": sc.created_epoch,
-                "evaporated": sc.evaporated,
-                "methods": sc.bytecode.methods.keys().collect::<Vec<_>>(),
+    let scripts: Vec<serde_json::Value> = if let Some(tc_arc) = state.tendermint.as_ref() {
+        let tc = safe_lock(tc_arc);
+        tc.script_engine()
+            .list()
+            .iter()
+            .map(|sc| {
+                serde_json::json!({
+                    "id": sc.id,
+                    "name": sc.name,
+                    "creator": account_name(&sc.creator),
+                    "energy": sc.energy,
+                    "half_life": sc.half_life,
+                    "created_epoch": sc.created_epoch,
+                    "evaporated": sc.evaporated,
+                    "methods": sc.bytecode.methods.keys().collect::<Vec<_>>(),
+                })
             })
-        })
-        .collect();
-    Json(serde_json::json!({ "scripts": list, "count": list.len() }))
+            .collect()
+    } else {
+        let c = safe_lock(&state.consensus);
+        c.executor
+            .script_engine
+            .list()
+            .iter()
+            .map(|sc| {
+                serde_json::json!({
+                    "id": sc.id,
+                    "name": sc.name,
+                    "creator": account_name(&sc.creator),
+                    "energy": sc.energy,
+                    "half_life": sc.half_life,
+                    "created_epoch": sc.created_epoch,
+                    "evaporated": sc.evaporated,
+                    "methods": sc.bytecode.methods.keys().collect::<Vec<_>>(),
+                })
+            })
+            .collect()
+    };
+    let count = scripts.len();
+    Json(serde_json::json!({ "scripts": scripts, "count": count }))
 }
 
 async fn get_script(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> impl IntoResponse {
-    let c = safe_lock(&state.consensus);
-    match c.executor.script_engine.get(id) {
-        Some(sc) => {
-            let resp = serde_json::json!({
-                "id": sc.id,
-                "name": sc.name,
-                "creator": account_name(&sc.creator),
-                "energy": sc.energy,
-                "half_life": sc.half_life,
-                "created_epoch": sc.created_epoch,
-                "last_refreshed": sc.last_refreshed,
-                "evaporated": sc.evaporated,
-                "methods": sc.bytecode.methods.keys().collect::<Vec<_>>(),
-                "abi": sc.abi,
-                "state_schema": sc.bytecode.state_schema.fields.iter().map(|f| {
-                    serde_json::json!({
-                        "name": f.name,
-                        "type": format!("{:?}", f.ty),
-                    })
+    macro_rules! script_to_json {
+        ($sc:expr) => {
+            serde_json::json!({
+                "id": $sc.id,
+                "name": $sc.name,
+                "creator": account_name(&$sc.creator),
+                "energy": $sc.energy,
+                "half_life": $sc.half_life,
+                "created_epoch": $sc.created_epoch,
+                "last_refreshed": $sc.last_refreshed,
+                "evaporated": $sc.evaporated,
+                "methods": $sc.bytecode.methods.keys().collect::<Vec<_>>(),
+                "abi": $sc.abi,
+                "state_schema": $sc.bytecode.state_schema.fields.iter().map(|f| {
+                    serde_json::json!({ "name": f.name, "type": format!("{:?}", f.ty) })
                 }).collect::<Vec<_>>(),
-                "state": sc.state,
-                "opcode_count": sc.bytecode.opcodes.len(),
-                // UpgradeContract surface (mainnet P0). `admin = null`
-                // means the contract is frozen on the admin path —
-                // only a governance-quorum upgrade can mutate bytecode.
-                "admin": sc.admin.map(|a| format!("0x{}", hex::encode(a))),
-                "upgrade_count": sc.upgrade_count,
-            });
-            (StatusCode::OK, Json(resp)).into_response()
-        }
+                "state": $sc.state,
+                "opcode_count": $sc.bytecode.opcodes.len(),
+                "admin": $sc.admin.map(|a| format!("0x{}", hex::encode(a))),
+                "upgrade_count": $sc.upgrade_count,
+            })
+        };
+    }
+    let found = if let Some(tc_arc) = state.tendermint.as_ref() {
+        let tc = safe_lock(tc_arc);
+        tc.script_engine().get(id).map(|sc| script_to_json!(sc))
+    } else {
+        let c = safe_lock(&state.consensus);
+        c.executor.script_engine.get(id).map(|sc| script_to_json!(sc))
+    };
+    match found {
+        Some(resp) => (StatusCode::OK, Json(resp)).into_response(),
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "script not found" })),
@@ -12389,9 +12413,15 @@ async fn get_script_abi(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<u64>,
 ) -> impl IntoResponse {
-    let c = safe_lock(&state.consensus);
-    match c.executor.script_engine.get(id) {
-        Some(sc) => (StatusCode::OK, Json(serde_json::to_value(&sc.abi).unwrap())).into_response(),
+    let found = if let Some(tc_arc) = state.tendermint.as_ref() {
+        let tc = safe_lock(tc_arc);
+        tc.script_engine().get(id).map(|sc| serde_json::to_value(&sc.abi).unwrap())
+    } else {
+        let c = safe_lock(&state.consensus);
+        c.executor.script_engine.get(id).map(|sc| serde_json::to_value(&sc.abi).unwrap())
+    };
+    match found {
+        Some(abi) => (StatusCode::OK, Json(abi)).into_response(),
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "script not found" })),

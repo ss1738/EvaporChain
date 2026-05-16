@@ -137,20 +137,23 @@ pub fn bind(typed: TypedInit) -> Result<Bound, BindError> {
             }
         }
         TypedInit::Sfsv(c) => {
-            if c.deposit == 0 {
-                return Err(invariant("SFSV", "deposit must be > 0"));
+            // New shape mirrors `.es` set_terms(future_self, predicate,
+            // release_param, deposit_amount). release_param = epoch when
+            // predicate_type 0, energy threshold when 1.
+            if c.deposit_amount == 0 {
+                return Err(invariant("SFSV", "deposit_amount must be > 0"));
             }
-            if c.predicate.is_empty() {
-                return Err(invariant("SFSV", "predicate must be non-empty"));
-            }
-            if c.predicate.len() > MAX_PREDICATE_LEN {
+            if c.predicate_type > 1 {
                 return Err(invariant(
                     "SFSV",
-                    "predicate exceeds MAX_PREDICATE_LEN",
+                    "predicate_type must be 0 (epoch) or 1 (energy)",
                 ));
             }
-            if c.release_epoch == 0 {
-                return Err(invariant("SFSV", "release_epoch must be > 0"));
+            if c.release_param == 0 {
+                return Err(invariant("SFSV", "release_param must be > 0"));
+            }
+            if c.future_self.is_empty() {
+                return Err(invariant("SFSV", "future_self must be non-empty"));
             }
         }
         TypedInit::Shlm(c) => {

@@ -20,9 +20,11 @@
 //!    predicate that, when satisfied, releases the funds. Two predicates
 //!    are supported in V1:
 //!       - `EpochReached(t)` — release at consensus epoch ≥ t.
-//!       - `EnergyDecaysBelow(threshold)` — release when the vault's
-//!         attached lot energy decays below `threshold` (using the
-//!         standard exponential half-life rule from `evaporchain-types`).
+//!       - `EnergyDecaysBelow(threshold)` — release when the vault
+//!         contract's *live* energy (decayed by the evaporation engine,
+//!         reset by `on_refresh`) is below `threshold`. The predicate
+//!         reads the engine-supplied value; it does not recompute decay
+//!         (invariant #1). Mirrors the `.es` `if energy < threshold`.
 //! 2. **Bequeath**: the eventual recipient is the creator's *future*
 //!    address (typically the same account, but the field is explicit so
 //!    cold-storage / heir flows can target a different one).
