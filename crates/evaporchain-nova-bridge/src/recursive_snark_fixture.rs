@@ -238,4 +238,40 @@ mod tests {
         assert_eq!(public_inputs.len(), 1, "arity-1 TrivialIncrementCircuit");
         assert_eq!(public_inputs[0], ark_bn254::Fr::from(2u64));
     }
+
+    #[test]
+    fn trivial_increment_circuit_arity_is_one() {
+        let c = TrivialIncrementCircuit;
+        let arity: usize = <TrivialIncrementCircuit as StepCircuit<Scalar1>>::arity(&c);
+        assert_eq!(arity, 1);
+    }
+
+    #[test]
+    fn trivial_increment_circuit_default_constructs() {
+        let _ = TrivialIncrementCircuit;
+        let _ = TrivialIncrementCircuit::default();
+    }
+
+    #[test]
+    fn generate_fixture_one_step_yields_one() {
+        let rs = generate_fixture(1).expect("generate fixture");
+        let stats = fixture_stats(&rs).expect("stats");
+        assert_eq!(stats.num_steps, 1);
+        assert_eq!(stats.z_i[0], Scalar1::from(1u64));
+    }
+
+    #[test]
+    fn generate_fixture_with_digest_returns_nonzero_digest() {
+        let (rs, digest) = generate_fixture_with_digest(1).expect("generate with digest");
+        assert_eq!(rs.num_steps(), 1);
+        assert_ne!(digest, Scalar1::ZERO, "PP digest must not be zero");
+    }
+
+    #[test]
+    fn public_inputs_for_bridge_one_step_yields_one() {
+        let rs = generate_fixture(1).expect("generate fixture");
+        let public_inputs = public_inputs_for_bridge(&rs);
+        assert_eq!(public_inputs.len(), 1);
+        assert_eq!(public_inputs[0], ark_bn254::Fr::from(1u64));
+    }
 }
