@@ -391,6 +391,110 @@ mod tests {
         assert_eq!(limbs[3], ArkFr::from(0u64));
     }
 
+    #[test]
+    fn secondary_hex_to_limbs_max_u64_in_first_limb() {
+        // First 8 bytes = 0xff..ff (LE u64::MAX), rest zero.
+        // limb[0] = u64::MAX, limbs[1..] = 0.
+        let hex = "ffffffffffffffff000000000000000000000000000000000000000000000000";
+        let limbs = secondary_hex_to_limbs(Some(hex), 0).expect("max u64 limbs");
+        assert_eq!(limbs[0], ArkFr::from(u64::MAX));
+        assert_eq!(limbs[1], ArkFr::from(0u64));
+        assert_eq!(limbs[2], ArkFr::from(0u64));
+        assert_eq!(limbs[3], ArkFr::from(0u64));
+    }
+
+    #[test]
+    fn secondary_hex_to_limbs_distinct_values_per_limb() {
+        // Pin that limbs are read in LE-byte order. Bytes
+        // [01, 0, ..., 0, 02, 0, ..., 0, 03, 0, ..., 0, 04, 0, ..., 0]
+        // ⇒ limb[0]=1, limb[1]=2, limb[2]=3, limb[3]=4
+        let mut bytes = [0u8; 32];
+        bytes[0]  = 0x01;
+        bytes[8]  = 0x02;
+        bytes[16] = 0x03;
+        bytes[24] = 0x04;
+        let hex = hex::encode(bytes);
+        let limbs = secondary_hex_to_limbs(Some(&hex), 0).expect("layout limbs");
+        assert_eq!(limbs[0], ArkFr::from(1u64));
+        assert_eq!(limbs[1], ArkFr::from(2u64));
+        assert_eq!(limbs[2], ArkFr::from(3u64));
+        assert_eq!(limbs[3], ArkFr::from(4u64));
+    }
+
+    #[test]
+    fn parse_secondary_hex_invalid_chars_errors() {
+        let err = parse_secondary_hex("nothex_yetcanonical_32byte_string_xx", 4)
+            .expect_err("non-hex chars must fail");
+        match err {
+            ExtractError::HexParseFailed { index, reason } => {
+                assert_eq!(index, 4);
+                assert!(reason.contains("hex") || reason.contains("byte"),
+                    "reason should mention hex/byte: {reason}");
+            }
+            other => panic!("expected HexParseFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_secondary_hex_wrong_length_errors() {
+        // Valid hex but only 8 bytes (16 chars).
+        let err = parse_secondary_hex("deadbeefdeadbeef", 2)
+            .expect_err("wrong length must fail");
+        match err {
+            ExtractError::HexParseFailed { index, reason } => {
+                assert_eq!(index, 2);
+                assert!(reason.contains("32 bytes"), "reason should mention 32 bytes: {reason}");
+            }
+            other => panic!("expected HexParseFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_secondary_hex_accepts_0x_prefix() {
+        let zero_hex_prefixed = format!("0x{}", "00".repeat(32));
+        let zero_hex_bare = "00".repeat(32);
+        let p_prefixed = parse_secondary_hex(&zero_hex_prefixed, 0).expect("prefixed");
+        let p_bare     = parse_secondary_hex(&zero_hex_bare,     0).expect("bare");
+        // Both must produce the same canonical scalar.
+        assert_eq!(p_prefixed, p_bare);
+    }
+
+    #[test]
+    fn absorb_seq_handles_empty_z0_zi() {
+        // Degenerate case: z0/zi both empty. Length should be 4 + 0 + 0 + 13 = 17.
+        let w = zero_witness();
+        let seq = w.absorb_seq(7, &[], &[]);
+        // Layout: pp_digest, num_steps, comm_W_x/y, comm_E_x/y, u, 4*x0, 4*x1, ri
+        assert_eq!(seq.len(), 2 + 4 + 1 + 4 + 4 + 1);
+        assert_eq!(seq[0], ArkFr::from(1u64), "pp_digest");
+        assert_eq!(seq[1], ArkFr::from(7u64), "num_steps=7");
+        assert_eq!(seq.last().copied().unwrap(), ArkFr::from(15u64), "ri_primary tail");
+    }
+
+    #[test]
+    fn absorb_seq_handles_multi_element_z_arity() {
+        // z_arity=2: z0 and zi each carry 2 elements. Length should be
+        // 2 + 2 + 2 + 4 + 1 + 4 + 4 + 1 = 20.
+        let w = zero_witness();
+        let z0 = vec![ArkFr::from(100u64), ArkFr::from(101u64)];
+        let zi = vec![ArkFr::from(200u64), ArkFr::from(201u64)];
+        let seq = w.absorb_seq(2, &z0, &zi);
+        assert_eq!(seq.len(), 20);
+        assert_eq!(seq[2], ArkFr::from(100u64), "z0[0]");
+        assert_eq!(seq[3], ArkFr::from(101u64), "z0[1]");
+        assert_eq!(seq[4], ArkFr::from(200u64), "zi[0]");
+        assert_eq!(seq[5], ArkFr::from(201u64), "zi[1]");
+    }
+
+    #[test]
+    fn absorb_seq_with_zero_steps_does_not_panic() {
+        // num_steps=0 is allowed (a fresh-from-`new` RecursiveSNARK).
+        let w = zero_witness();
+        let seq = w.absorb_seq(0, &[ArkFr::from(0u64)], &[ArkFr::from(0u64)]);
+        assert_eq!(seq.len(), 18);
+        assert_eq!(seq[1], ArkFr::from(0u64), "num_steps=0 must be encoded as Fr::zero");
+    }
+
     /// Full end-to-end integration test. Requires neptune constants dump.
     #[test]
     #[ignore]
