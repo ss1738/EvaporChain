@@ -2603,4 +2603,52 @@ contract WithStateArray {
             "estimator should scale with nested string size (small={small_est}, big={big_est})"
         );
     }
+
+    // SCR-N6: RandomRange must never return a value >= max, and must reject
+    // max=0. Tests across non-power-of-two sizes to confirm rejection sampling
+    // eliminates modulo bias (naive `raw % max` would over-weight low residues).
+    #[test]
+    fn scr_n6_random_range_output_always_in_bounds() {
+        let non_pow2_sizes: &[u64] = &[3, 5, 6, 7, 10, 13, 100, 1000, u64::MAX];
+        for &max in non_pow2_sizes {
+            // Sweep 256 different VRF seeds; verify every output < max.
+            for seed in 0u8..=255 {
+                let mut ctx = test_ctx();
+                ctx.vrf_randomness = [seed; 32];
+                let ops = vec![
+                    Op::Push(Value::U64(max)),
+                    Op::RandomRange,
+                    Op::Return,
+                ];
+                let bytecode = make_bytecode("run", ops);
+                let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &ctx)
+                    .expect("RandomRange should succeed");
+                let v = match r.return_value {
+                    Value::U64(v) => v,
+                    other => panic!("expected U64, got {other:?}"),
+                };
+                assert!(v < max, "SCR-N6: RandomRange({max}) returned {v} >= {max} for seed={seed}");
+            }
+        }
+    }
+
+    #[test]
+    fn scr_n6_random_range_max_one_always_zero() {
+        for seed in [0u8, 1, 42, 255] {
+            let mut ctx = test_ctx();
+            ctx.vrf_randomness = [seed; 32];
+            let ops = vec![Op::Push(Value::U64(1)), Op::RandomRange, Op::Return];
+            let bytecode = make_bytecode("run", ops);
+            let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &ctx).unwrap();
+            assert_eq!(r.return_value, Value::U64(0), "RandomRange(1) must always be 0");
+        }
+    }
+
+    #[test]
+    fn scr_n6_random_range_zero_max_rejected() {
+        let ops = vec![Op::Push(Value::U64(0)), Op::RandomRange, Op::Return];
+        let bytecode = make_bytecode("run", ops);
+        let err = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(err.is_err(), "SCR-N6: RandomRange(0) must be a runtime error");
+    }
 }
