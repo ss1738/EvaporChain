@@ -1256,8 +1256,31 @@ impl Parser {
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
+/// Maximum EvaporScript source size in bytes.
+///
+/// PARSER-1 (audit 2026-05-16): the lexer already caps the token
+/// count at 1M, but a pathological source under that token cap can
+/// still be hundreds of MB (e.g. 1M tokens of ~250-byte string
+/// literals = 250 MB).  Capping the input *before* the lexer runs
+/// closes the lex-time memory-amplification window and avoids
+/// touching the per-token gas/step accounting downstream.
+///
+/// 1 MiB is ~25× larger than any reference contract in
+/// `contracts/evaporscript/`; legitimate sources won't approach it.
+pub const MAX_SOURCE_BYTES: usize = 1_048_576;
+
 /// Parse EvaporScript source code into a Contract AST.
 pub fn parse(source: &str) -> Result<Contract, ScriptError> {
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err(ScriptError::Parse {
+            line: 0,
+            message: format!(
+                "source too large: {} bytes exceeds MAX_SOURCE_BYTES ({})",
+                source.len(),
+                MAX_SOURCE_BYTES
+            ),
+        });
+    }
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
@@ -1266,6 +1289,16 @@ pub fn parse(source: &str) -> Result<Contract, ScriptError> {
 
 /// Tokenize source code (exposed for testing).
 pub fn tokenize(source: &str) -> Result<Vec<(Token, usize)>, ScriptError> {
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err(ScriptError::Parse {
+            line: 0,
+            message: format!(
+                "source too large: {} bytes exceeds MAX_SOURCE_BYTES ({})",
+                source.len(),
+                MAX_SOURCE_BYTES
+            ),
+        });
+    }
     let mut lexer = Lexer::new(source);
     lexer.tokenize()
 }
@@ -1803,5 +1836,38 @@ contract Test {
             result.is_ok(),
             "moderate nesting (10 levels) should succeed"
         );
+    }
+
+    /// PARSER-1 (audit 2026-05-16): source > MAX_SOURCE_BYTES is
+    /// rejected before lexing.
+    #[test]
+    fn parser_n1_oversized_source_rejected() {
+        let oversized = "x".repeat(MAX_SOURCE_BYTES + 1);
+        let r = parse(&oversized);
+        match r {
+            Err(ScriptError::Parse { message, .. }) => {
+                assert!(
+                    message.contains("MAX_SOURCE_BYTES"),
+                    "wrong error message: {message}"
+                );
+            }
+            other => panic!("expected Parse error for oversized source, got {other:?}"),
+        }
+    }
+
+    /// PARSER-1: same cap applies to the standalone `tokenize` entry.
+    #[test]
+    fn parser_n1_tokenize_also_rejects_oversized() {
+        let oversized = "x".repeat(MAX_SOURCE_BYTES + 1);
+        let r = tokenize(&oversized);
+        assert!(matches!(r, Err(ScriptError::Parse { .. })));
+    }
+
+    /// PARSER-1: a legitimate-sized source still parses (sanity).
+    #[test]
+    fn parser_n1_normal_source_still_parses() {
+        let src = r#"contract Test { state { x: u64 = 0 } fn f() -> u64 { return 1 } }"#;
+        let r = parse(src);
+        assert!(r.is_ok(), "normal-sized source must still parse: {r:?}");
     }
 }

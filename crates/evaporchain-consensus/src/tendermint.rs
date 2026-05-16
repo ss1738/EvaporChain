@@ -7205,6 +7205,37 @@ impl TendermintConsensus {
         // height, round, and block_hash. Length-prefix chain_id so
         // "mainnet-1" != "mainnet" + trailing byte.
         let chain_id_bytes = chain_id.as_bytes();
+
+        // CONS-B1 (audit 2026-05-16): chain_id length is pushed as a
+        // u8, so a 256+ byte chain_id would silently truncate to 0 and
+        // a 257-byte one to 1 — both would create a DST collision risk
+        // (different chain_ids could share the same encoded prefix).
+        // Real chain_ids are short strings ("evaporchain-mainnet-1",
+        // "evaporchain-testnet-1") well under the cap; the panic here
+        // catches a misconfigured genesis at startup rather than
+        // letting it produce mis-bound signatures in production. Wire
+        // format unchanged.
+        assert!(
+            chain_id_bytes.len() < 256,
+            "bls_vote_message: chain_id is {} bytes, must be < 256 \
+             (u8-encoded length prefix)",
+            chain_id_bytes.len()
+        );
+
+        // CONS-A1 (audit 2026-05-16): the `phase` string is not
+        // length-prefixed in the encoded message; if a caller ever
+        // passed an attacker-influenced phase the encoding could
+        // collide with `chain_id_bytes || height_le[0]` adjacencies.
+        // Every call site today passes a fixed literal — codify that
+        // invariant here so any new caller gets caught at compile-
+        // exercise time rather than at signature-verification time.
+        // Wire format unchanged.
+        debug_assert!(
+            matches!(phase, "proposal" | "prevote" | "precommit"),
+            "bls_vote_message: phase must be one of \
+             {{proposal, prevote, precommit}}, got {phase:?}"
+        );
+
         let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 48);
         msg.push(chain_id_bytes.len() as u8);
         msg.extend_from_slice(chain_id_bytes);
@@ -14339,6 +14370,42 @@ mod tests {
             msg1, msg4,
             "Different phase should produce different message"
         );
+    }
+
+    /// CONS-B1 (audit 2026-05-16): chain_id length is u8-encoded;
+    /// a 256+ byte chain_id would silently truncate. The fail-fast
+    /// assert catches a misconfigured genesis at startup.
+    #[test]
+    #[should_panic(expected = "bls_vote_message: chain_id is")]
+    fn cons_b1_oversized_chain_id_panics() {
+        let oversized = "x".repeat(256);
+        TendermintConsensus::bls_vote_message(&oversized, 1, 0, &None, "prevote");
+    }
+
+    /// CONS-B1: a 255-byte chain_id is at the max safe length and
+    /// MUST encode without panicking.
+    #[test]
+    fn cons_b1_max_chain_id_at_255_ok() {
+        let max_safe = "x".repeat(255);
+        let _ = TendermintConsensus::bls_vote_message(&max_safe, 1, 0, &None, "prevote");
+    }
+
+    /// CONS-A1 (audit 2026-05-16): unknown `phase` strings trip the
+    /// debug_assert in dev/test builds. Codifies the call-site
+    /// invariant that phase is one of three fixed literals.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "bls_vote_message: phase must be one of")]
+    fn cons_a1_unknown_phase_panics_in_debug() {
+        TendermintConsensus::bls_vote_message("testchain", 1, 0, &None, "commit");
+    }
+
+    /// CONS-A1: all three valid phase literals encode without panic.
+    #[test]
+    fn cons_a1_all_valid_phases_accepted() {
+        let _ = TendermintConsensus::bls_vote_message("testchain", 1, 0, &None, "proposal");
+        let _ = TendermintConsensus::bls_vote_message("testchain", 1, 0, &None, "prevote");
+        let _ = TendermintConsensus::bls_vote_message("testchain", 1, 0, &None, "precommit");
     }
 
     #[test]
