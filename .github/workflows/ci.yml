@@ -9,9 +9,23 @@ on:
     branches: [main]
 
 jobs:
+  # Audit canaries — fast pure-bash regression gate over previously-closed
+  # audit findings.  Runs first because it's <1s and catches the dropped-
+  # closure class of bug (see scripts/audit-canaries.sh for the catalogue
+  # and SESSION_PROGRESS.md session 41-43 for the motivating incidents).
+  # If a merge drops an audit fix — even an unrelated one — this job
+  # fails and blocks the merge before the cargo jobs spend Mini time.
+  audit-canaries:
+    name: Audit canaries (regression-gate)
+    runs-on: [self-hosted, mini]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/audit-canaries.sh
+
   rust:
     name: Rust — check, test, lint
     runs-on: [self-hosted, mini]
+    needs: audit-canaries
     steps:
       - uses: actions/checkout@v4
       - run: cargo check --workspace

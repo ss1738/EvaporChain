@@ -255,6 +255,38 @@ canary \
     "PARSER-1 MAX_SOURCE_BYTES cap" "AUDIT_2026_05_16:PARSER-1" \
     "$PARSER" 'MAX_SOURCE_BYTES'
 
+# ─── M10 — BatchUndoLog stakes/delegations/sentinel ──────────────────
+# M10 was written + tested on branch `pr/audit-m10-batchundo-stakes-sentinel`
+# (commit 8a57451c) but never merged to main — a different regression
+# class than the R-series. Once PR #340 merges, these canaries pin
+# the closure so the *next* never-merge can't repeat the gap silently.
+
+ROCKSDB_BACKEND="crates/evaporchain-state/src/rocksdb_backend.rs"
+
+canary \
+    "M10 stakes_snapshot in BatchUndoLog" "AUDIT_2026_05_13:M10" \
+    "$ROCKSDB_BACKEND" 'stakes_snapshot:'
+
+canary \
+    "M10 delegations_snapshot in BatchUndoLog" "AUDIT_2026_05_13:M10" \
+    "$ROCKSDB_BACKEND" 'delegations_snapshot:'
+
+canary \
+    "M10 sentinel_params_snapshot in BatchUndoLog" "AUDIT_2026_05_13:M10" \
+    "$ROCKSDB_BACKEND" 'sentinel_params_snapshot:'
+
+canary \
+    "M10 sentinel_votes_snapshot in BatchUndoLog" "AUDIT_2026_05_13:M10" \
+    "$ROCKSDB_BACKEND" 'sentinel_votes_snapshot:'
+
+canary_function_contains \
+    "M10 put_sentinel_param routes through pending_batch" "AUDIT_2026_05_13:M10" \
+    "$ROCKSDB_BACKEND" "put_sentinel_param" "pending_batch"
+
+canary_function_contains \
+    "M10 put_sentinel_votes routes through pending_batch" "AUDIT_2026_05_13:M10" \
+    "$ROCKSDB_BACKEND" "put_sentinel_votes" "pending_batch"
+
 # ─── Crypto parameters ───────────────────────────────────────────────
 
 canary \
