@@ -24,15 +24,13 @@
 //!
 //! INVENTION_STACK §A5.2: SFSV coordinator.
 
-mod auctioneer;
-mod bid_server;
-mod config;
-mod node;
-mod poller;
-
-use auctioneer::Auctioneer;
-use config::{Config, POLL_INTERVAL_MS};
-use node::NodeClient;
+use evaporchain_sfsv_coordinator::{
+    auctioneer::Auctioneer,
+    bid_server,
+    config::{Config, POLL_INTERVAL_MS},
+    node::NodeClient,
+    poller,
+};
 use serde_json::json;
 use tracing::{error, info, warn};
 
@@ -55,7 +53,7 @@ async fn main() {
     // Start bid-intake HTTP server; get the channel receiver.
     let mut bid_rx = bid_server::spawn(cfg.bid_server_port).await;
 
-    let mut client = NodeClient::new(&cfg);
+    let client = NodeClient::new(&cfg);
     let mut auctioneer = Auctioneer::new();
 
     loop {
@@ -97,7 +95,6 @@ async fn main() {
             );
 
             // `.es` record_sale signature: record_sale(winner_addr: Address)
-            // The chain maps the byte-array arg to an on-chain Address.
             let args = json!([
                 { "Address": clear.winner.to_vec() }
             ]);

@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "SFSV off-chain coordinator. Polls the node for active vault listings, accepts bids via HTTP, runs SDDC Dutch auction clearing off-chain, and submits record_sale transactions back to the chain. First reference dApp coordinator per INVENTION_STACK.md §A5.2."
 
+[lib]
+name = "evaporchain_sfsv_coordinator"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sfsv-coordinator"
 path = "src/main.rs"

@@ -36,6 +36,8 @@ pub enum AuctioneerError {
     NotListed(ContractId),
     #[error("listing already tracked for contract {0}")]
     AlreadyTracked(ContractId),
+    #[error("invalid bid: {0}")]
+    BadBid(#[from] evaporchain_sddc::bid::BidError),
     #[error("market error: {0}")]
     Market(#[from] MarketError),
 }
@@ -132,11 +134,7 @@ impl Auctioneer {
                 state.bids.push(bid);
                 Ok(())
             }
-            Err(e) => Err(AuctioneerError::Market(MarketError::Clearing(
-                evaporchain_sddc::clearing::ClearError::Lifecycle(
-                    evaporchain_sddc::auction::LifecycleError::NotOpen,
-                ),
-            ))),
+            Err(e) => Err(AuctioneerError::BadBid(e)),
         }
     }
 
