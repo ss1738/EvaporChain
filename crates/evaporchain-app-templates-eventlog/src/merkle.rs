@@ -50,12 +50,35 @@ pub fn merkle_root(receipts: &[DeployReceipt]) -> [u8; 32] {
 
 /// Verify that `receipt` is at index `idx` in a tree whose root is
 /// `root`, given the sibling-hash `path` (leaf-to-root order).
+///
+/// `leaf_count` MUST come from a trusted source (the block header or
+/// a validated receipt log). SUB-N1 (audit 2026-05-15): without the
+/// count, a crafted `(idx, path)` can stop short of the root and
+/// certify an interior hash as a receipt using a path shorter than the
+/// tree's actual depth — Merkle tree-size confusion. The fix enforces
+/// `path.len() == ceil(log2(leaf_count))` and `idx < leaf_count`.
 pub fn verify_inclusion(
     receipt: &DeployReceipt,
     idx: usize,
     path: &[[u8; 32]],
     root: &[u8; 32],
+    leaf_count: usize,
 ) -> bool {
+    if leaf_count == 0 || idx >= leaf_count {
+        return false;
+    }
+    // Expected path length = ceil(log2(leaf_count)).
+    // For leaf_count = 1: depth = 0 (single leaf IS the root).
+    // For leaf_count = 2: depth = 1; for 3-4: depth = 2; etc.
+    let expected_depth: usize = if leaf_count <= 1 {
+        0
+    } else {
+        (usize::BITS - (leaf_count - 1).leading_zeros()) as usize
+    };
+    if path.len() != expected_depth {
+        return false;
+    }
+
     let mut current = leaf_hash(receipt);
     let mut i = idx;
     for sibling in path {
@@ -173,11 +196,11 @@ mod tests {
 
         // Path for index 0 is just [leaf_hash(r1)].
         let path = vec![leaf_hash(&r1)];
-        assert!(verify_inclusion(&r0, 0, &path, &root));
+        assert!(verify_inclusion(&r0, 0, &path, &root, 2));
 
         // Path for index 1 is [leaf_hash(r0)].
         let path = vec![leaf_hash(&r0)];
-        assert!(verify_inclusion(&r1, 1, &path, &root));
+        assert!(verify_inclusion(&r1, 1, &path, &root, 2));
     }
 
     #[test]
@@ -190,7 +213,7 @@ mod tests {
 
         // A correct path for r0 should not validate `other`.
         let path = vec![leaf_hash(&r1)];
-        assert!(!verify_inclusion(&other, 0, &path, &root));
+        assert!(!verify_inclusion(&other, 0, &path, &root, 2));
     }
 
     #[test]
@@ -202,7 +225,7 @@ mod tests {
 
         let path = vec![leaf_hash(&r1)];
         let bogus = [0xDEu8; 32];
-        assert!(!verify_inclusion(&r0, 0, &path, &bogus));
+        assert!(!verify_inclusion(&r0, 0, &path, &bogus, 2));
     }
 
     #[test]
@@ -243,13 +266,54 @@ mod tests {
         let l3 = leaf_hash(&leaves[3]);
         let n23 = node_hash(&l2, &l3);
         let path = vec![l0, n23];
-        assert!(verify_inclusion(&leaves[1], 1, &path, &root));
+        assert!(verify_inclusion(&leaves[1], 1, &path, &root, 4));
 
         // And path for l2 is [l3, n01].
         let l1 = leaf_hash(&leaves[1]);
         let n01 = node_hash(&l0, &l1);
         let path = vec![l3, n01];
-        assert!(verify_inclusion(&leaves[2], 2, &path, &root));
+        assert!(verify_inclusion(&leaves[2], 2, &path, &root, 4));
+    }
+
+    #[test]
+    fn sub_n1_short_path_attack_rejected() {
+        // SUB-N1 (audit 2026-05-15): a proof whose path is shorter than
+        // ceil(log2(leaf_count)) would stop at an interior node, not the
+        // root, and certify a non-leaf hash as a valid receipt.
+        // The fix enforces path.len() == expected_depth.
+        let leaves: Vec<DeployReceipt> = (0..4)
+            .map(|i| receipt(i + 1, 100 + i as u64, i + 1))
+            .collect();
+        let root = merkle_root(&leaves);
+
+        // Claim a 4-leaf proof but provide only 1 sibling instead of 2.
+        let l0 = leaf_hash(&leaves[0]);
+        let short_path = vec![l0]; // depth=1, but tree is depth=2
+        assert!(
+            !verify_inclusion(&leaves[1], 1, &short_path, &root, 4),
+            "short path must be rejected for a 4-leaf tree"
+        );
+
+        // Empty path should also be rejected for a multi-leaf tree.
+        let empty_path: Vec<[u8; 32]> = vec![];
+        assert!(
+            !verify_inclusion(&leaves[0], 0, &empty_path, &root, 4),
+            "empty path must be rejected for a 4-leaf tree"
+        );
+
+        // idx out of bounds should be rejected.
+        let l1 = leaf_hash(&leaves[1]);
+        let l2 = leaf_hash(&leaves[2]);
+        let l3 = leaf_hash(&leaves[3]);
+        let n23 = node_hash(&l2, &l3);
+        let valid_path = vec![l0, n23];
+        assert!(
+            !verify_inclusion(&leaves[1], 4, &valid_path, &root, 4),
+            "idx >= leaf_count must be rejected"
+        );
+        // Sanity: correct proof still passes.
+        assert!(verify_inclusion(&leaves[1], 1, &valid_path, &root, 4));
+        drop((l1, l3));
     }
 
     #[test]
