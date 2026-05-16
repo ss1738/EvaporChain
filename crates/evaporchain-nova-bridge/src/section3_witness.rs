@@ -313,6 +313,136 @@ mod tests {
         assert_eq!(out[1], ArkFr::from(0u64),  "row 1 has no entries");
     }
 
+    #[test]
+    fn sparse_mv_zero_matrix_yields_zeros() {
+        let m = SparseTriple { num_rows: 3, num_cols: 4, entries: vec![] };
+        let z = vec![
+            ArkFr::from(11u64), ArkFr::from(13u64),
+            ArkFr::from(17u64), ArkFr::from(19u64),
+        ];
+        let out = sparse_mv(&m, &z);
+        assert_eq!(out.len(), 3);
+        for v in &out { assert_eq!(*v, ArkFr::from(0u64)); }
+    }
+
+    #[test]
+    fn sparse_mv_multiple_entries_same_row_accumulate() {
+        // Row 0: 5*z[0] + 7*z[2] = 5*10 + 7*100 = 750
+        let m = SparseTriple {
+            num_rows: 1, num_cols: 4,
+            entries: vec![(0, 0, ArkFr::from(5u64)), (0, 2, ArkFr::from(7u64))],
+        };
+        let z = vec![
+            ArkFr::from(10u64), ArkFr::from(999u64),
+            ArkFr::from(100u64), ArkFr::from(9999u64),
+        ];
+        assert_eq!(sparse_mv(&m, &z)[0], ArkFr::from(750u64));
+    }
+
+    #[test]
+    fn sparse_mv_dense_2x2_matches_manual_product() {
+        // M = [[2,3],[5,7]] ; z = [11,13] ⇒ M*z = [61, 146]
+        let m = SparseTriple {
+            num_rows: 2, num_cols: 2,
+            entries: vec![
+                (0, 0, ArkFr::from(2u64)), (0, 1, ArkFr::from(3u64)),
+                (1, 0, ArkFr::from(5u64)), (1, 1, ArkFr::from(7u64)),
+            ],
+        };
+        let z   = vec![ArkFr::from(11u64), ArkFr::from(13u64)];
+        let out = sparse_mv(&m, &z);
+        assert_eq!(out[0], ArkFr::from(61u64));
+        assert_eq!(out[1], ArkFr::from(146u64));
+    }
+
+    #[test]
+    fn validate_rows_native_detects_unsatisfied_row() {
+        // A picks W[0]=7, B picks W[1]=11, C empty. lhs=77, rhs=0.
+        let s3 = Section3Witness {
+            w_primary: vec![ArkFr::from(7u64), ArkFr::from(11u64)],
+            e_primary: vec![ArkFr::from(0u64)],
+            u_primary: ArkFr::from(1u64),
+            x_primary: [ArkFr::from(0u64); 2],
+            a_primary: SparseTriple {
+                num_rows: 1, num_cols: 5,
+                entries: vec![(0, 0, ArkFr::from(1u64))],
+            },
+            b_primary: SparseTriple {
+                num_rows: 1, num_cols: 5,
+                entries: vec![(0, 1, ArkFr::from(1u64))],
+            },
+            c_primary: SparseTriple { num_rows: 1, num_cols: 5, entries: vec![] },
+            num_cons: 1, num_vars: 2, num_io: 2,
+        };
+        let err = s3.validate_rows_native().expect_err("row must fail");
+        assert!(err.contains("row 0"), "error must reference failing row: {err}");
+    }
+
+    #[test]
+    fn validate_rows_native_passes_on_handcrafted_satisfied_row() {
+        // 3 * 4 == 1 * 12 + 0; A→W[0], B→W[1], C→W[2].
+        let s3 = Section3Witness {
+            w_primary: vec![ArkFr::from(3u64), ArkFr::from(4u64), ArkFr::from(12u64)],
+            e_primary: vec![ArkFr::from(0u64)],
+            u_primary: ArkFr::from(1u64),
+            x_primary: [ArkFr::from(0u64); 2],
+            a_primary: SparseTriple {
+                num_rows: 1, num_cols: 6,
+                entries: vec![(0, 0, ArkFr::from(1u64))],
+            },
+            b_primary: SparseTriple {
+                num_rows: 1, num_cols: 6,
+                entries: vec![(0, 1, ArkFr::from(1u64))],
+            },
+            c_primary: SparseTriple {
+                num_rows: 1, num_cols: 6,
+                entries: vec![(0, 2, ArkFr::from(1u64))],
+            },
+            num_cons: 1, num_vars: 3, num_io: 2,
+        };
+        s3.validate_rows_native().expect("3 * 4 == 1 * 12 must satisfy");
+    }
+
+    #[test]
+    fn build_z_layout_is_w_then_u_then_x() {
+        let s3 = Section3Witness {
+            w_primary: vec![ArkFr::from(7u64), ArkFr::from(8u64)],
+            e_primary: vec![],
+            u_primary: ArkFr::from(99u64),
+            x_primary: [ArkFr::from(11u64), ArkFr::from(12u64)],
+            a_primary: SparseTriple { num_rows: 0, num_cols: 0, entries: vec![] },
+            b_primary: SparseTriple { num_rows: 0, num_cols: 0, entries: vec![] },
+            c_primary: SparseTriple { num_rows: 0, num_cols: 0, entries: vec![] },
+            num_cons: 0, num_vars: 2, num_io: 2,
+        };
+        let z = s3.build_z();
+        assert_eq!(z.len(), 5);
+        assert_eq!(z[0], ArkFr::from(7u64));
+        assert_eq!(z[1], ArkFr::from(8u64));
+        assert_eq!(z[2], ArkFr::from(99u64));
+        assert_eq!(z[3], ArkFr::from(11u64));
+        assert_eq!(z[4], ArkFr::from(12u64));
+    }
+
+    #[test]
+    fn trivial_zero_with_zero_cons_validates_vacuously() {
+        let s3 = Section3Witness::trivial_zero(0, 4);
+        s3.validate_rows_native()
+            .expect("zero-constraint witness is vacuously satisfied");
+        assert_eq!(s3.num_cons, 0);
+        assert_eq!(s3.num_vars, 4);
+    }
+
+    #[test]
+    fn r1cs_shape_caps_match_ncr5_doctrine() {
+        // NCR5 (re-audit 2026-05-14) capped R1CS shape inputs at
+        // 1_000_000 for num_cons + num_vars and 1_024 for num_io.
+        // Pin so a future refactor doesn't relax the DoS gate.
+        assert_eq!(MAX_R1CS_NUM_CONS, 1_000_000);
+        assert_eq!(MAX_R1CS_NUM_VARS, 1_000_000);
+        assert_eq!(MAX_R1CS_NUM_IO, 1_024);
+    }
+
     /// Requires `PublicParams::setup` (~3 s) + pp JSON serialisation (~30 s).
     /// `cargo test -p evaporchain-nova-bridge section3_witness -- --ignored --nocapture`
     #[test]
