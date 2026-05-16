@@ -251,6 +251,75 @@ mod tests {
         assert!(decoded.c.is_on_curve());
     }
 
+    /// `PointNotOnCurve { which: "A" }` fires when bytes decode to a
+    /// canonical (x, y) pair that doesn't satisfy y² = x³ + 3.
+    #[test]
+    fn decode_rejects_off_curve_a() {
+        use ark_ec::AffineRepr;
+        let proof = Proof::<Bn254> {
+            a: G1Affine::generator(),
+            b: G2Affine::generator(),
+            c: G1Affine::generator(),
+        };
+        let mut bytes = proof_to_eip197_bytes(&proof);
+        // Replace A with (1, 1). 1² = 1; 1³ + 3 = 4. Off curve.
+        bytes[0..32].fill(0);
+        bytes[31] = 1;
+        bytes[32..64].fill(0);
+        bytes[63] = 1;
+        match eip197_bytes_to_proof(&bytes) {
+            Err(Eip197DecodeError::PointNotOnCurve { which }) => assert_eq!(which, "A"),
+            other => panic!("expected PointNotOnCurve A, got {other:?}"),
+        }
+    }
+
+    /// `PointNotOnCurve { which: "C" }` fires when C decodes as
+    /// canonical but is not on the curve.
+    #[test]
+    fn decode_rejects_off_curve_c() {
+        use ark_ec::AffineRepr;
+        let proof = Proof::<Bn254> {
+            a: G1Affine::generator(),
+            b: G2Affine::generator(),
+            c: G1Affine::generator(),
+        };
+        let mut bytes = proof_to_eip197_bytes(&proof);
+        bytes[192..224].fill(0);
+        bytes[223] = 1;
+        bytes[224..256].fill(0);
+        bytes[255] = 1;
+        match eip197_bytes_to_proof(&bytes) {
+            Err(Eip197DecodeError::PointNotOnCurve { which }) => assert_eq!(which, "C"),
+            other => panic!("expected PointNotOnCurve C, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_error_displays_all_variants() {
+        assert!(Eip197DecodeError::WrongLength(100).to_string().contains("100"));
+        assert!(Eip197DecodeError::NonCanonicalLimb { offset: 64 }
+            .to_string()
+            .contains("64"));
+        assert!(Eip197DecodeError::PointNotOnCurve { which: "B" }
+            .to_string()
+            .contains("B"));
+    }
+
+    #[test]
+    fn proof_size_consts_match_spec() {
+        assert_eq!(FQ_BYTES_BE, 32);
+        assert_eq!(EIP197_PROOF_BYTES, 256);
+        // 8 limbs of 32 bytes = 256 (A=2, B=4, C=2).
+        assert_eq!(8 * FQ_BYTES_BE, EIP197_PROOF_BYTES);
+    }
+
+    #[test]
+    fn decode_error_clone_eq_works() {
+        let e = Eip197DecodeError::WrongLength(7);
+        assert_eq!(e.clone(), e);
+        assert_ne!(e, Eip197DecodeError::WrongLength(8));
+    }
+
     /// Pin the Fq2 (c1, c0) swap explicitly. After encode, the
     /// G2 X-coordinate's c1 limb must sit at bytes 64..96 (the
     /// FIRST G2 slot), not 96..128. A regression here would
