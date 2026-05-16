@@ -431,8 +431,11 @@ impl VerkleTrie {
                 // Empty trie: root should be the empty hash
                 return *expected_root == [0u8; 32];
             }
-            // Single leaf at root (no internal nodes): verify leaf hash = root
-            let mut data = Vec::with_capacity(64);
+            // Single leaf at root (no internal nodes): verify leaf hash = root.
+            // H2 (audit 2026-05-16): must mirror node_hash leaf path —
+            // prepend VERKLE_LEAF_DST.
+            let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&proof.key);
             data.extend_from_slice(proof.value.as_ref().unwrap());
             let leaf_hash = *blake3::hash(&data).as_bytes();
@@ -446,10 +449,12 @@ impl VerkleTrie {
             return false;
         }
 
-        // Reconstruct the leaf hash
+        // Reconstruct the leaf hash.
+        // H2 (audit 2026-05-16): mirror node_hash leaf-DST.
         let leaf_hash = match &proof.value {
             Some(value) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&proof.key);
                 data.extend_from_slice(value);
                 *blake3::hash(&data).as_bytes()
@@ -489,7 +494,13 @@ impl VerkleTrie {
                 commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
-            current_hash = point_to_bytes(&commitment);
+            // H2 (audit 2026-05-16): mirror node_hash internal-DST.
+            let point_bytes = point_to_bytes(&commitment);
+            let mut wrapped =
+                Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            wrapped.extend_from_slice(VERKLE_INTERNAL_DST);
+            wrapped.extend_from_slice(&point_bytes);
+            current_hash = *blake3::hash(&wrapped).as_bytes();
         }
 
         // The reconstructed root should match

@@ -1450,9 +1450,14 @@ mod tests {
     }
 
     #[test]
-    fn test_root_matches_standard_verkle() {
-        // Critical: an EnergyVerkleTrie with the same keys/values as a standard
-        // VerkleTrie must produce the same root commitment.
+    fn test_root_differs_from_standard_verkle() {
+        // H3 (audit 2026-05-16): EnergyVerkleTrie and standard
+        // VerkleTrie use DISTINCT generator seeds — the test now
+        // asserts the roots DIFFER on identical key/value sets.
+        // Pre-H3 both used `"EvaporChain_Verkle_Gen_{i}"` so the
+        // commitments aliased; cross-trie proofs were
+        // indistinguishable.  Post-H3 the EnergyVerkle seed is
+        // `"EvaporChain_EnergyVerkle_Gen_{i}"`, breaking the alias.
         use crate::verkle::VerkleTrie;
 
         let mut standard = VerkleTrie::new();
@@ -1465,10 +1470,10 @@ mod tests {
             energy.insert(key, value, 1000, 100, 0);
         }
 
-        assert_eq!(
+        assert_ne!(
             standard.root(),
             energy.root(),
-            "EnergyVerkleTrie must produce the same root as standard VerkleTrie"
+            "post-H3: EnergyVerkleTrie MUST diverge from standard VerkleTrie"
         );
     }
 
