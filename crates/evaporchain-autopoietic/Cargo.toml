@@ -13,3 +13,6 @@ evaporchain-refresh-patronage = { path = "../evaporchain-refresh-patronage" }
 evaporchain-types             = { path = "../evaporchain-types" }
 serde                         = { workspace = true }
 thiserror                     = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
