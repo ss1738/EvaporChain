@@ -4,6 +4,66 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night) — HIGH sweep: SUB-N1/N2/N3, SCR-N2/N3/N4, GEN-N1 + crypto C1/H2/C2 reclean
+
+**Focus:** Close all remaining HIGH-class findings from AUDIT_2026_05_15.md in one pass: HBCT conservation (SUB-N3), Merkle tree-size confusion (SUB-N1), calldata DoS cap (SUB-N2), constant-fold divergence (SCR-N2), sub-call atomicity (SCR-N3), map-key collision (SCR-N4), KeyAnnounce BLS continuity (GEN-N1). Also recommit H2 DST + C1 forgery + C2 NMT tautology that were in working tree.
+**Commits shipped:** 9 (b5959a05 → 49c9df79)
+**Deliverables:**
+- **Crypto C1/H2** (`b5959a05`) — EnergyVerkleTrie: depth=0 hit_compressed forgery path rejected; LEAF/INTERNAL DST tags added to verify_proof leaf-hash and internal-hash reconstruction.
+- **DA C2** (`fe8f67cb`) — namespace-Merkle: zero-hash sibling guard fixed from tautological `!is_empty()&&hash==zero` to namespace-metadata check (non-sentinel namespace + zero hash → reject forgery).
+- **SUB-N3** (`62b77fe0`) — `HbctBook::transfer` uses `checked_add` on recipient BEFORE debiting sender. `RecipientOverflow` error variant added. Adversarial test: force to=u64::MAX-5, verify 0 state change on reject.
+- **SCR-N2/N3/N4** (`c0a067ab`) — fold_binop: `checked_*` (not `saturating_*`) → overflow stays unfolded so runtime and compiler agree. `call_external`: snapshot `state_patches.len()` + `collected_events.len()`, truncate on sub-call Err (atomicity). `to_map_key()` → `Option<String>`; Map/Array return None, all MapGet/MapSet sites propagate error.
+- **SUB-N1** (`e949e15c`) — `verify_inclusion` gains `leaf_count: usize`; enforces `path.len() == ceil(log2(leaf_count))` and `idx < leaf_count`. Adversarial test: short path / empty path / out-of-bounds idx all rejected.
+- **SUB-N2** (`7b21fbc9`) — `materialise()` checks `cd.len() > MAX_INIT_CALLDATA (65536)` before any `parse()` call.
+- **GEN-N1** (`49c9df79`) — KeyAnnounce: if `vi.bls_public_key` already exists and announced pk differs, `continuity_sig` (PoP from old key) required; reject without it. `#[serde(default)]` preserves backward-compat. Adversarial test covers first-reg / overwrite-without-sig / overwrite-with-wrong-key all handled correctly.
+
+**Empirical results (Mini 1):**
+- `evaporchain-hbct`: 22 passed / 0 failed
+- `evaporchain-app-templates-eventlog`: 31 passed / 0 failed
+- `evaporchain-app-templates-engine`: 19 passed / 0 failed
+- `evaporchain-script`: all passed / 0 failed
+- `evaporchain-consensus`: 18 + 5 slashing tests passed / 0 failed
+- `evaporchain-da`: 182 passed / 0 failed
+
+**Decisions made:**
+- git push/pull works fine for cross-machine sync; scp/rsync workaround not needed for git-tracked files.
+- C1/H2/C2 fixes were in working tree uncommitted from previous session; committed as separate atomic commits.
+
+**What's next:**
+- MEDIUM findings: PRIV-N5 (AAD), SCR-N5 (parser unary depth), SUB-N4..N7 (field length caps), GEN-N2/N3 (genesis overflow / hash binding), DRIFT-N4 (dead u8 check)
+- Run full workspace `make test` to confirm 0 regressions across all 147 crates
+
+**Blockers / open questions:** None.
+
+**Cross-references:** AUDIT_2026_05_15.md (all HIGH-class now ✅ CLOSED), commits b5959a05..49c9df79
+
+## 2026-05-16 (evening) — H2+C1 verify DST fix + C2 NMT zero-hash tautology
+
+**Focus:** Close two lingering test failures: (1) Verkle/EnergyVerkle verify() out of sync with DST-tagged node_hash() after H2 commit, plus C1 forgery-rejection guard. (2) DA NMT zero-hashed-sibling tautological check that always evaluated false.
+**Commits shipped:** 2 (b61519a3 → b69de55d)
+**Deliverables:**
+- **H2+C1 verify fix** (`b61519a3`) — `verkle.rs` verify(): all three hash sites (depth==0 leaf, main leaf reconstruction, internal loop) now use LEAF/INTERNAL DST tags matching node_hash(). `energy_verkle.rs` verify(): same DST tags + C1 guard (`hit_compressed=true` at depth==0 → false). `test_root_matches_standard_verkle`: changed assert_eq→assert_ne (H3 intentional divergence). Constants promoted to `pub(crate)` for cross-module import.
+- **C2 NMT zero-hash tautology** (`b69de55d`) — `namespace.rs` verify_namespace_proof(): `!sib.is_empty() && sib.hash==[0u8;32]` was always false (is_empty() checks hash==zero). Fixed to guard on namespace metadata: sibling with non-NAMESPACE_MIN namespace range + zero hash is now rejected. All 182 DA tests pass.
+
+**Empirical results:**
+- 6 crypto tests previously failing; 5 confirmed green post-fix; 1 (adversarial_collision_heavy_keys_round_trip) passes logic but very slow (256 × 32-level deep proofs, no commitment caching, ~3min per run in debug mode)
+- evaporchain-da: 181→182 passed / 0 failed
+
+**Decisions made:**
+- MacBook→Mini rsync/scp silently fails (same checksum or permission issue); all file edits applied via Python over SSH directly on Mini going forward this session.
+- adversarial_collision_heavy_keys_round_trip is a correctness test that passes but reveals a perf issue: commit_internal() recomputes entire subtree recursively at every level during prove(). No fix this session (not a mainnet blocker).
+
+**What's next:**
+- Run `make test-compile` on full workspace to catch any cross-crate breakage from H2 DST changes
+- Continue MAINNET_READINESS.md punch list — pick next OPEN lane
+- Consider adding commitment hash caching to VerkleTrie/EnergyVerkleTrie (perf, not correctness)
+
+**Blockers / open questions:**
+- MacBook→Mini file transfer broken for scp/rsync (working theory: ssh key mismatch with host-based key caching). Workaround: Python heredoc over SSH.
+- adversarial_collision_heavy_keys_round_trip runs for 3+ minutes; full suite takes 60+ minutes due to proptests. Only run targeted tests during development.
+
+**Cross-references:** AUDIT_2026_05_11.md (H2, C1, C2), commits b61519a3, b69de55d
+
 ## 2026-05-16 (session 42) — WIP batch flush + PRIV-N5 HashSet perf fix + chain consolidation
 
 **Focus:** Merge 2 accumulated WIP audit batches (MEDIUMs + LOWs), resolve test regressions introduced by PRIV-N6/N5 dedup, upgrade EncryptedMempool dedup to O(1) HashSet, consolidate diverged branches.
