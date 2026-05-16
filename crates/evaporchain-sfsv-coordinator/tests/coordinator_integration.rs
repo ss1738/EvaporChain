@@ -79,9 +79,9 @@ fn two_listings_one_clears_one_stays_open() {
     assert!(ae.is_tracked(1));
     assert!(ae.is_tracked(2));
 
-    // Bid for A at epoch 50: price=550, max_price=700, lambda_tol=5 ≥ lot(0).
-    // price at epoch 50 = ceiling - (ceiling-floor)*(50/200) = 1000 - 900*0.25 = 775.
-    // max_price=700 < 775 → no clear yet at epoch 50.
+    // SDDC clears at price_at(bid.submitted_at), not price_at(epoch_now).
+    // Vault A: ceiling=1000, floor=100, opened_at=0, duration=200.
+    // price_at(50) = 1000 - 900*(50/200) = 775. max_price=700 < 775 → no clear.
     ae.submit_bid(&BidRequest {
         contract_id: 1,
         bidder_hex: hex_addr(0xCC),
@@ -91,18 +91,27 @@ fn two_listings_one_clears_one_stays_open() {
     })
     .unwrap();
 
-    // No clear at epoch 50 (price 775 > max_price 700).
+    // No clear at epoch 50 (price_at(50)=775 > max_price=700).
     let clears = ae.try_clear_all(50);
-    assert!(clears.is_empty(), "no bid should clear at epoch 50");
+    assert!(clears.is_empty(), "bid at epoch 50 must not clear (price 775 > max 700)");
     assert!(ae.is_tracked(1), "vault A still open");
 
-    // At epoch 100: price = 1000 - 900*0.5 = 550. max_price=700 ≥ 550 → clears.
+    // Submit a second bid at epoch 100: price_at(100)=550. max_price=700 ≥ 550 → clears.
+    ae.submit_bid(&BidRequest {
+        contract_id: 1,
+        bidder_hex: hex_addr(0xCC),
+        max_price: 700,
+        lambda_tolerance: 5,
+        submitted_at: 100,
+    })
+    .unwrap();
+
     let clears = ae.try_clear_all(100);
     assert_eq!(clears.len(), 1, "vault A must clear at epoch 100");
     let c = &clears[0];
     assert_eq!(c.contract_id, 1);
     assert_eq!(c.winner, addr(0xCC));
-    assert_eq!(c.price_paid, 550);
+    assert_eq!(c.price_paid, 550); // price_at(submitted_at=100)
 
     // A is gone; B is still open (no bids).
     assert!(!ae.is_tracked(1), "vault A removed after clear");
