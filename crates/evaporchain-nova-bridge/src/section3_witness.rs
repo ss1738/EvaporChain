@@ -356,4 +356,165 @@ mod tests {
         println!("Section 3 native row check: PASS");
     }
 
+    // ─── Coverage push (2026-05-16): lift section3_witness.rs from ~32% ───
+    //
+    // Targets the parsing helpers (`parse_le_hex_scalar`, `parse_le_hex_vec`,
+    // `parse_usize_vec`, `parse_csr`) and `sparse_mv` edge cases.  Each
+    // helper has a happy path and several error paths reachable from JSON
+    // input that this round-1 audit hadn't covered.
+
+    use serde_json::json;
+
+    #[test]
+    fn parse_le_hex_scalar_accepts_64_char_with_prefix() {
+        // 64 hex chars after `0x`.
+        let s = format!("0x{}", "01".repeat(32));
+        let r = parse_le_hex_scalar(&json!(s));
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn parse_le_hex_scalar_accepts_64_char_without_prefix() {
+        let s = "01".repeat(32);
+        let r = parse_le_hex_scalar(&json!(s));
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn parse_le_hex_scalar_rejects_wrong_length() {
+        // 32 hex chars — half-length.
+        let r = parse_le_hex_scalar(&json!("0123"));
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("expected 64 hex chars"));
+    }
+
+    #[test]
+    fn parse_le_hex_scalar_rejects_invalid_hex_chars() {
+        let r = parse_le_hex_scalar(&json!("z".repeat(64)));
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("byte"));
+    }
+
+    #[test]
+    fn parse_le_hex_scalar_rejects_non_string() {
+        let r = parse_le_hex_scalar(&json!(42));
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("expected string"));
+    }
+
+    #[test]
+    fn parse_le_hex_vec_accepts_empty_array() {
+        let r = parse_le_hex_vec(&json!([])).unwrap();
+        assert_eq!(r.len(), 0);
+    }
+
+    #[test]
+    fn parse_le_hex_vec_rejects_non_array() {
+        let r = parse_le_hex_vec(&json!("not_an_array"));
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("expected JSON array"));
+    }
+
+    #[test]
+    fn parse_le_hex_vec_propagates_bad_element_error() {
+        // Second element is the wrong length.
+        let good = "01".repeat(32);
+        let bad = "01".repeat(10);
+        let r = parse_le_hex_vec(&json!([good, bad]));
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("expected 64 hex chars"));
+    }
+
+    #[test]
+    fn parse_usize_vec_happy_path() {
+        let r = parse_usize_vec(&json!([0, 1, 5, 42])).unwrap();
+        assert_eq!(r, vec![0, 1, 5, 42]);
+    }
+
+    #[test]
+    fn parse_usize_vec_rejects_non_array() {
+        let r = parse_usize_vec(&json!(42));
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("expected JSON array"));
+    }
+
+    #[test]
+    fn parse_usize_vec_rejects_non_u64_element() {
+        let r = parse_usize_vec(&json!([0, "string", 42]));
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("expected u64"));
+    }
+
+    #[test]
+    fn parse_csr_rejects_indptr_length_mismatch() {
+        // num_rows=2 ⇒ indptr.len() must be 3, but we pass 2.
+        let bad_csr = json!({
+            "indptr":  [0, 0],
+            "indices": [],
+            "data":    [],
+        });
+        let r = parse_csr(&bad_csr, 2, 4);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("indptr.len()"));
+    }
+
+    #[test]
+    fn parse_csr_empty_matrix_round_trips() {
+        // 0 rows × 0 cols ⇒ indptr=[0], empty indices+data.
+        let csr = json!({
+            "indptr":  [0],
+            "indices": [],
+            "data":    [],
+        });
+        let r = parse_csr(&csr, 0, 0).unwrap();
+        assert_eq!(r.num_rows, 0);
+        assert_eq!(r.num_cols, 0);
+        assert!(r.entries.is_empty());
+    }
+
+    // ─── sparse_mv edge cases ───
+
+    #[test]
+    fn sparse_mv_empty_matrix_returns_zero_vec() {
+        let m = SparseTriple { num_rows: 3, num_cols: 3, entries: vec![] };
+        let z = vec![ArkFr::from(1u64), ArkFr::from(2u64), ArkFr::from(3u64)];
+        let out = sparse_mv(&m, &z);
+        assert_eq!(out.len(), 3);
+        for v in &out {
+            assert_eq!(*v, ArkFr::from(0u64));
+        }
+    }
+
+    #[test]
+    fn sparse_mv_identity_matrix_returns_z() {
+        // Identity over 3 rows: m[i][i] = 1.
+        let m = SparseTriple {
+            num_rows: 3,
+            num_cols: 3,
+            entries: vec![
+                (0, 0, ArkFr::from(1u64)),
+                (1, 1, ArkFr::from(1u64)),
+                (2, 2, ArkFr::from(1u64)),
+            ],
+        };
+        let z = vec![ArkFr::from(10u64), ArkFr::from(20u64), ArkFr::from(30u64)];
+        let out = sparse_mv(&m, &z);
+        assert_eq!(out, z);
+    }
+
+    #[test]
+    fn sparse_mv_multi_entry_row_sums_correctly() {
+        // Row 0 = [2, 3, 0]; z = [5, 7, 11] → 2*5 + 3*7 = 31
+        let m = SparseTriple {
+            num_rows: 1,
+            num_cols: 3,
+            entries: vec![
+                (0, 0, ArkFr::from(2u64)),
+                (0, 1, ArkFr::from(3u64)),
+            ],
+        };
+        let z = vec![ArkFr::from(5u64), ArkFr::from(7u64), ArkFr::from(11u64)];
+        let out = sparse_mv(&m, &z);
+        assert_eq!(out[0], ArkFr::from(31u64));
+    }
 }
