@@ -4,6 +4,34 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night) — apply_validator_key_rotations rotation-continuity hardening
+
+**Focus:** Fresh audit of recently changed security-sensitive code; found doc-vs-code divergence in `apply_validator_key_rotations` — bls_pop_old verified via wrong function. Fixed and tested.
+**Commits shipped:** 1 (`4cd64a6e`)
+**Deliverables:**
+- **apply_validator_key_rotations fix** — changed `verify_pop(old_pk, bls_pop_old)` to `BlsVerifier::verify_rotation_continuity(old_pk, new_pk_bytes, bls_pop_old)`. Struct's own doc comment at `evaporchain-execution/src/lib.rs:261` already specified the correct check; production code diverged from it. Old check only proved knowledge of old_sk (via historical self-PoP) without binding to the specific new key — an attacker who captured any historical bls_pop_old from registration time could submit a ValidatorKeyRotation with a different new_bls_public_key and pass.
+- **Test update** — both happy-path tests (`consensus` + `consensus-types`) updated to use `sign_rotation_continuity(&new_pk)` instead of `proof_of_possession()` for bls_pop_old. Bad-continuity-proof rejection test already correct (unrelated key's sig).
+- **SCR-N7 verified** — `compiler.rs:548` already has `MAX_FOLD_STRING_LEN = 65_536` cap applied at fold time. No code change needed.
+- **All code lanes in MAINNET_READINESS.md confirmed DONE** — remaining open items are OPS-ONLY cluster soaks or BLOCKED on operator.
+
+**Empirical results:**
+- `cargo test -p evaporchain-consensus -- gen_n1`: 8/8 green
+- `cargo test -p evaporchain-consensus -- test_apply_validator_key_rotations`: 2/2 green
+
+**Decisions made:**
+- Sweep of all remaining MEDIUM/LOW audit items from AUDIT_2026_05_15.md confirms they were already fixed in session 42. No new code changes needed there.
+- apply_validator_key_rotations path has lower attack surface than KeyAnnounce (needs block inclusion through BFT consensus) but the missing new-key binding was still a correctness gap and was worth closing.
+
+**What's next:**
+- Full workspace test currently running on Mini 1 (started after disk cleanup — removed 4.6GB llvm-cov-target, freed to 56% capacity)
+- Pick a fresh audit target — recently changed security-sensitive files not yet swept this session cycle
+- Consider starting V1.5 substrate work (T2 deferred items) now that all code lanes are DONE
+
+**Blockers / open questions:**
+- Mini 1 disk tends to fill up from debug builds; monitor after full workspace test completes
+
+**Cross-references:** `evaporchain-execution/src/lib.rs:252-271` (ValidatorKeyRotation struct doc), `crates/evaporchain-consensus/src/tendermint.rs:3887-3902` (fix), commit `4cd64a6e`
+
 ## 2026-05-16 (late night) — SCR-N6 adversarial tests + audit sweep verification
 
 **Focus:** Close the test gap for SCR-N6 (RandomRange rejection sampling), verify all AUDIT_2026_05_15.md crate-level tests pass, fix Mini git divergence.

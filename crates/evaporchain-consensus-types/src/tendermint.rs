@@ -7819,29 +7819,12 @@ mod tests {
         let new_kp = evaporchain_crypto::signatures::BlsKeypair::generate();
         let new_pk = new_kp.public_key_bytes().0.clone();
 
-        // bls_pop_old: in the current implementation,
-        // `apply_validator_key_rotations` calls `verify_pop(old_pk, bls_pop_old)`,
-        // which checks that `bls_pop_old` is a PoP signature over the
-        // OLD pubkey itself (`proof_of_possession()` semantics). This
-        // proves "submitter controls the old key" but does NOT bind the
-        // old key to the new key bytes. A tighter binding (sign new_pk
-        // with old key under POP DST) is tracked as a follow-up; for now
-        // the loose continuity proof is what's exercised by the test.
-        let pop_sig_old = kps[0].proof_of_possession().0.clone();
+        // bls_pop_old: sign(old_sk, new_pk_bytes, BLS_ROTATION_DST).
+        // verify_rotation_continuity now enforces this binding on the
+        // consensus side, preventing replay across rotation attempts.
+        let pop_sig_old = kps[0].sign_rotation_continuity(&new_pk).0.clone();
 
         let new_pop = new_kp.proof_of_possession().0.clone();
-
-        // The current `apply_validator_key_rotations` continuity check
-        // expects bls_pop_old to verify against the OLD pubkey using the
-        // POP DST. `proof_of_possession()` signs the signer's OWN pk,
-        // so passing kps[0].proof_of_possession() will verify against
-        // kps[0]'s pubkey — which IS the validator's old key. The PoP is
-        // for kps[0]'s OWN pk, not for new_pk. The continuity check thus
-        // succeeds at the BLS level (PoP of old key by old key) but does
-        // NOT bind old_key to new_key. A future tightening should make
-        // bls_pop_old sign new_pk under POP DST. For 4d, we exercise the
-        // continuity-of-control path with the looser binding currently in
-        // place; the tighter binding is tracked as a follow-up.
 
         let rotation = evaporchain_execution::ValidatorKeyRotation {
             validator_id: 1,
