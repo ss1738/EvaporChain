@@ -4,6 +4,39 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (session 42) — WIP batch flush + PRIV-N5 HashSet perf fix + chain consolidation
+
+**Focus:** Merge 2 accumulated WIP audit batches (MEDIUMs + LOWs), resolve test regressions introduced by PRIV-N6/N5 dedup, upgrade EncryptedMempool dedup to O(1) HashSet, consolidate diverged branches.
+**Commits shipped:** 12 (6411fc5f → 2f409bc6)
+**Deliverables:**
+- **MEDIUMs batch** (`6411fc5f`) — 6 findings: SCR-N5 (parse_unary depth guard), SUB-N4 (SFSV/SCL/SGB/SSM field length caps), SUB-N5 (HBCT delivery_location 64-byte cap), SUB-N6 (LightCone MAX_PARENTS_PER_BLOCK=16), SUB-N7 (is_antichain MAX_ANTICHAIN_INPUT=64), GEN-N2 (genesis balance checked_add).
+- **LOWs batch** (`687950c2`) — 6 findings: PRIV-N6 (commitment dedup in submit_encrypted), SCR-N6 (VRF rejection-sampling for modulo bias), SCR-N7 (compiler DCE dead-store detection), SUB-N9/N10 (lambda-fold / nova_path), GEN-N4 (genesis type).
+- **dos_v4 test fix** (`6360fcc5`) — flood test cycle used nonce=(i%256) → only 256 unique commitments accepted; changed to i as u64 spread into 32-byte nonce.
+- **PRIV-N5** (`e085f518`) — AEAD AAD binding for `(submitted_epoch, nonce_hash)` + structural admission-id dedup closes "intact ciphertext, tampered commitment-field" attack vector that PRIV-N6 missed. 7 new tests.
+- **HashSet dedup upgrade** (`9b5fcb32`) — `seen_commitments` + `seen_admission_ids` HashSets alongside the Vec. O(n²) linear scan (274s at 10k cap) → O(1) per submit. Rebuilt on `process_reveals`.
+- **encrypted_pool unit test fix** (`e850083e`) — unique nonces so neither commitment nor admission-id dedup fires before the cap check.
+- **final-cleanup** (`28d9b58f`) — GEN-N5 Argon2 t=4, SUB-N8 eventlog prune, DRIFT-N4 dead protocol_version check.
+- **GEN-N3** (`2f409bc6`) — canonical genesis hash binding in state_root via `BLAKE3(EVAPORCHAIN_V1_GENESIS_BIND\0 || raw_db_state_root || canonical_genesis_hash)`.
+
+**Empirical results:**
+- `evaporchain-consensus`: 952 passed / 0 failed (945 before HashSet fix + 7 PRIV-N5 tests)
+- `evaporchain-execution`: 557 passed / 0 failed
+- All MEDIUMs + LOWs affected crates: 0 failures
+
+**Decisions made:**
+- PRIV-N6's O(n) linear scan was annotated "~μs" but was actually O(n²) total at fill → 274s. HashSet upgrade is the correct production fix. Two parallel sets (~640 KB at 10k cap) is acceptable.
+- Superseded `ed9ab5c5` (old test fix) during branch consolidation; `e850083e` is the correct replacement.
+- Force push required to consolidate 4 diverged branches (PRIV-N5, final-cleanup, GEN-N3, session docs) into single unified main.
+
+**What's next:**
+- Run fresh end-to-end workspace test on main to confirm 0 failures across all 147 crates.
+- MAINNET_READINESS.md: all code lanes now ✅ DONE; remaining are OPS-ONLY cluster soak items.
+- Natural next: fresh audit cycle on codebase changes since 2026-05-15.
+
+**Blockers / open questions:** Branch divergence was frequent this session due to SSH state not persisting. Consider a `.envrc` or alias that always starts Mini 1 sessions on `main`.
+
+**Cross-references:** AUDIT_2026_05_15.md; commits 6411fc5f (MEDIUMs), 687950c2 (LOWs), e085f518 (PRIV-N5), 9b5fcb32 (HashSet), 2f409bc6 (GEN-N3).
+
 ## 2026-05-15 (session 41) — AUDIT_2026_05_15.md punch-list cleared: final 5 items in 3 PRs
 
 **Focus:** Close the last actionable code findings from `AUDIT_2026_05_15.md` — GEN-N5, SUB-N8, DRIFT-N4, PRIV-N5, GEN-N3 — and resolve a pre-existing test regression introduced when PRIV-N6 dedup landed.
