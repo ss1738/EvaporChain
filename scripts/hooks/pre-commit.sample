@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pre-commit hook — runs audit-canaries to gate against silent
+# regression of closed audit findings.
+#
+# To install: cp scripts/hooks/pre-commit.sample .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# To bypass for a one-off commit (use sparingly): git commit --no-verify
+#
+# Motivation: a single large merge on 2026-05-16 silently overwrote
+# 10 audit closures (R3/R4/R6/R7 + DRIFT-N3) shipped 24 hours earlier.
+# A canary gate at commit time would have caught this; the post-hoc
+# fresh audit caught it 24 hours later but only after the regressions
+# had been on main HEAD long enough to ship downstream.
+
+set -u
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCRIPT="$REPO_ROOT/scripts/audit-canaries.sh"
+
+if [[ ! -x "$SCRIPT" ]]; then
+    echo "pre-commit: $SCRIPT not found or not executable, skipping canaries" >&2
+    exit 0
+fi
+
+if "$SCRIPT" >/dev/null 2>&1; then
+    exit 0
+else
+    echo
+    echo "✗ pre-commit: audit-canaries failed."
+    echo
+    "$SCRIPT" >&2
+    echo
+    echo "A closed audit finding has been silently re-introduced."
+    echo "Fix the regression, or use --no-verify if you're intentionally"
+    echo "reverting a fix (and update the canary script to remove the entry)."
+    exit 1
+fi

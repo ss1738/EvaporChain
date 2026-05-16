@@ -1,4 +1,4 @@
-.PHONY: build test test-compile lint lint-strict fmt fmt-check bench check
+.PHONY: build test test-compile lint lint-strict fmt fmt-check bench check audit-canaries
 
 build:
 	cargo build --workspace
@@ -29,5 +29,14 @@ fmt-check:
 bench:
 	cd prototypes/fold-a-block && cargo run --release
 
+# Regression-gate for closed audit findings.  Targeted grep over the
+# tree to verify previously-shipped fixes haven't been silently
+# overwritten.  Motivation: the 2026-05-16 audit round caught 10
+# closures (R3/R4/R6/R7 + DRIFT-N3) that a single large merge
+# dropped 24 hours after they shipped.  Each canary maps to a known
+# closed finding; see `scripts/audit-canaries.sh` for the catalogue.
+audit-canaries:
+	./scripts/audit-canaries.sh
+
 # Pre-PR gate. Excludes lint-strict until the backlog is cleared.
-check: fmt-check lint build test-compile
+check: fmt-check lint build test-compile audit-canaries
