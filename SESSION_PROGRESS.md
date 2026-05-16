@@ -4,6 +4,38 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night+7) — Doctrine triplet sweep: 8 invention-stack crates closed
+
+**Focus:** Close the doctrine triplet (source citation + adversarial test + non-trivial e2e fixture) across all remaining invention-stack substrate crates on `chore/coverage-eg-fss`.
+**Commits shipped:** 9 (97d72a1c → 6cc64d4c)
+**Deliverables:**
+
+| Crate | Tests | Fixture |
+|---|---|---|
+| `evaporchain-bell-beacon` | 10 e2e | 5-window validator beacon session, 3/5 certified |
+| `evaporchain-sddc` | 12 e2e | Carbon-credit secondary market, Alice/Bob/Carol/Dave |
+| `evaporchain-sfsv` | 12 e2e | Life-insurance vault + secondary market + 3-party resale |
+| `evaporchain-shlm` | 12 e2e (prior session) | AI-era recruiting market, COBOL/Python freshness |
+| `evaporchain-singh-attractor` | 12 e2e | Three-regime chain fee session (QUIET/ACTIVE/SURGE) |
+| `evaporchain-singh-attractor-v2` | 12 e2e | Anti-grinding Bell-anchored 5-epoch session |
+| `evaporchain-lambda-fold` | 13 e2e | Five-step light-client fold, epoch-600 decay |
+| `evaporchain-ib-validators` | 12 e2e | 5-validator checkpoint committee, IB gate |
+| `evaporchain-evap-fork-cert` | 11 e2e | Competing fork evaporation at epoch 600 |
+| `evaporchain-light-cone` | 16 e2e | Network-partition fork-and-merge 9-block DAG |
+
+**Empirical results:** All tests green on Mini 1 before each commit.
+**Decisions made:**
+- Doctrine thresholds hardcoded where computable (per-block decay values, exact halving at N half-lives); property-based for stochastic paths (Bell-seed fallback sampling).
+- `chore/coverage-eg-fss` is the canonical branch; stray commits on `chore/coverage-autopoietic` cherry-picked across.
+
+**What's next:**
+1. Singh application crates (singh-sabi, singh-migrant, singh-posthuma, etc.) — same doctrine triplet pattern
+2. V2 companion crates (evap-fork-cert-v2, light-cone-v2, ib-validators-v2) — no tests/ directories
+3. SESSION_PROGRESS.md missing entries for earlier SDDC/SFSV/bell-beacon commits — already captured here
+
+**Blockers / open questions:** None.
+**Cross-references:** commits 97d72a1c…6cc64d4c on `chore/coverage-eg-fss`
+
 ## 2026-05-16 (night+4) — SFSV smoke test green: Bug #1 + Bug #2 empirically confirmed
 
 **Focus:** Live devnet smoke test confirming the two architectural fixes (api.rs Bug #1, parallel.rs Bug #2) work end-to-end.
