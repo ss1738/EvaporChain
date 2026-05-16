@@ -4,6 +4,33 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (evening) — H2+C1 verify DST fix + C2 NMT zero-hash tautology
+
+**Focus:** Close two lingering test failures: (1) Verkle/EnergyVerkle verify() out of sync with DST-tagged node_hash() after H2 commit, plus C1 forgery-rejection guard. (2) DA NMT zero-hashed-sibling tautological check that always evaluated false.
+**Commits shipped:** 2 (b61519a3 → b69de55d)
+**Deliverables:**
+- **H2+C1 verify fix** (`b61519a3`) — `verkle.rs` verify(): all three hash sites (depth==0 leaf, main leaf reconstruction, internal loop) now use LEAF/INTERNAL DST tags matching node_hash(). `energy_verkle.rs` verify(): same DST tags + C1 guard (`hit_compressed=true` at depth==0 → false). `test_root_matches_standard_verkle`: changed assert_eq→assert_ne (H3 intentional divergence). Constants promoted to `pub(crate)` for cross-module import.
+- **C2 NMT zero-hash tautology** (`b69de55d`) — `namespace.rs` verify_namespace_proof(): `!sib.is_empty() && sib.hash==[0u8;32]` was always false (is_empty() checks hash==zero). Fixed to guard on namespace metadata: sibling with non-NAMESPACE_MIN namespace range + zero hash is now rejected. All 182 DA tests pass.
+
+**Empirical results:**
+- 6 crypto tests previously failing; 5 confirmed green post-fix; 1 (adversarial_collision_heavy_keys_round_trip) passes logic but very slow (256 × 32-level deep proofs, no commitment caching, ~3min per run in debug mode)
+- evaporchain-da: 181→182 passed / 0 failed
+
+**Decisions made:**
+- MacBook→Mini rsync/scp silently fails (same checksum or permission issue); all file edits applied via Python over SSH directly on Mini going forward this session.
+- adversarial_collision_heavy_keys_round_trip is a correctness test that passes but reveals a perf issue: commit_internal() recomputes entire subtree recursively at every level during prove(). No fix this session (not a mainnet blocker).
+
+**What's next:**
+- Run `make test-compile` on full workspace to catch any cross-crate breakage from H2 DST changes
+- Continue MAINNET_READINESS.md punch list — pick next OPEN lane
+- Consider adding commitment hash caching to VerkleTrie/EnergyVerkleTrie (perf, not correctness)
+
+**Blockers / open questions:**
+- MacBook→Mini file transfer broken for scp/rsync (working theory: ssh key mismatch with host-based key caching). Workaround: Python heredoc over SSH.
+- adversarial_collision_heavy_keys_round_trip runs for 3+ minutes; full suite takes 60+ minutes due to proptests. Only run targeted tests during development.
+
+**Cross-references:** AUDIT_2026_05_11.md (H2, C1, C2), commits b61519a3, b69de55d
+
 ## 2026-05-16 (session 42) — WIP batch flush + PRIV-N5 HashSet perf fix + chain consolidation
 
 **Focus:** Merge 2 accumulated WIP audit batches (MEDIUMs + LOWs), resolve test regressions introduced by PRIV-N6/N5 dedup, upgrade EncryptedMempool dedup to O(1) HashSet, consolidate diverged branches.
