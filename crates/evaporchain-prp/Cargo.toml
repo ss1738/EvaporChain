@@ -15,3 +15,5 @@ blake3 = { workspace = true }
 
 [dev-dependencies]
 proptest = "1"
+serde_json = { workspace = true }
+blake3 = { workspace = true }
