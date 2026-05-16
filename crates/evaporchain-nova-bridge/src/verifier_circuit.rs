@@ -518,4 +518,121 @@ mod tests {
             "expected SynthesisError::Unsatisfiable for mismatched arity, got {result:?}"
         );
     }
+
+    /// Parallel of the num_steps / mismatched-arity wire tests for
+    /// the EmptyState variant — `z0 = []` must surface as
+    /// `Unsatisfiable` at the top of `generate_constraints`.
+    #[test]
+    fn generate_constraints_rejects_empty_state_as_unsatisfiable() {
+        let circuit = NovaVerifierCircuit::new(
+            5,
+            vec![],
+            vec![],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let result = circuit.generate_constraints(cs.clone());
+        assert!(
+            matches!(result, Err(SynthesisError::Unsatisfiable)),
+            "expected SynthesisError::Unsatisfiable for empty z0, got {result:?}"
+        );
+    }
+
+    /// `new()` initialises both section witnesses to None — pins that
+    /// trusted setup (which uses `new`/`dummy`) doesn't accidentally
+    /// drag in a Section 2 or 3 enforcement gate.
+    #[test]
+    fn new_initialises_sections_to_none() {
+        let c = NovaVerifierCircuit::new(
+            1,
+            vec![Bn254Fr::from(0u64)],
+            vec![Bn254Fr::from(0u64)],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        assert!(c.section2.is_none(), "section2 must default to None");
+        assert!(c.section3.is_none(), "section3 must default to None");
+    }
+
+    /// `dummy()` is the trusted-setup-time witness — must have no
+    /// section witnesses attached.
+    #[test]
+    fn dummy_has_no_section_witnesses() {
+        let d = NovaVerifierCircuit::dummy();
+        assert!(d.section2.is_none());
+        assert!(d.section3.is_none());
+        // And the shape must match what setup expects.
+        assert_eq!(d.num_steps, 1);
+        assert_eq!(d.z0.len(), 1);
+        assert_eq!(d.zi.len(), 1);
+    }
+
+    /// `validate_structurally`'s MismatchedArity variant carries the
+    /// observed `z0_len` / `zi_len` so the caller can render a useful
+    /// error. Pin both values.
+    #[test]
+    fn mismatched_arity_error_carries_correct_lengths() {
+        let c = NovaVerifierCircuit::new(
+            1,
+            vec![Bn254Fr::from(0u64); 3],
+            vec![Bn254Fr::from(0u64); 5],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        match c.validate_structurally() {
+            Err(StructuralValidationError::MismatchedArity { z0_len, zi_len }) => {
+                assert_eq!(z0_len, 3);
+                assert_eq!(zi_len, 5);
+            }
+            other => panic!("expected MismatchedArity {{ z0_len:3, zi_len:5 }}, got {other:?}"),
+        }
+    }
+
+    /// `StructuralValidationError` Display impls render the diagnostic
+    /// context: each variant's `to_string()` should mention the
+    /// numeric or descriptive context so log lines are useful.
+    #[test]
+    fn structural_validation_error_displays_all_variants() {
+        let zero = StructuralValidationError::NumStepsZero.to_string();
+        let empty = StructuralValidationError::EmptyState.to_string();
+        let mismatch = StructuralValidationError::MismatchedArity { z0_len: 7, zi_len: 9 }
+            .to_string();
+        assert!(zero.contains("num_steps"), "got: {zero}");
+        assert!(empty.contains("z0"), "got: {empty}");
+        assert!(mismatch.contains("7") && mismatch.contains("9"), "got: {mismatch}");
+    }
+
+    /// `StructuralValidationError` Clone + PartialEq smoke (derived,
+    /// but pinning here so a derive removal causes a loud failure —
+    /// downstream callers may use `assert_eq!` on these errors).
+    #[test]
+    fn structural_validation_error_clone_and_eq() {
+        let a = StructuralValidationError::MismatchedArity { z0_len: 1, zi_len: 2 };
+        assert_eq!(a.clone(), a);
+        assert_ne!(
+            a,
+            StructuralValidationError::MismatchedArity { z0_len: 1, zi_len: 3 },
+        );
+        assert_ne!(a, StructuralValidationError::NumStepsZero);
+    }
+
+    /// Empty `z0` AND empty `zi` is still rejected as `EmptyState`,
+    /// NOT as `MismatchedArity` (their lengths happen to match). Pin
+    /// the dispatch precedence: EmptyState check must fire before
+    /// the arity-match check.
+    #[test]
+    fn empty_state_takes_precedence_over_arity_match() {
+        let c = NovaVerifierCircuit::new(
+            1,
+            vec![],
+            vec![],
+            Bn254Fr::from(0u64),
+            Bn254Fr::from(0u64),
+        );
+        assert_eq!(
+            c.validate_structurally(),
+            Err(StructuralValidationError::EmptyState),
+        );
+    }
 }
