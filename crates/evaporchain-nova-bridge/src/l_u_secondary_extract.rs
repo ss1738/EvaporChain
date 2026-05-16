@@ -181,6 +181,7 @@ fn parse_secondary_scalar_hex(
 mod tests {
     use super::*;
     use crate::recursive_snark_fixture::generate_fixture;
+    use ff::Field;
 
     /// Diagnostic — dump the raw JSON shape for a fresh fixture
     /// so the test output shows the exact hex format
@@ -246,5 +247,77 @@ mod tests {
             h0_2 != h0_5 || h1_2 != h1_5,
             "different num_steps must produce different transcript hashes"
         );
+    }
+
+    #[test]
+    fn parse_secondary_scalar_hex_none_input_errors() {
+        let err = parse_secondary_scalar_hex(None, 0).expect_err("expected error");
+        match err {
+            ExtractError::HexParseFailed { index, .. } => assert_eq!(index, 0),
+            other => panic!("expected HexParseFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_secondary_scalar_hex_non_hex_errors() {
+        let err = parse_secondary_scalar_hex(Some("nothex"), 3).expect_err("expected error");
+        match err {
+            ExtractError::HexParseFailed { index, .. } => assert_eq!(index, 3),
+            other => panic!("expected HexParseFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_secondary_scalar_hex_wrong_length_errors() {
+        let err = parse_secondary_scalar_hex(Some("deadbeef"), 1).expect_err("expected error");
+        match err {
+            ExtractError::HexParseFailed { index, reason } => {
+                assert_eq!(index, 1);
+                assert!(reason.contains("32 bytes"), "reason was {reason}");
+            }
+            other => panic!("expected HexParseFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_secondary_scalar_hex_accepts_0x_prefix() {
+        let zero_hex_prefixed = format!("0x{}", "00".repeat(32));
+        let s = parse_secondary_scalar_hex(Some(&zero_hex_prefixed), 0)
+            .expect("zero scalar parses");
+        assert_eq!(s, SecondaryScalar::ZERO);
+    }
+
+    #[test]
+    fn parse_secondary_scalar_hex_accepts_bare_hex() {
+        let zero_hex = "00".repeat(32);
+        let s = parse_secondary_scalar_hex(Some(&zero_hex), 0)
+            .expect("zero scalar parses without prefix");
+        assert_eq!(s, SecondaryScalar::ZERO);
+    }
+
+    #[test]
+    fn extract_error_displays_all_variants() {
+        assert!(ExtractError::Serialize("x".into()).to_string().contains("serde_json"));
+        assert!(ExtractError::MissingPath.to_string().contains("l_u_secondary"));
+        assert!(ExtractError::TooFewHashes(1).to_string().contains("1"));
+        assert!(ExtractError::HexParseFailed { index: 0, reason: "r".into() }
+            .to_string()
+            .contains("hex scalar"));
+        assert!(ExtractError::SerdeError("e".into()).to_string().contains("serde"));
+        assert!(ExtractError::MissingField("f".into()).to_string().contains("malformed"));
+        assert!(ExtractError::ShapeTooLarge { name: "num_cons", value: 999, cap: 1 }
+            .to_string()
+            .contains("num_cons"));
+    }
+
+    #[test]
+    fn extract_error_clone_and_debug_work() {
+        let err = ExtractError::ShapeTooLarge {
+            name: "num_vars",
+            value: 100,
+            cap: 10,
+        };
+        let _cloned = err.clone();
+        let _debug = format!("{err:?}");
     }
 }
