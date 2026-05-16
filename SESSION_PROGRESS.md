@@ -4,6 +4,34 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night+6) — SHLM e2e integration tests shipped; doctrine triplet closed
+
+**Focus:** SHLM (Singh Skill Half-Life Market) doctrine §4.2 e2e integration test gap.
+**Commits shipped:** 1 (8938c153)
+**Deliverables:**
+- `crates/evaporchain-shlm/tests/e2e.rs`: 12 integration tests, AI-era recruiting market fixture
+  - Python (hl=100) vs COBOL (hl=1000) skill class doctrine comparison
+  - Alice clears Python bounty at submission-locked price 105_000 (epoch 50)
+  - Bob (elapsed=150, freshness_score=375 < 600) excluded by eligibility filter pre-SDDC
+  - Carol clears COBOL bounty at price 150_000 (epoch 100)
+  - Dave (level=200 < min_level=300) excluded by level gate
+  - Doctrine claim proven: COBOL retains 1.5x more freshness than Python at same elapsed
+  - Winner price locked at submission epoch (not clearing epoch)
+  - Credential refresh restores eligibility for previously-stale candidate
+  - Adversarial: refresh backdating rejected, class-mismatch rejected, zero-salary/zero-min-level rejected
+**Empirical results:**
+- 12/12 SHLM e2e tests pass on Mini 1 (0 failed, 0.00s)
+- 32 SHLM unit+proptest tests pass (unchanged baseline)
+**Decisions made:**
+- freshness_tolerance (lambda_tolerance in SDDC) must be >= bounty.min_freshness (lot_lambda) to clear
+- eligibility filter runs at submitted_at not epoch_now — freshness evaluated at bid submission time
+**What's next:**
+- Remaining doctrine triplet gaps: evaporchain-sddc, evaporchain-sfsv vault state machine
+- Then remaining §A5.2 substrate crates: singh-sabi, singh-migrant, singh-posthuma, singh-heir, etc.
+- Full workspace test run to confirm no regressions
+**Blockers / open questions:** None
+**Cross-references:** CHANGELOG.md, commit 8938c153, prior SAP (461b8d72), coordinator (4e45db35)
+
 ## 2026-05-16 (night+5) — SFSV coordinator binary shipped; VM paradigm doctrine gap closed
 
 **Focus:** SFSV off-chain coordinator binary (path to Paper 1) + all VM paradigm e2e integration tests.
