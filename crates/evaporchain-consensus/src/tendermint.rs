@@ -168,6 +168,21 @@ pub enum ConsensusMessage {
         /// Prevents rogue-key attacks on aggregate signatures.
         #[serde(default)]
         proof_of_possession: Vec<u8>,
+        /// GEN-N1 (audit 2026-05-16): continuity signature.
+        /// Required when the validator already has a previously-
+        /// registered BLS key and is rotating to a new one — the
+        /// signature is BLS.Sign(old_sk, continuity_msg) where the
+        /// message is built by `bls_continuity_message(chain_id,
+        /// validator_id, new_pk)`.  Without this, any peer could
+        /// gossip a fabricated KeyAnnounce for any validator_id +
+        /// attacker-generated key/PoP and the chain would overwrite
+        /// the registered key, enabling impersonation.
+        ///
+        /// Empty for fresh registrations (no previously-registered
+        /// key to sign with — gated by PoP and validator_set
+        /// membership only).
+        #[serde(default)]
+        continuity_signature: Vec<u8>,
     },
     /// Validator attests to data availability for a committed block.
     DAAttestation {
@@ -3469,6 +3484,11 @@ impl TendermintConsensus {
 
     /// Generate a KeyAnnounce message for broadcasting our BLS public key
     /// along with a proof-of-possession (prevents rogue-key attacks).
+    ///
+    /// **For fresh registrations only.**  This message carries an empty
+    /// `continuity_signature` and will be REJECTED by peers if the
+    /// validator already has a different BLS key registered (post-GEN-N1).
+    /// Use `make_key_rotation_announce` for rotations.
     pub fn make_key_announce(&self) -> Option<ConsensusMessage> {
         self.bls_keypair
             .as_ref()
@@ -3476,7 +3496,37 @@ impl TendermintConsensus {
                 validator_id: self.my_id,
                 bls_public_key: kp.public_key_bytes().0.clone(),
                 proof_of_possession: kp.proof_of_possession().0.clone(),
+                continuity_signature: Vec::new(),
             })
+    }
+
+    /// GEN-N1 (audit 2026-05-16): build a KeyAnnounce that ROTATES
+    /// from the validator's currently-registered BLS key to a new
+    /// one.  The continuity signature is produced with `old_keypair`
+    /// over `bls_continuity_message(chain_id, my_id, new_pk)`;
+    /// honest peers verify it against the previously-registered key
+    /// before accepting the rotation.
+    ///
+    /// The caller is responsible for:
+    ///   1. Calling this with the OLD keypair still loaded (before
+    ///      `set_bls_keypair(new_keypair)`).
+    ///   2. Swapping to the new keypair locally and broadcasting the
+    ///      returned message.
+    pub fn make_key_rotation_announce(
+        &self,
+        old_keypair: &evaporchain_crypto::signatures::BlsKeypair,
+        new_keypair: &evaporchain_crypto::signatures::BlsKeypair,
+    ) -> ConsensusMessage {
+        let new_pk = new_keypair.public_key_bytes().0.clone();
+        let continuity_msg =
+            Self::bls_continuity_message(&self.chain_id, self.my_id, &new_pk);
+        let continuity_sig = old_keypair.sign(&continuity_msg).0.clone();
+        ConsensusMessage::KeyAnnounce {
+            validator_id: self.my_id,
+            bls_public_key: new_pk,
+            proof_of_possession: new_keypair.proof_of_possession().0.clone(),
+            continuity_signature: continuity_sig,
+        }
     }
 
     /// Set the VRF keypair for this validator (enables VRF-based leader election).
@@ -4668,6 +4718,7 @@ impl TendermintConsensus {
             validator_id,
             ref bls_public_key,
             ref proof_of_possession,
+            ref continuity_signature,
         } = msg
         {
             if bls_public_key.len() != 48 {
@@ -4690,6 +4741,61 @@ impl TendermintConsensus {
                         "REJECTED BLS key: proof-of-possession verification failed (possible rogue-key attack)"
                     );
                     return actions;
+                }
+            }
+
+            // GEN-N1 (audit 2026-05-16): if the validator already has
+            // a registered BLS key and is announcing a *different*
+            // key, require a continuity signature from the OLD key
+            // over `bls_continuity_message(chain_id, validator_id,
+            // new_pk)`.  Pre-fix any gossip peer could send a
+            // KeyAnnounce with the legitimate validator_id + an
+            // attacker-generated new key + valid PoP-on-new-key, and
+            // honest validators would overwrite the registered key
+            // — enabling impersonation until the real validator's
+            // next re-broadcast.  Post-fix, the rotation must be
+            // signed by the previously-registered (old) key, which
+            // only the legitimate validator holds.
+            if let Some(vi) = self.validator_set.get(validator_id) {
+                let is_rotation = matches!(
+                    vi.bls_public_key.as_ref(),
+                    Some(registered) if registered != bls_public_key
+                );
+                if is_rotation {
+                    use evaporchain_crypto::signatures::{
+                        BlsPublicKey, BlsSignature, BlsVerifier,
+                    };
+                    if continuity_signature.is_empty() {
+                        warn!(
+                            validator = validator_id,
+                            "REJECTED key rotation: continuity_signature missing \
+                             (GEN-N1: rotations from a registered key require a \
+                             signature from the OLD key)"
+                        );
+                        return actions;
+                    }
+                    let old_pk = BlsPublicKey(
+                        vi.bls_public_key
+                            .as_ref()
+                            .expect("is_rotation implies Some")
+                            .clone(),
+                    );
+                    let continuity_msg = Self::bls_continuity_message(
+                        &self.chain_id,
+                        validator_id,
+                        bls_public_key,
+                    );
+                    let cont_sig = BlsSignature(continuity_signature.clone());
+                    if !BlsVerifier::verify(&continuity_msg, &cont_sig, &old_pk) {
+                        warn!(
+                            validator = validator_id,
+                            "REJECTED key rotation: continuity_signature \
+                             does not verify against previously-registered key \
+                             (GEN-N1: possible impersonation attempt via \
+                             fabricated KeyAnnounce)"
+                        );
+                        return actions;
+                    }
                 }
             }
 
@@ -7204,6 +7310,49 @@ impl TendermintConsensus {
     }
 
     // ──────────────── BLS Aggregate Signatures ─────────────────────────
+
+    /// GEN-N1 (audit 2026-05-16): canonical continuity message
+    /// bound to a `KeyAnnounce` rotation.  The previously-registered
+    /// validator key signs this message to prove the rotation is
+    /// authorized.  Layout:
+    ///
+    /// ```text
+    /// EvaporChain_BLS_Rotate_v1\0 || chain_id_len (u8) || chain_id
+    ///   || validator_id (LE u64) || new_pk (48 bytes)
+    /// ```
+    ///
+    /// chain_id is length-prefixed and DST-tagged so:
+    ///   - the same key rotation cannot replay across chains
+    ///     (chain_id binding)
+    ///   - the same continuity sig cannot be replayed across
+    ///     validators (validator_id binding)
+    ///   - the same continuity sig only authorizes ONE new key
+    ///     (new_pk binding)
+    ///
+    /// Panics if `chain_id.len() >= 256` — same fail-fast guard as
+    /// `bls_vote_message` (CONS-B1).
+    pub fn bls_continuity_message(
+        chain_id: &str,
+        validator_id: u64,
+        new_pk: &[u8],
+    ) -> Vec<u8> {
+        const ROTATE_DST: &[u8] = b"EvaporChain_BLS_Rotate_v1\0";
+        let chain_id_bytes = chain_id.as_bytes();
+        assert!(
+            chain_id_bytes.len() < 256,
+            "bls_continuity_message: chain_id is {} bytes, must be < 256",
+            chain_id_bytes.len()
+        );
+        let mut msg = Vec::with_capacity(
+            ROTATE_DST.len() + 1 + chain_id_bytes.len() + 8 + new_pk.len(),
+        );
+        msg.extend_from_slice(ROTATE_DST);
+        msg.push(chain_id_bytes.len() as u8);
+        msg.extend_from_slice(chain_id_bytes);
+        msg.extend_from_slice(&validator_id.to_le_bytes());
+        msg.extend_from_slice(new_pk);
+        msg
+    }
 
     /// Construct the canonical message to BLS-sign for a vote.
     pub fn bls_vote_message(
@@ -19396,6 +19545,7 @@ mod t1_20_batch6 {
             validator_id: 1,
             bls_public_key: vec![0u8; 10], // must be 48 — length check fires
             proof_of_possession: vec![],
+                continuity_signature: Vec::new(),
         });
         assert!(actions.is_empty());
     }
@@ -19772,11 +19922,262 @@ mod t1_20_batch7 {
             validator_id: 1,
             bls_public_key: key.clone(),
             proof_of_possession: vec![],
+                continuity_signature: Vec::new(),
         });
         assert!(actions.is_empty());
         // Key must now be registered on validator 1
         let bls = tc.validator_set.get(1).unwrap().bls_public_key.as_ref();
         assert_eq!(bls, Some(&key));
+    }
+
+    // ── GEN-N1 (audit 2026-05-16): rotation requires continuity signature ──
+
+    /// Fresh registration (no prior key) works without continuity_signature.
+    /// This is the genesis case — nothing to roll back against.
+    #[test]
+    fn gen_n1_fresh_registration_accepted_without_continuity() {
+        use evaporchain_crypto::signatures::BlsKeypair;
+        let mut tc = make_tc();
+        let kp = BlsKeypair::generate();
+        let msg = ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: kp.public_key_bytes().0.clone(),
+            proof_of_possession: kp.proof_of_possession().0.clone(),
+            continuity_signature: Vec::new(),
+        };
+        tc.on_message(msg);
+        let registered = tc.validator_set.get(1).unwrap().bls_public_key.as_ref();
+        assert_eq!(registered, Some(&kp.public_key_bytes().0));
+    }
+
+    /// Rotation with a valid continuity signature from the OLD key
+    /// is accepted; the new key replaces the registered one.
+    #[test]
+    fn gen_n1_rotation_with_valid_continuity_accepted() {
+        use evaporchain_crypto::signatures::BlsKeypair;
+        let mut tc = make_tc();
+
+        // Step 1: register an initial key (genesis).
+        let old_kp = BlsKeypair::generate();
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: old_kp.public_key_bytes().0.clone(),
+            proof_of_possession: old_kp.proof_of_possession().0.clone(),
+            continuity_signature: Vec::new(),
+        });
+
+        // Step 2: rotate to a new key with continuity sig from old_kp.
+        let new_kp = BlsKeypair::generate();
+        let continuity_msg = TendermintConsensus::bls_continuity_message(
+            &tc.chain_id,
+            1,
+            &new_kp.public_key_bytes().0,
+        );
+        let cont_sig = old_kp.sign(&continuity_msg).0.clone();
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: new_kp.public_key_bytes().0.clone(),
+            proof_of_possession: new_kp.proof_of_possession().0.clone(),
+            continuity_signature: cont_sig,
+        });
+
+        let registered = tc.validator_set.get(1).unwrap().bls_public_key.as_ref();
+        assert_eq!(registered, Some(&new_kp.public_key_bytes().0));
+    }
+
+    /// **The GEN-N1 vulnerability:** rotation with MISSING continuity
+    /// signature must be rejected.  Pre-fix any peer could fabricate
+    /// a KeyAnnounce with a legitimate validator_id + attacker-
+    /// generated new key + valid PoP and overwrite the registered
+    /// key.  Post-fix the registered key is preserved.
+    #[test]
+    fn gen_n1_rotation_without_continuity_rejected() {
+        use evaporchain_crypto::signatures::BlsKeypair;
+        let mut tc = make_tc();
+
+        let old_kp = BlsKeypair::generate();
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: old_kp.public_key_bytes().0.clone(),
+            proof_of_possession: old_kp.proof_of_possession().0.clone(),
+            continuity_signature: Vec::new(),
+        });
+        let registered_before = tc
+            .validator_set
+            .get(1)
+            .unwrap()
+            .bls_public_key
+            .as_ref()
+            .cloned();
+
+        // Attacker forges a KeyAnnounce with no continuity_signature.
+        let attacker_kp = BlsKeypair::generate();
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: attacker_kp.public_key_bytes().0.clone(),
+            proof_of_possession: attacker_kp.proof_of_possession().0.clone(),
+            continuity_signature: Vec::new(), // ← missing
+        });
+
+        // Registered key MUST be unchanged.
+        let registered_after = tc
+            .validator_set
+            .get(1)
+            .unwrap()
+            .bls_public_key
+            .as_ref()
+            .cloned();
+        assert_eq!(
+            registered_before, registered_after,
+            "GEN-N1: rotation without continuity must NOT overwrite registered key"
+        );
+        assert_ne!(
+            registered_after.as_ref(),
+            Some(&attacker_kp.public_key_bytes().0),
+            "GEN-N1: attacker key must NOT take over registration"
+        );
+    }
+
+    /// Rotation with a continuity signature from the WRONG key
+    /// (e.g., the attacker signed with their own attacker_kp) is
+    /// rejected.  This is the realistic attack: attacker generates
+    /// new_kp + cont_sig with new_kp.sign() — but `verify` against
+    /// the OLD registered key rejects.
+    #[test]
+    fn gen_n1_rotation_with_wrong_key_continuity_rejected() {
+        use evaporchain_crypto::signatures::BlsKeypair;
+        let mut tc = make_tc();
+
+        let old_kp = BlsKeypair::generate();
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: old_kp.public_key_bytes().0.clone(),
+            proof_of_possession: old_kp.proof_of_possession().0.clone(),
+            continuity_signature: Vec::new(),
+        });
+        let registered_before = tc
+            .validator_set
+            .get(1)
+            .unwrap()
+            .bls_public_key
+            .as_ref()
+            .cloned();
+
+        // Attacker signs the continuity message with their own key, not the old one.
+        let attacker_kp = BlsKeypair::generate();
+        let continuity_msg = TendermintConsensus::bls_continuity_message(
+            &tc.chain_id,
+            1,
+            &attacker_kp.public_key_bytes().0,
+        );
+        let bad_cont_sig = attacker_kp.sign(&continuity_msg).0.clone();
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: 1,
+            bls_public_key: attacker_kp.public_key_bytes().0.clone(),
+            proof_of_possession: attacker_kp.proof_of_possession().0.clone(),
+            continuity_signature: bad_cont_sig,
+        });
+
+        let registered_after = tc
+            .validator_set
+            .get(1)
+            .unwrap()
+            .bls_public_key
+            .as_ref()
+            .cloned();
+        assert_eq!(
+            registered_before, registered_after,
+            "GEN-N1: continuity sig from the wrong key must NOT overwrite registered key"
+        );
+    }
+
+    /// Continuity message is bound to chain_id.  A continuity sig
+    /// valid on chain-A cannot be replayed against chain-B.
+    #[test]
+    fn gen_n1_continuity_message_binds_chain_id() {
+        let validator_id = 1u64;
+        let new_pk = vec![0xCC; 48];
+        let msg_a = TendermintConsensus::bls_continuity_message(
+            "evaporchain-mainnet-1",
+            validator_id,
+            &new_pk,
+        );
+        let msg_b = TendermintConsensus::bls_continuity_message(
+            "evaporchain-testnet-1",
+            validator_id,
+            &new_pk,
+        );
+        assert_ne!(
+            msg_a, msg_b,
+            "GEN-N1: continuity message must differ across chain_ids"
+        );
+    }
+
+    /// Continuity message is bound to validator_id.  A continuity sig
+    /// valid for validator 1 cannot be replayed as if it authorized
+    /// validator 2's rotation.
+    #[test]
+    fn gen_n1_continuity_message_binds_validator_id() {
+        let new_pk = vec![0xCC; 48];
+        let msg_1 = TendermintConsensus::bls_continuity_message("c", 1, &new_pk);
+        let msg_2 = TendermintConsensus::bls_continuity_message("c", 2, &new_pk);
+        assert_ne!(
+            msg_1, msg_2,
+            "GEN-N1: continuity message must differ across validator_ids"
+        );
+    }
+
+    /// Continuity message is bound to the new_pk.  A signature
+    /// authorizing rotation to key X cannot be reused to authorize
+    /// rotation to key Y.
+    #[test]
+    fn gen_n1_continuity_message_binds_new_pk() {
+        let pk_x = vec![0x11; 48];
+        let pk_y = vec![0x22; 48];
+        let msg_x = TendermintConsensus::bls_continuity_message("c", 1, &pk_x);
+        let msg_y = TendermintConsensus::bls_continuity_message("c", 1, &pk_y);
+        assert_ne!(
+            msg_x, msg_y,
+            "GEN-N1: continuity message must differ across new_pks"
+        );
+    }
+
+    /// `make_key_rotation_announce` produces a signed, verifiable rotation.
+    /// End-to-end happy-path: produce → consume → registered key updates.
+    #[test]
+    fn gen_n1_make_key_rotation_announce_roundtrips() {
+        use evaporchain_crypto::signatures::BlsKeypair;
+        let mut tc = make_tc();
+
+        let old_kp = BlsKeypair::generate();
+        tc.on_message(ConsensusMessage::KeyAnnounce {
+            validator_id: tc.my_id,
+            bls_public_key: old_kp.public_key_bytes().0.clone(),
+            proof_of_possession: old_kp.proof_of_possession().0.clone(),
+            continuity_signature: Vec::new(),
+        });
+
+        let new_kp = BlsKeypair::generate();
+        let rotation_msg = tc.make_key_rotation_announce(&old_kp, &new_kp);
+        // Sanity: continuity_signature is non-empty.
+        if let ConsensusMessage::KeyAnnounce {
+            ref continuity_signature,
+            ..
+        } = rotation_msg
+        {
+            assert!(!continuity_signature.is_empty());
+        } else {
+            panic!("expected KeyAnnounce");
+        }
+
+        tc.on_message(rotation_msg);
+        let registered = tc
+            .validator_set
+            .get(tc.my_id)
+            .unwrap()
+            .bls_public_key
+            .as_ref();
+        assert_eq!(registered, Some(&new_kp.public_key_bytes().0));
     }
 
     // ── governance_set_param: crooks_mev_beta_mb valid range ─────────────────
@@ -19996,6 +20397,7 @@ mod t1_20_batch8 {
             validator_id: 1,
             bls_public_key: registered_key,
             proof_of_possession: vec![],
+                continuity_signature: Vec::new(),
         });
         // Send attestation claiming a DIFFERENT key — must be rejected.
         let different_key = vec![0xBBu8; 48];
@@ -20256,6 +20658,7 @@ mod t1_20_batch9 {
             validator_id: 1,
             bls_public_key: vec![0xAAu8; 48],
             proof_of_possession: vec![0u8; 96],
+                continuity_signature: Vec::new(),
         });
         assert!(
             actions.is_empty(),
@@ -21012,6 +21415,7 @@ mod t1_20_batch13 {
             validator_id: 1,
             bls_public_key: vec![0u8; 48],
             proof_of_possession: vec![0u8; 48],
+                continuity_signature: Vec::new(),
         };
         assert_eq!(msg.height(), 0);
     }
@@ -21030,6 +21434,7 @@ mod t1_20_batch13 {
             validator_id: 2,
             bls_public_key: vec![0u8; 48],
             proof_of_possession: vec![],
+                continuity_signature: Vec::new(),
         };
         assert_eq!(msg.round(), 0);
     }
@@ -21749,6 +22154,7 @@ mod t1_20_batch16 {
             validator_id: 1,
             bls_public_key: bls_key.clone(),
             proof_of_possession: vec![],
+                continuity_signature: Vec::new(),
         });
         assert_eq!(tc.validator_set.get(1).unwrap().bls_public_key.as_ref(), Some(&bls_key));
     }
@@ -22502,6 +22908,7 @@ mod t1_20_batch20 {
             validator_id: 7,
             bls_public_key: vec![0u8; 48],
             proof_of_possession: vec![],
+                continuity_signature: Vec::new(),
         };
         assert_eq!(msg.height(), 0);
         assert_eq!(msg.round(), 0);
@@ -22722,6 +23129,7 @@ mod t1_20_batch21 {
             validator_id: 1,
             bls_public_key: vec![0x11u8; 48],
             proof_of_possession: vec![0u8; 96], // invalid BLS PoP → verify fails → line 4582
+            continuity_signature: Vec::new(),
         };
         let actions = tc.on_message(msg);
         assert!(actions.is_empty());
@@ -22738,6 +23146,7 @@ mod t1_20_batch21 {
             validator_id: 1,
             bls_public_key: pk.clone(),
             proof_of_possession: vec![],
+                continuity_signature: Vec::new(),
         };
         let _ = tc.on_message(msg);
         // Closing braces 4601-4602 passed; key is now registered.
