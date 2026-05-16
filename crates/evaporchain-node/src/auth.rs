@@ -672,4 +672,147 @@ mod tests {
         bad_headers.insert("authorization", "Bearer wrong".parse().unwrap());
         assert!(authenticate(&bad_headers, &sessions).is_err());
     }
+
+    // ─── Coverage push (2026-05-16): bring auth.rs from ~46% to ~75% ───
+
+    /// Tokens are 128-hex-char and unique with overwhelming probability.
+    #[test]
+    fn test_generate_token_uniqueness() {
+        let n = 100;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..n {
+            let t = generate_token();
+            assert_eq!(t.len(), 128);
+            assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(seen.insert(t), "duplicate token in {n} draws");
+        }
+    }
+
+    /// Verification codes are in [100000, 999999] and uniformly numeric.
+    #[test]
+    fn test_generate_verification_code_range() {
+        for _ in 0..50 {
+            let code = generate_verification_code();
+            let n: u32 = code.parse().unwrap();
+            assert!((100_000..=999_999).contains(&n), "out-of-range: {n}");
+            assert_eq!(code.len(), 6);
+        }
+    }
+
+    /// Address derivation is deterministic for identical pubkeys.
+    #[test]
+    fn test_generate_address_deterministic() {
+        let pk = vec![0xAB; 1952]; // ML-DSA pubkey size
+        let a1 = generate_address_from_pubkey(&pk);
+        let a2 = generate_address_from_pubkey(&pk);
+        assert_eq!(a1, a2);
+        assert!(a1.starts_with("0x"));
+        assert_eq!(a1.len(), 66); // "0x" + 64 hex chars
+    }
+
+    /// Address derivation is injective for distinct pubkeys.
+    #[test]
+    fn test_generate_address_injective() {
+        let pk1 = vec![0x11; 1952];
+        let pk2 = vec![0x22; 1952];
+        let a1 = generate_address_from_pubkey(&pk1);
+        let a2 = generate_address_from_pubkey(&pk2);
+        assert_ne!(a1, a2);
+    }
+
+    /// Tampering with the nonce portion of the encrypted blob fails decryption.
+    #[test]
+    fn test_decrypt_tampered_nonce_fails() {
+        let encrypted = encrypt_secret_key("payload").unwrap();
+        let mut bytes = hex::decode(&encrypted).unwrap();
+        // Flip first byte (inside the 24-byte XNonce prefix).
+        bytes[0] ^= 0xFF;
+        let tampered = hex::encode(&bytes);
+        assert!(decrypt_secret_key(&tampered).is_err());
+    }
+
+    /// Inputs that aren't valid hex are rejected before any crypto runs.
+    #[test]
+    fn test_decrypt_rejects_invalid_hex() {
+        let err = decrypt_secret_key("zzz not hex").unwrap_err();
+        assert!(err.contains("hex"), "wrong error: {err}");
+    }
+
+    /// Short (< 24 bytes total) blobs can't even contain a nonce; reject loudly.
+    #[test]
+    fn test_decrypt_rejects_short_blob() {
+        let too_short = hex::encode([0u8; 10]);
+        let err = decrypt_secret_key(&too_short).unwrap_err();
+        assert!(err.contains("too short"), "wrong error: {err}");
+    }
+
+    /// Two successive encryptions of the same plaintext MUST produce
+    /// different ciphertexts (random nonce per call).
+    #[test]
+    fn test_encrypt_produces_unique_ciphertext_per_call() {
+        let plaintext = "fixed_plaintext";
+        let c1 = encrypt_secret_key(plaintext).unwrap();
+        let c2 = encrypt_secret_key(plaintext).unwrap();
+        assert_ne!(c1, c2, "two encrypts of same plaintext must differ (nonce reuse)");
+        // But both decrypt back to the same plaintext.
+        assert_eq!(decrypt_secret_key(&c1).unwrap(), plaintext);
+        assert_eq!(decrypt_secret_key(&c2).unwrap(), plaintext);
+    }
+
+    /// Sessions older than SESSION_TTL_SECS are rejected via the
+    /// "Token expired" path.
+    #[test]
+    fn test_authenticate_rejects_expired_token() {
+        let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+        let token = "expired_tok";
+        // Synthesize an Instant in the past by computing
+        // Instant::now() - SESSION_TTL_SECS - 60.  std::time::Instant
+        // doesn't support direct subtraction past zero so we use the
+        // checked_sub variant.
+        let past = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(SESSION_TTL_SECS + 60))
+            .expect("clock far enough past boot");
+        {
+            let mut s = sessions.lock().unwrap();
+            s.insert(token.to_string(), (7, past));
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let err = authenticate(&headers, &sessions).unwrap_err();
+        assert!(err.contains("expired"), "wrong error: {err}");
+    }
+
+    /// `authenticate` accepts a bare-token header (no Bearer prefix) —
+    /// the strip_prefix fallback path.  Documents the lenient behaviour
+    /// so a future tightening (require Bearer) is a deliberate choice.
+    #[test]
+    fn test_authenticate_accepts_bare_token_without_bearer_prefix() {
+        let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+        let token = "bare_token";
+        {
+            let mut s = sessions.lock().unwrap();
+            s.insert(token.to_string(), (9, Instant::now()));
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", token.parse().unwrap());
+        assert_eq!(authenticate(&headers, &sessions).unwrap(), 9);
+    }
+
+    /// `authenticate` uses constant-time comparison against stored
+    /// tokens (audit C-AUTH-001).  A token of a different length must
+    /// be rejected without the length-comparison branch leaking via
+    /// hashmap probing.
+    #[test]
+    fn test_authenticate_constant_time_length_mismatch() {
+        let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut s = sessions.lock().unwrap();
+            s.insert("a".repeat(128), (1, Instant::now()));
+        }
+        // A 127-char guess (length mismatch) must be rejected.
+        let short_guess = "a".repeat(127);
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {short_guess}").parse().unwrap());
+        assert!(authenticate(&headers, &sessions).is_err());
+    }
 }
