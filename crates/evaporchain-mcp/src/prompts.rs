@@ -133,6 +133,113 @@ mod tests {
             assert_eq!(arg["required"], false);
         }
     }
+
+    // ─── Coverage push (2026-05-16): lift prompts.rs from ~26% ───
+
+    fn find_prompt(name: &str) -> Value {
+        let prompts = list_prompts();
+        prompts["prompts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("prompt not found: {name}"))
+    }
+
+    /// Each prompt name is a valid identifier shape (lowercase + underscores).
+    #[test]
+    fn test_prompt_names_are_snake_case_identifiers() {
+        for p in list_prompts()["prompts"].as_array().unwrap() {
+            let name = p["name"].as_str().unwrap();
+            assert!(!name.is_empty(), "prompt name is empty");
+            assert!(
+                name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "prompt name '{name}' is not snake_case"
+            );
+        }
+    }
+
+    /// All 6 prompts have non-empty, human-readable descriptions.
+    #[test]
+    fn test_prompt_descriptions_non_empty() {
+        for p in list_prompts()["prompts"].as_array().unwrap() {
+            let desc = p["description"].as_str().unwrap();
+            assert!(desc.len() > 20, "description too short for {}", p["name"]);
+        }
+    }
+
+    /// explore_chain takes no arguments.
+    #[test]
+    fn test_explore_chain_has_zero_arguments() {
+        let p = find_prompt("explore_chain");
+        assert_eq!(p["arguments"].as_array().unwrap().len(), 0);
+    }
+
+    /// chain_health_report takes no arguments.
+    #[test]
+    fn test_chain_health_report_has_zero_arguments() {
+        let p = find_prompt("chain_health_report");
+        assert_eq!(p["arguments"].as_array().unwrap().len(), 0);
+    }
+
+    /// viability_audit takes no arguments.
+    #[test]
+    fn test_viability_audit_has_zero_arguments() {
+        let p = find_prompt("viability_audit");
+        assert_eq!(p["arguments"].as_array().unwrap().len(), 0);
+    }
+
+    /// consensus_phase_investigation takes no arguments.
+    #[test]
+    fn test_consensus_phase_investigation_has_zero_arguments() {
+        let p = find_prompt("consensus_phase_investigation");
+        assert_eq!(p["arguments"].as_array().unwrap().len(), 0);
+    }
+
+    /// oracle_data_analysis takes 1 optional argument: `staleness_threshold_secs`.
+    #[test]
+    fn test_oracle_data_analysis_argument_shape() {
+        let p = find_prompt("oracle_data_analysis");
+        let args = p["arguments"].as_array().unwrap();
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0]["name"], "staleness_threshold_secs");
+        assert_eq!(args[0]["required"], false);
+    }
+
+    /// `get_prompt` returns a clear error for an unknown prompt name.
+    /// Exercises the dispatcher's `_ => Err(...)` fallback path.
+    #[tokio::test]
+    async fn test_get_prompt_unknown_name_returns_err() {
+        // Context construction is non-trivial; for an error-path test
+        // we want the dispatcher to fail BEFORE reaching any ctx call.
+        // The match arm fires on `name` validation, which happens before
+        // ctx is used, so a stub Context is sufficient.  Build the
+        // smallest possible:
+        use crate::protocol::Context;
+        let ctx = Context {
+            node_url: "http://127.0.0.1:1".into(),
+            client: reqwest::Client::new(),
+            api_token: None,
+        };
+        let err = get_prompt(&ctx, &json!({"name": "no_such_prompt"}))
+            .await
+            .unwrap_err();
+        assert!(err.contains("Unknown prompt"), "wrong error: {err}");
+    }
+
+    /// `get_prompt` returns a clear error when the `name` parameter is missing.
+    #[tokio::test]
+    async fn test_get_prompt_missing_name_returns_err() {
+        use crate::protocol::Context;
+        let ctx = Context {
+            node_url: "http://127.0.0.1:1".into(),
+            client: reqwest::Client::new(),
+            api_token: None,
+        };
+        let err = get_prompt(&ctx, &json!({})).await.unwrap_err();
+        assert!(err.contains("name"), "wrong error: {err}");
+    }
 }
 
 async fn get_explore_chain(ctx: &Context) -> Result<Value, String> {
