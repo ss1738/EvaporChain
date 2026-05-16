@@ -87,9 +87,9 @@ pub fn fee_for(typed: &TypedInit) -> u64 {
             target_bytes.saturating_mul(PER_SCL_TARGET_BYTE)
         }
         TypedInit::Sfsv(c) => {
-            // Predicate string length contributes too; SFSV's
-            // predicate is the on-chain release condition.
-            (c.predicate.len() as u64).saturating_mul(PER_FRAGMENT_BYTE)
+            // future_self address is the only variable-length field
+            // (predicate_type + release_param + deposit_amount are all u64 — fixed).
+            (c.future_self.len() as u64).saturating_mul(PER_FRAGMENT_BYTE)
         }
         // ── Fixed-shape primitives ──────────────────────────────
         _ => 0,
