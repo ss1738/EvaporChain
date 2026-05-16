@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<!--
+  SFSV reference dApp UI — single-file view layer.
+  Closes gap #4 from research/SFSV_ARCHITECTURE.md §10.2.
+
+  No framework. No build step. No npm. Open this file in any modern
+  browser; configure the node URL + auth token; lock and reclaim.
+
+  ## Run options
+    Local file:    open crates/evaporchain-sfsv/ui/index.html
+    Static server: python3 -m http.server -d crates/evaporchain-sfsv/ui 8080
+    With node:     ./scripts/launch-devnet.sh & then open this file
+
+  ## API surface used
+    POST /api/tx/deploy-script             — Lock step: deploys .es contract
+    POST /api/tx/call-script               — Lock step: set_terms(); reclaim: try_payout()
+    GET  /api/tx/:hash                     — Status polling
+    GET  /api/contract/by-deploy/:hash     — Resolve contract addr post-deploy
+    GET  /api/contract/:addr/state         — Live vault state
+
+  ## Forkability
+    See ../README.md "Fork recipe" — this file ports verbatim to any
+    other decay-dApp with the .es contract source path changed and the
+    Lock form fields renamed to match the domain.
+-->
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SFSV — Self-Future-Self Vault</title>
+<style>
+  /* clean, light, professional — per CLAUDE.md UI rule (no dark themes
+     except Premier & Maple Care). System fonts; no web-font fetch. */
+  :root {
+    --bg: #fafafa;
+    --fg: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --accent-fg: #ffffff;
+    --good: #15803d;
+    --bad: #b91c1c;
+    --warn: #b45309;
+    --code-bg: #f3f4f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 4rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+          system-ui, sans-serif;
+    max-width: 880px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 0.875rem;
+    margin-bottom: 2rem;
+  }
+  .sub code {
+    background: var(--code-bg);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.8rem;
+  }
+  section {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1rem;
+  }
+  h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  h2 .num {
+    display: inline-flex;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-fg);
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+  }
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin: 0.5rem 0 0.25rem;
+  }
+  input[type="text"], input[type="number"], select {
+    width: 100%;
+    padding: 0.5rem 0.625rem;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+    color: var(--fg);
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+  button {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 4px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 0.75rem;
+  }
+  button:hover  { filter: brightness(1.05); }
+  button:active { filter: brightness(0.95); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary {
+    background: #fff;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  pre, .log {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem;
+    font-size: 0.78rem;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 14rem;
+    overflow-y: auto;
+  }
+  .status-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1rem;
+    font-size: 0.85rem;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .status-grid dt { color: var(--muted); }
+  .status-grid dd { margin: 0; word-break: break-all; }
+  .pill {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .pill.locked   { background: #fef3c7; color: var(--warn); }
+  .pill.released { background: #dcfce7; color: var(--good); }
+  .pill.unknown  { background: #f3f4f6; color: var(--muted); }
+  .err {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: var(--bad);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+  }
+  footer {
+    margin-top: 2rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-align: center;
+  }
+  footer a { color: var(--muted); text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>SFSV — Self-Future-Self Vault</h1>
+<p class="sub">
+  Reference dApp for EvaporChain's energy-decay primitive.
+  Pairs with <code>research/SFSV_ARCHITECTURE.md</code> and the
+  <code>future_self_vault.es</code> contract.
+</p>
+
+<section>
+  <h2><span class="num">⚙</span> Connection</h2>
+  <label for="node-url">Node URL</label>
+  <input id="node-url" type="text" placeholder="http://127.0.0.1:9001"
+         value="http://127.0.0.1:9001" />
+  <div class="row">
+    <div>
+      <label for="auth-token">Auth token <span style="color:var(--muted)">(optional)</span></label>
+      <input id="auth-token" type="text" placeholder="EVAPORCHAIN_TX_TOKEN" />
+    </div>
+    <div>
+      <label for="caller-addr">Caller address (32-byte hex)</label>
+      <input id="caller-addr" type="text" placeholder="0x…" />
+    </div>
+  </div>
+  <button id="probe-btn" class="secondary">Probe node</button>
+  <div id="probe-result"></div>
+</section>
+
+<section>
+  <h2><span class="num">1</span> Lock</h2>
+  <label for="future-self">Future-self / beneficiary address</label>
+  <input id="future-self" type="text" placeholder="0x… (defaults to caller)" />
+
+  <div class="row">
+    <div>
+      <label for="predicate">Predicate</label>
+      <select id="predicate">
+        <option value="0">0 — EpochReached</option>
+        <option value="1">1 — EnergyDecaysBelow</option>
+      </select>
+    </div>
+    <div>
+      <label for="release-param">Release param
+        <span style="color:var(--muted)">(epoch or threshold)</span>
+      </label>
+      <input id="release-param" type="number" min="1" value="200" />
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label for="energy">Initial energy</label>
+      <input id="energy" type="number" min="1" value="1000000" />
+    </div>
+    <div>
+      <label for="half-life">Half-life (epochs)</label>
+      <input id="half-life" type="number" min="1" value="64" />
+    </div>
+  </div>
+
+  <label for="deposit">Deposit (snapshot)</label>
+  <input id="deposit" type="number" min="1" value="1000" />
+
+  <button id="lock-btn">Lock vault</button>
+  <div id="lock-result"></div>
+</section>
+
+<section>
+  <h2><span class="num">2</span> Reclaim</h2>
+  <label for="contract-addr">Contract address</label>
+  <input id="contract-addr" type="text" placeholder="0x… (filled after Lock)" />
+  <button id="reclaim-btn">Try reclaim (try_payout)</button>
+  <div id="reclaim-result"></div>
+</section>
+
+<section>
+  <h2><span class="num">3</span> Live vault state</h2>
+  <dl class="status-grid" id="status-grid">
+    <dt>Contract</dt><dd id="s-contract">—</dd>
+    <dt>Status</dt><dd><span id="s-status" class="pill unknown">unknown</span></dd>
+    <dt>Epoch</dt><dd id="s-epoch">—</dd>
+    <dt>Energy</dt><dd id="s-energy">—</dd>
+    <dt>Predicate satisfied</dt><dd id="s-pred">—</dd>
+    <dt>Released at</dt><dd id="s-released-at">—</dd>
+    <dt>Current holder</dt><dd id="s-holder">—</dd>
+  </dl>
+  <button id="refresh-btn" class="secondary">Refresh now</button>
+  <label style="margin-top:0.5rem; display:flex; align-items:center; gap:0.4rem">
+    <input id="auto-refresh" type="checkbox" checked />
+    auto-refresh every 3s
+  </label>
+</section>
+
+<section>
+  <h2><span class="num">📜</span> Activity</h2>
+  <div id="log" class="log">No activity yet.</div>
+</section>
+
+<footer>
+  Closes gap #4 from <code>research/SFSV_ARCHITECTURE.md</code> §10.2 ·
+  no framework, no build step, no npm ·
+  fork via <a href="../README.md">../README.md</a>
+</footer>
+
+<script>
+(() => {
+  "use strict";
+
+  // ── DOM refs ─────────────────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
+  const nodeUrlEl     = $("node-url");
+  const tokenEl       = $("auth-token");
+  const callerEl      = $("caller-addr");
+  const futureSelfEl  = $("future-self");
+  const predicateEl   = $("predicate");
+  const releaseEl     = $("release-param");
+  const energyEl      = $("energy");
+  const halfLifeEl    = $("half-life");
+  const depositEl     = $("deposit");
+  const contractEl    = $("contract-addr");
+  const probeBtn      = $("probe-btn");
+  const probeResult   = $("probe-result");
+  const lockBtn       = $("lock-btn");
+  const lockResult    = $("lock-result");
+  const reclaimBtn    = $("reclaim-btn");
+  const reclaimResult = $("reclaim-result");
+  const refreshBtn    = $("refresh-btn");
+  const autoRefresh   = $("auto-refresh");
+  const logEl         = $("log");
+
+  let logBuf = [];
+  const log = (msg) => {
+    const t = new Date().toISOString().slice(11, 19);
+    logBuf.unshift(`[${t}] ${msg}`);
+    logBuf = logBuf.slice(0, 80);
+    logEl.textContent = logBuf.join("\n");
+  };
+
+  // ── Persistence — remember the connection fields across reloads ─
+  const STORAGE_KEY = "sfsv_ui_v1";
+  const PERSIST = ["node-url", "auth-token", "caller-addr", "contract-addr"];
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    PERSIST.forEach((id) => {
+      if (saved[id] != null) $(id).value = saved[id];
+    });
+  } catch (e) { /* corrupt storage — ignore */ }
+
+  const persist = () => {
+    const out = {};
+    PERSIST.forEach((id) => { out[id] = $(id).value; });
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(out)); } catch (e) {}
+  };
+  PERSIST.forEach((id) => $(id).addEventListener("change", persist));
+
+  // ── HTTP helper ─────────────────────────────────────────────────
+  const apiCall = async (path, opts = {}) => {
+    const url = nodeUrlEl.value.replace(/\/$/, "") + path;
+    const headers = { ...(opts.headers || {}) };
+    if (opts.body) headers["Content-Type"] = "application/json";
+    const tok = tokenEl.value.trim();
+    if (tok) headers["Authorization"] = "Bearer " + tok;
+    const t0 = performance.now();
+    let resp;
+    try {
+      resp = await fetch(url, { ...opts, headers });
+    } catch (e) {
+      throw new Error(`network: ${e.message}`);
+    }
+    const ms = Math.round(performance.now() - t0);
+    const text = await resp.text();
+    log(`${opts.method || "GET"} ${path} → ${resp.status} (${ms}ms)`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+    try { return text ? JSON.parse(text) : {}; }
+    catch (e) { throw new Error(`non-JSON response: ${text.slice(0, 200)}`); }
+  };
+
+  // ── Inline status rendering ─────────────────────────────────────
+  const showErr = (target, msg) => {
+    target.innerHTML = `<div class="err">${escapeHtml(msg)}</div>`;
+  };
+  const escapeHtml = (s) => String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  // ── Probe node ──────────────────────────────────────────────────
+  probeBtn.addEventListener("click", async () => {
+    probeResult.innerHTML = "";
+    try {
+      const v = await apiCall("/api/version");
+      probeResult.innerHTML = `<div class="log">Reachable. version=${escapeHtml(JSON.stringify(v))}</div>`;
+    } catch (e) {
+      showErr(probeResult, "Cannot reach node: " + e.message);
+    }
+  });
+
+  // ── Lock flow ────────────────────────────────────────────────────
+  lockBtn.addEventListener("click", async () => {
+    lockResult.innerHTML = "";
+    lockBtn.disabled = true;
+    try {
+      if (!callerEl.value) throw new Error("caller address required");
+      const fs = futureSelfEl.value || callerEl.value;
+
+      // Step 1: deploy script.
+      // The .es source is FETCHED from the workspace via a relative
+      // path so this UI ports verbatim across forks. If the file:///
+      // origin blocks the fetch (some browsers), use a static server
+      // (`python3 -m http.server`) from the workspace root.
+      log("Fetching contract source…");
+      const src = await fetch("../../../contracts/evaporscript/future_self_vault.es")
+        .then(r => r.ok ? r.text() : Promise.reject(new Error("fetch .es: " + r.status)));
+
+      log("POST /api/tx/deploy-script");
+      const deploy = await apiCall("/api/tx/deploy-script", {
+        method: "POST",
+        body: JSON.stringify({
+          deployer: callerEl.value,
+          source_code: src,
+          energy: Number(energyEl.value),
+          half_life: Number(halfLifeEl.value),
+        }),
+      });
+      if (!deploy.success || !deploy.tx_hash) {
+        throw new Error("deploy rejected: " + (deploy.message || "(no message)"));
+      }
+      log(`Deploy tx: ${deploy.tx_hash}`);
+
+      // Step 2: resolve contract addr (chain indexer link).
+      const addr = await pollContractAddr(deploy.tx_hash);
+      contractEl.value = addr;
+      persist();
+      log(`Contract deployed: ${addr}`);
+
+      // Step 3: set_terms.
+      log("POST /api/tx/call-script (set_terms)");
+      const seal = await apiCall("/api/tx/call-script", {
+        method: "POST",
+        body: JSON.stringify({
+          caller: callerEl.value,
+          contract: addr,
+          method: "set_terms",
+          args: [fs, Number(predicateEl.value), Number(releaseEl.value), Number(depositEl.value)],
+        }),
+      });
+      if (!seal.success) {
+        throw new Error("set_terms rejected: " + (seal.message || "(no message)"));
+      }
+      log(`Sealed: ${seal.tx_hash}`);
+      lockResult.innerHTML = `<div class="log">✓ Vault locked at ${escapeHtml(addr)}</div>`;
+    } catch (e) {
+      showErr(lockResult, e.message);
+    } finally {
+      lockBtn.disabled = false;
+    }
+  });
+
+  // Poll the chain's deploy-by-hash index for up to 60s.
+  const pollContractAddr = async (hash) => {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try {
+        const r = await apiCall("/api/contract/by-deploy/" + hash);
+        if (r.contract_addr) return r.contract_addr;
+      } catch (e) { /* keep polling */ }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    throw new Error("deploy not indexed within 60s");
+  };
+
+  // ── Reclaim flow ────────────────────────────────────────────────
+  reclaimBtn.addEventListener("click", async () => {
+    reclaimResult.innerHTML = "";
+    reclaimBtn.disabled = true;
+    try {
+      if (!callerEl.value) throw new Error("caller address required");
+      const addr = contractEl.value;
+      if (!addr) throw new Error("contract address required");
+
+      log("POST /api/tx/call-script (try_payout)");
+      const r = await apiCall("/api/tx/call-script", {
+        method: "POST",
+        body: JSON.stringify({
+          caller: callerEl.value,
+          contract: addr,
+          method: "try_payout",
+          args: [],
+        }),
+      });
+      if (!r.success) {
+        throw new Error("try_payout rejected: " + (r.message || "(no message)"));
+      }
+      log(`Reclaim tx: ${r.tx_hash}`);
+      reclaimResult.innerHTML = `<div class="log">✓ Reclaim submitted (${escapeHtml(r.tx_hash)}).
+Watch the state panel for released=true.</div>`;
+    } catch (e) {
+      showErr(reclaimResult, e.message);
+    } finally {
+      reclaimBtn.disabled = false;
+    }
+  });
+
+  // ── Live state poll ─────────────────────────────────────────────
+  const refresh = async () => {
+    const addr = contractEl.value;
+    if (!addr) return;
+    try {
+      const s = await apiCall("/api/contract/" + addr + "/state");
+      $("s-contract").textContent     = addr;
+      $("s-epoch").textContent        = s.epoch_now ?? "—";
+      $("s-energy").textContent       = s.energy ?? "—";
+      $("s-pred").textContent         = s.predicate_satisfied ?? "—";
+      $("s-released-at").textContent  = s.payout_at ?? (s.released ? "?" : "—");
+      $("s-holder").textContent       = s.holder ?? "—";
+      const pill = $("s-status");
+      if (s.released === true || s.released === 1) {
+        pill.textContent = "released";
+        pill.className = "pill released";
+      } else if (s.sealed === true || s.sealed === 1) {
+        pill.textContent = "locked";
+        pill.className = "pill locked";
+      } else {
+        pill.textContent = "unsealed";
+        pill.className = "pill unknown";
+      }
+    } catch (e) {
+      // silent on poll error — keep the last good values
+    }
+  };
+  refreshBtn.addEventListener("click", refresh);
+
+  let pollHandle = null;
+  const setPoll = (on) => {
+    if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+    if (on) pollHandle = setInterval(refresh, 3000);
+  };
+  autoRefresh.addEventListener("change", () => setPoll(autoRefresh.checked));
+  setPoll(autoRefresh.checked);
+
+  log("UI ready. Configure connection + lock a vault, or paste a contract address to inspect.");
+})();
+</script>
+</body>
+</html>
