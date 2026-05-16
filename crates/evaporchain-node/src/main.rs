@@ -518,7 +518,7 @@ fn obj_id(b: u8) -> [u8; 32] {
 
 fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
     use api::{
-        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        parse_swap_addr, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
         GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
     };
     use evaporchain_state::db::StateDB;
@@ -531,7 +531,7 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
         (GENESIS_COMMUNITY, 38_916),
     ];
     for (hex, balance) in &accounts {
-        let address = parse_hex_address(hex).expect("invalid demo address");
+        let address = parse_swap_addr(hex).expect("invalid demo address").1;
         if db.get_account(&address).is_none() {
             db.put_account(Account {
                 address,
@@ -552,7 +552,7 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
 
 fn seed_demo_objects(db: &mut RocksDBStateDB, node_tag: &str) {
     use api::{
-        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        parse_swap_addr, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
         GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
     };
     use evaporchain_state::db::StateDB;
@@ -595,7 +595,7 @@ fn seed_demo_objects(db: &mut RocksDBStateDB, node_tag: &str) {
         if db.get_object(&id).is_some() {
             continue;
         }
-        let owner = parse_hex_address(owner_hex).unwrap();
+        let owner = parse_swap_addr(owner_hex).unwrap().1;
         db.put_object(StateObject {
             id,
             owner,
@@ -655,7 +655,7 @@ fn encode_block_2d(
 
 fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
     use api::{
-        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        parse_swap_addr, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
         GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
     };
 
@@ -684,7 +684,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
         (GENESIS_COMMUNITY, 38_916),
     ];
     for (hex, balance) in &accounts {
-        let address = parse_hex_address(hex).expect("invalid genesis address");
+        let address = parse_swap_addr(hex).expect("invalid genesis address").1;
         db.put_account(Account {
             address,
             balance: *balance,
@@ -734,7 +734,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
     ];
 
     for (oid, owner_hex, energy, half_life, label) in &objects {
-        let owner = parse_hex_address(owner_hex).expect("invalid genesis address");
+        let owner = parse_swap_addr(owner_hex).expect("invalid genesis address").1;
         db.put_object(StateObject {
             id: obj_id(*oid),
             owner,
@@ -926,7 +926,7 @@ fn generate_demo_tx(
     chain_id: &str,
 ) -> Option<Transaction> {
     use api::{
-        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        parse_swap_addr, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
         GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
     };
     use evaporchain_state::db::StateDB;
@@ -979,8 +979,8 @@ fn generate_demo_tx(
             while ti == from_global {
                 ti = rng.gen_range(0..all_hexes.len());
             }
-            let from = parse_hex_address(my_accts[fi]).unwrap();
-            let to = parse_hex_address(all_hexes[ti]).unwrap();
+            let from = parse_swap_addr(my_accts[fi]).unwrap().1;
+            let to = parse_swap_addr(all_hexes[ti]).unwrap().1;
             // Read on-chain balance and nonce
             let (balance, nonce) = {
                 let db_guard = safe_lock(db);
@@ -1019,7 +1019,7 @@ fn generate_demo_tx(
             let energy = rng.gen_range(15..120);
             let half_life = rng.gen_range(500..5000);
             let ci = rng.gen_range(0..my_accts.len());
-            let creator = parse_hex_address(my_accts[ci]).unwrap();
+            let creator = parse_swap_addr(my_accts[ci]).unwrap().1;
             let prefix = prefixes[rng.gen_range(0..prefixes.len())];
             let name = format!(
                 "{}v{}:0x{:02x}{:02x}",
