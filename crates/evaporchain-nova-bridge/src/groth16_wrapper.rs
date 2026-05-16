@@ -237,6 +237,51 @@ mod tests {
         assert!(!rejected, "verify must reject a proof against tampered public inputs");
     }
 
+    /// `public_inputs_for` returns exactly the two committed-hash
+    /// entries when z0 and zi are empty.
+    #[test]
+    fn public_inputs_for_empty_state_yields_only_hashes() {
+        let circuit = NovaVerifierCircuit::new(
+            1,
+            vec![],
+            vec![],
+            Bn254Fr::from(7u64),
+            Bn254Fr::from(11u64),
+        );
+        let pi = public_inputs_for(&circuit);
+        assert_eq!(pi, vec![Bn254Fr::from(7u64), Bn254Fr::from(11u64)]);
+    }
+
+    /// Tampering the *second* hash slot also rejects. Existing
+    /// tampered-input test only flips slot 0.
+    #[test]
+    fn verify_rejects_tampered_secondary_hash() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(404);
+        let (pk, vk) = setup(&mut rng).expect("setup");
+        let dummy = NovaVerifierCircuit::dummy();
+        let mut public_inputs = public_inputs_for(&dummy);
+        let proof = prove(&pk, dummy, &mut rng).expect("prove");
+        public_inputs[1] = Bn254Fr::from(99u64);
+        assert!(!verify(&vk, &public_inputs, &proof).expect("verify"));
+    }
+
+    /// A proof under one setup must not verify against a different
+    /// setup's vk.
+    #[test]
+    fn verify_rejects_proof_against_wrong_vk() {
+        let mut rng_a = ark_std::rand::rngs::StdRng::seed_from_u64(11);
+        let mut rng_b = ark_std::rand::rngs::StdRng::seed_from_u64(22);
+        let (pk_a, _vk_a) = setup(&mut rng_a).expect("setup a");
+        let (_pk_b, vk_b) = setup(&mut rng_b).expect("setup b");
+        let dummy = NovaVerifierCircuit::dummy();
+        let pi = public_inputs_for(&dummy);
+        let proof = prove(&pk_a, dummy, &mut rng_a).expect("prove with pk_a");
+        assert!(
+            !verify(&vk_b, &pi, &proof).expect("verify against wrong vk"),
+            "proof under setup A must not verify under setup B's vk"
+        );
+    }
+
     /// `public_inputs_for` honours the circuit's allocation order:
     /// [hash_primary, hash_secondary, z0[..], zi[..]]. Pin the
     /// exact layout for a circuit with non-trivial arity so future
