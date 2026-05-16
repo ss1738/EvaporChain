@@ -70,10 +70,25 @@ pub enum EngineError {
     ParseFailed(String),
 }
 
+/// SUB-N2 (audit 2026-05-15): cap init calldata before any `parse()` call.
+/// Each `parse()` calls `serde_json::from_slice(calldata)` with no length
+/// pre-flight; multi-MB calldata forces parse-tree allocation before any
+/// gas check, enabling a DoS via 20 × `O(N)` allocs at dispatch time.
+pub const MAX_INIT_CALLDATA: usize = 65_536; // 64 KiB
+
 /// Dispatch an instruction to the right typed handler.
 pub fn materialise(instr: &MaterialiseInstruction) -> Result<TypedInit, EngineError> {
     let cls = instr.template_class;
     let cd = instr.init_calldata.as_slice();
+
+    // SUB-N2: enforce calldata size cap before delegating to any parse().
+    if cd.len() > MAX_INIT_CALLDATA {
+        return Err(EngineError::ParseFailed(format!(
+            "init calldata too large: {} bytes (max {})",
+            cd.len(),
+            MAX_INIT_CALLDATA
+        )));
+    }
 
     let typed = if cls == SINGH_SABI {
         TypedInit::SinghSabi(init_singh_sabi::parse(cd).map_err(parse_err)?)
