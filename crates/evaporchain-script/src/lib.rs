@@ -60,15 +60,19 @@ impl Value {
 
     /// Convert a value to a string key for map indexing.
     /// Type-prefixed to prevent cross-type collisions (e.g. U64(42) vs Str("42")).
-    pub fn to_map_key(&self) -> String {
+    /// Returns `None` for Map/Array — composite values cannot be map keys because
+    /// `Value::Map(_)` always produced `"m:map"` and `Value::Array(_)` always
+    /// produced `"r:array"`, causing every Map / every Array to alias the same
+    /// slot (SCR-N4, audit 2026-05-15).
+    pub fn to_map_key(&self) -> Option<String> {
         match self {
-            Value::U64(n) => format!("u:{n}"),
-            Value::Bool(b) => format!("b:{b}"),
-            Value::Str(s) => format!("s:{s}"),
-            Value::Address(a) => format!("a:{}", hex::encode(a)),
-            Value::Null => "n:null".to_string(),
-            Value::Map(_) => "m:map".to_string(),
-            Value::Array(_) => "r:array".to_string(),
+            Value::U64(n) => Some(format!("u:{n}")),
+            Value::Bool(b) => Some(format!("b:{b}")),
+            Value::Str(s) => Some(format!("s:{s}")),
+            Value::Address(a) => Some(format!("a:{}", hex::encode(a))),
+            Value::Null => Some("n:null".to_string()),
+            // SCR-N4: Map and Array are not valid map keys.
+            Value::Map(_) | Value::Array(_) => None,
         }
     }
 }
@@ -470,6 +474,14 @@ impl ExternalCaller for ContractCallRouter {
             call_depth,
         };
 
+        // SCR-N3 (audit 2026-05-15): snapshot before executing so that
+        // any sub-call patches accumulated during this contract's run can
+        // be rolled back atomically if this call errors. Without the
+        // snapshot, B's patches stay in the router even when A (the
+        // parent that called B) ultimately fails, breaking call atomicity.
+        let patches_before = self.state_patches.len();
+        let events_before = self.collected_events.len();
+
         self.active_calls.insert(contract_id);
         // SCR-N1: tag the inner VM with `executing_contract_id =
         // contract_id` so any further nested call from this contract
@@ -486,17 +498,21 @@ impl ExternalCaller for ContractCallRouter {
             contract_id,
         );
         self.active_calls.remove(&contract_id);
-        let result = result?;
 
-        self.state_patches.push((contract_id, result.state_changes));
-        self.collected_events
-            .extend(result.structured_events.clone());
-
-        Ok((
-            result.return_value,
-            result.structured_events,
-            result.gas_used,
-        ))
+        match result {
+            Ok(res) => {
+                self.state_patches.push((contract_id, res.state_changes));
+                self.collected_events.extend(res.structured_events.clone());
+                Ok((res.return_value, res.structured_events, res.gas_used))
+            }
+            Err(e) => {
+                // Roll back any sub-call patches accumulated during this
+                // contract's execution. They must not outlive the failed call.
+                self.state_patches.truncate(patches_before);
+                self.collected_events.truncate(events_before);
+                Err(e)
+            }
+        }
     }
 }
 
@@ -1321,34 +1337,45 @@ mod map_key_collision_tests {
     /// C-05: U64(42) and Str("42") must produce different map keys.
     #[test]
     fn test_c05_u64_and_str_produce_different_keys() {
-        let key_u64 = Value::U64(42).to_map_key();
-        let key_str = Value::Str("42".to_string()).to_map_key();
+        let key_u64 = Value::U64(42).to_map_key().unwrap();
+        let key_str = Value::Str("42".to_string()).to_map_key().unwrap();
         assert_ne!(
             key_u64, key_str,
             "U64(42) and Str(\"42\") must hash to different map keys, got both = {key_u64}"
         );
     }
 
-    /// C-05: All variant prefixes must be distinct.
+    /// C-05: Scalar prefixes must be distinct; Map/Array return None (SCR-N4).
     #[test]
     fn test_c05_all_type_prefixes_distinct() {
-        let keys = [
+        // Map and Array now return None — excluded from prefix-uniqueness check.
+        let keys: Vec<String> = [
             Value::U64(0).to_map_key(),
             Value::Bool(false).to_map_key(),
             Value::Str("0".to_string()).to_map_key(),
             Value::Address([0u8; 32]).to_map_key(),
             Value::Null.to_map_key(),
-            Value::Map(HashMap::new()).to_map_key(),
-            Value::Array(Vec::new()).to_map_key(),
-        ];
+        ]
+        .into_iter()
+        .map(|opt| opt.expect("scalar variants must return Some"))
+        .collect();
         // Extract the prefix (everything before first ':')
         let prefixes: Vec<&str> = keys.iter().map(|k| k.split(':').next().unwrap()).collect();
         let unique: std::collections::HashSet<&str> = prefixes.iter().copied().collect();
         assert_eq!(
             prefixes.len(),
             unique.len(),
-            "all type prefixes must be unique, got: {:?}",
+            "all scalar type prefixes must be unique, got: {:?}",
             prefixes
+        );
+        // Map and Array must return None (SCR-N4 fix).
+        assert!(
+            Value::Map(HashMap::new()).to_map_key().is_none(),
+            "Map must not be usable as a map key"
+        );
+        assert!(
+            Value::Array(Vec::new()).to_map_key().is_none(),
+            "Array must not be usable as a map key"
         );
     }
 
@@ -1411,10 +1438,10 @@ contract MapTest {
     /// C-05: Verify that the type prefix format is stable (regression guard).
     #[test]
     fn test_c05_key_format_stability() {
-        assert_eq!(Value::U64(42).to_map_key(), "u:42");
-        assert_eq!(Value::Str("42".to_string()).to_map_key(), "s:42");
-        assert_eq!(Value::Bool(true).to_map_key(), "b:true");
-        assert_eq!(Value::Null.to_map_key(), "n:null");
+        assert_eq!(Value::U64(42).to_map_key().unwrap(), "u:42");
+        assert_eq!(Value::Str("42".to_string()).to_map_key().unwrap(), "s:42");
+        assert_eq!(Value::Bool(true).to_map_key().unwrap(), "b:true");
+        assert_eq!(Value::Null.to_map_key().unwrap(), "n:null");
     }
 
     // ─── Value accessor invariants ────────────────────────────────────────
@@ -1494,7 +1521,7 @@ contract MapTest {
     #[test]
     fn test_value_to_map_key_address_full_hex() {
         let addr = [0xCDu8; 32];
-        let key = Value::Address(addr).to_map_key();
+        let key = Value::Address(addr).to_map_key().unwrap();
         assert!(key.starts_with("a:"));
         // 32 bytes → 64 hex chars
         assert_eq!(key.len(), 2 + 64);
@@ -1601,17 +1628,18 @@ contract Tiny {
     }
 
     /// T1.20 — Value::to_map_key for every variant (covers all
-    /// arms in the to_map_key match, lines 63-71).
+    /// arms in the to_map_key match).
     #[test]
     fn t1_20_value_to_map_key_all_variants() {
-        assert_eq!(Value::U64(42).to_map_key(), "u:42");
-        assert_eq!(Value::Bool(true).to_map_key(), "b:true");
-        assert_eq!(Value::Str("foo".into()).to_map_key(), "s:foo");
+        assert_eq!(Value::U64(42).to_map_key().unwrap(), "u:42");
+        assert_eq!(Value::Bool(true).to_map_key().unwrap(), "b:true");
+        assert_eq!(Value::Str("foo".into()).to_map_key().unwrap(), "s:foo");
         let mut a = [0u8; 32];
         a[0] = 0xAB;
-        assert!(Value::Address(a).to_map_key().starts_with("a:"));
-        assert_eq!(Value::Null.to_map_key(), "n:null");
-        assert_eq!(Value::Map(Default::default()).to_map_key(), "m:map");
-        assert_eq!(Value::Array(vec![]).to_map_key(), "r:array");
+        assert!(Value::Address(a).to_map_key().unwrap().starts_with("a:"));
+        assert_eq!(Value::Null.to_map_key().unwrap(), "n:null");
+        // SCR-N4: Map and Array cannot be map keys → None.
+        assert!(Value::Map(Default::default()).to_map_key().is_none());
+        assert!(Value::Array(vec![]).to_map_key().is_none());
     }
 }

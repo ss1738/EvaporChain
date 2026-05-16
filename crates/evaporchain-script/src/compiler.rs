@@ -549,9 +549,15 @@ pub const MAX_FOLD_STRING_LEN: usize = 65_536;
 
 fn fold_binop(a: &Value, b: &Value, op: BinOp) -> Option<Value> {
     match (a, b, op) {
-        (Value::U64(x), Value::U64(y), BinOp::Add) => Some(Value::U64(x.saturating_add(*y))),
-        (Value::U64(x), Value::U64(y), BinOp::Sub) => Some(Value::U64(x.saturating_sub(*y))),
-        (Value::U64(x), Value::U64(y), BinOp::Mul) => Some(Value::U64(x.saturating_mul(*y))),
+        // SCR-N2 (audit 2026-05-15): use checked_* so overflow folds to
+        // None (emit the instruction; let the runtime VM catch it) instead
+        // of saturating. saturating_add would fold `u64::MAX + 1` to
+        // `u64::MAX`, which differs from what the VM produces at runtime
+        // (arithmetic overflow error), letting an adversarial contract
+        // author force conservation / auth predicates to constant true/false.
+        (Value::U64(x), Value::U64(y), BinOp::Add) => x.checked_add(*y).map(Value::U64),
+        (Value::U64(x), Value::U64(y), BinOp::Sub) => x.checked_sub(*y).map(Value::U64),
+        (Value::U64(x), Value::U64(y), BinOp::Mul) => x.checked_mul(*y).map(Value::U64),
         (Value::U64(x), Value::U64(y), BinOp::Div) if *y != 0 => Some(Value::U64(x / y)),
         (Value::U64(x), Value::U64(y), BinOp::Mod) if *y != 0 => Some(Value::U64(x % y)),
         (Value::U64(x), Value::U64(y), BinOp::Eq) => Some(Value::Bool(x == y)),

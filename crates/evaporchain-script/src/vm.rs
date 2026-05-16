@@ -613,7 +613,15 @@ impl EvaporVM {
                     let key = self.pop()?;
                     let val = match self.state.get(field) {
                         Some(Value::Map(map)) => {
-                            let key_str = key.to_map_key();
+                            // SCR-N4: reject Map/Array as map keys — they always
+                            // produced the same string ("m:map"/"r:array"), aliasing
+                            // every composite value to the same slot.
+                            let key_str = key.to_map_key().ok_or_else(|| {
+                                ScriptError::Runtime(
+                                    "MapGet: composite values (Map/Array) cannot be map keys"
+                                        .to_string(),
+                                )
+                            })?;
                             map.get(&key_str).cloned().unwrap_or(Value::U64(0))
                         }
                         Some(Value::Array(arr)) => {
@@ -653,9 +661,19 @@ impl EvaporVM {
                         }
                     }
 
+                    // SCR-N4: resolve the map key once, early, so both the
+                    // is_new_entry check and the actual insert share the same
+                    // validated string — and so Map/Array keys are rejected
+                    // before any state mutation.
+                    let map_key_str: String = key.to_map_key().ok_or_else(|| {
+                        ScriptError::Runtime(
+                            "MapSet: composite values (Map/Array) cannot be map keys".to_string(),
+                        )
+                    })?;
+
                     // Check if this is a new map entry — track memory before borrowing state
                     let is_new_entry = match self.state.get(field.as_str()) {
-                        Some(Value::Map(m)) => !m.contains_key(&key.to_map_key()),
+                        Some(Value::Map(m)) => !m.contains_key(&map_key_str),
                         None => true,
                         _ => false,
                     };
@@ -669,13 +687,12 @@ impl EvaporVM {
                         .or_insert_with(|| Value::Map(HashMap::new()));
                     match entry {
                         Value::Map(m) => {
-                            let key_str = key.to_map_key();
-                            if !m.contains_key(&key_str) && m.len() >= MAX_MAP_ENTRIES {
+                            if !m.contains_key(&map_key_str) && m.len() >= MAX_MAP_ENTRIES {
                                 return Err(ScriptError::Runtime(format!(
                                     "map entry limit exceeded ({MAX_MAP_ENTRIES})"
                                 )));
                             }
-                            m.insert(key_str, val);
+                            m.insert(map_key_str, val);
                         }
                         Value::Array(arr) => {
                             let index = key.as_u64()? as usize;
