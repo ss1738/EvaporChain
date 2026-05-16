@@ -4,6 +4,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (late night) — SCR-N6 adversarial tests + audit sweep verification
+
+**Focus:** Close the test gap for SCR-N6 (RandomRange rejection sampling), verify all AUDIT_2026_05_15.md crate-level tests pass, fix Mini git divergence.
+**Commits shipped:** 1 (`f4b1b2ec` / rebased `7c364b7e`)
+**Deliverables:**
+- **SCR-N6 adversarial tests** — 3 tests in `vm::tests`: `scr_n6_random_range_output_always_in_bounds` (256 seeds × 9 non-power-of-two sizes including u64::MAX), `scr_n6_random_range_max_one_always_zero`, `scr_n6_random_range_zero_max_rejected`. All 3 green on Mini 1.
+- **Verified zone formula** — `zone = u64::MAX - (u64::MAX % max) = q*max` is exactly divisible by max; rejection probability ≤ `(max-1)/u64::MAX`, 64-iter cap unreachable in practice.
+- **Fixed Mini 1 git divergence** — Mini was stuck on rebased SHA chain from earlier session; `git fetch origin && git reset --hard origin/main` re-synced cleanly.
+
+**Empirical results:**
+- `cargo test -p evaporchain-script -p evaporchain-hbct -p evaporchain-app-templates-eventlog -p evaporchain-app-templates-engine`: all result lines `ok. N passed; 0 failed` — zero failures across all audit-fix crates.
+
+**Decisions made:**
+- SCR-N6 implementation in vm.rs is correct as written; no code fix needed, only the missing adversarial test.
+- For future tests: Mini requires full module path (`vm::tests::scr_n6_*`) not short filter (`scr_n6`) to match tests in nested modules.
+
+**What's next:**
+- Continue audit sweep: SCR-N7 (compiler string-concat fold, LOW), then fresh sweep of most recently changed security-sensitive files
+- Run full `make test` on Mini (or targeted consensus + execution + crypto) to verify no regressions
+- Pick next OPEN lane from MAINNET_READINESS.md
+
+**Blockers / open questions:**
+- Mini scp/rsync silent failure still present for non-git-tracked hot patches; git push+pull is reliable for all committed changes (no workaround needed in normal flow)
+
+**Cross-references:** AUDIT_2026_05_15.md (SCR-N6), commit `7c364b7e`
+
 ## 2026-05-16 (evening) — H2+C1 verify DST fix + C2 NMT zero-hash tautology
 
 **Focus:** Close two lingering test failures: (1) Verkle/EnergyVerkle verify() out of sync with DST-tagged node_hash() after H2 commit, plus C1 forgery-rejection guard. (2) DA NMT zero-hashed-sibling tautological check that always evaluated false.
