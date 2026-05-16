@@ -1678,6 +1678,8 @@ impl ExecutionEngine for ParallelExecutor {
         // ── Phase 6: Execute serial (contract/script) txs sequentially ──
 
         let mut serial_call_depth: usize = 0;
+        // Collects emit() events from script calls; drained into contract_events below.
+        let mut pending_events: Vec<(u64, evaporchain_script::ContractEvent)> = Vec::new();
         // Side-effect channel for validator BLS key rotations — populated
         // by `RotateValidatorKey` arm below and surfaced through
         // `BlockExecutionResult.validator_key_rotations` so the consensus
@@ -1842,7 +1844,13 @@ impl ExecutionEngine for ParallelExecutor {
                                 call.caller,
                                 call.epoch,
                             )
-                            .map(|_| ())
+                            .map(|result| {
+                                if !result.structured_events.is_empty() {
+                                    pending_events.extend(
+                                        result.structured_events.into_iter().map(|e| (call.contract_id, e)),
+                                    );
+                                }
+                            })
                             .map_err(|e| ExecutionError::ScriptError(e.to_string()));
                         serial_call_depth = serial_call_depth.saturating_sub(1);
                         r
@@ -2443,6 +2451,15 @@ impl ExecutionEngine for ParallelExecutor {
         let tx_outcomes: Vec<crate::TxOutcome> =
             indexed_outcomes.into_iter().map(|(_, o)| o).collect();
 
+        let contract_events: Vec<crate::BlockContractEvent> = pending_events
+            .into_iter()
+            .map(|(contract_id, event)| crate::BlockContractEvent {
+                contract_id,
+                tx_index: 0,
+                event,
+            })
+            .collect();
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -2454,7 +2471,7 @@ impl ExecutionEngine for ParallelExecutor {
             base_fee,
             total_fees,
             evaporation_proof: None,
-            contract_events: Vec::new(),
+            contract_events,
             cross_shard_processed,
             cross_shard_receipts,
             validator_key_rotations,

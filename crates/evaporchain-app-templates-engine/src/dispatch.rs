@@ -190,16 +190,28 @@ mod tests {
     }
 
     #[test]
-    fn dispatches_sfsv_with_string_predicate() {
+    fn dispatches_sfsv_epoch_and_energy_predicates() {
+        // EpochReached vault (predicate_type 0).
         let instr = build_instr(
             SFSV_VAULT,
-            json!({"deposit": 5000, "predicate": "epoch_reached", "release_epoch": 10000}),
+            json!({"future_self":"0xab","predicate_type":0,"release_param":10000,"deposit_amount":5000}),
         );
         match materialise(&instr).unwrap() {
             TypedInit::Sfsv(c) => {
-                assert_eq!(c.deposit, 5000);
-                assert_eq!(c.predicate, "epoch_reached");
+                assert_eq!(c.deposit_amount, 5000);
+                assert_eq!(c.predicate_type, 0);
+                assert_eq!(c.release_param, 10000);
             }
+            _ => panic!("wrong variant"),
+        }
+        // EnergyDecaysBelow vault (predicate_type 1) — was undeployable
+        // via the pipeline before the init_sfsv threshold-gap fix.
+        let instr2 = build_instr(
+            SFSV_VAULT,
+            json!({"future_self":"0xab","predicate_type":1,"release_param":250,"deposit_amount":1000}),
+        );
+        match materialise(&instr2).unwrap() {
+            TypedInit::Sfsv(c) => assert_eq!(c.predicate_type, 1),
             _ => panic!("wrong variant"),
         }
     }

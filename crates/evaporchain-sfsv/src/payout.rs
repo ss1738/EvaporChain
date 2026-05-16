@@ -1,10 +1,20 @@
-//! Payout resolver — checks the predicate at `epoch_now` and, if true,
-//! credits the deposit to the current holder, marking the vault Released.
+//! Payout resolver — checks the predicate at `epoch_now` (with the
+//! vault contract's live, engine-tracked energy) and, if satisfied,
+//! credits the deposit to the current holder, marking the vault
+//! Released.
 //!
-//! Payouts are *idempotent* in the sense that a Released vault cannot
-//! be paid out again (`PayoutError::AlreadyReleased`). Validators must
-//! call `payout` only once per vault per chain history; the higher
-//! transaction layer is responsible for ensuring at-most-once execution.
+//! **EvaporScript-first (2026-05-16):** the caller supplies
+//! `contract_energy` — the vault instance's *current* energy as tracked
+//! by the evaporation engine (post-decay, post-`on_refresh`). This
+//! module never recomputes decay (invariant #1); it only asks the
+//! predicate "is the live energy below threshold yet?", exactly as the
+//! `.es` `try_payout` reads its built-in `energy` field. The execution
+//! layer that owns the contract instance is responsible for passing the
+//! engine-true value.
+//!
+//! Payouts are *idempotent*: a Released vault cannot be paid out again
+//! (`PayoutError::AlreadyReleased`). The higher transaction layer must
+//! ensure at-most-once execution per vault per chain history.
 
 use evaporchain_types::{AccountAddress, Energy, Epoch};
 use serde::{Deserialize, Serialize};
@@ -29,14 +39,29 @@ pub struct PayoutResolution {
     pub payout_at: Epoch,
 }
 
-/// Attempt to pay out the vault as of `epoch_now`. Mutates the vault
-/// to `Released` on success.
-pub fn payout(vault: &mut Vault, epoch_now: Epoch) -> Result<PayoutResolution, PayoutError> {
+/// Attempt to pay out the vault as of `epoch_now`, given the vault
+/// contract's current engine-tracked energy `contract_energy`. Mutates
+/// the vault to `Released` on success.
+///
+/// `contract_energy` is irrelevant for `EpochReached` vaults but must
+/// still be supplied (the caller passes the live reading unconditionally;
+/// the predicate ignores it where appropriate).
+pub fn payout(
+    vault: &mut Vault,
+    epoch_now: Epoch,
+    contract_energy: Energy,
+) -> Result<PayoutResolution, PayoutError> {
     let holder = match vault.status {
         VaultStatus::Locked { current_holder } => current_holder,
         VaultStatus::Released { .. } => return Err(PayoutError::AlreadyReleased),
     };
-    if !evaluate(&vault.predicate, PredicateContext { epoch_now }) {
+    if !evaluate(
+        &vault.predicate,
+        PredicateContext {
+            epoch_now,
+            contract_energy,
+        },
+    ) {
         return Err(PayoutError::PredicateNotSatisfied { epoch_now });
     }
     let amount = vault.deposit;
@@ -68,10 +93,14 @@ mod tests {
         Vault::create(id(0xFF), addr(0xAA), addr(0xBB), 1_000, predicate, 0).unwrap()
     }
 
+    // For EpochReached vaults the live energy is irrelevant; pass the
+    // deposit as a stand-in to prove it is ignored.
+    const IGNORED_ENERGY: Energy = 1_000;
+
     #[test]
     fn payout_blocked_until_predicate_trips() {
         let mut v = vault_with(Predicate::EpochReached { release_epoch: 100 });
-        let err = payout(&mut v, 50).unwrap_err();
+        let err = payout(&mut v, 50, IGNORED_ENERGY).unwrap_err();
         assert!(matches!(err, PayoutError::PredicateNotSatisfied { .. }));
         assert!(v.is_locked());
     }
@@ -79,7 +108,7 @@ mod tests {
     #[test]
     fn payout_releases_to_current_holder_at_first_satisfying_epoch() {
         let mut v = vault_with(Predicate::EpochReached { release_epoch: 100 });
-        let res = payout(&mut v, 100).unwrap();
+        let res = payout(&mut v, 100, IGNORED_ENERGY).unwrap();
         assert_eq!(res.paid_to, addr(0xBB));
         assert_eq!(res.amount, 1_000);
         assert_eq!(res.payout_at, 100);
@@ -96,38 +125,48 @@ mod tests {
     #[test]
     fn second_payout_attempt_errors() {
         let mut v = vault_with(Predicate::EpochReached { release_epoch: 100 });
-        payout(&mut v, 100).unwrap();
-        let err = payout(&mut v, 110).unwrap_err();
+        payout(&mut v, 100, IGNORED_ENERGY).unwrap();
+        let err = payout(&mut v, 110, IGNORED_ENERGY).unwrap_err();
         assert_eq!(err, PayoutError::AlreadyReleased);
     }
 
     #[test]
     fn payout_after_resale_credits_buyer_not_creator() {
-        // Doctrine claim: "your future self can't sue" — once sold,
-        // the original holder loses any payout claim.
+        // Doctrine: "your future self can't sue" — once sold, the
+        // original holder loses any payout claim.
         let mut v = vault_with(Predicate::EpochReached { release_epoch: 100 });
-        // Future-self (holder) sells to 0xCC.
         v.transfer_claim(addr(0xBB), addr(0xCC)).unwrap();
-        let res = payout(&mut v, 100).unwrap();
-        // 0xCC gets the deposit, not the original future_self (0xBB).
+        let res = payout(&mut v, 100, IGNORED_ENERGY).unwrap();
         assert_eq!(res.paid_to, addr(0xCC));
     }
 
     #[test]
-    fn payout_with_energy_decay_predicate() {
-        // Energy starts at 1000, half-life 10. Threshold = 1.
-        // After 100 epochs, energy ≈ 1000 / 2^10 ≈ 0 < 1.
-        let pred = Predicate::EnergyDecaysBelow {
-            initial_energy: 1000,
-            half_life: 10,
-            created_at_epoch: 0,
-            threshold: 1,
-        };
-        let mut v = vault_with(pred);
-        // At epoch 5 (half a half-life), still ≥ 1 → blocked.
-        assert!(payout(&mut v, 5).is_err());
-        // At epoch 1000, fully decayed → satisfies.
-        let res = payout(&mut v, 1000).unwrap();
+    fn payout_with_energy_decay_predicate_reads_live_energy() {
+        // `.es` model: release iff the vault's *live* engine energy is
+        // below threshold. The engine supplies the value; payout never
+        // recomputes decay.
+        let mut v = vault_with(Predicate::EnergyDecaysBelow { threshold: 500 });
+        // Live energy still 800 ≥ 500 → blocked (epoch is irrelevant).
+        assert!(payout(&mut v, 5, 800).is_err());
+        assert!(payout(&mut v, 9_999, 500).is_err()); // exactly 500 not < 500
+        // Engine decayed it to 499 < 500 → releases.
+        let res = payout(&mut v, 1_000, 499).unwrap();
+        assert_eq!(res.paid_to, addr(0xBB));
+        assert_eq!(res.amount, 1_000);
+    }
+
+    #[test]
+    fn payout_energy_decay_is_refresh_aware() {
+        // Decayed below threshold but a boost (on_refresh) lifted live
+        // energy back above it before payout was called → must NOT
+        // release. The old frozen-formula predicate could not do this.
+        let mut v = vault_with(Predicate::EnergyDecaysBelow { threshold: 500 });
+        // refreshed back to 900 ⇒ blocked even though epochs elapsed
+        let err = payout(&mut v, 2_100, 900).unwrap_err();
+        assert!(matches!(err, PayoutError::PredicateNotSatisfied { .. }));
+        assert!(v.is_locked());
+        // later, decays again to 100 ⇒ releases
+        let res = payout(&mut v, 3_000, 100).unwrap();
         assert_eq!(res.paid_to, addr(0xBB));
     }
 

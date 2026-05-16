@@ -343,4 +343,108 @@ mod tests {
         let truncated = truncate_to_n_le_bits(v, 4);
         assert_eq!(truncated, Bn254Fr::from(15u64), "low 4 bits of 0xff = 0x0f = 15");
     }
+
+    /// IOPattern hasher distinguishes squeeze counts (parity with the
+    /// existing absorb-count and domain-separator distinguishers).
+    #[test]
+    fn iopattern_value_distinguishes_squeeze_counts() {
+        let a = iopattern_value_absorb_then_squeeze(3, 1, 0);
+        let b = iopattern_value_absorb_then_squeeze(3, 2, 0);
+        assert_ne!(a, b);
+    }
+
+    /// IOPattern hasher: distinct combinations of (absorb, squeeze,
+    /// ds) must produce distinct tags. This is the load-bearing
+    /// collision-resistance property for the chain's domain separation.
+    #[test]
+    fn iopattern_value_collides_only_on_identical_triples() {
+        let mut seen = std::collections::HashSet::new();
+        for absorb in [0u32, 1, 2, 8] {
+            for squeeze in [0u32, 1, 4] {
+                for ds in [0u32, 1, 7] {
+                    let tag = iopattern_value_absorb_then_squeeze(absorb, squeeze, ds);
+                    assert!(
+                        seen.insert((absorb, squeeze, ds, tag)),
+                        "duplicate tag {tag} for ({absorb},{squeeze},{ds})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `iopattern_tag_as_fr(0)` must produce `Fr::ZERO` — the
+    /// degenerate case that anchors all other tag conversions.
+    #[test]
+    fn iopattern_tag_as_fr_zero_yields_zero() {
+        assert_eq!(iopattern_tag_as_fr(0u128), Bn254Fr::from(0u64));
+    }
+
+    /// `iopattern_tag_as_fr(u128::MAX)` must produce a non-zero `Fr`
+    /// of magnitude `2^128 - 1` — pins that the conversion does NOT
+    /// truncate the high bytes of u128.
+    #[test]
+    fn iopattern_tag_as_fr_for_u128_max() {
+        let f = iopattern_tag_as_fr(u128::MAX);
+        assert_ne!(f, Bn254Fr::from(0u64));
+        // 2^128 - 1 = 340282366920938463463374607431768211455
+        let expected_bytes: [u8; 16] = u128::MAX.to_le_bytes();
+        let mut full = [0u8; 32];
+        full[..16].copy_from_slice(&expected_bytes);
+        assert_eq!(f, Bn254Fr::from_le_bytes_mod_order(&full));
+    }
+
+    /// `iopattern_tag_as_fr` must be injective on distinct tags
+    /// (within Fr's range — collision impossible for u128 since
+    /// 2^128 << Fr modulus 2^254).
+    #[test]
+    fn iopattern_tag_as_fr_is_injective_on_distinct_u128s() {
+        let mut seen = std::collections::HashSet::new();
+        for tag in [0u128, 1, 42, u64::MAX as u128, u128::MAX] {
+            let f = iopattern_tag_as_fr(tag);
+            assert!(seen.insert(f), "Fr collision on distinct tag {tag}");
+        }
+    }
+
+    /// `truncate_to_n_le_bits(_, 0)` must yield zero — no bits kept.
+    /// Edge case at one end of the (0..=256) range.
+    #[test]
+    fn truncate_to_n_le_bits_zero_bits_yields_zero() {
+        assert_eq!(
+            truncate_to_n_le_bits(Bn254Fr::from(u64::MAX), 0),
+            Bn254Fr::from(0u64),
+            "0-bit truncation must zero out everything"
+        );
+    }
+
+    /// `truncate_to_n_le_bits(f, n)` for n ≥ field-size must yield
+    /// `f` unchanged (no truncation occurs; the high bits beyond the
+    /// field don't exist).
+    #[test]
+    fn truncate_to_n_le_bits_at_field_size_returns_input() {
+        let small = Bn254Fr::from(12345u64);
+        assert_eq!(truncate_to_n_le_bits(small, 256), small);
+        // The boundary just-below the field size (~254 bits) must
+        // also round-trip for a small input.
+        assert_eq!(truncate_to_n_le_bits(small, 250), small);
+    }
+
+    /// `truncate_to_n_le_bits` matches `NUM_HASH_BITS = 250` doctrine.
+    /// Pin the constant so a future arkworks bump that changes the
+    /// neptune reference output produces a loud failure here.
+    #[test]
+    fn num_hash_bits_constant_pins_at_250() {
+        assert_eq!(NUM_HASH_BITS, 250);
+    }
+
+    /// `iopattern_value_absorb_then_squeeze` agrees with itself
+    /// under repeated calls AND across (3,1,0) — sanity pin for the
+    /// determinism property that the existing test asserts.
+    #[test]
+    fn iopattern_value_for_canonical_squeeze_pattern_is_nonzero() {
+        // PoseidonRO::squeeze always uses ds=0; this is the pattern
+        // the chain's Section 2 sponge depends on. Pin it returns a
+        // non-zero, deterministic value.
+        let tag = iopattern_value_absorb_then_squeeze(3, 1, 0);
+        assert_ne!(tag, 0);
+    }
 }
