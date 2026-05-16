@@ -27,7 +27,13 @@ const WIDTH: usize = 256;
 const MAX_DEPTH: usize = 32;
 
 // ─────────────────────── Generator Points ────────────────────────────────
-// Shared with the standard Verkle trie — same generators, same commitments.
+// H3 (audit 2026-05-16): use DISTINCT generator seed from standard
+// Verkle to ensure Energy-Verkle and standard-Verkle commitments never
+// alias.  Pre-fix both tries used `"EvaporChain_Verkle_Gen_{i}"` →
+// identical generators → identical Pedersen commitments on the same
+// child values → cross-trie proofs indistinguishable.  Post-fix the
+// Energy-Verkle generator seed carries `EnergyVerkle_` prefix so the
+// derived generator points differ from `verkle.rs`'s set.
 
 static GENERATORS: OnceLock<Vec<Ep>> = OnceLock::new();
 
@@ -35,7 +41,7 @@ fn generators() -> &'static Vec<Ep> {
     GENERATORS.get_or_init(|| {
         let mut gens = Vec::with_capacity(WIDTH + 1);
         for i in 0..=WIDTH {
-            let seed = format!("EvaporChain_Verkle_Gen_{}", i);
+            let seed = format!("EvaporChain_EnergyVerkle_Gen_{}", i);
             let hash = blake3::hash(seed.as_bytes());
             let scalar = bytes_to_scalar(hash.as_bytes());
             gens.push(Ep::generator() * scalar);

@@ -169,6 +169,16 @@ pub fn verify_ghost_bridge_proof_with_keys(
             .iter()
             .all(|sig| !sig.signature.is_empty() && sig.signature.len() >= 48);
 
+    // H8 (audit 2026-05-16): fail-CLOSED when no validator pubkeys
+    // are available.  Pre-fix the `None` arm returned `true`, meaning
+    // any structurally-valid proof was accepted without any BLS
+    // verification.  A relayer that forgot to load the validator set
+    // — or an attacker who replayed an old proof against a fresh
+    // node — could mint ghost-bridge assets without any cryptographic
+    // gate.  Post-fix: missing keys → attestation invalid.  The
+    // caller is responsible for providing the active validator set;
+    // if it can't (light-client mode), it must use a separate
+    // explicitly-trusted attestation path, not this function.
     checks.attestation_valid = if structural_valid {
         match validator_pubkeys {
             Some(keys) => proof
@@ -182,7 +192,7 @@ pub fn verify_ghost_bridge_proof_with_keys(
                         BlsVerifier::verify(&proof.state_root, &bls_sig, &pk)
                     })
                 }),
-            None => true,
+            None => false,
         }
     } else {
         false
