@@ -4,6 +4,37 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night+5) — SFSV coordinator binary shipped; VM paradigm doctrine gap closed
+
+**Focus:** SFSV off-chain coordinator binary (path to Paper 1) + all VM paradigm e2e integration tests.
+**Commits shipped:** 3 (52a92b6, 859db56, f424974)
+**Deliverables:**
+- `evaporchain-sfsv-coordinator` crate: off-chain SDDC auctioneer binary
+  - `poller.rs`: polls `/api/scripts` for SFSV vault listings (method heuristic)
+  - `auctioneer.rs`: off-chain auction state machine, SDDC clearing, bid book
+  - `bid_server.rs`: Axum HTTP server accepting `POST /bid` bids via mpsc channel
+  - `node.rs`: thin reqwest client wrapping node API (epoch, scripts, call-script, wait-finalised)
+  - `main.rs`: 2-second coordinator loop (discover → drain bids → clear → record_sale → wait finality)
+  - `tests/coordinator_integration.rs`: 5 integration tests (two-listing clear, unknown contract, zero-price adversarial, expired listing, resale chain)
+- VM paradigm doctrine §4.2 gap closed:
+  - `total-evaporscript/tests/e2e.rs`: 6 tests, sealed-auction settlement fixture (nested BoundedFor + BoundedWhile)
+  - `cap-decay-vm/tests/e2e.rs`: 11 tests, 3-level storage delegation chain (company→dept→developer)
+  - `dp-native-vm/tests/e2e.rs`: 11 tests, salary analytics pipeline (5-query budget cliff)
+**Empirical results:**
+- All 5 coordinator integration tests green on Mini 1
+- All 28 VM paradigm e2e tests green (6+11+11)
+- `cargo check -p evaporchain-sfsv-coordinator` compiles clean (warnings only)
+**Decisions made:**
+- SDDC clearing uses `price_at(bid.submitted_at)` not `price_at(epoch_now)` — bids lock price at submission time
+- Coordinator V1 uses method-name heuristic (`list_for_sale` + `record_sale`) to identify SFSV vaults
+- `lot_lambda=0` in coordinator V1 (accepts all lambda-tolerant bids); real deployment reads from `.es` state
+**What's next:**
+1. Wire coordinator into MAINNET_READINESS.md as DONE (SFSV lane)
+2. Run full workspace test suite on Mini 1 to check for regressions from this branch
+3. SFSV release-binary build (`--release`) + README/runbook for Paper 1
+**Blockers / open questions:** None.
+**Cross-references:** commits 52a92b6 (paradigm tests + smoke fix), 859db56 (lib target + int tests), f424974 (SDDC pricing fix)
+
 ## 2026-05-16 (night+4) — SFSV smoke test green: Bug #1 + Bug #2 empirically confirmed
 
 **Focus:** Live devnet smoke test confirming the two architectural fixes (api.rs Bug #1, parallel.rs Bug #2) work end-to-end.
