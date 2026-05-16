@@ -90,7 +90,7 @@ pub fn catalogue() -> Vec<TemplateDescriptor> {
             SFSV_VAULT,
             "SFSV (Future-Self Vault)",
             "Marketplace",
-            json!({"deposit": 1000, "predicate": "epoch_reached", "release_epoch": 10000}),
+            json!({"future_self": "0x00", "predicate_type": 0, "release_param": 10000, "deposit_amount": 1000}),
             "Sell your future-self's claim — third parties bid for delayed-payout vaults via SDDC.",
             "evaporchain-sfsv",
         )
