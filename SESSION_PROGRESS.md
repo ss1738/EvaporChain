@@ -4,6 +4,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night+1) — EvaporScript contracts for SDDC, SFSV, and SHLM dApps
+
+**Focus:** Write the three missing on-chain EvaporScript contracts for the dApp layer — closing the biggest gap identified in the 5-agent audit (Rust dApp scaffolds complete, zero .es contracts).
+**Commits shipped:** 1 (piggy-backed into `08831112` via coverage branch merge)
+**Deliverables:**
+- **`contracts/evaporscript/future_self_vault.es`** — FutureSelfVault contract: one-shot `set_terms(predicate, release_param, deposit)`, secondary-market listing via `list_for_sale(ceiling, floor, duration)` + `record_sale(winner)`, payout via `try_payout()` (predicate-gated). Two predicate types: `EpochReached` (pure epoch check) and `EnergyDecaysBelow` (uses `energy` built-in — contract's own energy IS the deposit, decays by physics). All three lifecycle hooks wired. Pattern: `predicate_satisfied()` and `try_payout` inline identical predicate logic (no internal dispatch).
+- **`contracts/evaporscript/sddc.es`** — SDDC two-axis clearing contract: `set_lot(ceiling, floor, lambda, duration)`, `submit_bid(max_price, lambda_tolerance)`, linear-descent `current_price()` = `ceiling - spread*elapsed/duration`, coordinator-confirmed `try_clear(winner, price)` verifying both axes on-chain before recording. `void_auction()` for no-winner close. Energy-evaporation = implicit void.
+- **`contracts/evaporscript/shlm.es`** — SHLM skill-credential market: `register_class(name, half_life)`, admin `issue_credential(holder, level)` + `refresh_credential`, employer `post_bounty(max_staleness, min_level, salary)` + `withdraw_bounty`, coordinator `record_match(employer, holder, salary)` with on-chain dual eligibility gate (staleness + level). `is_eligible(holder, employer)` pure read for coordinator pre-check. One contract per skill class.
+
+**Architecture decisions:**
+- No `self.method()` dispatch → predicate evaluation inlined in both `try_payout` and `predicate_satisfied`; must stay bit-identical (enforced by SFSV Rust tests).
+- `EnergyDecaysBelow` uses the `energy` built-in (contract's own decaying energy) not a hand-coded formula — this is the canonical "lifecycle = entity" doctrine pattern.
+- SDDC `try_clear` verifies both axes on-chain even though off-chain coordinator already verified them — belt-and-suspenders; prevents coordinator bugs or griefing from recording invalid clears.
+- SHLM staleness gate: `elapsed <= max_elapsed` where `elapsed = epoch - cred_attested_at` — avoids storing a fixed release_epoch that would age incorrectly as the class lives longer.
+
+**What's next:**
+- Validate deploy pipeline on live cluster: deploy `future_self_vault.es` against running 3-node Tailscale cluster, check `POST /api/contracts/deploy` + event log + payout
+- Fix pre-existing `test_genesis_ceremony_full_flow` failure (parallel tempdir collision in evaporchain-cli)
+- Try `try_payout()` on Mini to confirm EvaporScript VM handles `energy` built-in correctly at runtime
+
+**Blockers / open questions:**
+- The `energy` built-in in EvaporScript VM: confirm opcode `ContractEnergy` (or equivalent) is wired correctly in vm.rs so `try_payout`/`predicate_satisfied` see the live energy for `EnergyDecaysBelow` predicate type.
+
+**Cross-references:** `contracts/evaporscript/future_self_vault.es`, `contracts/evaporscript/sddc.es`, `contracts/evaporscript/shlm.es`, `crates/evaporchain-sfsv/src/`, `crates/evaporchain-sddc/src/`, `crates/evaporchain-shlm/src/`
+
 ## 2026-05-16 (night) — apply_validator_key_rotations rotation-continuity hardening
 
 **Focus:** Fresh audit of recently changed security-sensitive code; found doc-vs-code divergence in `apply_validator_key_rotations` — bls_pop_old verified via wrong function. Fixed and tested.
