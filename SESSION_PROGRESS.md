@@ -4,6 +4,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-16 (night+4) — SFSV smoke test green: Bug #1 + Bug #2 empirically confirmed
+
+**Focus:** Live devnet smoke test confirming the two architectural fixes (api.rs Bug #1, parallel.rs Bug #2) work end-to-end.
+**Commits shipped:** 1 (MockConsensus devnet sig-verification fix)
+**Deliverables:**
+- **`ParallelExecutor::new_devnet()`** — new constructor in `parallel.rs` that mirrors `new_production` but with `verify_signatures = false`. Mock-consensus is a devnet mode; the API layer signs with the node keypair, not the deployer's private key, so sig verification must be off.
+- **`MockConsensus::new_with_gas_limit()`** switched from `new_production` to `new_devnet`. All other constructors unchanged.
+- **Smoke test `sfsv_smoke_test.py`** — full 7-step test: register/login → faucet → deploy vault.es → wait finalise → `/api/scripts` count check (Bug #1) → set_terms → wait epoch → try_payout → `/api/contract/:id/events` check (Bug #2). Lives at `/tmp/sfsv_smoke_test.py` for re-runs.
+
+**Empirical results (live devnet at block-interval 400ms):**
+- `[3] /api/scripts count=1 ids=[1]` → **Bug #1 CONFIRMED FIXED** (api.rs TendermintConsensus routing)
+- `event data: ["['vault sealed']", "['vault payout']"]` → **Bug #2 CONFIRMED FIXED** (parallel.rs emit() event plumbing)
+- deploy_tx: `03f6fa30...` | seal_tx: `88a9be8d...` | payout_tx: `db58d5e3...` — all three finalised in ~5s each
+
+**Decisions made:**
+- `MockConsensus` is devnet-only, should never have `verify_signatures: true`. Production uses `TendermintConsensus` which also uses `new_with_sig_verification`.
+- Event names come through as `"Log"` (the EvaporScript emit opcode name); event payload is in `data` array. Smoke test checks `data` field for "payout" substring.
+
+**What's next:**
+1. Commit the devnet sig-verify fix to git and push
+2. VM paradigm crates: `evaporchain-total-evaporscript`, `evaporchain-cap-decay-vm`, `evaporchain-dp-native-vm` — doctrine substrate triplet needing adversarial tests + e2e fixtures
+3. SFSV off-chain coordinator binary (path to Paper 1, SDDC Dutch auction clearing)
+
+**Blockers / open questions:** None — both bugs are confirmed closed.
+
+**Cross-references:** `crates/evaporchain-execution/src/parallel.rs` (new_devnet), `crates/evaporchain-consensus/src/lib.rs` (MockConsensus::new_with_gas_limit)
+
+---
+
 ## 2026-05-16 (night+3) — Close app-templates SFSV schema drift (3-fix cascade)
 
 **Focus:** Full app-templates pipeline (`deploy`→`materialise`→`engine`→`bind`→`fees`→`receipt`→`eventlog`) was broken by schema drift between the old SFSV string-predicate format and the new InitConfig struct that mirrors `future_self_vault.es`.

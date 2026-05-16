@@ -917,6 +917,20 @@ impl ParallelExecutor {
         }
     }
 
+    /// Devnet / mock-consensus variant of `new_production`. Identical
+    /// in every way except `verify_signatures = false` so that the API
+    /// layer can submit transactions signed with the node keypair (not
+    /// the deployer's private key). Only used by `MockConsensus`.
+    pub fn new_devnet(
+        grace_period: u64,
+        fee_controller: fees::PidFeeController,
+        block_gas_limit: u64,
+    ) -> Self {
+        let mut ex = Self::new_production(grace_period, fee_controller, block_gas_limit);
+        ex.verify_signatures = false;
+        ex
+    }
+
     pub fn new_production(
         grace_period: u64,
         fee_controller: fees::PidFeeController,

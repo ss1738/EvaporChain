@@ -209,12 +209,15 @@ impl MockConsensus {
     }
 
     /// Create with a custom block gas limit (for high-throughput mode).
+    /// Uses `new_devnet` (sig verification OFF) — MockConsensus is a
+    /// devnet/test mode; the API layer signs with the node keypair, not
+    /// the deployer's private key.
     pub fn new_with_gas_limit(grace_period: u64, block_gas_limit: u64) -> Self {
         Self {
             block_number: 0,
             epoch: 0,
             parent_hash: [0u8; 32],
-            executor: ParallelExecutor::new_production(
+            executor: ParallelExecutor::new_devnet(
                 grace_period,
                 PidFeeController::testnet_config(),
                 block_gas_limit,
