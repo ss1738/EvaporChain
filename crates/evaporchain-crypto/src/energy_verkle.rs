@@ -205,11 +205,20 @@ impl EnergyNode {
 
     /// Compute the cryptographic hash/commitment of this node.
     /// Compressed nodes return their stored commitment (same as the original subtree).
+    ///
+    /// CR-1 (audit 2026-05-17): producer-side DSTs MUST match `verify` /
+    /// `verify_multi`. Pre-fix `EnergyNode::hash` returned raw
+    /// `blake3(key || value)` for leaves and raw `point_to_bytes(commitment)`
+    /// for internals, while `verify` reconstructed with `VERKLE_LEAF_DST` /
+    /// `VERKLE_INTERNAL_DST` (commit b5959a05, H2 closure). The H2 closure
+    /// was half-applied — verify side added DSTs, producer side didn't —
+    /// so `test_proof_verifies` was red on HEAD.
     fn hash(&self) -> [u8; 32] {
         match self {
             EnergyNode::Empty => [0u8; 32],
             EnergyNode::Leaf(leaf) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&leaf.key);
                 data.extend_from_slice(&leaf.value);
                 *blake3::hash(&data).as_bytes()
@@ -222,7 +231,11 @@ impl EnergyNode {
                     let scalar = bytes_to_scalar(&child_hash);
                     commitment += gens[idx as usize] * scalar;
                 }
-                point_to_bytes(&commitment)
+                let pt = point_to_bytes(&commitment);
+                let mut data = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+                data.extend_from_slice(VERKLE_INTERNAL_DST);
+                data.extend_from_slice(&pt);
+                *blake3::hash(&data).as_bytes()
             }
             EnergyNode::Compressed(c) => c.commitment,
         }
@@ -784,6 +797,17 @@ impl EnergyVerkleTrie {
             return false;
         }
 
+        // CR-2 (audit 2026-05-17): bind path_indices to the proof's key
+        // bytes. Without this, a non-existence proof for an EXISTING key
+        // can be forged by routing path_indices through empty trie slots
+        // — bytes_to_scalar([0u8;32]) = Fq::ZERO makes the path-idx slot
+        // a no-op in the reconstructed commitment.
+        for level in 0..proof.depth {
+            if proof.path_indices[level] != proof.key[level] {
+                return false;
+            }
+        }
+
         // Reconstruct leaf hash (H2: LEAF DST).
         let leaf_hash = match &proof.value {
             Some(value) => {
@@ -1102,6 +1126,8 @@ impl EnergyVerkleTrie {
         }
 
         // Terminal: all keys resolved at or above this depth
+        // CR-3 (audit 2026-05-17): apply VERKLE_LEAF_DST to match
+        // `EnergyNode::hash` (CR-1 fix) and `verify` (H2 closure).
         if indices.iter().all(|&i| proof.depths[i] <= depth) {
             let mut hash = [0u8; 32];
             let mut found = false;
@@ -1110,7 +1136,8 @@ impl EnergyVerkleTrie {
                     if found {
                         return None;
                     }
-                    let mut data = Vec::with_capacity(64);
+                    let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                    data.extend_from_slice(VERKLE_LEAF_DST);
                     data.extend_from_slice(&proof.keys[i]);
                     data.extend_from_slice(v);
                     hash = *blake3::hash(&data).as_bytes();
@@ -1155,7 +1182,13 @@ impl EnergyVerkleTrie {
             }
         }
 
-        Some(point_to_bytes(&commitment))
+        // CR-3 (audit 2026-05-17): apply VERKLE_INTERNAL_DST to match
+        // `EnergyNode::hash` (CR-1 fix) and `verify` (H2 closure).
+        let pt = point_to_bytes(&commitment);
+        let mut data = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+        data.extend_from_slice(VERKLE_INTERNAL_DST);
+        data.extend_from_slice(&pt);
+        Some(*blake3::hash(&data).as_bytes())
     }
 
     /// Insert multiple entries at once.

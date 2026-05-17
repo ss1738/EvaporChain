@@ -448,6 +448,19 @@ impl VerkleTrie {
             return false;
         }
 
+        // CR-2 (audit 2026-05-17): bind path_indices to the proof's key
+        // bytes. Without this, a non-existence proof for an EXISTING key
+        // can be forged by routing path_indices through empty trie slots:
+        // the path child's contribution at the bottom level is
+        // bytes_to_scalar([0u8;32]) = Fq::ZERO, so the path-idx slot
+        // becomes a no-op in the reconstructed commitment and the
+        // sibling-only sum reconstructs to the real root.
+        for level in 0..proof.depth {
+            if proof.path_indices[level] != proof.key[level] {
+                return false;
+            }
+        }
+
         // Reconstruct the leaf hash (H2: LEAF DST matches node_hash()).
         let leaf_hash = match &proof.value {
             Some(value) => {
