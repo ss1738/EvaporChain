@@ -3,11 +3,29 @@
     TLA+ formal specification of EvaporChain's Energy-Annotated Verkle Trie
     subtree-compression mechanism.
 
-    The frontier document research/frontier/02-energy-verkle-trie.md flags
-    DECOMPRESSION as the hardest part: when a ghost under a compressed
-    subtree gets resurrected, the trie must "decompress" the subtree
-    correctly. This spec formalises the compress / decompress lifecycle
-    and verifies its key correctness invariants.
+    HISTORICAL / RESEARCH MODEL (audit 2026-05-17). The model below
+    formalises a compress/DECOMPRESS lifecycle. The production
+    implementation in `crates/evaporchain-crypto/src/energy_verkle.rs`
+    does NOT support decompress: once a subtree is compressed, ghosted
+    leaves cannot be revived by a "decompress + insert" path. Instead
+    a resurrected leaf comes back through the chain-level Refresh /
+    Resurrect tx pipeline, which writes a fresh leaf into the trie via
+    the normal `insert` path. The Coq companion
+    `research/coq/EnergyVerkleCompression.v` (lines 282-289) explicitly
+    notes the absence of a decompress operation in the Rust code.
+
+    KEEP-WHAT-WE-CAN: the `Compress` action + the cold-subtree
+    invariants ARE correct against the production code. The
+    `DecompressOnInsert` action below is a research artefact for a
+    hypothetical decompress path; it does not correspond to anything
+    shipped. Treat the spec's "decompress revives" property as
+    aspirational, not as a verified property of the production trie.
+
+    The frontier document research/frontier/02-energy-verkle-trie.md
+    originally framed DECOMPRESSION as the hardest part; the audit
+    flagged it as fictional formalisation drift. See the proof companion
+    (research/frontier/02-energy-verkle-trie-proof.md §4) for the
+    formal-drift acknowledgement.
 
     The model is deliberately abstract. It does not try to model the
     full 256-ary BTreeMap structure of the production code — that
