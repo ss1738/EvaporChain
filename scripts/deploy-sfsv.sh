@@ -20,7 +20,7 @@
 #   5. GET /api/script/<id>         → assert .state.released is truthy
 #
 #   ./scripts/deploy-sfsv.sh --dry-run
-#   ./scripts/deploy-sfsv.sh --node http://127.0.0.1:9001 \
+#   ./scripts/deploy-sfsv.sh --node http://89.167.52.40:8099 \
 #       --deployer 1 --future-self 2 --predicate 0 --release-param 200 \
 #       --energy 1000000 --half-life 64 --deposit 1000
 #
@@ -34,12 +34,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/future_self_vault.es"
 
-NODE_URL="${NODE_URL:-http://127.0.0.1:9001}"
+NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
-DEPLOYER_U8="${DEPLOYER_U8:-1}"          # u8 devnet account index (tx deployer/caller)
+DEPLOYER_U8="${DEPLOYER_U8:-0}"          # 0 = genesis faucet — the only pre-funded account on the permanent node (override for a faucet-funded acct)
 FUTURE_SELF="${FUTURE_SELF:-2}"          # set_terms `future_self` arg (.es address)
 PREDICATE_TYPE="${PREDICATE_TYPE:-0}"    # 0=EpochReached 1=EnergyDecaysBelow
-RELEASE_PARAM="${RELEASE_PARAM:-200}"    # epoch (type0) or threshold (type1)
+RELEASE_PARAM="${RELEASE_PARAM:-}"       # type0: future epoch (default = now+margin); type1: energy threshold. empty ⇒ auto-resolve
+RELEASE_MARGIN="${RELEASE_MARGIN:-30}"   # type0 only: epochs ahead of current to set the release (must exercise the gate yet stay within timeout)
 INITIAL_ENERGY="${INITIAL_ENERGY:-1000000}"
 HALF_LIFE="${HALF_LIFE:-64}"
 DEPOSIT_AMOUNT="${DEPOSIT_AMOUNT:-1000}"
@@ -50,7 +51,7 @@ POLL_TIMEOUT_SEC=180
 usage() { cat <<'EOF'
 deploy-sfsv.sh [options]
   --dry-run               validate + print intended calls; no network
-  --node URL              node base URL (default http://127.0.0.1:9001)
+  --node URL              node base URL (default http://89.167.52.40:8099)
   --token TOKEN           auth token ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8           deployer/caller account index (u8)
   --future-self V         set_terms future_self arg
@@ -143,6 +144,21 @@ if ! $DRY_RUN; then
     curl -sS -m 5 "$NODE_URL/api/version" >/dev/null 2>&1 || die "node $NODE_URL unreachable" 2
 fi
 
+# Resolve an epoch-relative release for predicate-0 (EpochReached).
+# An absolute default (e.g. 200) is ancient on a long-lived node, so
+# the gate never blocks and the non-vacuity assertion correctly fails.
+# Anchor to the live epoch + margin so the gate is genuinely exercised
+# (rejected pre-release, finalised post-release). Type-1 keeps a plain
+# energy-threshold default. An explicit --release-param is respected.
+if [[ -z "$RELEASE_PARAM" ]]; then
+  if [[ "$PREDICATE_TYPE" == "0" ]]; then
+    _cur_ep=$($DRY_RUN && echo 0 || get_epoch)
+    RELEASE_PARAM=$(( _cur_ep + RELEASE_MARGIN ))
+  else
+    RELEASE_PARAM=200
+  fi
+fi
+
 cat <<EOF
 ╔══════════════════════════════════════════════════════════════════╗
 ║  SFSV reference dApp — end-to-end deploy (source-verified spec)  ║
@@ -203,10 +219,20 @@ else
       '{caller:$c, contract_id:$cid, method:"try_payout", args:[], epoch:$ep}')
     TH=$(printf '%s' "$(curl_json POST /api/tx/call-script "$TP_BODY")" | jq -r '.tx_hash // empty')
     [[ -z "$TH" ]] && { sleep 4; continue; }
-    rs=$(curl_json GET "/api/tx/$TH" | jq -r '.state // "unknown"')
+    # A freshly-submitted tx is `pending` until mined (~1-2 blocks).
+    # Checking its state once immediately (as before) never observes a
+    # terminal state, so the loop would resubmit forever and never see
+    # the try_payout that actually finalises. Poll THIS hash to a
+    # terminal state before classifying.
+    rs=unknown
+    for _w in 1 2 3 4 5 6; do
+      rs=$(curl_json GET "/api/tx/$TH" | jq -r '.state // "unknown"')
+      [[ "$rs" == "included" || "$rs" == "finalised" || "$rs" == "rejected" ]] && break
+      sleep 2
+    done
     if [[ "$rs" == "included" || "$rs" == "finalised" ]]; then ok=1; log "try_payout finalised at epoch $EPOCH"; break; fi
     [[ "$rs" == "rejected" ]] && saw_gate=1   # predicate `require` reverted — gate is real
-    sleep 4   # rejected/pending ⇒ predicate not satisfied yet; retry
+    sleep 2   # not yet satisfied ⇒ retry
   done
   (( ok == 1 )) || die "try_payout never succeeded within ${POLL_TIMEOUT_SEC}s (predicate never tripped)" 5
   # Non-vacuity: an EpochReached vault sealed before release_epoch MUST
