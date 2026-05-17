@@ -4,6 +4,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+## 2026-05-17 (morning) — Doctrine triplet sweep complete: singh-posthuma e2e
+
+**Focus:** Final crate in the DOCTRINE_PUNCH_LIST singh-* sweep — `evaporchain-singh-posthuma` (Sealed Testaments). Completed the full doctrine triplet (source citation + adversarial + e2e fixture) across all 6 singh-* crates.
+**Commits shipped:** 1 (`01cfafe3`)
+**Deliverables:**
+- **`crates/evaporchain-singh-posthuma/tests/e2e.rs`** — 30 integration tests: full "Alice's Last Testament" lifecycle fixture (3-of-5 committee, initial=8_192, half_life=100); suspension-gap proof (sealed testament at epoch 400 holds 8_192 vs hypothetical decay of 512 → 16× preservation); cert.death_epoch anchoring (clock starts at 400 not "now"); MemorialMarker commitment uniqueness; monotone-non-increasing energy after reveal. Adversarial: all 7 VaultError variants, all 6 CertificateError variants, ZeroHalfLife, ZeroInitialEnergy, all fade ordering guards. Cross-cuts: serde round-trip for all 3 states, determinism.
+- **Full doctrine triplet sweep across singh-* crates** (across 2 sessions):
+  - `singh-heir` — 18 e2e tests (3-gen inheritance chain, escheated terminal state)
+  - `singh-sabi` — 19 e2e tests (Pilgrim half-life decay + entropy axes, Hako transfer invariance)
+  - `singh-migrant` — 18 e2e tests (3-hop kula ring 823 >> stillness 125, tier-3 acceleration)
+  - `singh-lineage` — 21 e2e tests (2-child graduated dormancy 90/180/365 → 25/50/100%)
+  - `singh-resonance` — 17 e2e tests (beloved 4_167 vs abandoned 2_500, anti-Black-Mirror guard)
+  - `singh-posthuma` — 30 e2e tests (lifecycle fixture above)
+
+**Empirical results:** 30/30 posthuma tests green on Mini 1, 0 failures. All 6 crates compile cleanly with new e2e suites.
+
+**Decisions made:** Sweep is complete. Next priority: VM paradigm crates (`evaporchain-total-evaporscript`, `evaporchain-cap-decay-vm`, `evaporchain-dp-native-vm`) need doctrine triplets, then SFSV off-chain coordinator.
+
+**What's next:**
+1. VM paradigm doctrine triplets: `total-evaporscript`, `cap-decay-vm`, `dp-native-vm`
+2. SFSV off-chain coordinator binary (path to Paper 1)
+3. Commit devnet sig-verify fix and push all branches
+
+**Blockers / open questions:** None.
+
+**Cross-references:** `crates/evaporchain-singh-posthuma/tests/e2e.rs`, commit `01cfafe3`; prior session commits `ad936bbe` (lineage+resonance), `c3ca2013` (migrant), earlier session (heir+sabi).
+
+---
+
 ## 2026-05-16 (night+4) — SFSV smoke test green: Bug #1 + Bug #2 empirically confirmed
 
 **Focus:** Live devnet smoke test confirming the two architectural fixes (api.rs Bug #1, parallel.rs Bug #2) work end-to-end.
