@@ -6,6 +6,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, eighth continued) — test verification + 5 real bug fixes found
+
+**Focus:** First full workspace test run on Mini 1 since audit work began. Found and fixed 5 real bugs (3 API mismatches in new e2e tests, 1 production logic bug in consensus, 2 wrong semantic assumptions).
+**Commits shipped:** 6 (f25988e5 clippy, 7d546357 fee-controller API, 85f8a8f9 decay-lamport TickError, 91a893a8 GEN-N1 rotation, 14fbe3aa decay-lamport overflow, 9402d220 decay-lamport residual semantics)
+**Deliverables:**
+- **f25988e5** — 27-file clippy cleanup from Mini 1 stash (is_empty, abs_diff, Default impl, unused imports)
+- **7d546357** — fee-controller e2e: `step()` takes 4 args `(params, state, gas_used, epochs_elapsed)` returning `(FeeState, Drift)`, not 2 args returning `Drift`. Use `gas_used=target_gas` for pure-decay fixtures.
+- **85f8a8f9** — decay-lamport e2e: `TickError::Overflow` doesn't exist; tick uses saturating_add. Renamed test to `overflow_guard_saturates_never_panics`.
+- **91a893a8** — **BUG FIX**: GEN-N1 key rotation success path never applied the key update. After continuity_signature verified at line 4825, code fell through to `if vi.bls_public_key.is_some() { return; }` guard which unconditionally rejected. Fix: `rotation_continuity_ok` flag skips the reject gate when rotation was authorised.
+- **14fbe3aa** — decay-lamport overflow: tighten `assert!(c.current_tick <= u64::MAX)` → `assert_eq!(c.current_tick, u64::MAX)` (clippy absurd_extreme_comparisons).
+- **9402d220** — decay-lamport residual semantics: `accumulated_energy` stores the RESIDUAL after last tick boundary (not total ever spent); `merge()` always resets it to 0 (cross-node residuals are undefined). Two test assertions were wrong.
+**Empirical results:** `cargo test --workspace` on Mini 1: exit 0 (all tests pass) after all 6 fixes. Two independent runs confirmed.
+**Decisions made:** The GEN-N1 rotation bug was the most significant: the security fix (require continuity sig) was correct, but the success path to APPLY the rotation was accidentally blocked by the "already-has-key" guard. The semantic assertions in decay-lamport tests revealed a subtlety: `accumulated_energy` is a modular residual, not a cumulative counter.
+**What's next:** All code complete + all tests green. Remaining work is OPS (cluster soaks, governance flips, key rotations) requiring live cluster access.
+**Blockers / open questions:** None code-side. Cluster OPS lanes (T0.2/T0.5/T0.6/T1.17-19/T1.23) need operator action.
+**Cross-references:** GEN-N1 fix: `crates/evaporchain-consensus/src/tendermint.rs:4793-4862`. Fee-controller API: `crates/evaporchain-fee-controller/src/controller.rs:48`. Decay-lamport residual: `crates/evaporchain-decay-lamport/src/clock.rs:47`.
+
+---
+
 ## 2026-05-17 (night, seventh continued) — AUDIT_2026_05_17: INV-MED-5 + M-4 + Q10 + INV-MED-6 closed
 
 **Focus:** Close final four open AUDIT_2026_05_17 findings: doc drift on Tier-2 VMs, poseidon_hash warning, namespace sentinel, and 5 missing doctrine e2e tests.
