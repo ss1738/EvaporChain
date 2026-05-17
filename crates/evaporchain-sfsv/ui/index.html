@@ -18,14 +18,17 @@
                                    args = Vec<evaporchain_script::Value> (externally-tagged:
                                    address ⇒ {"Address":[b0..b31]}, u64 ⇒ {"U64":n})
     GET  /api/tx/:hash           — status poll; carries .contract_id after deploy
-    GET  /api/contract/:id       — live vault; logical state under .state (tagged Value map)
+    GET  /api/script/:id         — live vault; .state is the tagged Value map
+                                   (get_script — the SCRIPT engine store)
     GET  /api/status             — chain epoch (.epoch) + reachability probe
 
   NOTE: deployer/caller are u8 devnet account indices (node maps i ⇒
   addr_from_byte(i) = [i,0,…,0]); index 0 = genesis-funded faucet
   account. There is NO /api/version, /api/contract/by-deploy/:hash,
-  or /api/contract/:addr/state — those were spec guesses; corrected
-  here against source (see VERIFICATION_2026_05_16.md "LIVE E2E PASS").
+  /api/contract/:addr/state. EvaporScript vaults are at /api/script/:id
+  — NOT /api/contract/:id (the unrelated template/CallContract store,
+  which always 404s for a script vault). Corrected against source +
+  live node (see VERIFICATION_2026_05_16.md "LIVE E2E PASS").
 
   ## Forkability
     See ../README.md "Fork recipe" — this file ports verbatim to any
@@ -556,17 +559,15 @@ Until the predicate trips it will be rejected — retry; the state panel flips t
     const pill = $("s-status");
     let c;
     try {
-      c = await apiCall("/api/contract/" + cid);
+      // EvaporScript vaults live in the node's SCRIPT engine:
+      // GET /api/script/:id (api.rs get_script). NOT /api/contract/:id
+      // (the unrelated template store — always 404s for vaults).
+      c = await apiCall("/api/script/" + cid);
     } catch (e) {
-      // A finalised try_payout retires the instance (.es §lifecycle-4),
-      // so a post-payout 404 is the terminal "released" state, not an
-      // error. Distinguish that from a transient poll failure.
-      if (/HTTP 404|not found/i.test(e.message)) {
-        $("s-contract").textContent = cid + " (retired post-payout)";
-        pill.textContent = "released";
-        pill.className = "pill released";
-      }
-      return; // transient: keep last good values
+      // Script contracts persist + are observable, so a 404 is a real
+      // error, not a terminal state — keep last good values and let the
+      // next poll retry rather than fabricating a "released" render.
+      return;
     }
     const st = c.state || {};
     const released = untag(st.released) === true;

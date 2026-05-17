@@ -8,8 +8,8 @@
 #   - deployer/caller are u8 account indices, NOT hex addresses
 #   - call-script requires contract_id:u64 + epoch:u64
 #   - no /api/contract/by-deploy/:hash  (contract_id is in /api/tx/:hash)
-#   - no /api/contract/:id/state        (only /api/contract/:id; logical
-#                                        state is the `.state` JSON object)
+#   - EvaporScript state is at GET /api/script/:id (.state tagged map),
+#     NOT /api/contract/:id (that is the unrelated template store)
 #   - no predicate_satisfied field — try_payout self-guards; retry it.
 #
 # Flow (all source-verified except the epoch-field note in get_epoch):
@@ -17,7 +17,7 @@
 #   2. poll GET /api/tx/<hash>      → state included; read .contract_id
 #   3. call-script set_terms(...)   → seal the vault
 #   4. retry call-script try_payout → reverts until predicate trips
-#   5. GET /api/contract/<id>       → assert .state.released is truthy
+#   5. GET /api/script/<id>         → assert .state.released is truthy
 #
 #   ./scripts/deploy-sfsv.sh --dry-run
 #   ./scripts/deploy-sfsv.sh --node http://127.0.0.1:9001 \
@@ -218,44 +218,34 @@ else
   log "predicate gate proven: try_payout was rejected pre-release, finalised post-release."
 fi
 
-# ── 4. verify .state.released ──
-log "Step 4/4 — verify GET /api/contract/$CID .state.released"
+# ── 4. verify .state.released (DIRECT observation) ──
+# EvaporScript contracts live in the node's SCRIPT engine, queried at
+# GET /api/script/:id (api.rs get_script, route api.rs:18971) — NOT
+# /api/contract/:id, which is the unrelated TEMPLATE/CallContract store
+# (an earlier version queried that, always 404'd, and was wrongly
+# explained as "retired on payout / devnet limitation"). Script
+# contracts persist and are fully observable; get_script returns the
+# tagged `.state` map. This is a STRICT, directly-observed assertion —
+# a 404 or released!=true here is a real failure. Empirically PASSED:
+# contract_id 9, released={Bool:true}, payout_at={U64:5803} (2026-05-16).
+log "Step 4/4 — verify GET /api/script/$CID .state.released"
 if $DRY_RUN; then
-  log "[DRY-RUN] would assert .state.released truthy (1/true)"
+  log "[DRY-RUN] would assert .state.released == {\"Bool\":true}"
   log "✓ dry-run complete."; exit 0
 fi
-STATE=$(curl_json GET "/api/contract/$CID")
-# We only reach here AFTER step 3 proved try_payout was predicate-gated
-# (rejected pre-release) then finalised. The `.es` try_payout require()s
-# sealed + !released + predicate, and ONLY then sets released=true,
-# stamps payout_at, emits "vault payout" — so a finalised try_payout
-# ⟺ released was set true at execution. SFSV doctrine (.es header
-# §lifecycle-4): the off-chain layer credits the holder then RETIRES
-# the instance; the vault's own energy also decays. So a post-payout
-# `contract not found` is the EXPECTED terminal state, not a failure.
+STATE=$(curl_json GET "/api/script/$CID")
 if printf '%s' "$STATE" | jq -e 'has("error")' >/dev/null 2>&1; then
-  log "✓ contract $CID absent post-payout — SFSV doctrine §lifecycle-4:"
-  log "  instance retired/evaporated after payout. The predicate-gated"
-  log "  finalised try_payout (step 3) is the terminal success proof."
-  cat <<EOF
-
-╔══════════════════════════════════════════════════════════════════╗
-║          ✓ SFSV LIFECYCLE COMPLETE (retired post-payout)         ║
-║  contract_id: $CID   deploy: $DH                                  ║
-║  proof: deploy✓  set_terms✓  predicate-gated try_payout✓         ║
-╚══════════════════════════════════════════════════════════════════╝
-EOF
-  exit 0
+  die "GET /api/script/$CID returned an error AFTER a finalised \
+predicate-gated try_payout — script contracts persist on this node, so \
+this is a real failure: $(printf '%s' "$STATE" | jq -c .)" 6
 fi
-# Contract still live → strict confirmation. State is
-# HashMap<String, evaporchain_script::Value>; fields are externally
-# tagged: released ⇒ {"Bool":true}, payout_at ⇒ {"U64":n}. Tagged
-# first, bare fallback.
+# State fields are externally-tagged evaporchain_script::Value:
+# released ⇒ {"Bool":true}, payout_at ⇒ {"U64":n}.
 REL=$(printf '%s' "$STATE" | jq -r '
   (.state.released.Bool) // (.state.released) //
   (.state.Released.Bool) // (.state.Released) // "0"')
 case "$REL" in
-  1|true|True) log "✓ released==true confirmed on live contract state" ;;
+  1|true|True) log "✓ released==true DIRECTLY observed on live script state" ;;
   *) die "vault NOT released; .state.released=$REL ; full state: $(printf '%s' "$STATE" | jq -c '.state')" 6 ;;
 esac
 PAYOUT_AT=$(printf '%s' "$STATE" | jq -r '.state.payout_at.U64 // .state.payout_at // "?"')
