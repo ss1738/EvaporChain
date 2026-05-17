@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/erasure_attestation.es"
 
-NODE_URL="${NODE_URL:-http://127.0.0.1:9001}"
+NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
 DEPLOYER_U8="${DEPLOYER_U8:-0}"          # controller = owner; 0 = genesis faucet
 SUBJECT_U8="${SUBJECT_U8:-1}"
@@ -46,7 +46,7 @@ POLL_TIMEOUT_SEC=300
 usage() { cat <<'EOF'
 deploy-erasure-attestation.sh [options]
   --dry-run            validate + print intended calls; no network
-  --node URL           node base URL (default http://127.0.0.1:9001)
+  --node URL           node base URL (default http://89.167.52.40:8099)
   --token TOKEN        auth bearer ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8        controller/owner index (default 0 = faucet)
   --subject U8         data-subject ref (default 1)
@@ -174,10 +174,18 @@ saw_open=0
 if $DRY_RUN; then
   log "[DRY-RUN] would assert sealed=true, obligation_basis=$BASIS, evaporated=false"
 else
-  ST=$(curl_json GET "/api/script/$CID")
-  SEALED=$(printf '%s' "$ST" | untag sealed)
-  BON=$(printf '%s' "$ST" | jq -r '.state.obligation_basis | if type=="object" then .U64 else . end')
-  EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
+  # poll_tx returns on `included`; on a busy shared node the executed
+  # state can lag the tx by a beat. Settle-retry the read instead of
+  # a single-shot (mirrors the verified pilot's post-seal settle).
+  SEALED= BON= EVAP=
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    ST=$(curl_json GET "/api/script/$CID")
+    SEALED=$(printf '%s' "$ST" | untag sealed)
+    BON=$(printf '%s' "$ST" | jq -r '.state.obligation_basis | if type=="object" then .U64 else . end')
+    EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
+    [[ "$SEALED" == "true" && "$BON" == "$BASIS" && "$EVAP" == "false" ]] && break
+    sleep 2
+  done
   if [[ "$SEALED" == "true" && "$BON" == "$BASIS" && "$EVAP" == "false" ]]; then
     saw_open=1
     log "CONFIRMED: sealed=true obligation_basis=$BON evaporated=false (in obligation window)"
@@ -195,8 +203,13 @@ if [[ "$MODE" == "attest" ]]; then
     '{caller:$c, contract_id:$cid, method:"attest_erasure", args:[ {U64:$v} ], epoch:$ep}')
   AH=$(submit_tx "/api/tx/call-script" "$ABODY" attest 6)
   poll_tx "$AH" attest 6 >/dev/null
-  ST=$(curl_json GET "/api/script/$CID")
-  ATT=$(printf '%s' "$ST" | untag attested)
+  ATT=
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    ST=$(curl_json GET "/api/script/$CID")
+    ATT=$(printf '%s' "$ST" | untag attested)
+    [[ "$ATT" == "true" ]] && break
+    sleep 2
+  done
   log "Step 5/5 - verdict (attest)"
   (( saw_open == 1 )) || die "non-vacuity: never confirmed an opened attestation" 5
   [[ "$ATT" == "true" ]] || die "attest_erasure did not set attested=true (got '$ATT') — proof unshown" 6

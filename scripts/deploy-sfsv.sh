@@ -20,7 +20,7 @@
 #   5. GET /api/script/<id>         → assert .state.released is truthy
 #
 #   ./scripts/deploy-sfsv.sh --dry-run
-#   ./scripts/deploy-sfsv.sh --node http://127.0.0.1:9001 \
+#   ./scripts/deploy-sfsv.sh --node http://89.167.52.40:8099 \
 #       --deployer 1 --future-self 2 --predicate 0 --release-param 200 \
 #       --energy 1000000 --half-life 64 --deposit 1000
 #
@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/future_self_vault.es"
 
-NODE_URL="${NODE_URL:-http://127.0.0.1:9001}"
+NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
 DEPLOYER_U8="${DEPLOYER_U8:-1}"          # u8 devnet account index (tx deployer/caller)
 FUTURE_SELF="${FUTURE_SELF:-2}"          # set_terms `future_self` arg (.es address)
@@ -50,7 +50,7 @@ POLL_TIMEOUT_SEC=180
 usage() { cat <<'EOF'
 deploy-sfsv.sh [options]
   --dry-run               validate + print intended calls; no network
-  --node URL              node base URL (default http://127.0.0.1:9001)
+  --node URL              node base URL (default http://89.167.52.40:8099)
   --token TOKEN           auth token ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8           deployer/caller account index (u8)
   --future-self V         set_terms future_self arg
