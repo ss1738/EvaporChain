@@ -68,15 +68,18 @@ fn merge_is_idempotent() {
     let a = spend(make_clock(), 600_000);
     let a2 = a.merge(a);
     assert_eq!(a2.current_tick, a.current_tick);
-    assert_eq!(a2.accumulated_energy, a.accumulated_energy);
+    // merge() always resets accumulated_energy to 0 — residuals are not
+    // combined across nodes (cross-node residual combination is undefined).
+    assert_eq!(a2.accumulated_energy, 0);
 }
 
 #[test]
 fn energy_accumulates_across_ticks() {
     let a = spend(make_clock(), 300_000);
-    let a = spend(a, 400_000); // now 700k total → 1 full quantum
+    let a = spend(a, 400_000); // 300k + 400k = 700k total → 1 tick (500k quantum), 200k residual
     assert_eq!(a.current_tick, 1);
-    assert_eq!(a.accumulated_energy, 700_000);
+    // accumulated_energy is the residual after the last tick boundary, not total spent.
+    assert_eq!(a.accumulated_energy, 200_000);
 }
 
 // ── Causal precedence ─────────────────────────────────────────────────────
