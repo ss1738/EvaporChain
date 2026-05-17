@@ -6,6 +6,29 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, second continued) — AUDIT_2026_05_17: contract security batch + CONS-A
+
+**Focus:** Close SDDC-1/SHLM-1/SPLIT-1/SFSV-1/LOTTERY-1/EXEC-2/CONS-A — contract caller guards, overflow fix, chain-VRF draw, governance λ read path.
+**Commits shipped:** 2 (d2db9fb5 → f77d547e), fast-forward merged to main, pushed.
+**Deliverables:**
+- **CONS-A closed** (d2db9fb5): ChainLambda::default_genesis() no longer hard-codes λ at conservation gate; chain_lambda read from consensus state at all 7 call sites; governance write path `POST /api/governance/param` + `GET /api/governance/flags` wired.
+- **SDDC-1 closed** (f77d547e): try_clear() in sddc.es now requires `caller == owner`; adversary cannot race coordinator to extract bids at below-market price.
+- **SHLM-1 closed** (f77d547e): record_match() in shlm.es now requires `caller == self.admin`; any-address exploit that could supply below-market agreed_salary is closed.
+- **SPLIT-1 closed** (f77d547e): claim/entitlement_of/pending_of in payment_split.es use division-first arithmetic `(total/10000)*bps + (total%10000)*bps/10000`; silent u64 overflow at ~1.8e15 eliminated without u128.
+- **SFSV-1 closed** (f77d547e): record_sale() in future_self_vault.es now requires `caller == owner`; TOCTOU race between cancel_listing and record_sale is closed.
+- **LOTTERY-1 closed** (f77d547e): lottery.es replaced operator-supplied VRF path with chain-VRF draw(); entry_by_index map tracks insertion order; random_range(entry_count) derives winner from beacon. vrf_blob/vrf_proof/set_winner removed. vm.rs: vrf_domain_randomness() and random_range() added to call_builtin so EvaporScript source can call them as named functions. lottery_pilot.rs updated — all set_winner references removed, lottery1_draw_is_operator_only adversarial test added.
+- **EXEC-2 call_depth leak closed** (f77d547e): call_depth increment in both execute_call_contract and execute_call_script moved to after arg validation in block_stm.rs, lib.rs, parallel.rs.
+
+**Empirical results:** Tests run on Mini — pending next session confirmation.
+**Decisions made:**
+- LOTTERY-1: removed LEGACY set_winner entirely rather than retaining it; vrf_blob/vrf_proof dead code removed. The chain-VRF draw() is the single path.
+- SPLIT-1: division-first arithmetic rather than u128 cast because EvaporScript has no u128 type; rounding error ≤ 1 unit per recipient documented in contract comment.
+**What's next:** NFT-1 (CRITICAL — state owner shadow-collision with builtin), doc-drift items (Frontier #2 decompress, GHOST-A MMR nullifier), then MEDIUM/LOW backlog.
+**Blockers / open questions:** None.
+**Cross-references:** AUDIT_2026_05_17.md — SDDC-1/SHLM-1/SPLIT-1/SFSV-1/LOTTERY-1/EXEC-2/CONS-A all closed; commits d2db9fb5, f77d547e on main.
+
+---
+
 ## 2026-05-17 (night, continued) — AUDIT_2026_05_17 drive: Q4–Q8 + EXEC-2 + PARSE-1 + INV-HIGH
 
 **Focus:** Close remaining AUDIT_2026_05_17 HIGH-class items — DA path hardening (Q4–Q8), call_depth DoS (EXEC-2), parser recursion DoS (PARSE-1), MERA hot-path (INV-HIGH-1/2).
