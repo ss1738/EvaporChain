@@ -34,6 +34,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use evaporchain_energy_kernel::ChainLambda;
 use evaporchain_proving::nova::{RealBlockProver, ThermodynamicWitness};
 use evaporchain_proving::{CompressedProof, ProvingError};
 use evaporchain_types::{Block, DualCommitment};
@@ -100,17 +101,26 @@ pub struct NovaFolder {
     total_energy_remaining: u128,
     step_count: u64,
     latest_epoch: u64,
+    /// L0-A (audit 2026-05-17): chain-global λ. Replaces the pre-fix
+    /// behaviour where `fold_block` grabbed the FIRST object's
+    /// half_life from `ThermodynamicWitness` (or hard-coded `100`) as
+    /// the running-total decay constant — a Layer-0 doctrine violation
+    /// (the chain has *one* λ; routing through per-object half-lives
+    /// silently used 1000× faster decay when an object with `half_life=10`
+    /// happened to be first in the witness).
+    chain_lambda: ChainLambda,
 }
 
 impl NovaFolder {
-    /// Create a new folder at genesis. Performs the heavy `pp`
-    /// setup; Phase 3.1 contract — call once per chain.
-    pub fn new(genesis: &DualCommitment) -> Result<Self, NovaFoldError> {
+    /// Create a new folder at genesis with explicit chain λ. Performs
+    /// the heavy `pp` setup; Phase 3.1 contract — call once per chain.
+    pub fn new(genesis: &DualCommitment, chain_lambda: ChainLambda) -> Result<Self, NovaFoldError> {
         Ok(Self {
             prover: RealBlockProver::new(genesis)?,
             total_energy_remaining: 0,
             step_count: 0,
             latest_epoch: 0,
+            chain_lambda,
         })
     }
 
@@ -150,14 +160,19 @@ impl NovaFolder {
             self.total_energy_remaining
         } else {
             let prev_u64 = self.total_energy_remaining.min(u64::MAX as u128) as u64;
-            let half_life = thermo
-                .object_energies
-                .first()
-                .map(|(_, _, hl)| *hl)
-                .unwrap_or(100);
-            let decayed = evaporchain_types::energy_at_epoch(prev_u64, half_life, elapsed);
+            // L0-A (audit 2026-05-17): use the chain-global λ (single-λ
+            // doctrine) instead of the per-object half_life from
+            // `thermo.object_energies[0]` (which silently varied the
+            // running-total decay constant). Matches `crate::fold::fold`
+            // which already routed through `chain_lambda.half_life()`.
+            let decayed =
+                evaporchain_types::energy_at_epoch(prev_u64, self.chain_lambda.half_life(), elapsed);
             decayed as u128
         };
+        // Suppress unused warning — `thermo` is still required by
+        // `fold_real_block_with_witness` even though we no longer
+        // consult its `object_energies` for the running total.
+        let _ = thermo;
         self.total_energy_remaining = decayed_prev.saturating_add(step_energy as u128);
         self.step_count = self.step_count.saturating_add(1);
         self.latest_epoch = observed_epoch;
@@ -313,7 +328,8 @@ mod tests {
     #[test]
     fn nova_fold_three_blocks_and_verify() {
         let genesis = make_dual_commitment(0, 0);
-        let mut folder = NovaFolder::new(&genesis).expect("folder setup failed");
+        let mut folder = NovaFolder::new(&genesis, ChainLambda::default_genesis())
+            .expect("folder setup failed");
 
         let mut last_state = genesis.clone();
         let mut last_instance = NovaFoldedInstance::identity();
@@ -349,7 +365,8 @@ mod tests {
     #[test]
     fn nova_verify_rejects_below_energy_floor() {
         let genesis = make_dual_commitment(0, 0);
-        let mut folder = NovaFolder::new(&genesis).expect("folder setup failed");
+        let mut folder = NovaFolder::new(&genesis, ChainLambda::default_genesis())
+            .expect("folder setup failed");
         let block = make_block(1, 1);
         let new_state = make_dual_commitment(1, 1);
         let thermo = ThermodynamicWitness {
