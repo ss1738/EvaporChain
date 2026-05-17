@@ -3,8 +3,8 @@
 //! Branch 4, "Memento contracts" — only EvaporChain can offer the
 //! thermodynamic `OwnerEnergyBelow` trigger.
 //!
-//! Existing in-module tests cover the happy path + 5 trigger variants
-//! + commitment binding + length-prefix anti-collision. This file
+//! Existing in-module tests cover the happy path, 5 trigger variants,
+//! commitment binding, and length-prefix anti-collision. This file
 //! adds:
 //!
 //!   - Serde round-trips for `MementoContract` and `MementoReveal`

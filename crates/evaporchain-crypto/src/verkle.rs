@@ -1040,11 +1040,11 @@ mod tests {
 
         // trie_a deletes in insertion order; trie_b deletes in
         // reverse. Both must end at the empty root.
-        for i in 0..n as usize {
-            trie_a.delete(&keys[i]);
+        for key in keys.iter().take(n as usize) {
+            trie_a.delete(key);
         }
-        for i in (0..n as usize).rev() {
-            trie_b.delete(&keys[i]);
+        for key in keys.iter().take(n as usize).rev() {
+            trie_b.delete(key);
         }
         assert_eq!(trie_a.root(), empty_root, "forward-delete returns to empty");
         assert_eq!(trie_b.root(), empty_root, "reverse-delete returns to empty");

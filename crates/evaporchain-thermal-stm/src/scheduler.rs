@@ -319,7 +319,7 @@ mod tests {
         let r = s.run(BTreeMap::new(), vec![low, high]).unwrap();
         // key(0) is high's, key(1) was NOT written (low aborted).
         assert_eq!(r.state.get(&key(0)).unwrap(), b"high");
-        assert!(r.state.get(&key(1)).is_none());
+        assert!(!r.state.contains_key(&key(1)));
     }
 
     // ── initial state preserved ───────────────────────────────────

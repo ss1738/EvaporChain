@@ -109,8 +109,8 @@ fn state_proof_url_pattern_a_through_f_round_trips() {
     let t = HttpTransport::new("http://h");
     // Walk all nibble values 0..16 across 32 bytes.
     let mut key = [0u8; 32];
-    for i in 0..32 {
-        key[i] = (i as u8) | ((i as u8) << 4);
+    for (i, byte) in key.iter_mut().enumerate() {
+        *byte = (i as u8) | ((i as u8) << 4);
     }
     let url = t.state_proof_url(&key);
     // Recover the hex part.

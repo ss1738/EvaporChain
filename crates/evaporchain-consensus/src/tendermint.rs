@@ -9773,18 +9773,18 @@ mod tests {
 
         let insert_start = std::time::Instant::now();
         for round in 0..blocks_per_fork {
-            for fork_idx in 0..n_forks {
+            for (fork_idx, tip) in tips.iter_mut().enumerate().take(n_forks) {
                 let mut new_tip = [0u8; 32];
                 new_tip[0] = 0xA0 + fork_idx as u8;
                 new_tip[1] = (round as u8).wrapping_add(1);
                 new_tip[2] = ((round >> 8) as u8).wrapping_add(1);
-                let parent = tips[fork_idx];
+                let parent = *tip;
                 if tc
                     .light_cone_dag
                     .insert(LcBlock::new(new_tip, vec![parent], 100, (round + 2) as u64))
                     .is_ok()
                 {
-                    tips[fork_idx] = new_tip;
+                    *tip = new_tip;
                 }
             }
         }
@@ -10041,7 +10041,7 @@ mod tests {
         tc.mev_missing_refund_violations.insert(1, 100);
         let slashed = tc.apply_mev_missing_refund_slashes();
         // Counter reset.
-        assert!(tc.mev_missing_refund_violations.get(&1).is_none());
+        assert!(!tc.mev_missing_refund_violations.contains_key(&1));
         // The result should report at least the validator we
         // configured (real slash amount depends on entropy math).
         let entry_for_1 = slashed.iter().find(|(v, _)| *v == 1);
@@ -10063,7 +10063,7 @@ mod tests {
         // Validator 99 doesn't exist → no slash entry.
         assert!(slashed.iter().all(|(v, _)| *v != 99));
         // Counter reset regardless — operator tooling expects it.
-        assert!(tc.mev_missing_refund_violations.get(&99).is_none());
+        assert!(!tc.mev_missing_refund_violations.contains_key(&99));
     }
 
     /// Phase 4.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
@@ -12960,26 +12960,26 @@ mod tests {
         assert!(tc.propose_parents().is_empty());
     }
 
-    /// MCC Phase C.5 — validator-determinism property test (256
-    /// random DAG shapes).
-    ///
-    /// **The contract:** every honest validator with the same DAG
-    /// state must produce the same MCC fork-choice outputs:
-    ///   1. `candidate_heads()` returns the same `BTreeSet` of leaves
-    ///   2. `enumerate_candidate_heads()` returns the same sorted
-    ///      `Vec<(BlockId, caliber)>` (same order, same scores)
-    ///   3. `light_cone_antichain_digest()` matches
-    ///   4. `plan_replay_to_head` produces the same `ReplayWalk` for
-    ///      every (from, to) pair drawn from the candidate heads
-    ///
-    /// **Why this is a proptest, not a unit test:** the manual
-    /// `mcc_phase_a_candidate_heads_converges_across_validators`
-    /// test (already shipped) covers a 6-block hand-picked sequence.
-    /// This proptest sweeps 256 randomly-generated DAG shapes (linear
-    /// chains, branching, multi-parent merges) at sizes 1..=20
-    /// blocks, catching any non-determinism that depends on a
-    /// specific topology — HashMap iteration order leaking into
-    /// scoring, time-based tie-breaks, etc.
+    // MCC Phase C.5 — validator-determinism property test (256
+    // random DAG shapes).
+    //
+    // **The contract:** every honest validator with the same DAG
+    // state must produce the same MCC fork-choice outputs:
+    //   1. `candidate_heads()` returns the same `BTreeSet` of leaves
+    //   2. `enumerate_candidate_heads()` returns the same sorted
+    //      `Vec<(BlockId, caliber)>` (same order, same scores)
+    //   3. `light_cone_antichain_digest()` matches
+    //   4. `plan_replay_to_head` produces the same `ReplayWalk` for
+    //      every (from, to) pair drawn from the candidate heads
+    //
+    // **Why this is a proptest, not a unit test:** the manual
+    // `mcc_phase_a_candidate_heads_converges_across_validators`
+    // test (already shipped) covers a 6-block hand-picked sequence.
+    // This proptest sweeps 256 randomly-generated DAG shapes (linear
+    // chains, branching, multi-parent merges) at sizes 1..=20
+    // blocks, catching any non-determinism that depends on a
+    // specific topology — HashMap iteration order leaking into
+    // scoring, time-based tie-breaks, etc.
     proptest::proptest! {
         #[test]
         fn mcc_phase_c5_validator_determinism_under_random_dags(

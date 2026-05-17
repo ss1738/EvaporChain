@@ -167,7 +167,7 @@ fn doctrine_aborted_tx_has_zero_state_effect() {
 
     let result = s.run(BTreeMap::new(), vec![winner, loser]).unwrap();
     assert_eq!(result.state.get(&key(0)).unwrap(), b"win");
-    assert!(result.state.get(&key(99)).is_none(), "aborted tx must not partially write key(99)");
+    assert!(!result.state.contains_key(&key(99)), "aborted tx must not partially write key(99)");
 }
 
 #[test]
