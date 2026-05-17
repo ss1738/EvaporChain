@@ -36,7 +36,13 @@ const CF_SENTINEL_VOTES: &str = "sentinel_votes";
 const CF_STAKES: &str = "stakes";
 /// Delegation records keyed by (delegator_address[32] ++ validator_id_be[8]).
 const CF_DELEGATIONS: &str = "delegations";
+/// Governance proposals, keyed by proposal_id (big-endian u64).
+const CF_PROPOSALS: &str = "proposals";
+/// Governance parameter key→value pairs, key = UTF-8 string bytes.
+const CF_GOV_PARAMS: &str = "gov_params";
 const TRIE_SNAPSHOT_KEY: &[u8] = b"__energy_verkle_trie__";
+/// Maximum number of in-memory historical snapshots (mirrors InMemoryStateDB).
+const MAX_SNAPSHOTS_ROCKSDB: usize = 256;
 const PRIVACY_NOTE_ROOT_KEY: &[u8] = b"__note_tree_root__";
 const PRIVACY_POOL_BALANCE_KEY: &[u8] = b"__shielded_pool_balance__";
 const PRIVACY_NOTE_COUNT_KEY: &[u8] = b"__note_count__";
@@ -103,6 +109,9 @@ struct BatchUndoLog {
     delegations_snapshot: HashMap<[u8; 40], DelegationRecord>,
     sentinel_params_snapshot: BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
     sentinel_votes_snapshot: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
+    // STATE-2: governance proposals and params were no-op stubs on RocksDB.
+    proposals_snapshot: HashMap<u64, evaporchain_types::GovernanceProposal>,
+    governance_params_snapshot: HashMap<String, String>,
 }
 
 /// RocksDB-backed state database with in-memory write-through cache.
@@ -135,6 +144,14 @@ pub struct RocksDBStateDB {
     stakes: HashMap<u64, StakeRecord>,
     /// Delegation records, keyed by delegation_key(delegator, validator_id).
     delegations: HashMap<[u8; 40], DelegationRecord>,
+    /// Governance proposals, write-through to CF_PROPOSALS.
+    proposals: HashMap<u64, evaporchain_types::GovernanceProposal>,
+    /// Governance key→value params, write-through to CF_GOV_PARAMS.
+    governance_params: HashMap<String, String>,
+    /// In-memory rolling window of historical account+object snapshots
+    /// (MAX_SNAPSHOTS_ROCKSDB entries). Not persisted across restarts —
+    /// used for light-client queries within the recent window only.
+    snapshots: BTreeMap<u64, (HashMap<AccountAddress, Account>, HashMap<ObjectId, StateObject>)>,
     // Batch mode: buffer writes for atomic commit (Mutex for Sync)
     pending_batch: std::sync::Mutex<Option<WriteBatch>>,
     // Undo log for reverting in-memory state on rollback
@@ -160,6 +177,8 @@ impl RocksDBStateDB {
             ColumnFamilyDescriptor::new(CF_SENTINEL_VOTES, Options::default()),
             ColumnFamilyDescriptor::new(CF_STAKES, Options::default()),
             ColumnFamilyDescriptor::new(CF_DELEGATIONS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_PROPOSALS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_GOV_PARAMS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -482,6 +501,47 @@ impl RocksDBStateDB {
             );
         }
 
+        // STATE-2: load governance proposals.
+        let mut proposals: HashMap<u64, evaporchain_types::GovernanceProposal> = HashMap::new();
+        let cf_prop = db
+            .cf_handle(CF_PROPOSALS)
+            .ok_or_else(|| format!("missing column family: {CF_PROPOSALS}"))?;
+        let iter = db.iterator_cf(cf_prop, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if key.len() == 8 {
+                if let Ok(proposal) =
+                    bincode::deserialize::<evaporchain_types::GovernanceProposal>(&value)
+                {
+                    proposals.insert(proposal.proposal_id, proposal);
+                }
+            }
+        }
+
+        // STATE-2: load governance key→value params.
+        let mut governance_params: HashMap<String, String> = HashMap::new();
+        let cf_gp = db
+            .cf_handle(CF_GOV_PARAMS)
+            .ok_or_else(|| format!("missing column family: {CF_GOV_PARAMS}"))?;
+        let iter = db.iterator_cf(cf_gp, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if let (Ok(k), Ok(v)) = (
+                std::str::from_utf8(&key).map(|s| s.to_string()),
+                std::str::from_utf8(&value).map(|s| s.to_string()),
+            ) {
+                governance_params.insert(k, v);
+            }
+        }
+
+        if !proposals.is_empty() || !governance_params.is_empty() {
+            println!(
+                "  RocksDB: loaded {} proposals, {} governance params",
+                proposals.len(),
+                governance_params.len()
+            );
+        }
+
         Ok(Self {
             db,
             objects,
@@ -500,6 +560,9 @@ impl RocksDBStateDB {
             sentinel_votes,
             stakes,
             delegations,
+            proposals,
+            governance_params,
+            snapshots: BTreeMap::new(),
             pending_batch: std::sync::Mutex::new(None),
             batch_undo: None,
         })
@@ -521,6 +584,39 @@ impl RocksDBStateDB {
                 name
             )
         })
+    }
+
+    fn persist_proposal(&self, proposal: &evaporchain_types::GovernanceProposal) {
+        let key = proposal.proposal_id.to_be_bytes();
+        let value = match bincode::serialize(proposal) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_proposal", e),
+        };
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_PROPOSALS).unwrap();
+            batch.put_cf(cf, key, &value);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_PROPOSALS);
+            if let Err(e) = self.db.put_cf(cf, key, value) {
+                fatal_persistence_error("write_proposal_to_rocksdb", e);
+            }
+        }
+    }
+
+    fn persist_gov_param(&self, key: &str, value: &str) {
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_GOV_PARAMS).unwrap();
+            batch.put_cf(cf, key.as_bytes(), value.as_bytes());
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_GOV_PARAMS);
+            if let Err(e) = self.db.put_cf(cf, key.as_bytes(), value.as_bytes()) {
+                fatal_persistence_error("write_gov_param_to_rocksdb", e);
+            }
+        }
     }
 
     fn persist_object(&self, obj: &StateObject) {
@@ -871,6 +967,9 @@ impl StateDB for RocksDBStateDB {
             delegations_snapshot: self.delegations.clone(),
             sentinel_params_snapshot: self.sentinel_params.clone(),
             sentinel_votes_snapshot: self.sentinel_votes.clone(),
+            // STATE-2: snapshot governance for rollback.
+            proposals_snapshot: self.proposals.clone(),
+            governance_params_snapshot: self.governance_params.clone(),
         });
     }
 
@@ -959,6 +1058,10 @@ impl StateDB for RocksDBStateDB {
             self.delegations = undo.delegations_snapshot;
             self.sentinel_params = undo.sentinel_params_snapshot;
             self.sentinel_votes = undo.sentinel_votes_snapshot;
+            // STATE-2: revert governance proposals and params.
+            // Disk writes were buffered in pending_batch (dropped above).
+            self.proposals = undo.proposals_snapshot;
+            self.governance_params = undo.governance_params_snapshot;
         }
     }
 
@@ -1348,40 +1451,77 @@ impl StateDB for RocksDBStateDB {
         count
     }
 
-    fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> {
-        None
-    }
-    fn put_proposal(&mut self, _proposal: evaporchain_types::GovernanceProposal) {}
-    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> {
-        Vec::new()
-    }
-    fn get_governance_param(&self, _key: &str) -> Option<&str> {
-        None
-    }
-    fn put_governance_param(&mut self, _key: String, _value: String) {}
+    // ─── STATE-2: Governance proposals (was no-op) ───────────────────────
 
-    fn commit_state_snapshot(&mut self, _height: u64) {}
+    fn get_proposal(&self, proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> {
+        self.proposals.get(&proposal_id)
+    }
+
+    fn put_proposal(&mut self, proposal: evaporchain_types::GovernanceProposal) {
+        self.persist_proposal(&proposal);
+        self.proposals.insert(proposal.proposal_id, proposal);
+    }
+
+    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> {
+        self.proposals.values().collect()
+    }
+
+    // ─── STATE-2: Governance params (was no-op) ──────────────────────────
+
+    fn get_governance_param(&self, key: &str) -> Option<&str> {
+        self.governance_params.get(key).map(|s| s.as_str())
+    }
+
+    fn put_governance_param(&mut self, key: String, value: String) {
+        self.persist_gov_param(&key, &value);
+        self.governance_params.insert(key, value);
+    }
+
+    // ─── STATE-2: Historical snapshots (in-memory rolling window) ────────
+    // Not persisted across restarts — covers the MAX_SNAPSHOTS_ROCKSDB
+    // recent-block window needed by light-client queries.
+
+    fn commit_state_snapshot(&mut self, height: u64) {
+        self.snapshots
+            .insert(height, (self.accounts.clone(), self.objects.clone()));
+        while self.snapshots.len() > MAX_SNAPSHOTS_ROCKSDB {
+            if let Some(&oldest) = self.snapshots.keys().next() {
+                self.snapshots.remove(&oldest);
+            }
+        }
+    }
+
     fn get_account_at_height(
         &self,
-        _address: &evaporchain_types::AccountAddress,
-        _height: u64,
+        address: &evaporchain_types::AccountAddress,
+        height: u64,
     ) -> Option<evaporchain_types::Account> {
-        None
+        self.snapshots
+            .get(&height)
+            .and_then(|(accts, _)| accts.get(address).cloned())
     }
+
     fn get_object_at_height(
         &self,
-        _id: &evaporchain_types::ObjectId,
-        _height: u64,
+        id: &evaporchain_types::ObjectId,
+        height: u64,
     ) -> Option<evaporchain_types::StateObject> {
-        None
+        self.snapshots
+            .get(&height)
+            .and_then(|(_, objs)| objs.get(id).cloned())
     }
+
     fn earliest_snapshot_height(&self) -> Option<u64> {
-        None
+        self.snapshots.keys().next().copied()
     }
+
     fn latest_snapshot_height(&self) -> Option<u64> {
-        None
+        self.snapshots.keys().next_back().copied()
     }
-    fn prune_snapshots_before(&mut self, _height: u64) {}
+
+    fn prune_snapshots_before(&mut self, height: u64) {
+        self.snapshots = self.snapshots.split_off(&height);
+    }
 
     // ─── Sentinel autonomic governance (write-through to RocksDB) ───────
 
@@ -2259,11 +2399,14 @@ mod tests {
     }
 
     #[test]
-    fn t1_20_governance_param_stub_returns_none() {
+    fn t1_20_governance_param_persists() {
         let mut db = tmp_db();
-        db.put_governance_param("fee_base".to_string(), "100".to_string());
-        // Stub impl always returns None — verify it does not panic.
         assert!(db.get_governance_param("fee_base").is_none());
+        db.put_governance_param("fee_base".to_string(), "100".to_string());
+        assert_eq!(db.get_governance_param("fee_base"), Some("100"));
+        // Overwrite
+        db.put_governance_param("fee_base".to_string(), "200".to_string());
+        assert_eq!(db.get_governance_param("fee_base"), Some("200"));
     }
 
     // ── T1.20 batch-2: in-batch persist paths + proof/prune/trie-snapshot ──
@@ -2499,9 +2642,11 @@ mod tests {
     }
 
     #[test]
-    fn t1_20b_stub_governance_methods_dont_panic() {
+    fn t1_20b_governance_and_snapshot_methods_work() {
         let mut db = tmp_db();
+        // Proposals round-trip
         assert!(db.get_proposal(1).is_none());
+        assert!(db.all_proposals().is_empty());
         db.put_proposal(evaporchain_types::GovernanceProposal {
             proposal_id: 1,
             proposer: [0u8; 32],
@@ -2516,14 +2661,20 @@ mod tests {
             created_at: 0,
             voters: Default::default(),
         });
-        let all = db.all_proposals();
-        assert!(all.is_empty());
-        db.commit_state_snapshot(1);
-        assert!(db.get_account_at_height(&[0u8; 32], 1).is_none());
-        assert!(db.get_object_at_height(&[0u8; 32], 1).is_none());
+        assert!(db.get_proposal(1).is_some());
+        assert_eq!(db.all_proposals().len(), 1);
+        // Snapshot round-trip (fresh DB has no accounts)
         assert!(db.earliest_snapshot_height().is_none());
         assert!(db.latest_snapshot_height().is_none());
+        db.commit_state_snapshot(5);
+        assert_eq!(db.earliest_snapshot_height(), Some(5));
+        assert_eq!(db.latest_snapshot_height(), Some(5));
+        // Unknown account/object at committed height returns None
+        assert!(db.get_account_at_height(&[0u8; 32], 5).is_none());
+        assert!(db.get_object_at_height(&[0u8; 32], 5).is_none());
+        // Prune clears snapshots
         db.prune_snapshots_before(100);
+        assert!(db.earliest_snapshot_height().is_none());
     }
 
     // ── T1.20 batch-3: reopen-loads-all-CFs + dirty-object/account sync ──
@@ -2569,6 +2720,40 @@ mod tests {
         let delegator = [0xAA; 32];
         let del = db2.get_delegation(&delegator, 7).expect("delegation should load from disk");
         assert_eq!(del.amount, 100_000);
+    }
+
+    #[test]
+    fn state2_proposals_and_gov_params_survive_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.put_proposal(evaporchain_types::GovernanceProposal {
+                proposal_id: 42,
+                proposer: [0u8; 32],
+                title: "gas-limit-increase".to_string(),
+                param_key: "block_gas_limit".to_string(),
+                param_value: "20000000".to_string(),
+                start_epoch: 10,
+                end_epoch: 20,
+                votes_for: 0,
+                votes_against: 0,
+                status: evaporchain_types::ProposalStatus::Active,
+                created_at: 1,
+                voters: Default::default(),
+            });
+            db.put_governance_param("block_gas_limit".to_string(), "20000000".to_string());
+            db.put_governance_param("conservation_enforcement".to_string(), "enforce".to_string());
+        }
+        // Reopen — proposals and params must survive restart.
+        let db2 = RocksDBStateDB::open(dir.path()).unwrap();
+        let p = db2.get_proposal(42).expect("proposal must persist across restart");
+        assert_eq!(p.param_key, "block_gas_limit");
+        assert_eq!(db2.get_governance_param("block_gas_limit"), Some("20000000"));
+        assert_eq!(
+            db2.get_governance_param("conservation_enforcement"),
+            Some("enforce")
+        );
+        assert_eq!(db2.all_proposals().len(), 1);
     }
 
     #[test]
