@@ -307,7 +307,7 @@ This is where doctrine primitives stop being shadows and start running the chain
     - `INVENTION_STACK.md §A1.2 T1` doctrine claim updated to reflect shipped substrate (E.4).
   - **34 new tests across `evaporchain-light-cone` (10) + `evaporchain-consensus` (24).** Consensus suite: 469 → 493 (+24), light-cone: 41 → 51 (+10).
   - **Phases C + E: ALL DONE 2026-05-05.** C.1-C.6 (hot-path surgery) + E.1-E.6 (endpoints, plan addenda, runbooks) all shipped per `docs/archive/completed-plans/MCC_FULL_MULTI_PARENT_PLAN.md`. **Remaining: Phase D only** — adversarial + perf + 72hr soak (D.1-D.5); tracked as T0.2 in `MAINNET_READINESS.md` (OPS-ONLY, scripts ready at `scripts/d-track-*.sh`).
-- [ ] **Promote conservation audit from gating to mandatory** (sequel to Layer 0 first item — once Layer 4 changes block acceptance semantics, revisit the governance flag).
+- [x] **Promote conservation audit from gating to mandatory** DONE -- default changed to "enforce" in commit 76d95590 (T1.13, 2026-05-15). Clusters start in enforcement mode. (sequel to Layer 0 first item — once Layer 4 changes block acceptance semantics, revisit the governance flag).
 
 **Acceptance:** a fresh devnet runs with antichain-mempool + MCC fork-choice as the production block source/fork-choice. Existing Tendermint tests fail cleanly (because the production path has changed) — replace them with antichain-aware analogs.
 
