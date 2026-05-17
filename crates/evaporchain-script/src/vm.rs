@@ -824,8 +824,15 @@ impl EvaporVM {
                 }
 
                 Op::VrfDomainRandomness => {
-                    self.charge_gas(GAS_STATE_LOAD)?; // Costs a bit more (hashing)
+                    // OPCODE-1 (audit 2026-05-17): size-scaled BLAKE3 charge.
+                    // Pre-fix flat GAS_STATE_LOAD=5 ignored the popped `domain`
+                    // string length (up to MAX_STRING_LEN = 1 MiB), letting a
+                    // contract hash megabytes of input for ~5 gas — same anti-
+                    // pattern as M15 (hash() flat-rate). Now uses the M15
+                    // size-scaled shape: GAS_HASH_BASE + per-32B byte rider.
                     let domain = self.pop()?.as_str()?.to_string();
+                    let chunks_32 = (domain.len() as u64 + 31) / 32;
+                    self.charge_gas(GAS_HASH_BASE + GAS_HASH_PER_32B * chunks_32)?;
                     let mut hasher = blake3::Hasher::new();
                     hasher.update(b"EvaporChain_Beacon_Derive");
                     hasher.update(&ctx.vrf_randomness);
