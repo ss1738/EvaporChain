@@ -11,12 +11,11 @@
 use evaporchain_sddc::auction::{Auction, AuctionId};
 use evaporchain_sfsv::{
     predicate::Predicate,
-    vault::{Listing, Vault},
+    vault::Vault,
 };
-use evaporchain_types::Energy;
 use tracing::{debug, warn};
 
-use crate::node::{NodeClient, NodeError, ScriptSummary};
+use crate::node::{NodeClient, ScriptSummary};
 
 /// Build a synthetic `Vault` + `Auction` from the on-chain state JSON.
 /// Returns `None` if the listing fields are absent (vault not listed).

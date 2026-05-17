@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (afternoon) — Doctrine sweep: Tier-2/3 + light-cone + singh-triage + eth-bridge + node housekeeping
+
+**Focus:** Clear all untracked doctrine test files and stale source additions from the working tree. Re-commit the 4 Tier-2/3 e2e suites after a concurrent-session rebase wiped them, then pick up 3 more untracked e2e suites (light-cone, singh-triage, eth-bridge) and 2 source additions (init_refresh_market, repair-meta binary).
+**Commits shipped:** 5 (`5b124b77`, `7c22ec3e`, `4100ac82`, `e4791533`, SESSION_PROGRESS)
+**Deliverables:**
+- **Re-committed 4 Tier-2/3 e2e suites** (`5b124b77`): ew-twap (13 tests), thermal-stm (10), epa-mmr (16), plc (11) — 50 total. Original commit `7b1b6f35` was wiped by a concurrent session's rebase; files re-deployed from MacBook and re-committed on current branch tip.
+- **Committed 3 more untracked e2e suites** (`7c22ec3e`): light-cone (16 tests, §4.1 network-partition fork-and-merge DAG fixture), singh-triage (19 tests, §A5 5-bucket inbox triage), eth-bridge (6 tests, Rust/Solidity bit-compat for ConeIntersection.energyAtEpoch).
+- **init_refresh_market.rs** (`4100ac82`): typed init for AMM-priced namespace rent (app-templates-engine).
+- **repair-meta binary** (`4100ac82`): `crates/evaporchain-node/src/repair_meta.rs` + Cargo.toml [[bin]] declaration for reading/patching CF_META/parent_hash in a RocksDB data dir.
+- **Removed misplaced src/Cargo.toml** (`e4791533`): stale duplicate without app-templates + tokio-util entries; real Cargo.toml already correct.
+
+**Empirical results:** 50 + 16 + 19 + 6 = 91 doctrine e2e tests green on Mini 1, 0 failures across all 7 crates.
+
+**Decisions made:** Working tree now clean of untracked non-Coq files on this branch.
+
+**What's next:**
+1. SFSV off-chain coordinator binary (path to Paper 1, SDDC Dutch auction clearing)
+2. Commit devnet sig-verify fix and push all branches to GitHub
+3. VM paradigm crates (`total-evaporscript`, `cap-decay-vm`, `dp-native-vm`) already have passing e2e suites — no work needed there
+
+**Blockers / open questions:** Concurrent agent sessions on the same branch can rebase and wipe commits. Watch for this pattern.
+
+**Cross-references:** commits `5b124b77`, `7c22ec3e`, `4100ac82`, `e4791533`; prior session `01cfafe3` (singh-* sweep).
+
+---
+
 ## 2026-05-17 (afternoon) — Doctrine triplet sweep: Tier-2/3 substrate crates
 
 **Focus:** Complete the doctrine triplet (non-trivial fixture + adversarial + INVENTION_STACK §4.3 citation) for the 4 remaining Tier-2/3 App-Layer substrate crates: `evaporchain-ew-twap`, `evaporchain-thermal-stm`, `evaporchain-epa-mmr`, `evaporchain-plc`.
@@ -57,6 +83,66 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 **Cross-references:** `crates/evaporchain-singh-posthuma/tests/e2e.rs`, commit `01cfafe3`; prior session commits `ad936bbe` (lineage+resonance), `c3ca2013` (migrant), earlier session (heir+sabi).
 
 ---
+
+---
+
+## 2026-05-17 (morning) — Doctrine triplet sweep: 7 V2 + sibling crates closed
+
+**Focus:** Doctrine triplet e2e for invention-stack V2 layer (light-cone-v2, ib-validators-v2, bell-beacon-v2, causal-chsh, evap-fork-cert-v2) + singh-inequality V1+V2.
+**Commits shipped:** 1 (87d5099f on `chore/coverage-eg-fss`)
+**Deliverables:**
+
+| Crate | Tests | Fixture |
+|---|---|---|
+| `evaporchain-light-cone-v2` | 13 e2e | 9-block partition+merge DAG; light client holds only causal_root(D), verifies 8 ancestors |
+| `evaporchain-ib-validators-v2` | 17 e2e | 6-validator BFT, CHSH jail at epoch 0 + energy jail + expiry recovery across 3 rounds |
+| `evaporchain-bell-beacon-v2` | 15 e2e | 3-window chain; pair-reorder invariance; chain-id isolation; cross-chain replay rejection |
+| `evaporchain-causal-chsh` | 15 e2e | 200-block LCG trace; rolling alarm; milli/float agreement; max-cartel S=4 algebraic ceiling |
+| `evaporchain-evap-fork-cert-v2` | 12 e2e | 3-fork Bell-anchored evaporation monitor; half-life decay; epoch-200 certification |
+| `evaporchain-singh-inequality` | 14 e2e | 5-validator fee-range; Epoch A/B/C decay; Singh ≤ Hoeffding; deviation=105 passes Singh, fails Hoeffding |
+| `evaporchain-singh-inequality-v2` | 20 e2e | 5-validator concentrated oracle; Scenarios A/B/C; V2 admits ε=80/100 when V1 rejects |
+
+**Empirical results:** All 106 new integration tests green on Mini 1 (`satyawansingh@100.119.53.101`) before commit.
+**Decisions made:**
+- Scenario arithmetic hardcoded with inline derivations in fixture comments — exact integer matches (not approximate).
+- Unused imports cleaned before final commit (BernsteinAdvantage, AlarmStatus, CartelAlarmEvent).
+- Files inadvertently bundled into `a431db46` on `chore/coverage-epv` by parallel agent; cherry-picked and properly committed on `chore/coverage-eg-fss`.
+**What's next:**
+1. Continue doctrine triplet sweep — remaining singh-* crates: singh-heartbeat, singh-counsel, singh-triage, singh-heir, singh-sabi, singh-migrant, singh-lineage, singh-resonance, singh-posthuma
+2. Check DOCTRINE_PUNCH_LIST.md for any other uncovered invention-stack crates
+3. Pull `chore/coverage-eg-fss` changes down to Mini 1 for verification before PR
+
+## 2026-05-16 (night+7) — Doctrine triplet sweep: 8 invention-stack crates closed
+
+**Focus:** Close the doctrine triplet (source citation + adversarial test + non-trivial e2e fixture) across all remaining invention-stack substrate crates on `chore/coverage-eg-fss`.
+**Commits shipped:** 9 (97d72a1c → 6cc64d4c)
+**Deliverables:**
+
+| Crate | Tests | Fixture |
+|---|---|---|
+| `evaporchain-bell-beacon` | 10 e2e | 5-window validator beacon session, 3/5 certified |
+| `evaporchain-sddc` | 12 e2e | Carbon-credit secondary market, Alice/Bob/Carol/Dave |
+| `evaporchain-sfsv` | 12 e2e | Life-insurance vault + secondary market + 3-party resale |
+| `evaporchain-shlm` | 12 e2e (prior session) | AI-era recruiting market, COBOL/Python freshness |
+| `evaporchain-singh-attractor` | 12 e2e | Three-regime chain fee session (QUIET/ACTIVE/SURGE) |
+| `evaporchain-singh-attractor-v2` | 12 e2e | Anti-grinding Bell-anchored 5-epoch session |
+| `evaporchain-lambda-fold` | 13 e2e | Five-step light-client fold, epoch-600 decay |
+| `evaporchain-ib-validators` | 12 e2e | 5-validator checkpoint committee, IB gate |
+| `evaporchain-evap-fork-cert` | 11 e2e | Competing fork evaporation at epoch 600 |
+| `evaporchain-light-cone` | 16 e2e | Network-partition fork-and-merge 9-block DAG |
+
+**Empirical results:** All tests green on Mini 1 before each commit.
+**Decisions made:**
+- Doctrine thresholds hardcoded where computable (per-block decay values, exact halving at N half-lives); property-based for stochastic paths (Bell-seed fallback sampling).
+- `chore/coverage-eg-fss` is the canonical branch; stray commits on `chore/coverage-autopoietic` cherry-picked across.
+
+**What's next:**
+1. Singh application crates (singh-sabi, singh-migrant, singh-posthuma, etc.) — same doctrine triplet pattern
+2. V2 companion crates (evap-fork-cert-v2, light-cone-v2, ib-validators-v2) — no tests/ directories
+3. SESSION_PROGRESS.md missing entries for earlier SDDC/SFSV/bell-beacon commits — already captured here
+
+**Blockers / open questions:** None.
+**Cross-references:** commits 97d72a1c…6cc64d4c on `chore/coverage-eg-fss`
 
 ## 2026-05-16 (night+4) — SFSV smoke test green: Bug #1 + Bug #2 empirically confirmed
 

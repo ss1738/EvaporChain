@@ -125,7 +125,7 @@ Doctrine-grade behaviors are gated behind governance flags so the cluster stays 
 
 | Flag | Default | Doctrine behaviour |
 |---|---|---|
-| `conservation_enforcement` | `"observe"` | `"enforce"` rejects blocks with energy violations |
+| `conservation_enforcement` | `"enforce"` | `"observe"` disables energy-violation rejection (legacy mode); default changed in 76d95590 |
 | `block_source_mode` | `"fifo"` | `"antichain"` enables antichain mempool drain |
 | `parent_acceptance_mode` | `"linear"` | `"mcc"` enables MCC Boltzmann fork-choice |
 | `crooks_mev_settlement_mode` | `"observe"` | `"enforce"` settles MEV refunds on-chain |
