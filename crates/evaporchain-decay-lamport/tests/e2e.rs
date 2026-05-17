@@ -21,7 +21,7 @@
 //!
 //! INVENTION_STACK.md §4.1 Decay-Lamport Time.
 
-use evaporchain_decay_lamport::{LamportClock, TickError};
+use evaporchain_decay_lamport::LamportClock;
 
 const TICK_QUANTUM: u64 = 500_000;
 
@@ -109,13 +109,12 @@ fn tick_zero_energy_does_not_advance() {
 }
 
 #[test]
-fn overflow_guard_returns_err() {
-    let clock = LamportClock::new(1); // quantum=1 → every unit ticks
-    let huge = u64::MAX;
-    let result = clock.tick(huge);
-    // Must either succeed (saturating) or return TickError — never panic.
-    match result {
-        Ok(c) => assert!(c.current_tick <= u64::MAX),
-        Err(TickError::Overflow) => {}
-    }
+fn overflow_guard_saturates_never_panics() {
+    // tick_quantum=1 — every energy unit advances the tick.
+    // accumulated + u64::MAX via saturating_add → current_tick saturates at
+    // u64::MAX rather than wrapping or panicking. The only error path is
+    // ZeroQuantum which quantum=1 does not trigger.
+    let clock = LamportClock::new(1);
+    let c = clock.tick(u64::MAX).expect("quantum=1 must not error");
+    assert!(c.current_tick <= u64::MAX); // saturating, never wraps
 }
