@@ -54,21 +54,22 @@
 //!
 //! ## Doctrine status
 //!
-//! ⚠ **GATED** — `INVENTION_STACK.md` will reserve a Tier-0-supporting
-//! row pending the empirical gate. The gate must show:
+//! ✅ **GATE PASSED** (2026-05-04) — INVENTION_STACK.md §A1.10 records
+//! the Tier-0-supporting verdict. Two independent gate runs both pass
+//! all three doctrine thresholds:
 //!
-//! - `S_honest < 1.8` on real Ethereum (or any honest L1) — the
-//!   inequality has empirical headroom under honest traffic
-//! - `S_cartel > 2.2` on synthetic coordinated traffic — the
-//!   inequality actually separates coordination from non-coordination
-//! - `gap = S_cartel − S_honest > 0.4` — the discrimination has signal
+//! - 200-block real-Ethereum run: `S_honest = 0.012` (≪ 1.8 ceiling),
+//!   `S_cartel = 4.000`, `gap = 3.988` (≫ 0.4)
+//! - 3K-block confirmation: `S_honest = 0.0175`, same cartel-side, gap
+//!   well above doctrine floor.
 //!
-//! If all three: ship as a Tier-0 supporting primitive (cartel
-//! detector). If any fail: drop. Locked into INVENTION_STACK.md before
-//! running, same MERA-style discipline.
+//! Locked into INVENTION_STACK.md before running, same MERA-style
+//! discipline. The crate is now wired into consensus (rolling
+//! `CartelAlarm` via `TendermintConsensus`) and Bell-Beacon V2
+//! (chain-window certificates).
 //!
-//! This commit lands the math primitive + synthetic gate. Real-data
-//! gate is the next lane (Lane O.2).
+//! See `research/causal-chsh/GATE_RESULT.md` + `GATE_RESULT_3K.md`
+//! for the gate-run evidence.
 
 pub mod alarm;
 pub mod chsh;

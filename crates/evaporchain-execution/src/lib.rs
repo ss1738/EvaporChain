@@ -3854,12 +3854,15 @@ impl ExecutionEngine for SimpleExecutor {
         self.last_conservation_audit = Some(stored);
         self.last_audit_epoch = Some(block.epoch);
 
-        let mera_root = crate::mera_integration::compute_mera_commitment(db);
-        let mera_commitment = if mera_root == [0u8; 32] {
-            None
-        } else {
-            Some(mera_root)
-        };
+        // INV-HIGH-1 (audit 2026-05-17): MERA verdict is FAIL → VERKLE per
+        // INVENTION_STACK.md §A1.8 + CLAUDE.md ("Do not treat
+        // evaporchain-mera as a production crate"). Doctrine says it must
+        // not ship; pre-fix this hot path computed a per-block tensor-
+        // network commitment that no downstream consumer reads (verified
+        // by grep across consensus + node). Wired tombstone — `None`
+        // keeps the field for serde compatibility but eliminates the
+        // wasted cycles. See AUDIT_2026_05_17.md.
+        let mera_commitment = None;
 
         Ok(BlockExecutionResult {
             state_root,

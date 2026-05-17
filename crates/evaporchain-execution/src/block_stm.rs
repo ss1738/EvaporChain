@@ -2214,12 +2214,9 @@ impl ExecutionEngine for BlockStmExecutor {
             "Block-STM block executed"
         );
 
-        let mera_root = crate::mera_integration::compute_mera_commitment(db);
-        let mera_commitment = if mera_root == [0u8; 32] {
-            None
-        } else {
-            Some(mera_root)
-        };
+        // INV-HIGH-1 (audit 2026-05-17): MERA hot-path compute eliminated;
+        // FAIL verdict per INVENTION_STACK.md §A1.8. See AUDIT_2026_05_17.md.
+        let mera_commitment = None;
 
         // §1.2 conservation audit + governance gate — mirrors
         // SimpleExecutor::execute_block and ParallelExecutor::execute_block

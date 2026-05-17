@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Authenticated Energy-MERA state commitment (Vidal 2007 / Evenbly-Vidal 2011). Energy filtration IS the MERA RG flow. χ=4 prototype. Per INVENTION_STACK.md §A1.4, §A1.8 PASS."
+description = "Authenticated Energy-MERA state commitment (Vidal 2007 / Evenbly-Vidal 2011). Energy filtration IS the MERA RG flow. χ=4 prototype. RESEARCH ARTEFACT ONLY — INVENTION_STACK.md §A1.8 gate FAILED (R²=0.66 vs threshold 0.85) 2026-05-03; VERKLE verdict locked. Do NOT wire to block production, finality, or light-client verification. See CLAUDE.md."
 
 [dependencies]
 evaporchain-types  = { path = "../evaporchain-types" }
