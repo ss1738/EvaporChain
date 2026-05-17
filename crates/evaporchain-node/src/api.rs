@@ -17881,7 +17881,17 @@ async fn get_encrypted_mempool_status(State(state): State<Arc<ApiState>>) -> imp
 }
 
 fn hex_to_32(s: &str) -> Option<[u8; 32]> {
-    let bytes = hex::decode(s).ok()?;
+    // A4 (audit 2026-05-17): cap input length BEFORE hex::decode allocates.
+    // R1 (parse_hex32:3412) applied this guard; the later-added hex_to_32
+    // helper missed it. A 2 MiB hex blob (within the body cap) would force
+    // a ~1 MiB Vec allocation before the post-decode length check rejects.
+    // 32 bytes encode to exactly 64 hex chars; accept an optional "0x"
+    // prefix that the chain's other parsers tolerate.
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    if stripped.len() != 64 {
+        return None;
+    }
+    let bytes = hex::decode(stripped).ok()?;
     if bytes.len() != 32 {
         return None;
     }
