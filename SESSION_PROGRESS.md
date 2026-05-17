@@ -3635,4 +3635,23 @@ Week 4 (mainnet genesis prep + audit engagement):
 
 ---
 
+## 2026-05-18 — Cluster-liveness verification + permanent-node consolidation
+
+**Focus:** ground-truth the mainnet critical path. CI is structurally dead (GitHub runners stuck `queued`), so health was unknown.
+
+**Verified (measured, not assumed):**
+
+- `main` compiles clean workspace-wide (`cargo build --workspace` RC=0 on the permanent VPS); ~1,120 mainnet-critical core tests green / 0 failed (consensus 966+, light-client, light-client-http, energy-kernel). The recent `chain_id` light-client fixes are sound.
+- **T3.1 cluster is DOWN** — direct sweep 2026-05-18: 0/5 `evaporchain-tailscale-5node-1` nodes serving (Mini 1 SSH-flaky + zero listening sockets; Mini 2/3 SSH timeout; Hetzner hel-1 `100.66.208.20` + hel-2 `100.91.235.22` no API). `MAINNET_READINESS.md` T3.1 index corrected ✅→🔴 REGRESSED to match the lane spec + reality.
+- Permanent single node stood up this session: `89.167.52.40:8099` (Hetzner `ubuntu-4gb-hel1-3`, systemd, key-based root, full Rust toolchain). All 5 reference dApps + the public `/erasure` on-ramp live-verified against it.
+
+**Implication for the sprint:** the remaining mainnet critical path (T0.2 72-hr soak, T0.6 slashing-at-scale soak, T0.5/T1.17–19 ops) is gated on a live cluster that no longer exists. Re-bring-up is the genuine #1 blocker. The permanent VPS is the reliable rebuild anchor (vs. the chronically-flaky Minis). Multi-validator soak at real scale = an operator scope/cost decision (≥1 added paid VPS); a zero-cost interim is a multi-validator cluster co-located on the permanent VPS.
+
+**Cross-references:**
+
+- `MAINNET_READINESS.md` T3.1 (index + lane spec, corrected this session)
+- memory `evaporchain_public_node_endpoint.md`
+
+---
+
 <!-- Future sessions: prepend new entries above this line. -->

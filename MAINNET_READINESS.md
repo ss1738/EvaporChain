@@ -98,7 +98,7 @@ Lanes are grouped by primary file/crate. Lanes within the same group are SEQUENT
 
 | ID | Lane | Status | Surface |
 |---|---|---|---|
-| T3.1 | Phase C cluster deploy + bring-up | ✅ DONE — cluster live (PR #209, 2026-05-13); 3 Minis + 2 Hetzners, chain_id `evaporchain-tailscale-5node-1` | OPS |
+| T3.1 | Phase C cluster deploy + bring-up | 🔴 REGRESSED — deployed 2026-05-13 (PR #209) but **VERIFIED DOWN 2026-05-18** (0/5 nodes serving: Minis SSH-dead / no listening sockets, both Hetzners no API). Re-bring-up REQUIRED before any T0.2/T0.6 soak. Reliable rebuild anchor = the always-on permanent single node `89.167.52.40:8099` (this session). See lane spec. | OPS |
 | T3.2 | 5-node Tailscale genesis switch | ✅ DONE — folded into T3.1; 5-node genesis live since PR #209 | OPS |
 
 ### Tier 0 — Critical path (mainnet-blocking)
@@ -158,7 +158,7 @@ Each lane below has the full spec a session needs to start. Status here mirrors 
 
 ### T3.1 — Phase C cluster deploy + bring-up
 
-**Status:** 🔴 BLOCKED on Hetzner SSH auth from operator
+**Status:** 🔴 REGRESSED / RE-BRING-UP REQUIRED — verified 2026-05-18: 0/5 nodes serving (Mini 1 SSH-flaky + zero listening sockets; Mini 2/3 SSH timeout; Hetzner hel-1/hel-2 no API on 8080/8099/9001). The original "🔴 BLOCKED on Hetzner SSH auth" is now SUPERSEDED — Hetzner SSH/permanent-node is solved (always-on single node `89.167.52.40:8099`, key-based root, full toolchain, proven this session). Real remaining blockers: (a) the 3 Minis are chronically unreliable; (b) a true T0.2/T0.6 multi-validator soak needs ≥1 added paid VPS — an operator scope/cost decision (cf. `feedback_no_hetzner_until_conclusion`, parked 2026-05-02). Zero-cost interim path available: a multi-validator cluster co-located on the permanent VPS (no new infra) to unblock T0.6 slashing-at-scale + T0.2 adversarial under live conditions.
 **Surface:** OPS (no code changes; SSH + binary stage)
 **Depends on:** none
 **Effort:** 1-2 days
