@@ -558,17 +558,21 @@ mod tests {
 
     #[test]
     fn test_leader_vrf_input_deterministic() {
-        let a = leader_vrf_input(100, 0);
-        let b = leader_vrf_input(100, 0);
+        let a = leader_vrf_input("test-chain", 100, 0);
+        let b = leader_vrf_input("test-chain", 100, 0);
         assert_eq!(a, b);
-        let c = leader_vrf_input(100, 1);
+        let c = leader_vrf_input("test-chain", 100, 1);
         assert_ne!(a, c);
+        // H-1 (audit 2026-05-17): different chain_ids yield distinct
+        // VRF inputs even at identical (height, round).
+        let d = leader_vrf_input("other-chain", 100, 0);
+        assert_ne!(a, d);
     }
 
     #[test]
     fn test_sortition_vrf_input_includes_role() {
-        let a = sortition_vrf_input(100, 0, "prevote");
-        let b = sortition_vrf_input(100, 0, "precommit");
+        let a = sortition_vrf_input("test-chain", 100, 0, "prevote");
+        let b = sortition_vrf_input("test-chain", 100, 0, "precommit");
         assert_ne!(a, b);
     }
 
