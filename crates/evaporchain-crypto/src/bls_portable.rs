@@ -86,6 +86,24 @@ pub fn verify(msg: &[u8], sig_bytes: &[u8], pk_bytes: &[u8], dst: &[u8]) -> bool
 /// fast_aggregate_verify works by aggregating the public keys (sum in
 /// G1) and then doing a single pairing check:
 ///   e(G1::generator(), agg_sig) == e(sum(pks), hash_to_g2(msg, dst))
+///
+/// **H-4 (audit 2026-05-17) — caller responsibility for proof-of-possession.**
+///
+/// This function does NOT verify proofs-of-possession for the supplied
+/// public keys. The caller MUST have independently verified PoP for
+/// every `pk` in `pk_byte_slices`; otherwise the function is vulnerable
+/// to the standard BLS rogue-key attack (Boneh-Drijvers-Neven 2018 §3):
+/// an adversary registers `pk_adv = -sum(pk_honest_i) + pk_real_adv`,
+/// then forges an aggregate signature on any message by signing only
+/// with `pk_real_adv` — the aggregate sums to `pk_real_adv` so the
+/// verification passes despite no honest signer having actually signed.
+///
+/// EvaporChain's validator path gates PoP at registration (W7 closure
+/// in `BlsVerifier::verify_proof_of_possession`), so consensus-internal
+/// calls are safe. Browser dApps, light clients, indexers, or any other
+/// non-validator caller MUST call `BlsVerifier::verify_proof_of_possession`
+/// for every key before this function. Until they do, treat the API as
+/// `aggregate_verify_assuming_pop`.
 pub fn aggregate_verify(
     msg: &[u8],
     agg_sig_bytes: &[u8],

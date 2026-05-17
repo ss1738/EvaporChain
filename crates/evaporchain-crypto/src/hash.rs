@@ -214,6 +214,33 @@ fn mds_multiply(state: &mut [Fp; WIDTH], mds: &[[Fp; WIDTH]; WIDTH]) {
 ///
 /// Uses sponge construction: absorb input as field elements (31 bytes each),
 /// then squeeze one element as the digest.
+///
+/// **M-4 / M-5 (audit 2026-05-17) — for ZK-circuit field-element
+/// compression ONLY. NOT a general-purpose cryptographic hash.**
+///
+/// This implementation lacks the hardening a general-purpose Poseidon
+/// requires:
+///
+/// 1. **No length prefix.** Two distinct inputs that hash to the same
+///    elements vec (e.g. empty input and a 31-byte input that decodes
+///    to `Fp::ZERO`) absorb to identical state. Length-vs-content
+///    ambiguity, not a collision proper, but real for short inputs.
+/// 2. **No capacity-distinguishing IV.** A general sponge uses a
+///    non-zero IV in the capacity portion to bind the construction's
+///    domain. Here the state starts at all-zero.
+/// 3. **No padding-discriminator** ("10*" per Grassi et al. 2019 §4.3).
+///    The last absorbed chunk's zero-pad is indistinguishable from a
+///    chunk that genuinely ends in zeros.
+/// 4. **No DST across uses.** Two crates calling `poseidon_hash(x)`
+///    for two different purposes produce the same digest → cross-
+///    purpose collision.
+///
+/// EvaporChain uses Poseidon only inside the Nova IVC circuit's
+/// field-element compression where BOTH sides of the equation use the
+/// same shape and the four hazards above are irrelevant. For any other
+/// caller — chain commitments, signatures, message hashing — use
+/// `blake3_hash` with an explicit DST instead. See `accumulator.rs`
+/// or `signatures.rs` for the canonical DST pattern.
 pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     // Split input into 31-byte chunks → field elements (31 bytes to stay < p)
     let mut elements = Vec::new();
