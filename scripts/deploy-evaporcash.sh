@@ -29,9 +29,12 @@
 #   5. (no gradual-decay assertion — /api/script .energy is the static
 #      deploy value, verified 2026-05-17; live decay is NOT
 #      API-surfaced. Demurrage is proven by the TERMINAL loss.)
-#   6. HOARD: never spend; poll until evaporated==true with
-#      spent==false. Success iff saw_value && evaporated-while-unspent
-#      (same observable bar as the live-verified Dead Drop e2e).
+#   5/6. --mode hoard (default): never spend; poll until
+#      evaporated==true with spent==false — "money rots if you hoard".
+#   5/6. --mode spend: call spend(to) as the holder; assert
+#      state.spent==true AND holder moved to `to` — circulation
+#      preserves value (the OTHER half of the Wörgl thesis; the claim
+#      is retired-by-spend, NOT lost to evaporation).
 #
 # Exit: 0 hoarded-value-lost-proven · 2 precondition · 3 deploy ·
 #       4 issue · 5 non-vacuity/decay · 6 never-evaporated
@@ -48,6 +51,8 @@ NODE_URL="${NODE_URL:-http://127.0.0.1:9001}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
 DEPLOYER_U8="${DEPLOYER_U8:-0}"          # 0 = genesis-funded faucet account
 HOLDER_U8="${HOLDER_U8:-0}"              # issue() bearer (read auth not needed here)
+SPEND_TO_U8="${SPEND_TO_U8:-1}"          # --mode spend: recipient of spend(to)
+MODE="${MODE:-hoard}"                    # hoard = lose-by-decay ; spend = circulate-to-preserve
 FACE="${FACE:-1000}"                     # accounting snapshot only
 INITIAL_ENERGY="${INITIAL_ENERGY:-120000}"  # the note's value at issue
 HALF_LIFE="${HALF_LIFE:-6}"              # demurrage rate; smaller = rots faster
@@ -63,6 +68,8 @@ deploy-evaporcash.sh [options]
   --token TOKEN        auth bearer ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8        deployer/caller index (default 0 = faucet)
   --holder U8          issue() bearer index (default 0)
+  --mode hoard|spend   hoard=lose-by-decay (default) ; spend=circulate-to-preserve
+  --spend-to U8        --mode spend recipient index (default 1)
   --face N             face_value accounting snapshot (default 1000)
   --energy N           note value at issue (default 120000)
   --half-life N        demurrage rate; smaller = rots sooner (default 6)
@@ -80,6 +87,8 @@ while [[ $# -gt 0 ]]; do
     --token) TOKEN="$2"; shift 2 ;;
     --deployer) DEPLOYER_U8="$2"; shift 2 ;;
     --holder) HOLDER_U8="$2"; shift 2 ;;
+    --mode) MODE="$2"; shift 2 ;;
+    --spend-to) SPEND_TO_U8="$2"; shift 2 ;;
     --face) FACE="$2"; shift 2 ;;
     --energy) INITIAL_ENERGY="$2"; shift 2 ;;
     --half-life) HALF_LIFE="$2"; shift 2 ;;
@@ -213,32 +222,37 @@ fi
 log "Step 4/6 - (skipped) live energy is not API-surfaced; demurrage"
 log "  is proven by the TERMINAL loss in step 5, not a gradual read."
 
-# ── 5. HOARD: never spend; wait for the value to evaporate ──
-log "Step 5/6 - HOARD (never spend) — poll until the note evaporates"
-if $DRY_RUN; then
-  log "[DRY-RUN] would poll until evaporated==true while spent==false"
-  log "OK dry-run complete."; exit 0
+# ── 5. mode-specific behaviour ──
+if [[ "$MODE" != "hoard" && "$MODE" != "spend" ]]; then
+  die "unknown --mode '$MODE' (expected: hoard | spend)" 2
 fi
-deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); lost=0
-while (( $(date +%s) < deadline )); do
-  ST=$(curl_json GET "/api/script/$CID")
-  if printf '%s' "$ST" | jq -e 'has("error")' >/dev/null 2>&1; then
-    lost=1; log "note $CID gone from the script store (evaporated, unspent)"; break
-  fi
-  EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
-  SPENT=$(printf '%s' "$ST" | jq -r '.state.spent | if type=="object" then .Bool else . end')
-  if [[ "$EVAP" == "true" ]]; then
-    [[ "$SPENT" == "true" ]] && die "note was SPENT — hoarding scenario invalidated (someone spent it)" 6
-    lost=1; log "note evaporated with spent=false — value lost to hoarding"; break
-  fi
-  sleep 4
-done
 
-# ── 6. verdict ──
-log "Step 6/6 - verdict"
-(( saw_value == 1 )) || die "non-vacuity: never confirmed an issued note with value" 5
-(( lost == 1 )) || die "note never evaporated within ${POLL_TIMEOUT_SEC}s — demurrage-to-zero not reached (half-life too large?)" 6
-cat <<EOF
+if [[ "$MODE" == "hoard" ]]; then
+  # HOARD: never spend; wait for the value to evaporate (the Wörgl
+  # "money rots if you hoard it" half).
+  log "Step 5/6 - HOARD (never spend) — poll until the note evaporates"
+  if $DRY_RUN; then
+    log "[DRY-RUN] would poll until evaporated==true while spent==false"
+    log "OK dry-run complete."; exit 0
+  fi
+  deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); lost=0
+  while (( $(date +%s) < deadline )); do
+    ST=$(curl_json GET "/api/script/$CID")
+    if printf '%s' "$ST" | jq -e 'has("error")' >/dev/null 2>&1; then
+      lost=1; log "note $CID gone from the script store (evaporated, unspent)"; break
+    fi
+    EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
+    SPENT=$(printf '%s' "$ST" | jq -r '.state.spent | if type=="object" then .Bool else . end')
+    if [[ "$EVAP" == "true" ]]; then
+      [[ "$SPENT" == "true" ]] && die "note was SPENT — hoarding scenario invalidated (someone spent it)" 6
+      lost=1; log "note evaporated with spent=false — value lost to hoarding"; break
+    fi
+    sleep 4
+  done
+  log "Step 6/6 - verdict (hoard)"
+  (( saw_value == 1 )) || die "non-vacuity: never confirmed an issued note with value" 5
+  (( lost == 1 )) || die "note never evaporated within ${POLL_TIMEOUT_SEC}s — demurrage-to-zero not reached (half-life too large?)" 6
+  cat <<EOF
 
 +==================================================================+
 |        OK  EVAPORCASH — HOARDING PENALTY PROVEN BY PHYSICS        |
@@ -249,3 +263,42 @@ cat <<EOF
 |  (gradual decay is real but not API-surfaced; terminal loss is.)  |
 +==================================================================+
 EOF
+else
+  # SPEND: circulate before decay — the OTHER half of the thesis
+  # (circulation preserves value; the claim moves to a new holder and
+  # the note is retired-by-spend, NOT lost to evaporation).
+  log "Step 5/6 - SPEND (circulate) — call spend(to=$SPEND_TO_U8) as the holder"
+  if $DRY_RUN; then
+    log "[DRY-RUN] would spend(to) then assert spent=true & holder moved"
+    log "OK dry-run complete."; exit 0
+  fi
+  EP=$(get_epoch)
+  SPBODY=$(jq -n --argjson c "$HOLDER_U8" --argjson cid "$CID" \
+    --argjson t "$SPEND_TO_U8" --argjson ep "$EP" \
+    '{caller:$c, contract_id:$cid, method:"spend",
+      args:[ {Address: ([$t] + [range(0;31)|0])} ], epoch:$ep}')
+  SPH=$(submit_tx "/api/tx/call-script" "$SPBODY" spend 6)
+  poll_tx "$SPH" spend 6 >/dev/null
+  log "spend tx finalised."
+  ST=$(curl_json GET "/api/script/$CID")
+  if printf '%s' "$ST" | jq -e 'has("error")' >/dev/null 2>&1; then
+    die "note $CID gone right after spend — expected it to persist as spent" 6
+  fi
+  SPENT=$(printf '%s' "$ST" | jq -r '.state.spent | if type=="object" then .Bool else . end')
+  HOLDER0=$(printf '%s' "$ST" | jq -r '.state.holder.Address[0] // (.state.holder|.[0]) // -1')
+  log "Step 6/6 - verdict (spend)"
+  (( saw_value == 1 )) || die "non-vacuity: never confirmed an issued note with value" 5
+  [[ "$SPENT" == "true" ]] || die "spend did not set spent=true (got '$SPENT') — circulation unproven" 6
+  [[ "$HOLDER0" == "$SPEND_TO_U8" ]] || die "holder did not transfer to $SPEND_TO_U8 (holder[0]=$HOLDER0) — claim did not move" 6
+  cat <<EOF
+
++==================================================================+
+|     OK  EVAPORCASH — CIRCULATION PRESERVES VALUE (the other half) |
+|  contract_id: $CID                                                |
+|  proof: deploy ok  issue ok  HAD-VALUE ok  ->  SPENT & MOVED      |
+|  spend(to=$SPEND_TO_U8): state.spent=true, holder[0]=$HOLDER0 —    |
+|  the claim circulated to a new holder (retired-by-spend, NOT      |
+|  lost to evaporation). Hoarding loses; circulating preserves.     |
++==================================================================+
+EOF
+fi
