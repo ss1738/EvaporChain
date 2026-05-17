@@ -248,6 +248,30 @@ impl MerkleMountainRange {
 
     /// Verify an inclusion proof for a nullifier hash against a root.
     pub fn verify(proof: &MMRProof, nullifier_hash: &[u8; 32], expected_root: &[u8; 32]) -> bool {
+        Self::verify_at_size(proof, nullifier_hash, expected_root, None)
+    }
+
+    /// H-3 (audit 2026-05-17): like `verify`, but with an optional
+    /// external `expected_size` cross-check. When the caller knows the
+    /// MMR's current size (e.g. a light client tracking a chain-side
+    /// commitment to the size), this catches proofs forged against a
+    /// different-shaped MMR — the SUB-N1 tree-size-confusion class.
+    /// Without this, a divergent proof shape that still re-bags to
+    /// `expected_root` would pass the bag-of-peaks check.
+    pub fn verify_at_size(
+        proof: &MMRProof,
+        nullifier_hash: &[u8; 32],
+        expected_root: &[u8; 32],
+        expected_size: Option<u64>,
+    ) -> bool {
+        if let Some(size) = expected_size {
+            if proof.mmr_size != size {
+                return false;
+            }
+            if proof.leaf_index >= size {
+                return false;
+            }
+        }
         // Rebuild from leaf to peak using siblings
         let mut current = *nullifier_hash;
 
