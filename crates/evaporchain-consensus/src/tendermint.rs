@@ -8051,6 +8051,20 @@ impl TendermintConsensus {
                     return false;
                 }
             };
+        // Q1 (audit 2026-05-17): cross-check cert.total_stake against the live
+        // validator set before calling is_supermajority(). An attacker-supplied
+        // total_stake=0 makes is_supermajority() return true for any attested_stake
+        // (0*3 >= 0*2), forging a valid cert with a single-key attestation.
+        let vs_total = self.validator_set.total_stake();
+        if cert.total_stake != vs_total {
+            warn!(
+                block = block.number,
+                cert_total = cert.total_stake,
+                vs_total,
+                "DA certificate total_stake does not match validator set — Q1 forgery rejected"
+            );
+            return false;
+        }
         // Verify supermajority stake
         if !cert.is_supermajority() {
             warn!(
@@ -17637,15 +17651,17 @@ mod da_tests {
     }
 
     /// Helper: create a valid DA certificate with BLS-signed attestations.
-    fn make_valid_da_cert(block_number: u64, num_validators: u64) -> Vec<u8> {
+    fn make_valid_da_cert(block_number: u64, num_attesters: u64) -> Vec<u8> {
         use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
 
         let data_root = [0xDAu8; 32];
         let stake_per = 1000u64;
-        let total_stake = num_validators * stake_per;
+        // Q1 fix: total_stake must match make_test_tc()'s validator set (4 × 1000 = 4000).
+        // num_attesters attesting (e.g. 3) still yields 3000/4000 = 75% ≥ 2/3.
+        let total_stake = 4000u64;
         let mut builder = CertificateBuilder::new(block_number, data_root, total_stake);
 
-        for vid in 1..=num_validators {
+        for vid in 1..=num_attesters {
             let kp = BlsKeypair::generate();
             let att = create_attestation(block_number, &data_root, vid, 8, stake_per, &kp);
             assert!(builder.add_attestation(att));
