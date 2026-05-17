@@ -4,6 +4,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 **This is NOT** `CHANGELOG.md` (formal published ship log) or `AUDIT_*.md` (point-in-time audit). This is the operator-level "what we did + what's next + what's blocked" view across sessions.
 
+---
+
+## 2026-05-17 (afternoon) — Doctrine triplet sweep: Tier-2/3 substrate crates
+
+**Focus:** Complete the doctrine triplet (non-trivial fixture + adversarial + INVENTION_STACK §4.3 citation) for the 4 remaining Tier-2/3 App-Layer substrate crates: `evaporchain-ew-twap`, `evaporchain-thermal-stm`, `evaporchain-epa-mmr`, `evaporchain-plc`.
+**Commits shipped:** 1 (`7b1b6f35`)
+**Deliverables:**
+- **`crates/evaporchain-ew-twap/tests/e2e.rs`** — 13 tests. Non-trivial fixture: 2 honest oracles @ 100k energy vs 1 attacker @ 100 energy. Exact arithmetic: sum_pe=401_000_000_000, sum_e=200_100, EW-TWAP=2_003_998 vs standard TWAP=4_666_666 (attacker moves EW-TWAP only 3,998 above honest mean). Adversarial: NonMonotoneEpoch, ZeroTotalEnergy, u64-overflow detection.
+- **`crates/evaporchain-thermal-stm/tests/e2e.rs`** — 10 tests. Non-trivial fixture: 5-tx bank-transfer batch submitted in reverse-priority order proving: sorting, zero-partial-write (aborted tx leaves zero state), validator-determinism (same batch any submission order → byte-identical outcome), deadlock impossibility (cyclic-conflict pair resolves to higher-energy commit, no hang). Adversarial: DuplicateTxId, high-fan-out conflict (10 txs → 1 commits, 9 abort).
+- **`crates/evaporchain-epa-mmr/tests/e2e.rs`** — 16 tests. Non-trivial fixture: 8-leaf MMR across 4 phases (all proofs at floor=500; EnergyBelowFloor gate; decay tick update_energy(3,50) → root changes, old proof → RootMismatch; byte-tamper → RootMismatch, energy pump → RootMismatch). Energy floor check fires before hash check (even with garbage root). Non-power-of-two (11 leaves, 3 peaks) all provable.
+- **`crates/evaporchain-plc/tests/e2e.rs`** — 11 tests. Non-trivial fixture: 3-block honest chain (d_B=1,2,1 all ≤ bd_max) + adversarial extra bar b(0,500) with half-persistence=250 >> bd_max=5 → StabilityBoundViolated. bd_max=0 pins barcode (identical passes, any perturbation fails). State unchanged on any rejection.
+
+**Empirical results:** 50/50 tests green on Mini 1 across all 4 crates. Zero failures.
+
+**Decisions made:** Tier-2/3 doctrine sweep is now complete. All 10 substrate crates in the invention-stack now have the full triplet.
+
+**What's next:**
+1. VM paradigm doctrine triplets: `total-evaporscript`, `cap-decay-vm`, `dp-native-vm`
+2. SFSV off-chain coordinator binary (path to Paper 1, SDDC Dutch auction clearing)
+3. Commit devnet sig-verify fix and push all branches
+
+**Blockers / open questions:** None.
+
+**Cross-references:** `crates/evaporchain-{ew-twap,thermal-stm,epa-mmr,plc}/tests/e2e.rs`, commit `7b1b6f35`; prior session `01cfafe3` (singh-* sweep complete).
+
 ## 2026-05-17 (morning) — Doctrine triplet sweep complete: singh-posthuma e2e
 
 **Focus:** Final crate in the DOCTRINE_PUNCH_LIST singh-* sweep — `evaporchain-singh-posthuma` (Sealed Testaments). Completed the full doctrine triplet (source citation + adversarial + e2e fixture) across all 6 singh-* crates.
