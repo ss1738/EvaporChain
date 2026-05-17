@@ -13,6 +13,7 @@
 //! - Compressed nodes can be decompressed on resurrection
 //! - Proof sizes shrink when traversing cold (compressed) regions
 
+#[allow(unused_imports)]
 use pasta_curves::group::ff::{Field, PrimeField};
 use pasta_curves::group::{Curve, Group, GroupEncoding};
 use pasta_curves::{Ep, Fq};
@@ -20,13 +21,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
+use crate::verkle::{VERKLE_INTERNAL_DST, VERKLE_LEAF_DST};
+
 // ─────────────────────── Constants ───────────────────────────────────────
 
 const WIDTH: usize = 256;
 const MAX_DEPTH: usize = 32;
 
 // ─────────────────────── Generator Points ────────────────────────────────
-// Shared with the standard Verkle trie — same generators, same commitments.
+// H3 (audit 2026-05-16): use DISTINCT generator seed from standard
+// Verkle to ensure Energy-Verkle and standard-Verkle commitments never
+// alias.  Pre-fix both tries used `"EvaporChain_Verkle_Gen_{i}"` →
+// identical generators → identical Pedersen commitments on the same
+// child values → cross-trie proofs indistinguishable.  Post-fix the
+// Energy-Verkle generator seed carries `EnergyVerkle_` prefix so the
+// derived generator points differ from `verkle.rs`'s set.
 
 static GENERATORS: OnceLock<Vec<Ep>> = OnceLock::new();
 
@@ -34,7 +43,7 @@ fn generators() -> &'static Vec<Ep> {
     GENERATORS.get_or_init(|| {
         let mut gens = Vec::with_capacity(WIDTH + 1);
         for i in 0..=WIDTH {
-            let seed = format!("EvaporChain_Verkle_Gen_{}", i);
+            let seed = format!("EvaporChain_EnergyVerkle_Gen_{}", i);
             let hash = blake3::hash(seed.as_bytes());
             let scalar = bytes_to_scalar(hash.as_bytes());
             gens.push(Ep::generator() * scalar);
@@ -43,10 +52,19 @@ fn generators() -> &'static Vec<Ep> {
     })
 }
 
+/// Convert 32 bytes to a Pallas scalar field element (Fq).
+///
+/// L1 (audit 2026-05-13): same shape as `verkle::bytes_to_scalar`.
+/// See that function's docstring for the bias bound (≈ 1.5 × 10⁻³⁹
+/// from uniformity over the full Fq range) and the `expect` rationale
+/// — the masked value is provably < modulus, so the fallback is dead
+/// but loud rather than silently collapsing to `Fq::ONE`.
 fn bytes_to_scalar(bytes: &[u8; 32]) -> Fq {
     let mut repr = *bytes;
-    repr[31] &= 0x3F;
-    Fq::from_repr(repr).unwrap_or(Fq::ONE)
+    repr[31] &= 0x3F; // ensure < field modulus (254-bit subspace)
+    Fq::from_repr(repr).expect(
+        "bytes_to_scalar invariant: after `repr[31] &= 0x3F` the value is < Fq modulus",
+    )
 }
 
 fn point_to_bytes(point: &Ep) -> [u8; 32] {
@@ -187,11 +205,20 @@ impl EnergyNode {
 
     /// Compute the cryptographic hash/commitment of this node.
     /// Compressed nodes return their stored commitment (same as the original subtree).
+    ///
+    /// CR-1 (audit 2026-05-17): producer-side DSTs MUST match `verify` /
+    /// `verify_multi`. Pre-fix `EnergyNode::hash` returned raw
+    /// `blake3(key || value)` for leaves and raw `point_to_bytes(commitment)`
+    /// for internals, while `verify` reconstructed with `VERKLE_LEAF_DST` /
+    /// `VERKLE_INTERNAL_DST` (commit b5959a05, H2 closure). The H2 closure
+    /// was half-applied — verify side added DSTs, producer side didn't —
+    /// so `test_proof_verifies` was red on HEAD.
     fn hash(&self) -> [u8; 32] {
         match self {
             EnergyNode::Empty => [0u8; 32],
             EnergyNode::Leaf(leaf) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&leaf.key);
                 data.extend_from_slice(&leaf.value);
                 *blake3::hash(&data).as_bytes()
@@ -204,7 +231,11 @@ impl EnergyNode {
                     let scalar = bytes_to_scalar(&child_hash);
                     commitment += gens[idx as usize] * scalar;
                 }
-                point_to_bytes(&commitment)
+                let pt = point_to_bytes(&commitment);
+                let mut data = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+                data.extend_from_slice(VERKLE_INTERNAL_DST);
+                data.extend_from_slice(&pt);
+                *blake3::hash(&data).as_bytes()
             }
             EnergyNode::Compressed(c) => c.commitment,
         }
@@ -724,15 +755,35 @@ impl EnergyVerkleTrie {
     }
 
     /// Verify a proof against a root commitment.
+    ///
+    /// Soundness note (AUDIT-2026-05-13 C1): the `hit_compressed` flag on the
+    /// proof was previously a free pass — `verify` returned `true` whenever it
+    /// was set, regardless of `expected_root`. That allowed any party to forge
+    /// an exclusion proof by setting one bit. The disjunction has been removed.
+    ///
+    /// Consequence: when `prove` walks the trie and immediately hits a
+    /// `Compressed` node at the root (no internal traversal), it currently
+    /// produces a proof with `depth == 0`, `value == None`,
+    /// `hit_compressed == true` and no commitment chain. Such proofs are NOT
+    /// independently verifiable today and are correctly rejected here. A
+    /// follow-up (see CompressedNode envelope work) must extend the proof
+    /// to carry the root Compressed node's stored commitment so `verify` can
+    /// reconstruct + compare against `expected_root`.
     pub fn verify(proof: &EnergyVerkleProof, expected_root: &[u8; 32]) -> bool {
         if proof.depth > MAX_DEPTH {
             return false;
         }
         if proof.depth == 0 {
-            if proof.value.is_none() {
-                return *expected_root == [0u8; 32] || proof.hit_compressed;
+            // C1: hit_compressed=true with no commitment chain is a forgery path -- reject.
+            if proof.hit_compressed {
+                return false;
             }
-            let mut data = Vec::with_capacity(64);
+            if proof.value.is_none() {
+                return *expected_root == [0u8; 32];
+            }
+            // H2: LEAF DST matches EnergyNode leaf node_hash.
+            let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&proof.key);
             data.extend_from_slice(proof.value.as_ref().unwrap());
             let leaf_hash = *blake3::hash(&data).as_bytes();
@@ -746,10 +797,22 @@ impl EnergyVerkleTrie {
             return false;
         }
 
-        // Reconstruct leaf hash
+        // CR-2 (audit 2026-05-17): bind path_indices to the proof's key
+        // bytes. Without this, a non-existence proof for an EXISTING key
+        // can be forged by routing path_indices through empty trie slots
+        // — bytes_to_scalar([0u8;32]) = Fq::ZERO makes the path-idx slot
+        // a no-op in the reconstructed commitment.
+        for level in 0..proof.depth {
+            if proof.path_indices[level] != proof.key[level] {
+                return false;
+            }
+        }
+
+        // Reconstruct leaf hash (H2: LEAF DST).
         let leaf_hash = match &proof.value {
             Some(value) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&proof.key);
                 data.extend_from_slice(value);
                 *blake3::hash(&data).as_bytes()
@@ -772,7 +835,12 @@ impl EnergyVerkleTrie {
                 commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
-            current_hash = point_to_bytes(&commitment);
+            // H2: INTERNAL DST matches node_hash() for internal nodes.
+            let pt = point_to_bytes(&commitment);
+            let mut t = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            t.extend_from_slice(VERKLE_INTERNAL_DST);
+            t.extend_from_slice(&pt);
+            current_hash = *blake3::hash(&t).as_bytes();
         }
 
         current_hash == *expected_root
@@ -1058,6 +1126,8 @@ impl EnergyVerkleTrie {
         }
 
         // Terminal: all keys resolved at or above this depth
+        // CR-3 (audit 2026-05-17): apply VERKLE_LEAF_DST to match
+        // `EnergyNode::hash` (CR-1 fix) and `verify` (H2 closure).
         if indices.iter().all(|&i| proof.depths[i] <= depth) {
             let mut hash = [0u8; 32];
             let mut found = false;
@@ -1066,7 +1136,8 @@ impl EnergyVerkleTrie {
                     if found {
                         return None;
                     }
-                    let mut data = Vec::with_capacity(64);
+                    let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                    data.extend_from_slice(VERKLE_LEAF_DST);
                     data.extend_from_slice(&proof.keys[i]);
                     data.extend_from_slice(v);
                     hash = *blake3::hash(&data).as_bytes();
@@ -1111,7 +1182,13 @@ impl EnergyVerkleTrie {
             }
         }
 
-        Some(point_to_bytes(&commitment))
+        // CR-3 (audit 2026-05-17): apply VERKLE_INTERNAL_DST to match
+        // `EnergyNode::hash` (CR-1 fix) and `verify` (H2 closure).
+        let pt = point_to_bytes(&commitment);
+        let mut data = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+        data.extend_from_slice(VERKLE_INTERNAL_DST);
+        data.extend_from_slice(&pt);
+        Some(*blake3::hash(&data).as_bytes())
     }
 
     /// Insert multiple entries at once.
@@ -1435,10 +1512,10 @@ mod tests {
             energy.insert(key, value, 1000, 100, 0);
         }
 
-        assert_eq!(
+        assert_ne!(
             standard.root(),
             energy.root(),
-            "EnergyVerkleTrie must produce the same root as standard VerkleTrie"
+            "EnergyVerkleTrie must produce a DIFFERENT root than standard VerkleTrie (H3: distinct generators)"
         );
     }
 
@@ -1826,6 +1903,51 @@ mod tests {
         assert_eq!(count, 5);
         assert_eq!(trie.root_meta().max_energy, 0);
     }
+
+    #[test]
+    fn audit_c1_hit_compressed_forgery_rejected_against_any_root() {
+        // AUDIT-2026-05-13 C1: prior to the fix, `verify` returned `true` for
+        // any proof with `hit_compressed = true` regardless of `expected_root`.
+        // Construct that exact forgery and assert it is now rejected against
+        // both the empty-trie sentinel root and an arbitrary non-zero root.
+        let forgery = EnergyVerkleProof {
+            key: [0xAB; 32],
+            value: None,
+            depth: 0,
+            commitments: Vec::new(),
+            path_indices: Vec::new(),
+            siblings: Vec::new(),
+            energy_path: Vec::new(),
+            hit_compressed: true,
+        };
+        let arbitrary_root = [0xDE; 32];
+        let empty_sentinel = [0u8; 32];
+        assert!(
+            !EnergyVerkleTrie::verify(&forgery, &arbitrary_root),
+            "hit_compressed=true must NOT short-circuit verify"
+        );
+        assert!(
+            !EnergyVerkleTrie::verify(&forgery, &empty_sentinel),
+            "hit_compressed=true must NOT short-circuit verify even vs zero root"
+        );
+    }
+
+    #[test]
+    fn audit_c1_empty_trie_absence_still_verifies_against_zero_root() {
+        // Soundness lower bound: the legitimate empty-trie absence proof
+        // (depth=0, value=None, hit_compressed=false) must continue to verify
+        // against the zero-sentinel root. Otherwise the C1 fix would have
+        // broken the canonical absence case.
+        let trie = EnergyVerkleTrie::new();
+        let key = make_key(99);
+        let proof = trie.prove(&key);
+        assert!(proof.value.is_none());
+        assert_eq!(proof.depth, 0);
+        assert!(!proof.hit_compressed);
+        let root = trie.root();
+        assert_eq!(root, [0u8; 32]);
+        assert!(EnergyVerkleTrie::verify(&proof, &root));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2004,5 +2126,38 @@ mod proptests {
             }
             prop_assert!(!EnergyVerkleTrie::verify_multi(&mp, &root));
         }
+    }
+
+    // ── L1 (audit 2026-05-13): bytes_to_scalar hardening (mirror of verkle.rs) ──
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_is_deterministic() {
+        let input = [0x77u8; 32];
+        assert_eq!(bytes_to_scalar(&input), bytes_to_scalar(&input));
+    }
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_all_ones_does_not_panic() {
+        let input = [0xFFu8; 32];
+        let scalar = bytes_to_scalar(&input);
+        assert!(!bool::from(scalar.is_zero()));
+    }
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_distinct_inputs_distinct_scalars() {
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        a[0] = 1;
+        b[0] = 2;
+        assert_ne!(bytes_to_scalar(&a), bytes_to_scalar(&b));
+    }
+
+    #[test]
+    fn audit_l1_energy_bytes_to_scalar_masks_top_2_bits() {
+        let mut base = [0xABu8; 32];
+        base[31] = 0x3F;
+        let mut high = base;
+        high[31] = 0xFF;
+        assert_eq!(bytes_to_scalar(&base), bytes_to_scalar(&high));
     }
 }

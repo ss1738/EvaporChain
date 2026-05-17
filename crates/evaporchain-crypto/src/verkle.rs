@@ -8,6 +8,7 @@
 //! Keys are 32 bytes; each byte selects a child index at each trie depth
 //! (max depth = 32). Values are 32 bytes.
 
+#[allow(unused_imports)]
 use pasta_curves::group::ff::{Field, PrimeField};
 use pasta_curves::group::{Curve, Group, GroupEncoding};
 use pasta_curves::{Ep, Fq};
@@ -44,10 +45,29 @@ fn generators() -> &'static Vec<Ep> {
 }
 
 /// Convert 32 bytes to a Pallas scalar field element (Fq).
+///
+/// **Bias note (L1 audit 2026-05-13):** the function masks the top 2 bits
+/// of the last byte (`repr[31] &= 0x3F`), restricting the input to the
+/// 254-bit subspace. Pallas Fq's modulus is `2^254 + ε` where `ε ≈
+/// 4.56 × 10^37`. So a uniformly-random 32-byte input maps to a Fq
+/// element uniformly distributed over `[0, 2^254)`. The deviation from
+/// uniform over the full `[0, modulus)` is bounded by `ε / 2^254 ≈
+/// 1.5 × 10^-39` — well below any practical security margin for the
+/// generator-derivation and leaf-hashing contexts where this is used.
+///
+/// **L1 hardening:** the pre-fix `unwrap_or(Fq::ONE)` fallback collapsed
+/// out-of-range inputs to `Fq::ONE`, which would have made multiple
+/// distinct hash outputs map to the same scalar — silently breaking
+/// injectivity. The fallback is dead today (the 254-bit mask
+/// guarantees `repr < modulus`), but `expect` makes the invariant
+/// loud: any future caller that bypasses the mask trips a panic
+/// instead of silently collapsing.
 fn bytes_to_scalar(bytes: &[u8; 32]) -> Fq {
     let mut repr = *bytes;
-    repr[31] &= 0x3F; // ensure < field modulus
-    Fq::from_repr(repr).unwrap_or(Fq::ONE)
+    repr[31] &= 0x3F; // ensure < field modulus (254-bit subspace)
+    Fq::from_repr(repr).expect(
+        "bytes_to_scalar invariant: after `repr[31] &= 0x3F` the value is < Fq modulus",
+    )
 }
 
 /// Hash a curve point to 32 bytes (serialize affine coordinates).
@@ -108,20 +128,44 @@ fn commit_internal(children: &BTreeMap<u8, Node>) -> Ep {
     commitment
 }
 
+/// H2 (audit 2026-05-16): leaf-vs-internal domain separation.
+///
+/// Pre-fix `node_hash` for a leaf computed `BLAKE3(key || value)` —
+/// a 64-byte preimage of `[u8; 32] || [u8; 32]`.  An internal node's
+/// hash is `point_to_bytes(commit_internal(children))` — a 32-byte
+/// serialization of a Pallas Ep point.  Under untagged hashing the
+/// two preimage shapes are technically disjoint by length, but a
+/// future encoder change or composition with an attacker-controlled
+/// outer hash could surface a collision-class.  Tag both inputs so
+/// the protocol explicitly enforces the leaf/internal distinction.
+pub(crate) const VERKLE_LEAF_DST: &[u8] = b"EvaporChain_Verkle_Leaf_v1\0";
+pub(crate) const VERKLE_INTERNAL_DST: &[u8] = b"EvaporChain_Verkle_Internal_v1\0";
+
 /// Compute the hash/commitment of a node.
 fn node_hash(node: &Node) -> [u8; 32] {
     match node {
         Node::Empty => [0u8; 32],
         Node::Leaf(leaf) => {
-            // Hash(key || value) for leaf commitment
-            let mut data = Vec::with_capacity(64);
+            // Hash(VERKLE_LEAF_DST || key || value) for leaf commitment.
+            let mut data =
+                Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&leaf.key);
             data.extend_from_slice(&leaf.value);
             *blake3::hash(&data).as_bytes()
         }
         Node::Internal(internal) => {
+            // Hash(VERKLE_INTERNAL_DST || point_bytes(commitment)).
+            // The point_to_bytes alone is unambiguous within the
+            // protocol, but DST-prefixing makes it explicit and
+            // collision-free under composition.
             let commitment = commit_internal(&internal.children);
-            point_to_bytes(&commitment)
+            let point_bytes = point_to_bytes(&commitment);
+            let mut data =
+                Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            data.extend_from_slice(VERKLE_INTERNAL_DST);
+            data.extend_from_slice(&point_bytes);
+            *blake3::hash(&data).as_bytes()
         }
     }
 }
@@ -387,8 +431,10 @@ impl VerkleTrie {
                 // Empty trie: root should be the empty hash
                 return *expected_root == [0u8; 32];
             }
-            // Single leaf at root (no internal nodes): verify leaf hash = root
-            let mut data = Vec::with_capacity(64);
+            // Single leaf at root (no internal nodes): verify leaf hash = root.
+            // H2: LEAF DST prefix matches node_hash() for leaves.
+            let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+            data.extend_from_slice(VERKLE_LEAF_DST);
             data.extend_from_slice(&proof.key);
             data.extend_from_slice(proof.value.as_ref().unwrap());
             let leaf_hash = *blake3::hash(&data).as_bytes();
@@ -402,10 +448,24 @@ impl VerkleTrie {
             return false;
         }
 
-        // Reconstruct the leaf hash
+        // CR-2 (audit 2026-05-17): bind path_indices to the proof's key
+        // bytes. Without this, a non-existence proof for an EXISTING key
+        // can be forged by routing path_indices through empty trie slots:
+        // the path child's contribution at the bottom level is
+        // bytes_to_scalar([0u8;32]) = Fq::ZERO, so the path-idx slot
+        // becomes a no-op in the reconstructed commitment and the
+        // sibling-only sum reconstructs to the real root.
+        for level in 0..proof.depth {
+            if proof.path_indices[level] != proof.key[level] {
+                return false;
+            }
+        }
+
+        // Reconstruct the leaf hash (H2: LEAF DST matches node_hash()).
         let leaf_hash = match &proof.value {
             Some(value) => {
-                let mut data = Vec::with_capacity(64);
+                let mut data = Vec::with_capacity(VERKLE_LEAF_DST.len() + 64);
+                data.extend_from_slice(VERKLE_LEAF_DST);
                 data.extend_from_slice(&proof.key);
                 data.extend_from_slice(value);
                 *blake3::hash(&data).as_bytes()
@@ -445,7 +505,12 @@ impl VerkleTrie {
                 commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
-            current_hash = point_to_bytes(&commitment);
+            // H2: INTERNAL DST matches node_hash() for internal nodes.
+            let pt = point_to_bytes(&commitment);
+            let mut t = Vec::with_capacity(VERKLE_INTERNAL_DST.len() + 32);
+            t.extend_from_slice(VERKLE_INTERNAL_DST);
+            t.extend_from_slice(&pt);
+            current_hash = *blake3::hash(&t).as_bytes();
         }
 
         // The reconstructed root should match
@@ -860,7 +925,7 @@ mod tests {
             );
             // Wrong-value tampering also rejected at deep paths.
             let mut bad_proof = proof.clone();
-            bad_proof.value = Some(make_value(((val[0]).wrapping_add(1)) as u8));
+            bad_proof.value = Some(make_value((val[0]).wrapping_add(1)));
             assert!(
                 !VerkleTrie::verify(&bad_proof, &root),
                 "tampered-value proof must reject at deep path"
@@ -1102,5 +1167,61 @@ mod proptests {
             }
             prop_assert_eq!(trie.len(), unique_keys.len());
         }
+    }
+
+    // ── L1 (audit 2026-05-13): bytes_to_scalar hardening ──
+
+    /// Determinism: same input → same scalar.
+    #[test]
+    fn audit_l1_bytes_to_scalar_is_deterministic() {
+        let input = [0x42u8; 32];
+        let a = bytes_to_scalar(&input);
+        let b = bytes_to_scalar(&input);
+        assert_eq!(a, b);
+    }
+
+    /// All-ones input does NOT panic — the mask drops it to the
+    /// 254-bit subspace which is provably < Fq. This pins the
+    /// invariant that `expect` documents.
+    #[test]
+    fn audit_l1_bytes_to_scalar_all_ones_does_not_panic() {
+        let input = [0xFFu8; 32];
+        let scalar = bytes_to_scalar(&input);
+        // Sanity: result is non-zero (the 254-bit value 0x3FFF...FFFF is non-zero).
+        assert!(!bool::from(scalar.is_zero()));
+    }
+
+    /// Distinct inputs that differ only outside the masked bits must
+    /// still produce distinct scalars when the unmasked bytes differ.
+    /// Pre-fix: under `unwrap_or(Fq::ONE)` an attacker could craft
+    /// inputs that landed in the collapse branch; with `expect` the
+    /// branch is unreachable, so this test exists to pin the
+    /// distinct-input → distinct-scalar contract on representative
+    /// values.
+    #[test]
+    fn audit_l1_bytes_to_scalar_distinct_inputs_distinct_scalars() {
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        a[0] = 1;
+        b[0] = 2;
+        let sa = bytes_to_scalar(&a);
+        let sb = bytes_to_scalar(&b);
+        assert_ne!(sa, sb);
+    }
+
+    /// The top 2 bits of `repr[31]` are silently masked. Confirm that
+    /// inputs differing only in those bits map to the SAME scalar
+    /// (intentional — documents the bias source).
+    #[test]
+    fn audit_l1_bytes_to_scalar_masks_top_2_bits() {
+        let mut base = [0xABu8; 32];
+        base[31] = 0x3F; // already masked
+        let mut high = base;
+        high[31] = 0xFF; // top 2 bits set → must be masked off
+        assert_eq!(
+            bytes_to_scalar(&base),
+            bytes_to_scalar(&high),
+            "top 2 bits of byte 31 must be masked (254-bit subspace)"
+        );
     }
 }
