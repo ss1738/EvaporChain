@@ -6,6 +6,26 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, sixth continued) — AUDIT_2026_05_17: all stranded commits landed on main; 8 commits pushed
+
+**Focus:** Recover and land all audit commits that were orphaned/on wrong branches after a `git reset --hard origin/main`.
+**Commits shipped:** 8 (3f7e4cd2 CR-1/2/3, f1150475 GHOST-B, 5f46589f A6, 1c42bd18 Q9/Q13/A5, a4cd2fce A4, bdc03d05 A8, ebe6d5c7 HIGHs, 938f5fa0 clippy)
+**Deliverables:**
+- **CR-1/2/3** (3f7e4cd2): execution/lib.rs `address_from_pubkey` paymaster fix (energy_verkle.rs DST fixes were already on main).
+- **GHOST-B** (f1150475): `execute_refresh` checks `blake3(tx.public_key) == obj.owner` for both live and ghost paths.
+- **A6** (5f46589f): per-IP rate-limit bucket for snapshot downloads.
+- **Q9/Q13/A5** (1c42bd18), **A4** (a4cd2fce), **A8** (bdc03d05): node API hardening batch.
+- **HIGHs bundle** (ebe6d5c7): SCR-N2/N4/SUB-N1/N2/GEN-N1 — 5 HIGH findings from AUDIT_2026_05_15.
+- **clippy** (938f5fa0): pnt erasing_op false-deny on phase=0 template.
+- LOWs bundle (22c306f9), GEN-N1 (3481144a), GEN-N3 (c4f66858) confirmed already on main — cherry-picks were empty.
+**Empirical results:** All cherry-picks applied cleanly; `encrypted_mempool.rs` conflict resolved keeping O(1) HashSet PRIV-N5+N6 (HEAD) over incoming O(n) linear scan (22c306f9 incoming).
+**Decisions made:** LOWs bundle PRIV-N6 dedup conflict → kept HEAD (O(1) seen_commitments/seen_admission_ids HashSets). Incoming used O(n) linear scan — HEAD is strictly superior.
+**What's next:** Push to origin; then MAINNET_READINESS.md for next open lane.
+**Blockers / open questions:** Recurring branch-switching issue: a `git reset --hard origin/main` happened between sessions (likely from a worktree cleanup). Pattern: verify with `git log origin/main..HEAD` before every push.
+**Cross-references:** Closes remaining stranded work from AUDIT_PLAN_2026_05_17.md.
+
+---
+
 ## 2026-05-17 (night, fifth continued) — AUDIT_2026_05_17: ALL FINDINGS CLOSED (L0-A + H-3 + H-4 + Q11 + INV-MED-4 + Q12)
 
 **Focus:** Close the final 6 open findings from AUDIT_2026_05_17 in one session.
