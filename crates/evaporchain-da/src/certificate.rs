@@ -20,7 +20,7 @@ pub struct DAAttestation {
     pub samples_verified: u32,
     /// Validator's stake weight.
     pub stake: u64,
-    /// BLS signature over (block_number || data_root || validator_id || samples_verified).
+    /// BLS signature over (block_number || data_root || validator_id || samples_verified || stake).
     pub signature: Vec<u8>,
     /// BLS public key of the signer.
     pub public_key: Vec<u8>,
@@ -58,6 +58,11 @@ impl DACertificate {
             return false;
         }
 
+        // Q2 (audit 2026-05-17): dedup by validator_id — a cert carrying N
+        // copies of the same attestation would otherwise count each copy's
+        // stake separately, allowing a single-key forgery to amplify to 100×
+        // stake by replaying one valid attestation 100 times.
+        let mut seen_validators = std::collections::HashSet::<u64>::new();
         let mut recomputed_stake: u64 = 0;
 
         for att in &self.attestations {
@@ -66,13 +71,21 @@ impl DACertificate {
                 return false;
             }
 
+            // Q2: reject duplicate signer.
+            if !seen_validators.insert(att.validator_id) {
+                return false;
+            }
+
             // Reconstruct the signed message — must match create_attestation exactly.
-            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+            // Q3 (audit 2026-05-17): stake is now included in the signed
+            // message so an adversary cannot inflate att.stake post-signing.
+            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
             msg.extend_from_slice(DA_ATTESTATION_DST);
             msg.extend_from_slice(&att.block_number.to_le_bytes());
             msg.extend_from_slice(&att.data_root);
             msg.extend_from_slice(&att.validator_id.to_le_bytes());
             msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+            msg.extend_from_slice(&att.stake.to_le_bytes());
 
             let pk = BlsPublicKey(att.public_key.clone());
             let sig = BlsSignature(att.signature.clone());
@@ -122,12 +135,14 @@ impl DACertificate {
                 // supermajority on their own.
                 continue;
             }
-            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+            // Q3: include stake in signed message (matches create_attestation + verify_signatures).
+            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
             msg.extend_from_slice(DA_ATTESTATION_DST);
             msg.extend_from_slice(&att.block_number.to_le_bytes());
             msg.extend_from_slice(&att.data_root);
             msg.extend_from_slice(&att.validator_id.to_le_bytes());
             msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+            msg.extend_from_slice(&att.stake.to_le_bytes());
             let pk = BlsPublicKey(att.public_key.clone());
             let sig = BlsSignature(att.signature.clone());
             if !BlsVerifier::verify(&msg, &sig, &pk) {
@@ -136,7 +151,8 @@ impl DACertificate {
             recomputed_stake = recomputed_stake.saturating_add(att.stake);
         }
         // The active-only stake must still hit supermajority.
-        recomputed_stake.saturating_mul(3) >= self.total_stake.saturating_mul(2)
+        // Use u128 to prevent wrap when stake values are near u64::MAX.
+        (recomputed_stake as u128) * 3 >= (self.total_stake as u128) * 2
     }
 }
 
@@ -156,12 +172,15 @@ pub fn create_attestation(
     keypair: &BlsKeypair,
 ) -> DAAttestation {
     // Build the message to sign — DST prefix ensures cross-context separation.
-    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+    // Q3 (audit 2026-05-17): stake is included so the field cannot be
+    // inflated post-signing without breaking the BLS verification.
+    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
     msg.extend_from_slice(DA_ATTESTATION_DST);
     msg.extend_from_slice(&block_number.to_le_bytes());
     msg.extend_from_slice(data_root);
     msg.extend_from_slice(&validator_id.to_le_bytes());
     msg.extend_from_slice(&samples_verified.to_le_bytes());
+    msg.extend_from_slice(&stake.to_le_bytes());
 
     let sig = keypair.sign(&msg);
     let pk = keypair.public_key_bytes();
@@ -207,14 +226,14 @@ impl CertificateBuilder {
 
         // Reconstruct the signed message and verify the BLS signature.
         // MUST mirror create_attestation byte-for-byte, including the
-        // DA_ATTESTATION_DST prefix — without it, every attestation
-        // produced by create_attestation fails verification.
-        let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+        // DA_ATTESTATION_DST prefix and stake (Q3 fix).
+        let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
         msg.extend_from_slice(DA_ATTESTATION_DST);
         msg.extend_from_slice(&att.block_number.to_le_bytes());
         msg.extend_from_slice(&att.data_root);
         msg.extend_from_slice(&att.validator_id.to_le_bytes());
         msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+        msg.extend_from_slice(&att.stake.to_le_bytes());
 
         let pk = BlsPublicKey(att.public_key.clone());
         let sig = BlsSignature(att.signature.clone());
@@ -505,6 +524,60 @@ mod tests {
             !cert.verify_signatures_with_active(&|_| false),
             "every signer jailed → no recomputed stake → must fail"
         );
+    }
+
+    // ── Q1/Q2/Q3 adversarial tests (audit 2026-05-17) ────────────────────────
+
+    /// Q2: duplicate validator_id in one certificate must be rejected.
+    /// Attack: replaying a single valid attestation 100× inflates recomputed_stake
+    /// 100-fold, bypassing the supermajority check with a single BLS keypair.
+    #[test]
+    fn q2_duplicate_validator_id_rejected() {
+        let data_root = [0xD2u8; 32];
+        let kp = BlsKeypair::generate();
+        let att = create_attestation(1, &data_root, 42, 8, 1_000, &kp);
+
+        // Two copies of the same attestation (validator_id=42 appears twice).
+        let cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![att.clone(), att],
+            attested_stake: 2_000,
+            total_stake: 3_000, // 2000/3000 >= 2/3 — would pass supermajority
+        };
+        assert!(!cert.verify_signatures(), "duplicate validator_id must be rejected");
+    }
+
+    /// Q3: tampering the `stake` field post-signing must break BLS verification
+    /// because `stake` is now included in the signed message.
+    #[test]
+    fn q3_tampered_stake_rejected() {
+        let data_root = [0xD3u8; 32];
+        let kp = BlsKeypair::generate();
+        let mut att = create_attestation(1, &data_root, 1, 8, 1_000, &kp);
+
+        // Inflate stake after signing.
+        att.stake = 999_999_999;
+
+        let cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![att],
+            attested_stake: 999_999_999,
+            total_stake: 999_999_999,
+        };
+        assert!(!cert.verify_signatures(), "inflated stake must fail BLS verification");
+    }
+
+    /// Q3: zero-stake attestation with matching sig still round-trips cleanly
+    /// (stake=0 is a valid signed value; the forgery requires tampering it).
+    #[test]
+    fn q3_zero_stake_attestation_verifies() {
+        let data_root = [0xD3u8; 32];
+        let kp = BlsKeypair::generate();
+        let att = create_attestation(1, &data_root, 1, 4, 0, &kp);
+        let mut builder = CertificateBuilder::new(1, data_root, 0);
+        assert!(builder.add_attestation(att));
     }
 
     // Audit C2: is_supermajority must not overflow when stakes are near u64::MAX.
