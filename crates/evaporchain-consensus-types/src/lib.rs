@@ -526,8 +526,12 @@ impl ValidatorSet {
     // ─────────────────── VRF-Based Leader Election ──────────────────────────
 
     /// Verify that a block's VRF proof is valid for the claimed proposer.
+    ///
+    /// H-1 (audit 2026-05-17): `chain_id` is now bound into the VRF input
+    /// to prevent cross-chain leader-claim replay.
     pub fn verify_vrf_proposal(
         &self,
+        chain_id: &str,
         proposer_id: u64,
         height: u64,
         round: u32,
@@ -542,7 +546,7 @@ impl ValidatorSet {
             Some(pk) => pk,
             None => return false,
         };
-        let alpha = evaporchain_crypto::vrf::leader_vrf_input(height, round);
+        let alpha = evaporchain_crypto::vrf::leader_vrf_input(chain_id, height, round);
         evaporchain_crypto::vrf::vrf_verify(
             vrf_pk,
             &alpha,
