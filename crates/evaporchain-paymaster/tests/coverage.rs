@@ -4,6 +4,7 @@
 //! that the in-source unit tests don't span together.
 
 use evaporchain_crypto::signatures::HybridKeypair;
+use evaporchain_crypto::Signer;
 use evaporchain_paymaster::{
     AuditFsyncMode, InnerVariant, Paymaster, PaymasterConfig, PaymasterError, SponsorOutcome,
     MAX_RATE_LIMIT_BUCKETS,
