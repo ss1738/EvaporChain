@@ -10,6 +10,28 @@
 //! A primitive that wants to express decay over a different physical unit
 //! (e.g. blocks-per-halving, seconds-per-halving) must convert at its
 //! boundary, not introduce a second constant.
+//!
+//! ## L0-B / L0-C (audit 2026-05-17) — siblings of λ
+//!
+//! Doctrine says one λ. In practice the chain carries two additional
+//! *decay-shaped* constants that intentionally live OUTSIDE λ because
+//! they parameterise distinct physical processes:
+//!
+//! 1. **`MEV_INCLUSION_HALF_LIFE_BLOCKS`** (4 blocks; `evaporchain-types`)
+//!    — sets how quickly an unincluded tx's mempool-inclusion priority
+//!    decays. Block-count timescale (not epoch); decoupled from λ so
+//!    operators can tune mempool aggressiveness without touching the
+//!    state-decay constant. Audit L0-B.
+//!
+//! 2. **`reward_half_life`** (per-genesis; `evaporchain-types/genesis.rs`)
+//!    — block-reward halving schedule (analogue of Bitcoin's halving).
+//!    Conceptually distinct from state decay: reward halving is a
+//!    monetary policy parameter, not a thermodynamic state parameter.
+//!    Audit L0-C.
+//!
+//! These are the **only** sanctioned non-λ decay constants. Any new
+//! decay-shaped parameter MUST be added to this enumeration with a
+//! doctrine justification before landing.
 
 use evaporchain_types::HalfLife;
 use serde::{Deserialize, Serialize};
