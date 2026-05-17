@@ -2,10 +2,17 @@
 
 > Flagship demo #2 for EvaporChain's energy-decay primitive: the
 > *inverse* of immutability. Sibling of `SFSV_ARCHITECTURE.md` and
-> `EVAPORCASH_ARCHITECTURE.md`; same doctrine, same substrate. Pairs
-> with `contracts/evaporscript/dead_drop.es` (to build) and the
-> `crates/evaporchain-dead-drop` mirror crate. Cheapest-to-build,
-> highest watch-it-die visceral factor of the flagship set.
+> `EVAPORCASH_ARCHITECTURE.md`; same doctrine, same substrate.
+>
+> **Contract: `contracts/evaporscript/mortal_message.es` (the canonical
+> EvaporScript pilot — already shipped).** Dead Drop is the
+> mortal-messages dApp *positioned* as the flagship "prove the chain"
+> forgetting demo — NOT a new contract. Per invariant #2 the `.es` is
+> the source of truth; a separate `dead_drop.es` would be a redundant
+> near-duplicate of the proven pilot (the exact redundant-scaffold
+> anti-pattern the SFSV strategic record warns against). The genuinely
+> new artifact is the live-e2e runbook `scripts/deploy-dead-drop.sh`
+> (this change) that *directly observes the forgetting* on a node.
 
 ---
 
@@ -87,84 +94,89 @@ node retaining them forks itself out (see §7.1).
 
 ### 2.2 EvaporScript VM (Layer 3)
 
-`dead_drop.es` is the source of truth (invariant #2). No internal
-method dispatch — the expiry computation is inlined into `read`,
-`expires_at`, and the hooks, parity-pinned by
-`tests/dead_drop_parity.rs` (port of `predicate_inlining_parity.rs`).
-Read returns the **live** `energy_at_epoch`-gated availability — never
-a frozen formula (the model-(a) lesson from
-`VERIFICATION_2026_05_16.md`).
+`mortal_message.es` is the source of truth (invariant #2). No internal
+method dispatch. Crucially, the contract does **not** hand-roll any
+decay/expiry arithmetic at all — forgetting is the chain runtime
+driving the instance Active→Grace→Ghost via its own `energy` builtin
+(the `on_grace`/`on_evaporate` hooks just emit). That structurally
+*avoids* the model-(a) frozen-formula trap (the
+`VERIFICATION_2026_05_16.md` lesson) because there is no formula in the
+contract to drift — the strongest possible form of the invariant.
 
 ---
 
 ## 3. State Machine & Lifecycle
 
+One Dead Drop = one `mortal_message.es` instance. The chain runtime
+(not contract code) drives the lifecycle off the instance's own
+`energy` builtin; `set_payload` seals the content once.
+
 ```
-        post(payload, ttl_epochs)  → id, energy E sized so that
-                                      energy_at_epoch(E, ttl) ≈ ε
+   deploy mortal_message.es with energy=E, half_life=τ   (E,τ = the TTL)
+                      │
+              set_payload(body, recipient)   (owner-only, once)
                       │
                       ▼
-   ┌──────────── Active ────────────┐   read(id) → bytes  ✅
-   │  self.energy ≥ read_floor       │
-   │  extend(id): refresh energy →   │   (pay-to-remember; the ONLY
-   │    pushes expiry out            │    way to defeat forgetting)
+   ┌──────────── Active ────────────┐   read() → body  ✅
+   │  instance energy healthy        │   (caller == recipient || owner)
+   │  on_refresh / record_boost:     │   (chain-applied energy refresh;
+   │    chain pushes evaporation out │    the ONLY defer path, gas-paid)
    └───────────────┬─────────────────┘
-                    │ energy < read_floor
+                    │ energy decays (evaporation engine)
                     ▼
-   ┌──────────── Grace ─────────────┐   read(id) → ⚠ "fading"
-   │  content still present but the  │    (degraded; on_grace emitted)
-   │  contract refuses fresh reads   │
+   ┌──────────── Grace ─────────────┐   on_grace → emit("energy low")
+   │  instance still present         │   read() still works here
    └───────────────┬─────────────────┘
-                    │ evaporation engine retires the object
+                    │ engine retires the instance
                     ▼
-   ┌──────── Ghost → Evaporated ────┐   read(id) → ✗ "forgotten"
-   │  payload bytes pruned from      │    content unrecoverable;
-   │  state; only a content-free     │    tombstone = blake3(id) only,
-   │  tombstone may remain           │    NEVER the payload
+   ┌──────── Ghost → Evaporated ────┐   on_evaporate → emit; instance
+   │  contract + state{body} cease   │   + state gone. GET /api/script/
+   │  to exist; unrecoverable        │   :id no longer returns it.
    └─────────────────────────────────┘
 ```
 
-`extend()` is the deliberate, bounded escape hatch (contrast SFSV
-where refresh postpones a *release*; here refresh postpones
-*forgetting*). Absent `extend`, forgetting is guaranteed — that
-guarantee is the product.
+The escape hatch is the chain's energy **refresh** (surfaced via
+`on_refresh`/`record_boost`), not a contract method — contrast SFSV
+where refresh postpones a *release*; here it postpones *forgetting*.
+Absent refresh, forgetting is guaranteed by physics — that guarantee
+is the product.
 
 ---
 
 ## 4. Mathematical Foundation
 
-### 4.1 Expiry function
+### 4.1 Lifespan function
+
+The instance's own energy follows the canonical chain decay (SFSV §4.1
+/ EvaporCash §4.1):
 
 ```
-available(id, e) = energy_at_epoch(E, e − posted_at) ≥ read_floor
+instance_energy(e) = energy_at_epoch(E, e − deploy_epoch)
+                    = E · 2^(−(e − deploy_epoch) / τ)
 ```
 
-Same canonical decay as SFSV §4.1 / EvaporCash §4.1. The deployer
-sizes `E` and reads `ttl` off the inverse:
-
-```
-E ≈ read_floor · 2^( ttl / τ )
-```
-
-— the only arithmetic the deployer does; the contract itself never
-re-derives decay (invariant #1).
+`E` = deploy `energy`, `τ` = deploy `half_life`. The deployer picks
+(E, τ) so the instance survives the intended read window then
+evaporates — the only sizing arithmetic anyone does. The contract
+contains **no** decay math (invariant #1, maximally: nothing to lint).
 
 ### 4.2 The forgetting guarantee
 
-Define *forgotten(id, e)* ≡ the payload bytes are absent from the
-state committed by the block at height for epoch *e*. Claim:
+Define *forgotten(e)* ≡ the instance's `state { body }` is absent from
+the state committed at epoch *e*. Claim:
 
 ```
-∀ e ≥ evaporate_epoch(id):  forgotten(id, e)  ∧  ¬∃ revive API
+∀ e ≥ evaporate_epoch:  forgotten(e)  ∧  ¬∃ revive API
 ```
 
-Unlike SFSV (which has no revival) and EvaporCash (whose decay is
-recoverable via touch), Dead Drop's evaporation is **terminal by
-construction**: there is no `revive`, and `extend` is only callable
-*while Active* (cannot resurrect an Evaporated entry). Candidate Coq
-obligation `research/coq/DeadDropForgetting.v` (not yet written):
-post-evaporation state-root excludes the payload pre-image — corollary
-of the evaporation-engine pruning lemma + state-root binding.
+Evaporation is **terminal by construction**: there is no `revive`; the
+only defer path is the chain-applied energy refresh (`on_refresh`),
+which cannot resurrect an already-Evaporated instance. Stronger than
+SFSV (no revival) and EvaporCash (touch-recoverable). Candidate Coq
+obligation `research/coq/DeadDropForgetting.v` (not yet written; not
+demo-blocking): the post-evaporation state-root excludes the body
+pre-image — a corollary of the evaporation-engine pruning lemma +
+state-root binding, both already exercised by the chain.
 
 ### 4.3 Conservation
 
@@ -174,30 +186,39 @@ EvaporCash-style pool.
 
 ---
 
-## 5. Contract Surface (`.es`)
+## 5. Contract Surface (`.es`) — `mortal_message.es` (actual, shipped)
+
+Reconciled to the real grammar of the shipped pilot (verified by
+reading `contracts/evaporscript/mortal_message.es`). EvaporScript
+supports `string` (used here), `address`, `u64`, `bool`; **no `bytes`
+type, no maps/ids** in the surface. **One Dead Drop = one contract
+instance** (exactly as SFSV is one vault per instance) — the
+instance's *own* decaying `energy` builtin IS the forgetting timer;
+deploy `energy`/`half_life` ARE the TTL.
 
 ```
-fn post(payload: bytes, ttl_epochs: u64)  -> u64   # returns id; sizes energy from ttl
-fn extend(id: u64)                                  # Active-only; refresh → push expiry
-fn purge(id: u64)                                   # voluntary early forget (owner-only)
+fn set_payload(payload_body: string, payload_recipient: address)
+                          # owner-only, once (caller == owner); seals
+fn read() -> string       # require sealed; caller == recipient || owner;
+                          #   returns body while the instance is Active
+fn record_boost()         # telemetry for chain-applied energy refresh
+fn inspect() -> u64       # boost_count, without exposing the body
 
-# Read-only (each inlines the SAME energy_at_epoch availability check)
-fn read(id: u64)            -> bytes   # Active only; Grace/Evaporated → revert
-fn expires_at(id: u64)      -> u64     # epoch at which available() crosses read_floor
-fn is_forgotten(id: u64)    -> bool
-fn poster_of(id: u64)       -> address
-
-# Lifecycle hooks
-on_grace()      -> emit("payload fading")
-on_evaporate()  -> emit("payload forgotten")   # asserts content cleared
+on_grace()      -> emit("message energy low — boost to keep alive")
+on_refresh()    -> boost_count += 1; emit("message boosted")
+on_evaporate()  -> emit("message evaporated")   # terminal: instance + state gone
 ```
 
-`read`, `expires_at`, `is_forgotten` inline the identical
-availability expression (no method dispatch) — drift caught at PR time
-by `tests/dead_drop_parity.rs`. Payload size is bounded by the node's
-64 KB `source_code`/args cap (verified this session); large payloads
-post a `blake3` commitment + off-chain blob, on-chain bytes for the
-≤64 KB demo path.
+The forgetting is **structural, not a contract branch**: when the
+instance's energy decays out, the chain's evaporation engine retires
+the whole contract (Active → Grace → Ghost → Evaporated) and its
+`state { body }` ceases to exist — `GET /api/script/:id` stops
+returning it. There is no `revive`; `record_boost`/`on_refresh` is the
+only (bounded, gas-paid) way to defer forgetting. Payload is a
+`string` bounded by the node's 64 KB `source_code`/args cap (verified
+this session); larger payloads post a `blake3` commitment string +
+off-chain blob. No new parity test is required — `mortal_message.es`
+is itself the canonical proven pilot.
 
 ---
 
@@ -220,39 +241,58 @@ clears the balance pre-check with no admin-gated faucet. Poll
 `POST /api/tx/call-script` —
 `CallScriptRequest { caller: u8, contract_id: u64, method, args:
 Vec<evaporchain_script::Value>, epoch: u64 }`. `args` externally
-tagged: `post(payload, ttl)` → `[{"Str": "<payload>"} or
-{"Address"/"U64"...}, {"U64": ttl}]`; bytes via `{"Str": ...}` or a
-tagged byte array per the `.es` param type. `epoch` **required**.
-Auth: register (testnet auto-verifies) → login → bearer token.
+tagged: `set_payload(body, recipient)` →
+`[{"Str":"<body>"}, {"Address":[r,0×31]}]`; `read()` → `[]`. `epoch`
+**required**. Auth: register (testnet auto-verifies) → login → bearer
+token. (TTL is the deploy `energy`/`half_life`, not a call arg.)
 
 ### 6.3 Observe — the demo's centrepiece
 
 `GET /api/script/:id` (the **script** engine store, *not*
 `/api/contract/:id` — the endpoint error corrected in `b76df4a2`).
-The live "watch it die" panel polls this each epoch: `.state` shows
-the payload present → fading → **absent**, and `energy` ticking down
-toward `read_floor`. `GET /api/status` → `.epoch` for the countdown.
+The live "watch it die" panel polls this each epoch: `.state.body`
+present → instance `energy` ticking down → the whole entry **absent**
+(404 / `.evaporated`). `GET /api/status` → `.epoch` for the countdown.
 This single endpoint *is* the demo.
 
-### 6.4 Runbook
+### 6.4 Runbook — `scripts/deploy-dead-drop.sh` (shipped, this change)
 
-`scripts/deploy-dead-drop.sh` — structural fork of the live-verified
-`deploy-sfsv.sh`. Lifecycle proof sequence: deploy → `post` → read
-(succeeds) → wait past `expires_at` → read (**reverts: forgotten**) →
-`GET /api/script/:id` asserting the payload is **absent from
-`.state`** (the strict, directly-observed assertion — the Dead Drop
-analogue of SFSV's directly-observed `released:{Bool:true}`). A
-non-vacuity guard: assert at least one *successful* read occurred
-*before* expiry, so a green run cannot be a vacuous "never readable."
+Authored directly against the **corrected** node contract (the
+`/api/script/:id` endpoint per `b76df4a2`) — NOT forked from the
+on-branch `deploy-sfsv.sh`, which on some branches is still the old
+`/api/contract/:id` version; forking it would re-introduce that bug.
+Proof sequence against `mortal_message.es`:
+
+1. deploy with small `energy`/`half_life` (the TTL knob)
+2. poll `/api/tx/:hash` → `.contract_id`
+3. `set_payload(body, recipient)` — tagged args
+   `[{"Str":body},{"Address":[r,0×31]}]`, `epoch` required
+4. **non-vacuity guard:** `read()` finalises AND `GET /api/script/:id`
+   `.state.body.Str == body` → `saw_readable=1`. A run that never
+   confirmed a readable payload **fails** (exit 5) — it cannot prove
+   forgetting from a never-readable drop.
+5. poll `GET /api/script/:id` until it `has("error")` / `.evaporated`
+   / body gone → **forgotten**.
+
+Verdict: PASS iff `saw_readable==1` **and** it disappeared. Inverse
+polarity to SFSV: here a post-readable `/api/script/:id` 404 **is the
+success** (a state object that physically ceased to exist), guarded
+against vacuity by step 4. "Still readable past TTL" → exit 6
+(forgetting guarantee violated).
 
 ### 6.5 Invariant obligations (mainnet gate)
 
-- Invariant #1: availability via `energy_at_epoch` only (Layer 0 lint).
-- Invariant #2: `.es` source of truth; `crates/evaporchain-dead-drop`
-  mirrors; `tests/dead_drop_parity.rs` pins equivalence.
-- Forgetting guarantee (§4.2): no `revive`; `extend` Active-only;
-  on_evaporate asserts content cleared. This is the one obligation
-  unique to Dead Drop and the one the threat model centres on.
+- Invariant #1: forgetting is the chain's `energy`-driven evaporation
+  engine; the contract holds no decay arithmetic (Layer 0 lint moot —
+  nothing to lint).
+- Invariant #2: `mortal_message.es` is the source of truth and is
+  itself the proven canonical pilot — no mirror crate / parity test
+  needed (there is no second implementation to drift from).
+- Forgetting guarantee (§4.2): no `revive`; the only defer path is the
+  chain-applied energy refresh surfaced via `on_refresh`/`record_boost`
+  (bounded, gas-paid); on_evaporate is terminal — the instance and its
+  `state { body }` cease to exist. This is the obligation the threat
+  model centres on.
 
 ---
 
@@ -289,12 +329,12 @@ non-vacuity guard: assert at least one *successful* read occurred
 
 | Surface | State |
 |---|---|
-| `contracts/evaporscript/dead_drop.es` | **to build** (this spec) |
-| `crates/evaporchain-dead-drop` mirror | to build (SFSV-class, smallest of the flagships) |
-| `tests/dead_drop_parity.rs` | to build (port of `predicate_inlining_parity.rs`) |
-| `tests/adversarial.rs` (§7) | to build (port of SFSV adversarial harness) |
-| `scripts/deploy-dead-drop.sh` | to build (fork of live-verified `deploy-sfsv.sh`) |
-| `research/coq/DeadDropForgetting.v` | candidate (not yet written) — §4.2 |
+| `contracts/evaporscript/mortal_message.es` | **already shipped** — the canonical pilot IS the Dead Drop contract (no `dead_drop.es`; redundant by invariant #2) |
+| mirror crate / parity test | **not required** — `mortal_message.es` is itself the proven reference pilot |
+| `scripts/deploy-dead-drop.sh` | **shipped (this change)** — forgetting e2e, corrected `/api/script/:id`, non-vacuity-guarded |
+| `tests/adversarial.rs` (§7) | optional follow-up (port of SFSV adversarial harness) — not blocking the demo |
+| `research/coq/DeadDropForgetting.v` | candidate (not yet written) — §4.2; nice-to-have, not demo-blocking |
+| live forgetting e2e on a node | **pending** — run `deploy-dead-drop.sh` against a node (Mini) to capture the directly-observed PASS, as SFSV's was |
 | Node API contract | **already verified live** — §6, no chain change |
 
 No mainnet code change required: Dead Drop is pure EvaporScript over
