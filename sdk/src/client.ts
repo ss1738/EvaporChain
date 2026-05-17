@@ -47,6 +47,11 @@ import type {
   BellBeaconLatest,
   BellBeaconRequest,
   BellBeaconResponse,
+  ScriptValue,
+  ScriptInfo,
+  ScriptContract,
+  TxStatus,
+  AuthSession,
 } from "./types";
 import { EventEmitter } from "events";
 
@@ -78,6 +83,7 @@ export class EvaporChain {
   private retryDelay: number;
   private wsReconnectDelay: number;
   private wsMaxReconnects: number;
+  private authToken?: string;
   private ws: WebSocket | null = null;
   private wsReconnectCount = 0;
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -100,6 +106,7 @@ export class EvaporChain {
       this.retryDelay = urlOrOptions?.retryDelay ?? 500;
       this.wsReconnectDelay = urlOrOptions?.wsReconnectDelay ?? 3_000;
       this.wsMaxReconnects = urlOrOptions?.wsMaxReconnects ?? 10;
+      this.authToken = urlOrOptions?.authToken;
     }
   }
 
@@ -123,6 +130,7 @@ export class EvaporChain {
           signal: controller.signal,
           headers: {
             "Content-Type": "application/json",
+            ...(this.authToken ? { Authorization: `Bearer ${this.authToken}` } : {}),
             ...init?.headers,
           },
         });
@@ -350,6 +358,158 @@ export class EvaporChain {
       args,
       epoch,
     });
+  }
+
+  // ── Auth (session token for tx routes) ──
+
+  /**
+   * Set the bearer token used on authenticated tx routes
+   * (deploy-script / call-script require it).
+   */
+  setAuthToken(token: string | undefined): void {
+    this.authToken = token;
+  }
+
+  /** Register a node account. On testnet this auto-verifies the email. */
+  async register(email: string, password: string, displayName: string): Promise<AuthSession> {
+    return this.post<AuthSession>("/api/auth/register", {
+      email,
+      password,
+      display_name: displayName,
+    });
+  }
+
+  /**
+   * Log in and (on success) store the returned token on this client so
+   * subsequent deploy/call-script calls are authenticated. Returns the
+   * session so callers can also read it.
+   */
+  async login(email: string, password: string): Promise<AuthSession> {
+    const s = await this.post<AuthSession>("/api/auth/login", { email, password });
+    if (s.token) this.authToken = s.token;
+    return s;
+  }
+
+  // ── EvaporScript (.es) — value encoders ──
+  //
+  // call-script args are Vec<evaporchain_script::Value>, EXTERNALLY
+  // TAGGED. Bare positionals are rejected by the node. Always build
+  // args with these. A u8 account index maps to addr_from_byte(i) =
+  // [i, 0×31]; index 0 is the genesis-funded faucet account.
+
+  /** Encode a u8 account index as a 32-byte EvaporScript address. */
+  static esAddr(index: number): ScriptValue {
+    const bytes = new Array(32).fill(0);
+    bytes[0] = index & 0xff;
+    return { Address: bytes };
+  }
+  /** Encode a raw 32-byte address. */
+  static esAddrBytes(bytes: number[]): ScriptValue {
+    if (bytes.length !== 32) throw new EvaporChainError("address must be 32 bytes", 0);
+    return { Address: [...bytes] };
+  }
+  static esU64(n: number): ScriptValue {
+    return { U64: n };
+  }
+  static esStr(s: string): ScriptValue {
+    return { Str: s };
+  }
+  static esBool(b: boolean): ScriptValue {
+    return { Bool: b };
+  }
+
+  // ── EvaporScript — deploy / call / read ──
+
+  /**
+   * Deploy an EvaporScript (`.es`) contract. `deployer` is a u8 devnet
+   * account index (0 = genesis-funded faucet — clears the balance
+   * pre-check). Requires an auth token (see `login`). Returns the
+   * submit result; poll {@link waitForScriptContractId} for the id.
+   */
+  async deployScript(
+    deployer: number,
+    sourceCode: string,
+    energy: number,
+    halfLife: number,
+  ): Promise<TxResult & { tx_hash?: string }> {
+    return this.post<TxResult & { tx_hash?: string }>("/api/tx/deploy-script", {
+      deployer,
+      source_code: sourceCode,
+      energy,
+      half_life: halfLife,
+    });
+  }
+
+  /**
+   * Call a method on an EvaporScript contract. `args` MUST be built
+   * with the `es*` encoders (externally-tagged). `epoch` is required.
+   *
+   * ```ts
+   * await chain.callScript(0, cid, "set_terms",
+   *   [EvaporChain.esAddr(2), EvaporChain.esU64(0),
+   *    EvaporChain.esU64(rp), EvaporChain.esU64(1000)],
+   *   await chain.getEpoch());
+   * ```
+   */
+  async callScript(
+    caller: number,
+    contractId: number,
+    method: string,
+    args: ScriptValue[],
+    epoch: number,
+  ): Promise<TxResult & { tx_hash?: string }> {
+    return this.post<TxResult & { tx_hash?: string }>("/api/tx/call-script", {
+      caller,
+      contract_id: contractId,
+      method,
+      args,
+      epoch,
+    });
+  }
+
+  /** Tx status by hash (`/api/tx/:hash`). Always 200; `pending` is typed. */
+  async getTx(hash: string): Promise<TxStatus> {
+    return this.get<TxStatus>(`/api/tx/${hash}`);
+  }
+
+  /** Current chain epoch (from `/api/status`). */
+  async getEpoch(): Promise<number> {
+    return (await this.getStatus()).epoch;
+  }
+
+  /** List EvaporScript contracts (`/api/scripts`). */
+  async getScripts(): Promise<ScriptInfo[]> {
+    const res = await this.get<{ scripts: ScriptInfo[]; count: number }>("/api/scripts");
+    return res.scripts;
+  }
+
+  /**
+   * Read an EvaporScript contract (`/api/script/:id`) — NOT
+   * `/api/contract/:id`, which is the unrelated template store and
+   * 404s for an `.es` contract. `.state` is the externally-tagged map.
+   */
+  async getScript(id: number): Promise<ScriptContract> {
+    return this.get<ScriptContract>(`/api/script/${id}`);
+  }
+
+  /**
+   * Poll a deploy tx until finalised and return its `contract_id`
+   * (the deploy tx status carries it; there is no by-deploy index).
+   * Throws on `rejected` or timeout.
+   */
+  async waitForScriptContractId(txHash: string, timeoutMs = 120_000): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const r = await this.getTx(txHash);
+      if (r.state === "rejected") {
+        throw new EvaporChainError(`deploy tx rejected: ${r.error ?? "(no error)"}`, 0);
+      }
+      if ((r.state === "included" || r.state === "finalised") && r.contract_id != null) {
+        return r.contract_id;
+      }
+      await new Promise((res) => setTimeout(res, 2_000));
+    }
+    throw new EvaporChainError("deploy not finalised within timeout", 0);
   }
 
   // ── Batch Transactions ──
