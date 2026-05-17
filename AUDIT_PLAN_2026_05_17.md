@@ -97,11 +97,11 @@ Each step is a coherent code class — same crate family or same threat model.
 | Step 2 — Q1/2/3 + Q5 + Q7 DA cert | ✅ DONE | `ebe6d5c7` HIGHs bundle (Q1 stake cross-check, Q2 dedup, Q3 stake-in-signed-msg, Q5 antichain stake-weighted, Q7 StateProof leaf-index+DST) |
 | Step 3 — A1/2/3 + STATE-2 + SBA-1 | ✅ DONE | A1-A8 spread across `1c42bd18`/`a4cd2fce`/`bdc03d05`/`ebe6d5c7`; STATE-2 `ebe6d5c7`; SBA-1 in contracts/ |
 | Step 4 — L0-A + H-3/4 + Q11 + MEDs | ✅ DONE | `5a1ff06c` L0-A, `bea074bb` H-3, `856cc616` H-4, `38880efc` Q11+INV-MED-4+Q12, `1c42bd18` Q9+Q13+A5, `f1150475` GHOST-B, OPCODE-1/RULE-1/PARSE-1/EXEC-2/SPLIT-1 in earlier commits |
-| Step 5 — M-1..6 + INV + LOWs | 🟡 IN PROGRESS | M-1✅ M-2✅ M-3✅(doc) M-4 pending, M-6✅, INV-MED-5 pending, INV-MED-6 pending, Q10 pending; LOWs batch `22c306f9`(LOWs already on main) |
+| Step 5 — M-1..6 + INV + LOWs | ✅ DONE | `0608916e` INV-MED-5+M-4+Q10; `0509e62f` INV-MED-6 (693 lines e2e); GHOST-A closed via `f6a20128` (paper_1 §3.4 Inv-4 corrected, pre-dates Step 5) |
 
-**Remaining open findings (2026-05-17 night, sixth session):**
-- INV-MED-5: Tier-2 VM lib.rs §4.2 citations (total-evaporscript, cap-decay-vm, dp-native-vm)
-- INV-MED-6: standalone tests/e2e.rs for decay-lamport, fee-controller, llsa, sentinel, tombstone
-- M-4: poseidon_hash no-IV/DST — add EXPERIMENTAL warning (can't change scheme — ZK circuit compatibility)
-- Q10: namespace is_empty hash-zero sentinel → inverted-range sentinel
-- GHOST-A: paper drift (V1 deliberately uses DB uniqueness, not MMR consume) — doc update
+**All findings CLOSED as of 2026-05-17 (seventh session).**
+- INV-MED-5 ✅ `0608916e` — Tier-2 VM lib.rs §4.2 doc citations
+- INV-MED-6 ✅ `0509e62f` — standalone tests/e2e.rs for 5 doctrine primitives
+- M-4 ✅ `0608916e` — poseidon_hash EXPERIMENTAL warning (ZK-circuit-only)
+- Q10 ✅ `0608916e` — namespace inverted-range sentinel
+- GHOST-A ✅ `f6a20128` — paper_1 §3.4 Inv-4 corrected before this session
