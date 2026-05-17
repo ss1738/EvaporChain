@@ -177,6 +177,8 @@ pub struct StateSyncManager {
     pending_requests: HashSet<usize>,
     /// Genesis checkpoint for safe initial sync.
     genesis_checkpoint: Option<GenesisCheckpoint>,
+    /// Chain ID bound into BLS vote messages.
+    chain_id: String,
 }
 
 impl StateSyncManager {
@@ -192,7 +194,13 @@ impl StateSyncManager {
             received_chunks: HashMap::new(),
             pending_requests: HashSet::new(),
             genesis_checkpoint: None,
+            chain_id: String::new(),
         }
+    }
+
+    /// Set the chain ID used for BLS vote message binding.
+    pub fn set_chain_id(&mut self, chain_id: &str) {
+        self.chain_id = chain_id.to_string();
     }
 
     /// Create a state sync manager with a hardcoded genesis checkpoint.
@@ -437,7 +445,7 @@ impl StateSyncManager {
                     return vec![];
                 }
             }
-            self.light_client = Some(LightClientVerifier::new(header.clone(), current_time));
+            self.light_client = Some(LightClientVerifier::new(header.clone(), current_time, &self.chain_id));
             info!(
                 height = target,
                 has_checkpoint = self.genesis_checkpoint.is_some(),
@@ -847,8 +855,11 @@ mod tests {
         (vs, kps)
     }
 
-    fn bls_vote_message(height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(48);
+    fn bls_vote_message(chain_id: &str, height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
+        let chain_id_bytes = chain_id.as_bytes();
+        let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 9 + 8 + 4 + 32);
+        msg.push(chain_id_bytes.len() as u8);
+        msg.extend_from_slice(chain_id_bytes);
         msg.extend_from_slice(b"precommit");
         msg.extend_from_slice(&height.to_le_bytes());
         msg.extend_from_slice(&round.to_le_bytes());
@@ -862,7 +873,7 @@ mod tests {
         kps: &[BlsKeypair],
         ids: &[u64],
     ) -> CommitCertificate {
-        let msg = bls_vote_message(height, 0, &block_hash);
+        let msg = bls_vote_message("", height, 0, &block_hash);
         let sigs: Vec<BlsSignature> = ids.iter().map(|&id| kps[id as usize].sign(&msg)).collect();
         let agg = BlsVerifier::aggregate_signatures(&sigs).unwrap();
         CommitCertificate {

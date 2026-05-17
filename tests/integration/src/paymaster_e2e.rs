@@ -405,7 +405,8 @@ async fn paymaster_e2e_strict_mode_full_pipeline() {
 
     // ── Wallet side: build + sign UserOp.
     let user_kp = HybridKeypair::generate();
-    let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+    // address = blake3(ADDRESS_DST || pk) — must match address_from_pubkey in executor I1 check.
+    let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
     let recipient: AccountAddress = [9u8; 32];
 
     let inner = Transaction::Transfer(TransferTx {

@@ -743,11 +743,13 @@ pub const MAX_SKIP_HEIGHT_GAP: u64 = 10_000;
 pub struct LightClientVerifier {
     trusted_states: std::collections::BTreeMap<u64, TrustedState>,
     trust_period: u64,
+    /// Chain ID bound into BLS vote messages — must match the signer's chain_id.
+    chain_id: String,
 }
 
 impl LightClientVerifier {
     /// Create a new verifier with a genesis trusted state.
-    pub fn new(genesis_header: LightBlockHeader, current_time: u64) -> Self {
+    pub fn new(genesis_header: LightBlockHeader, current_time: u64, chain_id: &str) -> Self {
         let height = genesis_header.height;
         let mut trusted_states = std::collections::BTreeMap::new();
         trusted_states.insert(
@@ -760,6 +762,7 @@ impl LightClientVerifier {
         Self {
             trusted_states,
             trust_period: TRUST_PERIOD_SECS,
+            chain_id: chain_id.to_string(),
         }
     }
 
@@ -768,6 +771,7 @@ impl LightClientVerifier {
         genesis_header: LightBlockHeader,
         current_time: u64,
         trust_period: u64,
+        chain_id: &str,
     ) -> Self {
         let height = genesis_header.height;
         let mut trusted_states = std::collections::BTreeMap::new();
@@ -781,6 +785,7 @@ impl LightClientVerifier {
         Self {
             trusted_states,
             trust_period,
+            chain_id: chain_id.to_string(),
         }
     }
 
@@ -900,7 +905,7 @@ impl LightClientVerifier {
             ));
         }
 
-        let msg = bls_vote_message(cert.height, cert.round, &cert.block_hash);
+        let msg = bls_vote_message(&self.chain_id, cert.height, cert.round, &cert.block_hash);
         let agg_sig = BlsSignature(cert.aggregate_signature.clone());
         if !BlsVerifier::aggregate_verify(&msg, &agg_sig, &pks) {
             return Err("BLS aggregate signature verification failed".into());
@@ -964,9 +969,17 @@ impl LightClientVerifier {
     }
 }
 
-/// Construct the BLS vote message for verification (matches tendermint.rs format).
-pub fn bls_vote_message(height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(48);
+/// Construct the BLS vote message for verification — must match tendermint.rs format exactly.
+/// Format: u8(len(chain_id)) || chain_id || "precommit" || height_le8 || round_le4 || block_hash
+pub fn bls_vote_message(chain_id: &str, height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
+    let chain_id_bytes = chain_id.as_bytes();
+    debug_assert!(
+        chain_id_bytes.len() < 256,
+        "chain_id too long for u8 length prefix"
+    );
+    let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 9 + 8 + 4 + 32);
+    msg.push(chain_id_bytes.len() as u8);
+    msg.extend_from_slice(chain_id_bytes);
     msg.extend_from_slice(b"precommit");
     msg.extend_from_slice(&height.to_le_bytes());
     msg.extend_from_slice(&round.to_le_bytes());
