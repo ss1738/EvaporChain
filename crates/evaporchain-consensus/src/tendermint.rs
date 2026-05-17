@@ -4792,6 +4792,7 @@ impl TendermintConsensus {
             // next re-broadcast.  Post-fix, the rotation must be
             // signed by the previously-registered (old) key, which
             // only the legitimate validator holds.
+            let mut rotation_continuity_ok = false;
             if let Some(vi) = self.validator_set.get(validator_id) {
                 let is_rotation = matches!(
                     vi.bls_public_key.as_ref(),
@@ -4832,6 +4833,8 @@ impl TendermintConsensus {
                         );
                         return actions;
                     }
+                    // All continuity checks passed — rotation is authorised.
+                    rotation_continuity_ok = true;
                 }
             }
 
@@ -4840,16 +4843,14 @@ impl TendermintConsensus {
                 // registration if the validator currently has no
                 // registered key. Overwriting an already-registered
                 // key requires a continuity proof signed by the
-                // currently-registered key — that path is handled by
-                // `apply_validator_key_rotations` (driven by a
-                // `RotateValidatorKey` transaction with both the
-                // old-key signature and the new-key PoP). Without
+                // currently-registered key (checked above;
+                // rotation_continuity_ok = true when passed). Without
                 // this gate, any off-path attacker who can gossip
                 // could replace a genesis-anchored BLS key with one
                 // they control: PoP on the NEW key alone proves
                 // they control the new key, NOT that the legitimate
                 // validator authorised the rotation.
-                if vi.bls_public_key.is_some() {
+                if vi.bls_public_key.is_some() && !rotation_continuity_ok {
                     if vi.bls_public_key.as_ref() != Some(bls_public_key) {
                         warn!(
                             validator = validator_id,
