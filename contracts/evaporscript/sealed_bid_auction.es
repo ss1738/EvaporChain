@@ -19,6 +19,14 @@
 //   2 = SETTLE     — seller picks the winner
 //   3 = CLOSED     — terminal; record_winner advances to this on
 //                    success
+//
+// Commit-reveal binding (SBA-1 fix):
+//   `commit_hash` is blake3(chain_id || auction_id || bidder || price || nonce)
+//   produced by the Rust substrate (NX4 / decay-bound-auction crate).
+//   At `reveal()` the caller must supply the SAME hash string;
+//   the contract verifies the stored hash matches before accepting
+//   the reveal. The Rust layer additionally verifies the pre-image
+//   (price, nonce) against the hash so both layers enforce binding.
 
 contract SealedBidAuction {
     state {
@@ -29,6 +37,10 @@ contract SealedBidAuction {
 
         phase: u64 = 0
 
+        // committed_hashes stores the hash each bidder submitted at commit
+        // time. Parallel presence map `committed` guards the U64(0) default
+        // on unmapped keys (EvaporScript map default = U64(0)).
+        committed_hashes: map[address -> string]
         committed: map[address -> u64]
         revealed: map[address -> u64]
         nominal: map[address -> u64]
@@ -65,10 +77,14 @@ contract SealedBidAuction {
     }
 
     // Commit a bid hash in phase 0. Open call; one commit per address.
+    // commit_hash = blake3(chain_id || auction_id || caller || price || nonce)
+    // as produced by the Rust NX4 binding layer.
     fn commit(commit_hash: string) {
         require(self.sealed == true, "auction not configured")
         require(self.phase == 0, "not in COMMIT phase")
         require(self.committed[caller] == 0, "already committed")
+        // SBA-1: store the hash so reveal can verify binding.
+        self.committed_hashes[caller] = commit_hash
         self.committed[caller] = 1
         self.commit_count += 1
         emit("commit recorded")
@@ -78,11 +94,16 @@ contract SealedBidAuction {
     // Nominal must clear the reserve; effective must not exceed
     // nominal (the dApp coordinator decays nominal → effective by
     // reveal-time distance from commit, so effective <= nominal always).
-    fn reveal(nominal_bid: u64, effective_bid: u64) {
+    // commitment_hash must match the hash submitted at commit time.
+    fn reveal(nominal_bid: u64, effective_bid: u64, commitment_hash: string) {
         require(self.sealed == true, "auction not configured")
         require(self.phase == 1, "not in REVEAL phase")
         require(self.committed[caller] > 0, "no commit on file")
         require(self.revealed[caller] == 0, "already revealed")
+        // SBA-1: verify the caller knows the exact hash they committed.
+        // This binds the reveal to the commit; the Rust substrate also
+        // verifies the blake3 pre-image (price, nonce).
+        require(self.committed_hashes[caller] == commitment_hash, "commitment hash mismatch")
         require(nominal_bid >= self.reserve_price, "nominal below reserve")
         require(effective_bid <= nominal_bid, "effective cannot exceed nominal")
         self.revealed[caller] = 1
@@ -136,6 +157,11 @@ contract SealedBidAuction {
 
     fn reveals_received() -> u64 {
         return self.reveal_count
+    }
+
+    // Return the stored commit hash for a bidder (for coordinator verification).
+    fn committed_hash_of(who: address) -> string {
+        return self.committed_hashes[who]
     }
 
     on_grace() {

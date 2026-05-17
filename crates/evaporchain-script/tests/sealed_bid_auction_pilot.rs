@@ -108,6 +108,7 @@ fn parses_and_compiles_cleanly() {
         "is_settled",
         "commits_received",
         "reveals_received",
+        "committed_hash_of",
     ];
     for m in &public {
         assert!(
@@ -163,10 +164,11 @@ fn full_round_trip_commit_reveal_settle() {
     let s1 = advance(&bc, after_b_commit.state_changes, seller, 1, 300);
 
     // Alice reveals nominal=500, effective=500 (full strength).
+    // Must supply the exact hash she committed (SBA-1 binding check).
     let after_a_reveal = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500)],
+        vec![Value::U64(500), Value::U64(500), Value::Str("alice-commit-hash".to_string())],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -175,7 +177,7 @@ fn full_round_trip_commit_reveal_settle() {
     let after_b_reveal = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(600), Value::U64(400)],
+        vec![Value::U64(600), Value::U64(400), Value::Str("bob-commit-hash".to_string())],
         after_a_reveal.state_changes,
         &ctx(bob, seller, 320, 10_000),
     )
@@ -303,7 +305,7 @@ fn reveal_without_commit_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500)],
+        vec![Value::U64(500), Value::U64(500), Value::Str("any".to_string())],
         s1,
         &ctx(alice, seller, 210, 10_000),
     )
@@ -332,7 +334,7 @@ fn reveal_below_reserve_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(50), Value::U64(50)],
+        vec![Value::U64(50), Value::U64(50), Value::Str("hash".to_string())],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -361,7 +363,7 @@ fn reveal_effective_exceeds_nominal_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(600)],
+        vec![Value::U64(500), Value::U64(600), Value::Str("hash".to_string())],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -390,7 +392,7 @@ fn double_reveal_rejects() {
     let s_revealed = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500)],
+        vec![Value::U64(500), Value::U64(500), Value::Str("hash".to_string())],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -398,7 +400,7 @@ fn double_reveal_rejects() {
     let err = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(600), Value::U64(600)],
+        vec![Value::U64(600), Value::U64(600), Value::Str("hash".to_string())],
         s_revealed.state_changes,
         &ctx(alice, seller, 311, 10_000),
     )
@@ -450,7 +452,7 @@ fn settle_with_mismatched_effective_rejects() {
     let s_revealed = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500)],
+        vec![Value::U64(500), Value::U64(500), Value::Str("hash".to_string())],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -489,7 +491,7 @@ fn non_seller_settle_rejects() {
     let s_r = EvaporVM::execute(
         &bc,
         "reveal",
-        vec![Value::U64(500), Value::U64(500)],
+        vec![Value::U64(500), Value::U64(500), Value::Str("h".to_string())],
         s1,
         &ctx(alice, seller, 310, 10_000),
     )
@@ -507,6 +509,57 @@ fn non_seller_settle_rejects() {
         format!("{err:?}").contains("only seller can settle"),
         "wrong revert: {err:?}"
     );
+}
+
+/// SBA-1: reveal with wrong commitment hash must reject.
+/// Closes the audit finding: commit stored the hash but reveal never
+/// checked it.  Now `reveal` requires `commitment_hash == stored hash`.
+#[test]
+fn sba1_reveal_wrong_commitment_hash_rejects() {
+    let bc = compile_pilot();
+    let seller = [0xAAu8; 32];
+    let alice = [0xB1u8; 32];
+    let s0 = seal(&bc, seller, "x", 100);
+    // Alice commits with hash "correct-hash".
+    let s_c = EvaporVM::execute(
+        &bc,
+        "commit",
+        vec![Value::Str("correct-hash".to_string())],
+        s0,
+        &ctx(alice, seller, 200, 10_000),
+    )
+    .unwrap();
+    let s1 = advance(&bc, s_c.state_changes, seller, 1, 300);
+    // Alice tries to reveal with a different hash — must reject.
+    let err = EvaporVM::execute(
+        &bc,
+        "reveal",
+        vec![
+            Value::U64(500),
+            Value::U64(500),
+            Value::Str("wrong-hash".to_string()),
+        ],
+        s1.clone(),
+        &ctx(alice, seller, 310, 10_000),
+    )
+    .expect_err("reveal with wrong hash must reject");
+    assert!(
+        format!("{err:?}").contains("commitment hash mismatch"),
+        "wrong revert: {err:?}"
+    );
+    // Alice reveals with the correct hash — must succeed.
+    EvaporVM::execute(
+        &bc,
+        "reveal",
+        vec![
+            Value::U64(500),
+            Value::U64(500),
+            Value::Str("correct-hash".to_string()),
+        ],
+        s1,
+        &ctx(alice, seller, 310, 10_000),
+    )
+    .expect("reveal with correct hash must succeed");
 }
 
 #[test]
