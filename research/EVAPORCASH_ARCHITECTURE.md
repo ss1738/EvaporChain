@@ -35,6 +35,56 @@ bank.
 
 ---
 
+## ⛔ BLOCKING FINDING (2026-05-17) — §4 NOT implementable in EvaporScript today
+
+Verified against the real VM before any contract was written (the same
+verify-before-build discipline that caught the Dead Drop / mortal_message
+duplication and the /api/script endpoint):
+
+- EvaporScript exposes **exactly four** builtins to `.es`:
+  `caller | owner | epoch | energy` (`evaporchain-script/src/
+  compiler.rs:368`). **There is no `energy_at_epoch` builtin**, no
+  pow/shift/exp, no float — it is a 44-opcode *total* VM.
+- Every shipped decay contract (`future_self_vault.es`,
+  `mortal_message.es`, `energy_pool.es`) uses the **contract's single
+  own `energy`** (engine-decayed) as the one decaying quantity.
+  `energy_pool.es` stores per-account balances as **raw u64**
+  (`stakes[caller] = prev + amount`) — it does **not** demurrage them.
+
+Consequently §4.1/§4.2's core mechanism —
+`spendable = energy_at_epoch(touched_value, e − last_touched)`
+**per balance** — cannot be expressed: there is no in-script primitive
+to decay an arbitrary stored value, re-deriving the half-life in-script
+would violate invariant #1 (Layer 0 lint) *and* is impossible (no
+exp/shift), and the one in-script decaying quantity (the contract's
+own `energy`) cannot represent N independent per-account balances.
+
+**This is a real VM-capability gap, not a coding detail.** EvaporCash
+needs a design decision before any `.es` is written (do NOT fabricate
+a contract around a non-existent builtin):
+
+- **(A) Bearer-note model** — one balance = one mortal contract
+  instance; its *own* `energy` demurrages natively (exactly the
+  proven SFSV/mortal_message/energy_pool pattern). Transfer =
+  retire+reissue. **Implementable today, doctrinally pure**, but it is
+  "demurraging bearer notes," not a classic fungible map ledger.
+- **(B) Host-layer demurrage** — expose `energy_at_epoch` to scripts
+  as a host function, or engine-decayed map entries. Faithful to §4
+  but it is **mainnet/VM work** that touches the (verified-complete)
+  chain — out of scope for a scoped demo + a sprint risk.
+- **(C) Pool-only decay** — only the contract's own energy (the pool)
+  decays; per-balance hoarding is not penalised. Implementable, but
+  loses the "your money rots if you hoard it" punchline — i.e. loses
+  the demo's entire point.
+
+Recommendation (unranked — operator decides): **(A)** is the only
+path that is both implementable now and on-thesis; it reframes
+EvaporCash as *demurraging bearer cash* rather than a balance map.
+§3–§5 below describe the (now-known-unimplementable) map model and are
+retained only as the pre-finding record — **do not build to them.**
+
+---
+
 ## 1. Mission & Doctrine Anchor
 
 ### 1.1 What EvaporCash is
@@ -313,14 +363,20 @@ of SFSV's predicate-gate non-vacuity guard).
 
 | Surface | State |
 |---|---|
-| `contracts/evaporscript/evaporcash.es` | **to build** (this spec) |
-| `crates/evaporchain-evaporcash` mirror | to build (SFSV-class) |
-| `tests/evaporcash_parity.rs` | to build (port of `predicate_inlining_parity.rs`) |
-| `tests/adversarial.rs` (§7) | to build (port of SFSV adversarial harness) |
-| `scripts/deploy-evaporcash.sh` | to build (fork of live-verified `deploy-sfsv.sh`) |
-| Node API contract | **already verified live** — §6, no chain change needed |
+| **design decision (A/B/C)** | ⛔ **BLOCKING — operator must pick** (see top finding); nothing below can start until then |
+| `contracts/evaporscript/evaporcash.es` | **BLOCKED** — §4 map-ledger model is not implementable in EvaporScript (no `energy_at_epoch` builtin); do not fabricate it |
+| `crates/evaporchain-evaporcash` mirror | blocked on the above |
+| `tests/evaporcash_parity.rs` | blocked on the above |
+| `scripts/deploy-evaporcash.sh` | blocked on the above |
+| Node API contract | already verified live — §6, no chain change needed |
 
-No mainnet code change is required: EvaporCash is pure EvaporScript +
-substrate the chain already ships and this session live-verified.
-Solo budget ~3 weeks, scoped — *after* the mainnet sprint or as a
-scoped parallel exactly as SFSV was, never at the sprint's cost.
+**Honest status:** EvaporCash is NOT a "pure EvaporScript, ~3-week,
+SFSV-class" build as the pre-finding text claimed. Under model **(A)**
+(bearer notes) it is roughly SFSV-class and needs no chain change.
+Under **(B)** it requires mainnet/VM work (host-exposed decay) — a
+different, larger, sprint-touching effort. **(C)** is cheap but
+defeats the demo's purpose. Dead Drop, by contrast, is done +
+live-verified (= `mortal_message.es`). The only thing to "start
+building" from the two flagships is EvaporCash, and it is
+**design-blocked**, not code-blocked — the next step is a decision,
+not a contract.
