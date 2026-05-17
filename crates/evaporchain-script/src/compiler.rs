@@ -647,6 +647,20 @@ fn optimize(opcodes: &mut Vec<Op>, methods: &HashMap<String, usize>) {
 
 /// Compile a parsed Contract AST into EvaporBytecode.
 pub fn compile(contract: &Contract) -> Result<EvaporBytecode, ScriptError> {
+    // NFT-1 (audit 2026-05-17): reject state fields that shadow builtin names.
+    // Bare `owner`/`caller`/`epoch`/`energy` always resolve to the execution-
+    // context builtin in EvaporScript; a state field with the same name would
+    // be silently inaccessible without the `self.` prefix, misleading authors.
+    const RESERVED: &[&str] = &["owner", "caller", "epoch", "energy"];
+    for field in &contract.state_fields {
+        if RESERVED.contains(&field.name.as_str()) {
+            return Err(ScriptError::Compile(format!(
+                "state field '{}' shadows a builtin reserved name; use a different name (e.g. 'holder' instead of 'owner')",
+                field.name
+            )));
+        }
+    }
+
     let mut compiler = Compiler::new();
     compiler.compile_contract(contract)?;
 
