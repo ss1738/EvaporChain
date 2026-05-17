@@ -737,8 +737,10 @@ mod tests {
 
     #[test]
     fn reward_at_epoch_capped_zero_when_total_at_cap() {
-        let mut tok = Tokenomics::default();
-        tok.max_supply_cap = Some(1_000_000);
+        let tok = Tokenomics {
+            max_supply_cap: Some(1_000_000),
+            ..Tokenomics::default()
+        };
         // cumulative already AT cap → no more emissions.
         assert_eq!(tok.reward_at_epoch_capped(0, 1_000_000), 0);
         assert_eq!(tok.reward_at_epoch_capped(0, 1_000_001), 0);
@@ -747,10 +749,12 @@ mod tests {
 
     #[test]
     fn reward_at_epoch_capped_clips_final_block_to_headroom() {
-        let mut tok = Tokenomics::default();
-        tok.block_reward = 100;
-        tok.reward_half_life = 0; // constant 100
-        tok.max_supply_cap = Some(1050);
+        let tok = Tokenomics {
+            block_reward: 100,
+            reward_half_life: 0, // constant 100
+            max_supply_cap: Some(1050),
+            ..Tokenomics::default()
+        };
         // cumulative = 1000 → headroom = 50, so reward should be
         // clipped from 100 to 50. The next block (cumulative = 1050)
         // gets 0.
@@ -761,10 +765,12 @@ mod tests {
     #[test]
     fn reward_at_epoch_capped_compose_with_halving() {
         // Halving every 100 epochs, initial 1024, cap 5000.
-        let mut tok = Tokenomics::default();
-        tok.block_reward = 1024;
-        tok.reward_half_life = 100;
-        tok.max_supply_cap = Some(5000);
+        let tok = Tokenomics {
+            block_reward: 1024,
+            reward_half_life: 100,
+            max_supply_cap: Some(5000),
+            ..Tokenomics::default()
+        };
         // At epoch 0: schedule says 1024, headroom > 1024 → 1024.
         assert_eq!(tok.reward_at_epoch_capped(0, 0), 1024);
         // At epoch 100 (one halving): schedule = 512, cumulative
@@ -776,8 +782,10 @@ mod tests {
 
     #[test]
     fn tokenomics_serde_round_trip_with_cap() {
-        let mut tok = Tokenomics::default();
-        tok.max_supply_cap = Some(21_000_000);
+        let tok = Tokenomics {
+            max_supply_cap: Some(21_000_000),
+            ..Tokenomics::default()
+        };
         let json = serde_json::to_string(&tok).unwrap();
         let parsed: Tokenomics = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.max_supply_cap, Some(21_000_000));
@@ -828,39 +836,49 @@ mod tests {
 
     #[test]
     fn split_staker_pool_zero_commission_passes_pool_through() {
-        let mut tok = Tokenomics::default();
-        tok.validator_commission_default = 0.0;
+        let tok = Tokenomics {
+            validator_commission_default: 0.0,
+            ..Tokenomics::default()
+        };
         // delegator_share = 1000, commission = 0
         assert_eq!(tok.split_staker_pool(1_000), (1_000, 0));
     }
 
     #[test]
     fn split_staker_pool_full_commission_takes_everything() {
-        let mut tok = Tokenomics::default();
-        tok.validator_commission_default = 1.0;
+        let tok = Tokenomics {
+            validator_commission_default: 1.0,
+            ..Tokenomics::default()
+        };
         // delegator_share = 0, commission = pool
         assert_eq!(tok.split_staker_pool(1_000), (0, 1_000));
     }
 
     #[test]
     fn split_staker_pool_ten_percent_commission() {
-        let mut tok = Tokenomics::default();
-        tok.validator_commission_default = 0.10;
+        let tok = Tokenomics {
+            validator_commission_default: 0.10,
+            ..Tokenomics::default()
+        };
         assert_eq!(tok.split_staker_pool(1_000), (900, 100));
     }
 
     #[test]
     fn split_staker_pool_clamps_overflow_rate() {
-        let mut tok = Tokenomics::default();
-        tok.validator_commission_default = 1.5; // clamped to 1.0
+        let tok = Tokenomics {
+            validator_commission_default: 1.5, // clamped to 1.0
+            ..Tokenomics::default()
+        };
         // After clamp: commission = pool, delegators = 0
         assert_eq!(tok.split_staker_pool(500), (0, 500));
     }
 
     #[test]
     fn split_staker_pool_clamps_negative_rate() {
-        let mut tok = Tokenomics::default();
-        tok.validator_commission_default = -0.2; // clamped to 0.0
+        let tok = Tokenomics {
+            validator_commission_default: -0.2, // clamped to 0.0
+            ..Tokenomics::default()
+        };
         assert_eq!(tok.split_staker_pool(500), (500, 0));
     }
 
@@ -875,15 +893,19 @@ mod tests {
 
     #[test]
     fn apy_capped_reward_zero_apy_returns_raw() {
-        let mut tok = Tokenomics::default();
-        tok.target_staking_apy = 0.0;
+        let tok = Tokenomics {
+            target_staking_apy: 0.0,
+            ..Tokenomics::default()
+        };
         assert_eq!(tok.apy_capped_reward(1_000, 1_000_000), 1_000);
     }
 
     #[test]
     fn apy_capped_reward_negative_apy_returns_raw() {
-        let mut tok = Tokenomics::default();
-        tok.target_staking_apy = -0.05;
+        let tok = Tokenomics {
+            target_staking_apy: -0.05,
+            ..Tokenomics::default()
+        };
         assert_eq!(tok.apy_capped_reward(1_000, 1_000_000), 1_000);
     }
 
@@ -894,8 +916,10 @@ mod tests {
         // budget per block = 5_000 / blocks_per_year (a small number).
         // raw_reward = 1_000_000 (way more than the per-block budget).
         // Result: clipped down to budget_per_block.max(1).
-        let mut tok = Tokenomics::default();
-        tok.target_staking_apy = 0.05;
+        let tok = Tokenomics {
+            target_staking_apy: 0.05,
+            ..Tokenomics::default()
+        };
         let result = tok.apy_capped_reward(1_000_000, 100_000);
         assert!(
             result < 1_000_000,
@@ -907,8 +931,10 @@ mod tests {
     #[test]
     fn apy_capped_reward_large_stake_caps_aggressively() {
         // Same shape but smaller raw reward — should also clip.
-        let mut tok = Tokenomics::default();
-        tok.target_staking_apy = 0.05;
+        let tok = Tokenomics {
+            target_staking_apy: 0.05,
+            ..Tokenomics::default()
+        };
         // Raw 100, total_staked 10. Annual budget = 0.5, /blocks_per_year = 0,
         // budget_per_block.max(1) = 1. Result = min(100, 1) = 1.
         assert_eq!(tok.apy_capped_reward(100, 10), 1);
@@ -918,10 +944,12 @@ mod tests {
 
     #[test]
     fn block_reward_dispatches_to_legacy_when_emission_is_none() {
-        let mut tok = Tokenomics::default();
-        tok.emission = None;
-        tok.block_reward = 200;
-        tok.reward_half_life = 0; // constant
+        let tok = Tokenomics {
+            emission: None,
+            block_reward: 200,
+            reward_half_life: 0, // constant
+            ..Tokenomics::default()
+        };
         // None branch: delegates to reward_at_epoch_capped.
         assert_eq!(tok.block_reward(0, 0), 200);
         assert_eq!(tok.block_reward(1_000, 0), 200);
@@ -929,15 +957,17 @@ mod tests {
 
     #[test]
     fn block_reward_dispatches_to_emission_params_when_set() {
-        let mut tok = Tokenomics::default();
-        tok.emission = Some(
-            crate::emission::EmissionParams::new(
-                500,
-                crate::emission::EmissionSchedule::Constant,
-                None,
-            )
-            .unwrap(),
-        );
+        let tok = Tokenomics {
+            emission: Some(
+                crate::emission::EmissionParams::new(
+                    500,
+                    crate::emission::EmissionSchedule::Constant,
+                    None,
+                )
+                .unwrap(),
+            ),
+            ..Tokenomics::default()
+        };
         // Some branch: delegates to emission::block_reward_at.
         assert_eq!(tok.block_reward(0, 0), 500);
         assert_eq!(tok.block_reward(1_000_000, 0), 500);
