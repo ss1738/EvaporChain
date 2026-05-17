@@ -7284,6 +7284,11 @@ impl TendermintConsensus {
             // The mempool was already drained above, so the next proposal will
             // be empty (or near-empty), achieving the same livelock-prevention
             // goal without violating Agreement.
+            //
+            // Q11 (audit 2026-05-17): formally modelled in
+            // research/tla/EvaporChainBFT.tla — PrecommitNilAdvanceRound /
+            // PrecommitTimeoutAdvanceRound:
+            //   nextR == IF r + 1 >= MaxRound THEN 0 ELSE r + 1
             self.round_state = RoundState::new(0);
             self.set_timeouts_for_round(0);
             return;

@@ -2344,6 +2344,20 @@ async fn main() -> Result<()> {
         eprintln!("\x1b[1;31m{}\x1b[0m", e);
         std::process::exit(1);
     }
+    // Q12 (audit 2026-05-17): refuse to start with an empty chain_id.
+    // An empty chain_id falls back to legacy unscoped gossipsub topics,
+    // opening cross-testnet contamination (the same bug fixed by the
+    // chain-id-scoped topics patch). The default ("evaporchain-testnet-1")
+    // prevents this in normal usage; this guard catches an explicit
+    // `--chain-id ""` which would otherwise silently downgrade the protection.
+    if args.chain_id.trim().is_empty() {
+        eprintln!(
+            "error: --chain-id must not be empty.\n       \
+             An empty chain-id falls back to unscoped gossipsub topics, enabling\n       \
+             cross-testnet contamination. Use a non-empty identifier (e.g. evaporchain-testnet-1)."
+        );
+        std::process::exit(1);
+    }
     let node_tag = make_tag(&args.node_id);
     if args.mainnet_strict {
         println!(
