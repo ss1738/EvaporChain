@@ -76,6 +76,12 @@ pub struct Auctioneer {
     listings: HashMap<ContractId, ListingState>,
 }
 
+impl Default for Auctioneer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Auctioneer {
     pub fn new() -> Self {
         Self {

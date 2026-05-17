@@ -3494,7 +3494,7 @@ mod proptests {
         // Marker bytes 0x01..=0x06 must all appear.
         for marker in 1u8..=6 {
             assert!(
-                sb.iter().any(|&b| b == marker),
+                sb.contains(&marker),
                 "guard marker 0x{:02x} missing from signable_bytes",
                 marker
             );

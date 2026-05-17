@@ -161,7 +161,7 @@ fn compute_chsh_s_milli_is_validator_deterministic() {
     let b = compute_chsh_s_milli(&honest).unwrap();
     assert_eq!(a, b, "milli S must be deterministic (i64 arithmetic)");
     // Milli S is in range [0, 4000].
-    assert!(a >= 0 && a <= 4_000, "S_milli must be in [0, 4000], got {a}");
+    assert!((0..=4_000).contains(&a), "S_milli must be in [0, 4000], got {a}");
 }
 
 #[test]

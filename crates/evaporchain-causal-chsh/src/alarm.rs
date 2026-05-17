@@ -480,7 +480,7 @@ mod tests {
             // For interval ≥ 50: threshold = interval.
             // For interval < 50 (e.g. 21): threshold = next multiple
             // ≥ 50 (e.g. 63).
-            let first_run_threshold = ((50 + run_interval - 1) / run_interval) * run_interval;
+            let first_run_threshold = 50_u64.div_ceil(run_interval) * run_interval;
             if n_records >= first_run_threshold {
                 prop_assert!(
                     alarm.status().is_some(),

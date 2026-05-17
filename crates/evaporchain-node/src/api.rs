@@ -3458,7 +3458,7 @@ async fn post_hbct_seed_demo(
     headers: HeaderMap,
 ) -> Json<HbctSeedDemoResp> {
     // Audit E5: seed endpoints write demo state; admin-gate to prevent pollution.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(HbctSeedDemoResp { status: "error", minted_positions: 0, detail: "unauthorized".into() });
     }
     // Realistic-shaped demo positions. Locations are GB BMU codes +
@@ -3675,7 +3675,7 @@ async fn post_hbct_tick(
     Json(req): Json<HbctTickReq>,
 ) -> Json<HbctTickResp> {
     // Audit E5: auto-burn tick is a state mutation; admin-gate to prevent unauthorized burns.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(HbctTickResp { entries_removed: 0, mwh_burnt: 0 });
     }
     let mut book = safe_lock(&state.hbct_book);
@@ -3968,7 +3968,7 @@ async fn post_sentinel_seed_demo(
     headers: HeaderMap,
 ) -> Json<SentinelSeedDemoResp> {
     // Audit E5: governance demo seed writes to state; admin-gate.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelSeedDemoResp { status: "error", registered: vec![], detail: "unauthorized".into() });
     }
     // (id, current, min, max). Realistic-shaped chain knobs.
@@ -4027,7 +4027,7 @@ async fn post_sentinel_seed_votes(
     Json(q): Json<SentinelSeedVotesQuery>,
 ) -> Json<SentinelSeedVotesResp> {
     // Audit E5: governance vote seeding writes to state; admin-gate.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelSeedVotesResp { status: "error", votes_recorded: 0, detail: "unauthorized".into() });
     }
     // Deterministic vote slate: 3 demo validators, each voting for a
@@ -4151,7 +4151,7 @@ async fn post_sentinel_tick(
     Json(req): Json<SentinelTickReq>,
 ) -> Json<SentinelParameterResp> {
     // Audit E4: sentinel tick (parameter adjustment) must be admin-gated.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelParameterResp { id: req.parameter_id, current: 0, min: 0, max: 0, vote_count: 0 });
     }
     let mut db = safe_lock(&state.db);

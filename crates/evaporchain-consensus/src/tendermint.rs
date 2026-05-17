@@ -2480,7 +2480,7 @@ impl TendermintConsensus {
         {
             return Vec::new();
         }
-        if self.validator_set.len() == 0 {
+        if self.validator_set.is_empty() {
             return Vec::new();
         }
         // Q5 (audit 2026-05-17): use stake-weighted quorum, not count-based
@@ -11546,7 +11546,7 @@ mod tests {
     /// (replay protection).
     #[test]
     fn test_due_refund_txs_grace_window_and_replay_protection() {
-        use evaporchain_types::{Block, RefundTx, TransferTx};
+        use evaporchain_types::{Block, TransferTx};
 
         fn addr_local(seed: u8) -> [u8; 32] {
             let mut a = [0u8; 32];
@@ -14296,11 +14296,11 @@ mod tests {
             // Random "key" string for unknown-key cases.
             junk_key in "[a-z]{3,18}",
         ) {
-            use proptest::prelude::*;
+            
             // Some toolchains don't surface proptest's assertion
             // macros via the prelude glob; explicit imports below
             // make them available unconditionally.
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            use proptest::prop_assert;
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
             let (key, value, expected): (&str, String, &str) = match bucket {
                 0 => ("parent_acceptance_mode", "mcc".to_string(), "ok"),
@@ -14383,8 +14383,8 @@ mod tests {
             s_honest_milli in -2000i64..4001,
             last_run_at_height in 0u64..1_000_001,
         ) {
-            use proptest::prelude::*;
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            
+            
             use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
 
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
@@ -17295,7 +17295,7 @@ mod da_tests {
         // Dropped (same-sender) txs returned to mempool — should still
         // be there for the next proposal.
         assert!(
-            tc.mempool.len() >= 1,
+            !tc.mempool.is_empty(),
             "dropped same-sender txs must remain in pool — got {} pending",
             tc.mempool.len()
         );
@@ -21849,7 +21849,7 @@ mod t1_20_batch14 {
             "gas limit should truncate; got {} txs",
             block.transactions.len()
         );
-        assert!(tc.mempool.len() > 0, "rejected txs should be back in mempool");
+        assert!(!tc.mempool.is_empty(), "rejected txs should be back in mempool");
     }
 
     // ── Test 6: verify_cert signer has no BLS key → false (line 7124) ──
@@ -22748,7 +22748,7 @@ mod t1_20_batch18 {
             info.pop_verified = true;
             vs.add_validator(info);
         }
-        let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
+        let tc = TendermintConsensus::new_for_test(1, 5, vs);
         let cert = CommitCertificate {
             height: 1, round: 0, block_hash: [0u8; 32],
             signer_ids: vec![1],
@@ -22774,7 +22774,7 @@ mod t1_20_batch18 {
             info.pop_verified = true;
             vs.add_validator(info);
         }
-        let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
+        let tc = TendermintConsensus::new_for_test(1, 5, vs);
         let cert = CommitCertificate {
             height: 1, round: 0, block_hash: [0u8; 32],
             signer_ids: vec![1],
@@ -23083,7 +23083,7 @@ mod t1_20_batch20 {
         // With u64 overflow: (9_223_372_036_854_775_808 * 2) wraps to 0,
         //   then div_ceil(3) = 0, making the threshold trivially satisfied.
         let large_stake = u64::MAX / 2 + 1;
-        let expected = ((large_stake as u128 * 2 + 2) / 3) as u64;
+        let expected = (large_stake as u128 * 2).div_ceil(3) as u64;
         assert_eq!(expected, 6_148_914_691_236_517_206);
 
         // Build a minimal ValidatorSet with one validator holding large_stake.
@@ -23739,7 +23739,7 @@ mod t1_20_batch24 {
     use super::*;
     use evaporchain_da::certificate::{DAAttestation, DACertificate};
     use evaporchain_crypto::signatures::BlsKeypair;
-    use evaporchain_state::InMemoryStateDB;
+    
 
     fn make_vs3() -> ValidatorSet {
         let mut vs = ValidatorSet::new();
