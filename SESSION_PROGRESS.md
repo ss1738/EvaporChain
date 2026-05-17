@@ -6,6 +6,28 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, seventh continued) — AUDIT_2026_05_17: INV-MED-5 + M-4 + Q10 + INV-MED-6 closed
+
+**Focus:** Close final four open AUDIT_2026_05_17 findings: doc drift on Tier-2 VMs, poseidon_hash warning, namespace sentinel, and 5 missing doctrine e2e tests.
+**Commits shipped:** 2 (0608916e INV-MED-5/M-4/Q10, 0509e62f INV-MED-6)
+**Deliverables:**
+- **INV-MED-5 closed** (0608916e): `lib.rs` head-doc added to `evaporchain-total-evaporscript`, `evaporchain-cap-decay-vm`, `evaporchain-dp-native-vm` citing `INVENTION_STACK.md §4.2`.
+- **M-4 closed** (0608916e): `hash.rs` — explicit M-4 EXPERIMENTAL doc block on `poseidon_hash` warning callers it is ZK-circuit-only (unparameterised intentionally; use `blake3_hash` for non-ZK). Cannot rename without breaking `evaporchain-proving` callers.
+- **Q10 closed** (0608916e): `namespace.rs` — `NmtNode::is_empty()` changed from `hash==0` sentinel to inverted namespace range (`min=NAMESPACE_MAX && max=NAMESPACE_MIN`), which is structurally impossible for any real node.
+- **INV-MED-6 closed** (0509e62f): Standalone `tests/e2e.rs` added to all 5 doctrine primitives:
+  - `evaporchain-decay-lamport`: 3-node causality chain, zero-energy adversarial, overflow guard, merge commutativity/idempotency
+  - `evaporchain-fee-controller`: 100-step Lyapunov from 3× target + from zero, equilibrium fixed point, floor enforcement
+  - `evaporchain-llsa`: k-of-n 3-auditor gate (threshold met/missed), from_version absent, to_version collision, sequential v0→v1→v2
+  - `evaporchain-sentinel`: 20-epoch homeostatic convergence, bound clamping, max-step cap, ancient-vote decay, conflicting-vote dominance
+  - `evaporchain-tombstone`: 5-account block evaporation sweep, cause distinctness, duplicate rejection, determinism, epoch binding
+**Empirical results:** Tests written; pending Mini run. Known non-obvious pattern: `AlwaysAcceptVerifier` checks both `target_invariant_id` AND `bound_amendment_hash` bindings — proof must be built after amendment to compute correct hash.
+**Decisions made:** poseidon_hash NOT renamed (breaks proving crate callers); doc-only closure is correct for M-4.
+**What's next:** All AUDIT_2026_05_17 findings closed. Check MAINNET_READINESS.md for next open lane.
+**Blockers / open questions:** Tests still pending Mini run for all sessions since 2026-05-17 afternoon. Should batch-run on Mini 1 next session.
+**Cross-references:** AUDIT_PLAN_2026_05_17.md all steps DONE. Commits: 0608916e, 0509e62f.
+
+---
+
 ## 2026-05-17 (night, sixth continued) — AUDIT_2026_05_17: all stranded commits landed on main; 8 commits pushed
 
 **Focus:** Recover and land all audit commits that were orphaned/on wrong branches after a `git reset --hard origin/main`.
