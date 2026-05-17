@@ -9,6 +9,27 @@ pub type ObjectId = [u8; 32];
 /// 32-byte account address.
 pub type AccountAddress = [u8; 32];
 
+/// Domain-separation tag for address derivation from a public key.
+///
+/// H-2 (audit 2026-05-17): pre-fix every site derived addresses via
+/// raw `blake3::hash(pk)` with no DST — the highest-leverage 32-byte
+/// target on the chain shared its preimage space with every other
+/// 1952-byte BLAKE3 call in the workspace. H4 applied DST hardening
+/// to MMR leaves/nodes; this closes the same class for addresses.
+/// Pre-mainnet hard-fork: every address on the chain changes once this
+/// helper is wired into the genesis path.
+pub const ADDRESS_DST: &[u8] = b"evaporchain:address:v1\0";
+
+/// Canonical address derivation. Use this everywhere a public key
+/// becomes an `AccountAddress`. See `ADDRESS_DST` for the audit
+/// rationale.
+pub fn address_from_pubkey(pk: &[u8]) -> AccountAddress {
+    let mut data = Vec::with_capacity(ADDRESS_DST.len() + pk.len());
+    data.extend_from_slice(ADDRESS_DST);
+    data.extend_from_slice(pk);
+    *blake3::hash(&data).as_bytes()
+}
+
 /// Epoch number (monotonically increasing).
 pub type Epoch = u64;
 
