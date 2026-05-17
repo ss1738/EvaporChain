@@ -7901,7 +7901,7 @@ async fn post_settle_demurrage(
     }
 
     // A2: AUDIT-I1 binding — public key must hash to the claimed `from` address.
-    let pk_derived_addr = *blake3::hash(&pk_bytes).as_bytes();
+    let pk_derived_addr = evaporchain_types::address_from_pubkey(&pk_bytes);
     if pk_derived_addr != from {
         return Json(SettleDemurrageResp {
             status: "error",
@@ -21926,7 +21926,7 @@ mod a2_settle_demurrage_pk_binding {
     fn a2_pk_hash_matches_address_derivation() {
         // Simulate any 1952-byte ML-DSA public key blob.
         let pk_bytes: Vec<u8> = (0u8..=255).cycle().take(1952).collect();
-        let derived = *blake3::hash(&pk_bytes).as_bytes();
+        let derived = evaporchain_types::address_from_pubkey(&pk_bytes);
         // The handler rejects requests where this equality doesn't hold.
         let addr = derived; // by construction they match
         assert_eq!(derived, addr);

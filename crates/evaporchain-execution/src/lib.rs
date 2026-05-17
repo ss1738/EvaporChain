@@ -1258,7 +1258,7 @@ impl SimpleExecutor {
             _ => tx.sender(),
         };
         if let Some(claimed) = binding_addr {
-            let derived: [u8; 32] = *blake3::hash(pk).as_bytes();
+            let derived: [u8; 32] = evaporchain_types::address_from_pubkey(pk);
             if &derived != claimed {
                 return Err(ExecutionError::InvalidSignature);
             }
@@ -2797,7 +2797,7 @@ impl SimpleExecutor {
             // derivation across the chain is `blake3(public_key_bytes)`
             // — see `generate_address_from_pubkey` in
             // crates/evaporchain-node/src/auth.rs L115-120.
-            let derived_addr: [u8; 32] = *blake3::hash(pk_bytes).as_bytes();
+            let derived_addr: [u8; 32] = evaporchain_types::address_from_pubkey(pk_bytes);
             if derived_addr != admin_addr {
                 return Err(ExecutionError::ContractError(format!(
                     "UpgradeContract: admin_public_key does not match \
@@ -4012,7 +4012,7 @@ mod tests {
     /// Use this for the `from` / `creator` field of any test that
     /// signs a tx and expects the binding check to pass.
     fn addr_from_kp(kp: &MlDsaKeypair) -> [u8; 32] {
-        *blake3::hash(&kp.public_key_bytes()).as_bytes()
+        evaporchain_types::address_from_pubkey(&kp.public_key_bytes())
     }
 
     /// Helper: sign a transaction with the given keypair.
@@ -7434,7 +7434,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_admin_path_ok() {
         let kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
 
         let mut db = InMemoryStateDB::new();
         // Owner needs an account so nonce check works.
@@ -7466,7 +7466,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_admin_signature_invalid_rejects() {
         let admin_kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&admin_kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&admin_kp.public_key_bytes());
         // Different keypair — the wrong admin.
         let attacker_kp = MlDsaKeypair::generate();
 
@@ -7587,7 +7587,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_state_preserved() {
         let kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
 
         let mut db = InMemoryStateDB::new();
         db.put_account(Account {
@@ -7641,7 +7641,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_immutable_when_admin_none_rejects() {
         let kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
 
         let mut db = InMemoryStateDB::new();
         db.put_account(Account {
@@ -7756,7 +7756,7 @@ contract Counter {
     ) -> (evaporchain_types::UserOpTx, [u8; 32], HybridKeypair) {
         let kp = HybridKeypair::generate();
         let pk = kp.public_key_bytes();
-        let paymaster_addr: [u8; 32] = *blake3::hash(&pk).as_bytes();
+        let paymaster_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&pk);
 
         let mut tx = evaporchain_types::UserOpTx {
             sender: addr(sender_byte),
@@ -7894,7 +7894,7 @@ contract Counter {
             vesting: None,
         });
         let kp = HybridKeypair::generate();
-        let victim_pm: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let victim_pm: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         fund_account_at(&mut db, victim_pm, 1_000_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -7966,7 +7966,7 @@ contract Counter {
         // Fund a real-looking paymaster address. Whoever owns the matching
         // private key isn't producing this tx — the attacker is.
         let kp = HybridKeypair::generate();
-        let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let victim_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         fund_account_at(&mut db, victim_addr, 1_000_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -7989,7 +7989,7 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         let kp = HybridKeypair::generate();
-        let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let victim_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         fund_account_at(&mut db, victim_addr, 1_000_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -9314,12 +9314,12 @@ contract Counter {
         let mut db = InMemoryStateDB::default();
         // Victim has balance.
         let victim_kp = MlDsaKeypair::generate();
-        let victim_addr: [u8; 32] = *blake3::hash(&victim_kp.public_key_bytes()).as_bytes();
+        let victim_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&victim_kp.public_key_bytes());
         db.get_or_create_account(&victim_addr).balance = 1_000_000;
 
         // Attacker keypair — different from victim's.
         let attacker_kp = MlDsaKeypair::generate();
-        let attacker_addr: [u8; 32] = *blake3::hash(&attacker_kp.public_key_bytes()).as_bytes();
+        let attacker_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&attacker_kp.public_key_bytes());
 
         // Forge: tx.from = victim, but signed by attacker.
         let chain_id = "testchain";

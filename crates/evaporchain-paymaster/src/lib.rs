@@ -940,7 +940,7 @@ impl Paymaster {
         config: PaymasterConfig,
     ) -> Result<Self, PaymasterError> {
         let pk = keypair.public_key_bytes();
-        let address: AccountAddress = *blake3::hash(&pk).as_bytes();
+        let address: AccountAddress = evaporchain_types::address_from_pubkey(&pk);
         let nonce_file: PathBuf = nonce_file.into();
         let next = load_nonce(&nonce_file)?;
         let rate_limiter =
@@ -1723,7 +1723,7 @@ mod tests {
 
         // (a) pk derives to paymaster address.
         let pk = user_op.paymaster_public_key.as_deref().unwrap();
-        let derived: AccountAddress = *blake3::hash(pk).as_bytes();
+        let derived: AccountAddress = evaporchain_types::address_from_pubkey(pk);
         assert_eq!(derived, pm_addr);
         // (b) sig verifies under the canonical sponsorship payload.
         let payload = user_op
@@ -1781,7 +1781,7 @@ mod tests {
         sender_byte: u8,
     ) -> (UserOpTx, HybridKeypair) {
         let user_kp = HybridKeypair::generate();
-        let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+        let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
         let _ = sender_byte; // sender derived from key; param kept for tests that may want a fixed slot
         let mut user_op = UserOpTx {
             sender,
@@ -1851,7 +1851,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let pm = strict_paymaster(&tmp, "test");
         let user_kp = HybridKeypair::generate();
-        let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+        let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
         let mut user_op = UserOpTx {
             sender,
             nonce: 0,
@@ -3308,8 +3308,8 @@ mod tests {
         let kp2 = load_keypair_from_file(&path).expect("load");
         // Roundtrip preserves the address derivation
         // (blake3 of public key bytes).
-        let addr1: AccountAddress = *blake3::hash(&kp1.public_key_bytes()).as_bytes();
-        let addr2: AccountAddress = *blake3::hash(&kp2.public_key_bytes()).as_bytes();
+        let addr1: AccountAddress = evaporchain_types::address_from_pubkey(&kp1.public_key_bytes());
+        let addr2: AccountAddress = evaporchain_types::address_from_pubkey(&kp2.public_key_bytes());
         assert_eq!(addr1, addr2);
     }
 
