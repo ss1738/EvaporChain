@@ -26,10 +26,12 @@
 #   3. issue(to, face)            (owner-only, once)
 #   4. CONFIRM issued + has value (non-vacuity): GET /api/script/:id
 #      shows sealed=true, spent=false, energy>0  -> saw_value=1
-#   5. DEMURRAGE: re-read after a few epochs; assert energy strictly
-#      DROPPED (value rotting by physics) -> saw_decay=1
-#   6. HOARD: never spend; poll until evaporated==true. Success iff
-#      saw_value && saw_decay && evaporated-while-unspent.
+#   5. (no gradual-decay assertion — /api/script .energy is the static
+#      deploy value, verified 2026-05-17; live decay is NOT
+#      API-surfaced. Demurrage is proven by the TERMINAL loss.)
+#   6. HOARD: never spend; poll until evaporated==true with
+#      spent==false. Success iff saw_value && evaporated-while-unspent
+#      (same observable bar as the live-verified Dead Drop e2e).
 #
 # Exit: 0 hoarded-value-lost-proven · 2 precondition · 3 deploy ·
 #       4 issue · 5 non-vacuity/decay · 6 never-evaporated
@@ -192,25 +194,21 @@ else
   fi
 fi
 
-# ── 4. DEMURRAGE: value must visibly DECAY while hoarded ──
-log "Step 4/6 - observe demurrage (wait ~${DECAY_WAIT_EPOCHS} epochs, energy must DROP)"
-saw_decay=0
-if $DRY_RUN; then
-  log "[DRY-RUN] would assert energy strictly decreased"
-else
-  START_EP=$(get_epoch); TARGET=$(( START_EP + DECAY_WAIT_EPOCHS ))
-  while (( $(get_epoch) < TARGET )); do sleep 4; done
-  E2=$(note_energy "$CID")
-  if [[ "$E2" -ge 0 && "$E2" -lt "$E1" ]]; then
-    saw_decay=1
-    log "DEMURRAGE OBSERVED: energy $E1 -> $E2 over ~${DECAY_WAIT_EPOCHS} epochs (value is rotting, unspent)"
-  elif [[ "$E2" -lt 0 ]]; then
-    log "note already gone before the decay snapshot — energy decayed out fast; treating as decayed"
-    saw_decay=1
-  else
-    die "no demurrage observed: energy did not drop ($E1 -> $E2). half-life too large for the window?" 5
-  fi
-fi
+# ── 4. (observability note — NOT an assertion) ──
+# DIRECTLY VERIFIED 2026-05-17 (probe on node 8099, and the Dead Drop
+# transcript): GET /api/script/:id `.energy` is the STATIC deploy
+# value — it reads 60000 at issue and 60000 ~10 epochs later, then the
+# instance flips straight to `evaporated:true`. The node does NOT
+# surface the live-decaying energy. Demurrage is real (it is what
+# drives the eventual evaporation) but the gradual "watch it tick
+# down" is NOT API-observable; only the TERMINAL loss is. So this
+# runbook does not (and honestly cannot) assert a gradual decrease —
+# the provable claim is the same observable shape as Dead Drop's
+# forgetting: confirmed-issued-with-value -> hoarded -> evaporated
+# unspent = value lost. Over-asserting gradual decay here was a real
+# bug (spurious exit 5); removed, not papered over.
+log "Step 4/6 - (skipped) live energy is not API-surfaced; demurrage"
+log "  is proven by the TERMINAL loss in step 5, not a gradual read."
 
 # ── 5. HOARD: never spend; wait for the value to evaporate ──
 log "Step 5/6 - HOARD (never spend) — poll until the note evaporates"
@@ -236,15 +234,15 @@ done
 # ── 6. verdict ──
 log "Step 6/6 - verdict"
 (( saw_value == 1 )) || die "non-vacuity: never confirmed an issued note with value" 5
-(( saw_decay == 1 )) || die "non-vacuity: never observed the value decaying (demurrage unproven)" 5
 (( lost == 1 )) || die "note never evaporated within ${POLL_TIMEOUT_SEC}s — demurrage-to-zero not reached (half-life too large?)" 6
 cat <<EOF
 
 +==================================================================+
 |        OK  EVAPORCASH — HOARDING PENALTY PROVEN BY PHYSICS        |
 |  contract_id: $CID                                                |
-|  proof: deploy ok  issue ok  HAD-VALUE ok  DECAYED ok  ->  LOST   |
-|  an unspent note's value rotted ($E1 -> 0) and the chain retired  |
-|  it unspent — "money rots if you hoard it", native, no keeper.    |
+|  proof: deploy ok  issue ok  HAD-VALUE ok  ->  LOST-UNSPENT       |
+|  an unspent note (issued value $E1) was retired by the engine     |
+|  unspent — "money rots if you hoard it", native, no keeper.       |
+|  (gradual decay is real but not API-surfaced; terminal loss is.)  |
 +==================================================================+
 EOF

@@ -315,9 +315,21 @@ e2e caught). `epoch` is **required**. Auth: register
 `GET /api/script/:id` (the **script** engine store — *not*
 `/api/contract/:id`, which is the unrelated template store and 404s
 for an `.es` contract; this was the endpoint error corrected in
-`b76df4a2`). Returns the externally-tagged `.state` map; the demo's
-"watch it decay" panel polls `balance_of` deltas and `pool_balance`
-growth between epochs from here. `GET /api/status` → `.epoch`.
+`b76df4a2`). Returns the externally-tagged `.state` map. `GET
+/api/status` → `.epoch`.
+
+> **OBSERVABILITY REALITY (verified 2026-05-17, model A):** this
+> endpoint's `.energy` is the **static deploy value**, not the
+> live-decaying one — directly probed: `60000` at issue and `60000`
+> ~10 epochs later, then a straight flip to `evaporated:true` (the
+> Dead Drop transcript shows the same). So there is **no
+> "watch-the-balance-tick-down" panel** — gradual decay is real
+> (it drives the eventual evaporation) but **not API-surfaced**. The
+> demo's provable, directly-observable claim is the **terminal loss**:
+> an unspent note `evaporated:true` while `spent:false` = value lost
+> to hoarding (same observable bar as the live-verified Dead Drop).
+> The pre-finding `balance_of`/`pool_balance` "decay panel" wording
+> belongs to the superseded map model — do not build to it.
 
 ### 6.4 Runbook
 
