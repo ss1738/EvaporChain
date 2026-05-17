@@ -183,8 +183,11 @@ if $DRY_RUN; then
   log "[DRY-RUN] would assert sealed=true, spent=false, energy>0"
 else
   ST=$(curl_json GET "/api/script/$CID")
-  SEALED=$(printf '%s' "$ST" | jq -r '.state.sealed.Bool // .state.sealed // false')
-  SPENT=$(printf '%s' "$ST" | jq -r '.state.spent.Bool // .state.spent // false')
+  # jq `//` treats boolean false as empty and falls through — so
+  # `.x.Bool // .x // false` mis-extracts a legit `false` as the raw
+  # {"Bool":false} object. Unwrap the tagged value explicitly instead.
+  SEALED=$(printf '%s' "$ST" | jq -r '.state.sealed | if type=="object" then .Bool else . end')
+  SPENT=$(printf '%s' "$ST" | jq -r '.state.spent | if type=="object" then .Bool else . end')
   E1=$(printf '%s' "$ST" | jq -r '.energy // -1')
   if [[ "$SEALED" == "true" && "$SPENT" == "false" && "$E1" -gt 0 ]]; then
     saw_value=1
@@ -223,7 +226,7 @@ while (( $(date +%s) < deadline )); do
     lost=1; log "note $CID gone from the script store (evaporated, unspent)"; break
   fi
   EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
-  SPENT=$(printf '%s' "$ST" | jq -r '.state.spent.Bool // .state.spent // false')
+  SPENT=$(printf '%s' "$ST" | jq -r '.state.spent | if type=="object" then .Bool else . end')
   if [[ "$EVAP" == "true" ]]; then
     [[ "$SPENT" == "true" ]] && die "note was SPENT — hoarding scenario invalidated (someone spent it)" 6
     lost=1; log "note evaporated with spent=false — value lost to hoarding"; break
