@@ -17,6 +17,8 @@ use evaporchain_sfsv_coordinator::config::Config;
 // Config — defaults + env overrides
 // =================================================================
 
+static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn config_default_field_values() {
     let c = Config::default();
@@ -28,11 +30,9 @@ fn config_default_field_values() {
 
 #[test]
 fn config_from_env_falls_back_to_defaults_when_unset() {
-    // Defensively clear any SFSV_* vars that might leak from the shell.
+    let _guard = ENV_MUTEX.lock().unwrap();
     for k in ["SFSV_NODE_URL", "SFSV_AUTH_TOKEN", "SFSV_CALLER_BYTE", "SFSV_BID_PORT"] {
-        // SAFETY: tests run single-threaded by default for cargo test
-        // unless --test-threads is set; for this crate the suite is
-        // small enough that the default ordering is safe.
+        // SAFETY: serialised by ENV_MUTEX; no other thread touches SFSV_* vars.
         unsafe { std::env::remove_var(k); }
     }
     let c = Config::from_env();
@@ -44,7 +44,8 @@ fn config_from_env_falls_back_to_defaults_when_unset() {
 
 #[test]
 fn config_from_env_honours_overrides() {
-    // SAFETY: see note in fallback test above.
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // SAFETY: serialised by ENV_MUTEX; no other thread touches SFSV_* vars.
     unsafe {
         std::env::set_var("SFSV_NODE_URL", "http://remote:1234");
         std::env::set_var("SFSV_AUTH_TOKEN", "tok-abc");
@@ -67,6 +68,8 @@ fn config_from_env_honours_overrides() {
 
 #[test]
 fn config_from_env_ignores_unparseable_numeric_overrides() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // SAFETY: serialised by ENV_MUTEX; no other thread touches SFSV_* vars.
     unsafe {
         std::env::set_var("SFSV_CALLER_BYTE", "not-a-number");
         std::env::set_var("SFSV_BID_PORT", "🚀");
