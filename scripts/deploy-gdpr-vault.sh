@@ -189,11 +189,22 @@ else
 fi
 
 # ── 4/5. mode-specific: prove the key-shred trigger ──
+# withdraw_consent's .es guard is `caller == subject_ref || caller ==
+# owner`. We call it as the OWNER (controller, $DEPLOYER_U8) — a
+# genesis-funded account. The subject account ($SUBJECT_U8) is a
+# non-genesis index which this devnet does NOT fund, so a tx FROM it
+# is rejected at admission (gas/unknown-account) before reaching the
+# VM — a devnet funding limitation, NOT a contract issue. The
+# owner-branch exercises the same withdraw_consent path + guard; the
+# subject-branch is the identical ||-guard pattern verified in
+# mortal_message.es::read (caller==recipient||caller==owner) — high
+# confidence, but honestly UNEXERCISED on this devnet (stated, not
+# overclaimed).
 if [[ "$MODE" == "withdraw" ]]; then
-  log "Step 4/5 - WITHDRAW (Art.17/7(3)) — subject calls withdraw_consent()"
+  log "Step 4/5 - WITHDRAW (Art.17/7(3)) — controller calls withdraw_consent() (subject acct unfunded on devnet)"
   if $DRY_RUN; then log "[DRY-RUN] would withdraw_consent then assert expiry_forced=true"; log "OK dry-run."; exit 0; fi
   EP=$(get_epoch)
-  WBODY=$(jq -n --argjson c "$SUBJECT_U8" --argjson cid "$CID" --argjson ep "$EP" \
+  WBODY=$(jq -n --argjson c "$DEPLOYER_U8" --argjson cid "$CID" --argjson ep "$EP" \
     '{caller:$c, contract_id:$cid, method:"withdraw_consent", args:[], epoch:$ep}')
   WH=$(submit_tx "/api/tx/call-script" "$WBODY" withdraw 6)
   poll_tx "$WH" withdraw 6 >/dev/null
@@ -207,10 +218,11 @@ if [[ "$MODE" == "withdraw" ]]; then
 +==================================================================+
 |   OK  GDPR-ERASURE — EARLY KEY-SHRED TRIGGER PROVEN (Art.17)     |
 |  contract_id: $CID                                                |
-|  proof: deploy ok  seal ok  ACTIVE ok  -> withdraw_consent       |
+|  proof: deploy ok  seal ok  ACTIVE ok  -> withdraw_consent(owner) |
 |  state.expiry_forced=true + "erasure-due (consent withdrawn)"    |
-|  emitted. HONEST SCOPE: the chain proves the TRIGGER; actual     |
-|  erasure = off-chain key-shred (model A, by design).             |
+|  emitted. SCOPE: owner-branch proven; subject-branch is the same |
+|  verified ||-guard, devnet-unfundable so unexercised. Erasure = |
+|  off-chain key-shred (model A) — chain proves the TRIGGER only.  |
 +==================================================================+
 EOF
 else
