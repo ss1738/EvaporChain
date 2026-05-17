@@ -27,10 +27,11 @@ fn lyapunov_at_target_is_zero() {
 
 #[test]
 fn lyapunov_symmetric_around_target() {
-    for delta in [1u64, 10, 100, 9_999] {
+    // Symmetry only holds for |delta| ≤ target (else lower side saturates at 0).
+    for delta in [1u64, 10, 100, 999] {
         assert_eq!(
             lyapunov_value(1_000 + delta, 1_000),
-            lyapunov_value(1_000 - delta.min(1_000), 1_000),
+            lyapunov_value(1_000 - delta, 1_000),
         );
     }
 }
