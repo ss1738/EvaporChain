@@ -6,6 +6,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, fifth continued) — AUDIT_2026_05_17: ALL FINDINGS CLOSED (L0-A + H-3 + H-4 + Q11 + INV-MED-4 + Q12)
+
+**Focus:** Close the final 6 open findings from AUDIT_2026_05_17 in one session.
+**Commits shipped:** 6 on main (5a1ff06c L0-A, bea074bb H-3, 856cc616 H-4, 38880efc Q11/INV-MED-4/Q12); pushed to origin/main `e7f4eee4..38880efc`.
+**Deliverables:**
+- **L0-A closed** (5a1ff06c): `nova_path.rs` — `NovaFolder` now holds `chain_lambda: ChainLambda` and decays `total_energy_remaining` using `chain_lambda.half_life()` (ChainLambda::default_genesis() = 4096). Pre-fix used first object's per-object `half_life` (or fallback 100), wrong for aggregate IVC energy. `new_with_lambda()` variant added for governance-supplied λ.
+- **H-3 closed** (bea074bb): `accumulator.rs` — `MerkleMountainRange::verify()` now pre-flight validates `MMRProof.mmr_size` before any hash work: (1) leaf_count from mmr_size via binary search on `2n−popcount(n)`; (2) leaf_index < leaf_count; (3) peak_hashes.len()+1 == popcount(leaf_count); (4) siblings.len() == height_of_peak_at_peak_index. Adds `h3_verify_rejects_tampered_mmr_size` adversarial test.
+- **H-4 closed** (856cc616): `bls_portable.rs` — adds `verify_pop()` and `aggregate_verify_with_pop()`. Closes rogue-key attack window for browser dApps/light clients/indexers using the portable BLS backend. `aggregate_verify` updated with rogue-key precondition doc. Two H-4 adversarial tests added.
+- **Q11 closed** (38880efc): `tendermint.rs` — citation comment added at MAX_ROUNDS_PER_HEIGHT reset (line 7287) pointing to EvaporChainBFT.tla `PrecommitNilAdvanceRound/PrecommitTimeoutAdvanceRound: nextR == IF r+1 >= MaxRound THEN 0 ELSE r+1`. Behavior was already modeled; the finding was a doc-alignment gap.
+- **INV-MED-4 closed** (38880efc): `INVENTION_STACK.md §4.1 #1` — Light-Cone Consensus one-liner updated from implied-authoritative to honest production status. Adds explicit caveat: read-only observability layer until Layer 4 voting-handler wiring lands.
+- **Q12 closed** (38880efc): `main.rs` — startup guard refuses `--chain-id ""`. An empty chain_id silently falls back to unscoped gossipsub topics (cross-testnet contamination vector).
+**Empirical results:** Tests pending on Mini.
+**Decisions made:** H-3 validation uses binary search on `2n−popcount(n)` since mmr_size = node_count, not leaf_count. H-4 chose doc+wrapper pattern rather than changing `aggregate_verify` API to keep validator-path callers unbroken.
+**What's next:** All AUDIT_2026_05_17 findings closed. Next lane from MAINNET_READINESS.md — Energy-Verkle Trie or consensus hot-path.
+**Blockers / open questions:** Branch switching still happens; commits sometimes land on wrong branch. Pattern: always `git branch --show-current` after `git checkout main`, and use cherry-pick to recover.
+**Cross-references:** AUDIT_PLAN_2026_05_17.md — all 5 steps DONE. Commits: 5a1ff06c, bea074bb, 856cc616, 38880efc.
+
+---
+
 ## 2026-05-17 (night, fourth continued) — AUDIT_2026_05_17: VEST-1 + OPCODE-5 + BOUNTY-1 + H-2 + L0-B/C + TOK-A
 
 **Focus:** Close all remaining MED findings from AUDIT_2026_05_17 (VEST-1, OPCODE-5, BOUNTY-1, TOK-A) and carry over H-2/L0-B/C from stranded branch.
