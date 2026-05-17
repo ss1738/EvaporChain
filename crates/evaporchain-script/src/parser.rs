@@ -1892,4 +1892,49 @@ contract Test {
         let r = parse(src);
         assert!(r.is_ok(), "normal-sized source must still parse: {r:?}");
     }
+
+    /// PARSE-1 (audit 2026-05-17): deeply nested if-blocks must not stack-overflow
+    /// the parser. Pre-fix, parse_block / parse_if / parse_while had no depth guard
+    /// and a crafted contract with MAX_STMT_DEPTH+1 nested blocks would exhaust the
+    /// Rust call stack. Post-fix the parser returns a controlled error.
+    #[test]
+    fn parse1_deeply_nested_if_blocks_rejected() {
+        // Build MAX_STMT_DEPTH+2 levels of nested if-blocks:
+        // contract C { fn f() { if true { if true { if true { ... } } } } }
+        let depth = MAX_STMT_DEPTH + 2;
+        let open: String = "if true { ".repeat(depth);
+        let close: String = "} ".repeat(depth);
+        let src = format!(
+            "contract C {{ fn f() {{ {open}let x: u64 = 1{close}}} }}"
+        );
+        let result = parse(&src);
+        match result {
+            Err(e) => {
+                let msg = format!("{e:?}");
+                assert!(
+                    msg.contains("nesting depth exceeds maximum"),
+                    "expected block-nesting-depth error, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected parse to fail for {depth}-level nested blocks"),
+        }
+    }
+
+    /// PARSE-1: blocks nested at exactly MAX_STMT_DEPTH should succeed.
+    #[test]
+    fn parse1_max_minus_1_nesting_ok() {
+        // fn body is itself a block (depth=1), so MAX_STMT_DEPTH-1 nested ifs
+        // lands at exactly MAX_STMT_DEPTH total.
+        let depth = MAX_STMT_DEPTH - 1;
+        let open: String = "if true { ".repeat(depth);
+        let close: String = "} ".repeat(depth);
+        let src = format!(
+            "contract C {{ fn f() {{ {open}let x: u64 = 1{close}}} }}"
+        );
+        let result = parse(&src);
+        assert!(
+            result.is_ok(),
+            "nesting at MAX_STMT_DEPTH-1 inside fn body should succeed: {result:?}"
+        );
+    }
 }
