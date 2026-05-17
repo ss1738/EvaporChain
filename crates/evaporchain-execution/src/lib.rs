@@ -5370,9 +5370,15 @@ mod tests {
     #[test]
     fn test_signed_refresh_succeeds() {
         let mut db = InMemoryStateDB::new();
+        let kp = MlDsaKeypair::generate();
+        // GHOST-B (audit 2026-05-17): refresh caller must match the
+        // object's owner. Derive the owner from the keypair so the
+        // test exercises the happy path of the new auth check.
+        let owner: evaporchain_types::AccountAddress =
+            *blake3::hash(&kp.public_key_bytes()).as_bytes();
         db.put_object(StateObject {
             id: obj_id(1),
-            owner: addr(1),
+            owner,
             energy: 100,
             half_life: 10,
             created_at: 0,
@@ -5385,7 +5391,6 @@ mod tests {
         });
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
-        let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Refresh(RefreshTx {
             object_id: obj_id(1),
