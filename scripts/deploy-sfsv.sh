@@ -36,10 +36,11 @@ CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/future_self_vault.es"
 
 NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
-DEPLOYER_U8="${DEPLOYER_U8:-1}"          # u8 devnet account index (tx deployer/caller)
+DEPLOYER_U8="${DEPLOYER_U8:-0}"          # 0 = genesis faucet — the only pre-funded account on the permanent node (override for a faucet-funded acct)
 FUTURE_SELF="${FUTURE_SELF:-2}"          # set_terms `future_self` arg (.es address)
 PREDICATE_TYPE="${PREDICATE_TYPE:-0}"    # 0=EpochReached 1=EnergyDecaysBelow
-RELEASE_PARAM="${RELEASE_PARAM:-200}"    # epoch (type0) or threshold (type1)
+RELEASE_PARAM="${RELEASE_PARAM:-}"       # type0: future epoch (default = now+margin); type1: energy threshold. empty ⇒ auto-resolve
+RELEASE_MARGIN="${RELEASE_MARGIN:-30}"   # type0 only: epochs ahead of current to set the release (must exercise the gate yet stay within timeout)
 INITIAL_ENERGY="${INITIAL_ENERGY:-1000000}"
 HALF_LIFE="${HALF_LIFE:-64}"
 DEPOSIT_AMOUNT="${DEPOSIT_AMOUNT:-1000}"
@@ -141,6 +142,21 @@ if ! $DRY_RUN; then
   command -v jq   >/dev/null || die "jq required" 2
   curl -sS -m 5 "$NODE_URL/api/health" >/dev/null 2>&1 || \
     curl -sS -m 5 "$NODE_URL/api/version" >/dev/null 2>&1 || die "node $NODE_URL unreachable" 2
+fi
+
+# Resolve an epoch-relative release for predicate-0 (EpochReached).
+# An absolute default (e.g. 200) is ancient on a long-lived node, so
+# the gate never blocks and the non-vacuity assertion correctly fails.
+# Anchor to the live epoch + margin so the gate is genuinely exercised
+# (rejected pre-release, finalised post-release). Type-1 keeps a plain
+# energy-threshold default. An explicit --release-param is respected.
+if [[ -z "$RELEASE_PARAM" ]]; then
+  if [[ "$PREDICATE_TYPE" == "0" ]]; then
+    _cur_ep=$($DRY_RUN && echo 0 || get_epoch)
+    RELEASE_PARAM=$(( _cur_ep + RELEASE_MARGIN ))
+  else
+    RELEASE_PARAM=200
+  fi
 fi
 
 cat <<EOF
