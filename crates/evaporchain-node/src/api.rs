@@ -12992,6 +12992,10 @@ async fn docs_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/docs.html"))
 }
 
+async fn erasure_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/erasure.html"))
+}
+
 async fn manifest_json() -> impl IntoResponse {
     (
         [(
@@ -18757,6 +18761,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/wallet", get(wallet_html))
         // Explorer (developer dashboard)
         .route("/explorer", get(dashboard_html))
+        // Public Proof-of-Erasure / GDPR-Erasure on-ramp
+        .route("/erasure", get(erasure_html))
         .route("/health", get(health))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
