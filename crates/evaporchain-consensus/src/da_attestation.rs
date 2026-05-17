@@ -290,16 +290,19 @@ impl Default for DAAttestationManager {
 
 /// Verify the BLS signature on a DA attestation. MUST mirror
 /// `evaporchain_da::certificate::create_attestation` byte-for-byte,
-/// including the `DA_ATTESTATION_DST` prefix.
+/// including the `DA_ATTESTATION_DST` prefix and `stake` field (Q3 fix).
 fn verify_attestation_signature(att: &DAAttestation) -> bool {
     use evaporchain_da::certificate::DA_ATTESTATION_DST;
-    // Reconstruct the signed message
-    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+    // Reconstruct the signed message.
+    // Q3 (audit 2026-05-17): stake is now part of the signed message so
+    // that inflating att.stake post-signing breaks BLS verification.
+    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
     msg.extend_from_slice(DA_ATTESTATION_DST);
     msg.extend_from_slice(&att.block_number.to_le_bytes());
     msg.extend_from_slice(&att.data_root);
     msg.extend_from_slice(&att.validator_id.to_le_bytes());
     msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+    msg.extend_from_slice(&att.stake.to_le_bytes());
 
     let pk = BlsPublicKey(att.public_key.clone());
     let sig = evaporchain_crypto::signatures::BlsSignature(att.signature.clone());

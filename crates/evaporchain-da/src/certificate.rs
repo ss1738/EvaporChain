@@ -20,7 +20,7 @@ pub struct DAAttestation {
     pub samples_verified: u32,
     /// Validator's stake weight.
     pub stake: u64,
-    /// BLS signature over (block_number || data_root || validator_id || samples_verified).
+    /// BLS signature over (block_number || data_root || validator_id || samples_verified || stake).
     pub signature: Vec<u8>,
     /// BLS public key of the signer.
     pub public_key: Vec<u8>,
@@ -44,8 +44,8 @@ pub struct DACertificate {
 impl DACertificate {
     /// Check if attested stake >= 2/3 of total stake (supermajority).
     pub fn is_supermajority(&self) -> bool {
-        // 2/3 threshold: attested_stake * 3 >= total_stake * 2
-        self.attested_stake * 3 >= self.total_stake * 2
+        // Audit C2: cast to u128 before multiplication to prevent wrap when stake > u64::MAX/3.
+        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
     }
 
     /// Verify every attestation's BLS signature and check that `attested_stake`
@@ -58,6 +58,11 @@ impl DACertificate {
             return false;
         }
 
+        // Q2 (audit 2026-05-17): dedup by validator_id — a cert carrying N
+        // copies of the same attestation would otherwise count each copy's
+        // stake separately, allowing a single-key forgery to amplify to 100×
+        // stake by replaying one valid attestation 100 times.
+        let mut seen_validators = std::collections::HashSet::<u64>::new();
         let mut recomputed_stake: u64 = 0;
 
         for att in &self.attestations {
@@ -66,13 +71,21 @@ impl DACertificate {
                 return false;
             }
 
+            // Q2: reject duplicate signer.
+            if !seen_validators.insert(att.validator_id) {
+                return false;
+            }
+
             // Reconstruct the signed message — must match create_attestation exactly.
-            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+            // Q3 (audit 2026-05-17): stake is now included in the signed
+            // message so an adversary cannot inflate att.stake post-signing.
+            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
             msg.extend_from_slice(DA_ATTESTATION_DST);
             msg.extend_from_slice(&att.block_number.to_le_bytes());
             msg.extend_from_slice(&att.data_root);
             msg.extend_from_slice(&att.validator_id.to_le_bytes());
             msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+            msg.extend_from_slice(&att.stake.to_le_bytes());
 
             let pk = BlsPublicKey(att.public_key.clone());
             let sig = BlsSignature(att.signature.clone());
@@ -122,12 +135,14 @@ impl DACertificate {
                 // supermajority on their own.
                 continue;
             }
-            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+            // Q3: include stake in signed message (matches create_attestation + verify_signatures).
+            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
             msg.extend_from_slice(DA_ATTESTATION_DST);
             msg.extend_from_slice(&att.block_number.to_le_bytes());
             msg.extend_from_slice(&att.data_root);
             msg.extend_from_slice(&att.validator_id.to_le_bytes());
             msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+            msg.extend_from_slice(&att.stake.to_le_bytes());
             let pk = BlsPublicKey(att.public_key.clone());
             let sig = BlsSignature(att.signature.clone());
             if !BlsVerifier::verify(&msg, &sig, &pk) {
@@ -136,7 +151,8 @@ impl DACertificate {
             recomputed_stake = recomputed_stake.saturating_add(att.stake);
         }
         // The active-only stake must still hit supermajority.
-        recomputed_stake.saturating_mul(3) >= self.total_stake.saturating_mul(2)
+        // Use u128 to prevent wrap when stake values are near u64::MAX.
+        (recomputed_stake as u128) * 3 >= (self.total_stake as u128) * 2
     }
 }
 
@@ -156,12 +172,15 @@ pub fn create_attestation(
     keypair: &BlsKeypair,
 ) -> DAAttestation {
     // Build the message to sign — DST prefix ensures cross-context separation.
-    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+    // Q3 (audit 2026-05-17): stake is included so the field cannot be
+    // inflated post-signing without breaking the BLS verification.
+    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
     msg.extend_from_slice(DA_ATTESTATION_DST);
     msg.extend_from_slice(&block_number.to_le_bytes());
     msg.extend_from_slice(data_root);
     msg.extend_from_slice(&validator_id.to_le_bytes());
     msg.extend_from_slice(&samples_verified.to_le_bytes());
+    msg.extend_from_slice(&stake.to_le_bytes());
 
     let sig = keypair.sign(&msg);
     let pk = keypair.public_key_bytes();
@@ -207,14 +226,14 @@ impl CertificateBuilder {
 
         // Reconstruct the signed message and verify the BLS signature.
         // MUST mirror create_attestation byte-for-byte, including the
-        // DA_ATTESTATION_DST prefix — without it, every attestation
-        // produced by create_attestation fails verification.
-        let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+        // DA_ATTESTATION_DST prefix and stake (Q3 fix).
+        let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4 + 8);
         msg.extend_from_slice(DA_ATTESTATION_DST);
         msg.extend_from_slice(&att.block_number.to_le_bytes());
         msg.extend_from_slice(&att.data_root);
         msg.extend_from_slice(&att.validator_id.to_le_bytes());
         msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+        msg.extend_from_slice(&att.stake.to_le_bytes());
 
         let pk = BlsPublicKey(att.public_key.clone());
         let sig = BlsSignature(att.signature.clone());
@@ -250,7 +269,8 @@ impl CertificateBuilder {
 
     /// Check if we already have supermajority.
     pub fn has_supermajority(&self) -> bool {
-        self.attested_stake * 3 >= self.total_stake * 2
+        // Audit C2: u128 to prevent wrap when stake > u64::MAX/3.
+        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
     }
 }
 
@@ -445,5 +465,138 @@ mod tests {
         // But full validation catches the forged signatures
         assert!(!forged_cert.verify_signatures());
         assert!(!forged_cert.verify_all());
+    }
+
+    // ── T1.20: verify_signatures_with_active (M4 audit post-jail filter) ──
+
+    /// T1.20 — M4 audit feature: `verify_signatures_with_active` with
+    /// an `is_active` predicate that returns true for every signer
+    /// behaves identically to `verify_signatures` (active-stake hits
+    /// supermajority). Pinning the all-active baseline before the
+    /// adversarial cases.
+    #[test]
+    fn t1_20_verify_with_active_all_active_passes() {
+        let cert = build_valid_cert(3);
+        // is_active accepts everyone.
+        assert!(cert.verify_signatures_with_active(&|_| true));
+    }
+
+    /// T1.20 — M4 audit: one signer marked inactive but the remaining
+    /// active signers still hit supermajority. Doctrine: a stale cert
+    /// whose minority signer was jailed post-hoc must still be
+    /// accepted (lines 117-125 — `continue` skips that attestation but
+    /// the loop keeps adding the remaining active stakes).
+    #[test]
+    fn t1_20_verify_with_active_one_inactive_still_meets_quorum() {
+        // 5 signers @ 1000 each = 5000 total. 2/3 threshold = 3333.
+        // Drop validator 5 → remaining 4 × 1000 = 4000 ≥ 3334.
+        let cert = build_valid_cert(5);
+        let is_active = |vid: u64| vid != 5;
+        assert!(
+            cert.verify_signatures_with_active(&is_active),
+            "remaining 4 of 5 signers must still constitute supermajority"
+        );
+    }
+
+    /// T1.20 — M4 audit: enough signers marked inactive that the
+    /// remaining active stake DROPS below supermajority. Doctrine:
+    /// post-jail check must refuse the cert. (3 jailed of 5 →
+    /// remaining 2 × 1000 = 2000 < 3334.)
+    #[test]
+    fn t1_20_verify_with_active_jailed_majority_fails() {
+        let cert = build_valid_cert(5);
+        // Validators 3, 4, 5 inactive — only 1+2 left.
+        let is_active = |vid: u64| vid <= 2;
+        assert!(
+            !cert.verify_signatures_with_active(&is_active),
+            "2 of 5 active signers is below 2/3 — cert must fail"
+        );
+    }
+
+    /// T1.20 — M4 audit boundary: ALL signers marked inactive. The
+    /// `recomputed_stake` stays at 0, and `0 * 3 >= total_stake * 2`
+    /// holds only when `total_stake == 0`. With non-zero stake this
+    /// must fail. Pinning the all-jailed edge case explicitly.
+    #[test]
+    fn t1_20_verify_with_active_all_inactive_fails() {
+        let cert = build_valid_cert(3);
+        assert!(
+            !cert.verify_signatures_with_active(&|_| false),
+            "every signer jailed → no recomputed stake → must fail"
+        );
+    }
+
+    // ── Q1/Q2/Q3 adversarial tests (audit 2026-05-17) ────────────────────────
+
+    /// Q2: duplicate validator_id in one certificate must be rejected.
+    /// Attack: replaying a single valid attestation 100× inflates recomputed_stake
+    /// 100-fold, bypassing the supermajority check with a single BLS keypair.
+    #[test]
+    fn q2_duplicate_validator_id_rejected() {
+        let data_root = [0xD2u8; 32];
+        let kp = BlsKeypair::generate();
+        let att = create_attestation(1, &data_root, 42, 8, 1_000, &kp);
+
+        // Two copies of the same attestation (validator_id=42 appears twice).
+        let cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![att.clone(), att],
+            attested_stake: 2_000,
+            total_stake: 3_000, // 2000/3000 >= 2/3 — would pass supermajority
+        };
+        assert!(!cert.verify_signatures(), "duplicate validator_id must be rejected");
+    }
+
+    /// Q3: tampering the `stake` field post-signing must break BLS verification
+    /// because `stake` is now included in the signed message.
+    #[test]
+    fn q3_tampered_stake_rejected() {
+        let data_root = [0xD3u8; 32];
+        let kp = BlsKeypair::generate();
+        let mut att = create_attestation(1, &data_root, 1, 8, 1_000, &kp);
+
+        // Inflate stake after signing.
+        att.stake = 999_999_999;
+
+        let cert = DACertificate {
+            block_number: 1,
+            data_root,
+            attestations: vec![att],
+            attested_stake: 999_999_999,
+            total_stake: 999_999_999,
+        };
+        assert!(!cert.verify_signatures(), "inflated stake must fail BLS verification");
+    }
+
+    /// Q3: zero-stake attestation with matching sig still round-trips cleanly
+    /// (stake=0 is a valid signed value; the forgery requires tampering it).
+    #[test]
+    fn q3_zero_stake_attestation_verifies() {
+        let data_root = [0xD3u8; 32];
+        let kp = BlsKeypair::generate();
+        let att = create_attestation(1, &data_root, 1, 4, 0, &kp);
+        let mut builder = CertificateBuilder::new(1, data_root, 0);
+        assert!(builder.add_attestation(att));
+    }
+
+    // Audit C2: is_supermajority must not overflow when stakes are near u64::MAX.
+    // Pre-fix: `attested * 3` and `total * 2` both wrap in u64, producing false
+    // positives (undersized quorum passes) or false negatives (real quorum fails).
+    #[test]
+    fn audit_c2_is_supermajority_no_overflow_near_u64_max() {
+        // total near u64::MAX (divisible by 3 for clean 2/3 boundary).
+        let total: u64 = u64::MAX / 3 * 3;
+        let attested: u64 = total / 3 * 2; // exactly 2/3
+        let mut cert = DACertificate {
+            block_number: 1,
+            data_root: [0u8; 32],
+            attestations: vec![],
+            attested_stake: attested,
+            total_stake: total,
+        };
+        assert!(cert.is_supermajority(), "2/3 of near-max stake must be supermajority");
+        cert.attested_stake = attested - 1; // one below 2/3
+        assert!(!cert.is_supermajority(), "2/3 - 1 of near-max stake must not be supermajority");
     }
 }
