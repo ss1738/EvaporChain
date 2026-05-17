@@ -4061,13 +4061,11 @@ impl TendermintConsensus {
         if total == 0 {
             return u64::MAX;
         }
-        // ceiling(2*total/3): strictly more than 2/3 of total stake.
-        // With 3 equal-stake validators (total=3000) this gives 2000, so any
-        // 2-of-3 combination reaches quorum. Using `total*2/3 + 1` = 2001 would
-        // demand all three validators — impossible if any one times out or lags.
-        // Audit C2: use u128 to prevent `total * 2` from overflowing u64 when
-        // total > u64::MAX/2. Result fits in u64: (2*total/3) <= total <= u64::MAX.
-        ((total as u128 * 2 + 2) / 3) as u64
+        // Q4 (audit 2026-05-17): floor(2T/3) + 1 — strictly more than 2T/3.
+        // Mirrors evaporchain-consensus::tendermint::stake_quorum_threshold; see
+        // that function's doctrine note for the strict-vs-ceiling tradeoff.
+        // Audit C2: u128 to prevent total * 2 overflow at total > u64::MAX/2.
+        ((total as u128 * 2) / 3 + 1) as u64
     }
 
     /// Who is the proposer for the current height/round?

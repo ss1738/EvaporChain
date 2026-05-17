@@ -4198,22 +4198,29 @@ impl TendermintConsensus {
     }
 
     /// Stake threshold for a 2f+1 quorum (stake-weighted).
+    ///
+    /// Q4 (audit 2026-05-17): returns the smallest stake STRICTLY more
+    /// than 2T/3, i.e. `floor(2T/3) + 1`. Tendermint safety requires
+    /// `Q > 2T/3` strict. Pre-fix used `ceil(2T/3)` which equals
+    /// exactly 2T/3 when T is divisible by 3, allowing a Byzantine T/3
+    /// actor to combine with two distinct honest T/3 sets and produce
+    /// two disjoint quorums for different blocks at the same height
+    /// (Agreement violation; the TLA spec's `|Faulty|*3 < |Validators|`
+    /// ASSUME saved the model but runtime had no equivalent). The
+    /// liveness consequence in equal-stake 3-validator chains is
+    /// deliberate: BFT at f<N/3 strict admits 0 faulty for N=3, so
+    /// the n=3 cluster needs all 3 honest to commit — matching the
+    /// safety contract.
     fn stake_quorum_threshold(&self) -> u64 {
         let total = self.validator_set.total_stake();
         if total == 0 {
             return u64::MAX;
         }
-        // ceiling(2*total/3): strictly more than 2/3 of total stake.
-        // With 3 equal-stake validators (total=3000) this gives 2000, so any
-        // 2-of-3 combination reaches quorum. Using `total*2/3 + 1` = 2001 would
-        // demand all three validators — impossible if any one times out or lags.
-        //
-        // Audit C1 (2026-05-14): use u128 to prevent `total * 2` from overflowing
-        // u64 when total > u64::MAX / 2. The light-client verification path at
-        // consensus_types::ValidatorSet::verify_commit already uses u128 for the same
-        // arithmetic (line ~892). div_ceil(3) = (x + 2) / 3 for unsigned x.
-        // Result always fits in u64 because (total * 2 / 3) <= total <= u64::MAX.
-        ((total as u128 * 2 + 2) / 3) as u64
+        // floor(2T/3) + 1: strictly more than 2T/3 for every T ≥ 1.
+        // Audit C1 (2026-05-14): u128 to prevent total * 2 from overflowing u64.
+        // Result always fits in u64 because floor(2T/3) ≤ T ≤ u64::MAX, and the
+        // +1 stays within u64 since total ≤ u64::MAX - 1 in any realistic chain.
+        ((total as u128 * 2) / 3 + 1) as u64
     }
 
     /// Who is the proposer for the current height/round?

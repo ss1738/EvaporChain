@@ -145,10 +145,14 @@ impl PoHACertificate {
         self.re_attestation_count += 1;
     }
 
-    /// Check if this certificate has supermajority attestation.
+    /// Check if this certificate has strictly more than 2/3 attestation.
+    ///
+    /// Q4 (audit 2026-05-17): strict `>` enforces Tendermint safety.
+    /// Pre-fix `>=` collapsed to exactly `2T/3` when divisible; Byzantine
+    /// T/3 actor could split-quorum two blocks at same height.
     pub fn is_supermajority(&self) -> bool {
         // Audit C2: u128 to prevent wrap when stake > u64::MAX/3.
-        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
+        (self.attested_stake as u128) * 3 > (self.total_stake as u128) * 2
     }
 
     /// Compute a 32-byte hash of this certificate for compact storage.

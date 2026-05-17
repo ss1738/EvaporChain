@@ -42,10 +42,17 @@ pub struct DACertificate {
 }
 
 impl DACertificate {
-    /// Check if attested stake >= 2/3 of total stake (supermajority).
+    /// Check if attested stake is STRICTLY more than 2/3 of total stake.
+    ///
+    /// Q4 (audit 2026-05-17): Tendermint safety requires strict `> 2T/3`.
+    /// Pre-fix used `>= ceil(2T/3)` which collapses to exactly `2T/3` when
+    /// total_stake is divisible by 3. A Byzantine actor holding stake
+    /// exactly T/3 could combine with two distinct honest T/3 sets to
+    /// produce two disjoint quorums for different blocks at the same
+    /// height (Agreement violation). Matches `finality.rs::has_supermajority`.
     pub fn is_supermajority(&self) -> bool {
         // Audit C2: cast to u128 before multiplication to prevent wrap when stake > u64::MAX/3.
-        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
+        (self.attested_stake as u128) * 3 > (self.total_stake as u128) * 2
     }
 
     /// Verify every attestation's BLS signature and check that `attested_stake`
@@ -150,9 +157,9 @@ impl DACertificate {
             }
             recomputed_stake = recomputed_stake.saturating_add(att.stake);
         }
-        // The active-only stake must still hit supermajority.
-        // Use u128 to prevent wrap when stake values are near u64::MAX.
-        (recomputed_stake as u128) * 3 >= (self.total_stake as u128) * 2
+        // The active-only stake must still hit strict supermajority.
+        // Q4: strict > prevents two disjoint quorums at the boundary.
+        (recomputed_stake as u128) * 3 > (self.total_stake as u128) * 2
     }
 }
 
@@ -267,10 +274,11 @@ impl CertificateBuilder {
         self.attested_stake
     }
 
-    /// Check if we already have supermajority.
+    /// Check if we already have strict supermajority (> 2/3).
     pub fn has_supermajority(&self) -> bool {
         // Audit C2: u128 to prevent wrap when stake > u64::MAX/3.
-        (self.attested_stake as u128) * 3 >= (self.total_stake as u128) * 2
+        // Q4: strict > prevents disjoint-quorum Byzantine forgery.
+        (self.attested_stake as u128) * 3 > (self.total_stake as u128) * 2
     }
 }
 
