@@ -179,6 +179,14 @@ pub struct ApiState {
     /// started with `--snapshot-dir` (or the default
     /// `<data_dir>/snapshots`). `None` disables snapshot serving.
     pub snapshot_dir: Option<std::path::PathBuf>,
+    /// A6 (audit 2026-05-17): per-IP rate-limit bucket for the snapshot
+    /// download endpoint. Snapshots are gigabyte-scale .zst blobs;
+    /// without a dedicated bucket a single attacker could keep N
+    /// concurrent streams open, exhausting disk-read bandwidth even
+    /// after R12 streamed-IO landed. Sliding-window cap of
+    /// `SNAPSHOT_DOWNLOAD_PER_MINUTE` requests per IP per 60s; entries
+    /// older than the window are reaped on every hit.
+    pub snapshot_rate_limit: Mutex<HashMap<std::net::IpAddr, Vec<Instant>>>,
     /// libp2p Sybil-resistance state (peer IPs, scores, ban list,
     /// rejection counters). `None` when the node was started without
     /// `--network-mode` and the in-process libp2p swarm is absent.
@@ -18469,6 +18477,36 @@ async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoRes
     }
 }
 
+/// A6 (audit 2026-05-17): per-IP cap for snapshot downloads — gigabyte
+/// streams must be throttled separately from the workspace-global
+/// `RateLimiter` to prevent a single IP from saturating disk-read
+/// bandwidth. 3 requests / 60s is a sane default — a legitimate
+/// fast-sync client only needs one per height.
+pub(crate) const SNAPSHOT_DOWNLOAD_PER_MINUTE: usize = 3;
+pub(crate) const SNAPSHOT_WINDOW_SECS: u64 = 60;
+
+/// Returns `true` if the request from `ip` is within the per-IP
+/// snapshot-download budget. Updates the bucket on every hit.
+/// Loopback always passes (used by the local fast-sync test
+/// harness + the validator's own snapshot-warmup probe).
+pub(crate) fn check_snapshot_rate_limit(
+    map: &mut HashMap<std::net::IpAddr, Vec<Instant>>,
+    ip: std::net::IpAddr,
+) -> bool {
+    if ip.is_loopback() {
+        return true;
+    }
+    let now = Instant::now();
+    let window = std::time::Duration::from_secs(SNAPSHOT_WINDOW_SECS);
+    let timestamps = map.entry(ip).or_default();
+    timestamps.retain(|t| now.duration_since(*t) < window);
+    if timestamps.len() >= SNAPSHOT_DOWNLOAD_PER_MINUTE {
+        return false;
+    }
+    timestamps.push(now);
+    true
+}
+
 /// `GET /api/snapshot/download/:height` — streams the `.zst` blob for
 /// the given height. 404 if not present.
 ///
@@ -18479,10 +18517,32 @@ async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoRes
 /// responding — a few concurrent downloads OOM'd the node. The
 /// streaming path keeps per-request memory at ~64KB regardless of
 /// snapshot size.
+///
+/// A6 (audit 2026-05-17): the workspace-global rate-limit middleware
+/// (200 req / 10s / IP) does not provide enough headroom for a
+/// gigabyte-stream endpoint — a single IP could open 200 concurrent
+/// downloads. This handler now consults a dedicated per-IP bucket
+/// (`snapshot_rate_limit` on `ApiState`) capped at
+/// [`SNAPSHOT_DOWNLOAD_PER_MINUTE`] requests per
+/// [`SNAPSHOT_WINDOW_SECS`] seconds. Loopback is exempt so the local
+/// fast-sync harness keeps working.
 async fn get_snapshot_download(
     State(state): State<Arc<ApiState>>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Path(height): Path<u64>,
 ) -> impl IntoResponse {
+    // A6 (audit 2026-05-17): per-IP snapshot-download throttle.
+    if let Some(axum::extract::ConnectInfo(addr)) = connect_info {
+        let mut map = safe_lock(&state.snapshot_rate_limit);
+        if !check_snapshot_rate_limit(&mut map, addr.ip()) {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "60")],
+                "snapshot download rate limit exceeded — 3 per minute per IP",
+            )
+                .into_response();
+        }
+    }
     let path = match snapshot_path_for(&state, height) {
         Some(p) => p,
         None => return (StatusCode::NOT_FOUND, "snapshot dir not configured").into_response(),
@@ -21990,5 +22050,68 @@ mod r1_parse_hex_length_cap {
     fn parse_hex_address_accepts_exact_64_chars() {
         let valid = "0".repeat(64);
         assert!(parse_hex_address(&valid).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod a6_snapshot_rate_limit {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn ip(b: u8) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(10, 0, 0, b))
+    }
+
+    #[test]
+    fn loopback_is_exempt() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        for _ in 0..1_000 {
+            assert!(check_snapshot_rate_limit(&mut m, lo));
+        }
+    }
+
+    #[test]
+    fn third_request_passes_fourth_is_blocked() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let a = ip(7);
+        for i in 0..SNAPSHOT_DOWNLOAD_PER_MINUTE {
+            assert!(check_snapshot_rate_limit(&mut m, a), "req {} should pass", i);
+        }
+        assert!(
+            !check_snapshot_rate_limit(&mut m, a),
+            "req beyond cap must be blocked"
+        );
+    }
+
+    #[test]
+    fn distinct_ips_have_independent_buckets() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let a = ip(1);
+        let b = ip(2);
+        for _ in 0..SNAPSHOT_DOWNLOAD_PER_MINUTE {
+            assert!(check_snapshot_rate_limit(&mut m, a));
+            assert!(check_snapshot_rate_limit(&mut m, b));
+        }
+        assert!(!check_snapshot_rate_limit(&mut m, a));
+        assert!(!check_snapshot_rate_limit(&mut m, b));
+    }
+
+    #[test]
+    fn stale_entries_are_reaped() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let a = ip(9);
+        // Pre-seed with timestamps older than the window.
+        let old = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(SNAPSHOT_WINDOW_SECS + 10))
+            .expect("clock should allow rewind in test");
+        m.insert(a, vec![old; SNAPSHOT_DOWNLOAD_PER_MINUTE + 5]);
+        // Fresh hit should still pass — stale entries get reaped.
+        assert!(check_snapshot_rate_limit(&mut m, a));
+        assert_eq!(
+            m.get(&a).map(|v| v.len()),
+            Some(1),
+            "stale entries should be reaped, only this hit remains"
+        );
     }
 }

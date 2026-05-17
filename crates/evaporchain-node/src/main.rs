@@ -3766,6 +3766,8 @@ async fn main() -> Result<()> {
                 evaporchain_pnt::PhasedNullifierTree::new(16).expect("window_depth=16 is valid"),
             )),
             snapshot_dir: Some(snapshot_dir_path.clone()),
+            // A6 (audit 2026-05-17): per-IP snapshot-download bucket.
+            snapshot_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
             network_sybil: net_sybil_state.clone(),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
