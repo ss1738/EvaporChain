@@ -3,7 +3,6 @@
 //! `NEG_G1_GEN_UNCOMP` for the BLS pairing check.
 
 use bls12_381::{G1Affine, G1Projective};
-use group::Group;
 
 /// EIP-2537 uncompressed encoding of a `G1Affine`. 128 bytes:
 /// [pad16 || x_be_48 || pad16 || y_be_48].
