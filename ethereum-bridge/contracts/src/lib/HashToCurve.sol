@@ -12,9 +12,16 @@ import {BLS381} from "./BLS381.sol";
 ///         construction for BLS12-381 G2.
 ///
 /// @dev    Domain Separation Tag (DST):
-///           "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_EVAPORCHAIN_V1"
-///         must match the DST used by EvaporChain validators when signing.
-///         (See `evaporchain-crypto::signatures::bls`.)
+///           "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_"
+///         must match `BLS_DST` in `evaporchain-crypto::signatures` —
+///         the application tag is `_NUL_` (non-PoP signatures). The
+///         distinct `_POP_` ciphersuite tag is used by the
+///         proof-of-possession verifier only; both DSTs intentionally
+///         do not collide.
+///
+///         M-6 (audit 2026-05-17): pre-fix this docstring named the
+///         `_POP_EVAPORCHAIN_V1` tag while the code declared `_NUL_`.
+///         Bringing the comment in line with the code.
 library HashToCurve {
     /// @dev Domain Separation Tag. Must match the Rust producer in
     ///      `evaporchain-crypto::signatures::BLS_DST`.

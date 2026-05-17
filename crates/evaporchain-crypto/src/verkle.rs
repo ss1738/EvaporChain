@@ -183,6 +183,12 @@ pub struct VerkleProof {
     /// Depth of the proof (number of internal nodes traversed).
     pub depth: usize,
     /// Commitment bytes at each level along the path.
+    ///
+    /// M-3 (audit 2026-05-17): **DIAGNOSTIC-ONLY.** `verify` reconstructs
+    /// these commitments from siblings at each level and ignores the
+    /// supplied values. Field kept for serde wire compatibility but
+    /// modifying it has no effect on verification. Do not rely on it
+    /// for any security-relevant decision.
     pub commitments: Vec<[u8; 32]>,
     /// The child index taken at each level.
     pub path_indices: Vec<u8>,
