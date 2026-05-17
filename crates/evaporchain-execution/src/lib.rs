@@ -2484,9 +2484,10 @@ impl SimpleExecutor {
                         .into(),
                 )
             })?;
-            // Bind paymaster public key to paymaster address (same
-            // blake3 derivation as `generate_address_from_pubkey`).
-            let derived_pm_addr: [u8; 32] = *blake3::hash(pm_pk).as_bytes();
+            // Bind paymaster public key to paymaster address — must go
+            // through the DST-aware `address_from_pubkey` helper so the
+            // verification side matches the producer side (H-2).
+            let derived_pm_addr: [u8; 32] = evaporchain_types::address_from_pubkey(pm_pk);
             if &derived_pm_addr != paymaster {
                 return Err(ExecutionError::ContractError(format!(
                     "UserOpTx: paymaster_public_key does not derive to paymaster address \
