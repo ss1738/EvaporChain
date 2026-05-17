@@ -6,6 +6,29 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (evening, night) — AUDIT_2026_05_17 drive: Q1/Q2/Q3 + A1/A2/A3 + STATE-2 + SBA-1
+
+**Focus:** Close the top-priority audit findings from AUDIT_2026_05_17.md (Q-class DA forgery, A-class wallet impersonation, STATE-2 RocksDB stubs, SBA-1 contract binding).
+**Commits shipped:** 5 (a16cb92e → ae68b793)
+**Deliverables:**
+- **Q1/Q2/Q3 DA-certificate forgery class closed** (a16cb92e, merged 1149696b): total_stake=0 shortcut (Q1), duplicate validator dedup (Q2), att.stake excluded from BLS message (Q3) — 5 message-build sites patched across certificate.rs, da_attestation.rs, tendermint.rs. 1151 consensus+DA tests green.
+- **A1+A2+A3 wallet-impersonation class closed** (83550ac4): wallet_sign_tx + wallet_submit_tx + post_settle_demurrage + post_pool_{mint,withdraw,reanchor} — all 7 endpoints now enforce require_wallet_ownership or blake3(pk)==from. 254 node tests green.
+- **STATE-2 RocksDB governance stubs closed** (77afe28f): CF_PROPOSALS + CF_GOV_PARAMS column families added; 9 no-op methods replaced with real write-through implementations; begin/rollback_batch updated; reopen persistence test added. 254 state tests green.
+- **SBA-1 sealed_bid_auction.es commit-reveal binding closed** (ae68b793): commit() stores hash in committed_hashes map; reveal() verifies hash match before accepting; committed_hash_of() getter added. 13 pilot tests green including new adversarial sba1_reveal_wrong_commitment_hash_rejects.
+
+**Empirical results:** 254 node + 254 state + 966 consensus + 13 script pilot = all green on Mini 1.
+
+**Decisions made:**
+- CR-1/2/3 from audit were already green on HEAD (prior session PRs landed them); pivoted directly to Q-class.
+- Historical snapshots kept in-memory (MAX_SNAPSHOTS=256) for STATE-2 — not persisted across restarts; this covers the light-client window and avoids expensive full account/object serialization per block.
+- EvaporScript SBA-1 fix uses string equality check (Op::Eq uses Rust PartialEq, string comparison works); Rust substrate blake3 pre-image check is the second layer.
+
+**What's next:** Q4–Q8 (DA path hardening), INV-HIGH-1/2 (MERA hot-path removal + Cargo.toml false claim), EXEC-2 + PARSE-1 (validator DoS vectors)
+**Blockers / open questions:** None.
+**Cross-references:** AUDIT_2026_05_17.md items Q1/Q2/Q3, A1/A2/A3, STATE-2, SBA-1 all closed.
+
+---
+
 ## 2026-05-17 (evening, late) — Branch merge sweep + lint fix + doc drift
 
 **Focus:** Merge  into main; fix verification-report defects; push all clean branches.
