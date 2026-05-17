@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, continued) — AUDIT_2026_05_17 drive: Q4–Q8 + EXEC-2 + PARSE-1 + INV-HIGH
+
+**Focus:** Close remaining AUDIT_2026_05_17 HIGH-class items — DA path hardening (Q4–Q8), call_depth DoS (EXEC-2), parser recursion DoS (PARSE-1), MERA hot-path (INV-HIGH-1/2).
+**Commits shipped:** 5 (f114c1d6 → b89378e9), merged to main
+**Deliverables:**
+- **INV-HIGH-1/2 + INV-MED-3 closed** (f114c1d6): MERA computation removed from all 3 execution hot-paths (lib.rs, block_stm.rs, parallel.rs); mera_commitment wired to None tombstone; Cargo.toml description corrected from §A1.8 PASS claim to FAIL verdict + research-artefact-only warning.
+- **Q4 strict supermajority closed** (7b245a56): All `>=` supermajority comparisons in certificate.rs (is_supermajority, verify_signatures_with_active, has_supermajority) and poha.rs changed to strict `>`; stake_quorum_threshold uses floor(2T/3)+1 formula. Tests extended to cover the equal-stake 3-validator boundary.
+- **Q5 stake-weighted antichain finalization closed** (90a61f1e): try_finalize_antichain() replaced count-based 2f+1 threshold with stake-weighted sum via validator_set.get(vid).stake vs stake_quorum_threshold(). Zero BFT test failures.
+- **Q6 canonical DA seed closed** (7b245a56 area): Manual seed construction replaced with evaporchain_da::DASampler::build_da_sample_seed_v1(block.number, &data_root, self.my_id) — data_root now bound into every seed.
+- **Q7 bridge StateProof Merkle fixed** (7b245a56 area): Added DST constants + leaf_index + tree_size fields; verify() replaced sorted-hash with positional left/right + DST-bound leaf hash. make_state_proof test helper updated. All bridge tests green.
+- **Q8 verify_signatures_with_active closed** (7b245a56 area): verify_da_certificate() now calls cert.verify_signatures_with_active(&|vid| self.validator_set.get(vid).is_some()) — jailed/exited signers excluded.
+- **EXEC-2 call_depth leak closed** (7b245a56 area): Both execute_call_contract and execute_call_script now validate args BEFORE call_depth += 1; size-check + JSON-parse error paths can no longer leak depth.
+- **PARSE-1 adversarial test + bugfix** (b89378e9): Prior PARSE-1 commit called self.current_line() (doesn't exist); fixed to self.line(). Added parse1_deeply_nested_if_blocks_rejected + parse1_max_minus_1_nesting_ok tests. Both pass.
+
+**Empirical results:** 966 consensus + 559 consensus-unit + 185 execution + 32 script-parser = 0 failures on Mini 1. All tests green.
+**Decisions made:**
+- StateProof historical snapshots: in-memory only, not persisted across restarts (same as prior session decision).
+- Q4 strict `>` in 3-validator equal-stake cluster: all 3 honest validators must commit — correct per BFT safety contract; liveness consequence is documented in stake_quorum_threshold docstring.
+**What's next:** Remaining AUDIT_2026_05_17 items below Q4–Q8 class (if any), or next lane from MAINNET_READINESS.md.
+**Blockers / open questions:** None.
+**Cross-references:** AUDIT_2026_05_17.md — Q4/Q5/Q6/Q7/Q8/EXEC-2/PARSE-1/INV-HIGH-1/2 all closed; commits f114c1d6, 7b245a56, 90a61f1e, b89378e9 on main.
+
+---
+
 ## 2026-05-17 (evening, night) — AUDIT_2026_05_17 drive: Q1/Q2/Q3 + A1/A2/A3 + STATE-2 + SBA-1
 
 **Focus:** Close the top-priority audit findings from AUDIT_2026_05_17.md (Q-class DA forgery, A-class wallet impersonation, STATE-2 RocksDB stubs, SBA-1 contract binding).
