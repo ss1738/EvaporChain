@@ -6,6 +6,26 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, third continued) — AUDIT_2026_05_17: NFT-1 + GHOST-A + Frontier #2/#3 doc-drift
+
+**Focus:** Close NFT-1 (reserved state field), GHOST-A (paper drift Inv-4), Frontier #2 (stale line numbers + inline decompress), Frontier #3 (magnitude claim caveat).
+**Commits shipped:** 2 (a2c49088, beaa2b62) + H-1 VRF fix from prior branch; rebased onto remote main (04083af9), pushed.
+**Deliverables:**
+- **NFT-1 closed** (a2c49088): compiler.rs now rejects state fields with builtin-reserved names (owner/caller/epoch/energy) with ScriptError::Compile; mortal_nft.es state field owner renamed to holder throughout; mortal_nft_pilot.rs gains nft1_reserved_state_field_names_rejected_at_compile_time adversarial test covering all 4 reserved names.
+- **GHOST-A closed** (beaa2b62): paper_1_mechanism.md §3.4 Inv-4 corrected — prior text said "MMR entry is consumed"; actual V1 enforces resurrection uniqueness via db.remove_ghost(). Paper now describes correct construction. refresh.rs gains a comment citing the finding and explaining why no MMR consume step is needed.
+- **Frontier #2 closed** (beaa2b62): 02-energy-verkle-trie-proof.md §4 stale line numbers (352-355 → ~386) corrected; note added clarifying decompression is inline within insert_recursive, consistent with EnergyVerkleCompression.v.
+- **Frontier #3 closed** (beaa2b62): 03-rule-based-consensus-proof.md §4.1 "0.1% error" claim qualified as a concrete-parameter arithmetic example, not a mechanized bound; notes LazyEagerEquivalence.v proves only one-sided lazy ≤ eager; mechanizing the magnitude is listed as open work.
+
+**Empirical results:** Tests pending on Mini.
+**Decisions made:**
+- GHOST-A: paper amendment (not MMR-consume implementation) — V1 is safe; the invariant holds by different means than Paper 1 originally claimed.
+- NFT-1: full compiler-level enforcement (not just a doc note) so any future contract author gets a hard error, not a silent footgun.
+**What's next:** GHOST-B (grief-resurrection, no owner check), OPCODE-5 (emit bypasses memory cap), remaining MEDs (L0-B, L0-C, TOK-A, INV-MED-3/4/5/6), or next lane from MAINNET_READINESS.md.
+**Blockers / open questions:** None.
+**Cross-references:** AUDIT_2026_05_17.md — NFT-1/GHOST-A/Frontier #2/#3 closed; commits a2c49088, beaa2b62, rebased to 04083af9.
+
+---
+
 ## 2026-05-17 (night, second continued) — AUDIT_2026_05_17: contract security batch + CONS-A
 
 **Focus:** Close SDDC-1/SHLM-1/SPLIT-1/SFSV-1/LOTTERY-1/EXEC-2/CONS-A — contract caller guards, overflow fix, chain-VRF draw, governance λ read path.
