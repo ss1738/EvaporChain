@@ -19322,10 +19322,20 @@ fn is_mcp_gated_path(method: &axum::http::Method, path: &str) -> bool {
     if *method != axum::http::Method::POST {
         return false;
     }
-    // Exact-match endpoints.
+    // A5 (audit 2026-05-17): MCP compute-only POST endpoints that the
+    // 26-tool inventory exposes (`compute_demurrage`,
+    // `check_annealing_temperature`, `check_conservation`). Pre-fix
+    // these paths were not in the gate's allowlist; pure compute, no
+    // state mutation, but the gate's claim of "every MCP-tool path is
+    // gated" was technically false.
     if matches!(
         path,
-        "/api/faucet" | "/api/fork_cert/prove" | "/api/mera/commit"
+        "/api/faucet"
+            | "/api/fork_cert/prove"
+            | "/api/mera/commit"
+            | "/api/demurrage/owed"
+            | "/api/annealing/temperature"
+            | "/api/energy_kernel/conservation_check"
     ) {
         return true;
     }

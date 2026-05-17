@@ -2106,6 +2106,17 @@ impl TendermintConsensus {
             Some(v) => v.stake,
             None => return 0,
         };
+        // Q13 (audit 2026-05-17): short-circuit when stake is already 0.
+        // Pre-fix every duplicate equivocating vote triggered a full
+        // KL-divergence computation even after the validator had been
+        // slashed to zero stake — Byzantine validator flooding 1000
+        // equivocating prevotes burned ~1000 KL computations on each
+        // receiving node. With this guard, only the first equivocation
+        // (which actually drains stake) does the work; subsequent
+        // duplicates return immediately.
+        if stake == 0 {
+            return 0;
+        }
         let w = window.max(2);
         let observed = match Distribution::from_counts(&[0, w]) {
             Ok(d) => d,
@@ -7420,7 +7431,14 @@ impl TendermintConsensus {
         // invariant here so any new caller gets caught at compile-
         // exercise time rather than at signature-verification time.
         // Wire format unchanged.
-        debug_assert!(
+        // Q9 (audit 2026-05-17): hard `assert!` (not `debug_assert!`)
+        // so the phase-enum check fires in release builds too. Pre-fix
+        // it was stripped at release and a future caller passing an
+        // attacker-influenced `phase` could create signed-message
+        // ambiguity. Wire format unchanged (phase still appended
+        // un-prefixed; the 3 legal values have distinct lengths so no
+        // ambiguity within the enum).
+        assert!(
             matches!(phase, "proposal" | "prevote" | "precommit"),
             "bls_vote_message: phase must be one of \
              {{proposal, prevote, precommit}}, got {phase:?}"
