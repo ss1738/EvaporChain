@@ -109,7 +109,13 @@ contract Bounty {
         return self.submission_count
     }
 
+    // BOUNTY-1 (audit 2026-05-17): maps return U64(0) for missing keys
+    // regardless of declared value type, so self.submissions[who] on a
+    // non-submitter returns 0, not "". Guard with the parallel presence map.
     fn submission_of(who: address) -> string {
+        if self.has_submitted[who] == 0 {
+            return ""
+        }
         return self.submissions[who]
     }
 
