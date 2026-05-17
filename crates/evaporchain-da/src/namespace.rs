@@ -87,8 +87,16 @@ impl NmtNode {
         }
     }
 
+    /// Q10 (audit 2026-05-17): pre-fix this tested `hash == [0u8; 32]`
+    /// — practically-impossible but theoretically reachable collision
+    /// (a real BLAKE3 output hitting 32 zero bytes would be silently
+    /// treated as empty, collapsing the namespace range). Tag the empty
+    /// sentinel via the `min > max` invariant instead: `empty()`
+    /// constructs `min = NAMESPACE_MAX, max = NAMESPACE_MIN`, which no
+    /// real node can produce (real leaves have `min = max = namespace`;
+    /// real internals have `min ≤ max`). Unforgeable by construction.
     fn is_empty(&self) -> bool {
-        self.hash == [0u8; 32]
+        self.min_namespace > self.max_namespace
     }
 
     fn internal(left: &NmtNode, right: &NmtNode) -> Self {
