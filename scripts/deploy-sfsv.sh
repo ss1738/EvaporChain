@@ -219,10 +219,20 @@ else
       '{caller:$c, contract_id:$cid, method:"try_payout", args:[], epoch:$ep}')
     TH=$(printf '%s' "$(curl_json POST /api/tx/call-script "$TP_BODY")" | jq -r '.tx_hash // empty')
     [[ -z "$TH" ]] && { sleep 4; continue; }
-    rs=$(curl_json GET "/api/tx/$TH" | jq -r '.state // "unknown"')
+    # A freshly-submitted tx is `pending` until mined (~1-2 blocks).
+    # Checking its state once immediately (as before) never observes a
+    # terminal state, so the loop would resubmit forever and never see
+    # the try_payout that actually finalises. Poll THIS hash to a
+    # terminal state before classifying.
+    rs=unknown
+    for _w in 1 2 3 4 5 6; do
+      rs=$(curl_json GET "/api/tx/$TH" | jq -r '.state // "unknown"')
+      [[ "$rs" == "included" || "$rs" == "finalised" || "$rs" == "rejected" ]] && break
+      sleep 2
+    done
     if [[ "$rs" == "included" || "$rs" == "finalised" ]]; then ok=1; log "try_payout finalised at epoch $EPOCH"; break; fi
     [[ "$rs" == "rejected" ]] && saw_gate=1   # predicate `require` reverted — gate is real
-    sleep 4   # rejected/pending ⇒ predicate not satisfied yet; retry
+    sleep 2   # not yet satisfied ⇒ retry
   done
   (( ok == 1 )) || die "try_payout never succeeded within ${POLL_TIMEOUT_SEC}s (predicate never tripped)" 5
   # Non-vacuity: an EpochReached vault sealed before release_epoch MUST
