@@ -6,7 +6,7 @@
 # mortal_message.es) positioned as the "prove the chain" forgetting
 # demo — see research/DEAD_DROP_ARCHITECTURE.md. A message contract is
 # deployed with a SMALL energy budget + half-life (the TTL); the
-# chain's evaporation engine forgets it. This script proves the
+# chain's evaporation engine drives it to a terminal evaporated
 # forgetting end-to-end on a live node and is the inverse of
 # deploy-sfsv.sh: there, a 404 after payout was a BUG (wrong endpoint);
 # here, disappearance from /api/script/:id IS the success — but ONLY
@@ -28,10 +28,13 @@
 #   3. call-script set_payload(body, recipient)        (seal once)
 #   4. call-script read() -> finalised  AND GET /api/script/:id shows
 #      the body  => CONFIRMED READABLE (sets saw_readable; non-vacuity)
-#   5. poll GET /api/script/:id until the contract is gone (evaporated)
-#      => FORGOTTEN. Success iff saw_readable==1 AND it disappeared.
+#   5. poll GET /api/script/:id until evaporated==true (terminal,
+#      energy-exhausted, unrefreshable). Success iff saw_readable==1
+#      AND it reached terminal evaporation. NOTE (verified 2026-05-17):
+#      get_script keeps returning .state.body post-evaporation — this
+#      proves liveness-death, NOT byte-erasure. Not overclaimed.
 #
-# Exit: 0 forgotten-after-readable · 2 precondition · 3 deploy ·
+# Exit: 0 terminal-evap-after-readable · 2 precondition · 3 deploy ·
 #       4 set_payload · 5 read/non-vacuity · 6 never-forgot
 #
 # Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -60,7 +63,7 @@ deploy-dead-drop.sh [options]
   --token TOKEN        auth bearer ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8        deployer/caller account index (default 0 = faucet)
   --recipient U8       set_payload recipient index (default 0)
-  --body STR           payload string that must be forgotten
+  --body STR           payload string (must reach terminal evaporation)
   --energy N           initial contract energy (default 120000)
   --half-life N        decay rate; smaller = forgets sooner (default 6)
   --timeout SEC        per-phase poll timeout (default 240)
@@ -198,19 +201,23 @@ fi
 # ── 5. wait for the chain to FORGET it ──
 log "Step 4/5 - poll GET /api/script/$CID until the contract evaporates"
 if $DRY_RUN; then
-  log "[DRY-RUN] would poll until /api/script/:id 404s / body gone"
+  log "[DRY-RUN] would poll until evaporated==true (terminal liveness-death)"
   log "OK dry-run complete."; exit 0
 fi
-deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); forgotten=0
+deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); terminal=0
 while (( $(date +%s) < deadline )); do
   ST=$(curl_json GET "/api/script/$CID")
   if printf '%s' "$ST" | jq -e 'has("error")' >/dev/null 2>&1; then
-    forgotten=1; log "contract $CID gone from the script store (evaporated)"; break
+    terminal=1; log "contract $CID gone from script store (404 — rare; still terminal)"; break
   fi
-  STILL=$(printf '%s' "$ST" | jq -r '.state.body.Str // .state.body // ""')
   EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
-  if [[ "$EVAP" == "true" || -z "$STILL" ]]; then
-    forgotten=1; log "payload no longer present (.evaporated=$EVAP, body empty)"; break
+  # NOTE (verified 2026-05-17, probe cid 17): get_script does NOT
+  # purge .state.body and does NOT 404 post-evaporation (~300s window).
+  # `evaporated==true` is the real terminal signal; "body empty / gone"
+  # does not happen on this node. We assert ONLY the terminal
+  # liveness-death, not byte-disappearance.
+  if [[ "$EVAP" == "true" ]]; then
+    terminal=1; log "note $CID reached terminal evaporated=true (energy-exhausted, unrefreshable)"; break
   fi
   sleep 4
 done
@@ -218,14 +225,16 @@ done
 # ── verdict ──
 log "Step 5/5 - verdict"
 (( saw_readable == 1 )) || die "non-vacuity: never confirmed a readable payload" 5
-(( forgotten == 1 )) || die "vault NEVER forgot within ${POLL_TIMEOUT_SEC}s — the payload is still readable past its TTL (real failure: forgetting guarantee violated)" 6
+(( terminal == 1 )) || die "note never reached terminal evaporated=true within ${POLL_TIMEOUT_SEC}s — still alive past its TTL (real failure: terminal-evaporation guarantee violated)" 6
 cat <<EOF
 
 +==================================================================+
-|              OK  DEAD DROP — FORGETTING PROVEN                    |
+|         OK  DEAD DROP — TERMINAL EVAPORATION PROVEN              |
 |  contract_id: $CID                                                |
-|  proof: deploy ok  seal ok  CONFIRMED-READABLE ok  ->  FORGOTTEN  |
-|  the payload "$BODY" was readable on a live chain, then           |
-|  physically removed by the evaporation engine — unrecoverable.    |
+|  proof: deploy ok  seal ok  CONFIRMED-READABLE ok  -> EVAPORATED  |
+|  payload "$BODY" was readable on a live chain, then its contract  |
+|  reached terminal evaporated=true (dead, unrefreshable) by        |
+|  physics. HONEST SCOPE: get_script still returns the last         |
+|  .state.body — this proves liveness-death, NOT byte-erasure.      |
 +==================================================================+
 EOF

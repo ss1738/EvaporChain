@@ -18,13 +18,30 @@
 
 ## 0. TL;DR for cold readers
 
-Dead Drop lets you post a payload that the chain **physically forgets**
-after its energy decays — not encryption, not access-control, not a
-"please delete" request. The bytes leave chain state and become
-**unrecoverable by protocol law**. Ethereum's defining property is
-*immutable forever*; Dead Drop is the demonstrable opposite, on the
-one chain where forgetting is a physical law rather than a retrofit
-(contrast Ethereum's late-2026 Hegota state-expiry *bolt-on*).
+Dead Drop lets you post a payload whose contract is driven, by energy
+decay, to a **terminal evaporated state** — dead, unrefreshable, out
+of the chain's live/active set — with no keeper bot and no "please
+delete" request. Ethereum's defining property is *immutable forever*;
+Dead Drop's is the demonstrable opposite **at the liveness level**: a
+payload-bearing contract that *physically dies* on a schedule set at
+deploy, by protocol physics, not a retrofit (contrast Ethereum's
+late-2026 Hegota state-expiry *bolt-on*).
+
+> **OBSERVABILITY REALITY — verified 2026-05-17 (60-iter / ~300s probe,
+> contract_id 17).** This is the honest scope, not the original
+> overclaim. `GET /api/script/:id` does **NOT** purge `.state.body`
+> and does **NOT** 404 post-evaporation — ~250s/epochs after
+> `evaporated:true` first appeared the body string was *still
+> returned*. So Dead Drop does **not** make the bytes "leave chain
+> state / unrecoverable by protocol law" on this node. What it
+> provably does: the contract reaches a terminal `evaporated:true`
+> (energy-exhausted, unrefreshable, retired from the active set) by
+> physics. The "forgetting" is **lifecycle-death of the instance**,
+> not byte-erasure from the historical state view (the chain retains
+> last-state history like any chain). The earlier
+> "physically forgets / bytes unrecoverable" framing is corrected
+> here, repo-wide, to this verified semantic — same
+> non-overclaim discipline as the EvaporCash gradual-decay finding.
 
 It is the single most legible demo of the thesis sentence —
 *"data without a half-life is a bug, not a feature"* — to a
@@ -160,23 +177,30 @@ instance_energy(e) = energy_at_epoch(E, e − deploy_epoch)
 evaporates — the only sizing arithmetic anyone does. The contract
 contains **no** decay math (invariant #1, maximally: nothing to lint).
 
-### 4.2 The forgetting guarantee
+### 4.2 The terminal-evaporation guarantee (corrected from "forgetting")
 
-Define *forgotten(e)* ≡ the instance's `state { body }` is absent from
-the state committed at epoch *e*. Claim:
+Define *evaporated(e)* ≡ at epoch *e* the instance reports
+`evaporated == true` (energy-exhausted, retired from the active set,
+unrefreshable). Verified claim:
 
 ```
-∀ e ≥ evaporate_epoch:  forgotten(e)  ∧  ¬∃ revive API
+∀ e ≥ evaporate_epoch:  evaporated(e)  ∧  ¬∃ revive API
 ```
+
+**NOT claimed** (probe-falsified 2026-05-17): that `state { body }`
+becomes absent / `GET /api/script/:id` 404s. It does not — the body
+persisted for the full ~300s post-evaporation probe. The honest
+guarantee is *terminal liveness-death*, not state-erasure.
 
 Evaporation is **terminal by construction**: there is no `revive`; the
 only defer path is the chain-applied energy refresh (`on_refresh`),
 which cannot resurrect an already-Evaporated instance. Stronger than
-SFSV (no revival) and EvaporCash (touch-recoverable). Candidate Coq
-obligation `research/coq/DeadDropForgetting.v` (not yet written; not
-demo-blocking): the post-evaporation state-root excludes the body
-pre-image — a corollary of the evaporation-engine pruning lemma +
-state-root binding, both already exercised by the chain.
+SFSV (no revival) and EvaporCash (touch-recoverable) **with respect to
+liveness** — the contract cannot be brought back; it makes no claim
+about historical-state confidentiality. The earlier candidate Coq
+obligation about a "post-evaporation state-root excluding the body
+pre-image" is **withdrawn** — that property is false on this node;
+the chain retains last-state history.
 
 ### 4.3 Conservation
 
@@ -209,12 +233,15 @@ on_refresh()    -> boost_count += 1; emit("message boosted")
 on_evaporate()  -> emit("message evaporated")   # terminal: instance + state gone
 ```
 
-The forgetting is **structural, not a contract branch**: when the
+The death is **structural, not a contract branch**: when the
 instance's energy decays out, the chain's evaporation engine retires
-the whole contract (Active → Grace → Ghost → Evaporated) and its
-`state { body }` ceases to exist — `GET /api/script/:id` stops
-returning it. There is no `revive`; `record_boost`/`on_refresh` is the
-only (bounded, gas-paid) way to defer forgetting. Payload is a
+the whole contract (Active → Grace → Ghost → `evaporated:true`) — it
+leaves the live/active set and is unrefreshable. **Verified
+2026-05-17:** `GET /api/script/:id` continues to return the record
+(incl. the last `.state.body`) post-evaporation — it does NOT 404 or
+blank the body. The retirement is *liveness-death*, not state-erasure.
+There is no `revive`; `record_boost`/`on_refresh` is the only
+(bounded, gas-paid) way to defer it. Payload is a
 `string` bounded by the node's 64 KB `source_code`/args cap (verified
 this session); larger payloads post a `blake3` commitment string +
 off-chain blob. No new parity test is required — `mortal_message.es`
@@ -271,14 +298,17 @@ Proof sequence against `mortal_message.es`:
    `.state.body.Str == body` → `saw_readable=1`. A run that never
    confirmed a readable payload **fails** (exit 5) — it cannot prove
    forgetting from a never-readable drop.
-5. poll `GET /api/script/:id` until it `has("error")` / `.evaporated`
-   / body gone → **forgotten**.
+5. poll `GET /api/script/:id` until `.evaporated == true` (terminal,
+   energy-exhausted, unrefreshable) → **terminal evaporation**.
 
-Verdict: PASS iff `saw_readable==1` **and** it disappeared. Inverse
-polarity to SFSV: here a post-readable `/api/script/:id` 404 **is the
-success** (a state object that physically ceased to exist), guarded
-against vacuity by step 4. "Still readable past TTL" → exit 6
-(forgetting guarantee violated).
+Verdict: PASS iff `saw_readable==1` **and** it reached
+`evaporated==true`. **Verified 2026-05-17:** `get_script` keeps
+returning the record + `.state.body` post-evaporation (no 404, no
+blanking) — so the proof is **terminal liveness-death**, NOT
+byte-disappearance (the earlier "404 is the success / ceased to exist"
+framing was probe-falsified and is corrected). Non-vacuity guarded by
+step 4. "Still alive past TTL" → exit 6 (terminal-evaporation
+guarantee violated).
 
 ### 6.5 Invariant obligations (mainnet gate)
 
