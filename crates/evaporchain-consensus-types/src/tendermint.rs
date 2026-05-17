@@ -4999,7 +4999,8 @@ impl TendermintConsensus {
                 {
                     if let Some(proposer_info) = self.validator_set.get(proposer_id) {
                         if let Some(ref vrf_pk) = proposer_info.vrf_public_key {
-                            let alpha = leader_vrf_input(height, round);
+                            // H-1: chain_id-scoped VRF input.
+                            let alpha = leader_vrf_input(&self.chain_id, height, round);
                             let output = VrfOutput(*vrf_out);
                             let proof = VrfProof(vrf_proof.clone());
                             if !vrf_verify(vrf_pk, &alpha, &output, &proof) {
@@ -6449,7 +6450,8 @@ impl TendermintConsensus {
 
         // Compute VRF output for this block (leader election proof + randomness).
         let (vrf_out, vrf_prf) = if let Some(ref vrf_kp) = self.vrf_keypair {
-            let alpha = leader_vrf_input(self.height, self.round_state.round);
+            // H-1: chain_id-scoped VRF input.
+            let alpha = leader_vrf_input(&self.chain_id, self.height, self.round_state.round);
             let (output, proof) = vrf_kp.evaluate(&alpha);
             (Some(output.0), Some(proof.0))
         } else {
@@ -14888,7 +14890,8 @@ mod vrf_tests {
             .as_ref()
             .unwrap();
 
-        let alpha = leader_vrf_input(block.number, 0);
+        // H-1: chain_id-scoped VRF input.
+        let alpha = leader_vrf_input(&nodes[0].chain_id, block.number, 0);
         let output = VrfOutput(block.vrf_output.unwrap());
         let proof = VrfProof(block.vrf_proof.clone().unwrap());
         assert!(
@@ -15026,7 +15029,8 @@ mod vrf_tests {
     fn test_vrf_leader_check_stake_weighted() {
         // VRF leader check should be proportional to stake
         let kp = VrfKeypair::generate();
-        let alpha = leader_vrf_input(1, 0);
+        // H-1: chain_id-scoped VRF input.
+        let alpha = leader_vrf_input("test-chain", 1, 0);
         let (output, _proof) = kp.evaluate(&alpha);
 
         // With 100% of stake, should always be leader

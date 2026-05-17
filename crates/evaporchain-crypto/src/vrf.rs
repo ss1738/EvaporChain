@@ -200,16 +200,32 @@ pub fn sortition(
 }
 
 /// Construct the VRF input for leader election at a given height and round.
-pub fn leader_vrf_input(height: u64, round: u32) -> Vec<u8> {
-    let mut input = Vec::with_capacity(12);
+///
+/// H-1 (audit 2026-05-17): chain_id length-prefixed into the input.
+/// Pre-fix the input was `height_le || round_le` only — a validator
+/// reusing a VRF key across testnets/mainnet had its (h, r) VRF output
+/// structurally valid on any EvaporChain chain at the same (h, r),
+/// enabling cross-chain leader-claim replay. Matches the K4 closure's
+/// length-prefixed chain_id pattern in BLS vote messages.
+pub fn leader_vrf_input(chain_id: &str, height: u64, round: u32) -> Vec<u8> {
+    let chain_bytes = chain_id.as_bytes();
+    let mut input = Vec::with_capacity(8 + chain_bytes.len() + 12);
+    input.extend_from_slice(&(chain_bytes.len() as u64).to_le_bytes());
+    input.extend_from_slice(chain_bytes);
     input.extend_from_slice(&height.to_le_bytes());
     input.extend_from_slice(&round.to_le_bytes());
     input
 }
 
-/// Construct the VRF input for committee sortition at a given height, round, and role.
-pub fn sortition_vrf_input(height: u64, round: u32, role: &str) -> Vec<u8> {
-    let mut input = Vec::with_capacity(12 + role.len());
+/// Construct the VRF input for committee sortition at a given chain, height, round, and role.
+///
+/// H-1 (audit 2026-05-17): see `leader_vrf_input` doc for the cross-chain
+/// replay class. Same length-prefix scheme.
+pub fn sortition_vrf_input(chain_id: &str, height: u64, round: u32, role: &str) -> Vec<u8> {
+    let chain_bytes = chain_id.as_bytes();
+    let mut input = Vec::with_capacity(8 + chain_bytes.len() + 12 + role.len());
+    input.extend_from_slice(&(chain_bytes.len() as u64).to_le_bytes());
+    input.extend_from_slice(chain_bytes);
     input.extend_from_slice(&height.to_le_bytes());
     input.extend_from_slice(&round.to_le_bytes());
     input.extend_from_slice(role.as_bytes());
