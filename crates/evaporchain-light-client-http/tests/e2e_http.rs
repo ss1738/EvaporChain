@@ -163,7 +163,7 @@ fn e2e_state_query_round_trip_via_http() {
     // 5. Construct the LightClient with the trie's root as the
     //    trusted state_root.
     let header = synthetic_header_with_root(state_root);
-    let lc = LightClient::new(header, 1_700_000_000, /* vk_bytes */ None);
+    let lc = LightClient::new(header, 1_700_000_000, "", /* vk_bytes */ None);
 
     // 6. Drive the SDK's HTTP-backed state-query: fetch + verify
     //    in one call. Asserts the proof verifies cryptographically
@@ -184,7 +184,7 @@ fn e2e_state_query_404_on_missing_proof() {
     // Genesis with arbitrary state_root — doesn't matter, the
     // request never gets to the verify_state step.
     let header = synthetic_header_with_root([0xff; 32]);
-    let lc = LightClient::new(header, 1_700_000_000, None);
+    let lc = LightClient::new(header, 1_700_000_000, "", None);
 
     let key = [9u8; 32];
     let result = lc.fetch_and_verify_state(&transport, &key, Some([0u8; 32]));
@@ -216,7 +216,7 @@ fn e2e_state_query_value_mismatch_rejects() {
     let transport = HttpTransport::new(base_url);
 
     let header = synthetic_header_with_root(state_root);
-    let lc = LightClient::new(header, 1_700_000_000, None);
+    let lc = LightClient::new(header, 1_700_000_000, "", None);
 
     let result = lc.fetch_and_verify_state(&transport, &key, Some(wrong));
     assert!(
