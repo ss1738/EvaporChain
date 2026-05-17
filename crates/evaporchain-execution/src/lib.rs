@@ -1550,8 +1550,11 @@ impl SimpleExecutor {
         if self.call_depth >= MAX_CALL_DEPTH {
             return Err(ExecutionError::CallDepthExceeded(MAX_CALL_DEPTH));
         }
-        self.call_depth += 1;
 
+        // EXEC-2 (audit 2026-05-17): validate args BEFORE incrementing call_depth.
+        // Pre-fix incremented first, then early-returned on size/parse failure
+        // without decrementing, leaking depth across blocks until MAX_CALL_DEPTH
+        // was exhausted and all legitimate calls hard-errored.
         // Audit G2 (2026-05-14): reject oversized args before allocating a serde parse tree.
         if tx.args.len() > 1_000_000 {
             return Err(ExecutionError::ContractError(
@@ -1561,6 +1564,7 @@ impl SimpleExecutor {
         let args: serde_json::Value = serde_json::from_str(&tx.args)
             .map_err(|e| ExecutionError::ContractError(format!("invalid args JSON: {e}")))?;
 
+        self.call_depth += 1;
         let result = self
             .contract_engine
             .call(tx.contract_id, &tx.method, &args, &tx.caller, tx.epoch)
@@ -1744,8 +1748,8 @@ impl SimpleExecutor {
         if self.call_depth >= MAX_CALL_DEPTH {
             return Err(ExecutionError::CallDepthExceeded(MAX_CALL_DEPTH));
         }
-        self.call_depth += 1;
 
+        // EXEC-2 (audit 2026-05-17): validate args BEFORE incrementing call_depth.
         // Parse args from JSON
         // Audit G2 (2026-05-14): reject oversized args before serde parse.
         if tx.args.len() > 1_000_000 {
@@ -1759,6 +1763,8 @@ impl SimpleExecutor {
             serde_json::from_str(&tx.args)
                 .map_err(|e| ExecutionError::ScriptError(format!("invalid args JSON: {e}")))?
         };
+
+        self.call_depth += 1;
 
         let result = self
             .script_engine

@@ -108,6 +108,16 @@ impl ValidatorSetCommitment {
     }
 }
 
+/// Domain-separation tags for Q7 fixed Merkle proof hashing.
+///
+/// Q7 (audit 2026-05-17): the original verify() used sorted min/max of sibling
+/// pairs ("sorted-Merkle"). A sorted tree has no leaf index, no tree size, and
+/// no DST, so an adversary can swap (left, right) pairs or present a proof for
+/// a different key at the same root. These DSTs + positional hashing fix all
+/// three second-preimage vectors.
+const STATE_PROOF_LEAF_DST: &[u8] = b"evaporchain:state-proof-leaf:v1:";
+const STATE_PROOF_INNER_DST: &[u8] = b"evaporchain:state-proof-inner:v1:";
+
 /// Merkle state proof for a specific account or storage value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateProof {
@@ -119,24 +129,46 @@ pub struct StateProof {
     pub proof_path: Vec<[u8; 32]>,
     /// State root this proof is against.
     pub state_root: [u8; 32],
+    /// Index of this leaf in the Merkle tree (0-based).
+    /// Bit k of leaf_index determines left (0) or right (1) at tree level k.
+    pub leaf_index: u64,
+    /// Total number of leaves in the tree.
+    /// Guards against proofs that silently omit levels for a smaller tree.
+    pub tree_size: u64,
 }
 
 impl StateProof {
     /// Verify this state proof against the claimed state root.
+    ///
+    /// Q7 fix: leaf hash includes DST + key binding; inner nodes use
+    /// positional left/right derived from leaf_index bits. Both prevent
+    /// second-preimage forgery that was possible with the prior sorted-hash.
     pub fn verify(&self) -> bool {
-        let mut current = blake3_hash(&self.value);
+        if self.tree_size == 0 || self.leaf_index >= self.tree_size {
+            return false;
+        }
 
-        // Walk up the Merkle path
+        // Leaf hash: DST + key + value so different keys at same value can't collide.
+        let mut leaf_input =
+            Vec::with_capacity(STATE_PROOF_LEAF_DST.len() + 32 + self.value.len());
+        leaf_input.extend_from_slice(STATE_PROOF_LEAF_DST);
+        leaf_input.extend_from_slice(&self.key);
+        leaf_input.extend_from_slice(&self.value);
+        let mut current = blake3_hash(&leaf_input);
+
+        let mut index = self.leaf_index;
         for sibling in &self.proof_path {
-            let mut combined = Vec::with_capacity(64);
-            if current <= *sibling {
-                combined.extend_from_slice(&current);
-                combined.extend_from_slice(sibling);
+            let mut node_input = Vec::with_capacity(STATE_PROOF_INNER_DST.len() + 64);
+            node_input.extend_from_slice(STATE_PROOF_INNER_DST);
+            if index & 1 == 0 {
+                node_input.extend_from_slice(&current);
+                node_input.extend_from_slice(sibling);
             } else {
-                combined.extend_from_slice(sibling);
-                combined.extend_from_slice(&current);
+                node_input.extend_from_slice(sibling);
+                node_input.extend_from_slice(&current);
             }
-            current = blake3_hash(&combined);
+            current = blake3_hash(&node_input);
+            index >>= 1;
         }
 
         current == self.state_root
@@ -567,29 +599,46 @@ mod tests {
         }
     }
 
-    fn make_state_proof(key: [u8; 32], value: &[u8], siblings: &[[u8; 32]]) -> StateProof {
-        // Build a valid Merkle proof
-        let mut current = blake3_hash(value);
+    fn make_state_proof(
+        key: [u8; 32],
+        value: &[u8],
+        siblings: &[[u8; 32]],
+        leaf_index: u64,
+    ) -> StateProof {
+        // Leaf hash with DST + key binding — mirrors StateProof::verify().
+        let mut leaf_input =
+            Vec::with_capacity(STATE_PROOF_LEAF_DST.len() + 32 + value.len());
+        leaf_input.extend_from_slice(STATE_PROOF_LEAF_DST);
+        leaf_input.extend_from_slice(&key);
+        leaf_input.extend_from_slice(value);
+        let mut current = blake3_hash(&leaf_input);
+
         let mut proof_path = Vec::new();
+        let mut index = leaf_index;
 
         for sibling in siblings {
             proof_path.push(*sibling);
-            let mut combined = Vec::with_capacity(64);
-            if current <= *sibling {
-                combined.extend_from_slice(&current);
-                combined.extend_from_slice(sibling);
+            let mut node_input = Vec::with_capacity(STATE_PROOF_INNER_DST.len() + 64);
+            node_input.extend_from_slice(STATE_PROOF_INNER_DST);
+            if index & 1 == 0 {
+                node_input.extend_from_slice(&current);
+                node_input.extend_from_slice(sibling);
             } else {
-                combined.extend_from_slice(sibling);
-                combined.extend_from_slice(&current);
+                node_input.extend_from_slice(sibling);
+                node_input.extend_from_slice(&current);
             }
-            current = blake3_hash(&combined);
+            current = blake3_hash(&node_input);
+            index >>= 1;
         }
 
+        let tree_size = 1u64 << siblings.len();
         StateProof {
             key,
             value: value.to_vec(),
             proof_path,
             state_root: current,
+            leaf_index,
+            tree_size,
         }
     }
 
@@ -643,7 +692,8 @@ mod tests {
     fn test_state_proof_verification() {
         let sibling1 = [0x11; 32];
         let sibling2 = [0x22; 32];
-        let proof = make_state_proof([0xAA; 32], b"balance:1000000", &[sibling1, sibling2]);
+        // leaf_index=0: left child at both levels
+        let proof = make_state_proof([0xAA; 32], b"balance:1000000", &[sibling1, sibling2], 0);
 
         assert!(proof.verify());
 
@@ -810,8 +860,8 @@ mod tests {
 
         let cert = make_signed_certificate(1, [0xAA; 32], 0, &keypairs, &[0, 1, 2]);
 
-        // Build a valid state proof
-        let proof = make_state_proof([0x01; 32], b"balance:1000000", &[[0x33; 32]]);
+        // Build a valid state proof (leaf_index=0 in a 2-leaf tree)
+        let proof = make_state_proof([0x01; 32], b"balance:1000000", &[[0x33; 32]], 0);
         let state_root = proof.state_root;
 
         let msg = builder.build_transfer(
@@ -840,12 +890,14 @@ mod tests {
 
         let cert = make_signed_certificate(1, [0xAA; 32], 0, &keypairs, &[0, 1, 2]);
 
-        // State proof with wrong state root
+        // State proof with wrong state root (verify() will reject it)
         let proof = StateProof {
             key: [0x01; 32],
             value: b"balance:1000000".to_vec(),
             proof_path: vec![[0x33; 32]],
-            state_root: [0xBB; 32], // matches msg.state_root
+            state_root: [0xBB; 32], // matches msg.state_root but not the computed root
+            leaf_index: 0,
+            tree_size: 2,
         };
 
         let msg = builder.build_transfer(

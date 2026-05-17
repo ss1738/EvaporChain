@@ -2469,23 +2469,35 @@ impl TendermintConsensus {
         {
             return Vec::new();
         }
-        let n = self.validator_set.len();
-        if n == 0 {
+        if self.validator_set.len() == 0 {
             return Vec::new();
         }
-        let f = (n.saturating_sub(1)) / 3;
-        let threshold = 2 * f + 1;
+        // Q5 (audit 2026-05-17): use stake-weighted quorum, not count-based
+        // `2f+1`. Count-based threshold is an H11 regression: a set of
+        // low-stake validators could satisfy the count while representing
+        // far less than 2/3 of total stake, breaking BFT safety.
+        let stake_threshold = self.stake_quorum_threshold();
 
         let candidates =
             evaporchain_light_cone::concurrency::closing_antichain(&self.light_cone_dag);
         let mut finalized = Vec::new();
         for tip in candidates {
-            let precommit_count = self
+            let attested_stake: u64 = self
                 .dag_round_states
                 .get(&tip)
-                .map(|rs| rs.precommits.len())
+                .map(|rs| {
+                    rs.precommits
+                        .keys()
+                        .map(|vid| {
+                            self.validator_set
+                                .get(*vid)
+                                .map(|v| v.stake)
+                                .unwrap_or(0)
+                        })
+                        .fold(0u64, |acc, s| acc.saturating_add(s))
+                })
                 .unwrap_or(0);
-            if precommit_count >= threshold {
+            if attested_stake >= stake_threshold {
                 finalized.push(tip);
             }
         }
@@ -7921,13 +7933,16 @@ impl TendermintConsensus {
                 return None;
             }
 
-            let seed = {
-                let mut s = Vec::with_capacity(40);
-                s.extend_from_slice(b"da-2d-sample");
-                s.extend_from_slice(&block.number.to_le_bytes());
-                s.extend_from_slice(&self.my_id.to_le_bytes());
-                s
-            };
+            // Q6 (audit 2026-05-17): use canonical seed builder so the
+            // data_root is bound into the seed. Manual construction was
+            // missing the data_root binding, allowing a seed that would be
+            // identical for two different blocks at the same height if a
+            // proposer swapped data while keeping block.number constant.
+            let seed = evaporchain_da::DASampler::build_da_sample_seed_v1(
+                block.number,
+                &data_root,
+                self.my_id,
+            );
 
             // 16 cells -> confidence ~ 1 - 2^(-16) ~ 0.999985 if all valid
             let num_samples = 16usize;
@@ -8115,10 +8130,14 @@ impl TendermintConsensus {
         // C-09 FIX: Verify all BLS signatures on attestations and recompute
         // attested_stake from attestation data. Without this, a forged certificate
         // with fabricated attested_stake and garbage signatures would be accepted.
-        if !cert.verify_signatures() {
+        // Q8 (audit 2026-05-17): use verify_signatures_with_active so attestations
+        // from jailed or exited validators are excluded. verify_signatures() ignores
+        // the current active set, allowing a cert built by validators who were since
+        // jailed to still pass — a liveness attack (stale quorum locks finalization).
+        if !cert.verify_signatures_with_active(&|vid| self.validator_set.get(vid).is_some()) {
             warn!(
                 block = block.number,
-                "DA certificate contains invalid BLS signatures or inflated stake"
+                "DA certificate contains invalid BLS signatures, inflated stake, or inactive signers"
             );
             return false;
         }
@@ -17980,9 +17999,17 @@ mod da_tests {
     #[test]
     fn da_quorum_3_validators_strict_mode_succeeds_with_both_peers() {
         // Sanity: in strict (proposer-excluded) mode, 2-of-2 non-proposer
-        // attestations DOES reach quorum. Both peers attesting is the only
-        // viable path in n=3 strict mode.
-        let mut tc = make_3_validator_tc();
+        // attestations DOES reach strict supermajority when peer stakes
+        // outweigh the proposer's. Q4 (audit 2026-05-17): equal-stake
+        // n=3 cannot reach strict `> 2T/3` with only 2 attestations, so
+        // this test now uses a stake-weighted set: proposer=200 (small),
+        // peer1=1500, peer2=1300. Total=3000, threshold=2001. Peers
+        // together = 2800 > 2001 → strict supermajority reached.
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1500, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 200, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1300, [3u8; 32]));
+        let mut tc = TendermintConsensus::new_for_test(1, 100, vs);
         tc.set_small_cluster_da_mode(false);
 
         let data_root = [0xEFu8; 32];
@@ -17991,21 +18018,21 @@ mod da_tests {
         tc.da_block_proposers.insert(h, proposer);
 
         // Proposer attestation arrives but is filtered out in strict mode.
-        inject_da_attestation(&mut tc, h, data_root, proposer, 1000);
+        inject_da_attestation(&mut tc, h, data_root, proposer, 200);
         // Both peers attest in time.
-        inject_da_attestation(&mut tc, h, data_root, 1, 1000);
-        inject_da_attestation(&mut tc, h, data_root, 3, 1000);
+        inject_da_attestation(&mut tc, h, data_root, 1, 1500);
+        inject_da_attestation(&mut tc, h, data_root, 3, 1300);
 
         assert!(
             tc.has_da_supermajority(h),
-            "strict mode: 2-of-2 non-proposer attestations should clear quorum"
+            "strict mode: 2-of-2 non-proposer attestations with majority stake should clear quorum"
         );
         let cert_bytes = tc.try_build_da_certificate(h, data_root).unwrap();
         let cert: evaporchain_da::certificate::DACertificate =
             serde_json::from_slice(&cert_bytes).unwrap();
         // Strict mode: proposer's attestation is filtered → only 2 in cert.
         assert_eq!(cert.attestations.len(), 2);
-        assert_eq!(cert.attested_stake, 2000);
+        assert_eq!(cert.attested_stake, 2800); // peer1 (1500) + peer3 (1300)
         assert!(cert.is_supermajority());
     }
 
@@ -21179,8 +21206,11 @@ mod t1_20_batch12 {
         tc.round_state.proposed_block = Some(block);
         tc.round_state.phase = Phase::Precommit;
         let wrong_hash = [0xABu8; 32];
+        // Q4 (audit 2026-05-17): strict supermajority requires 3-of-3
+        // in equal-stake n=3 (threshold = floor(2*3000/3)+1 = 2001).
         tc.round_state.precommits.insert(1, Some(wrong_hash));
         tc.round_state.precommits.insert(2, Some(wrong_hash));
+        tc.round_state.precommits.insert(3, Some(wrong_hash));
         let mut db = InMemoryStateDB::new();
         let actions = tc.tick(&mut db);
         assert!(
@@ -21198,8 +21228,10 @@ mod t1_20_batch12 {
         let bh = TendermintConsensus::block_hash(&block);
         tc.round_state.proposed_block = Some(block);
         tc.round_state.phase = Phase::Precommit;
+        // Q4: 3-of-3 needed for strict supermajority in equal-stake n=3.
         tc.round_state.precommits.insert(1, Some(bh));
         tc.round_state.precommits.insert(2, Some(bh));
+        tc.round_state.precommits.insert(3, Some(bh));
         let mut db = InMemoryStateDB::new();
         let actions = tc.tick(&mut db);
         assert!(!actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(..))));
@@ -21211,6 +21243,7 @@ mod t1_20_batch12 {
         let mut tc = make_tc();
         tc.round_state.proposed_block = Some(make_block_at(1, 1));
         let wrong_hash = [0xCDu8; 32];
+        // Q4: strict supermajority requires 3-of-3 messages in equal-stake n=3.
         tc.on_message(ConsensusMessage::Precommit {
             height: 1,
             round: 0,
@@ -21218,11 +21251,18 @@ mod t1_20_batch12 {
             validator_id: 1,
             bls_signature: None,
         });
-        let actions = tc.on_message(ConsensusMessage::Precommit {
+        tc.on_message(ConsensusMessage::Precommit {
             height: 1,
             round: 0,
             block_hash: Some(wrong_hash),
             validator_id: 2,
+            bls_signature: None,
+        });
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(wrong_hash),
+            validator_id: 3,
             bls_signature: None,
         });
         assert!(
@@ -21355,6 +21395,7 @@ mod t1_20_batch12 {
         block.chain_id = "mainnet-test".to_string();
         let bh = TendermintConsensus::block_hash(&block);
         tc.round_state.proposed_block = Some(block);
+        // Q4: strict supermajority requires 3-of-3 messages in equal-stake n=3.
         tc.on_message(ConsensusMessage::Precommit {
             height: 1,
             round: 0,
@@ -21362,11 +21403,18 @@ mod t1_20_batch12 {
             validator_id: 1,
             bls_signature: None,
         });
-        let actions = tc.on_message(ConsensusMessage::Precommit {
+        tc.on_message(ConsensusMessage::Precommit {
             height: 1,
             round: 0,
             block_hash: Some(bh),
             validator_id: 2,
+            bls_signature: None,
+        });
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: 1,
+            round: 0,
+            block_hash: Some(bh),
+            validator_id: 3,
             bls_signature: None,
         });
         assert!(!actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(..))));
@@ -21548,13 +21596,15 @@ mod t1_20_batch13 {
     #[test]
     fn t1_20_prevote_quorum_bls_precommit_sig_present() {
         // Lines 4394-4397: bls_sign_vote result stored in precommit_bls_sigs when
-        // prevote quorum (≥2f+1 stake) is reached in Phase::Prevote.
-        // threshold = ceil(3000 * 2/3) = 2000; validators 1+2 contribute 2000 stake.
+        // prevote quorum (>2f stake, strict) is reached in Phase::Prevote.
+        // Q4 (audit 2026-05-17): strict supermajority requires 3-of-3 in
+        // equal-stake n=3 (floor(2*3000/3)+1 = 2001).
         let mut tc = make_tc();
         tc.set_bls_keypair(BlsKeypair::generate());
         tc.round_state.phase = Phase::Prevote;
         tc.round_state.prevotes.insert(1, None); // 1000 stake
-        tc.round_state.prevotes.insert(2, None); // 1000 stake → total 2000 = threshold
+        tc.round_state.prevotes.insert(2, None); // 1000 stake
+        tc.round_state.prevotes.insert(3, None); // 1000 stake → total 3000 > 2001
         let mut db = InMemoryStateDB::new();
         let actions = tc.tick(&mut db);
         let has_bls_precommit = actions.iter().any(|a| {
@@ -21670,9 +21720,11 @@ mod t1_20_batch14 {
         block.transactions = vec![make_transfer(1), make_transfer(2)];
         tc.round_state.phase = Phase::Precommit;
         tc.round_state.proposed_block = Some(block);
-        // Two validators precommit quorum_hash — 2000 stake = threshold
+        // Q4 (audit 2026-05-17): strict supermajority requires 3-of-3
+        // precommits in equal-stake n=3 (threshold=2001).
         tc.round_state.precommits.insert(1, Some(quorum_hash));
         tc.round_state.precommits.insert(2, Some(quorum_hash));
+        tc.round_state.precommits.insert(3, Some(quorum_hash));
         let mempool_before = tc.mempool.len();
         let mut db = InMemoryStateDB::new();
         tc.tick(&mut db);
@@ -21687,15 +21739,18 @@ mod t1_20_batch14 {
         let mut block = make_block(1);
         block.transactions = vec![make_transfer(10), make_transfer(11)];
         tc.round_state.proposed_block = Some(block);
-        // Validator 1 precommitted (1000 stake, below quorum)
+        // Q4 (audit 2026-05-17): strict supermajority requires 3-of-3
+        // in equal-stake n=3 (threshold=2001).
         tc.round_state.precommits.insert(1, Some(quorum_hash));
+        tc.round_state.precommits.insert(2, Some(quorum_hash));
         let mempool_before = tc.mempool.len();
-        // Validator 2 sends matching precommit → 2000 stake = quorum → hash mismatch → requeue
+        // Validator 3's matching precommit completes the strict quorum
+        // (3000 stake > 2001), surfacing the hash mismatch.
         tc.on_message(ConsensusMessage::Precommit {
             height: 1,
             round: 0,
             block_hash: Some(quorum_hash),
-            validator_id: 2,
+            validator_id: 3,
             bls_signature: None,
         });
         assert!(
@@ -21813,9 +21868,11 @@ mod t1_20_batch14 {
     fn t1_20_check_precommit_quorum_returns_quorum_hash() {
         let mut tc = make_tc();
         let hash = [7u8; 32];
-        // 1000 + 1000 = 2000 = ceil(3000 * 2/3) = threshold
+        // Q4 (audit 2026-05-17): strict supermajority requires 3-of-3
+        // in equal-stake n=3 (threshold = floor(2*3000/3)+1 = 2001).
         tc.round_state.precommits.insert(1, Some(hash));
         tc.round_state.precommits.insert(2, Some(hash));
+        tc.round_state.precommits.insert(3, Some(hash));
         assert_eq!(tc.check_precommit_quorum(), Some(Some(hash)));
     }
 

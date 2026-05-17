@@ -492,11 +492,19 @@ impl Lexer {
 // ─── Parser ─────────────────────────────────────────────────────────────────
 
 const MAX_EXPR_DEPTH: usize = 64;
+/// PARSE-1 (audit 2026-05-17): guard parse_block / parse_if / parse_while
+/// against unbounded stack recursion. An attacker can craft deeply nested
+/// `if { if { if { ... } } }` contracts that stack-overflow the parser.
+/// MAX_EXPR_DEPTH already guards expression nesting; this constant caps
+/// statement-block nesting at the same level.
+const MAX_STMT_DEPTH: usize = 64;
 
 struct Parser {
     tokens: Vec<(Token, usize)>,
     pos: usize,
     expr_depth: usize,
+    /// Current nesting depth of parse_block calls (parse_if / parse_while / fn bodies).
+    stmt_depth: usize,
 }
 
 impl Parser {
@@ -505,6 +513,7 @@ impl Parser {
             tokens,
             pos: 0,
             expr_depth: 0,
+            stmt_depth: 0,
         }
     }
 
@@ -712,12 +721,25 @@ impl Parser {
     // ─── Block ───
 
     fn parse_block(&mut self) -> Result<Vec<Stmt>, ScriptError> {
+        // PARSE-1: guard against unbounded recursion via deeply-nested blocks.
+        self.stmt_depth += 1;
+        if self.stmt_depth > MAX_STMT_DEPTH {
+            self.stmt_depth -= 1;
+            return Err(ScriptError {
+                line: self.current_line(),
+                message: format!(
+                    "block nesting depth exceeds maximum ({MAX_STMT_DEPTH})"
+                ),
+            });
+        }
         self.expect(&Token::LBrace)?;
         let mut stmts = Vec::new();
         while *self.peek() != Token::RBrace && *self.peek() != Token::Eof {
             stmts.push(self.parse_stmt()?);
         }
-        self.expect(&Token::RBrace)?;
+        let result = self.expect(&Token::RBrace);
+        self.stmt_depth -= 1;
+        result?;
         Ok(stmts)
     }
 
