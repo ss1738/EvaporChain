@@ -6,6 +6,21 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (night, ninth) — coverage sweep: parse_listing + llvm-cov baseline
+
+**Focus:** Coverage sweep pass. Fixed final 2 decay-lamport test semantic errors, then drove coverage on sfsv-coordinator (parse_listing untested pure fn).
+**Commits shipped:** 2 (9402d220 decay-lamport residual semantics, 7b81047d sfsv-coordinator parse_listing 7 tests)
+**Deliverables:**
+- **9402d220** — decay-lamport residual semantics: `accumulated_energy` stores RESIDUAL not total; `merge()` always resets to 0. Final fix from workspace test run.
+- **7b81047d** — `poller::parse_listing` 7 tests: unlisted/missing-state/ceiling-le-floor/ceiling-lt-floor/zero-duration/valid-path/all-zero-defaults. First coverage of this pure JSON parsing function.
+**Empirical results:** llvm-cov workspace run launched on Mini 3 (background `bec2hpr0m`). Will capture new baseline once complete.
+**Decisions made:** `light-client-wasm` is workspace-excluded (correctly); all other crates have ≥1 test. `every_catalogue_entry_dispatches_via_full_pipeline` proves all template dispatch paths including the untested-looking `init_refresh_market` happy path.
+**What's next:** Capture llvm-cov TOTAL % when bec2hpr0m completes. Drive gaps from actual report, not guesses.
+**Blockers / open questions:** Mini 1 flapping (connection resets intermittently). Mini 3 is the reliable box right now.
+**Cross-references:** parse_listing gap: `crates/evaporchain-sfsv-coordinator/src/poller.rs:22`. Last coverage baseline: 73.38% regions 2026-05-02.
+
+---
+
 ## 2026-05-17 (night, eighth continued) — test verification + 5 real bug fixes found
 
 **Focus:** First full workspace test run on Mini 1 since audit work began. Found and fixed 5 real bugs (3 API mismatches in new e2e tests, 1 production logic bug in consensus, 2 wrong semantic assumptions).
