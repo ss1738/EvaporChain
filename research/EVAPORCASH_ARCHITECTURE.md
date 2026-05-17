@@ -77,11 +77,17 @@ a contract around a non-existent builtin):
   loses the "your money rots if you hoard it" punchline — i.e. loses
   the demo's entire point.
 
-Recommendation (unranked — operator decides): **(A)** is the only
-path that is both implementable now and on-thesis; it reframes
-EvaporCash as *demurraging bearer cash* rather than a balance map.
-§3–§5 below describe the (now-known-unimplementable) map model and are
-retained only as the pre-finding record — **do not build to them.**
+**DECISION (2026-05-17): model (A) — bearer-note — CHOSEN by the
+operator and IMPLEMENTED.** Contract:
+`contracts/evaporscript/evaporcash_note.es` (one note = one mortal
+contract instance; the note's own engine-decayed `energy` builtin IS
+its spendable value — invariant-#1-clean, no in-script formula;
+`spend(to)` retires the note + emits, the off-chain coordinator
+reissues a fresh note carrying the live value; `on_evaporate` of an
+unspent note = value lost to hoarding = the demo's punchline, by
+physics). §3–§5 below describe the *superseded* map model and are
+retained only as the pre-finding record — **do not build to them; the
+authoritative contract is `evaporcash_note.es`.**
 
 ---
 
@@ -363,11 +369,12 @@ of SFSV's predicate-gate non-vacuity guard).
 
 | Surface | State |
 |---|---|
-| **design decision (A/B/C)** | ⛔ **BLOCKING — operator must pick** (see top finding); nothing below can start until then |
-| `contracts/evaporscript/evaporcash.es` | **BLOCKED** — §4 map-ledger model is not implementable in EvaporScript (no `energy_at_epoch` builtin); do not fabricate it |
-| `crates/evaporchain-evaporcash` mirror | blocked on the above |
-| `tests/evaporcash_parity.rs` | blocked on the above |
-| `scripts/deploy-evaporcash.sh` | blocked on the above |
+| **design decision (A/B/C)** | ✅ **(A) bearer-note CHOSEN 2026-05-17** |
+| `contracts/evaporscript/evaporcash_note.es` | ✅ **written** (model A; faithful to verified grammar — single-instance, 4 builtins, no maps, no in-script decay). Mirrors future_self_vault.es / mortal_message.es. |
+| Mini parse/exec verification | **pending** — deploy on the smoke node (next increment, like SFSV/Dead Drop) |
+| `scripts/deploy-evaporcash.sh` | to build (author fresh against the corrected `/api/script/:id`, NOT fork the on-branch stale deploy-sfsv.sh) |
+| live forgetting/demurrage e2e | pending — run after the runbook, capture the directly-observed loss-to-hoarding |
+| `crates/evaporchain-evaporcash` mirror / parity | not required for the demo (single-instance pilot, like mortal_message — no second impl to drift from) |
 | Node API contract | already verified live — §6, no chain change needed |
 
 **Honest status:** EvaporCash is NOT a "pure EvaporScript, ~3-week,
