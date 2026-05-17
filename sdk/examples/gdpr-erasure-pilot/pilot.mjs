@@ -25,7 +25,9 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { EvaporChain } from "../../dist/index.js";
+// SDK builds with tsconfig rootDir "." → compiled entry is
+// dist/src/index.js (also now package.json "main", fixed in this PR).
+import { EvaporChain } from "../../dist/src/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ES_PATH = resolve(HERE, "../../../contracts/evaporscript/gdpr_vault.es");
