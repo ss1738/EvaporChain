@@ -12993,7 +12993,18 @@ async fn docs_html() -> impl IntoResponse {
 }
 
 async fn erasure_html() -> impl IntoResponse {
-    Html(include_str!("../dashboard/erasure.html"))
+    // Self-contained embedded copy is the production default. If an
+    // on-disk override exists at <data-dir or CWD>/erasure.html it is
+    // served instead — a tightly-scoped hot-reload hook so this
+    // actively-iterated public page can be updated without a full
+    // node rebuild. Any read error silently falls back to embedded.
+    const EMBEDDED: &str = include_str!("../dashboard/erasure.html");
+    let override_path =
+        std::env::var("EVAPORCHAIN_ERASURE_HTML").unwrap_or_else(|_| "erasure.html".to_string());
+    match tokio::fs::read_to_string(&override_path).await {
+        Ok(s) if s.contains("Proof-of-Erasure") => Html(s),
+        _ => Html(EMBEDDED.to_string()),
+    }
 }
 
 async fn manifest_json() -> impl IntoResponse {

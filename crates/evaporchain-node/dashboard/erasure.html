@@ -32,6 +32,9 @@
   .scope{background:var(--accent-soft);border:1px solid #cce7e7;border-radius:var(--radius);
     padding:16px 18px;margin-bottom:18px;font-size:14px;color:var(--accent-ink)}
   .scope b{font-weight:700}
+  .ctx-note{background:var(--warn-soft);border:1px solid #fde68a;border-radius:var(--radius);
+    padding:14px 18px;margin-bottom:18px;font-size:13.5px;color:var(--warn)}
+  .ctx-note code{font-family:'JetBrains Mono',monospace;font-size:12px}
   label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:14px 0 6px}
   input,select{width:100%;font:inherit;font-size:14px;padding:11px 13px;border:1px solid var(--line);
     border-radius:10px;background:#fff;color:var(--ink)}
@@ -119,6 +122,15 @@
       </div>
     </div>
     <button class="btn" id="run">Run the erasure lifecycle on-chain</button>
+  </div>
+
+  <div class="ctx-note" id="ctxNote" style="display:none">
+    <b>Note:</b> this endpoint is plain HTTP, so the browser disables WebCrypto
+    (<code>crypto.subtle</code> requires HTTPS/localhost). The encrypt &amp; key-shred
+    steps below therefore run as a clearly-labelled <b>illustrative stand-in</b>. The
+    <b>on-chain lifecycle is unaffected and fully real</b> — deploy, seal and the
+    erasure trigger are genuine transactions on this live chain, verifiable on the
+    explorer. Production serves HTTPS with a real HSM/KMS.
   </div>
 
   <div class="err-box" id="errBox"></div>
@@ -363,19 +375,48 @@ async function run(){
     const mode   = $("mode").value;
 
     // 1. encrypt in-browser — the key is the only thing whose destruction erases.
+    //    WebCrypto (crypto.subtle) ONLY exists in a secure context
+    //    (HTTPS/localhost). Over plain HTTP the on-chain proof below is
+    //    still fully real; the encrypt/shred step degrades to a clearly
+    //    labelled illustrative stand-in (production serves HTTPS + a real
+    //    HSM/KMS anyway — see the scope note).
     setStep("enc","run");
-    let K = await crypto.subtle.generateKey({name:"AES-GCM",length:256}, true, ["encrypt","decrypt"]);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({name:"AES-GCM",iv},K,new TextEncoder().encode(record));
-    const ctCommit = await crypto.subtle.digest("SHA-256", ct); // 32 bytes
-    const ctCommitArr = [...new Uint8Array(ctCommit)];
+    const SECURE = !!(globalThis.crypto && globalThis.crypto.subtle && window.isSecureContext);
     let shredded = false;
-    const tryDecrypt = async ()=>{
-      if(shredded||!K) return null;
-      try{ return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv},K,ct)); }
-      catch{ return null; }
-    };
-    setStep("enc","ok",`ct_commit = ${hex(ctCommit).slice(0,32)}…  (data never leaves the browser)`);
+    let ctCommitArr, tryDecrypt, encDetail;
+    if (SECURE) {
+      let K = await crypto.subtle.generateKey({name:"AES-GCM",length:256}, true, ["encrypt","decrypt"]);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await crypto.subtle.encrypt({name:"AES-GCM",iv},K,new TextEncoder().encode(record));
+      const ctCommit = await crypto.subtle.digest("SHA-256", ct);
+      ctCommitArr = [...new Uint8Array(ctCommit)];
+      tryDecrypt = async ()=>{
+        if(shredded||!K) return null;
+        try{ return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv},K,ct)); }
+        catch{ return null; }
+        finally{ if(shredded) K = null; }
+      };
+      encDetail = `AES-256-GCM · ct_commit = ${hex(ctCommit).slice(0,32)}…  (data never leaves the browser)`;
+    } else {
+      // Illustrative stand-in (NOT cryptographic): WebCrypto unavailable
+      // over plain HTTP. A reversible byte transform + a deterministic
+      // 32-byte digest, purely so the lifecycle + on-chain commitment are
+      // demonstrable. The chain steps below are unaffected and real.
+      const bytes = new TextEncoder().encode(record);
+      let kb = 0; for (let i=0;i<bytes.length;i++) kb = (kb*31 + bytes[i]) & 0xff; kb = (kb||7);
+      let key = kb;
+      const ctArr = [...bytes].map(b => b ^ kb);
+      const dig = new Array(32).fill(0);
+      for (let i=0;i<ctArr.length;i++) dig[i%32] = (dig[i%32]*131 + ctArr[i] + i) & 0xff;
+      ctCommitArr = dig;
+      tryDecrypt = async ()=> (shredded || key===null) ? null
+        : new TextDecoder().decode(new Uint8Array(ctArr.map(b => b ^ key)));
+      const origShredKey = ()=>{ key = null; };
+      window.__shredFallbackKey = origShredKey;
+      encDetail = `illustrative stand-in (WebCrypto needs HTTPS) · commit=${hex(new Uint8Array(dig)).slice(0,24)}…`;
+      $("ctxNote").style.display = "block";
+    }
+    setStep("enc","ok",encDetail);
 
     // 2. auth
     setStep("auth","run");
@@ -452,9 +493,11 @@ async function run(){
       setStep("trig","ok","retention clock terminally evaporated on-chain");
     }
 
-    // 7. crypto-shred
+    // 7. crypto-shred — destroy the key (real path: K released on next
+    //    tryDecrypt via its finally; fallback: null the stand-in key).
     setStep("shred","run");
-    K = null; shredded = true;
+    shredded = true;
+    if (window.__shredFallbackKey) window.__shredFallbackKey();
     await sleep(300);
     setStep("shred","ok","decryption key destroyed (HSM stand-in) — this is the erasure");
 
