@@ -5173,7 +5173,7 @@ impl TendermintConsensus {
                 // hiding the intent.
                 {
                     const MIN_SUPPORTED_PROTOCOL_VERSION: u8 = 0;
-                    #[allow(unused_comparisons)]
+                    #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
                     let below_min = block.protocol_version < MIN_SUPPORTED_PROTOCOL_VERSION;
                     if below_min {
                         warn!(
