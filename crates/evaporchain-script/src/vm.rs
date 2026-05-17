@@ -715,6 +715,10 @@ impl EvaporVM {
                         Value::Str(s) => s,
                         other => format!("{other}"),
                     };
+                    // OPCODE-5 (audit 2026-05-17): track message bytes before
+                    // enqueuing so bulk emits can't silently exhaust heap past
+                    // MAX_MEMORY_BYTES while only paying flat GAS_EMIT each.
+                    self.track_memory(msg.len())?;
                     self.events.push(msg.clone());
                     self.structured_events.push(ContractEvent {
                         name: "Log".into(),
@@ -755,6 +759,16 @@ impl EvaporVM {
                     values.reverse();
                     let topics = values[..tc].to_vec();
                     let data = values[tc..].to_vec();
+                    // OPCODE-5: track name + all value sizes before enqueuing.
+                    let event_bytes = name.len()
+                        + values
+                            .iter()
+                            .map(|v| match v {
+                                Value::Str(s) => s.len(),
+                                _ => 8,
+                            })
+                            .sum::<usize>();
+                    self.track_memory(event_bytes)?;
                     self.events.push(format!("event:{name}"));
                     self.structured_events.push(ContractEvent {
                         name: name.clone(),
@@ -1027,6 +1041,8 @@ impl EvaporVM {
                     Value::Str(s) => s,
                     other => format!("{other}"),
                 };
+                // OPCODE-5: same guard as Op::Emit.
+                self.track_memory(msg.len())?;
                 self.events.push(msg);
                 Ok(Value::Null)
             }
@@ -1094,6 +1110,20 @@ impl EvaporVM {
                     topics.push(self.pop()?);
                 }
                 topics.reverse();
+                // OPCODE-5: track name + data + topic sizes before enqueuing.
+                let event_bytes = name.len()
+                    + match &data_val {
+                        Value::Str(s) => s.len(),
+                        _ => 8,
+                    }
+                    + topics
+                        .iter()
+                        .map(|v| match v {
+                            Value::Str(s) => s.len(),
+                            _ => 8,
+                        })
+                        .sum::<usize>();
+                self.track_memory(event_bytes)?;
                 self.events.push(format!("event:{name}"));
                 self.structured_events.push(ContractEvent {
                     name,
@@ -2708,5 +2738,47 @@ contract WithStateArray {
         let bytecode = make_bytecode("run", ops);
         let err = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
         assert!(err.is_err(), "SCR-N6: RandomRange(0) must be a runtime error");
+    }
+
+    // ── OPCODE-5 (audit 2026-05-17): Op::Emit bulk-memory guard ──
+
+    /// Pre-fix: 64 emits of 1 MiB strings each charged only GAS_EMIT (8 gas)
+    /// but enqueued ~64 MiB of heap. Now each emit tracks msg.len() against
+    /// MAX_MEMORY_BYTES (4 MiB), so the 5th 1-MiB emit must hit the limit.
+    #[test]
+    fn opcode5_bulk_emit_hits_memory_limit() {
+        let big: String = "e".repeat(1_048_576); // 1 MiB
+        let mut ops: Vec<Op> = Vec::new();
+        for _ in 0..10 {
+            ops.push(Op::Push(Value::Str(big.clone())));
+            ops.push(Op::Emit);
+        }
+        ops.push(Op::Push(Value::U64(0)));
+        ops.push(Op::Return);
+        let bytecode = make_bytecode("blast", ops);
+        let result = EvaporVM::execute(&bytecode, "blast", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err(), "bulk emit should hit memory limit");
+        let err = format!("{:?}", result.unwrap_err());
+        assert!(
+            err.contains("memory"),
+            "expected memory error, got: {err}"
+        );
+    }
+
+    /// Small emits are unaffected: a handful of short messages should succeed.
+    #[test]
+    fn opcode5_small_emits_still_work() {
+        let ops = vec![
+            Op::Push(Value::Str("hello".into())),
+            Op::Emit,
+            Op::Push(Value::Str("world".into())),
+            Op::Emit,
+            Op::Push(Value::U64(0)),
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("ok", ops);
+        let r = EvaporVM::execute(&bytecode, "ok", vec![], empty_state(), &test_ctx())
+            .expect("small emits should succeed");
+        assert_eq!(r.events.len(), 2);
     }
 }
