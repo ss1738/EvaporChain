@@ -47,6 +47,9 @@ const HALF_LIFE = Number(arg("half-life", "5"));
 const MODE      = arg("mode", "retain");          // retain | withdraw
 const RECORD    = arg("record", "Alice Example — DOB 1990-01-01 — acct 1234");
 const TIMEOUT_S = Number(arg("timeout", "300"));
+// SDK per-request timeout. Default 10s is fine for localhost but too
+// tight for a pilot over a network hop to a busy node — raise it.
+const REQ_MS    = Number(arg("client-timeout-ms", "60000"));
 
 const log = (m) => console.log(`\x1b[36m[gdpr-pilot]\x1b[0m ${m}`);
 const die = (m, c = 1) => { console.error(`\x1b[31m[gdpr-pilot ERROR]\x1b[0m ${m}`); process.exit(c); };
@@ -71,7 +74,7 @@ console.log(`|  node: ${NODE}  mode: ${MODE}  retention E/hl: ${ENERGY}/${HALF_L
 console.log(`|  record encrypted; ct_commit=${ctCommit.toString("hex").slice(0, 16)}…  (data NEVER on-chain)`);
 console.log(`+=============================================================+`);
 
-const chain = new EvaporChain({ baseUrl: NODE });
+const chain = new EvaporChain({ baseUrl: NODE, timeout: REQ_MS, maxRetries: 2 });
 
 try {
   // ── 1. auth ──
