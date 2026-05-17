@@ -1,0 +1,11 @@
+{
+  "name": "evaporchain-gdpr-erasure-pilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Turnkey GDPR-Erasure pilot: off-chain crypto-shred half of model A, wired to the verified chain-side via @evaporchain/sdk.",
+  "scripts": {
+    "pilot": "node pilot.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
