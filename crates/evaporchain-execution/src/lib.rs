@@ -1470,21 +1470,52 @@ impl SimpleExecutor {
     }
 
     /// Execute an energy refresh transaction.
+    ///
+    /// GHOST-B (audit 2026-05-17): refresh + resurrect now require the
+    /// tx public_key to derive to the active object's owner / ghost's owner.
+    /// Pre-fix anyone with funds to pay the fee could resurrect any ghost.
+    /// Object reverts to original owner so no asset theft, but forced
+    /// state inflation + lifecycle hooks + decay obligations on an
+    /// unwilling owner. None public_key remains permissive for
+    /// internal protocol-driven refreshes.
     fn execute_refresh(
         &self,
         db: &mut dyn StateDB,
         tx: &RefreshTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
+        let sender: Option<[u8; 32]> = tx
+            .public_key
+            .as_ref()
+            .map(|pk| *blake3::hash(pk).as_bytes());
+
         // Try refresh on active/grace object first
-        if db.get_object(&tx.object_id).is_some() {
+        if let Some(obj) = db.get_object(&tx.object_id) {
+            if let Some(sender_addr) = sender {
+                if sender_addr != obj.owner {
+                    return Err(ExecutionError::RefreshFailed(format!(
+                        "GHOST-B: refresh caller must be object owner; got {} expected {}",
+                        hex::encode(sender_addr),
+                        hex::encode(obj.owner),
+                    )));
+                }
+            }
             RefreshEngine::refresh(db, &tx.object_id, tx.energy_deposit, epoch)
                 .map_err(|e| ExecutionError::RefreshFailed(e.to_string()))?;
             return Ok(());
         }
 
         // Try resurrection from ghost
-        if db.get_ghost(&tx.object_id).is_some() {
+        if let Some(ghost) = db.get_ghost(&tx.object_id) {
+            if let Some(sender_addr) = sender {
+                if sender_addr != ghost.owner {
+                    return Err(ExecutionError::RefreshFailed(format!(
+                        "GHOST-B: resurrect caller must be ghost owner; got {} expected {}",
+                        hex::encode(sender_addr),
+                        hex::encode(ghost.owner),
+                    )));
+                }
+            }
             RefreshEngine::resurrect(db, &tx.object_id, tx.energy_deposit, epoch)
                 .map_err(|e| ExecutionError::RefreshFailed(e.to_string()))?;
             return Ok(());
@@ -5330,9 +5361,13 @@ mod tests {
     #[test]
     fn test_signed_refresh_succeeds() {
         let mut db = InMemoryStateDB::new();
+        let kp = MlDsaKeypair::generate();
+        // GHOST-B: refresh caller must match object owner — derive owner
+        // from the keypair so the test exercises the happy path.
+        let owner: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
         db.put_object(StateObject {
             id: obj_id(1),
-            owner: addr(1),
+            owner,
             energy: 100,
             half_life: 10,
             created_at: 0,
@@ -5345,7 +5380,6 @@ mod tests {
         });
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
-        let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Refresh(RefreshTx {
             object_id: obj_id(1),
