@@ -94,7 +94,9 @@ For the protocol's intended use:
 - An object whose energy crosses zero between anchors will have its energy quantum-collapsed to 0 at the next anchor.
 - The cumulative rounding error after $\frac{T}{\text{AnchorInterval}}$ re-anchors over a long horizon $T$ is at most $\frac{T}{\text{AnchorInterval}}$ energy units.
 
-For real parameters (`InitialEnergy` ≈ $10^6$, `HalfLife` ≈ $10^4$, $T$ ≈ $10^7$), this is $10^3$ units of error against $10^6$ initial — a relative error below 0.1%.
+For real parameters (`InitialEnergy` ≈ $10^6$, `HalfLife` ≈ $10^4$, $T$ ≈ $10^7$), this is $10^3$ units of error against $10^6$ initial — a relative error below 0.1% **for these specific parameters**.
+
+**Caveat (Frontier #3, audit 2026-05-17):** this 0.1% figure is an arithmetic example, not a mechanized bound. `research/coq/LazyEagerEquivalence.v` proves only the one-sided bound `lazy ≤ eager`; it does not mechanize the magnitude. The above calculation is correct for the given concrete parameters but should not be cited as a general mechanized result. Mechanizing the magnitude bound is open work (see §5.1).
 
 ### 4.2 Why this matters for consensus
 
