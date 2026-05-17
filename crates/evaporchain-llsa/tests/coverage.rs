@@ -13,7 +13,7 @@ fn fresh_registry() -> EpvRegistry {
     r
 }
 
-fn well_formed_amendment(from: u64, to: u64, invariant: [u8; 32]) -> Amendment {
+fn well_formed_amendment(from: u32, to: u32, invariant: [u8; 32]) -> Amendment {
     let mut a = Amendment {
         from_version: from,
         to_version: to,
