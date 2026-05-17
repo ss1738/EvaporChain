@@ -725,8 +725,8 @@ impl Parser {
         self.stmt_depth += 1;
         if self.stmt_depth > MAX_STMT_DEPTH {
             self.stmt_depth -= 1;
-            return Err(ScriptError {
-                line: self.current_line(),
+            return Err(ScriptError::Parse {
+                line: self.line(),
                 message: format!(
                     "block nesting depth exceeds maximum ({MAX_STMT_DEPTH})"
                 ),
