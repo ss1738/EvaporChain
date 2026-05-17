@@ -6,7 +6,7 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
-## 2026-05-17 (evening) — Branch merge sweep + lint fix + doc drift
+## 2026-05-17 (evening, late) — Branch merge sweep + lint fix + doc drift
 
 **Focus:** Merge  into main; fix verification-report defects; push all clean branches.
 **Commits shipped:** 5 on coverage branch → landed on main via 
@@ -36,6 +36,71 @@ ERROR: no targets reachable — aborting against 3-Mini cluster)
 **Blockers / open questions:** All remaining mainnet lanes are OPS-ONLY. No code blockers.
 
 **Cross-references:** commits , , ; VERIFICATION_2026_05_16.md;  branch (now merged).
+
+---
+
+## 2026-05-17 (evening) — Coverage sweep (PRs #385–#395) + 7-agent comprehensive audit
+
+**Focus:** Two-part session. (1) Drive `tests/coverage.rs` integration suites across 11 substrate crates above 35 LOC/test density. (2) Launch 7 parallel specialised auditors covering crypto + post-quantum, consensus + DA, energy + conservation, invention-stack ↔ doctrine alignment, execution + EvaporScript, RPC + node + paymaster + MCP, and formal proof + spec alignment.
+
+**Commits shipped:** 11 coverage PRs merged + 1 audit document.
+- PR #385 — mev-detect (14 tests)
+- PR #386 — app-templates (16)
+- PR #387 — app-templates-bind (16)
+- PR #388 — fee-controller (17)
+- PR #389 — llsa (18)
+- PR #390 — energy-kernel (20)
+- PR #391 — decay-bound-auction (15)
+- PR #392 — paymaster (18)
+- PR #393 — causal-chsh (22)
+- PR #394 — light-cone (37)
+- PR #395 — bell-beacon-v2 (21)
+- `AUDIT_2026_05_17.md` — comprehensive 7-agent audit aggregate (not yet committed at the time of this entry)
+
+**Empirical results:** 214 new integration tests merged across 11 crates. All green on Mini 1.
+
+**Audit headline tally:** 9 CRITICAL, 14 HIGH, 25 MEDIUM, 13 LOW, 11 doctrine/spec/proof drift findings.
+
+**Top-of-stack CRITICALs (drive these first):**
+1. **CR-1** — `evaporchain-crypto::energy_verkle::tests::test_proof_verifies` is RED ON HEAD. `EnergyNode::hash` no DST, `verify` uses DST. Regression from commit `b5959a05` (H2 closure half-applied).
+2. **CR-2 + CR-3** — Verkle non-existence forgery via path-index unbinding + `verify_multi` vs `verify` use incompatible hash schemes (same crate, same fix shape).
+3. **Q1 + Q2 + Q3** — DA-cert single-key forgery chain: `total_stake` attacker-supplied, no validator dedup, signed message excludes `stake` field. One commit closes the class.
+4. **A1** (+ HIGH A2 + A3) — `wallet_sign_tx` / `wallet_submit_tx` skip `require_wallet_ownership`. Pattern across 7 newer api.rs endpoints.
+5. **STATE-2** — 9 RocksDB trait methods are no-op stubs (`put_proposal`, `get_governance_param`, `commit_state_snapshot`, ...). Cluster never persisted a proposal. CLAUDE.md `conservation_enforcement` default flip to `"enforce"` mitigates one slice; other governance params still dead on RocksDB.
+6. **SBA-1** — `sealed_bid_auction.es` reference contract has zero commit-reveal binding (NX4 fix exists only at substrate / Rust layer).
+7. **INV-HIGH-1 + INV-HIGH-2** — MERA computed on every block's hot path despite doctrine §A1.8 FAIL verdict. `evaporchain-mera/Cargo.toml:7` claims "§A1.8 PASS" against an explicit FAIL.
+
+**Cross-cutting themes:**
+- Crypto regressions in H2 closure (DST half-applied — CR-1/2/3 same fix shape, one commit).
+- DA-cert forgery surface (Q1+Q2+Q3 stack to single-BLS-sig cert forgery).
+- Newer api.rs handlers skip wallet-ownership check that older handlers correctly perform (A1+A2+A3).
+- Doctrine drift dominates: MERA hot-path, Causal-CHSH still flagged GATED despite double PASS, Light-Cone "Soul of the chain" framing not shipped, `decompress` formalised in TLA + frontier proof but missing in Rust.
+- Formal-proof headlines overclaim: Decay-BFT safety+liveness is a reachability wrapper; PoHA freeloading is axiomatised (9 axioms); LLSA proof vacuous on decay-floor side. Coq compiles green; doctrine summary doesn't qualify these.
+
+**Verified-clean across all 7 sweeps:**
+- Coq ↔ Rust `energy_at_epoch` is byte-for-byte aligned across all 7 steps (zero-half_life guard, full_halvings, remainder, 64-halving cutoff, linear interp u128 widening, saturating-sub). Coq nat is unbounded; Rust u64 is strictly more conservative.
+- Layer-0 invariant intact (no raw `>>` on energy outside types crate; verified across 73 callers).
+- BatchUndoLog covers all 10 state buckets (M10 intact). C3, M11, M12 all intact.
+- ML-DSA from_bytes layout assertion + canary (Z-UNS-001). BLS PoP DST distinct from sig DST. Hybrid verifier non-short-circuit (Crypto-3).
+- Paymaster runbook claims all hold. MCP write-tools carry `requiresConsent: true`. No secrets in tracing logs. All user_db queries use prepared statements.
+
+**What's next (audit drive order):**
+1. CR-1 (HEAD red — unblocks everything else)
+2. CR-2 + CR-3 (same crate, same patch)
+3. Q1 + Q2 + Q3 (one commit, DA-cert forgery class)
+4. A1 + A2 + A3 (shared `require_signed_for(addr)` helper)
+5. STATE-2 (wire RocksDB column families for governance + snapshots)
+6. Contract patches: SBA-1, LOTTERY-1, SDDC-1, SHLM-1, SPLIT-1, SFSV-1
+7. Q4 strict `>` quorum sweep, Q5 stake-weighted antichain, Q6 canonical DA-sample seed, Q7 bridge state-proof Merkle, Q8 active-set filter
+8. EXEC-2 + PARSE-1 (cheap validator DoS)
+9. L0-A + CONS-A (lambda doctrine drift)
+10. INV-HIGH-1/2 (delete MERA hot-path; fix Cargo.toml)
+11. TLA + frontier proof drift (decompress, magnitude claim, lock-rule)
+
+**Blockers / open questions:** Cluster TLC unverifiable — no JRE on any Mini (`brew install temurin` needed for in-CI model-checking).
+
+**Cross-references:** `AUDIT_2026_05_17.md` (this session's audit aggregate), prior `AUDIT_2026_05_11.md`, raw agent transcripts under `/private/tmp/claude-501/.../tasks/`.
+
 ---
 
 ## 2026-05-17 (afternoon) — Doctrine sweep: Tier-2/3 + light-cone + singh-triage + eth-bridge + node housekeeping
