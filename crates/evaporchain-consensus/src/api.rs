@@ -13115,14 +13115,59 @@ impl DeployedToken {
     }
 
     /// Apply proportional decay to all holder balances.
+    ///
+    /// TOK-A (audit 2026-05-17): pre-fix per-holder decay floor-divided
+    /// each balance independently, so the sum of post-decay holder
+    /// balances was strictly less than `energy_at_epoch(total_supply,
+    /// h, elapsed)` — silent supply destruction up to N units per tick
+    /// (N = holder count). Now: apply per-holder decay, then redistribute
+    /// the floor-division residue (intended_aggregate - actual_aggregate)
+    /// to the highest-balance holder so the contract-level supply tracks
+    /// the chain-level `energy_at_epoch` formula exactly.
     pub fn tick_decay(&mut self, epoch: u64) {
         if epoch <= self.last_decay_epoch {
             return;
         }
         let elapsed = epoch - self.last_decay_epoch;
+
+        // 1. Snapshot the supply before per-holder decay.
+        let supply_before: u64 = self
+            .balances
+            .values()
+            .fold(0u64, |a, b| a.saturating_add(*b));
+
+        // 2. Apply per-holder decay (existing behavior).
         for bal in self.balances.values_mut() {
             *bal = evaporchain_types::energy_at_epoch(*bal, self.decay_half_life, elapsed);
         }
+
+        // 3. Compute the intended aggregate and the per-holder-decay residue.
+        let intended_aggregate =
+            evaporchain_types::energy_at_epoch(supply_before, self.decay_half_life, elapsed);
+        let actual_aggregate: u64 = self
+            .balances
+            .values()
+            .fold(0u64, |a, b| a.saturating_add(*b));
+        let residue = intended_aggregate.saturating_sub(actual_aggregate);
+
+        // 4. Redistribute residue to the highest-balance holder so supply
+        //    matches the chain-level `energy_at_epoch` formula. Deterministic
+        //    tie-break: lexicographic address ordering.
+        if residue > 0 {
+            let recipient = self
+                .balances
+                .iter()
+                .max_by(|(a_addr, a_bal), (b_addr, b_bal)| {
+                    a_bal.cmp(b_bal).then_with(|| b_addr.cmp(a_addr))
+                })
+                .map(|(addr, _)| *addr);
+            if let Some(addr) = recipient {
+                if let Some(bal) = self.balances.get_mut(&addr) {
+                    *bal = bal.saturating_add(residue);
+                }
+            }
+        }
+
         self.last_decay_epoch = epoch;
     }
 }
