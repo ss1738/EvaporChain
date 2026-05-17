@@ -4888,6 +4888,60 @@ impl TendermintConsensus {
                     return actions;
                 }
 
+                // Audit Q3 (2026-05-15): reject proposals with timestamps more
+                // than 30 seconds in the future.  Without this guard a proposer
+                // can set block.timestamp = year_2050 and validators would accept
+                // it, causing epoch-derived energy decay calculations to explode.
+                // Pattern matches MockConsensus::validate_block_header.
+                {
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    const MAX_FUTURE_SECS: u64 = 30;
+                    if block.timestamp > now_secs.saturating_add(MAX_FUTURE_SECS) {
+                        warn!(
+                            height = height,
+                            round = round,
+                            block_ts = block.timestamp,
+                            now = now_secs,
+                            max_future = MAX_FUTURE_SECS,
+                            "Rejected proposal: timestamp too far in the future"
+                        );
+                        return actions;
+                    }
+                }
+
+                // Audit U3 (2026-05-15): reject proposals whose protocol_version
+                // is below the minimum this binary supports.  Without this check a
+                // malicious proposer can submit a stale version block to bypass all
+                // version-gated logic (new opcodes, governance flags, etc.).
+                //
+                // DRIFT-N4 (audit 2026-05-15): `block.protocol_version` is `u8`
+                // and `MIN_SUPPORTED_PROTOCOL_VERSION` is currently `0`, so the
+                // strict `<` comparison is a no-op (always false for an
+                // unsigned type vs. `0`).  Keeping the structure here means a
+                // future hard-fork only needs to bump the constant — no new
+                // code path to wire up — but the comparison is intentionally
+                // dead until that bump happens.  Use `#[allow(...)]` to
+                // silence the clippy/rustc `unused_comparisons` lint without
+                // hiding the intent.
+                {
+                    const MIN_SUPPORTED_PROTOCOL_VERSION: u8 = 0;
+                    #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
+                    let below_min = block.protocol_version < MIN_SUPPORTED_PROTOCOL_VERSION;
+                    if below_min {
+                        warn!(
+                            height = height,
+                            round = round,
+                            block_pv = block.protocol_version,
+                            min = MIN_SUPPORTED_PROTOCOL_VERSION,
+                            "Rejected proposal: protocol_version below minimum supported"
+                        );
+                        return actions;
+                    }
+                }
+
                 let hash = Self::block_hash(&block);
 
                 // ── Equivocation Detection ──
