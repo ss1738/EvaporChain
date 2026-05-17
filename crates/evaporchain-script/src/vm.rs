@@ -1209,6 +1209,57 @@ impl EvaporVM {
                 Ok(Value::Str(s))
             }
 
+            // LOTTERY-1 (audit 2026-05-17): expose VRF beacon as callable
+            // functions so contracts can bind randomness to on-chain state
+            // rather than trusting operator-supplied proofs. Mirrors the
+            // Op::VrfDomainRandomness / Op::RandomRange opcode semantics.
+            "vrf_domain_randomness" => {
+                if arg_count != 1 {
+                    return Err(ScriptError::Runtime(
+                        "vrf_domain_randomness() takes 1 argument (domain string)".into(),
+                    ));
+                }
+                let domain = self.pop()?.as_str()?.to_string();
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(b"EvaporChain_Beacon_Derive");
+                hasher.update(&ctx.vrf_randomness);
+                hasher.update(domain.as_bytes());
+                let derived = hasher.finalize();
+                let value = u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
+                Ok(Value::U64(value))
+            }
+
+            "random_range" => {
+                if arg_count != 1 {
+                    return Err(ScriptError::Runtime(
+                        "random_range() takes 1 argument (max exclusive)".into(),
+                    ));
+                }
+                let max = self.pop()?.as_u64()?;
+                if max == 0 {
+                    return Err(ScriptError::Runtime(
+                        "random_range: max must be > 0".into(),
+                    ));
+                }
+                const MAX_REJECTION_ITERS: u32 = 64;
+                let zone = u64::MAX - (u64::MAX % max);
+                let mut iter: u32 = 0;
+                let value = loop {
+                    let mut h = blake3::Hasher::new();
+                    h.update(b"EvaporChain_RandomRange_Reject_v1");
+                    h.update(&ctx.vrf_randomness);
+                    h.update(&iter.to_le_bytes());
+                    let derived = h.finalize();
+                    let raw =
+                        u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
+                    if raw < zone || iter >= MAX_REJECTION_ITERS {
+                        break raw % max;
+                    }
+                    iter += 1;
+                };
+                Ok(Value::U64(value))
+            }
+
             other => Err(ScriptError::Runtime(format!(
                 "unknown built-in function: {other}"
             ))),

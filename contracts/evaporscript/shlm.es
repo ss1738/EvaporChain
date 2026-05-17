@@ -160,10 +160,12 @@ contract SHLM {
     //   3. Run two-axis Dutch clearing across all eligible bids
     //   4. Confirmed payment routing
     //
-    // Any address may call (the coordinator is a service account); the
-    // contract validates that the employer has an active bounty and the
-    // holder has a valid credential satisfying the bounty conditions.
+    // SHLM-1 (audit 2026-05-17): restrict to admin/coordinator. Prior
+    // comment "Any address may call" was incorrect — any address could
+    // race the coordinator by supplying a low agreed_salary, extracting
+    // the employer's bounty at below-market rate.
     fn record_match(employer: address, holder: address, agreed_salary: u64) {
+        require(caller == self.admin, "only admin/coordinator can record match")
         require(self.sealed == true, "class not registered")
         require(self.bounty_active[employer] == 1, "employer has no active bounty")
         require(self.cred_exists[holder] == 1, "holder has no credential")

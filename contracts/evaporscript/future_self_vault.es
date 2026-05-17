@@ -131,12 +131,15 @@ contract FutureSelfVault {
         emit("listing cancelled")
     }
 
-    // Record a SDDC-cleared sale. The off-chain coordinator calls this
-    // after the Dutch auction clears. Transfers the claim to the winner
-    // and closes the listing. Anyone with the winning address confirmed
-    // off-chain may call — no caller restriction here since the listing
-    // state itself guards the transition.
+    // Record a SDDC-cleared sale. The owner (= the vault creator who
+    // deployed both SFSV and the SDDC instance) calls this after the
+    // Dutch auction clears. SFSV-1 (audit 2026-05-17): prior comment
+    // "no caller restriction" was incorrect — any address could call
+    // with an arbitrary winner_addr during the listing window, racing
+    // the legitimate coordinator (cancel_listing creates a TOCTOU window
+    // where the coordinator and a griever can interleave cancel + record).
     fn record_sale(winner_addr: address) {
+        require(caller == owner, "only coordinator/owner can record sale")
         require(self.sealed == true, "vault not yet sealed")
         require(self.released == false, "vault already released")
         require(self.listed == true, "no active listing")
