@@ -67,7 +67,11 @@ contract VestingSchedule {
         if elapsed >= self.duration_epochs {
             return self.total_grant
         }
-        return self.total_grant * elapsed / self.duration_epochs
+        // VEST-1 (audit 2026-05-17): division-first to avoid u64 overflow at
+        // total_grant * elapsed > u64::MAX. Rounding error ≤ 1 unit.
+        let vest_whole = self.total_grant / self.duration_epochs
+        let vest_rem   = self.total_grant % self.duration_epochs
+        return vest_whole * elapsed + vest_rem * elapsed / self.duration_epochs
     }
 
     // Beneficiary withdraws the delta between vested-now and
@@ -82,7 +86,10 @@ contract VestingSchedule {
             if elapsed >= self.duration_epochs {
                 vested = self.total_grant
             } else {
-                vested = self.total_grant * elapsed / self.duration_epochs
+                // VEST-1: division-first overflow guard.
+                let vest_whole = self.total_grant / self.duration_epochs
+                let vest_rem   = self.total_grant % self.duration_epochs
+                vested = vest_whole * elapsed + vest_rem * elapsed / self.duration_epochs
             }
         }
         require(vested > self.claimed_amount, "nothing to claim")
@@ -116,7 +123,10 @@ contract VestingSchedule {
         if elapsed >= self.duration_epochs {
             return self.total_grant
         }
-        return self.total_grant * elapsed / self.duration_epochs
+        // VEST-1: division-first overflow guard.
+        let vest_whole = self.total_grant / self.duration_epochs
+        let vest_rem   = self.total_grant % self.duration_epochs
+        return vest_whole * elapsed + vest_rem * elapsed / self.duration_epochs
     }
 
     // Vested-but-not-yet-claimed.

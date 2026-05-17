@@ -226,12 +226,11 @@ Qed.
     `nat_shr`, `linear_decay`, and saturating subtraction are all
     individually monotone in their first argument.
 
-    DISCHARGE STATUS 2026-05-07: stated; proof obligation tagged
-    [DRIFT-MONO-INIT]. The tactic `nia` typically handles this kind
-    of integer-floor monotonicity but the case split on the
-    halving-cutoff branch may need manual work. Left as Admitted for
-    a focused follow-up session; the outer `concrete_drift_one_sided`
-    theorem composes cleanly once this discharges. *)
+    DISCHARGE STATUS 2026-05-17 (audit-cleanup): the obligation is
+    now DISCHARGED — see `concrete_step_mono_init` (Qed) below. The
+    comment kept stale "Left as Admitted" wording through several
+    audit rounds; doc-only cleanup. The outer
+    `concrete_drift_one_sided` is also Qed. *)
 (** Helper: per-unit-step bound on linear_decay growth. When v
     increases by 1, linear_decay grows by at most 1 (because
     rem < h ≤ 2h, so each step in v adds < 1 to v*rem/(2h)). *)

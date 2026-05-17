@@ -1199,6 +1199,22 @@ impl P2pNetworkService {
     pub async fn start(
         config: NetworkConfig,
     ) -> Result<(NetworkChannels, NetworkHandle, PeerId), NetworkError> {
+        // Q12 (audit 2026-05-17): refuse to start with an empty chain_id
+        // outside dev / test contexts. Pre-fix an empty chain_id fell
+        // back to legacy unscoped gossipsub topics, which would join a
+        // shared topic mesh and contaminate any other EvaporChain
+        // testnet running on the same LAN. The `EVAPORCHAIN_ALLOW_EMPTY_CHAIN_ID`
+        // env var lets the test harness keep the old behaviour for the
+        // unit tests that pass an empty default.
+        if config.chain_id.is_empty()
+            && std::env::var("EVAPORCHAIN_ALLOW_EMPTY_CHAIN_ID").is_err()
+        {
+            return Err(NetworkError::ConfigError(
+                "chain_id must be non-empty; set it via NetworkConfig.chain_id or \
+                 set EVAPORCHAIN_ALLOW_EMPTY_CHAIN_ID=1 for legacy unscoped topics (test only)"
+                    .into(),
+            ));
+        }
         let block_cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
         let block_cache_inner = Arc::clone(&block_cache);
         let shard_cache: ShardCache = Arc::new(RwLock::new(BTreeMap::new()));
@@ -2277,6 +2293,9 @@ mod tests {
             use_tls: false,
             tls_certs: None,
             peer_authority: crate::tls::PeerAuthority::permissionless(),
+            // Q12 (audit 2026-05-17): non-empty chain_id required at start;
+            // tests use a deterministic dev string.
+            chain_id: "evaporchain-network-test".into(),
             ..NetworkConfig::default()
         }
     }

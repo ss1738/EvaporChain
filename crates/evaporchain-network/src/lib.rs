@@ -73,6 +73,10 @@ pub enum NetworkError {
     BroadcastFailed(String),
     #[error("connection error: {0}")]
     ConnectionError(String),
+    /// Q12 (audit 2026-05-17): refusing to start with bad config
+    /// (e.g. empty chain_id outside dev/test contexts).
+    #[error("network config error: {0}")]
+    ConfigError(String),
 }
 
 /// Trait for P2P network services.
