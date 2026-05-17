@@ -6,6 +6,38 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (evening) — Branch merge sweep + lint fix + doc drift
+
+**Focus:** Merge  into main; fix verification-report defects; push all clean branches.
+**Commits shipped:** 5 on coverage branch → landed on main via 
+**Deliverables:**
+- **Merged  → main** (): 35 unique commits landed — doctrine triplet e2e suites (60+ substrate crates), coverage tests (30+ crates), SFSV coordinator binary, Tier-2/3 e2e suites, Coq .gitignores, repair-meta binary, init_refresh_market.
+- ** lint fix** ():   now covers both  and ; cargo clippy --workspace --all-targets no longer exits 2 on this crate.
+- **Governance table doc drift fixed** (): CLAUDE.md  default corrected  →  (76d95590 changed the code default in T1.13).
+- **DOCTRINE_PUNCH_LIST stale checkbox closed** (): Layer-4  Promote conservation audit from gating to mandatory checked  with 76d95590 reference.
+- **Pushed clean audit/regression branches** (, ): both were 1 commit ahead of remote; now synced.
+- **All diverged audit/regression branches verified superseded**: , , ,  — all local-only commits already on main via separate commits.
+
+**Empirical results:**  — clean (no absurd_extreme_comparisons error). main at , 0 dirty state.
+
+**Decisions made:**
+- All VERIFICATION_2026_05_16.md code items closed (lint fix + governance table + punch-list checkbox).
+-  merged via  to preserve branch history.
+
+**What's next:**
+1. T0.2 cluster soak (OPS-ONLY — run ━━━ D-track soak: probing 3 target(s) ━━━
+  ⚠️   100.119.53.101:8080  (HTTP 000000, status='')
+  ⚠️   100.113.253.72:8080  (HTTP 000000, status='')
+  ⚠️   100.103.216.125:8080  (HTTP 000000, status='')
+ERROR: no targets reachable — aborting against 3-Mini cluster)
+2. T0.12 auditor selection (OPS-ONLY — operator decision)
+3. All remaining DOCTRINE_PUNCH_LIST  items are 9-15 month MetaCoq/extraction-harness research work
+
+**Blockers / open questions:** All remaining mainnet lanes are OPS-ONLY. No code blockers.
+
+**Cross-references:** commits , , ; VERIFICATION_2026_05_16.md;  branch (now merged).
+---
+
 ## 2026-05-17 (afternoon) — Doctrine sweep: Tier-2/3 + light-cone + singh-triage + eth-bridge + node housekeeping
 
 **Focus:** Clear all untracked doctrine test files and stale source additions from the working tree. Re-commit the 4 Tier-2/3 e2e suites after a concurrent-session rebase wiped them, then pick up 3 more untracked e2e suites (light-cone, singh-triage, eth-bridge) and 2 source additions (init_refresh_market, repair-meta binary).
