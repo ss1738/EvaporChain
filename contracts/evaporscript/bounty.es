@@ -109,7 +109,16 @@ contract Bounty {
         return self.submission_count
     }
 
+    // BOUNTY-1 (audit 2026-05-17): EvaporScript map defaults are U64(0)
+    // regardless of declared value type (see grammar gotchas). Reading
+    // self.submissions[who] for an unsubmitted `who` returns U64(0) and
+    // would surface as a runtime type-mismatch when the caller expects
+    // string. Gate on the parallel `has_submitted` presence map.
     fn submission_of(who: address) -> string {
+        let present = self.has_submitted[who]
+        if present == 0 {
+            return ""
+        }
         return self.submissions[who]
     }
 

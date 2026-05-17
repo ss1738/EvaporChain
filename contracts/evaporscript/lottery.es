@@ -20,6 +20,10 @@ contract Lottery {
         sealed: bool = false
 
         entered: map[address -> u64]
+        // LOTTERY-1 (audit 2026-05-17): track entry order so `draw` can
+        // pick by random index. Maps have no ordered iteration in
+        // EvaporScript; parallel index→address map is the workaround.
+        entry_by_index: map[u64 -> address]
         entry_count: u64 = 0
 
         drawn: bool = false
@@ -49,13 +53,35 @@ contract Lottery {
         require(self.drawn == false, "draw already happened")
         let already = self.entered[caller]
         require(already == 0, "already entered")
+        // LOTTERY-1: stamp the parallel index-keyed map BEFORE
+        // incrementing so `draw` can look up by the random index.
+        self.entry_by_index[self.entry_count] = caller
         self.entered[caller] = 1
         self.entry_count += 1
         emit("entry recorded")
     }
 
-    // Operator picks the winner with a VRF proof. Requires the winner
-    // to have entered. One-shot.
+    // LOTTERY-1 (audit 2026-05-17): chain-VRF draw — the
+    // audit-recommended path. The operator triggers the draw, but
+    // `random_range(n)` derives the winning index deterministically
+    // from the chain's VRF beacon. The operator can only choose WHEN
+    // to draw, not WHO wins.
+    fn draw() {
+        require(self.sealed == true, "lottery not configured")
+        require(caller == owner, "only operator can trigger draw")
+        require(self.drawn == false, "lottery already drawn")
+        require(self.entry_count > 0, "no entries to draw from")
+        let winner_index = random_range(self.entry_count)
+        self.winner = self.entry_by_index[winner_index]
+        self.drawn = true
+        emit("winner drawn")
+    }
+
+    // LEGACY operator-supplied VRF path. Retained for backward compat
+    // with existing pilots. AUDIT WARNING: the `proof` string is stored
+    // but not verified against the on-chain beacon; the operator is a
+    // trusted oracle here, not a VRF-fair lottery. New deployments
+    // should use `draw()` above.
     fn set_winner(winner_addr: address, proof: string) {
         require(self.sealed == true, "lottery not configured")
         require(caller == owner, "only operator can draw")

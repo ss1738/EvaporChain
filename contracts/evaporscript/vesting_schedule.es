@@ -67,7 +67,13 @@ contract VestingSchedule {
         if elapsed >= self.duration_epochs {
             return self.total_grant
         }
-        return self.total_grant * elapsed / self.duration_epochs
+        // VEST-1 (audit 2026-05-17): division-first to avoid u64 overflow
+        // when total_grant * elapsed exceeds u64::MAX. Mirrors the
+        // PaymentSplit::claim fix. Precision loss bounded by
+        // duration_epochs - 1 units.
+        let whole = self.total_grant / self.duration_epochs
+        let rem   = self.total_grant % self.duration_epochs
+        return whole * elapsed + rem * elapsed / self.duration_epochs
     }
 
     // Beneficiary withdraws the delta between vested-now and
@@ -116,7 +122,13 @@ contract VestingSchedule {
         if elapsed >= self.duration_epochs {
             return self.total_grant
         }
-        return self.total_grant * elapsed / self.duration_epochs
+        // VEST-1 (audit 2026-05-17): division-first to avoid u64 overflow
+        // when total_grant * elapsed exceeds u64::MAX. Mirrors the
+        // PaymentSplit::claim fix. Precision loss bounded by
+        // duration_epochs - 1 units.
+        let whole = self.total_grant / self.duration_epochs
+        let rem   = self.total_grant % self.duration_epochs
+        return whole * elapsed + rem * elapsed / self.duration_epochs
     }
 
     // Vested-but-not-yet-claimed.
