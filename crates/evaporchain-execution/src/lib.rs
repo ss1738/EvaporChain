@@ -101,6 +101,26 @@ pub enum ExecutionError {
 /// without a state-poisoning shim; integration with `execute_block`
 /// is just a `?` away from the call site (Layer 0 item 1 follow-up
 /// per the conservation gate's negative-case test gap).
+/// CONS-A (audit 2026-05-17): governance-read for the chain λ.
+/// Pre-fix every conservation-gate call site hard-coded
+/// `ChainLambda::default_genesis()` while `lambda.rs` doc claimed
+/// "a future governance amendment can rotate λ without each layer
+/// carrying its own constant" — the claim was unrealised because no
+/// governance read path existed. This helper reads the doctrine-keyed
+/// param `chain_lambda_half_life` and falls back to default_genesis()
+/// when absent or invalid (zero / non-numeric).
+pub fn governance_chain_lambda(db: &dyn StateDB) -> evaporchain_energy_kernel::ChainLambda {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    if let Some(val) = db.get_governance_param("chain_lambda_half_life") {
+        if let Ok(hl) = val.parse::<u64>() {
+            if hl > 0 {
+                return ChainLambda::new(Lambda::from_epochs(hl));
+            }
+        }
+    }
+    ChainLambda::default_genesis()
+}
+
 pub fn evaluate_conservation_gate(
     audit_verdict: Result<(), evaporchain_energy_kernel::ConservationViolation>,
     must_enforce: bool,
@@ -380,6 +400,10 @@ const GOVERNABLE_PARAM_KEYS: &[&str] = &[
     "base_fee_floor",
     "base_fee_ceiling",
     "target_gas_utilization",
+    // CONS-A (audit 2026-05-17): chain-global λ half-life. Read by
+    // `governance_chain_lambda` at every conservation-gate site;
+    // default_genesis() (4096 epochs) is the absent-value fallback.
+    "chain_lambda_half_life",
 ];
 
 fn is_governable_param_key(key: &str) -> bool {
@@ -447,6 +471,22 @@ fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
                     Err(format!(
                         "target_gas_utilization out of range [0.0, 1.0]: {}",
                         v
+                    ))
+                }
+            }),
+        // CONS-A (audit 2026-05-17): bound chain_lambda_half_life within
+        // sensible epoch counts so a malicious proposal can't set λ to 0
+        // (would degenerate the energy_at_epoch decay) or to a number that
+        // exceeds plausible chain horizons.
+        "chain_lambda_half_life" => value
+            .parse::<u64>()
+            .map_err(|_| "chain_lambda_half_life must be a positive integer".to_string())
+            .and_then(|v| {
+                if (1..=1_000_000_000).contains(&v) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "chain_lambda_half_life out of range [1, 1_000_000_000] epochs: {v}"
                     ))
                 }
             }),
@@ -3811,7 +3851,8 @@ impl ExecutionEngine for SimpleExecutor {
             db,
             self.refresh_pool.total_accrued(),
         );
-        let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+        // CONS-A (audit 2026-05-17): governance-read for chain λ.
+        let lambda = crate::governance_chain_lambda(db);
         // epochs_elapsed = block.epoch − last_audit_epoch. On the
         // first audit (None), elapsed = 0 — the kernel's λ-decay floor
         // collapses to "no decay allowed", which is the right

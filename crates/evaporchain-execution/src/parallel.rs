@@ -2403,7 +2403,8 @@ impl ExecutionEngine for ParallelExecutor {
             db,
             self.refresh_pool.total_accrued(),
         );
-        let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+        // CONS-A (audit 2026-05-17): governance-read for chain λ.
+        let lambda = crate::governance_chain_lambda(db);
         // epochs_elapsed = block.epoch − last_audit_epoch (0 on first
         // audit); see SimpleExecutor for the rationale.
         let epochs_elapsed = self
