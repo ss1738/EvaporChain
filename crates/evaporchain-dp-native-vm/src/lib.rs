@@ -1,5 +1,14 @@
 //! Differential-Privacy-Native VM.
 //!
+//! Per `research/INVENTION_STACK.md` §A1.6 — Tier-2 VM-paradigm triplet
+//! (pairs with `evaporchain-total-evaporscript` + `evaporchain-cap-decay-vm`):
+//!
+//! > **DP-Native VM** — `(ε, δ)`-differential privacy as a first-class
+//! > VM resource. Every query against a sensitive dataset draws from a
+//! > finite ε-budget that decays under chain-global λ. When the
+//! > reservoir empties the query gate fails closed by construction —
+//! > no off-chain privacy escrow needed.
+//!
 //! ## What this crate is
 //!
 //! A budget tracker + noise mechanism layer for VM-level

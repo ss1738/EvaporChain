@@ -1,6 +1,15 @@
 //! Capability-Decay VM — KeyKOS/seL4 object-capability with
 //! structural energy-bound authority.
 //!
+//! Per `research/INVENTION_STACK.md` §A1.6 — Tier-2 VM-paradigm triplet
+//! (pairs with `evaporchain-total-evaporscript` + `evaporchain-dp-native-vm`):
+//!
+//! > **Capability-Decay VM** — KeyKOS/seL4-style object capabilities
+//! > whose authority decays under chain-global λ. Solves the
+//! > capability-lifetime hole that all classical ocap systems leak:
+//! > capabilities, once granted, used to persist until explicit
+//! > revocation. Here, every capability evaporates on its own.
+//!
 //! ## Why ocap, why decay
 //!
 //! Default-deny is the inverse of EVM's default-allow + ACL.

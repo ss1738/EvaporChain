@@ -1,5 +1,13 @@
 //! Total-Programming EvaporScript — structural totality checker.
 //!
+//! Per `research/INVENTION_STACK.md` §A1.6 — Tier-2 VM-paradigm triplet
+//! (pairs with `evaporchain-cap-decay-vm` + `evaporchain-dp-native-vm`):
+//!
+//! > **Total EvaporScript** — Coq/Agda-style structural totality
+//! > checker. Every loop carries a syntactic termination witness, so
+//! > every contract call terminates by construction — strictly
+//! > stronger than gas-metered halting.
+//!
 //! ## What this crate is
 //!
 //! A restricted AST and a static checker that statically rejects
