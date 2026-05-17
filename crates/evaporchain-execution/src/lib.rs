@@ -1493,7 +1493,7 @@ impl SimpleExecutor {
         // the object/ghost owner. If pk is None we permit the call (the
         // tx came from a system path that doesn't sign — e.g. an
         // internal protocol-driven refresh) which is the existing behavior.
-        let sender: Option<AccountAddress> = tx
+        let sender: Option<evaporchain_types::AccountAddress> = tx
             .public_key
             .as_ref()
             .map(|pk| *blake3::hash(pk).as_bytes());
