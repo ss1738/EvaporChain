@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-17 (afternoon) — Doctrine sweep: Tier-2/3 + light-cone + singh-triage + eth-bridge + node housekeeping
+
+**Focus:** Clear all untracked doctrine test files and stale source additions from the working tree. Re-commit the 4 Tier-2/3 e2e suites after a concurrent-session rebase wiped them, then pick up 3 more untracked e2e suites (light-cone, singh-triage, eth-bridge) and 2 source additions (init_refresh_market, repair-meta binary).
+**Commits shipped:** 5 (`5b124b77`, `7c22ec3e`, `4100ac82`, `e4791533`, SESSION_PROGRESS)
+**Deliverables:**
+- **Re-committed 4 Tier-2/3 e2e suites** (`5b124b77`): ew-twap (13 tests), thermal-stm (10), epa-mmr (16), plc (11) — 50 total. Original commit `7b1b6f35` was wiped by a concurrent session's rebase; files re-deployed from MacBook and re-committed on current branch tip.
+- **Committed 3 more untracked e2e suites** (`7c22ec3e`): light-cone (16 tests, §4.1 network-partition fork-and-merge DAG fixture), singh-triage (19 tests, §A5 5-bucket inbox triage), eth-bridge (6 tests, Rust/Solidity bit-compat for ConeIntersection.energyAtEpoch).
+- **init_refresh_market.rs** (`4100ac82`): typed init for AMM-priced namespace rent (app-templates-engine).
+- **repair-meta binary** (`4100ac82`): `crates/evaporchain-node/src/repair_meta.rs` + Cargo.toml [[bin]] declaration for reading/patching CF_META/parent_hash in a RocksDB data dir.
+- **Removed misplaced src/Cargo.toml** (`e4791533`): stale duplicate without app-templates + tokio-util entries; real Cargo.toml already correct.
+
+**Empirical results:** 50 + 16 + 19 + 6 = 91 doctrine e2e tests green on Mini 1, 0 failures across all 7 crates.
+
+**Decisions made:** Working tree now clean of untracked non-Coq files on this branch.
+
+**What's next:**
+1. SFSV off-chain coordinator binary (path to Paper 1, SDDC Dutch auction clearing)
+2. Commit devnet sig-verify fix and push all branches to GitHub
+3. VM paradigm crates (`total-evaporscript`, `cap-decay-vm`, `dp-native-vm`) already have passing e2e suites — no work needed there
+
+**Blockers / open questions:** Concurrent agent sessions on the same branch can rebase and wipe commits. Watch for this pattern.
+
+**Cross-references:** commits `5b124b77`, `7c22ec3e`, `4100ac82`, `e4791533`; prior session `01cfafe3` (singh-* sweep).
+
+---
+
 ## 2026-05-17 (afternoon) — Doctrine triplet sweep: Tier-2/3 substrate crates
 
 **Focus:** Complete the doctrine triplet (non-trivial fixture + adversarial + INVENTION_STACK §4.3 citation) for the 4 remaining Tier-2/3 App-Layer substrate crates: `evaporchain-ew-twap`, `evaporchain-thermal-stm`, `evaporchain-epa-mmr`, `evaporchain-plc`.
