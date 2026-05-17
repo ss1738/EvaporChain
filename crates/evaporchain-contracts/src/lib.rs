@@ -639,7 +639,11 @@ impl ContractEngine {
                         )));
                     }
                     RuleAction::CostEnergy(cost) => {
-                        energy_cost += cost;
+                        // RULE-1 (audit 2026-05-17): saturating-add so a
+                        // contract with multiple CostEnergy rules near
+                        // u64::MAX can't silently wrap energy_cost back
+                        // toward zero. Pre-fix raw `+=` would wrap.
+                        energy_cost = energy_cost.saturating_add(*cost);
                         rules_triggered.push(format!("CostEnergy({cost}) on {method}"));
                     }
                     RuleAction::EmitEvent(msg) => {
