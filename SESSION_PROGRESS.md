@@ -6,6 +6,33 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (night, very late) — SinghTriage §A5.4: EvaporScript contract + deploy script live-verified (classify + refresh modes)
+
+**Focus:** Write `singh_triage.es` (wallet-opens-on-inbox paradigm, map[u64->u64] items, nested while loop urgency classification) and live-verify both modes against permanent Hetzner node.
+**Commits shipped:** 1 (`a072f063`)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `contracts/evaporscript/singh_triage.es` | CREATED, 214 LOC, 7 methods |
+| `scripts/deploy-singh-triage.sh` | CREATED, 452 LOC, 12-step proof |
+**Empirical results:**
+- classify mode: contract_id=38 — count_today=1, count_healthy=1, count_decayed=1 ✓; require_urgent(slot=0) hops=1 ≤ horizon_today=2 ✓
+- refresh mode: contract_id=41 — full round-trip: archive(1)→count_archived=1 ✓; refresh(0,131072)→item 0 Today→Healthy ✓; let_die(2)→decayed=0 ✓
+**Decisions made:**
+- map[u64->u64] with auto-assigned slots (item_count as next slot) — clean classify_all iteration
+- Hyperbolic decay `cur_e = energy * hl / (elapsed + hl)` — same as SinghResonance (no >> outside evaporchain-types)
+- Hops counting via nested while loop: `while e_tmp > 1 { e_tmp /= 2; hops += 1 }` — at depth 4-6, well within MAX_STMT_DEPTH=64
+- Randomize INITIAL_ENERGY (`20000000 + $RANDOM%32768`) — prevents deploy tx dedup between runs
+- fund_account helper (randomised amount) — seeds zero-balance account[2] before step 12 classify_all
+**What's next:**
+- §A5.4 remaining: Singh-Heartbeat (5–7 wk), Singh-Lineage (10–14 wk)
+- §A5.5 Consumer Apps: Singh Letter / Singh ChildKey
+- Singh-Posthuma §A5.3 death oracle deferred until post-core-sprint
+**Blockers / open questions:** None
+**Cross-references:** CHANGELOG.md `a072f063`; contracts 38/41 on node http://89.167.52.40:8099
+
+---
+
 ## 2026-05-18 (night, very late) — MortalNft §A5.3: deploy script live-verified (transfer + auth modes)
 
 **Focus:** Write and live-verify `deploy-mortal-nft.sh` for the existing `mortal_nft.es` contract — completes the §A5.3 NFT triple (MortalNft + Singh-Migrant + Singh-Sabi).
