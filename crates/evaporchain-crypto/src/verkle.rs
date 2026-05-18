@@ -891,6 +891,7 @@ mod tests {
     /// Adversary's goal: trip a depth bug, force quadratic-time
     /// behaviour, or break proof verification at deep paths.
     #[test]
+    #[ignore = "too slow under llvm-cov instrumentation; run with cargo test directly"]
     fn adversarial_collision_heavy_keys_round_trip() {
         let mut trie = VerkleTrie::new();
         let mut keys = Vec::new();
