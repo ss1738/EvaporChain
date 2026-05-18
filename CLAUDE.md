@@ -138,6 +138,11 @@ Flags are set via `POST /api/governance/param` and read via `GET /api/governance
 
 5 Coq proofs in `research/coq/` + `research/proofs/LLSAInvariantPreservation.v`, all zero-Admitted under Rocq 9.1.1. CI `coq` job runs `make` in `research/coq/` on every PR. Do not add `Admitted` — fix the proof instead.
 
+**Qualification (audit 2026-05-17):**
+- `PoHAFreeloading.v` — theorem is Qed, but proved relative to 9 cryptographic `Axiom`s (hash collision-resistance, BLS unforgeability, sampling-seed unmanipulability, negligibility closure). This is standard practice for crypto-game proofs in Coq; the axioms name exactly what remains unproved.
+- `EvaporChainSafetyLiveness.v` — BIG theorem is Qed, but conditional on user-supplied `Safety ss0` and `Liveness ss0` hypotheses (the base-case preservation obligations). It proves a reachability-induction; it does **not** prove the base invariants from scratch.
+- The other 4 proofs (`EnergyDecayMonotonicity`, `EnergyVerkleCompression`, `LazyEagerEquivalence`, `LLSAInvariantPreservation`) are fully unconditional Qed (no hiding axioms, no user-supplied hypotheses).
+
 5 TLA+ specs in `research/tla/` (`EvaporChainBFT`, `ConservationInvariant`, `PoHA`, `RuleBasedConsensus`, `EnergyVerkleTrie`). All `.cfg` files have `CHECK_DEADLOCK FALSE` — the bounded model reaches a terminal state at MaxHeight, which TLC flags as deadlock by design.
 
 ## Key non-obvious conventions
