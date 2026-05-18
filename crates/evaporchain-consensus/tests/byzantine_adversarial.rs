@@ -585,6 +585,76 @@ fn test_byzantine_jailed_validator_vote_ignored() {
     );
 }
 
+/// HONEST jailed-vote quorum probe — added 2026-05-18 end-to-end audit.
+///
+/// `test_byzantine_jailed_validator_vote_ignored` (above) passes for the
+/// WRONG reason: a lone jailed 1000-stake prevote is below the
+/// jailed-excluded threshold (`floor(2*2000/3)+1 = 1334`) whether or not
+/// jailed votes are filtered, so it NEVER exercises the bug.
+///
+/// VERIFIED in code: `ValidatorSet::total_stake()`
+/// (consensus-types/src/lib.rs) `.filter(|v| !v.jailed)` — the quorum
+/// DENOMINATOR excludes jailed. The audit traced that vote ingestion
+/// uses `validator_set.get()` (which returns jailed validators), so a
+/// jailed validator's prevote may still be counted in the NUMERATOR
+/// while the threshold has dropped → quorum reachable with < 2/3 of
+/// genuinely-active stake (BFT safety-margin erosion).
+///
+/// This probes the MARGINAL case: v1,v2 active (1000 each), v3 jailed
+/// (1000), threshold = 1334. v1 prevotes (1000, below threshold). v3
+/// (JAILED) prevotes (1000) — the marginal vote.
+///   CORRECT  : v3 filtered → numerator 1000 < 1334 → NO precommit.
+///   BUGGY    : v3 counted   → 2000 >= 1334 → precommit fires with only
+///              ONE genuinely-active validator (50% of true active stake).
+///
+/// `#[ignore]`d so it does NOT silently break CI, but it EXISTS as the
+/// honest probe the prior test failed to be. Un-ignore — and it must
+/// PASS — once the jailed-vote numerator/denominator asymmetry is
+/// resolved (jailed-filter at vote ingestion or in the quorum sum).
+#[test]
+#[ignore = "AUDIT 2026-05-18: exposes jailed-vote quorum num/denom asymmetry (tendermint vote ingestion vs consensus-types total_stake). Un-ignore + must pass once fixed."]
+fn test_jailed_validator_marginal_vote_must_not_reach_quorum() {
+    let mut vs = ValidatorSet::new();
+    vs.add_validator(make_validator(1, 1000));
+    vs.add_validator(make_validator(2, 1000));
+    let mut v3 = make_validator(3, 1000);
+    v3.jailed = true;
+    vs.add_validator(v3);
+
+    let mut tc = TendermintConsensus::new_for_test(1, 10, vs);
+    let block_hash = [0xAAu8; 32];
+
+    // v1 (active) prevotes — 1000, below the jailed-excluded threshold 1334.
+    let _ = tc.on_message(ConsensusMessage::Prevote {
+        height: 1,
+        round: 0,
+        block_hash: Some(block_hash),
+        validator_id: 1,
+        bls_signature: None,
+    });
+    // v3 (JAILED) prevotes — the marginal vote that must NOT be counted.
+    let actions = tc.on_message(ConsensusMessage::Prevote {
+        height: 1,
+        round: 0,
+        block_hash: Some(block_hash),
+        validator_id: 3,
+        bls_signature: None,
+    });
+
+    let precommitted = actions.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Precommit { .. })
+        )
+    });
+    assert!(
+        !precommitted,
+        "SAFETY: a jailed validator's prevote crossed quorum with only one \
+         genuinely-active validator (50% of true active stake) — jailed-vote \
+         numerator/denominator asymmetry (BFT safety-margin erosion)."
+    );
+}
+
 // ─── Additional Edge Cases ──────────────────────────────────────────────────
 
 #[test]
