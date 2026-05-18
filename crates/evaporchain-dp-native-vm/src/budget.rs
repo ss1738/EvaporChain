@@ -68,14 +68,15 @@ impl PrivacyBudget {
         }
     }
 
-    /// True iff the budget is fully exhausted on both axes.
+    /// True iff the budget can accept no more queries.
     ///
-    /// Uses `&&` so that datasets with `initial_delta_ppb = 0` (pure ε-DP)
-    /// are not reported exhausted while epsilon remains — the delta axis is
-    /// trivially satisfied at zero for such datasets and must not be the
-    /// deciding factor (audit 2026-05-18 F16).
+    /// Epsilon is always a binding constraint; the delta axis only counts if
+    /// `initial_delta_ppb > 0`. For pure ε-DP datasets (`initial_delta_ppb = 0`),
+    /// `remaining_delta_ppb()` is trivially 0 and must not trigger exhaustion
+    /// while epsilon remains (audit 2026-05-18 F16).
     pub fn is_exhausted(&self) -> bool {
-        self.remaining_epsilon_micros() == 0 && self.remaining_delta_ppb() == 0
+        self.remaining_epsilon_micros() == 0
+            || (self.initial_delta_ppb > 0 && self.remaining_delta_ppb() == 0)
     }
 }
 
@@ -321,11 +322,9 @@ mod tests {
         }
     }
 
-    /// T1.20 — `is_exhausted` returns true on EITHER axis being
-    /// at zero (line 72-74: `||` not `&&`). The chain refuses
-    /// queries the moment either ε OR δ hits 0; existing
-    /// `budget_exhausts_then_fails_closed` only tested
-    /// dual-exhaustion. Pin both partial cases.
+    /// T1.20 — `is_exhausted` returns true when epsilon is depleted OR when
+    /// delta (with non-zero initial budget) is depleted. For pure ε-DP datasets
+    /// (initial_delta_ppb=0) the delta axis never triggers exhaustion (audit F16).
     #[test]
     fn t1_20_is_exhausted_on_either_axis() {
         // ε exhausted, δ remaining.
@@ -351,6 +350,24 @@ mod tests {
         // Neither exhausted → false.
         let healthy = PrivacyBudget::new(1_000_000, 1_000);
         assert!(!healthy.is_exhausted());
+
+        // audit F16: pure ε-DP dataset (initial_delta=0) — must NOT be
+        // reported exhausted while epsilon remains.
+        let pure_eps = PrivacyBudget {
+            initial_epsilon_micros: 1_000_000,
+            initial_delta_ppb: 0,
+            consumed_epsilon_micros: 500_000,
+            consumed_delta_ppb: 0,
+        };
+        assert!(!pure_eps.is_exhausted());
+        // Once epsilon is also consumed, it is exhausted.
+        let pure_eps_done = PrivacyBudget {
+            initial_epsilon_micros: 1_000_000,
+            initial_delta_ppb: 0,
+            consumed_epsilon_micros: 1_000_000,
+            consumed_delta_ppb: 0,
+        };
+        assert!(pure_eps_done.is_exhausted());
     }
 
     #[test]
