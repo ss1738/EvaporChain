@@ -260,6 +260,54 @@ structure from a real fixture, pin the affine encoding, THEN write
 the `ck`/`W` extractor + box-iterate (as `l_u_secondary_extract` was
 "verified empirically").
 
+### S4a extractor — complete executable spec (all primitives pinned)
+
+Every decoder is now an exact, codebase-proven reuse. No guessing
+remains; this is mechanical execution + box-iterate.
+
+**Point decode (ck[i], h — bare hex; comm_W — `0x` hex):** reuse
+`section2_witness.rs:208-223` verbatim pattern —
+```
+use nova_snark::provider::bn256_grumpkin::grumpkin::Affine as GrumpkinAffine;
+use group::GroupEncoding; use crate::scalar_adapter::primary_to_ark_fr;
+let s = hex.strip_prefix("0x").unwrap_or(hex);          // handles bare + 0x
+let mut arr=[0u8;32]; arr.copy_from_slice(&hex::decode(s)?);
+let repr: <GrumpkinAffine as GroupEncoding>::Repr = arr.into();
+let a = Option::<GrumpkinAffine>::from(GrumpkinAffine::from_bytes(&repr)).ok_or(..)?;
+let pt = ark_ec::short_weierstrass::Affine::<GrumpkinConfig>::new(
+            primary_to_ark_fr(a.x), primary_to_ark_fr(a.y));   // validated by grumpkin_config trust gate
+```
+(`nova_snark` is a normal dep — no `halo2curves` in `[dependencies]`.)
+
+**Scalar decode (W[i], r_W — secondary scalar = BN254 Fq, EvmCompat
+`0x` BE-hex):** reuse `l_u_secondary_extract::parse_secondary_scalar_hex`
+(proven) → `SecondaryScalar`, then **one new exact converter** in
+`scalar_adapter.rs` mirroring `primary_to_ark_fr` but targeting Fq:
+```
+pub fn secondary_to_ark_fq(s: SecondaryScalar) -> ark_bn254::Fq {
+    let repr: [u8;32] = s.to_repr().into();
+    ark_bn254::Fq::from_le_bytes_mod_order(&repr)   // EXACT: target IS Fq, value<q
+}
+```
+(NOT `secondary_to_ark_fr_lossy` — that reduces mod Fr, wrong for MSM
+scalars. This is the only genuinely new code.)
+
+**Module `s4_secondary_extract.rs`:**
+- `extract_secondary_ck(pp_json) -> (Vec<Affine<GrumpkinConfig>>, Affine<GrumpkinConfig>)`
+  from `pp_json["ck_secondary"]["ck"]` (array, len 16384) + `["h"]`.
+- `extract_secondary_witness(rs_json) -> (Vec<Fq>, Fq)` from
+  `rs_json["r_W_secondary"]["W"]` + `["r_W"]`.
+- `extract_secondary_comm_w(rs_json) -> Affine<GrumpkinConfig>` from
+  `rs_json["r_U_secondary"]["comm_W"]["comm"]` (point decode above).
+
+**Real-fixture `#[ignore]` binding test (S6-class, needs real Nova
+fixture):** build `generate_fixture_with_digest` + `canonical_public_params`;
+`serde_json::to_value` both; extract; `let n=W.len();`
+`pedersen_msm_grumpkin(&W, &ck[..n], &r_W, h)` (W/r_W as
+`EmulatedFpVar<Fq,Fr>` witnesses) → assert `== comm_W`. Adversarial:
+perturb `W[0]` → assert `!=`. Box-iterate endianness exactly as
+`l_u_secondary_extract` was "verified empirically".
+
 **Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
 no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
 constants, (b) compose `ProjectiveVar` MSM with the right coord-field
