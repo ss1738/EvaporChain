@@ -207,17 +207,23 @@ SH=$(submit_tx "/api/tx/call-script" "$ST_BODY" set_terms 4)
 poll_tx "$SH" set_terms 4 >/dev/null
 log "vault sealed."
 
-# ── 2b. fund relay caller ──
+# ── 2b. verify relay caller balance ──
 # try_payout rotates to DEPLOYER+1 after the first pre-release rejection.
-# Ensure that account is funded; the faucet may be blocked on this node
-# so transfer from the deployer instead.
+# That account must be funded; on a fresh node, transfer from the deployer:
+#   POST /api/tx/transfer {"from":DEPLOYER,"to":RELAY,"amount":1000000000000,"nonce":DEPLOYER_NONCE}
 relay_caller=$(( DEPLOYER_U8 + 1 ))
-relay_addr_json=$(jq -n --argjson n "$relay_caller" '([$n] + [range(0;31)|0])')
-RELAY_BODY=$(jq -n --argjson f "$DEPLOYER_U8" --argjson a "$relay_addr_json" \
-  '{from:$f, to_address:$a, amount:1000000000000}')
-RF=$(submit_tx "/api/tx/transfer" "$RELAY_BODY" "fund-relay-caller" 4)
-poll_tx "$RF" "fund-relay-caller" 4 >/dev/null
-log "relay caller account[$relay_caller] funded."
+if ! $DRY_RUN; then
+  relay_bal=$(curl_json GET "/api/accounts" | jq -r \
+    --argjson d "$relay_caller" \
+    '("0123456789abcdef"[($d//16):($d//16+1)] + "0123456789abcdef"[($d%16):($d%16+1)]) as $h |
+     ("0x" + $h + ("00" * 31)) as $addr |
+     first(.[] | select(.address == $addr) | .balance) // 0') || relay_bal=0
+  if (( relay_bal < 1000000 )); then
+    die "relay caller account[$relay_caller] has insufficient balance ($relay_bal). Fund it first:
+  POST /api/tx/transfer {\"from\":$DEPLOYER_U8,\"to\":$relay_caller,\"amount\":1000000000000,\"nonce\":<deployer_nonce>}" 4
+  fi
+  log "relay caller account[$relay_caller] balance=$relay_bal ✓"
+fi
 
 # ── 3. retry try_payout until predicate trips (.es self-guards) ──
 log "Step 3/4 — retry call-script try_payout until included"
