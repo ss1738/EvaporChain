@@ -6,6 +6,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night) — Audit-fix sprint: F9/F10/F11, DA-Q2-BUILD, F2, F16
+
+**Focus:** Close all 4 HIGH/MED findings surfaced by the fresh 2026-05-18 comprehensive audit.
+
+**Commits shipped:** 5
+- `6cb7e261` — fix(total-evaporscript): close F9/F10/F11 — ranking-var reset voids totality cert
+- `529598bb` — fix(audit): close DA-Q2-BUILD, F2, F16 — three audit findings
+- `eb08438a` — fix(dp-native-vm): correct F16 is_exhausted for pure ε-DP datasets (initial fix used && which was wrong; correct fix guards delta arm with initial_delta_ppb > 0)
+- `3b13cf3a` — test(sfsv-coordinator): update T1.20 short-hex test to assert InvalidBidderHex
+
+**Deliverables:**
+- **F9/F10/F11 (HIGH)**: `evaporchain-total-evaporscript/check.rs` — new `non_decrement_assigns_var` helper + `BoundedWhileResetsRanking` error variant + pre-check in BoundedWhile arm. Programs oscillating on reset+decrement (e.g. `r=100; r=r-1`) no longer receive a totality Certificate. Covers direct body (F9/F10) and nested-loop outer-var reset (F11). 3 new tests.
+- **DA-Q2-BUILD (HIGH)**: `evaporchain-da/certificate.rs` — `seen_validators: HashSet<u64>` added to `CertificateBuilder`; `add_attestation` rejects duplicate validator_id before touching `attested_stake`. Replaying the same attestation N times can no longer inflate stake to reach supermajority.
+- **F2 (MED)**: `evaporchain-sfsv-coordinator/auctioneer.rs` — `hex_to_addr` now returns `Option<AccountAddress>`; rejects any hex string that doesn't decode to exactly 32 bytes; `submit_bid` returns `InvalidBidderHex(n)`. Updated T1.20 test that pinned old zero-pad behavior.
+- **F16 (MED)**: `evaporchain-dp-native-vm/budget.rs` — `is_exhausted()` guards delta arm with `initial_delta_ppb > 0` so pure ε-DP datasets (initial_delta=0) are not falsely reported exhausted while epsilon remains.
+
+**Empirical results:**
+- `evaporchain-total-evaporscript`: 43 unit + 6 e2e = 49 tests, 0 failures on Mini 1
+- `evaporchain-da` + `evaporchain-sfsv-coordinator` + `evaporchain-dp-native-vm`: 23+37+N tests, 0 failures
+
+**What's next:**
+- OPS lanes only (T0.2, T0.5, T0.6, T1.17-19, T1.23) — no open code-work findings remain
+- Any future audit can start from a clean slate for the 4 items that were HIGH
+- Lower-priority residual findings (F1 SFSV unauthenticated endpoint, F5 wait_finalised treats included as final, A1-LOW wallet silent skip) remain backlog
+
+**Blockers / open questions:** None code-blocking. All audit findings from the 2026-05-18 sweep closed.
+
+---
+
 ## 2026-05-18 (night) — HBCT + SCL doctrine triplets
 
 **Focus:** Close doctrine triplet gaps in the two launch-dApp crates that were missing press_claim_tests and e2e integration tests.
