@@ -6,6 +6,36 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night, session 4) — SBAV + SGB §A5.1: both contracts + deploy scripts live-verified (4 modes)
+
+**Focus:** Write `sbav_vm.es` (§A5.1 Bennett reversible VM, Landauer entropy) and `sgb_types.es` (§A5.1 Girard linear-logic type discipline), write and live-verify both deploy scripts (2 modes each).
+**Commits shipped:** 1 (this commit)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `contracts/evaporscript/sbav_vm.es` | CREATED, 133 LOC, 7 methods |
+| `contracts/evaporscript/sgb_types.es` | CREATED, 181 LOC, 7 methods |
+| `scripts/deploy-sbav-vm.sh` | CREATED, 6-step proof (reversible + decay modes) |
+| `scripts/deploy-sgb-types.sh` | CREATED, 13-step + 9-step proof (sound + violated modes) |
+**Empirical results:**
+- sbav reversible: contract_id=48 — snap1 reg0=1000 entropy=0; snap2 reg0=0 entropy=0; round-trip confirmed; require_zero_entropy PASSED ✓
+- sbav decay: contract_id=49 — op_swap+op_add zero entropy; op_decay(500) → entropy=500; require_nonzero_entropy PASSED ✓
+- sgb sound: contract_id=50 — Lin×1 Bang×3 Whimper×1; violations=0; require_sound_discipline PASSED ✓
+- sgb violated: contract_id=51 — Lin dropped(0 uses) + Whimper dup(2 uses); violations=2; require_violation_present PASSED ✓
+**Decisions made:**
+- EvaporScript grammar has no XOR/NOT/bitwise ops; SBAV V1 ships ADD/SUB/SWAP + DECAY (sufficient to prove thesis)
+- op_sub uses VM's checked_sub (errors on underflow); no additional require guard needed — VM enforces it
+- SGB declare_var uses auto-assigned sequential slots (same pattern as SinghHeartbeat) for clean O(n) iteration in check_discipline
+- `!=` operator IS supported in EvaporScript grammar (BinOp::Neq at parser.rs:443) — used in SGB check_discipline
+- Bang×3 uses three different callers to avoid TX hash dedup on same-slot use_var calls
+**What's next:**
+- cap_decay.es — Capability-Decay VM §4.2 (CapRegistry: mint/attenuate/revoke/invoke_gate)
+- dp_native.es — DP-Native VM §4.2 (privacy budget: register/consume, monotone exhaustion)
+**Blockers / open questions:** None
+**Cross-references:** contracts 48/49/50/51 on node http://89.167.52.40:8099
+
+---
+
 ## 2026-05-18 (late night, session 3) — SinghHeartbeat + SinghLineage §A5.4: both contracts + deploy scripts live-verified (4 modes)
 
 **Focus:** Write `singh_heartbeat.es` (§A5.4 ambient wallet pulse) and `singh_lineage.es` (§A5.4 graduated dormancy inheritance), write and live-verify both deploy scripts (2 modes each, 4 doctrine proofs total).
