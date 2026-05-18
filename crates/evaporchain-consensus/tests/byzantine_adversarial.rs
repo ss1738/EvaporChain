@@ -611,8 +611,12 @@ fn test_byzantine_jailed_validator_vote_ignored() {
 /// honest probe the prior test failed to be. Un-ignore — and it must
 /// PASS — once the jailed-vote numerator/denominator asymmetry is
 /// resolved (jailed-filter at vote ingestion or in the quorum sum).
+// AUDIT 2026-05-18: FIXED — quorum numerators (check_prevote_quorum /
+// check_precommit_quorum / try_build_commit_certificate /
+// has_da_supermajority) now `.filter(|v| !v.jailed)`, consistent with
+// the total_stake() denominator. This test is now a permanent
+// regression guard (un-ignored — must stay green).
 #[test]
-#[ignore = "AUDIT 2026-05-18: exposes jailed-vote quorum num/denom asymmetry (tendermint vote ingestion vs consensus-types total_stake). Un-ignore + must pass once fixed."]
 fn test_jailed_validator_marginal_vote_must_not_reach_quorum() {
     let mut vs = ValidatorSet::new();
     vs.add_validator(make_validator(1, 1000));

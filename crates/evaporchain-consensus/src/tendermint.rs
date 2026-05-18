@@ -7175,9 +7175,20 @@ impl TendermintConsensus {
             // Must match the per-validator weight used by `total_stake()`
             // (which is what `stake_quorum_threshold` is computed from).
             // See audit P2-01.
+            //
+            // AUDIT 2026-05-18 (jailed-vote num/denom asymmetry): `get()`
+            // returns jailed validators, but `total_stake()` (the
+            // threshold's denominator) does `.filter(|v| !v.jailed)`.
+            // Counting a jailed validator's prevote here while the
+            // threshold excludes it lets quorum be reached with < 2/3 of
+            // genuinely-active stake (BFT safety-margin erosion). The
+            // `.filter(|v| !v.jailed)` makes the numerator consistent
+            // with the denominator. Oracle: byzantine_adversarial.rs
+            // test_jailed_validator_marginal_vote_must_not_reach_quorum.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
@@ -7199,9 +7210,13 @@ impl TendermintConsensus {
         let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         for (vid, hash) in &self.round_state.precommits {
             // Must match `total_stake()` weight function. See audit P2-01.
+            // AUDIT 2026-05-18: exclude jailed (consistent w/ total_stake
+            // denominator) — jailed-vote num/denom asymmetry, see
+            // check_prevote_quorum for the full rationale.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
@@ -7525,9 +7540,13 @@ impl TendermintConsensus {
                 continue;
             };
             // Must match `total_stake()` weight function. See audit P2-01.
+            // AUDIT 2026-05-18: exclude jailed (consistent w/ total_stake
+            // denominator) — jailed-vote num/denom asymmetry. A jailed
+            // signer must not count toward a commit certificate.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             entries.push((*vid, sig_bytes.clone(), stake));
@@ -7841,8 +7860,12 @@ impl TendermintConsensus {
             if !unique.insert(vid) {
                 continue;
             }
+            // AUDIT 2026-05-18: exclude jailed — consistent with the
+            // total_stake() denominator (jailed-vote num/denom asymmetry).
             if let Some(v) = self.validator_set.get(vid) {
-                weight = weight.saturating_add(v.effective_stake());
+                if !v.jailed {
+                    weight = weight.saturating_add(v.effective_stake());
+                }
             }
         }
         weight >= threshold
