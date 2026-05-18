@@ -212,26 +212,44 @@ log "Step 3/4 — retry call-script try_payout until included"
 if $DRY_RUN; then
   log "[DRY-RUN] would loop call-script try_payout until tx state=included"
 else
+  # CallScript signable_bytes does NOT include the epoch field, so two
+  # try_payout calls with different epochs but same (caller, contract_id,
+  # method, args) hash to the same tx and the second submission returns the
+  # cached rejected record. Workaround: rotate the caller index after each
+  # rejection — any account can call try_payout (no caller restriction in
+  # the contract). Caller index 0 = deployer; bump by 1 each rejection.
   deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); ok=0; saw_gate=0
+  tp_caller=$DEPLOYER_U8
+  seen_hashes=()
   while (( $(date +%s) < deadline )); do
     EPOCH=$(get_epoch)
-    TP_BODY=$(jq -n --argjson c "$DEPLOYER_U8" --argjson cid "$CID" --argjson ep "$EPOCH" \
+    TP_BODY=$(jq -n --argjson c "$tp_caller" --argjson cid "$CID" --argjson ep "$EPOCH" \
       '{caller:$c, contract_id:$cid, method:"try_payout", args:[], epoch:$ep}')
     TH=$(printf '%s' "$(curl_json POST /api/tx/call-script "$TP_BODY")" | jq -r '.tx_hash // empty')
     [[ -z "$TH" ]] && { sleep 4; continue; }
     # A freshly-submitted tx is `pending` until mined (~1-2 blocks).
-    # Checking its state once immediately (as before) never observes a
-    # terminal state, so the loop would resubmit forever and never see
-    # the try_payout that actually finalises. Poll THIS hash to a
-    # terminal state before classifying.
+    # Poll to a terminal state before classifying.
     rs=unknown
     for _w in 1 2 3 4 5 6; do
       rs=$(curl_json GET "/api/tx/$TH" | jq -r '.state // "unknown"')
       [[ "$rs" == "included" || "$rs" == "finalised" || "$rs" == "rejected" ]] && break
       sleep 2
     done
-    if [[ "$rs" == "included" || "$rs" == "finalised" ]]; then ok=1; log "try_payout finalised at epoch $EPOCH"; break; fi
-    [[ "$rs" == "rejected" ]] && saw_gate=1   # predicate `require` reverted — gate is real
+    if [[ "$rs" == "included" || "$rs" == "finalised" ]]; then
+      # Confirm the vault actually released (tx "finalised" can be a dedup
+      # of a prior successful run; check chain state to be sure).
+      rel=$(curl_json GET "/api/script/$CID" | jq -r '(.state.released.Bool // .state.released) // false')
+      if [[ "$rel" == "true" || "$rel" == "1" || "$rel" == "True" ]]; then
+        ok=1; log "try_payout finalised at epoch $EPOCH (released confirmed)"; break
+      fi
+      # Stale "finalised" from dedup — treat as rejected, rotate caller.
+      saw_gate=1
+    fi
+    if [[ "$rs" == "rejected" ]]; then
+      saw_gate=1   # predicate `require` reverted — gate is real
+      # Rotate caller so next submission gets a different tx hash.
+      tp_caller=$(( tp_caller + 1 ))
+    fi
     sleep 2   # not yet satisfied ⇒ retry
   done
   (( ok == 1 )) || die "try_payout never succeeded within ${POLL_TIMEOUT_SEC}s (predicate never tripped)" 5
