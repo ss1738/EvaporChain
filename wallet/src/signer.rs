@@ -236,8 +236,19 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             t.signature = Some(sig);
             t.public_key = Some(pk);
         }
-        // Unshield and PrivateTransfer are ZK-authenticated — no signature needed.
-        Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {}
+        // Unshield and PrivateTransfer are ZK-authenticated — no ML-DSA
+        // signature needed; the ZK proof is the auth primitive.
+        // audit A1-LOW 2026-05-18: debug-assert so callers who accidentally
+        // pass a ZK tx to sign_transaction_for_chain get a clear panic in
+        // debug builds rather than a silent no-op.
+        Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {
+            debug_assert!(
+                false,
+                "sign_transaction_for_chain called on a ZK-authenticated tx type \
+                 (Unshield/PrivateTransfer) — ML-DSA signing is a no-op; \
+                 submit with a ZK proof instead"
+            );
+        }
         Transaction::Deferred(d) => {
             d.signature = Some(sig);
             d.public_key = Some(pk);
