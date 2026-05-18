@@ -6,6 +6,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (end-of-night) — Residual audit sweep: F1, F5, A1-LOW closed
+
+**Focus:** Close the 3 remaining lower-priority findings from the 2026-05-18 comprehensive audit. All audit backlogs now empty.
+
+**Commits shipped:** 3
+- `cb044c45` — fix(sfsv-coordinator): F1+F5 — bounded bid queue + exclude included from finality
+- `3e67a984` — fix(wallet): A1-LOW — debug_assert on ZK-tx set_signature no-op
+
+**Deliverables:**
+- **F1 (MED)**: `bid_server.rs` — switched from `mpsc::unbounded_channel` to bounded `mpsc::channel(MAX_BID_QUEUE=1024)`; full queue now returns 429 with back-pressure instead of silently growing heap.
+- **F5 (LOW)**: `node.rs:wait_finalised` — removed `"included"` from the finality match arm; only `"finalised"`, `"finalized"`, `"committed"` trigger settlement. Prevents record_sale firing on a tx that reorgs out.
+- **A1-LOW**: `wallet/signer.rs` — `debug_assert!(false, ...)` in the `Unshield`/`PrivateTransfer` branch of `set_signature`; silent no-op now surfaces as a panic in debug builds with an actionable message.
+
+**Verified on Mini 1:** sfsv-coordinator 23 tests ✅; wallet 9 tests ✅.
+
+**Status: AUDIT BACKLOG EMPTY.** All 7 findings from the 2026-05-18 comprehensive sweep are closed. All AUDIT_2026_05_17 + AUDIT_2026_05_15 + AUDIT_2026_05_11 findings also closed (per AUDIT_PLAN_2026_05_17.md).
+
+**What's next:**
+- Identify next building frontier — all mainnet readiness code work is done; OPS-only lanes blocked on cluster
+- Options: (a) next dApp from APPLICATION_UNIVERSE.md, (b) Paper 1 / whitepaper spec alignment pass, (c) SFSV/SHLM full live-demo integration, (d) light-client chain-tracking hardening
+
+**Blockers / open questions:** None code-blocking. T3.1 cluster (OPS) blocks T0.2/T0.6 soak.
+
+---
+
 ## 2026-05-18 (late night) — Audit-fix sprint: F9/F10/F11, DA-Q2-BUILD, F2, F16
 
 **Focus:** Close all 4 HIGH/MED findings surfaced by the fresh 2026-05-18 comprehensive audit.
