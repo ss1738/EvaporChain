@@ -6,6 +6,59 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (evening) — audit 2026-05-17 final sweep + VM paradigm crate verification
+
+**Focus:** Verify all remaining open items from the afternoon SESSION_PROGRESS entry, confirm VM paradigm crates are doctrine-complete, confirm SFSV coordinator is complete, fix A8-B secondary instance in block_to_json.
+
+**Commits shipped:** 1 (A8-B block_to_json hash fix)
+
+**Deliverables:**
+- **A8-B** — `node/jsonrpc.rs:block_to_json`: secondary JSON-RPC hash used `blake3(serde_json::to_vec(tx))` instead of `blake3(tx.signable_bytes())`. Fix: `evap_getBlockByHash` / `evap_getBlockByNumber` tx-hash list now matches chain-recorded hashes.
+
+**Verified closed (all items from afternoon "What's next"):**
+- GHOST-A: `refresh.rs:119-124` — paper §3.4 Inv-4 amended + code annotated (`db.remove_ghost()` is the uniqueness gate; MMR entry persists as historical proof)
+- H-1: `vrf.rs:210` — `leader_vrf_input` takes `chain_id` + length-prefixes it; all 4 tendermint.rs call sites pass `self.chain_id`
+- H-3: `accumulator.rs:251-273` — `MMRProof.mmr_size` validated via `leaf_count_from_mmr_size` + structural consistency checks before any hash work
+- H-4: `bls_portable.rs:154` — `aggregate_verify_with_pop` exists; `aggregate_verify` docstring warns untrusted-key callers to use the PoP variant
+- INV-HIGH-1: `execution/lib.rs:3944` — MERA tombstoned to `None` with doctrine annotation
+- INV-MED-4: `INVENTION_STACK.md §4.1 row 1` — annotated "(INV-MED-4 audit 2026-05-17)" + "No consensus-rejecting decision currently consults the DAG/antichain machinery"
+- M-3: `verkle.rs:187-192` + `energy_verkle.rs:254-257` — DIAGNOSTIC-ONLY doc annotation
+- M-6: `HashToCurve.sol:14-24` — DST doc corrected to `_NUL_` + M-6 annotation
+- A6: `api.rs:189` — `snapshot_rate_limit` field + `check_snapshot_rate_limit` helper at line 18517 + handler at 18559
+- A8 (primary): `jsonrpc.rs:300` — already fixed in prior session via `tx.signable_bytes()`
+
+**Also confirmed closed (not in afternoon "What's next" but checked):**
+- STATE-2: RocksDB governance stubs real at lines 1454-1480 (get/put_proposal, get/put_governance_param)
+- EXEC-2: call_depth incremented AFTER arg validation at lines 1625-1647, 1819-1864; `saturating_sub` on all exit paths
+- Q1/Q2/Q3, A1/A2/A3, all other CRITICALs/HIGHs: confirmed closed from prior sessions
+
+**VM paradigm crates — doctrine triplet fully verified:**
+- `evaporchain-total-evaporscript`: §4.2 citation ✓, press_claim_tests + adversarial (outer-var nested mutation) ✓, sealed-auction e2e ✓
+- `evaporchain-cap-decay-vm`: §4.2 citation ✓, structural revocation propagation test ✓, 3-level delegation chain e2e ✓
+- `evaporchain-dp-native-vm`: §4.2 citation ✓, budget-monotone + re-registration-forbidden tests ✓, salary-analytics 5-analyst e2e ✓
+
+**SFSV coordinator — complete:** 824 LOC, lib+bin targets, `auctioneer`+`config` unit-tested, `poller::parse_listing` 7-test coverage suite, `coordinator_integration.rs` non-trivial fixture (two listings, one clears, one stays + adversarial). Already committed (`ada8258d`).
+
+**Remaining open (LOW — no security impact):**
+- OPCODE-2/3/4, EXEC-1, SUB-1, POOL-1, RULE-2, WAL-1: gas asymmetries, micro-DoS, dead module hazards. Not expanded in main audit table; need raw agent output for specific sites.
+- OPS lanes (T0.2, T0.5, T0.6, T1.17-T1.19, T1.23): all OPS-ONLY, require operator on live cluster.
+
+**Decisions made:**
+- All 9 CRITICAL + 14 HIGH + 25 MED findings from 2026-05-17 audit are now closed or annotated.
+- VM paradigm crates and SFSV coordinator are doctrine-complete.
+- No new code-work lanes remain in MAINNET_READINESS.md or DOCTRINE_PUNCH_LIST.md.
+
+**What's next:**
+- LOW sweep: obtain raw agent output for OPCODE-2/3/4, EXEC-1, SUB-1, POOL-1, RULE-2, WAL-1 specific sites and fix
+- Push A8-B commit to origin
+- SFSV UI polish: `ui/index.html` wire-up to live node endpoint (not blocking for Paper 1)
+
+**Blockers / open questions:** None code-blocking.
+
+**Cross-references:** AUDIT_2026_05_17.md drive order items 16+ (LOWs); jsonrpc.rs:block_to_json A8-B
+
+---
+
 ## 2026-05-18 (afternoon) — audit 2026-05-17 drive-order completion: Q4/Q5/Q7 + all MEDs/LOWs
 
 **Focus:** Verify remaining HIGH items (Q4, Q5, Q7) and close all MED/LOW findings from the 2026-05-17 audit. 3 doc-fix commits.
