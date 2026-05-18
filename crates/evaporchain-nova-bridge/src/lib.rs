@@ -104,6 +104,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::doc_overindented_list_items)]
 
+pub mod bn256_g1_validation;
 pub mod circuit_builder;
 pub mod compress_ark;
 pub mod eip197;
