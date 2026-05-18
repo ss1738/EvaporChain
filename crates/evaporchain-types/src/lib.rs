@@ -2074,6 +2074,16 @@ pub const BASE_INCLUSION_ENERGY: u64 = 1_000_000;
 /// Block-count half-life for tx inclusion priority. Tuned for 2-second
 /// block intervals — 4 blocks ≈ 8 seconds halving, comparable to the
 /// Ethereum 12-second slot window.
+///
+/// **L0-B (audit 2026-05-17):** intentionally distinct from chain λ.
+/// Chain λ (`GenesisConfig::chain_lambda`) governs object-energy decay
+/// over epoch timescales (thousands of blocks). This constant governs
+/// MEV-resistance tx-priority decay over block timescales (seconds) and
+/// is dimensioned for that specific problem — a single-λ design would
+/// either make MEV resistance too slow or object evaporation too fast.
+/// Doctrine "single-λ" refers to object-level energy; this constant is
+/// an approved MEV-domain boundary value (analogous to how Bitcoin has a
+/// separate block-reward halving schedule and a mempool fee market).
 pub const MEV_INCLUSION_HALF_LIFE_BLOCKS: u64 = 4;
 
 /// Mechanized monotonicity proof: `research/coq/EnergyDecayMonotonicity.v`
