@@ -238,10 +238,15 @@ mod tests {
         );
     }
 
-    /// Section 2 integration test. Requires neptune constants dump.
+    /// Audit B-1/B-2 S2b: a circuit with ONLY Section 2 (no Section 3)
+    /// is now Unsatisfiable — both bindings are mandatory, so a
+    /// single-section circuit is rejected at `validate_structurally`
+    /// (MissingSection3). The both-sections positive is covered by
+    /// the S6 determinism proof and
+    /// `groth16_wrapper::tests::prove_and_verify_real_fixture_round_trip_accepts`.
     #[test]
     #[ignore]
-    fn build_circuit_with_section2_synthesizes_and_is_satisfied() {
+    fn build_circuit_with_section2_alone_is_unsatisfiable() {
         use crate::recursive_snark_fixture::generate_fixture_with_digest;
         use ark_relations::r1cs::ConstraintSystem;
 
@@ -255,23 +260,28 @@ mod tests {
         let circuit = build_circuit_with_section2(&rs, pp_digest, dump).expect("build with s2");
 
         assert!(circuit.section2.is_some(), "section2 witness must be attached");
+        assert!(circuit.section3.is_none(), "section3 must be absent here");
         let cs = ConstraintSystem::<ArkFr>::new_ref();
-        circuit
-            .generate_constraints(cs.clone())
-            .expect("synthesize with section2");
+        let result = circuit.generate_constraints(cs.clone());
         assert!(
-            cs.is_satisfied().expect("is_satisfied"),
-            "circuit with real section2 witness must be satisfied"
+            matches!(
+                result,
+                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+            ),
+            "section2-only circuit must be Unsatisfiable under S2b, got {result:?}"
         );
-        assert_eq!(cs.num_instance_variables(), 5);
     }
 
-    /// Section 3 integration test.
+    /// Audit B-1/B-2 S2b: a circuit with ONLY Section 3 (no Section 2)
+    /// is now Unsatisfiable — both bindings are mandatory, so a
+    /// single-section circuit is rejected at `validate_structurally`
+    /// (MissingSection2). The both-sections positive is covered by the
+    /// S6 determinism proof and
+    /// `groth16_wrapper::tests::prove_and_verify_real_fixture_round_trip_accepts`.
     /// Requires PublicParams::setup (~3s) + pp JSON serialisation (~30s).
-    /// `cargo test -p evaporchain-nova-bridge build_circuit_with_section3 -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn build_circuit_with_section3_synthesizes_and_is_satisfied() {
+    fn build_circuit_with_section3_alone_is_unsatisfiable() {
         use nova_snark::nova::PublicParams;
         use nova_snark::provider::{
             hyperkzg::EvaluationEngine as EE1,
@@ -291,15 +301,15 @@ mod tests {
         let circuit = build_circuit_with_section3(&rs, &pp).expect("build with s3");
 
         assert!(circuit.section3.is_some(), "section3 witness must be attached");
+        assert!(circuit.section2.is_none(), "section2 must be absent here");
         let cs = ConstraintSystem::<ArkFr>::new_ref();
-        circuit
-            .generate_constraints(cs.clone())
-            .expect("synthesize with section3");
+        let result = circuit.generate_constraints(cs.clone());
         assert!(
-            cs.is_satisfied().expect("is_satisfied"),
-            "circuit with real section3 witness must be satisfied"
+            matches!(
+                result,
+                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+            ),
+            "section3-only circuit must be Unsatisfiable under S2b, got {result:?}"
         );
-        // Public-input arity unchanged (Section 3 adds only private witnesses)
-        assert_eq!(cs.num_instance_variables(), 5);
     }
 }

@@ -443,18 +443,20 @@ mod tests {
     /// Pin that the skeleton circuit compiles, synthesizes, and
     /// produces the expected public-input arity (the L1-visible
     /// wiring stays stable across Phase 2.2's sub-steps).
+    /// Audit B-1/B-2 S2b: a section-less `dummy()` no longer
+    /// synthesizes — `generate_constraints` rejects it at the
+    /// mandatory-binding gate before any public-input wiring. The
+    /// canonical 5-input arity contract is pinned instead by the S6
+    /// determinism proof and the real-fixture positive
+    /// (`groth16_wrapper::tests::
+    /// prove_and_verify_real_fixture_round_trip_accepts`).
     #[test]
-    fn skeleton_dummy_synthesizes_with_expected_public_input_arity() {
+    fn skeleton_dummy_does_not_synthesize_missing_sections() {
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
-        NovaVerifierCircuit::dummy()
-            .generate_constraints(cs.clone())
-            .expect("dummy synthesize");
-        // Public inputs: 2 hashes + 1 z0 entry + 1 zi entry = 4
-        // Plus the Groth16-convention constant input = 5 total.
-        assert_eq!(
-            cs.num_instance_variables(),
-            5,
-            "Phase 2.2 public-input arity contract: 2 hashes + |z0| + |zi| + 1 const"
+        let result = NovaVerifierCircuit::dummy().generate_constraints(cs.clone());
+        assert!(
+            matches!(result, Err(SynthesisError::Unsatisfiable)),
+            "section-less dummy() must not synthesize under S2b, got {result:?}"
         );
     }
 
