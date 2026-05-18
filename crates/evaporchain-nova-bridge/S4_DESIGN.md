@@ -191,6 +191,21 @@ the expected prime order; decompress a real-fixture `comm_W` (the
 same path `section2_witness` uses) and assert it lies on the
 ark-defined curve. Config is NOT trusted until this passes on the box.
 
+### S4-nn step-2 — primary (bn256-G1) config: REUSE ark, no bespoke
+
+Source-verified on the box: `ark_bn254::g1::Config` is a complete
+`SWCurveConfig` (`BaseField=ark_bn254::Fq`, `ScalarField=ark_bn254::Fr`,
+`COEFF_A=0`, `COEFF_B=3`, `GENERATOR=(1,2)`). halo2curves `bn256` G1
+is identical (`G1_A=0`, `G1_B=3`, generator `(1,2)`), and the
+constants are tiny (1/2/3) so there is **no Montgomery-vs-canonical
+ambiguity** to resolve. **The primary commitment group needs NO
+bespoke config — reuse `ark_bn254::g1::Config` directly.** Only a
+small cross-library validation test is required (ark vs halo2curves
+generator bytes + a real-fixture primary `comm_W` decompresses onto
+ark BN254-G1). Net: of the two curve configs, only the **secondary**
+(`GrumpkinConfig`) is bespoke; the **primary** is library-provided.
+This further shrinks S4-nn.
+
 **Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
 no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
 constants, (b) compose `ProjectiveVar` MSM with the right coord-field
