@@ -109,25 +109,22 @@ pub enum StructuralValidationError {
     MissingSection3,
 
     /// Section 3 witness is internally inconsistent: its declared
-    /// dimensions and its actual vector lengths disagree. The R1CS
-    /// column count must equal `num_vars + 1 (u) + num_io`, the witness
-    /// vector must have `num_vars` entries, and the error vector must
-    /// have `num_cons` entries (`z = [W, u, X[0], X[1]]`). A witness
-    /// that fails these cheap invariants is malformed and is rejected
-    /// before any field / pairing work. (Exact equality to the
-    /// canonical R1CS shape is enforced *cryptographically* by the
-    /// Groth16 keys, which S2a pins to `setup_shape()`'s shape.)
+    /// dimensions and its actual vector lengths disagree. The witness
+    /// vector must have `num_vars` entries and the error vector must
+    /// have `num_cons` entries. A witness that fails these cheap
+    /// invariants is malformed and is rejected before any field /
+    /// pairing work. (Exact equality to the canonical R1CS shape —
+    /// including `num_cons`/`num_vars`/`num_io` magnitudes — is
+    /// enforced *cryptographically* by the Groth16 keys, which S2a
+    /// pins to `setup_shape()`'s shape and S6 proves bit-identical to
+    /// a real prover's; it is deliberately NOT re-hardcoded here.)
     #[error(
-        "section3 dims inconsistent: num_cols={num_cols} num_vars={num_vars} \
-         num_io={num_io} w_len={w_len} e_len={e_len} num_cons={num_cons}"
+        "section3 dims inconsistent: num_vars={num_vars} \
+         w_len={w_len} e_len={e_len} num_cons={num_cons}"
     )]
     Section3DimsInconsistent {
-        /// Declared column count of the primary R1CS.
-        num_cols: usize,
         /// Declared private-witness count.
         num_vars: usize,
-        /// Declared public-IO count.
-        num_io: usize,
         /// Actual length of the witness vector `w_primary`.
         w_len: usize,
         /// Actual length of the error vector `e_primary`.
@@ -298,12 +295,8 @@ impl NovaVerifierCircuit {
             .section3
             .as_ref()
             .ok_or(StructuralValidationError::MissingSection3)?;
-        if s3.num_cols != s3.num_vars + 1 + s3.num_io
-            || s3.w_primary.len() != s3.num_vars
-            || s3.e_primary.len() != s3.num_cons
-        {
+        if s3.w_primary.len() != s3.num_vars || s3.e_primary.len() != s3.num_cons {
             return Err(StructuralValidationError::Section3DimsInconsistent {
-                num_cols: s3.num_cols,
                 num_vars: s3.num_vars,
                 num_io: s3.num_io,
                 w_len: s3.w_primary.len(),
