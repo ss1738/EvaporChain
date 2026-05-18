@@ -169,6 +169,28 @@ composition**:
   halo2curves' coordinate/serialization convention (the same
   decompress `section2_witness` already does for `comm.{x,y}`).
 
+### S4-nn step-1 inputs — Grumpkin `SWCurveConfig` (authoritative, self-checked)
+
+Extracted from halo2curves 0.9.0 `grumpkin::G1Affine::generator()` on
+the box (canonical `to_repr`, not Montgomery) and decimal-converted +
+on-curve-verified (`y² ≡ x³−17 mod p` holds for the generator):
+
+- `BaseField` (point coords, circuit-native) = `ark_bn254::Fr`
+  - modulus `p = 21888242871839275222246405745257275088548364400416034343698204186575808495617`
+- `ScalarField` (MSM scalars, non-native) = `ark_bn254::Fq`
+- `COEFF_A = 0`
+- `COEFF_B = p − 17 = 21888242871839275222246405745257275088548364400416034343698204186575808495600`
+- `GENERATOR = (1, 17631683881184975370165255887551781615748388533673675138860)`
+- cofactor = 1 (prime order)
+
+Mandatory validation (the non-faked gate, must run on box): a
+`#[cfg(test)]` cross-library check — instantiate halo2curves
+`grumpkin` generator + `b`, compare canonical bytes to the ark
+`GrumpkinConfig` consts; assert ark `GENERATOR` is on-curve and has
+the expected prime order; decompress a real-fixture `comm_W` (the
+same path `section2_witness` uses) and assert it lies on the
+ark-defined curve. Config is NOT trusted until this passes on the box.
+
 **Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
 no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
 constants, (b) compose `ProjectiveVar` MSM with the right coord-field
