@@ -6,6 +6,39 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (night) — Singh-Migrant (Wanderwrits) §A5.3 NFT: kula-ring mechanic live-verified
+
+**Focus:** Write `singh_migrant.es` EvaporScript contract + `deploy-singh-migrant.sh` for the first §A5.3 NFT primitive — the NFT that dies if you keep it.
+
+**Commits shipped:** 1 (`ecd8555f`)
+- `ecd8555f` — feat(A5.3): Singh-Migrant (Wanderwrits) — kula-ring NFT live-verified
+
+**Deliverables:**
+| File | What |
+|------|------|
+| `contracts/evaporscript/singh_migrant.es` | Kula-ring NFT: visited[] map, novel-wallet detection, require_healthy/require_stale gates, assert_prior_holder/assert_novel_address probes |
+| `scripts/deploy-singh-migrant.sh` | 6-step doctrine proof (transfer + stale modes); includes caller-rotation fix for tx-hash dedup on no-arg require_* calls |
+
+**Empirical results:**
+- transfer mode: contract_id=29; novel_transfer_count=1 on first transfer; visited-map correctly distinguishes prior holders (account[1], account[2]) from novel address (account[0]) ✅
+- stale mode: contract_id=31; require_healthy REJECTED at rested=14 ≥ threshold=12; require_stale FINALISED ✅
+- Both modes: full green on permanent Hetzner node `http://89.167.52.40:8099`
+
+**Decisions made:**
+- Added `assert_prior_holder` / `assert_novel_address` probe methods instead of round-trip transfer from unfunded account[2] — cleaner doctrinal proof of visited-map logic
+- Caller rotation for no-arg gate calls (epoch not in signable_bytes → same (caller, cid, method, args) = same dedup hash regardless of epoch)
+
+**What's next:**
+1. Singh-Sabi (Patina Tokens) §A5.3 — `singh_sabi.es` + `deploy-singh-sabi.sh` (6-week build, cheapest; patina_score non-zero-floor decay, PatinaState entropy tuple)
+2. mortal_nft.es already exists — write `deploy-mortal-nft.sh` (simplest NFT, quick win)
+3. Check `MAINNET_READINESS.md` for other open §A5.x lanes
+
+**Blockers / open questions:** None
+
+**Cross-references:** INVENTION_STACK §A5.3; `evaporchain-singh-migrant` crate (decay/refund/token modules, 27+ tests)
+
+---
+
 ## 2026-05-18 (late evening) — SDDC two-axis Dutch auction: deploy script + live proof (§A5.2 foundational mechanism)
 
 **Focus:** Write and prove `deploy-sddc.sh` for SDDC (Singh Decay-Dutch Continuous Auction), the foundational §A5.2 mechanism underlying SFSV, SHLM, SAP, and SCL.
