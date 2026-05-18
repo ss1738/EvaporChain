@@ -308,6 +308,38 @@ fixture):** build `generate_fixture_with_digest` + `canonical_public_params`;
 perturb `W[0]` → assert `!=`. Box-iterate endianness exactly as
 `l_u_secondary_extract` was "verified empirically".
 
+### Primary (bn256-G1) MSM analog — pinned from nova 0.68 source
+
+HyperKZG `CommitmentKey<E>` `#[derive(Serialize)]` =
+`{ ck: Vec<AffineGroupElement>, h: AffineGroupElement, tau_H: G2Affine }`.
+`commit` (hyperkzg.rs:566) = `vartime_multiscalar_mul(v, ck.ck[..]) +
+group(ck.h)·r` — **identical MSM form to Pedersen**; `tau_H` is the
+verifier key only (NOT in the commitment → ignore).
+
+JSON paths (serde derive): `pp_json["ck_primary"]["ck"|"h"]`;
+`rs_json["r_W_primary"]["W"|"r_W"]`;
+`rs_json["r_U_primary"]["comm_W"]["comm"]`.
+
+**Field inversion vs secondary** (the only structural differences):
+- Scalars `W`/`r_W` = E1 scalar = `bn256::Scalar` = BN254 **Fr** =
+  circuit-NATIVE → use existing exact `scalar_adapter::primary_to_ark_fr`
+  (NOT `secondary_to_ark_fq`); gadget scalars are **native `FpVar<Fr>`**,
+  NOT `EmulatedFpVar`.
+- Point group = bn256 G1; coords = `bn256::Base` = BN254 **Fq** =
+  non-native → `ProjectiveVar<ark_bn254::g1::Config,
+  EmulatedFpVar<Fq,Fr>>`; need a bn256-G1 decoder
+  (`nova_snark::provider::bn256_grumpkin::bn256::Affine` +
+  `GroupEncoding`, analog of the grumpkin one) and a coord
+  `bn256::Base → ark_bn254::Fq` exact converter (analog of
+  `primary_to_ark_fr`, target Fq).
+
+So: `pedersen_msm_bn256_g1` gadget (native-scalar / non-native-coord
+inverse of `pedersen_msm_grumpkin`) + `extract_primary_*` (mirror of
+`s4_secondary_extract`, scalar=`primary_to_ark_fr`, point=bn256-G1
+decoder) + real-fixture binding test `r_U_primary.comm_W == Σ Wᵢ·ckᵢ
++ r_W·h`. All paths pinned; no guessing — mechanical once the
+secondary binding validates (it gates the shared structure).
+
 **Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
 no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
 constants, (b) compose `ProjectiveVar` MSM with the right coord-field
