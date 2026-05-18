@@ -6,6 +6,36 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night, session 6) — TotalEvaporScriptVM §4.2 + SinghStrategyMachines §A5.1: both contracts + deploy scripts live-verified (4 modes)
+
+**Focus:** Write `total_evaporscript_vm.es` (§4.2 structural totality checker — last Tier-2 VM triplet) and `ssm_vm.es` (§A5.1 game-semantic contracts — last unshipped §A5.1 primitive), write and live-verify both deploy scripts (2 modes each).
+**Commits shipped:** 1 (this commit)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `contracts/evaporscript/total_evaporscript_vm.es` | CREATED, 183 LOC, 6 methods |
+| `contracts/evaporscript/ssm_vm.es` | CREATED, 260 LOC, 8 methods |
+| `scripts/deploy-total-evaporscript-vm.sh` | CREATED, total + nontotal modes |
+| `scripts/deploy-ssm-vm.sh` | CREATED, strategy + decay modes |
+**Empirical results:**
+- total_vm total: contract_id=57 — BoundedFor(100) + BoundedWhile(50, dec=1); violations=0; require_total PASSED ✓
+- total_vm nontotal: contract_id=58 — BoundedFor(200) + BoundedWhile(50, dec=0); violations=1; require_nontotal_found PASSED ✓
+- ssm strategy: contract_id=60 — o_move(1000)→p_respond(0,800)→o_challenge(1,600)→p_respond(2,500); check_strategy; snap1(O-root slot=0) player=0 energy=1000 justifier_energy=0; snap2(P-resp slot=1) player=1 energy=800 justifier_energy=1000; require_strategy_holds PASSED ✓
+- ssm decay: contract_id=61 — o_move(1000)→p_respond(0,800)→o_challenge(1,600)→drain_move(slot=1,800)→witness snap1(O-chal slot=2): energy=600 justifier_energy=0; require_move_invisible(slot=2) PASSED ✓
+**Decisions made:**
+- TotalEvaporScript: BoundedFor is always total (has_decrement=1 hardcoded); BoundedWhile is total iff has_decrement=1; check_total() scans all instrs and counts kind==2 && has_decrement==0 violations
+- SSM: justifier=999 sentinel = initial O-move (always visible); justifier_energy read as self.move_energy[jus] (0 if jus==999 via map default); jus_alive flag pattern used in check_strategy nested ifs
+- SSM drain_move: requires `move_energy[slot] >= amount` before subtract (no underflow); all owner-only functions (o_move, p_respond, o_challenge) require caller==owner
+- Tier-2 VM substrate triplet (cap_decay + dp_native + total_evaporscript) now fully live-proven on chain
+- §A5.1 game-semantic triad (SBAV + SGB + SSM) now fully live-proven on chain
+**What's next:**
+- Survey remaining un-deployed .es contracts or new doctrine primitives from DOCTRINE_PUNCH_LIST.md
+- Consider SDDC/SFSV/SHLM launch dApp EvaporScript contracts
+**Blockers / open questions:** None
+**Cross-references:** contracts 57/58/60/61 on node http://89.167.52.40:8099
+
+---
+
 ## 2026-05-18 (late night, session 5) — CapabilityDecayVM + DPNativeVM §4.2: both contracts + deploy scripts live-verified (4 modes)
 
 **Focus:** Write `cap_decay.es` (§4.2 ocap + energy-decay) and `dp_native.es` (§4.2 DP-native monotone budget), write and live-verify both deploy scripts (2 modes each).
