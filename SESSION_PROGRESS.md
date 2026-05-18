@@ -38,6 +38,41 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (night) — Singh-Resonance (Vital-Sign NFTs) §A5.3: engagement-coupling live-verified
+
+**Focus:** Write `singh_resonance.es` + `deploy-singh-resonance.sh` — engagement-coupled decay NFT; the fourth §A5.3 primitive.
+
+**Commits shipped:** 1 (to be pushed)
+
+**Deliverables:**
+| File | What |
+|------|------|
+| `contracts/evaporscript/singh_resonance.es` | Engagement-coupled decay: attention window (hyperbolic decay), piecewise coupling formula (min 0.5×/mid 1.0×/max 8×), witness() snapshots, require_loved/require_ignored gates |
+| `scripts/deploy-singh-resonance.sh` | 9-step doctrine proof (engagement + critique modes) |
+
+**Empirical results:**
+- critique mode (contract_id=36): snapshot1_attention=0, snapshot1_eff_hl=50 = base_hl*50/100 ✅; require_ignored PASSED ✅
+- engagement mode (contract_id=37): snapshot1_eff_hl=50 (ignored/min scale) → snapshot2_eff_hl=414 after weight=2000 engagement ✅; require_loved PASSED ✅; transfer_count=1 ✅
+- Coupling math verified: attention_now=1818=2000*20/(2+20); approach=314=700*818/1818; eff_hl=414=100*(100+314)/100
+- Effective HL raised 50→414 (8.3× lift) — "engagement slows decay" proven on-chain
+
+**Decisions made:**
+- Attention decay uses hyperbolic window `a*hl/(elapsed+hl)` instead of bit-shift (blocked by no-`>>` invariant outside evaporchain-types). This demonstrates "yesterday's likes evaporate" correctly: elapsed=attention_hl halves the attention (one half-life equivalent).
+- Local variable re-assignment (`let eff_hl = 0; eff_hl = value` inside if-blocks) works via `Op::Store(name)` — compiler treats `let` and `Assign{Variable}` identically.
+- Piecewise coupling formula with nested ifs (max depth 2) compiles and executes correctly.
+- Caller rotation: witness 1 = caller 0, witness 2 = caller 1 (no-arg dedup prevention).
+
+**What's next:**
+1. §A5.3 remaining: Singh-Posthuma (Sealed Testaments, 12 weeks — death oracle hard, deferred)
+2. §A5.4 Wallet UX: Singh-Triage (EvaporWallet inbox paradigm, 6–8 weeks — ship first per spec)
+3. §A5.5 Consumer Apps: Singh Letter/ChildKey (age-locked sealed letters, highest mainstream press)
+
+**Blockers / open questions:** None
+
+**Cross-references:** INVENTION_STACK §A5.3; `evaporchain-singh-resonance` crate (coupling.rs, engagement.rs, token.rs)
+
+---
+
 ## 2026-05-18 (night, late) — Singh-Sabi (Patina Tokens) §A5.3 NFT: ruined-beautiful decay live-verified
 
 **Focus:** Write `singh_sabi.es` + `deploy-singh-sabi.sh` for the second §A5.3 NFT — the NFT that ages toward "ruined-beautiful".
