@@ -226,15 +226,35 @@ serde paths (the structs ARE the serde JSON shape — not guessed):
     BE-hex via `EvmCompatSerde` (reuse the `scalar_adapter` /
     `l_u_secondary_extract` decode path).
 - `r_U_secondary.comm_W` = the Section-2-bound committed point
-  (already extracted by `section2_witness`; AffineGroupElement
-  compressed-hex → decompress, the proven in-codebase path).
+  (already extracted by `section2_witness`; `Commitment.comm` has
+  `#[serde_as(as = "EvmCompatSerde")]` → its proven hex→decompress
+  path).
+
+> **CORRECTION (source-verified, blocking before extractor code):**
+> `CommitmentKey { ck: Vec<AffineGroupElement>, h: AffineGroupElement }`
+> fields carry **NO `#[serde_as]`** (unlike `Commitment.comm` and
+> unlike `DerandKey.h`, which DO). So `ck`/`h` serialize via
+> halo2curves' **native `AffineGroupElement` Serialize**, a
+> *different* encoding than the `EvmCompatSerde` hex
+> `section2_witness` decodes for `comm_W`. The `ck` decoder therefore
+> **cannot** reuse the `comm_W` path. The exact `ck_secondary` JSON
+> shape (halo2curves Grumpkin affine native serde — compressed bytes?
+> `{x,y}`? byte array?) MUST be **empirically pinned from a real
+> `serde_json::to_value(pp)` dump on the box** before the extractor
+> is written. Also confirm `CommitmentKey`/`PublicParams` actually
+> `#[derive(Serialize)]` reaches `ck_secondary` (only `digest` is
+> `#[serde(skip)]`). No extractor code until this is pinned — writing
+> against the assumed (wrong) encoding would be guessing in soundness
+> code.
 
 **Binding to enforce:** `r_U_secondary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`.
 Validation = a real-fixture `#[ignore]` test (real Nova fixture,
 S6-class): extract → `pedersen_msm_grumpkin` → assert `== comm_W`;
-adversarial: perturb `W[0]` → assert `!=`. Every path/encoding has a
-proven decoder; remaining risk = JSON-path exactness, box-iterated
-like `l_u_secondary_extract` ("verified empirically") was.
+adversarial: perturb `W[0]` → assert `!=`. Next executable step =
+**S4a-wiring-0**: box-dump `serde_json::to_value(pp)["ck_secondary"]`
+structure from a real fixture, pin the affine encoding, THEN write
+the `ck`/`W` extractor + box-iterate (as `l_u_secondary_extract` was
+"verified empirically").
 
 **Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
 no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
