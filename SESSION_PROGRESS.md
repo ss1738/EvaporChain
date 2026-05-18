@@ -6,6 +6,33 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late evening) — SDDC two-axis Dutch auction: deploy script + live proof (§A5.2 foundational mechanism)
+
+**Focus:** Write and prove `deploy-sddc.sh` for SDDC (Singh Decay-Dutch Continuous Auction), the foundational §A5.2 mechanism underlying SFSV, SHLM, SAP, and SCL.
+
+**Commits shipped:** 1 (`5b3e99d1`)
+- `5b3e99d1` — feat(sddc): deploy-sddc.sh — two-axis Dutch auction live doctrine proof
+
+**Deliverables:**
+- `scripts/deploy-sddc.sh` — 6-step SDDC runbook: deploy → set_lot → submit_bid → confirm open → mode-specific proof → verify.
+  - `clear` mode: both axes satisfied → try_clear FINALISED → phase=CLEARED
+  - `gate` mode: bid.λ_tol < lot_λ → try_clear REJECTED → λ-axis gate proven → void cleanup
+
+**Empirical results (live on http://89.167.52.40:8099):**
+- contract_id=26 (clear mode): two-axis clearing finalised; phase=1, price_paid=990000 ✅
+- contract_id=27 (gate mode): λ-tolerance gate enforced; bid.λ_tol=10 < lot_λ=50 → REJECTED; voided phase=2 ✅
+
+**What's next:**
+- All §A5.2 mechanisms now live-verified: SCL + SFSV + SHLM + SDDC.
+- Check §A5.3 NFT Primitives or §A5.5 Consumer Apps for next dApp.
+- SAP (Singh Attention Pool) is the next §A5.2 item but needs gaze-attestation TEE circuit — 8 weeks; may defer to focus on §A5.3.
+
+**Blockers / open questions:** None.
+
+**Cross-references:** scripts/deploy-sddc.sh; contracts/evaporscript/sddc.es; crates/evaporchain-sddc; commit 5b3e99d1
+
+---
+
 ## 2026-05-18 (evening) — SHLM both modes live-verified on permanent Hetzner node
 
 **Focus:** Prove the SHLM (Singh Skill Half-Life Market) chain-side doctrine live: match mode (fresh credential accepted) + stale mode (freshness gate enforced).
