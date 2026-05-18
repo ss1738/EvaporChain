@@ -66,6 +66,62 @@ mod tests {
     use ark_r1cs_std::{alloc::AllocVar, R1CSVar};
     use ark_relations::r1cs::ConstraintSystem;
 
+    /// S4a-wiring-0 (diagnostic, not a correctness assert): dump the
+    /// real `serde_json::to_value(pp)["ck_secondary"]` shape so the
+    /// `ck`/`h` affine encoding can be pinned EXACTLY (it has no
+    /// `#[serde_as]`, so it is NOT the `comm_W` EvmCompatSerde path).
+    /// `#[ignore]`: needs `PublicParams::setup` (seconds, no Nova
+    /// fixture). Run:
+    ///   cargo test -p evaporchain-nova-bridge dump_ck_secondary_shape \
+    ///     -- --ignored --nocapture
+    #[test]
+    #[ignore = "S4a-wiring-0 diagnostic: prints real pp ck_secondary JSON shape"]
+    fn dump_ck_secondary_shape() {
+        let pp = crate::recursive_snark_fixture::canonical_public_params()
+            .expect("canonical pp");
+        let v = serde_json::to_value(&pp).expect("pp to_value");
+
+        let obj = v.as_object().expect("pp json is object");
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort();
+        eprintln!("PP_TOP_KEYS = {keys:?}");
+
+        let ck_sec = &v["ck_secondary"];
+        eprintln!(
+            "ck_secondary IS_NULL={} IS_OBJ={} IS_ARR={} IS_STR={}",
+            ck_sec.is_null(),
+            ck_sec.is_object(),
+            ck_sec.is_array(),
+            ck_sec.is_string()
+        );
+        if let Some(o) = ck_sec.as_object() {
+            let mut sk: Vec<&String> = o.keys().collect();
+            sk.sort();
+            eprintln!("ck_secondary KEYS = {sk:?}");
+            let ck = &ck_sec["ck"];
+            eprintln!(
+                "ck_secondary.ck IS_ARR={} len={:?}",
+                ck.is_array(),
+                ck.as_array().map(|a| a.len())
+            );
+            if let Some(a) = ck.as_array() {
+                if let Some(e0) = a.first() {
+                    eprintln!("ck[0] = {}", serde_json::to_string(e0).unwrap_or_default());
+                }
+            }
+            eprintln!(
+                "ck_secondary.h = {}",
+                serde_json::to_string(&ck_sec["h"]).unwrap_or_default()
+            );
+        } else {
+            eprintln!(
+                "ck_secondary RAW (truncated 400) = {}",
+                &serde_json::to_string(ck_sec).unwrap_or_default()
+                    [..serde_json::to_string(ck_sec).unwrap_or_default().len().min(400)]
+            );
+        }
+    }
+
     /// THE PRIMITIVE PROOF: the in-circuit Pedersen MSM equals the
     /// out-of-circuit ark Grumpkin MSM, and the constraint system is
     /// satisfied. Small fixed case (2 bases) — fast, no nova fixture.
