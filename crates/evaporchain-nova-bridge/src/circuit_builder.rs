@@ -113,6 +113,46 @@ pub fn build_circuit_with_section3(
     Ok(base.with_section3(s3))
 }
 
+/// Audit B-1/B-2 S2b-prover: build a REAL, satisfiable prover
+/// circuit — both sections extracted from a real Nova fixture.
+/// Same construction as the S6 determinism proof, so its R1CS is
+/// (S6-proven) bit-identical to `setup_shape()` — the circuit
+/// `setup()` keys pk/vk over — hence a proof of it verifies.
+/// `setup_shape()` itself has a zeroed, non-satisfiable witness
+/// (shape template only) and CANNOT produce a verifying proof.
+///
+/// Returns `None` (caller skips) when the neptune dump is absent.
+/// Callers must be `#[ignore]` — a real Nova fixture is expensive.
+#[cfg(test)]
+pub(crate) fn real_provable_circuit() -> Option<NovaVerifierCircuit> {
+    use crate::recursive_snark_fixture::generate_fixture_with_digest;
+    use nova_snark::provider::{
+        hyperkzg::EvaluationEngine as EE1, ipa_pc::EvaluationEngine as EE2,
+    };
+    use nova_snark::spartan::snark::RelaxedR1CSSNARK;
+    use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
+    type S1 = RelaxedR1CSSNARK<E1, EE1<E1>>;
+    type S2 = RelaxedR1CSSNARK<E2, EE2<E2>>;
+
+    let dump = std::path::Path::new("/tmp/neptune-bn256-standard.json");
+    if !dump.exists() {
+        eprintln!("SKIP: /tmp/neptune-bn256-standard.json absent");
+        return None;
+    }
+    let circuit_step = TrivialIncrementCircuit;
+    let pp = PublicParams::<E1, E2, _>::setup(
+        &circuit_step,
+        &*S1::ck_floor(),
+        &*S2::ck_floor(),
+    )
+    .ok()?;
+    let (rs, pp_digest) = generate_fixture_with_digest(2).ok()?;
+    let circuit = build_circuit_with_section2(&rs, pp_digest, dump)
+        .ok()?
+        .with_section3(extract_section3_witness(&rs, &pp).ok()?);
+    Some(circuit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

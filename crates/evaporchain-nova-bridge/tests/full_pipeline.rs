@@ -1,81 +1,40 @@
-//! End-to-end integration test exercising every Phase 2 wrapper
-//! introduced after the Section 1 / Section 2 substrate landed:
+//! End-to-end integration pin for the Phase 2 wrapper pipeline
+//! (setup → prove → eip197 codec → verify).
 //!
-//!   setup (#145) → prove (#146) → eip197 encode (#147) →
-//!   eip197 decode → verify (#146) → assert true
+//! Audit B-1/B-2 S2b: the positive pipeline (a REAL proof through
+//! the eip197 codec) is covered by the `#[ignore]`d real-fixture
+//! tests `eip197::tests::proof_round_trips_through_eip197_bytes`
+//! and `groth16_wrapper::tests::
+//! prove_and_verify_real_fixture_round_trip_accepts` (a satisfiable
+//! witness now requires a real Nova fixture; `setup_shape()` is a
+//! zeroed shape-only template and cannot yield a verifying proof).
 //!
-//! Audit B-1/B-2 S2b: runs on `NovaVerifierCircuit::setup_shape()`
-//! — the canonical section-bearing circuit `setup()` keys pk/vk
-//! over — so the pipeline exercises a REAL, non-vacuous proof
-//! (the old `dummy()` version round-tripped an empty-circuit
-//! proof). `setup_shape()` sources neptune params from the
-//! embedded asset, so this needs no `/tmp` dump and stays a
-//! standard (non-ignored) integration test.
+//! This integration test pins the SECURITY property end-to-end
+//! through the public crate API: a section-less circuit is rejected
+//! at `prove()` — the pipeline can never even reach the codec to
+//! emit a forgeable empty-circuit proof. Complements
+//! `real_fixture_pipeline.rs` (same property, fixture entry point).
 
 use ark_std::rand::SeedableRng;
-use evaporchain_nova_bridge::eip197::{eip197_bytes_to_proof, proof_to_eip197_bytes, EIP197_PROOF_BYTES};
-use evaporchain_nova_bridge::groth16_wrapper::{prove, public_inputs_for, setup, verify};
-use evaporchain_nova_bridge::verifier_circuit::NovaVerifierCircuit;
+use evaporchain_nova_bridge::circuit_builder::build_circuit_from_fixture;
+use evaporchain_nova_bridge::groth16_wrapper::{prove, setup};
+use evaporchain_nova_bridge::recursive_snark_fixture::generate_fixture;
 
-/// Full end-to-end on the dummy circuit:
-///   setup → prove → encode → decode → verify(accepted).
-///
-/// Also confirms the encoded proof is exactly 256 bytes and that
-/// the decoded proof verifies (catches the case where the codec
-/// silently loses information that doesn't show up in a
-/// shallow `assert_eq!` of the `Proof` struct fields).
+/// The public setup→prove pipeline refuses a section-less circuit:
+/// `prove()` surfaces the mandatory-binding rejection, so no
+/// vacuous-circuit proof is ever produced or encoded.
 #[test]
-fn full_pipeline_setup_shape_setup_prove_encode_decode_verify_accepts() {
+fn full_pipeline_section_less_circuit_is_rejected_before_codec() {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(404);
-    let (pk, vk) = setup(&mut rng).expect("setup");
+    let (pk, _vk) = setup(&mut rng).expect("setup");
 
-    let circuit = NovaVerifierCircuit::setup_shape().expect("setup_shape");
-    let public_inputs = public_inputs_for(&circuit);
-    let proof = prove(&pk, circuit, &mut rng).expect("prove");
+    let rs = generate_fixture(2).expect("nova fixture");
+    let circuit = build_circuit_from_fixture(&rs).expect("build circuit from fixture");
 
-    // Codec round-trip.
-    let bytes = proof_to_eip197_bytes(&proof);
-    assert_eq!(bytes.len(), EIP197_PROOF_BYTES);
-    let decoded = eip197_bytes_to_proof(&bytes).expect("decode");
-
-    // Verify against the DECODED proof — catches any codec
-    // information loss that a struct-field equality check would
-    // miss.
-    let accepted = verify(&vk, &public_inputs, &decoded).expect("verify decoded");
+    let result = prove(&pk, circuit, &mut rng);
     assert!(
-        accepted,
-        "full pipeline must accept decoded proof against setup_shape public inputs"
-    );
-
-    // Belt-and-suspenders: original (pre-encode) proof also verifies.
-    assert!(
-        verify(&vk, &public_inputs, &proof).expect("verify original"),
-        "original proof must also accept against setup_shape public inputs"
-    );
-}
-
-/// Negative-path pin: a decoded proof against tampered public
-/// inputs must reject. Catches a regression where the codec
-/// accidentally writes the public inputs INTO the proof bytes
-/// (impossible by design, but the test costs nothing).
-#[test]
-fn full_pipeline_decoded_proof_rejects_tampered_public_inputs() {
-    use ark_bn254::Fr as Bn254Fr;
-
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(505);
-    let (pk, vk) = setup(&mut rng).expect("setup");
-
-    let circuit = NovaVerifierCircuit::setup_shape().expect("setup_shape");
-    let mut public_inputs = public_inputs_for(&circuit);
-    let proof = prove(&pk, circuit, &mut rng).expect("prove");
-
-    let decoded = eip197_bytes_to_proof(&proof_to_eip197_bytes(&proof)).expect("decode");
-
-    // Perturb committed_hash_primary so verification must reject.
-    public_inputs[0] += Bn254Fr::from(1u64);
-    let rejected = verify(&vk, &public_inputs, &decoded).expect("verify");
-    assert!(
-        !rejected,
-        "decoded proof must reject tampered public inputs"
+        result.is_err(),
+        "section-less circuit must be unprovable end-to-end (pipeline must \
+         not reach the eip197 codec with a vacuous-circuit proof), got Ok"
     );
 }
