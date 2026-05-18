@@ -47,30 +47,43 @@ comm_W == Commit(ck, W)        comm_E == Commit(ck, E)
 
 enforced inside the R1CS.
 
-> **MUST VERIFY (blocking, before any S4a code):** which commitment
-> scheme backs the *running-instance* `comm_W`/`comm_E`. In Nova these
-> are commitments under the engine's `CommitmentEngine` (Pedersen-style
-> MSM over the commitment group), **distinct** from the HyperKZG (E1)
-> / IPA (E2) *evaluation* engines used only by the final compressing
-> SNARK. If it is Pedersen-MSM, S4a is an in-circuit multi-scalar
-> multiplication — **no pairing**. If any KZG opening is actually on
-> the binding path, S4a needs in-circuit pairing (far deeper). The
-> in-code doc-comment says "need KZG pairing"; that is **unverified**
-> and may be imprecise. Resolve against `nova-snark` source
-> (`CommitmentEngine` for `Bn256EngineKZG` / `GrumpkinEngine`, and
-> exactly which commitment `RelaxedR1CSInstance.comm_W` carries)
-> before committing to an approach.
+> **RESOLVED (S4-0, verified against nova-snark v0.68.0 source):**
+> `RelaxedR1CSInstance.comm_W/comm_E = Commitment<E>` =
+> `<E::CE as CommitmentEngineTrait>::Commitment`. For the two engines:
+> - **E1 `Bn256EngineKZG`** (primary): `type CE =
+>   HyperKZGCommitmentEngine`. Its `commit` (hyperkzg.rs:566) is
+>   `vartime_multiscalar_mul(v, ck.ck) + h·r` — a **plain MSM** over
+>   BN256 G1. Pairing appears in hyperkzg.rs **only** inside the
+>   eval-proof `verify` (line 1191), which is the compressing-SNARK
+>   opening, **NOT** the running-instance commitment.
+> - **E2 `GrumpkinEngine`** (secondary): `type CE =
+>   PedersenCommitmentEngine`. `commit` (pedersen.rs:285) is the same
+>   form: `vartime_multiscalar_mul(v, ck.ck) + h·r` over Grumpkin.
+>
+> **Conclusion: S4a is an in-circuit MSM, NOT in-circuit pairing.**
+> The in-code "need KZG pairing" comment is **wrong** (it conflated
+> the commitment with HyperKZG's evaluation proof). This materially
+> de-risks S4a vs the worst case.
 
-Field/curve structure (BN254/Grumpkin 2-cycle), assuming Pedersen-MSM:
+Field/curve structure (BN254/Grumpkin 2-cycle) — circuit is over
+**BN254 Fr** (= `bn256::Scalar`). Per instance, an MSM
+`comm = Σ vᵢ·ckᵢ + h·r` has one native side and one non-native side:
 
-- The primary circuit is over **BN254 Fr**.
-- `r_U_secondary.comm_W` is a **Grumpkin** point. Grumpkin's base
-  field = BN254 Fr → its **coordinates are native** in the circuit
-  (this is why Section 2 can absorb `comm_W.x/y` directly as `ArkFr`).
-- But the **MSM scalars** are the committed vector entries; Grumpkin's
-  scalar field = BN254 **Fq** ≠ Fr → scalar handling for an in-circuit
-  Grumpkin MSM is **non-native**. This is the documented pain and
-  couples S4a to S4b's non-native machinery.
+| Instance | Commitment group | Point coords | MSM scalars (`v`) |
+|---|---|---|---|
+| **Primary** (Bn256/HyperKZG) | BN256 G1 | `bn256::Base` = BN254 **Fq** → *non-native* | primary `W` ∈ `bn256::Scalar` = BN254 **Fr** → *native* |
+| **Secondary** (Grumpkin/Pedersen) | Grumpkin | `grumpkin::Base` = BN254 **Fr** → *native* (why Section 2 absorbs `comm_W.x/y` directly as `ArkFr`) | secondary witness ∈ `grumpkin::Scalar` = BN254 **Fq** → *non-native* |
+
+So **no pairing anywhere**; each MSM needs non-native machinery on
+exactly one side (primary: non-native G1 point arithmetic, native
+scalars; secondary: native point arithmetic, non-native scalars).
+
+Structural note: Section 3 currently enforces the **primary** R1CS;
+Section 2 currently binds the **secondary** instance's
+`comm_W/comm_E.{x,y}`. Full binding requires S4a on **both** running
+instances — bind primary Section-3 `W/E` to the **primary** `comm_W`
+(currently not surfaced into the transcript) AND the secondary. This
+asymmetry is a real design item, not just an implementation detail.
 
 ### S4b — secondary RelaxedR1CS satisfiability
 
@@ -85,33 +98,43 @@ deep, very expensive.
 ## 3. Constraint-cost reality
 
 - Section 3 primary today: ~`num_cons` ≈ 10 003 mult gates.
-- S4a Pedersen-MSM opening of `W` (len ≈ `num_vars` ≈ 9 995) +
-  `E` (len ≈ `num_cons`): an MSM of ~20 k group ops with non-native
-  scalars — plausibly 10⁵–10⁶ constraints depending on window/strategy.
+- S4a MSM openings (no pairing): `W` (len ≈ `num_vars` ≈ 9 995) +
+  `E` (len ≈ `num_cons`) per instance — ~20 k EC group ops each.
+  In-circuit variable-base MSM is ~hundreds of constraints per point
+  (double-and-add + non-native side), so plausibly 10⁵–10⁶ constraints
+  total. Far cheaper than in-circuit pairing (the de-risk from S4-0).
 - S4b non-native secondary R1CS: emulated-Fq for a full second R1CS —
   same order again, likely larger.
 
 Order-of-magnitude: S4 is a multi-100k-to-millions-constraint
-addition. This is why it is the true mainnet gate and not an
-increment.
+addition (MSM-bound, not pairing-bound). Still the true mainnet gate
+and not an increment, but S4-0 removes the in-circuit-pairing worst
+case.
 
 ## 4. Staging (proposed, subject to the §2 MUST-VERIFY)
 
-1. **S4-0 (research, no code):** read nova-snark source; pin the exact
-   commitment scheme + which curve/field each of `comm_W`, `comm_E`,
-   secondary-R1CS lives in. Produce a one-page "verified model"
-   appendix to this doc. *Nothing downstream is correct until this is
-   done.*
-2. **S4-nn:** non-native BN254-Fq field gadget (shared by S4a scalars
-   and S4b). Unit-prove against known vectors. Likely the longest pole.
-3. **S4a:** in-circuit commitment-opening gadget; bind Section-3 `W/E`
-   to Section-2 `comm_W/comm_E`. Adversarial test: mismatched
-   `W` vs `comm_W` must be unsatisfiable.
+1. **S4-0 (research, no code) — ✅ DONE.** Commitment model pinned
+   against nova-snark v0.68.0 source: both running-instance
+   commitments are MSM (`Σ vᵢ·ckᵢ + h·r`), no pairing; native/
+   non-native split tabulated in §2. Result recorded inline above
+   (this *is* the verified model; no separate appendix needed).
+2. **S4-nn:** non-native BN254-**Fq** field gadget (used by secondary
+   MSM scalars + S4b's secondary R1CS, and primary G1 point coords).
+   Unit-prove against known vectors. Likely the longest pole.
+3. **S4a:** in-circuit variable-base MSM opening gadget; bind
+   Section-3 `W/E` to `comm_W/comm_E` for **both** running instances
+   (incl. surfacing the primary `comm_W` into the transcript — see §2
+   structural note). Adversarial test: mismatched `W` vs `comm_W`
+   must be unsatisfiable.
 4. **S4b:** in-circuit secondary RelaxedR1CS using the S4-nn gadget.
 5. **S4-verify (S6 analog):** determinism (setup-shape vs real shape
    still bit-identical with S4 constraints present) **+** adversarial
    (commitment mismatch and secondary-unsat both rejected) on the box,
    real fixture.
+
+Next concrete unit: **S4-nn** (the non-native Fq gadget) — the
+foundation both S4a (one side per instance) and S4b rest on. Gated
+only on S2b green now (S4-0 done).
 
 ## 5. Honest ceiling (do not overstate)
 
