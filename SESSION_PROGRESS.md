@@ -6,6 +6,34 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (post-midnight) — SCL CapabilityLease: EvaporScript contract + live 5-step doctrine verify
+
+**Focus:** Write the `capability_lease.es` EvaporScript contract for INVENTION_STACK §A5.2 (Singh Capability Lease) and prove the structural-revocation doctrine live on the permanent Hetzner node.
+
+**Commits shipped:** 2 (pending commit below)
+- `TBD` — feat(scl): capability_lease.es + deploy-capability-lease.sh — 5-step live doctrine verify
+
+**Deliverables:**
+- `contracts/evaporscript/capability_lease.es` — full SCL on-chain contract: `grant()`, `assert_authorized()`, `list_for_sale()`, `cancel_listing()`, `record_resale()`, read-only queries, `on_evaporate()` hook. No `revoke()` function. SDDC-1 class fix applied to `record_resale()`.
+- `scripts/deploy-capability-lease.sh` — 5-step end-to-end deploy + doctrine-verify runbook: deploy → grant → assert_authorized as subject → verify sealed on-chain → adversarial non-subject rejection.
+
+**Empirical results (live on http://89.167.52.40:8099):**
+- Contract deployed, contract_id=13, sealed=true ✅
+- `assert_authorized` as subject (account[1]) — INCLUDED (state: finalised) ✅
+- `assert_authorized` as non-subject (account[0]) — REJECTED ✅
+- Doctrine claim proven: structural gate works, no revoke tx was needed or exists.
+
+**Decisions made:**
+- deploy-capability-lease.sh uses faucet-funded distinct subject account (account[1] ≠ deployer) for full doctrine proof.
+- State values in `/api/script/:id` response are wrapped as `{"Bool": v}` / `{"U64": v}` — fixed jq path in sealed check accordingly.
+
+**What's next:**
+- SESSION_PROGRESS committed; next frontier = SFSV full end-to-end integration or APPLICATION_UNIVERSE next dApp
+
+**Blockers / open questions:** None.
+
+---
+
 ## 2026-05-18 (end-of-night) — Residual audit sweep: F1, F5, A1-LOW closed
 
 **Focus:** Close the 3 remaining lower-priority findings from the 2026-05-18 comprehensive audit. All audit backlogs now empty.
