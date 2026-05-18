@@ -230,22 +230,26 @@ serde paths (the structs ARE the serde JSON shape — not guessed):
   `#[serde_as(as = "EvmCompatSerde")]` → its proven hex→decompress
   path).
 
-> **CORRECTION (source-verified, blocking before extractor code):**
-> `CommitmentKey { ck: Vec<AffineGroupElement>, h: AffineGroupElement }`
-> fields carry **NO `#[serde_as]`** (unlike `Commitment.comm` and
-> unlike `DerandKey.h`, which DO). So `ck`/`h` serialize via
-> halo2curves' **native `AffineGroupElement` Serialize**, a
-> *different* encoding than the `EvmCompatSerde` hex
-> `section2_witness` decodes for `comm_W`. The `ck` decoder therefore
-> **cannot** reuse the `comm_W` path. The exact `ck_secondary` JSON
-> shape (halo2curves Grumpkin affine native serde — compressed bytes?
-> `{x,y}`? byte array?) MUST be **empirically pinned from a real
-> `serde_json::to_value(pp)` dump on the box** before the extractor
-> is written. Also confirm `CommitmentKey`/`PublicParams` actually
-> `#[derive(Serialize)]` reaches `ck_secondary` (only `digest` is
-> `#[serde(skip)]`). No extractor code until this is pinned — writing
-> against the assumed (wrong) encoding would be guessing in soundness
-> code.
+> **S4a-wiring-0 RESULT (PINNED from a real `serde_json::to_value(pp)`
+> box dump — `dump_ck_secondary_shape`, nova 0.68):**
+> - `PP_TOP_KEYS` include `ck_secondary` (and `ck_primary`,
+>   `r1cs_shape_*`); `digest` absent (confirms `#[serde(skip)]`).
+>   `PublicParams`/`CommitmentKey` serde reaches it. ✓
+> - `ck_secondary` is an object with keys `["ck", "h"]`.
+> - `ck_secondary.ck` is an array of **16384** elements (2¹⁴ Pedersen
+>   bases); the MSM uses `ck[..W.len()]` (nova: `ck.len() >= v.len()`).
+> - Each `ck[i]` and `h` is a **bare 64-char hex string = 32
+>   compressed bytes, NO `0x` prefix** (halo2curves native
+>   `AffineGroupElement` Serialize = compressed point). Confirmed
+>   distinct from `comm_W`'s `EvmCompatSerde` (`0x`-prefixed) path —
+>   the earlier correction was right.
+>   - e.g. `ck[0] = "da04349ffe210dacac0edfc90136c939702d7fc021d372d0b3aa0bceee3e9e2b"`
+> - **Decoder:** `hex::decode(s)` (no `0x` strip) → 32 bytes →
+>   halo2curves `grumpkin::G1Affine` compressed `from_bytes` (same
+>   decompression `section2_witness` performs for `comm_W`, just fed
+>   bare-hex bytes) → map coords to `ark_bn254::Fr` → `Affine<GrumpkinConfig>`.
+> Encoding is now observed, not assumed — extractor is execution
+> against a verified format.
 
 **Binding to enforce:** `r_U_secondary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`.
 Validation = a real-fixture `#[ignore]` test (real Nova fixture,
