@@ -298,7 +298,6 @@ impl NovaVerifierCircuit {
         if s3.w_primary.len() != s3.num_vars || s3.e_primary.len() != s3.num_cons {
             return Err(StructuralValidationError::Section3DimsInconsistent {
                 num_vars: s3.num_vars,
-                num_io: s3.num_io,
                 w_len: s3.w_primary.len(),
                 e_len: s3.e_primary.len(),
                 num_cons: s3.num_cons,
