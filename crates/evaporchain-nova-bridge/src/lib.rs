@@ -119,6 +119,7 @@ pub mod neptune_reference;
 pub mod neptune_sponge;
 pub mod recursive_snark_fixture;
 pub mod scalar_adapter;
+pub mod s4_msm_gadget;
 pub mod section2_gadget;
 pub mod section2_witness;
 pub mod section3_gadget;
