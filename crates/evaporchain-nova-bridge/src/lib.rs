@@ -108,6 +108,7 @@ pub mod circuit_builder;
 pub mod compress_ark;
 pub mod eip197;
 pub mod grain_lfsr;
+pub mod grumpkin_config;
 pub mod groth16_wrapper;
 pub mod l_u_secondary_extract;
 pub mod mds_linalg;

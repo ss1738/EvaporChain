@@ -53,3 +53,7 @@ thiserror  = "1"
 
 [dev-dependencies]
 rand = "0.8"
+# S4-nn cross-library trust gate: nova-snark commits with halo2curves;
+# the Grumpkin/bn256 ark configs are validated byte-for-byte against
+# it (grumpkin_config::tests). Same 0.9 line nova-snark 0.68 pulls.
+halo2curves = "0.9"
