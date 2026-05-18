@@ -34,7 +34,7 @@ mod tests {
     fn bn254_g1_params_sane() {
         let a = <PrimaryG1Config as SWCurveConfig>::COEFF_A;
         let b = <PrimaryG1Config as SWCurveConfig>::COEFF_B;
-        assert!(a.is_zero(), "BN254 G1 COEFF_A must be 0");
+        assert_eq!(a, ark_bn254::Fq::from(0u64), "BN254 G1 COEFF_A must be 0");
         assert_eq!(b, ark_bn254::Fq::from(3u64), "BN254 G1 COEFF_B must be 3");
 
         let g = <PrimaryG1Config as SWCurveConfig>::GENERATOR;
