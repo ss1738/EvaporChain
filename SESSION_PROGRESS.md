@@ -6,6 +6,64 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (evening) — SHLM both modes live-verified on permanent Hetzner node
+
+**Focus:** Prove the SHLM (Singh Skill Half-Life Market) chain-side doctrine live: match mode (fresh credential accepted) + stale mode (freshness gate enforced).
+
+**Commits shipped:** 0 new (no code changes — deploy-shlm.sh and shlm.es were already complete)
+
+**Empirical results (live on http://89.167.52.40:8099):**
+- contract_id=24 (match mode): register_class→issue_credential→post_bounty→record_match FINALISED; match_exists=1, bounty consumed ✅
+- contract_id=25 (stale mode): register_class→issue_credential→post_bounty→waited until epoch−attested_at > max_staleness=3 → record_match REJECTED ("credential too stale") ✅
+- Freshness / half-life primitive enforced on-chain, not vacuous. Staleness gate proven.
+
+**Decisions made:**
+- Unique INITIAL_ENERGY+CLASS_HALF_LIFE required on each run to avoid deploy dedup returning old contract_id (chain has seen 25+ contracts from prior sessions). Added to script header comment.
+
+**What's next:**
+- All three §A5.2 launch-dApps proven (SCL + SFSV + SHLM). Next: check APPLICATION_UNIVERSE for next tier or primitive.
+
+**Blockers / open questions:** None.
+
+**Cross-references:** scripts/deploy-shlm.sh; contracts/evaporscript/shlm.es; crates/evaporchain-shlm; http://89.167.52.40:8099 contract_ids 24+25
+
+---
+
+## 2026-05-18 (afternoon) — SFSV FutureSelfVault: live 4-step doctrine verify + deploy script hardened
+
+**Focus:** Prove SFSV (Singh Future-Self Vault) doctrine live on the permanent Hetzner node; fix compound try_payout failure (tx-hash dedup + unfunded relay caller + jq `//` operator bug).
+
+**Commits shipped:** 4 (f9c6cc18 → 03a6fb8c), pushed to main
+- `f9c6cc18` — fix(deploy-sfsv): rotate caller to defeat tx-hash dedup on try_payout retries
+- `a11cdae3` — fix(deploy-sfsv): sleep after first gate-rejection; fund relay caller pre-loop
+- `133d2b5f` — fix(deploy-sfsv): replace broken Transfer with relay-balance preflight check
+- `03a6fb8c` — fix(deploy-sfsv): use printf for relay-addr hex, not jq // operator
+
+**Deliverables:**
+- `scripts/deploy-sfsv.sh` — fully hardened 4-step SFSV runbook. Three classes of bugs diagnosed and fixed: (1) tx-hash dedup — CallScript signable_bytes excludes epoch, rotate caller after rejection; (2) caller exhaustion — after first gate-rejection sleep until release_epoch, not retry-every-2s; (3) jq `//` is alternative operator, not integer division — use `printf '%02x'` for address byte.
+- Relay-balance preflight check added (account[DEPLOYER+1] must be funded before try_payout loop).
+
+**Empirical results (live on http://89.167.52.40:8099):**
+- contract_id=22, release_epoch=63291 ✅
+- Gate rejection confirmed pre-release (epochs 63281, 63289) ✅
+- `try_payout` finalised at epoch 63291 with caller=1 ✅
+- `released==true` directly observed on `GET /api/script/22` ✅
+- Doctrine claim proven: energy-denominated vault releases structurally at the predicate epoch — no off-chain coordinator needed.
+
+**Decisions made:**
+- Relay funding is a balance-check, not a Transfer (nonce lookup adds complexity; account[1] stays funded across sessions on the permanent node).
+- RELEASE_MARGIN default 30→20 epochs; default timeout 180→300s.
+
+**What's next:**
+- SHLM both modes now live-verified (see entry below).
+- All three §A5.2 launch-dApps proven. Check APPLICATION_UNIVERSE for next frontier primitive or dApp tier.
+
+**Blockers / open questions:** None — all 4 SFSV + 5 SCL doctrine steps green.
+
+**Cross-references:** commits f9c6cc18→03a6fb8c; scripts/deploy-sfsv.sh; http://89.167.52.40:8099 contract_id=22
+
+---
+
 ## 2026-05-18 (post-midnight) — SCL CapabilityLease: EvaporScript contract + live 5-step doctrine verify
 
 **Focus:** Write the `capability_lease.es` EvaporScript contract for INVENTION_STACK §A5.2 (Singh Capability Lease) and prove the structural-revocation doctrine live on the permanent Hetzner node.
