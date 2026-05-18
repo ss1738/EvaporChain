@@ -140,7 +140,10 @@ pub fn extract_committed_hashes_via_serde(
     Ok((secondary_to_ark_fr_lossy(s0), secondary_to_ark_fr_lossy(s1)))
 }
 
-fn parse_secondary_scalar_hex(
+/// Reused by `s4_secondary_extract` (audit B-1/B-2 S4a): the
+/// endianness here is "verified empirically", so S4a reuses this
+/// exact parser rather than re-deriving it.
+pub(crate) fn parse_secondary_scalar_hex(
     s: Option<&str>,
     index: usize,
 ) -> Result<SecondaryScalar, ExtractError> {
