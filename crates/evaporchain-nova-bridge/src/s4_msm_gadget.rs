@@ -73,7 +73,7 @@ mod tests {
     fn pedersen_msm_grumpkin_matches_native() {
         // Public constant bases: G and 2G; blinding base h = 7G.
         let g = Projective::from(GrumpkinConfig::GENERATOR);
-        let g2 = g.double();
+        let g2 = g + g;
         let h_pt = g * Bn254Fq::from(7u64);
         let bases = [g.into_affine(), g2.into_affine()];
         let h_aff = h_pt.into_affine();
