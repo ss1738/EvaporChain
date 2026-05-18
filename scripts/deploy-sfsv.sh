@@ -40,13 +40,13 @@ DEPLOYER_U8="${DEPLOYER_U8:-0}"          # 0 = genesis faucet — the only pre-f
 FUTURE_SELF="${FUTURE_SELF:-2}"          # set_terms `future_self` arg (.es address)
 PREDICATE_TYPE="${PREDICATE_TYPE:-0}"    # 0=EpochReached 1=EnergyDecaysBelow
 RELEASE_PARAM="${RELEASE_PARAM:-}"       # type0: future epoch (default = now+margin); type1: energy threshold. empty ⇒ auto-resolve
-RELEASE_MARGIN="${RELEASE_MARGIN:-30}"   # type0 only: epochs ahead of current to set the release (must exercise the gate yet stay within timeout)
+RELEASE_MARGIN="${RELEASE_MARGIN:-20}"   # type0 only: epochs ahead of current to set the release (must exercise gate rejection yet stay within timeout)
 INITIAL_ENERGY="${INITIAL_ENERGY:-1000000}"
 HALF_LIFE="${HALF_LIFE:-64}"
 DEPOSIT_AMOUNT="${DEPOSIT_AMOUNT:-1000}"
 DRY_RUN=false
 VERBOSE=false
-POLL_TIMEOUT_SEC=180
+POLL_TIMEOUT_SEC=300
 
 usage() { cat <<'EOF'
 deploy-sfsv.sh [options]
@@ -207,6 +207,18 @@ SH=$(submit_tx "/api/tx/call-script" "$ST_BODY" set_terms 4)
 poll_tx "$SH" set_terms 4 >/dev/null
 log "vault sealed."
 
+# ── 2b. fund relay caller ──
+# try_payout rotates to DEPLOYER+1 after the first pre-release rejection.
+# Ensure that account is funded; the faucet may be blocked on this node
+# so transfer from the deployer instead.
+relay_caller=$(( DEPLOYER_U8 + 1 ))
+relay_addr_json=$(jq -n --argjson n "$relay_caller" '([$n] + [range(0;31)|0])')
+RELAY_BODY=$(jq -n --argjson f "$DEPLOYER_U8" --argjson a "$relay_addr_json" \
+  '{from:$f, to_address:$a, amount:1000000000000}')
+RF=$(submit_tx "/api/tx/transfer" "$RELAY_BODY" "fund-relay-caller" 4)
+poll_tx "$RF" "fund-relay-caller" 4 >/dev/null
+log "relay caller account[$relay_caller] funded."
+
 # ── 3. retry try_payout until predicate trips (.es self-guards) ──
 log "Step 3/4 — retry call-script try_payout until included"
 if $DRY_RUN; then
@@ -215,19 +227,29 @@ else
   # CallScript signable_bytes does NOT include the epoch field, so two
   # try_payout calls with different epochs but same (caller, contract_id,
   # method, args) hash to the same tx and the second submission returns the
-  # cached rejected record. Workaround: rotate the caller index after each
-  # rejection — any account can call try_payout (no caller restriction in
-  # the contract). Caller index 0 = deployer; bump by 1 each rejection.
+  # cached rejected record.
+  #
+  # Strategy: submit ONCE pre-release to prove the gate rejects (saw_gate=1),
+  # rotate to caller+1, then SLEEP until release_epoch before retrying.
+  # This prevents burning through all funded callers during the waiting period.
+  # Only callers 0 and 1 are consumed (both guaranteed funded: 0=deployer,
+  # 1=funded via Transfer in preflight).
   deadline=$(( $(date +%s) + POLL_TIMEOUT_SEC )); ok=0; saw_gate=0
   tp_caller=$DEPLOYER_U8
-  seen_hashes=()
   while (( $(date +%s) < deadline )); do
     EPOCH=$(get_epoch)
+    # After the first gate rejection, wait until we are at/past release_epoch
+    # before submitting again — avoids burning additional caller slots.
+    if (( saw_gate == 1 && EPOCH < RELEASE_PARAM )); then
+      gap=$(( RELEASE_PARAM - EPOCH ))
+      log "  gate proven; epoch=$EPOCH release=$RELEASE_PARAM — sleeping ~${gap}s for release..."
+      sleep $(( gap > 2 ? gap - 2 : 2 ))
+      continue
+    fi
     TP_BODY=$(jq -n --argjson c "$tp_caller" --argjson cid "$CID" --argjson ep "$EPOCH" \
       '{caller:$c, contract_id:$cid, method:"try_payout", args:[], epoch:$ep}')
     TH=$(printf '%s' "$(curl_json POST /api/tx/call-script "$TP_BODY")" | jq -r '.tx_hash // empty')
     [[ -z "$TH" ]] && { sleep 4; continue; }
-    # A freshly-submitted tx is `pending` until mined (~1-2 blocks).
     # Poll to a terminal state before classifying.
     rs=unknown
     for _w in 1 2 3 4 5 6; do
@@ -242,15 +264,15 @@ else
       if [[ "$rel" == "true" || "$rel" == "1" || "$rel" == "True" ]]; then
         ok=1; log "try_payout finalised at epoch $EPOCH (released confirmed)"; break
       fi
-      # Stale "finalised" from dedup — treat as rejected, rotate caller.
-      saw_gate=1
+      # Stale "finalised" from dedup — treat as gate, rotate caller.
+      saw_gate=1; tp_caller=$(( tp_caller + 1 ))
     fi
     if [[ "$rs" == "rejected" ]]; then
       saw_gate=1   # predicate `require` reverted — gate is real
       # Rotate caller so next submission gets a different tx hash.
       tp_caller=$(( tp_caller + 1 ))
     fi
-    sleep 2   # not yet satisfied ⇒ retry
+    sleep 2
   done
   (( ok == 1 )) || die "try_payout never succeeded within ${POLL_TIMEOUT_SEC}s (predicate never tripped)" 5
   # Non-vacuity: an EpochReached vault sealed before release_epoch MUST
