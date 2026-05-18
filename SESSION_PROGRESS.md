@@ -6,6 +6,35 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night, session 5) — CapabilityDecayVM + DPNativeVM §4.2: both contracts + deploy scripts live-verified (4 modes)
+
+**Focus:** Write `cap_decay.es` (§4.2 ocap + energy-decay) and `dp_native.es` (§4.2 DP-native monotone budget), write and live-verify both deploy scripts (2 modes each).
+**Commits shipped:** 1 (this commit)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `contracts/evaporscript/cap_decay.es` | CREATED, 235 LOC, 6 methods |
+| `contracts/evaporscript/dp_native.es` | CREATED, 127 LOC, 5 methods |
+| `scripts/deploy-cap-decay.sh` | CREATED, chain + invocable modes |
+| `scripts/deploy-dp-native.sh` | CREATED, exhaust + monotone modes |
+**Empirical results:**
+- cap_decay chain: contract_id=53 — mint root(energy=50000) + attenuate child(energy=25000); witness snap1: energy=25000 par_energy=50000 ✓; revoke root → require_ancestor_dead(child) PASSED ✓
+- cap_decay invocable: contract_id=54 — invoke_gate(root=0) PASSED; invoke_gate(child=1) PASSED; snap1 root energy=40000 par_energy=0 (sentinel); snap2 child energy=20000 par_energy=40000 ✓
+- dp_native exhaust: contract_id=55 — register(eps=1000); consume 300+400+300=1000; snap1 consumed=1000 total=1000; require_exhausted PASSED ✓
+- dp_native monotone: contract_id=56 — consume 400 → snap1(consumed=400) → consume 300 → snap2(consumed=700); monotone 400→700 verified; require_budget_remaining PASSED ✓
+**Decisions made:**
+- `energy` IS a reserved EvaporScript built-in (resolves to contract's live energy, not a parameter). Renamed mint's param to `init_energy`. Pattern: never use `energy` as a function parameter name in .es contracts.
+- CapDecay parent-chain walk uses nested `if ok_flag==0 / if blocked==0` pattern (no `break` in EvaporScript). Loop exit when root sentinel reached: set `i=7` → `i+1=8` → while exits.
+- DPNativeVM uses ds_id as caller-provided handle (not auto-assigned) since re-registration must be forbidden — `ds_present[ds_id]==0` guard closes the "reset to refill" attack.
+- Epsilon/delta tracked as integer micros/ppb throughout — no floating-point. monotone invariant: only `consume_budget` writes consumed fields, always in the increasing direction.
+**What's next:**
+- singh_attestation.es / similar remaining §A5 contracts
+- Or next tier-2 VM paradigm contract from DOCTRINE_PUNCH_LIST.md
+**Blockers / open questions:** None
+**Cross-references:** contracts 53/54/55/56 on node http://89.167.52.40:8099
+
+---
+
 ## 2026-05-18 (late night, session 4) — SBAV + SGB §A5.1: both contracts + deploy scripts live-verified (4 modes)
 
 **Focus:** Write `sbav_vm.es` (§A5.1 Bennett reversible VM, Landauer entropy) and `sgb_types.es` (§A5.1 Girard linear-logic type discipline), write and live-verify both deploy scripts (2 modes each).
