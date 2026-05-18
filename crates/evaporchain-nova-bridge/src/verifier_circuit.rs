@@ -178,6 +178,23 @@ impl NovaVerifierCircuit {
     ///
     /// Uses `num_steps = 1` (not 0) so the structural-validation gate
     /// in `generate_constraints` accepts the dummy during setup —
+    /// Audit B-1/B-2 S2a: the trusted-setup circuit shape — `dummy()`
+    /// at canonical arity WITH section2+section3 attached at the exact
+    /// prover R1CS shape (derived from canonical `PublicParams`, no
+    /// proof). This makes setup ≡ prover ≡ verifier R1CS so the
+    /// binding constraints are part of the keyed circuit. The
+    /// `#[deprecated]` insecure-randomness caveat in `groth16_wrapper`
+    /// still applies (S5/MPC ceremony is the separate, unchanged gap).
+    pub fn setup_shape(
+    ) -> Result<Self, crate::l_u_secondary_extract::ExtractError> {
+        let pp = crate::recursive_snark_fixture::canonical_public_params()
+            .map_err(crate::l_u_secondary_extract::ExtractError::Serialize)?;
+        let mut c = Self::dummy();
+        c.section3 = Some(Section3Witness::canonical_shape(&pp)?);
+        c.section2 = Some(Section2Witness::canonical_shape(pp.digest())?);
+        Ok(c)
+    }
+
     /// otherwise setup would `Unsatisfiable` and the prover key would
     /// never get generated.
     pub fn dummy() -> Self {

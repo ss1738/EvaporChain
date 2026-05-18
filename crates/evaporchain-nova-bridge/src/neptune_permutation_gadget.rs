@@ -609,6 +609,21 @@ fn partial_round_native_step<F: PrimeField>(state: &mut [F], post_ark: F) {
 /// `width = 25`, `full_rounds = 8`, `partial_rounds = 59`. The
 /// returned params object is `validate()`-clean.
 ///
+/// Audit B-1/B-2 S2a: canonical Neptune params from the COMPILED-IN
+/// dump, so `setup_shape()` is self-contained and `setup()`'s
+/// signature is unchanged (no runtime path; zero caller ripple). The
+/// dump is fixed protocol constants — correctly a compiled-in asset,
+/// not config. Writes the embedded bytes to a temp file once and
+/// reuses the verified `params_from_dump_path` (no parser refactor).
+pub fn params_from_embedded() -> Result<NeptuneParams<ark_bn254::Fr>, String> {
+    const DUMP: &[u8] = include_bytes!("../neptune-bn256-standard.json");
+    let p = std::env::temp_dir().join("evaporchain-canonical-neptune-bn256.json");
+    if !p.exists() {
+        std::fs::write(&p, DUMP).map_err(|e| format!("write embedded neptune dump: {e}"))?;
+    }
+    params_from_dump_path(&p)
+}
+
 /// Returns `Err` if any extractor fails (typed propagation from the
 /// parser layer).
 pub fn params_from_dump_path<P: AsRef<std::path::Path>>(

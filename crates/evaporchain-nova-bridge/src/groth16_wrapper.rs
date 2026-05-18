@@ -71,8 +71,14 @@ use crate::verifier_circuit::NovaVerifierCircuit;
 pub fn setup<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::r1cs::SynthesisError> {
-    let dummy = NovaVerifierCircuit::dummy();
-    Groth16::<Bn254>::circuit_specific_setup(dummy, rng)
+    // Audit B-1/B-2 S2a: key the circuit over the section-bearing
+    // setup_shape() (sections at exact prover R1CS shape) — NOT the
+    // constraint-vacuous dummy() — so the soundness bindings are part
+    // of the keyed circuit. (#[deprecated] insecure-randomness still
+    // applies; the MPC ceremony is the separate S5 gap.)
+    let circuit = NovaVerifierCircuit::setup_shape()
+        .map_err(|_| ark_relations::r1cs::SynthesisError::Unsatisfiable)?;
+    Groth16::<Bn254>::circuit_specific_setup(circuit, rng)
 }
 
 /// Generate a Groth16 proof for a concrete `NovaVerifierCircuit`
