@@ -206,6 +206,36 @@ ark BN254-G1). Net: of the two curve configs, only the **secondary**
 (`GrumpkinConfig`) is bespoke; the **primary** is library-provided.
 This further shrinks S4-nn.
 
+### S4a real-fixture wiring map (authoritatively pinned, nova 0.68 source)
+
+The MSM gadget (`s4_msm_gadget::pedersen_msm_grumpkin`, box-proven in
+isolation) is wired to a real fixture via these **source-verified**
+serde paths (the structs ARE the serde JSON shape — not guessed):
+
+- `PublicParams` named fields include `ck_secondary: CommitmentKey<E2>`
+  → `serde_json::to_value(pp)["ck_secondary"]`.
+- `CommitmentKey<E>` = `{ ck: Vec<AffineGroupElement>, h:
+  AffineGroupElement }` →
+  - `pp_json["ck_secondary"]["ck"]` = secondary Pedersen MSM bases
+  - `pp_json["ck_secondary"]["h"]` = blinding generator
+- `RecursiveSNARK` JSON `r_W_secondary` = `RelaxedR1CSWitness<E2>` =
+  `{ W:[scalar], r_W:scalar, E:[scalar], r_E:scalar }` →
+  - `rs_json["r_W_secondary"]["W"]` = secondary witness vector
+  - `rs_json["r_W_secondary"]["r_W"]` = blinding scalar
+  - scalars are E2 scalar = Grumpkin scalar = BN254 **Fq**, `0x`
+    BE-hex via `EvmCompatSerde` (reuse the `scalar_adapter` /
+    `l_u_secondary_extract` decode path).
+- `r_U_secondary.comm_W` = the Section-2-bound committed point
+  (already extracted by `section2_witness`; AffineGroupElement
+  compressed-hex → decompress, the proven in-codebase path).
+
+**Binding to enforce:** `r_U_secondary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`.
+Validation = a real-fixture `#[ignore]` test (real Nova fixture,
+S6-class): extract → `pedersen_msm_grumpkin` → assert `== comm_W`;
+adversarial: perturb `W[0]` → assert `!=`. Every path/encoding has a
+proven decoder; remaining risk = JSON-path exactness, box-iterated
+like `l_u_secondary_extract` ("verified empirically") was.
+
 **Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
 no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
 constants, (b) compose `ProjectiveVar` MSM with the right coord-field
