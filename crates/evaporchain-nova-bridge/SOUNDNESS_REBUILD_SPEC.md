@@ -38,3 +38,28 @@ The setup, prover, and verifier MUST synthesize an identical constraint system. 
 ## 4. Honest scope ceiling
 
 Even at S6-complete-minus-S4 this is "primary-R1CS + transcript bound, commitment binding deferred" — a major improvement over vacuous, but **not full Nova-accumulator soundness**. S4 (KZG-in-circuit + non-native secondary) is genuinely deep (possibly multi-week) and is the true mainnet gate. This spec deliberately does not pretend S2–S3 alone = sound. Mitigation throughout: `VerkleProofVerifier` is NOT deployed (`Deploy.s.sol` = BLS-quorum), so this is a pre-mainnet correctness rebuild, not a live incident.
+
+## S2a design resolution (2026-05-18 — hardest fork de-risked)
+
+**Question that gated everything:** can the trusted-setup circuit carry `section2`/`section3` at the *exact* prover R1CS shape **without** a real Nova proof? (If not, S2a → S6 are not implementable as scoped.)
+
+**Answer: YES.** Verified from the witness structs + gadgets:
+
+| Field | Role | Source for canonical placeholder |
+|---|---|---|
+| `Section3.a/b/c_primary`, `num_cons`, `num_vars`, `num_io` | **shape-determining** | the fixed step circuit's R1CS, held in canonical `PublicParams::<E1,E2,TrivialIncrementCircuit>` — deterministic, no proof |
+| `Section2.params` | shape-determining | fixed Neptune constants (JSON dump) |
+| `Section2.pp_digest` | shape-determining | `pp.digest()` of the canonical `PublicParams` — deterministic |
+| `Section3.w_primary/e_primary/u/x`, `Section2.comm_*/u_as_base/x*_limbs/ri_primary` | **value-only** | zeros — `enforce_primary_relaxed_r1cs_sat` emits `num_cons` gates and the Neptune sponge emits fixed rounds *independent of values* (data-independent circuit, verified) |
+
+⇒ setup R1CS ≡ prover R1CS ≡ verifier R1CS is achievable with a value-free placeholder derived purely from the canonical `PublicParams`.
+
+**Concrete implementation path (next, S2a-impl):**
+1. `Section3Witness::canonical_shape(pp: &PublicParams)` — mirror `extract_section3_witness`'s A/B/C/dims extraction but from `pp` (R1CS shape) instead of a `RecursiveSNARK`; zero `w/e/x/u`.
+2. `Section2Witness::canonical_shape(pp, neptune_params)` — fixed params + `pp.digest()→ArkFr`; zero value fields.
+3. `NovaVerifierCircuit::setup_shape()` — `dummy()` arity/z0/zi at `CANONICAL_SHAPE` **with both sections = `Some(canonical_shape(...))`**.
+4. `groth16_wrapper::setup` → call `setup_shape()` instead of `dummy()` (the `#[deprecated]` insecure-randomness caveat from PR #431 still applies — S5/MPC unchanged).
+5. S2b: drop the `Option` gating in `generate_constraints` so the bindings are unconditional; `validate_structurally` rejects dims ≠ `CANONICAL_SHAPE`.
+6. S6 determinism test: `cs.num_constraints()` for `setup_shape()` == for a real-witness circuit.
+
+**Still genuinely multi-day:** S2a-impl needs the canonical `PublicParams` plumbing + mirroring matrix extraction; S4 (KZG comm + secondary R1CS) remains the separate soundness ceiling. This entry only records that the **gating fork is solved** — the path is now concrete and de-risked, not blind.
