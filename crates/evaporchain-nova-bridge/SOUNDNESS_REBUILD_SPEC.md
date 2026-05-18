@@ -63,3 +63,60 @@ Even at S6-complete-minus-S4 this is "primary-R1CS + transcript bound, commitmen
 6. S6 determinism test: `cs.num_constraints()` for `setup_shape()` == for a real-witness circuit.
 
 **Still genuinely multi-day:** S2a-impl needs the canonical `PublicParams` plumbing + mirroring matrix extraction; S4 (KZG comm + secondary R1CS) remains the separate soundness ceiling. This entry only records that the **gating fork is solved** — the path is now concrete and de-risked, not blind.
+
+## S2a-impl design (2026-05-18 — implement-ready, verified against extract_*)
+
+Verified: `extract_section3_witness` pulls **shape from `pp`** (`serde_json::to_value(pp)["r1cs_shape_primary"]` → `num_cons/num_vars/num_io` + `parse_csr` A/B/C, `num_cols = num_vars+1+num_io`, with the `MAX_R1CS_*` caps); values from `rs`. `extract_section2_witness` takes `pp_digest` as a param + `params` from the JSON dump; values from `rs`. ⇒ exact `canonical_shape` bodies:
+
+```rust
+// Section3Witness — pure fn of pp; mirrors extract_section3_witness's
+// pp-derived half, values zeroed (lengths MUST match: Groth16 keys
+// bind #vars/#cons, values are irrelevant to keygen).
+pub fn canonical_shape(pp: &PublicParams<E1,E2,TrivialIncrementCircuit>) -> Result<Self, ExtractError> {
+    let shape = &serde_json::to_value(pp)?["r1cs_shape_primary"];
+    let num_cons = shape["num_cons"].as_u64()… as usize;   // + MAX caps (reuse)
+    let num_vars = …; let num_io = …;
+    let num_cols = num_vars + 1 + num_io;
+    Ok(Self {
+        w_primary: vec![ArkFr::zero(); num_vars],
+        e_primary: vec![ArkFr::zero(); num_cons],
+        u_primary: ArkFr::zero(), x_primary: [ArkFr::zero(); 2],
+        a_primary: parse_csr(&shape["A"], num_cons, num_cols)?,
+        b_primary: parse_csr(&shape["B"], num_cons, num_cols)?,
+        c_primary: parse_csr(&shape["C"], num_cons, num_cols)?,
+        num_cons, num_vars, num_io,
+    })
+}
+// Section2Witness — params from the EMBEDDED canonical dump (see below)
+pub fn canonical_shape(pp_digest: Scalar1) -> Result<Self, ExtractError> {
+    Ok(Self {
+        params: params_from_embedded()?,                 // include_bytes! (below)
+        pp_digest: primary_to_ark_fr(pp_digest),
+        comm_W_x: ArkFr::zero(), comm_W_y: ArkFr::zero(),
+        comm_E_x: ArkFr::zero(), comm_E_y: ArkFr::zero(),
+        u_as_base: ArkFr::zero(),
+        x0_limbs: [ArkFr::zero();4], x1_limbs: [ArkFr::zero();4],
+        ri_primary: ArkFr::zero(),
+    })
+}
+```
+
+**Neptune-dump wrinkle + resolution (the real design decision):** `params_from_dump_path` needs a runtime JSON file; `groth16_wrapper::setup` is called by ~15 sites with no path. Requiring a path ripples the `setup()` API + every caller. **Decision: embed the canonical Neptune dump via `include_bytes!("../assets/neptune_bn254_width25.json")`** (commit the dump as a crate asset) → `params_from_embedded()` parses the embedded bytes → `setup_shape()` is fully self-contained, `setup()` signature unchanged, zero caller ripple. (The dump is fixed protocol constants, correctly a compiled-in asset, not config.)
+
+**`setup_shape()` + wiring:**
+```rust
+impl NovaVerifierCircuit {
+  pub fn setup_shape() -> Result<Self, ExtractError> {
+    let pp = canonical_public_params();        // deterministic PublicParams::<…TrivialIncrement>::setup
+    let mut c = Self::dummy();                  // canonical ARITY z0/zi already
+    c.section3 = Some(Section3Witness::canonical_shape(&pp)?);
+    c.section2 = Some(Section2Witness::canonical_shape(pp.digest())?);
+    Ok(c)
+  }
+}
+// groth16_wrapper::setup: replace `NovaVerifierCircuit::dummy()` with
+// `NovaVerifierCircuit::setup_shape()?` — signature unchanged; the
+// #[deprecated] insecure-randomness caveat (PR #431) still stands (S5/MPC).
+```
+
+**Remaining for S2a-impl (mechanical now, de-risked):** add `assets/neptune_bn254_width25.json` + `params_from_embedded`; expose `canonical_public_params()` (factor from recursive_snark_fixture:103); the two `canonical_shape` fns; `setup_shape()`; one-line `groth16_wrapper` swap. Then S2b (drop `Option` gating + `validate_structurally` dim-reject) and S6 (`cs.num_constraints()` setup==real assertion). Still multi-day incl. the separate S4 KZG/secondary ceiling — this entry makes S2a-impl a coherent mechanical edit, not a blind crypto change.
