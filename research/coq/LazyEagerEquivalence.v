@@ -226,12 +226,10 @@ Qed.
     `nat_shr`, `linear_decay`, and saturating subtraction are all
     individually monotone in their first argument.
 
-    DISCHARGE STATUS 2026-05-07: stated; proof obligation tagged
-    [DRIFT-MONO-INIT]. The tactic `nia` typically handles this kind
-    of integer-floor monotonicity but the case split on the
-    halving-cutoff branch may need manual work. Left as Admitted for
-    a focused follow-up session; the outer `concrete_drift_one_sided`
-    theorem composes cleanly once this discharges. *)
+    DISCHARGE STATUS 2026-05-18: **Qed** — discharged via
+    `sub_linear_decay_mono_init` + `nat_shr_mono_init`. The earlier
+    draft comment ("Left as Admitted") is stale; the lemma is fully
+    closed. *)
 (** Helper: per-unit-step bound on linear_decay growth. When v
     increases by 1, linear_decay grows by at most 1 (because
     rem < h ≤ 2h, so each step in v adds < 1 to v*rem/(2h)). *)
@@ -337,16 +335,10 @@ Qed.
     already-floored intermediate cannot recover the bits the first
     stage truncated.
 
-    DISCHARGE STATUS 2026-05-07: stated; proof obligation tagged
-    [DRIFT-STEP-SUB]. Requires case-split on whether `(S k)/h =
-    k/h` (within-halving step) vs `(S k)/h = k/h + 1` (cross-halving
-    step). Within-halving case reduces to algebraic comparison
-    `inner_after * (2h - rem - 1) <= (inner_after - inner_after*rem/(2h)) * (2h - 1)`
-    which simplifies via `nia` to `rem >= 0` (always true). Cross-
-    halving case uses `energy_at_epoch_monotone` + the bound that
-    `nat_shr (k/h + 1)` differs from `nat_shr k/h` by exactly one
-    halving. Tractable but technical; left as Admitted for a focused
-    follow-up. *)
+    DISCHARGE STATUS 2026-05-18: **Qed** — within-halving case proved
+    via `concrete_step_subadditive_within_halving`; cross-halving via
+    `concrete_step_subadditive_cross_halving`. The earlier draft comment
+    ("left as Admitted") is stale; both helpers are fully closed. *)
 (** Standalone helper for nat-sub anti-monotonicity in argument 2.
     Coq's `Nat.sub_le_mono_l` has the wrong polarity (`n <= m ->
     n - p <= m - p`); this is the form needed for `c - b <= c - a`
@@ -705,9 +697,10 @@ Qed.
            lazy(k) ≤ staged-1 from eager(k)
         3. The latter is exactly eager(S k) by definition.
 
-    DISCHARGE STATUS 2026-05-07: composition Qed; depends on the
-    two helper lemmas above being discharged (currently Admitted).
-    Once both helpers land, this theorem becomes fully closed. *)
+    DISCHARGE STATUS 2026-05-18: **fully closed** — both helper lemmas
+    (`concrete_step_mono_init`, `concrete_step_subadditive`) are Qed;
+    this theorem is unconditionally Qed. The earlier "currently Admitted"
+    note is stale. *)
 Theorem concrete_drift_one_sided :
   forall e0 h n,
     h <> 0 ->
