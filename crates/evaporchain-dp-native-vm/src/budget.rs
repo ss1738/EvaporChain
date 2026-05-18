@@ -68,9 +68,14 @@ impl PrivacyBudget {
         }
     }
 
-    /// True iff the budget is fully exhausted on either axis.
+    /// True iff the budget is fully exhausted on both axes.
+    ///
+    /// Uses `&&` so that datasets with `initial_delta_ppb = 0` (pure ε-DP)
+    /// are not reported exhausted while epsilon remains — the delta axis is
+    /// trivially satisfied at zero for such datasets and must not be the
+    /// deciding factor (audit 2026-05-18 F16).
     pub fn is_exhausted(&self) -> bool {
-        self.remaining_epsilon_micros() == 0 || self.remaining_delta_ppb() == 0
+        self.remaining_epsilon_micros() == 0 && self.remaining_delta_ppb() == 0
     }
 }
 
