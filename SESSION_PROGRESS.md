@@ -6,6 +6,50 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (afternoon) — audit 2026-05-17 drive-order completion: Q4/Q5/Q7 + all MEDs/LOWs
+
+**Focus:** Verify remaining HIGH items (Q4, Q5, Q7) and close all MED/LOW findings from the 2026-05-17 audit. 3 doc-fix commits.
+
+**Commits shipped:** 3 (1f4ef335 → e389e359)
+
+**Deliverables:**
+- **1f4ef335** — Frontier #2/#3: TLA `DecompressOnInsert` comment line ref corrected (352-355→386); `03-rule-based-consensus.md` proof sketch annotated with integer-rounding caveat
+- **760c45f3** — LazyEagerEquivalence.v: 3 stale "Left as Admitted" comments updated to "Qed" (both helper lemmas are closed); frontier line drifts: `poha.rs:153` (was :131), `types/src/lib.rs` (was `state/evaporation.rs`)
+- **e389e359** — TLA BFT.tla: ReceiveProposalAndPrevote comment corrected (TLA is weaker classical Tendermint; Rust is stricter — a fortiori safe); ConservationInvariant.tla DecayFloor: abstraction note added (bit-shift-only over-approximates Rust's linear-interpolated floor, conservative direction for conservation proofs); CLAUDE.md: qualifies "zero-Admitted" with PoHAFreeloading axiom scope + EvaporChainSafetyLiveness conditional-on-hypotheses structure
+
+**Verified closed (code review, no new commits needed):**
+- Q4: `is_supermajority` strict `>` in both `certificate.rs:56` and `poha.rs:153`
+- Q5: `try_finalize_antichain` stake-weighted quorum (`stake_quorum_threshold()`) not count-based
+- Q7: `StateProof::verify` in `bridge.rs` has `leaf_index`, `tree_size`, DST-prefixed leaf hash
+- M-1: `secret_file_store.rs` Argon2id t=4 (matches bls_key_store.rs)
+- M-2: Argon2id-derived key wrapped in `Zeroizing<>` in secret_file_store.rs
+- M-4: Poseidon sponge documented as ZK-circuit-only; BLAKE3 recommended for non-ZK use
+- GHOST-B: `execute_refresh` checks `sender_addr != obj.owner` for both active + ghost paths
+- RULE-1: `energy_cost = energy_cost.saturating_add(*cost)` in contracts rule engine
+- A4: `hex_to_32` length-capped at 64 hex chars before `hex::decode`
+- OPCODE-1: `Op::VrfDomainRandomness` charges `GAS_HASH_BASE + ceil(domain_len/32)` (size-scaled)
+- OPCODE-5: `Op::Emit` and `Op::EmitEvent` call `track_memory()` before enqueueing
+- SFSV-1: `record_sale` has `require(caller == owner, ...)`
+- VEST-1: vesting_schedule uses division-based arithmetic (no mul overflow path)
+- BOUNTY-1: `submission_of` pre-checks `has_submitted[who]` before map lookup
+- A5: MCP compute-only POST paths added to `is_mcp_gated_path` allowlist
+- INV-MED-3: causal-chsh already says `✅ GATE PASSED (2026-05-04)` in lib.rs head + Cargo.toml
+
+**Decisions made:**
+- TLA models a weaker (more permissive) voting condition than Rust — valid for safety; documented not fixed
+- ConservationInvariant.tla DecayFloor is conservative under-approximation of Rust; safe for conservation proofs
+
+**What's next:**
+- Remaining MEDs not yet addressed: GHOST-A (MMR nullifier not consumed on resurrection), INV-MED-4 (light-cone overclaim), A6 (snapshot download no per-IP rate-limit), A8 (JSON-RPC tx hash bug), H-1 (VRF input not chain-id-scoped), H-3 (MMR proof.mmr_size not validated), H-4 (BLS aggregate no per-key PoP for non-validator callers)
+- Still open in crypto: M-3 (VerkleProof.commitments wire bloat), M-6 (bridge HashToCurve.sol doc/code DST mismatch)
+- Push this session's commits to origin
+
+**Blockers / open questions:** None code-blocking; all remaining items are MED or lower.
+
+**Cross-references:** AUDIT_2026_05_17.md drive order items 7, 8, 10, 14, 15, 16+
+
+---
+
 ## 2026-05-18 (morning) — coverage baseline capture: K4 chain_id + I1 ADDRESS_DST test fixes
 
 **Focus:** Capture new workspace llvm-cov baseline after Audit K4 (chain_id binding) and I1 (ADDRESS_DST) changes broke 5 test suites across the workspace. Fix all call sites, then drive coverage to a clean EXIT:0.
