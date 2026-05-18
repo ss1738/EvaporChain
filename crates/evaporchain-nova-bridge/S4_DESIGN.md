@@ -136,6 +136,50 @@ Next concrete unit: **S4-nn** (the non-native Fq gadget) — the
 foundation both S4a (one side per instance) and S4b rest on. Gated
 only on S2b green now (S4-0 done).
 
+## 7. S4-nn / architecture resolution (verified against ark 0.5 source)
+
+A second round of source verification (ark-r1cs-std 0.5 on the box)
+collapses most of the bespoke-crypto risk into **library
+composition**:
+
+- **Non-native field is library-provided.** `ark_r1cs_std::fields::
+  emulated_fp::EmulatedFpVar<TargetF, BaseF>` is a complete emulated
+  field gadget (`field_var.rs`, `reduce.rs`, `mul_without_reduce`,
+  full `FieldVar` impl). **Do NOT hand-roll CRT/limb non-native
+  arithmetic.** S4-nn reduces to *instantiate + validate*
+  `EmulatedFpVar<Fq, Fr>` for our operations, not implement it.
+- **EC MSM is library-provided and generic.** `ark_r1cs_std::groups::
+  curves::short_weierstrass::ProjectiveVar<P: SWCurveConfig, F:
+  FieldVar<P::BaseField, BasePrimeField<P>>>` implements `CurveVar`
+  with `scalar_mul_le` / `fixed_scalar_mul_le` /
+  `precomputed_base_scalar_mul_le`. `F` is the **coordinate** field
+  var, chosen per instance:
+  - **Secondary** (Grumpkin/Pedersen): `P::BaseField` = Grumpkin base
+    = BN254 Fr = circuit field → `ProjectiveVar<GrumpkinCfg,
+    FpVar<Fr>>` — **native point arithmetic**; non-native only for the
+    scalar bit-decomposition (`EmulatedFpVar<Fq,Fr>` → bits →
+    `scalar_mul_le`).
+  - **Primary** (BN256 G1/HyperKZG): `P::BaseField` = `bn256::Base` =
+    BN254 Fq ≠ Fr → `ProjectiveVar<Bn256Cfg, EmulatedFpVar<Fq,Fr>>` —
+    non-native point arithmetic (library), native scalars.
+- **No ark Grumpkin/bn256 crate** (nova uses halo2curves). Real
+  remaining bespoke work = define ark `SWCurveConfig` for nova's
+  Grumpkin and bn256 G1 from their **public** curve constants
+  (`COEFF_A`, `COEFF_B`, field assoc types), matching
+  halo2curves' coordinate/serialization convention (the same
+  decompress `section2_witness` already does for `comm.{x,y}`).
+
+**Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
+no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
+constants, (b) compose `ProjectiveVar` MSM with the right coord-field
+var per instance, (c) bind to Section 2/3, (d) secondary R1CS in
+`EmulatedFpVar`, (e) S4-verify with real-fixture validation +
+adversarial. Still the true mainnet gate and still substantial
+(constraint cost in §3 unchanged), but **no bespoke cryptographic
+primitives** — the deep risk is now correctness-of-composition +
+curve-config exactness, validated empirically (a real fixture's known
+`comm_W` must reproduce in-circuit; a wrong `W` must fail).
+
 ## 5. Honest ceiling (do not overstate)
 
 Until S4 lands, the verifier is **primary-R1CS + transcript bound,
