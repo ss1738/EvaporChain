@@ -43,6 +43,7 @@
 //! - The `Repr` type from halo2curves is a 32-byte newtype; we go
 //!   via `[u8; 32]` to keep the conversion explicit at every step.
 
+use ark_bn254::Fq as ArkFq;
 use ark_bn254::Fr as ArkFr;
 use ark_ff::{BigInteger, PrimeField as ArkPrimeField};
 use ff::PrimeField as FfPrimeField;
@@ -97,6 +98,24 @@ pub fn ark_fr_to_primary(f: ArkFr) -> PrimaryScalar {
 pub fn secondary_to_ark_fr_lossy(s: SecondaryScalar) -> ArkFr {
     let repr: [u8; 32] = s.to_repr().into();
     ArkFr::from_le_bytes_mod_order(&repr)
+}
+
+/// Same-field conversion: nova `grumpkin::Scalar` → `ark_bn254::Fq`.
+///
+/// grumpkin's scalar field **is** BN254's base field, so this is
+/// **exact and value-preserving for every input** — the genuine
+/// same-field analog of [`primary_to_ark_fr`], NOT the lossy
+/// [`secondary_to_ark_fr_lossy`] (which reduces mod the BN254
+/// *scalar* modulus and is wrong for arithmetic-bearing values).
+///
+/// Audit B-1/B-2 S4a: feeds real secondary `RelaxedR1CSWitness`
+/// scalars (`W`, `r_W`) into the Grumpkin Pedersen-MSM gadget
+/// ([`crate::s4_msm_gadget`]), whose scalars are
+/// `EmulatedFpVar<Fq, Fr>` — they must be the exact Fq values, not
+/// Fr-reduced.
+pub fn secondary_to_ark_fq(s: SecondaryScalar) -> ArkFq {
+    let repr: [u8; 32] = s.to_repr().into();
+    ArkFq::from_le_bytes_mod_order(&repr)
 }
 
 /// Cross-field byte transcoding: `ark_bn254::Fr` → nova
@@ -214,6 +233,28 @@ mod tests {
             bn256_neg_one_le, grumpkin_neg_one_le,
             "bn256 and grumpkin scalar moduli must differ — if this fires our \
              lossy-secondary assumption is wrong and the adapter can be tightened"
+        );
+    }
+
+    /// S4a: `secondary_to_ark_fq` is exact / value-preserving for
+    /// every input (same field), unlike the lossy Fr path.
+    #[test]
+    fn secondary_to_ark_fq_is_exact_value_preserving() {
+        for v in [0u64, 1, 2, 42, 7919, u64::MAX] {
+            assert_eq!(
+                secondary_to_ark_fq(SecondaryScalar::from(v)),
+                ArkFq::from(v),
+                "secondary_to_ark_fq must be value-preserving for {v}"
+            );
+        }
+        // q − 1 (Fq additive inverse of 1) must round-trip as the
+        // TRUE Fq −1 — i.e. `(q−1) + 1 == 0` in Fq. The lossy Fr path
+        // could not preserve this (q−1 > r).
+        let neg1_fq = secondary_to_ark_fq(-SecondaryScalar::from(1u64));
+        assert_eq!(
+            neg1_fq + ArkFq::from(1u64),
+            ArkFq::from(0u64),
+            "q-1 must map to the true Fq additive inverse of 1 (exactness)"
         );
     }
 }
