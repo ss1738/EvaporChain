@@ -156,17 +156,21 @@ mod tests {
              zero on both sides would indicate the extraction path silently failed"
         );
 
+        // Audit B-1/B-2 S2b: `build_circuit_from_fixture` attaches NO
+        // section witnesses, so synthesis MUST now fail — a section-
+        // less circuit is exactly the constraint-vacuity the fix
+        // closes. The satisfied-CS / arity-5 positive path is covered
+        // by the section-bearing `#[ignore]`d tests below and the S6
+        // determinism proof.
         let cs = ConstraintSystem::<ArkFr>::new_ref();
-        circuit
-            .generate_constraints(cs.clone())
-            .expect("synthesize real-fixture circuit");
+        let result = circuit.generate_constraints(cs.clone());
         assert!(
-            cs.is_satisfied().expect("is_satisfied"),
-            "real-fixture circuit must produce a satisfied CS (Sections 2+3 wired when witness attached)"
+            matches!(
+                result,
+                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+            ),
+            "section-less fixture circuit must be Unsatisfiable under S2b, got {result:?}"
         );
-
-        // Public-input arity contract: 2 hashes + |z0| + |zi| + 1 const = 5.
-        assert_eq!(cs.num_instance_variables(), 5);
     }
 
     /// Same shape with 5 steps to confirm zi tracks num_steps.
@@ -179,12 +183,19 @@ mod tests {
     }
 
     /// The Section 1 gate must accept a real fixture (num_steps
-    /// non-zero, balanced z0/zi).
+    /// Audit B-1/B-2 S2b: a real-fixture circuit *without* section
+    /// witnesses (`build_circuit_from_fixture` attaches none) is now
+    /// REJECTED by the structural gate — Section 1 shape alone is no
+    /// longer sufficient; the mandatory bindings must be present.
     #[test]
-    fn fixture_to_circuit_passes_structural_validation() {
+    fn fixture_to_circuit_section_less_fails_structural_validation() {
+        use crate::verifier_circuit::StructuralValidationError;
         let rs = generate_fixture(1).expect("generate 1-step fixture");
         let circuit = build_circuit_from_fixture(&rs).expect("build");
-        assert_eq!(circuit.validate_structurally(), Ok(()));
+        assert_eq!(
+            circuit.validate_structurally(),
+            Err(StructuralValidationError::MissingSection2),
+        );
     }
 
     /// Section 2 integration test. Requires neptune constants dump.
