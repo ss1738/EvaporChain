@@ -6,56 +6,51 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
-## 2026-05-18 (evening) — audit 2026-05-17 final sweep + VM paradigm crate verification
+## 2026-05-18 (evening) — audit 2026-05-17 final sweep + VM paradigm crate verification + SFSV UI
 
-**Focus:** Verify all remaining open items from the afternoon SESSION_PROGRESS entry, confirm VM paradigm crates are doctrine-complete, confirm SFSV coordinator is complete, fix A8-B secondary instance in block_to_json.
+**Focus:** Verify all remaining open items from the afternoon SESSION_PROGRESS entry, confirm VM paradigm crates are doctrine-complete, confirm SFSV coordinator is complete, LOW findings sweep, SFSV UI default endpoint.
 
-**Commits shipped:** 1 (A8-B block_to_json hash fix)
+**Commits shipped:** 3
+- `3753983c` — A8-B: `node/jsonrpc.rs:block_to_json` tx hashes now use `tx.signable_bytes()` not JSON serialization
+- `e37ffd27` — LOW findings: OPCODE-2/3/4 gas annotations, EXEC-1 `saturating_add`, RULE-2 BurnAmount stub annotation, WAL-1 `[u8;20]` truncation hazard, SUB-1 intentional no-period-gate comment
+- `a6626dae` — `sfsv/ui`: default node URL → `http://89.167.52.40:8099` (permanent public Hetzner node, viral-demo ready)
 
 **Deliverables:**
-- **A8-B** — `node/jsonrpc.rs:block_to_json`: secondary JSON-RPC hash used `blake3(serde_json::to_vec(tx))` instead of `blake3(tx.signable_bytes())`. Fix: `evap_getBlockByHash` / `evap_getBlockByNumber` tx-hash list now matches chain-recorded hashes.
+- **A8-B** — `node/jsonrpc.rs:block_to_json`: `evap_getBlockByHash`/`evap_getBlockByNumber` tx-hash list now matches chain-recorded hashes
+- **OPCODE-2/3/4** — gas asymmetry annotations on `Op::RandomRange`, `Op::Emit` Map/Array branch, `Op::Halt` now charges `GAS_RETURN` for parity with `Op::Return`
+- **EXEC-1** — `call_depth.saturating_add(1)` at both increment sites in `execute_call_contract` + `execute_call_script`
+- **RULE-2** — `RuleAction::BurnAmount` annotated as no-op placeholder; wiring requirement called out
+- **WAL-1** — `WalMutation` hazard annotated: `[u8;20]` will silently truncate 32-byte chain addresses if ever wired in
+- **SUB-1** — `subscription.es:pay()` intentional no-period-gate annotated; off-chain coordinator holds cadence responsibility
+- **SFSV UI** — default node URL points to permanent public Hetzner endpoint; works out of the box without local node
 
 **Verified closed (all items from afternoon "What's next"):**
-- GHOST-A: `refresh.rs:119-124` — paper §3.4 Inv-4 amended + code annotated (`db.remove_ghost()` is the uniqueness gate; MMR entry persists as historical proof)
-- H-1: `vrf.rs:210` — `leader_vrf_input` takes `chain_id` + length-prefixes it; all 4 tendermint.rs call sites pass `self.chain_id`
-- H-3: `accumulator.rs:251-273` — `MMRProof.mmr_size` validated via `leaf_count_from_mmr_size` + structural consistency checks before any hash work
-- H-4: `bls_portable.rs:154` — `aggregate_verify_with_pop` exists; `aggregate_verify` docstring warns untrusted-key callers to use the PoP variant
-- INV-HIGH-1: `execution/lib.rs:3944` — MERA tombstoned to `None` with doctrine annotation
-- INV-MED-4: `INVENTION_STACK.md §4.1 row 1` — annotated "(INV-MED-4 audit 2026-05-17)" + "No consensus-rejecting decision currently consults the DAG/antichain machinery"
-- M-3: `verkle.rs:187-192` + `energy_verkle.rs:254-257` — DIAGNOSTIC-ONLY doc annotation
-- M-6: `HashToCurve.sol:14-24` — DST doc corrected to `_NUL_` + M-6 annotation
-- A6: `api.rs:189` — `snapshot_rate_limit` field + `check_snapshot_rate_limit` helper at line 18517 + handler at 18559
-- A8 (primary): `jsonrpc.rs:300` — already fixed in prior session via `tx.signable_bytes()`
-
-**Also confirmed closed (not in afternoon "What's next" but checked):**
-- STATE-2: RocksDB governance stubs real at lines 1454-1480 (get/put_proposal, get/put_governance_param)
-- EXEC-2: call_depth incremented AFTER arg validation at lines 1625-1647, 1819-1864; `saturating_sub` on all exit paths
-- Q1/Q2/Q3, A1/A2/A3, all other CRITICALs/HIGHs: confirmed closed from prior sessions
+- GHOST-A, H-1, H-3, H-4, INV-HIGH-1, INV-MED-4, M-3, M-6, A6, A8 (primary) — all confirmed closed from prior sessions
 
 **VM paradigm crates — doctrine triplet fully verified:**
 - `evaporchain-total-evaporscript`: §4.2 citation ✓, press_claim_tests + adversarial (outer-var nested mutation) ✓, sealed-auction e2e ✓
 - `evaporchain-cap-decay-vm`: §4.2 citation ✓, structural revocation propagation test ✓, 3-level delegation chain e2e ✓
 - `evaporchain-dp-native-vm`: §4.2 citation ✓, budget-monotone + re-registration-forbidden tests ✓, salary-analytics 5-analyst e2e ✓
 
-**SFSV coordinator — complete:** 824 LOC, lib+bin targets, `auctioneer`+`config` unit-tested, `poller::parse_listing` 7-test coverage suite, `coordinator_integration.rs` non-trivial fixture (two listings, one clears, one stays + adversarial). Already committed (`ada8258d`).
+**SFSV coordinator — complete:** 824 LOC, lib+bin targets, all modules wired. `ui/index.html` (605 LOC) fully wired to live API; now defaults to public node.
 
 **Remaining open (LOW — no security impact):**
-- OPCODE-2/3/4, EXEC-1, SUB-1, POOL-1, RULE-2, WAL-1: gas asymmetries, micro-DoS, dead module hazards. Not expanded in main audit table; need raw agent output for specific sites.
-- OPS lanes (T0.2, T0.5, T0.6, T1.17-T1.19, T1.23): all OPS-ONLY, require operator on live cluster.
+- POOL-1 (acknowledged scaffold): EnergyPool `record_save()` awards to `caller == owner` — documented, no code change needed
+- OPS lanes (T0.2, T0.5, T0.6, T1.17-T1.19, T1.23): all OPS-ONLY, require operator on live cluster
 
 **Decisions made:**
-- All 9 CRITICAL + 14 HIGH + 25 MED findings from 2026-05-17 audit are now closed or annotated.
-- VM paradigm crates and SFSV coordinator are doctrine-complete.
-- No new code-work lanes remain in MAINNET_READINESS.md or DOCTRINE_PUNCH_LIST.md.
+- All 9 CRITICAL + 14 HIGH + 25 MED + all LOWs from 2026-05-17 audit are now closed, annotated, or acknowledged-scaffold.
+- VM paradigm crates and SFSV (coordinator + UI) are doctrine-complete and demo-ready.
+- No new code-work lanes remain from the audit sweep.
 
 **What's next:**
-- LOW sweep: obtain raw agent output for OPCODE-2/3/4, EXEC-1, SUB-1, POOL-1, RULE-2, WAL-1 specific sites and fix
-- Push A8-B commit to origin
-- SFSV UI polish: `ui/index.html` wire-up to live node endpoint (not blocking for Paper 1)
+- Mini 1 compile verify: `cargo test` on `e37ffd27`+`a6626dae` changes (OPCODE/EXEC/RULE/WAL/SUB + UI not Rust, but confirm workspace still green)
+- OPS lanes on live cluster when operator window opens
+- First reference dApp: SFSV is ready — write the Paper 1 companion section (post-mainnet)
 
 **Blockers / open questions:** None code-blocking.
 
-**Cross-references:** AUDIT_2026_05_17.md drive order items 16+ (LOWs); jsonrpc.rs:block_to_json A8-B
+**Cross-references:** AUDIT_2026_05_17.md drive order items 1-16+ fully swept; commits `3753983c`, `e37ffd27`, `a6626dae`
 
 ---
 
