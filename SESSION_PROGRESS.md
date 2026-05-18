@@ -6,6 +6,40 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (night, late) — Singh-Sabi (Patina Tokens) §A5.3 NFT: ruined-beautiful decay live-verified
+
+**Focus:** Write `singh_sabi.es` + `deploy-singh-sabi.sh` for the second §A5.3 NFT — the NFT that ages toward "ruined-beautiful".
+
+**Commits shipped:** 1 (`b4c0e9b7`)
+- `b4c0e9b7` — feat(A5.3): Singh-Sabi (Patina Tokens) — ruined-beautiful NFT live-verified
+
+**Deliverables:**
+| File | What |
+|------|------|
+| `contracts/evaporscript/singh_sabi.es` | Non-zero-floor patina decay; split-energy deployment (energy = decayable); snapshot1/snapshot2 probes in witness(); require_above_floor / require_below_initial gates |
+| `scripts/deploy-singh-sabi.sh` | 7-step doctrine proof: 3 structural invariants (at-mint score, monotone decay, floor maintenance) |
+
+**Empirical results:**
+- contract_id=33; snapshot1=915000 → snapshot2=500625 after 23 epochs (half_life=20) ✅
+- snapshot2=500625 >= floor_energy=150000 (Invariant 3: ruined-beautiful floor) ✅
+- require_above_floor + require_below_initial both PASSED pre+post decay ✅
+
+**Decisions made:**
+- API `.energy` returns STORED initial (not VM-computed decayed value). VM `energy` builtin = `energy_at_epoch(decayable, half_life, tx.epoch - created_epoch)`. Snapshot state fields in `witness()` are the only way to observe decay from state reads.
+- Split-energy deployment: contract deployed with `energy = initial - floor` so `patina_score = floor + energy` naturally.
+- Caller rotation for no-arg method dedup (same pattern as Singh-Migrant).
+
+**What's next:**
+1. `mortal_nft.es` already written — write `deploy-mortal-nft.sh` (quick win, proves basic decay-death)
+2. Check `MAINNET_READINESS.md` for §A5.4 Wallet UX Paradigm lanes
+3. Singh-Heir (§A5.3, 10 weeks) — kin-graph heirloom; deferred to Year 2 per INVENTION_STACK
+
+**Blockers / open questions:** None
+
+**Cross-references:** INVENTION_STACK §A5.3; `evaporchain-singh-sabi` crate (patina/entropy/token modules)
+
+---
+
 ## 2026-05-18 (night) — Singh-Migrant (Wanderwrits) §A5.3 NFT: kula-ring mechanic live-verified
 
 **Focus:** Write `singh_migrant.es` EvaporScript contract + `deploy-singh-migrant.sh` for the first §A5.3 NFT primitive — the NFT that dies if you keep it.
