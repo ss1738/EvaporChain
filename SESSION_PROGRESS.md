@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night, session 8) — Bounty + VestingSchedule: deploy scripts live-verified (4 modes), untag Bool=false fix
+
+**Focus:** Write and live-verify deploy scripts for `bounty.es` (anti-rug-pull doctrine + accept/claim lifecycle) and `vesting_schedule.es` (epoch-is-the-clock doctrine). Both scripts have 2 modes.
+**Commits shipped:** 1 (this commit)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `scripts/deploy-bounty.sh` | CREATED, submit + accept modes |
+| `scripts/deploy-vesting-schedule.sh` | CREATED, vest + gate modes |
+**Empirical results:**
+- bounty submit: contract_id=70 — submit-before-set_bounty REJECTED; set_bounty("Write a ZK proof", 50000); set_bounty-duplicate REJECTED; submit×2 (submission_count=2); cancel-after-submission REJECTED (anti-rug-pull); accept-by-non-poster REJECTED; sealed=true cancelled=false accepted=false ✓
+- bounty accept: contract_id=72 — set_bounty; submit(CALLER2); claim-before-accept REJECTED; accept(CALLER2); claim-wrong-winner(CALLER3) REJECTED; claim(CALLER2) → accepted=true ✓
+- vesting vest: contract_id=73 — set_terms(cliff>duration) REJECTED; set_terms(cliff=0 duration=1 grant=100000); set_terms-duplicate REJECTED; claim(DEPLOYER) REJECTED; cancel(CALLER2) REJECTED; claim(CALLER2) → claimed_amount=100000 ✓
+- vesting gate: contract_id=74 — set_terms(cliff=5000 duration=10000 grant=80000); claim-pre-cliff REJECTED; cancel(CALLER2) REJECTED; set_terms-duplicate REJECTED; cancel(DEPLOYER); claim-after-cancel REJECTED; cancelled=true claimed_amount=0 ✓
+**Decisions made (two bugs fixed):**
+- **`untag` Bool=false bug**: jq `//` operator treats `false` as falsy, returning the raw `{"Bool": false}` object instead of `false`. Fix: replace `(.Bool // .U64 // ...)` with `if has("Bool") then .Bool elif ...`. Applied to both new scripts.
+- **Bounty TX dedup**: adversarial pre-accept claim (step 4) used CALLER2 = same as real claim (step 7). Dedup rejected the valid claim. Fix: adversarial pre-accept claim uses CALLER4 (index 3) — different caller → different TX hash.
+- **accept/claim address comparison**: `caller == self.winner` where winner stored via Address arg. Bounty accept mode confirmed this works (claim succeeded). Same pattern used by vesting `caller == self.beneficiary` — also works.
+**What's next:**
+- energy_pool.es and oracle.es deploy scripts (remaining undeployed .es contracts)
+- Or dive into the next MAINNET_READINESS.md open lane
+**Blockers / open questions:** None
+**Cross-references:** contracts 70/71/72/73/74 on node http://89.167.52.40:8099
+
+---
+
 ## 2026-05-18 (late night, session 7) — OracleFeed + Multisig: deploy scripts live-verified (4 modes), two EvaporScript gotchas closed
 
 **Focus:** Write and live-verify deploy scripts for `oracle_feed.es` (freshness as structural property) and `multisig.es` (contract-is-the-proposal paradigm). Both scripts have 2 modes (publish/gate and execute/gate).
