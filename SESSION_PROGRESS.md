@@ -6,6 +6,36 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night, session 9) — Lottery + SealedBidAuction: deploy scripts live-verified (4 modes), TX dedup pattern documented
+
+**Focus:** Write and live-verify deploy scripts for `lottery.es` (VRF draw, void-by-physics) and `sealed_bid_auction.es` (decay-adjusted commit/reveal/settle, 4-phase machine).
+**Commits shipped:** 1 (this commit)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `scripts/deploy-lottery.sh` | CREATED, draw + gate modes |
+| `scripts/deploy-sealed-bid-auction.sh` | CREATED, settle + gate modes |
+**Empirical results:**
+- lottery draw: CID=77 — enter-before-set_event REJECTED; set_event; set_event-duplicate REJECTED; enter×2 (entry_count=2); draw → VRF picked CALLER3 as winner; claim_prize(CALLER3) → claimed=true ✓
+- lottery gate: CID=79 — set_event; enter CALLER2 (entry_count=1); draw-non-operator REJECTED; draw(DEPLOYER) → random_range(1)=0 → winner=CALLER2; enter-post-draw REJECTED; claim-non-winner REJECTED; drawn=true entry_count=1 ✓
+- sba settle: CID=80 — set_metadata; commit×2 (alice,bob); commit-duplicate REJECTED; set_phase(1); reveal-hash-mismatch REJECTED; reveal×2; reveal-duplicate REJECTED; set_phase(2); record_winner-effective-mismatch REJECTED; record_winner(alice,14000) → settled=true phase=3 reveal_count=2 ✓
+- sba gate: CID=81 — reveal-in-commit-phase REJECTED; record_winner-in-commit-phase REJECTED; commit×2; commit-duplicate REJECTED; set_phase(1); commit-in-reveal-phase REJECTED; phase-rewind REJECTED; reveal-hash-mismatch REJECTED; reveal-below-reserve REJECTED; phase=1 commit_count=2 reveal_count=0 settled=false ✓
+**Decisions made (TX dedup pattern fully documented):**
+- **TX dedup applies symmetrically**: same (caller, CID, method, args, epoch) → second TX returns FIRST TX's state, whether accepted or rejected. This means:
+  1. Adversarial TX deduped to accepted real TX → adversarial "appears accepted" (draw-before-entries gate)
+  2. Real TX deduped to rejected adversarial TX → real "appears rejected" (bounty claim, session 8)
+  - Fix in all cases: use different callers for adversarial and real TXs sharing (method, args, epoch)
+- **Lottery draw-before-entries untestable**: adversarial draw uses DEPLOYER (only operator can draw), and real draw also uses DEPLOYER → same TX hash if same epoch → skip; gate present in code
+- **Double-enter untestable**: same caller, same args, same epoch → dedup returns accepted state → skip; gate present in code
+- **SealedBidAuction reveal-duplicate workaround**: use a different commitment hash string ("bid_hash_alice_again" vs "bid_hash_alice") → different args → different TX hash → dedup-safe
+**What's next:**
+- Remaining 6 undeployed .es contracts: payment_split, subscription, time_lock, energy_pool, future_self_vault (SFSV dApp), bench_object
+- Or pivot to MAINNET_READINESS.md open lanes
+**Blockers / open questions:** None
+**Cross-references:** contracts 77/78/79/80/81 on node http://89.167.52.40:8099
+
+---
+
 ## 2026-05-18 (late night, session 8) — Bounty + VestingSchedule: deploy scripts live-verified (4 modes), untag Bool=false fix
 
 **Focus:** Write and live-verify deploy scripts for `bounty.es` (anti-rug-pull doctrine + accept/claim lifecycle) and `vesting_schedule.es` (epoch-is-the-clock doctrine). Both scripts have 2 modes.
