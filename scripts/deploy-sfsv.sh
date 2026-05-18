@@ -213,11 +213,12 @@ log "vault sealed."
 #   POST /api/tx/transfer {"from":DEPLOYER,"to":RELAY,"amount":1000000000000,"nonce":DEPLOYER_NONCE}
 relay_caller=$(( DEPLOYER_U8 + 1 ))
 if ! $DRY_RUN; then
-  relay_bal=$(curl_json GET "/api/accounts" | jq -r \
-    --argjson d "$relay_caller" \
-    '("0123456789abcdef"[($d//16):($d//16+1)] + "0123456789abcdef"[($d%16):($d%16+1)]) as $h |
-     ("0x" + $h + ("00" * 31)) as $addr |
-     first(.[] | select(.address == $addr) | .balance) // 0') || relay_bal=0
+  # Construct address as "0x" + 2-char hex byte + 62 zeros (= addr_from_byte).
+  relay_hex=$(printf '%02x' "$relay_caller")
+  relay_addr="0x${relay_hex}$(printf '%.0s00' {1..31})"
+  relay_bal=$(curl_json GET "/api/accounts" | \
+    jq -r --arg addr "$relay_addr" 'first(.[] | select(.address == $addr) | .balance) // 0') \
+    || relay_bal=0
   if (( relay_bal < 1000000 )); then
     die "relay caller account[$relay_caller] has insufficient balance ($relay_bal). Fund it first:
   POST /api/tx/transfer {\"from\":$DEPLOYER_U8,\"to\":$relay_caller,\"amount\":1000000000000,\"nonce\":<deployer_nonce>}" 4
