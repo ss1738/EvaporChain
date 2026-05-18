@@ -6,6 +6,38 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night, session 3) — SinghHeartbeat + SinghLineage §A5.4: both contracts + deploy scripts live-verified (4 modes)
+
+**Focus:** Write `singh_heartbeat.es` (§A5.4 ambient wallet pulse) and `singh_lineage.es` (§A5.4 graduated dormancy inheritance), write and live-verify both deploy scripts (2 modes each, 4 doctrine proofs total).
+**Commits shipped:** 1 (this commit)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `contracts/evaporscript/singh_heartbeat.es` | CREATED, 162 LOC, 4 methods |
+| `contracts/evaporscript/singh_lineage.es` | CREATED, 174 LOC, 6 methods |
+| `scripts/deploy-singh-heartbeat.sh` | CREATED, 361 LOC, 5-step proof (healthy + arrhythmia modes) |
+| `scripts/deploy-singh-lineage.sh` | CREATED, ~290 LOC, 7-step proof (authority + touch modes) |
+**Empirical results:**
+- heartbeat healthy: contract_id=44, epoch=79790 — bpm=60, color=0(Green), arrhythmia=0, health_bp=99, require_healthy PASSED ✓
+- heartbeat arrhythmia: contract_id=45, epoch=79837 — bpm=60, color=0(Green, giant dominates), arrhythmia=74, worst_hp=25, require_arrhythmic PASSED ✓
+- lineage authority: contract_id=46, epoch=80047 — dormancy=8→tier2(5000bp): snapshot1 addr=1 authority_bp=3000; dormancy=10→tier3(10000bp): snapshot2 addr=2 authority_bp=4000; require_authority PASSED ✓
+- lineage touch: contract_id=47, epoch=80079 — before touch dormancy=8 authority_bp=3000 ✓; after touch() dormancy=2 authority_bp=0 ✓
+**Decisions made:**
+- Hyperbolic decay for heartbeat: `cur_e = anchor_e * hl / (elapsed + hl)` — identical formula to SinghResonance/SinghTriage
+- Arrhythmia emerges from `health_bp - worst_hp` gap: aggregate stays Green (giant dominates) while one item signals dying (worst_hp=25)
+- Tier walk: iterate all 3 tiers ascending, last matching assignment wins → naturally selects highest crossed tier
+- `successor_present` parallel map needed: map default 0 cannot distinguish absent from zero-weight; standard EvaporScript pattern
+- touch() uses `require(epoch >= self.last_seen_epoch)` to prevent backward writes; resets dormancy immediately
+- witness_authority(addr, caller=different) avoids TX hash dedup on same-addr calls in touch mode
+**What's next:**
+- sbav_vm.es — SBAV VM paradigm EvaporScript contract (Rust crate evaporchain-cap-decay-vm 700+ LOC)
+- sgb_types.es — SGB types/state EvaporScript contract (evaporchain-dp-native-vm 800+ LOC)
+- mnemochaine.es — Mnemochaine memory-chain contract
+**Blockers / open questions:** None
+**Cross-references:** contracts 44/45/46/47 on node http://89.167.52.40:8099
+
+---
+
 ## 2026-05-18 (late night) — SinghLetter §A5.5: EvaporScript contract + deploy script live-verified (countdown + open modes)
 
 **Focus:** Write `singh_letter.es` (ChildKey §A5.5, inverted-decay time-lock) and live-verify both modes against permanent Hetzner node.
