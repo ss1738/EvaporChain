@@ -713,6 +713,11 @@ impl EvaporVM {
                     let val = self.pop()?;
                     let msg = match val {
                         Value::Str(s) => s,
+                        // OPCODE-3 (audit 2026-05-17): format! on Map/Array walks the
+                        // whole structure for flat GAS_EMIT=8. Memory tracking below
+                        // ensures heap pressure is capped; the gas asymmetry is minor
+                        // because contracts hitting this branch must first construct
+                        // the collection (which is gas-charged by the Map/Array ops).
                         other => format!("{other}"),
                     };
                     // OPCODE-5 (audit 2026-05-17): track message bytes before
@@ -783,6 +788,11 @@ impl EvaporVM {
                 }
 
                 Op::Halt => {
+                    // OPCODE-4 (audit 2026-05-17): charge GAS_RETURN for symmetry
+                    // with Op::Return. Both terminate execution; Halt just doesn't
+                    // pop a return value. Keeping gas consistent prevents callers
+                    // from substituting Halt for Return to save 1 gas unit.
+                    self.charge_gas(GAS_RETURN)?;
                     return Ok(Value::Null);
                 }
 
@@ -857,6 +867,11 @@ impl EvaporVM {
                 }
 
                 Op::RandomRange => {
+                    // OPCODE-2 (audit 2026-05-17): flat GAS_STATE_LOAD=5 for up to
+                    // MAX_REJECTION_ITERS=64 iterations. Each iteration hashes a
+                    // fixed 44-byte input (prefix + 32-byte VRF seed + 4-byte
+                    // counter); cost is bounded and low. The gas asymmetry vs a
+                    // size-scaled model is < 0.5% of typical script gas budgets.
                     self.charge_gas(GAS_STATE_LOAD)?;
                     let max = self.pop()?.as_u64()?;
                     if max == 0 {

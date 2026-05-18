@@ -1635,7 +1635,10 @@ impl SimpleExecutor {
         let args: serde_json::Value = serde_json::from_str(&tx.args)
             .map_err(|e| ExecutionError::ContractError(format!("invalid args JSON: {e}")))?;
 
-        self.call_depth += 1;
+        // EXEC-1 (audit 2026-05-17): use saturating_add for symmetry with
+        // the saturating_sub decrements below. Overflow is impossible given
+        // the MAX_CALL_DEPTH guard above, but the asymmetry is a code smell.
+        self.call_depth = self.call_depth.saturating_add(1);
         let result = self
             .contract_engine
             .call(tx.contract_id, &tx.method, &args, &tx.caller, tx.epoch)
@@ -1835,7 +1838,8 @@ impl SimpleExecutor {
                 .map_err(|e| ExecutionError::ScriptError(format!("invalid args JSON: {e}")))?
         };
 
-        self.call_depth += 1;
+        // EXEC-1 (audit 2026-05-17): saturating_add for symmetry.
+        self.call_depth = self.call_depth.saturating_add(1);
 
         let result = self
             .script_engine

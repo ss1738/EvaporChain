@@ -651,6 +651,10 @@ impl ContractEngine {
                         rules_triggered.push(format!("EmitEvent({msg})"));
                     }
                     RuleAction::BurnAmount(pct) => {
+                        // RULE-2 (audit 2026-05-17): BurnAmount is currently a
+                        // no-op placeholder — it records the trigger but does not
+                        // deduct energy. Wire to `db.deduct_energy(object_id, pct%)`
+                        // before enabling the rule engine in production.
                         rules_triggered.push(format!("BurnAmount({pct}%)"));
                     }
                 }
