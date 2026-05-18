@@ -6,6 +6,33 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (night) — HBCT + SCL doctrine triplets
+
+**Focus:** Close doctrine triplet gaps in the two launch-dApp crates that were missing press_claim_tests and e2e integration tests.
+
+**Commits shipped:** 3
+- `93420b8c` — HBCT + SCL: press_claim_tests + e2e (517 LOC of tests)
+- `0d575601` — add evaporchain-scl to workspace Cargo.toml (was missing)
+- Session follow-on: Mini 1 compile+test: 76 tests across both crates, 0 failures
+
+**Deliverables:**
+- **evaporchain-hbct** (§A3.4 launch wedge): `press_claim_tests` (5 adversarial, decay-to-zero boundary) + `tests/e2e.rs` (GB grid intraday market — 3 battery aggregators, 4 hour slots, secondary transfer, sequential auto-burn ticks, multi-location isolation)
+- **evaporchain-scl** (§A5.2 capability lease): `press_claim_tests` (6 adversarial, structural-expiry, no-revoke-method type assertion) + `tests/e2e.rs` (DAO treasury delegation lifecycle — grant, exercise, MEV theft attempt, SDDC resale, post-resale old-holder blocked, yield-optimizer expires structurally)
+- Both crates now satisfy the doctrine triplet: §-ref citation ✓, adversarial test ✓, non-trivial e2e ✓
+
+**Verified on Mini 1:** 76 tests, 0 failures; workspace still 10,633+ tests, 0 failures
+
+**What's next:**
+- OPS lanes (T0.2, T0.5, T0.6, T1.17-T1.19, T1.23) when operator window opens
+- Run fresh comprehensive audit on HEAD (last audit was 2026-05-17; dozens of fixes applied since)
+- evaporchain-hbct-elexon: check doctrine triplet (has tests dir but verify quality)
+
+**Blockers / open questions:** None code-blocking.
+
+**Cross-references:** INVENTION_STACK §A3.4 (HBCT), §A5.2 (SCL); commits 93420b8c, 0d575601
+
+---
+
 ## 2026-05-18 (evening) — audit 2026-05-17 final sweep + VM paradigm crate verification + SFSV UI
 
 **Focus:** Verify all remaining open items from the afternoon SESSION_PROGRESS entry, confirm VM paradigm crates are doctrine-complete, confirm SFSV coordinator is complete, LOW findings sweep, SFSV UI default endpoint.
