@@ -6,6 +6,38 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (night, very late) — MortalNft §A5.3: deploy script live-verified (transfer + auth modes)
+
+**Focus:** Write and live-verify `deploy-mortal-nft.sh` for the existing `mortal_nft.es` contract — completes the §A5.3 NFT triple (MortalNft + Singh-Migrant + Singh-Sabi).
+
+**Commits shipped:** 1 (to be pushed)
+- `deploy-mortal-nft.sh` — feat(A5.3): MortalNft deploy script — transfer + auth modes live-verified
+
+**Deliverables:**
+| File | What |
+|------|------|
+| `scripts/deploy-mortal-nft.sh` | 5-step doctrine proof for both `--mode transfer` (mint+transfer lifecycle) and `--mode auth` (holder-auth gate non-vacuous proof) |
+
+**Empirical results:**
+- transfer mode: contract_id=34; sealed=true, name=MayflieAlpha, transfer_count=0 post-mint ✅; transfer(acct[1]→acct[2]) finalised ✅; transfer_count=1, last_transfer_epoch=74237 ✅
+- auth mode: contract_id=35; transfer(caller=acct[0], NOT holder) REJECTED ✅; transfer(caller=acct[1], holder) FINALISED ✅; transfer_count=1, last_transfer_epoch=74367 ✅
+- No dedup issues: auth mode uses different callers (0 vs 1) for the two transfer calls
+
+**Decisions made:**
+- No snapshot/caller-rotation complexity needed — MortalNft has no no-arg methods that trigger dedup
+- `addr_arg` encoding `[2,0,…,0]` for account[2] works as `to` arg even though account[2] is unfunded (only callers need funds)
+
+**What's next:**
+1. Singh-Resonance §A5.3 — engagement-coupled decay NFT; crate `evaporchain-singh-resonance` exists; needs `.es` contract + `deploy-singh-resonance.sh` (8 weeks per spec; fastest remaining §A5.3)
+2. Singh-Posthuma §A5.3 — sealed testaments (12 weeks; death oracle is the hard piece; deferred)
+3. §A5.4 Wallet UX — Singh-Triage (EvaporWallet inbox paradigm, 6–8 weeks); ship first per spec
+
+**Blockers / open questions:** None
+
+**Cross-references:** INVENTION_STACK §A5.3; `mortal_nft.es` (pre-existing); Hetzner node `89.167.52.40:8099`
+
+---
+
 ## 2026-05-18 (night, late) — Singh-Sabi (Patina Tokens) §A5.3 NFT: ruined-beautiful decay live-verified
 
 **Focus:** Write `singh_sabi.es` + `deploy-singh-sabi.sh` for the second §A5.3 NFT — the NFT that ages toward "ruined-beautiful".
