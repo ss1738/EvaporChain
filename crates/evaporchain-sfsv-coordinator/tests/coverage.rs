@@ -190,20 +190,23 @@ fn submit_bid_handles_0x_prefixed_hex() {
 }
 
 #[test]
-fn submit_bid_with_short_hex_uses_zero_padding() {
-    // Coordinator's hex_to_addr is defensive: short hex → padded to 32
-    // bytes with leading zeros; invalid hex → all zeros. Either way it
-    // accepts the bid (the chain enforces ML-DSA later).
+fn submit_bid_with_short_hex_rejected() {
+    // audit 2026-05-18 (F2): short bidder_hex must be rejected, not
+    // silently zero-padded to the genesis address [0u8;32].
     let mut a = Auctioneer::new();
     a.register_listing(7, make_vault(), make_auction(1)).unwrap();
     let req = BidRequest {
         contract_id: 7,
-        bidder_hex: "01".to_string(), // only 1 byte of hex
+        bidder_hex: "01".to_string(), // only 1 byte — must reject
         max_price: 600,
         lambda_tolerance: 0,
         submitted_at: 5,
     };
-    a.submit_bid(&req).expect("short hex accepted (padded)");
+    let err = a.submit_bid(&req).unwrap_err();
+    assert!(
+        matches!(err, AuctioneerError::InvalidBidderHex(_)),
+        "expected InvalidBidderHex, got {err:?}"
+    );
 }
 
 #[test]
