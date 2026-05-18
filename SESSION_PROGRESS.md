@@ -6,6 +6,32 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-18 (late night) — SinghLetter §A5.5: EvaporScript contract + deploy script live-verified (countdown + open modes)
+
+**Focus:** Write `singh_letter.es` (ChildKey §A5.5, inverted-decay time-lock) and live-verify both modes against permanent Hetzner node.
+**Commits shipped:** 1 (`77eea9d0`)
+**Deliverables:**
+| File | Status |
+|---|---|
+| `contracts/evaporscript/singh_letter.es` | CREATED, 108 LOC, 5 methods |
+| `scripts/deploy-singh-letter.sh` | CREATED, 5-step + 6-step proof, auth auto-flow |
+**Empirical results:**
+- countdown mode: contract_id=42, epoch=78635 — unlock_epoch=85205, remaining=6567, unlockable=0, require_sealed PASSED ✓
+- open mode: contract_id=43, epoch=78656 — unlock_epoch=1, remaining=0, unlockable=1, open_letter + require_opened PASSED, opened_at_epoch=78656 ✓
+**Decisions made:**
+- Inverted decay = `unlock_epoch = birth + age * epy`; countdown = `unlock_epoch - epoch` (guarded by `if unlock_epoch > epoch`)
+- require(epoch >= self.unlock_epoch) in open_letter — `>=` works in require() expressions (confirmed via SinghResonance §A5.3 pattern)
+- snapshot pattern (witness_count 0→1 maps to snapshot1/snapshot2) — same as SinghResonance, no dedup since different callers
+- Auto-register+login auth flow: testnet auto-verifies email (line 338 auth.rs), register → login gives Bearer token in 2 calls
+- `has_signature=false` hardcoded in deploy-script + call-script handlers → no signature bypass; Bearer token always required
+**What's next:**
+- singh_heartbeat.es (§A5.4) — ambient pulse from TriageItems; Rust crate ready (90 LOC)
+- singh_lineage.es (§A5.4) — graduated dormancy authority; Rust crate ready (128 LOC)
+- sbav_vm.es / sgb_types.es — SBAV + SGB demonstration contracts (both Rust crates solid, 700+ LOC each)
+**Blockers / open questions:** Auth token required for all TX endpoints; acquire_token() pattern now standard for all future deploy scripts.
+
+---
+
 ## 2026-05-18 (night, very late) — SinghTriage §A5.4: EvaporScript contract + deploy script live-verified (classify + refresh modes)
 
 **Focus:** Write `singh_triage.es` (wallet-opens-on-inbox paradigm, map[u64->u64] items, nested while loop urgency classification) and live-verify both modes against permanent Hetzner node.
