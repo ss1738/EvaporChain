@@ -10,9 +10,13 @@
 - "Confidence" tags: **[V]** box-verified this work · **[I]** implemented,
   not yet verified · **[S]** specced/pinned, not implemented ·
   **[X]** not started · **[~]** project-asserted, not re-verified.
-- Hardware: the 4 GB Hetzner node-box CANNOT run full-`W` non-native
-  synthesis (empirically OOM'd). Full-scale verification → M4 Mini
-  cluster / `satyawan-1`. Never run heavy synth on the node-box.
+- Hardware: 4 GB Hetzner node-box = node only (never build). Mini 1
+  (16 GB) = tractable units. **`satyawan-1` (32-core / 123 GB) =
+  PROVEN scale-gate host** — B.3b (OOM'd twice ≤16 GB) PASSED there
+  in 332 s, no OOM (2026-05-19); fr009 training undisturbed (finished
+  naturally; queue advanced). `nice -19`, never touch the GPU
+  training. The scale-gates (A.3/B.3b/D.3) are RUNNABLE there, not
+  indefinitely deferred.
 
 ---
 
@@ -113,13 +117,14 @@
   data ... ok`, 1 passed, 29.80 s, 0 errors, first run. Real
   `ck_primary`/`r_W_primary`/`comm_W` decode to on-curve bn256-G1 +
   parseable Fr. The genuinely-open primary question is RESOLVED.
-- **B.3b [X — HARD SCALE-GATE]** Full in-circuit complete-formula
-  primary binding on real data. EMPIRICALLY OOM-killed (SIGKILL) on
-  Mini 1's 16 GB even at N=2 with JSON freed pre-circuit — the RCB
-  complete-formula CS for 2 scalars × 254-bit + a real fixture
-  exceeds 16 GB. SCALE boundary, NOT a logic gap (primary gadget
-  proven `[V]`). Needs a >>16 GB host (satyawan-1/cluster) — same
-  class as A.3; MAINNET EXIT requirement, deferred.
+- **B.3b [V — scale-gate CLEARED on satyawan-1]** Full in-circuit
+  complete-formula primary binding on real data. OOM'd twice ≤16 GB
+  (Mini 1); **PASSED on satyawan-1 (119 GB) 2026-05-19**:
+  `primary_msm_binds_real_prefix ... ok`, 1 passed, 332.63 s, no OOM,
+  training undisturbed. The in-circuit complete-formula primary
+  commitment binding on REAL fixture data is VERIFIED. (True-full-`W`
+  / larger-N is a further magnitude point but the binding logic on
+  real in-circuit data is proven.)
 - Depends on: B.0 (DECIDED). Primary gadget logic B.1→B.2-hardening
   all `[V]`; only B.3a (cheap, now) + B.3b (scale-gate) remain.
 
