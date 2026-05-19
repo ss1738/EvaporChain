@@ -6,6 +6,49 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 59, continued) — execution parallel.rs 80.2% → 91.5%
+
+**Focus:** Coverage push for `evaporchain-execution` parallel.rs
+**Commits shipped:** 1 (35f4611a)
+**Deliverables:**
+| Crate / file | Before | After | Tests added |
+|---|---|---|---|
+| `evaporchain-execution` parallel.rs | 80.17% | 91.54% | +475 lines (36 new tests) |
+| `evaporchain-execution` package | ~85% | 88.82% | — |
+**Key work:**
+- extract_access_keys for all 14 tx variants
+- OverlayStateDB direct method coverage: ghost/object/account/trie/privacy/stake/delegation/snapshot stubs
+- ParallelExecutor constructors: new, new_devnet, new_production, sig-verify variants
+- fee_controller/reward_accumulator accessors, enable_rewards, tick_lyapunov_fee_state
+- estimate_gas for 14 previously uncovered tx types: Governance, MultiSig, Blob, UpgradeContract, UserOp, Shield, Unshield, PrivateTransfer, Refund, Delegate, Undelegate, Deferred, RotateValidatorKey, ClaimDelegation
+- 581 tests green (0 failures)
+**What's next:**
+- `evaporchain-network` service.rs: 454 missed lines (77.22%) — libp2p event loop coverage
+**Cross-references:** commit 35f4611a
+
+---
+
+## 2026-05-19 (session 59) — contracts 85.8%→91.5%, consensus state_sync 80.5%→94.8%
+
+**Focus:** Coverage push for `evaporchain-contracts` and `evaporchain-consensus` state_sync.rs
+**Commits shipped:** 2 (4040d923 contracts, da70296b state_sync)
+**Deliverables:**
+| Crate / file | Before | After | Tests added |
+|---|---|---|---|
+| `evaporchain-contracts` lib.rs | 85.8% | 91.5% | +20 (116 unit + 15 e2e green) |
+| `evaporchain-consensus` state_sync.rs | 80.5% | 94.8% | +14 |
+| `evaporchain-consensus` total | 95.3% | 96.0% | — |
+**Key work:**
+- Fixed 5 failing contract tests (bidder field, reserve logic, completed-state read via get_state, half_life)
+- Added 14 state_sync tests covering full `handle_header_response` state machine: wrong-phase, no-target, height-mismatch, bootstrap±checkpoint, quorum/cert checks, light_client Valid/NeedBisection/Invalid paths
+**What's next:**
+- `evaporchain-execution` parallel.rs: 697 missed lines (80.2%) — async OCC, harder
+- `evaporchain-network` service.rs: 506 missed lines (76.1%) — libp2p event loop
+- `evaporchain-consensus` lib.rs: now 87.4% (+commit 23ea47a0: 4 tests for validate_block_header + RotatingConsensus::new)
+**Cross-references:** commits 4040d923, da70296b, 23ea47a0
+
+---
+
 ## 2026-05-19 (session 58) — evaporchain-consensus-types coverage 51.9% → 95.2% (58 new tests)
 
 **Focus:** Coverage push for `evaporchain-consensus-types` — added 58 targeted tests covering all major uncovered paths: BLS PoP constructors, key rotation, VRF leader election, slashing variants, light client verifier.
