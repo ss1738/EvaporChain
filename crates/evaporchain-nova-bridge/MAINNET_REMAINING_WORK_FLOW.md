@@ -148,6 +148,22 @@
   (currently only secondary's is — see `S4_DESIGN.md` structural note).
 - Depends on: A + B(logic) `[V]`; **D**; and the B.3b/A.3 scale-gates.
 
+> **D.3 SIZE MEASURED (2026-05-19, Mini3, tractable harness — no
+> spend, no big box):** synthetic fit ≈ `3844·s + 813` (~1281
+> constraints / non-native nonzero) × REAL secondary dims
+> (`num_cons=10554, num_vars=10536, total_nnz=126899`) ⇒ **full-D.3
+> ≈ 2.03 × 10⁸ constraints ≈ 57–284 GB**. Consistent with satyawan-1
+> (123 GB) hanging (123 GB is *inside* the band). **DECISION: do NOT
+> buy/rent a bigger box to brute-force this.** The primary R1CS
+> (native, Section 3) is ~10⁴ constraints; the secondary via
+> non-native emulation is ~2×10⁸ — a **~20,000× blow-up purely from
+> Fq emulation**, also impractical for Groth16 setup/prove itself.
+> This is quantitative proof the **curve-cycle redesign (B.0 Option
+> 3) is the necessary architecture**, not optional — it removes the
+> 20,000× factor at the root. Standalone-full-D.3 (≈256–512 GB,
+> ~$10–30 hourly cloud, one-off) is only a checkbox; the redesign is
+> the real path.
+
 ## PHASE D — S4b: secondary RelaxedR1CS satisfiability *(THE deep one)*
 
 - **D.1 [V]** Non-native row-sat gadget — proven via A.1
