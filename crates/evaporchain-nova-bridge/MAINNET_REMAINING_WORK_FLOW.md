@@ -33,14 +33,17 @@
 
 ## PHASE A — Finish S4a secondary binding
 
-- **A.1 [I→verify]** Box-verify the S4b *primitive* proof
-  (`s4b_secondary_r1cs_gadget`, tiny 1-row instance) — non-ignored,
-  memory-safe. Gate: `secondary_relaxed_r1cs_nn_sat_and_adversarial`
-  prints `ok`.
-- **A.2 [I→verify]** Box-verify the **bounded-`W`** secondary binding
-  (`s4_secondary_extract::secondary_msm_binds_real_prefix`, N=12) on the
-  node-box. Gate: in-circuit MSM == out-of-circuit ark MSM over the SAME
-  real extracted prefix + adversarial. Depends on: A.1 compiling clean.
+- **A.1 [V]** S4b primitive proof — BOX-VERIFIED on **Mini 1**
+  (2026-05-19): `secondary_relaxed_r1cs_nn_sat_and_adversarial ... ok`,
+  `1 passed; 0 failed`, 0.31 s, 0 errors. Proves the S4b/D.1 core
+  non-native row-sat logic (correct witness satisfies; perturbed row →
+  UNSATISFIABLE).
+- **A.2 [I→verify, running]** Bounded-`W` secondary binding
+  (`s4_secondary_extract::secondary_msm_binds_real_prefix`, N=12) — now
+  on **Mini 1** (10c/16 GB), NOT the node-box. Gate: in-circuit MSM ==
+  out-of-circuit ark MSM over the SAME real extracted prefix +
+  adversarial. (Build-host pivoted: node-box was unreliable for builds
+  — dies at crates.io index / OOMs full-`W` — and stays node-only.)
 - **A.3 [X]** Full-`W` secondary binding (`comm_W == Σ Wᵢ·ckᵢ + r_W·h`,
   unbounded) on a **bigger machine** (M4 Mini / satyawan-1). Gate: real
   `r_U_secondary.comm_W` equals the in-circuit MSM. Depends on: A.2 +
