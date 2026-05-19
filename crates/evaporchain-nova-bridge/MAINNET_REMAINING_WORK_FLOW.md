@@ -216,11 +216,53 @@ secondary ≈ 10.5k native Grumpkin scalar-muls × native per-op cost +
 the constant HyperKZG-pairing-in-circuit term), not to assert a final
 figure now.
 
-**NEXT [ ]:** D.3-style size *prediction* for the BN254-Fr recursion
-circuit (native secondary MSM term + constant primary-pairing term),
-no build/spend; if predicted ≪ Groth16-tractable (expected ~few ×10⁶)
-→ build the recursion circuit + re-point `groth16_wrapper::setup` at
-its succinct ppsnark verifier; `eip197.rs` codec reused unchanged.
+### SIZE PREDICTION — ✅ MEASURED [V] (2026-05-19, Mini3, box,
+HEAD `c217dce2`, `predict_native_grumpkin_msm_size_for_recursion_
+circuit ... ok`, 1 passed, 1.08 s)
+
+Real `cs.num_constraints()` of the existing native-Grumpkin
+`pedersen_msm_grumpkin` gadget (points = BN254-Fr coords = native;
+scalars = non-native Fq):
+
+| k | cons |
+|---|---|
+| 1 | 5,054 |
+| 2 | 7,587 |
+| 4 | 12,653 |
+| 8 | 22,785 |
+
+Linear fit: **2,533 cons / MSM term**, intercept 2,521. **Predicted
+at n=10,554: MSM ≈ 26.7M + HyperKZG-pairing const 2M ≈ TOTAL
+~28.7M constraints. FALSIFIER (≥1e9) DID NOT FIRE.**
+
+**Verdict (calibrated, no overhype):**
+- ✅ ~29M ≪ D.3's 2.03×10⁸ ≪ 1e9. The native-side placement gives
+  **~7× under D.3**; source-read-#3 "recursion escapes S4b scale" is
+  **empirically supported**, not just argued. The earlier flow text
+  "(~10⁵)" was optimistic — corrected: the measured figure is ~10⁷
+  (flat MSM), still well inside the conclusion.
+- ⚠️ ~29M is **tractable but NOT "small"**: Groth16 needs ~2²⁵
+  powers-of-tau, tens-of-GB prover RAM, minutes-scale prove on a
+  strong box — a **one-shot per-proof prover cost**. EVM **verify is
+  constant** (3 pairings ~250k gas) regardless — that part is cheap.
+- ~29M is a **conservative upper bound**: probe uses the *flat*
+  per-term MSM (n independent scalar-muls). IPA `ck_hat`'s scalar
+  vector has **tensor structure** (`ipa_pc.rs` L334-349) a bespoke
+  recursion circuit folds in ~log(n) → potential ~10–100× cut. Lever,
+  not requirement.
+
+**Bottom line:** Option (2) is the **validated EVM path** — buildable,
+no 10⁹ circuit, no forced HW spend, EVM verify cheap; prover-side
+~29M is heavy-but-one-shot and tensor-foldable. The B-1/B-2 #1
+mainnet-blocker architecture question is **resolved**.
+
+**NEXT [ ]:** build the BN254-Fr recursion circuit (reuse
+`pedersen_msm_grumpkin` for the secondary `ck_hat`; constant terms
+for hashes/NIFS/derandomize/HyperKZG), ppsnark-compress it, re-point
+`groth16_wrapper::setup` at its succinct verifier; `eip197.rs` codec
+unchanged. Decide flat-vs-tensor MSM after a first Groth16 prove-cost
+measurement on satyawan-1/Mini (the heavy step — schedule
+deliberately, never on the training rig / node box).
 
 ---
 
