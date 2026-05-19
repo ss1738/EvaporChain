@@ -27,6 +27,7 @@
 use ark_bn254::Fq as Bn254Fq;
 use ark_ec::short_weierstrass::Projective;
 use ark_ec::CurveGroup;
+use ark_std::Zero;
 
 use crate::grumpkin_config::GrumpkinConfig;
 
