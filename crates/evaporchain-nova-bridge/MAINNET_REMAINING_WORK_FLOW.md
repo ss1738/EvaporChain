@@ -90,6 +90,37 @@ gate: if predicted ≪ Groth16-tractable → build the verifier circuit
 + re-point `groth16_wrapper::setup`; if the IPA secondary dominates
 → that, not "the wrapper", is the real remaining problem to solve.
 
+### RESOLVED by source read (2026-05-19, `ipa_pc.rs` verify L351-356)
+
+`CompressedSNARK.verify` secondary path calls Spartan→IPA verify,
+whose `ck_hat = CE::commit(&ck, &s, 0)` is a **size-`n` MSM** (`s` is
+`vec![..; n]`, `n = b_vec.len()` ≈ 10,554 secondary). **Cheap
+natively** (∴ the 25 s validation is genuine and unaffected) but
+**in-circuit ≈ 10.5k non-native Grumpkin scalar-muls ≈ S4b-scale
+(~10⁸–10⁹ cons).** So:
+
+- The size-prediction harness's open question is **answered without
+  building it**: stock nova-snark IPA-secondary verifier is **NOT**
+  in-circuit-tractable. The earlier "small Groth16-of-verifier" was
+  optimism the calibrated flag correctly hedged. **No overturn of the
+  native CompressedSNARK result; sharpening of the EVM wrapper.**
+- The blowup is not removed by CompressedSNARK — it **moves** from
+  "raw RelaxedR1CS re-verify" to "IPA `ck_hat` size-n MSM". Confirms:
+  not fixable by hardware or curve-cycle redesign.
+- **Real remaining EVM problem (named, bounded):** discharge the
+  *secondary* (Grumpkin) side cheaply on-chain. Known solved shape =
+  **Sonobe-style decider**: Groth16/KZG-wrap the **primary only**
+  (HyperKZG → constant-size BN254 pairing, EVM-cheap), discharge the
+  secondary via the folded NIFS relation — **not** a full in-circuit
+  IPA. No 10⁹ circuit, no hardware/VPS spend.
+
+**NEXT [ ]:** source-read the Nova/Sonobe decider pattern + confirm
+nova-snark 0.68 exposes the primary `r_U_primary` + HyperKZG opening
+needed to build a *primary-only* Groth16 decider; scope its
+constraint count (HyperKZG-verify-in-circuit ≈ bounded constant
+pairing, the favorable side). The secondary is discharged by the
+existing NIFS fold check, not re-verified in-circuit.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
