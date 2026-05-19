@@ -9,7 +9,7 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 ## 2026-05-19 (session 58) — evaporchain-consensus-types coverage 51.9% → 95.2% (58 new tests)
 
 **Focus:** Coverage push for `evaporchain-consensus-types` — added 58 targeted tests covering all major uncovered paths: BLS PoP constructors, key rotation, VRF leader election, slashing variants, light client verifier.
-**Commits shipped:** 1 (pending)
+**Commits shipped:** 1
 **Deliverables:**
 | Item | Result |
 |---|---|

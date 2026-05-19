@@ -132,7 +132,6 @@ mod press_claim_tests {
 
     #[test]
     fn unsorted_fork_list_rejected_before_root_produced() {
-        // Forks out of order by fork_root — build must fail, no root emitted.
         let a = att(0x01, 50, 0x00, 0x00, vec![fwr(0x20, 0x00), fwr(0x10, 0x00)]);
         assert_eq!(build_attestation(&a).unwrap_err(), AttestationError::UnsortedForks);
     }

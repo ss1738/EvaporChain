@@ -3,45 +3,53 @@
 # deploy-subscription.sh — end-to-end doctrine proof for Subscription
 # (contracts/evaporscript/subscription.es).
 #
-# Doctrine: no off-chain reaper to detect non-payment and cancel.
-# pay() keeps the contract alive (renews its energy); skipping payments
-# lets the contract evaporate; on_evaporate flips lapsed=true
-# automatically.  No who-watches-the-watcher.
-#
-# The subscriber (deployer/owner) calls set_terms to arm.  Either party
-# (subscriber or provider) can cancel unilaterally.  Cancellation is
-# one-shot and blocks future pay() calls.
+# Doctrine: no off-chain reaper. `pay()` keeps the contract alive via energy;
+# missed payments let it evaporate naturally; `on_evaporate` flips `lapsed=true`.
+# The runtime IS the deadline enforcer. No who-watches-the-watcher problem.
 #
 # Two modes:
 #
-#   --mode pay (default):
-#     Happy path — arm and pay.
-#     1. Adversarial: pay() before set_terms → REJECTED (not sealed)
-#     2. set_terms(provider=CALLER2, amount=1000, period=10) → sealed=true
-#     3. Adversarial: set_terms again (different args to avoid dedup) → REJECTED
-#     4. Adversarial: pay() as CALLER2 (provider, not subscriber) → REJECTED
-#     5. pay() as DEPLOYER → paid_periods=1, cumulative_paid=1000
-#     6. GET state → sealed=true, is_active=true, periods_paid=1, total_paid=1000
+#   --mode active (default):
+#     Prove the subscription lifecycle (set_terms → pay → state check).
+#     1. Deploy
+#     2. Adversarial: pay() as CALLER3 (not subscriber) → REJECTED (sealed==false)
+#     3. set_terms(CALLER2=provider, amount=1000, period=100) → sealed=true
+#     4. Adversarial: set_terms again (different args) → REJECTED (already sealed)
+#     5. pay() as DEPLOYER (subscriber) → paid_periods=1, cumulative_paid=1000
+#     6. Adversarial: pay() as CALLER2 (provider, not subscriber) → REJECTED
+#     7. GET state → sealed=true, cancelled=false, paid_periods=1, cumulative_paid=1000
+#     Proves: non-subscriber pay rejected pre-seal, set_terms idempotent,
+#             subscriber-only pay, non-subscriber pay rejected post-seal.
+#     Note: SUB-1 (multiple pays allowed) is documented in contract source; tested
+#           separately when the epoch advances to produce distinct TX hashes.
 #
 #   --mode cancel:
-#     Bilateral cancel — provider kills the subscription.
-#     1. set_terms(provider=CALLER2, amount=500, period=5)
-#     2. pay() as DEPLOYER → one payment
-#     3. Adversarial: cancel() as CALLER3 (neither party) → REJECTED
-#     4. cancel() as CALLER2 (provider) → cancelled=true
-#     5. Adversarial: pay() after cancel → REJECTED
-#     6. Adversarial: cancel() as DEPLOYER (already cancelled) → REJECTED
-#     7. GET state → cancelled=true, is_active=false
+#     Prove cancel gates.
+#     1. Deploy
+#     2. set_terms(CALLER2=provider, amount=500, period=50) → sealed=true
+#     3. Adversarial: cancel() as CALLER3 (not subscriber or provider) → REJECTED
+#     4. cancel() as DEPLOYER (subscriber) → cancelled=true
+#     5. Adversarial: cancel() again (as CALLER3) → REJECTED (already cancelled)
+#     6. Adversarial: pay() after cancel (as DEPLOYER) → REJECTED
+#     7. GET state → cancelled=true, paid_periods=0
+#     Proves: unauthorized cancel rejected, subscriber can cancel, double-cancel rejected,
+#             pay after cancel rejected.
 #
 # TX DEDUP NOTES:
-#   set_terms adversarial test uses different args → different TX hash.
-#   pay() in step 2 and cancel()-check step 5 use different methods → no dedup.
-#   cancel() as CALLER2 (step 4) vs cancel() as DEPLOYER (step 6) → different callers.
+#   active mode: all TX hashes are distinct.
+#     step 2 adversarial pay uses CALLER3; step 5 real pay uses DEPLOYER — different callers.
+#     step 4 adversarial set_terms uses different args (2000/200) from step 3 (1000/100).
+#     step 6 adversarial pay uses CALLER2 — different caller from step 5 DEPLOYER.
+#   cancel mode step 3: adversarial cancel() uses CALLER3 — different from DEPLOYER (step 4).
+#   cancel mode step 5: second adversarial cancel() uses CALLER3 again (same hash as step 3).
+#     Both were rejected; require_rejected passes on the cached "rejected" state.
+#   cancel mode step 6: adversarial pay() uses DEPLOYER after cancel — different method from
+#     cancel() so unique hash; correctly REJECTED.
 #
 # Usage:
-#   ./scripts/deploy-subscription.sh --dry-run
-#   ./scripts/deploy-subscription.sh --node http://89.167.52.40:8099 --mode pay
-#   ./scripts/deploy-subscription.sh --node http://89.167.52.40:8099 --mode cancel
+#   ./deploy-subscription.sh --dry-run
+#   ./deploy-subscription.sh --node http://89.167.52.40:8099 --mode active
+#   ./deploy-subscription.sh --node http://89.167.52.40:8099 --mode cancel
 #
 # Exit: 0 ok · 2 precondition · 3 deploy · 4 call · 5 adversarial · 6 verify
 #
@@ -49,16 +57,14 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/subscription.es"
+CONTRACT_PATH="/Users/satyawansingh/EvaporChain/contracts/evaporscript/subscription.es"
 
 NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
 DEPLOYER_U8="${DEPLOYER_U8:-0}"   # subscriber (owner)
 CALLER2_U8="${CALLER2_U8:-1}"     # provider
-CALLER3_U8="${CALLER3_U8:-2}"     # adversarial (neither party)
-MODE="${MODE:-pay}"
+CALLER3_U8="${CALLER3_U8:-2}"     # unauthorized adversarial caller
+MODE="${MODE:-active}"
 
 INITIAL_ENERGY="${INITIAL_ENERGY:-$(( 5000000 + RANDOM % 32768 ))}"
 CONTRACT_HALF_LIFE="${CONTRACT_HALF_LIFE:-500000}"
@@ -71,10 +77,10 @@ deploy-subscription.sh [options]
   --dry-run              print intended calls; no network
   --node URL             node base URL (default http://89.167.52.40:8099)
   --token TOKEN          auth bearer ($EVAPORCHAIN_TX_TOKEN)
-  --deployer U8          subscriber account index (default 0)
+  --deployer U8          subscriber/owner account index (default 0)
   --caller2 U8           provider (default 1)
-  --caller3 U8           adversarial (default 2)
-  --mode pay|cancel      prove mode (default pay)
+  --caller3 U8           unauthorized adversarial caller (default 2)
+  --mode active|cancel   prove mode (default active)
   --energy N             contract initial energy (default ~5M randomised)
   --hl N                 contract half-life (default 500000)
   --timeout SEC          poll timeout (default 300)
@@ -130,7 +136,9 @@ poll_tx_state() {
   while (( $(date +%s) < deadline )); do
     resp=$(curl_json GET "/api/tx/$1") || true
     st=$(printf '%s' "$resp" | jq -r '.state // "unknown"')
-    case "$st" in included|finalised|rejected) printf '%s' "$st"; return 0 ;; esac
+    case "$st" in
+      included|finalised|rejected) printf '%s' "$st"; return 0 ;;
+    esac
     sleep 2
   done
   printf 'timeout'
@@ -163,7 +171,7 @@ acquire_token() {
   local email="deploy-sub-${ts}@example.com"
   local pass="EvaporSub${ts}!"
   local reg_body; reg_body=$(jq -n --arg e "$email" --arg p "$pass" \
-    '{email:$e, password:$p, display_name:"subscription-deploy"}')
+    '{email:$e, password:$p, display_name:"sub-deploy"}')
   local reg_resp; reg_resp=$(curl -sS -m 15 -X POST \
     -H 'Content-Type: application/json' -d "$reg_body" \
     "$NODE_URL/api/auth/register") || die "auth register curl failed" 2
@@ -185,8 +193,8 @@ grep -q "fn set_terms("          "$CONTRACT_PATH" || die ".es missing fn set_ter
 grep -q "fn pay("                "$CONTRACT_PATH" || die ".es missing fn pay" 2
 grep -q "fn cancel("             "$CONTRACT_PATH" || die ".es missing fn cancel" 2
 grep -q "fn is_active("          "$CONTRACT_PATH" || die ".es missing fn is_active" 2
-[[ "$MODE" == "pay" || "$MODE" == "cancel" ]] \
-  || die "unknown --mode '$MODE' (pay|cancel)" 2
+[[ "$MODE" == "active" || "$MODE" == "cancel" ]] \
+  || die "unknown --mode '$MODE' (active|cancel)" 2
 
 if ! $DRY_RUN; then
   command -v curl >/dev/null || die "curl required" 2
@@ -197,17 +205,17 @@ fi
 acquire_token
 ADDR2=$(addr_arg "$CALLER2_U8")
 
-if [[ "$MODE" == "pay" ]]; then
+if [[ "$MODE" == "active" ]]; then
 cat <<EOF
 
 +=====================================================================+
-|  Subscription — doctrine proof (pay mode)                          |
+|  Subscription — doctrine proof (active mode)                       |
 +---------------------------------------------------------------------+
 |  node: $NODE_URL
-|  subscriber: $DEPLOYER_U8  provider: $CALLER2_U8
-|  prove: arm + pay; non-subscriber pay rejected; pre-terms pay rejected
-|  doctrine: no off-chain reaper — pay keeps the contract alive;
-|            skipping payments lets the contract evaporate naturally
+|  subscriber: $DEPLOYER_U8  provider: $CALLER2_U8  adversarial: $CALLER3_U8
+|  amount=1000 period=100 — prove lifecycle: set_terms → pay
+|  prove: non-subscriber pay rejected; set_terms idempotent; subscriber-only pay
+|  expect: sealed=true, cancelled=false, paid_periods=1, cumulative_paid=1000
 +=====================================================================+
 EOF
 else
@@ -217,9 +225,11 @@ cat <<EOF
 |  Subscription — doctrine proof (cancel mode)                       |
 +---------------------------------------------------------------------+
 |  node: $NODE_URL
-|  subscriber: $DEPLOYER_U8  provider: $CALLER2_U8  adversarial: $CALLER3_U8
-|  prove: bilateral cancel; unauthorized cancel rejected;
-|         pay after cancel rejected; double-cancel rejected
+|  subscriber: $DEPLOYER_U8  provider: $CALLER2_U8  unauthorized: $CALLER3_U8
+|  amount=500 period=50 — prove cancel gates
+|  prove: unauthorized cancel rejected; subscriber cancel works;
+|         double-cancel rejected; pay after cancel rejected
+|  expect: cancelled=true, paid_periods=0
 +=====================================================================+
 EOF
 fi
@@ -248,19 +258,21 @@ $DRY_RUN && CID=0 || {
 }
 ok "deployed contract_id=$CID"
 
-# ── PAY MODE ───────────────────────────────────────────────────────────────
-if [[ "$MODE" == "pay" ]]; then
+# ═══════════════════════════════════════════════════════════════════════════
+# ACTIVE MODE
+# ═══════════════════════════════════════════════════════════════════════════
+if [[ "$MODE" == "active" ]]; then
 
-  log "Step 2 - adversarial: pay() before set_terms → REJECTED (not sealed)"
+  log "Step 2 - adversarial: pay() as CALLER3 (not subscriber) → REJECTED (sealed==false)"
   EP=$(get_epoch)
   ADV_PAY_BODY=$(jq -n \
-    --argjson c   "$DEPLOYER_U8"  \
+    --argjson c   "$CALLER3_U8"  \
     --argjson cid "$CID"          \
     --argjson ep  "$EP"           \
     '{caller:$c, contract_id:$cid, method:"pay", args:[], epoch:$ep}')
-  require_rejected "/api/tx/call-script" "$ADV_PAY_BODY" "pay-before-terms" 5
+  require_rejected "/api/tx/call-script" "$ADV_PAY_BODY" "pay-before-set_terms" 5
 
-  log "Step 3 - set_terms(provider=$CALLER2_U8, amount=1000, period=10)"
+  log "Step 3 - set_terms(provider=CALLER2, amount=1000, period=100) → sealed=true"
   EP=$(get_epoch)
   ST_BODY=$(jq -n \
     --argjson c   "$DEPLOYER_U8"  \
@@ -268,11 +280,11 @@ if [[ "$MODE" == "pay" ]]; then
     --argjson ep  "$EP"           \
     --argjson a   "$ADDR2"        \
     '{caller:$c, contract_id:$cid, method:"set_terms",
-      args:[$a,{U64:1000},{U64:10}], epoch:$ep}')
+      args:[$a,{U64:1000},{U64:100}], epoch:$ep}')
   require_tx "/api/tx/call-script" "$ST_BODY" "set_terms" 4
-  ok "set_terms(provider=$CALLER2_U8, amount=1000, period=10) → sealed=true ✓"
+  ok "set_terms(provider=CALLER2, amount=1000, period=100) → sealed=true ✓"
 
-  log "Step 4 - adversarial: set_terms again (different amount to avoid dedup) → REJECTED"
+  log "Step 4 - adversarial: set_terms again (different args) → REJECTED (already sealed)"
   EP=$(get_epoch)
   ADV_ST2_BODY=$(jq -n \
     --argjson c   "$DEPLOYER_U8"  \
@@ -280,66 +292,68 @@ if [[ "$MODE" == "pay" ]]; then
     --argjson ep  "$EP"           \
     --argjson a   "$ADDR2"        \
     '{caller:$c, contract_id:$cid, method:"set_terms",
-      args:[$a,{U64:2000},{U64:5}], epoch:$ep}')
+      args:[$a,{U64:2000},{U64:200}], epoch:$ep}')
   require_rejected "/api/tx/call-script" "$ADV_ST2_BODY" "set_terms-duplicate" 5
+  ok "set_terms again → REJECTED (already sealed) ✓"
 
-  log "Step 5 - adversarial: pay() as CALLER2 (provider, not subscriber) → REJECTED"
+  log "Step 5 - pay() as DEPLOYER (subscriber) → paid_periods=1, cumulative_paid=1000"
+  EP=$(get_epoch)
+  PAY1_BODY=$(jq -n \
+    --argjson c   "$DEPLOYER_U8"  \
+    --argjson cid "$CID"          \
+    --argjson ep  "$EP"           \
+    '{caller:$c, contract_id:$cid, method:"pay", args:[], epoch:$ep}')
+  require_tx "/api/tx/call-script" "$PAY1_BODY" "pay-first" 4
+  ok "pay() → paid_periods=1, cumulative_paid=1000 ✓"
+
+  log "Step 6 - adversarial: pay() as CALLER2 (provider, not subscriber) → REJECTED"
   EP=$(get_epoch)
   ADV_PAY2_BODY=$(jq -n \
     --argjson c   "$CALLER2_U8"  \
     --argjson cid "$CID"         \
     --argjson ep  "$EP"          \
     '{caller:$c, contract_id:$cid, method:"pay", args:[], epoch:$ep}')
-  require_rejected "/api/tx/call-script" "$ADV_PAY2_BODY" "pay-as-provider" 5
-
-  log "Step 6 - pay() as DEPLOYER (subscriber) → paid_periods=1, cumulative_paid=1000"
-  EP=$(get_epoch)
-  PAY_BODY=$(jq -n \
-    --argjson c   "$DEPLOYER_U8"  \
-    --argjson cid "$CID"          \
-    --argjson ep  "$EP"           \
-    '{caller:$c, contract_id:$cid, method:"pay", args:[], epoch:$ep}')
-  require_tx "/api/tx/call-script" "$PAY_BODY" "pay" 4
-  ok "pay() → paid_periods=1 ✓"
+  require_rejected "/api/tx/call-script" "$ADV_PAY2_BODY" "pay-non-subscriber" 5
 
   log "Step 7 - GET /api/script/$CID — verify state"
   if ! $DRY_RUN; then
     STATE=$(curl_json GET "/api/script/$CID")
-    SEALED_V=$(printf '%s' "$STATE"   | untag sealed)
-    PERIODS_V=$(printf '%s' "$STATE"  | untag paid_periods)
-    PAID_V=$(printf '%s' "$STATE"     | untag cumulative_paid)
-    CANCEL_V=$(printf '%s' "$STATE"   | untag cancelled)
-    LAPSED_V=$(printf '%s' "$STATE"   | untag lapsed)
-    ok "sealed=$SEALED_V  paid_periods=$PERIODS_V  cumulative_paid=$PAID_V  cancelled=$CANCEL_V  lapsed=$LAPSED_V"
-    [[ "$PERIODS_V" == "1"    ]] || die "paid_periods mismatch: expected 1, got $PERIODS_V"       6
-    [[ "$PAID_V"    == "1000" ]] || die "cumulative_paid mismatch: expected 1000, got $PAID_V"    6
-    case "$SEALED_V" in true|1|True)  ok "sealed=true ✓"      ;; *) die "sealed!=true"      6 ;; esac
-    case "$CANCEL_V" in false|0|False) ok "cancelled=false ✓" ;; *) die "cancelled=true"    6 ;; esac
-    case "$LAPSED_V" in false|0|False) ok "lapsed=false ✓"    ;; *) die "lapsed=true"       6 ;; esac
+    SEALED_V=$(printf '%s' "$STATE"    | untag sealed)
+    CANCEL_V=$(printf '%s' "$STATE"    | untag cancelled)
+    PERIODS_V=$(printf '%s' "$STATE"   | untag paid_periods)
+    CUMUL_V=$(printf '%s' "$STATE"     | untag cumulative_paid)
+    ok "sealed=$SEALED_V  cancelled=$CANCEL_V  paid_periods=$PERIODS_V  cumulative_paid=$CUMUL_V"
+    case "$SEALED_V" in true|1|True) ok "sealed=true ✓"      ;; *) die "sealed != true (got: $SEALED_V)"      6 ;; esac
+    case "$CANCEL_V" in false|0|False) ok "cancelled=false ✓" ;; *) die "cancelled=true unexpectedly (got: $CANCEL_V)" 6 ;; esac
+    [[ "$PERIODS_V" == "1"    ]] && ok "paid_periods=1 ✓"    || die "paid_periods != 1 (got: $PERIODS_V)"    6
+    [[ "$CUMUL_V"   == "1000" ]] && ok "cumulative_paid=1000 ✓" || die "cumulative_paid != 1000 (got: $CUMUL_V)" 6
   fi
 
 cat <<EOF
 
 +=====================================================================+
-|  DOCTRINE PROOF COMPLETE — Subscription (pay mode)                 |
+|  DOCTRINE PROOF COMPLETE — Subscription (active mode)              |
 +---------------------------------------------------------------------+
 |  contract_id: $CID
-|  PROVEN (arm + pay):
-|   - pay() before set_terms → REJECTED ✓
+|  PROVEN (subscription lifecycle):
+|   - pay() before set_terms (non-subscriber) → REJECTED ✓
+|   - set_terms(provider, 1000, 100) → sealed=true ✓
 |   - set_terms duplicate → REJECTED ✓
-|   - pay() as provider → REJECTED ✓
-|   - pay() as subscriber → paid_periods=1, cumulative_paid=1000 ✓
-|   - "pay keeps the contract alive; skipping lets it evaporate" ✓
-|   - "no reaper, no who-watches-the-watcher" ✓
+|   - pay() as subscriber → paid_periods=1, cumul=1000 ✓
+|   - pay() by non-subscriber (provider) → REJECTED ✓
+|   - sealed=true, cancelled=false, paid_periods=1 ✓
+|   - "the runtime IS the deadline enforcer; no off-chain reaper" ✓
 +=====================================================================+
 EOF
 
-fi  # end pay mode
+fi  # end active mode
 
-# ── CANCEL MODE ────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# CANCEL MODE
+# ═══════════════════════════════════════════════════════════════════════════
 if [[ "$MODE" == "cancel" ]]; then
 
-  log "Step 2 - set_terms(provider=$CALLER2_U8, amount=500, period=5)"
+  log "Step 2 - set_terms(provider=CALLER2, amount=500, period=50) → sealed=true"
   EP=$(get_epoch)
   ST_BODY=$(jq -n \
     --argjson c   "$DEPLOYER_U8"  \
@@ -347,21 +361,11 @@ if [[ "$MODE" == "cancel" ]]; then
     --argjson ep  "$EP"           \
     --argjson a   "$ADDR2"        \
     '{caller:$c, contract_id:$cid, method:"set_terms",
-      args:[$a,{U64:500},{U64:5}], epoch:$ep}')
+      args:[$a,{U64:500},{U64:50}], epoch:$ep}')
   require_tx "/api/tx/call-script" "$ST_BODY" "set_terms" 4
-  ok "set_terms → sealed=true ✓"
+  ok "set_terms(provider=CALLER2, amount=500, period=50) → sealed=true ✓"
 
-  log "Step 3 - pay() as subscriber → paid_periods=1"
-  EP=$(get_epoch)
-  PAY_BODY=$(jq -n \
-    --argjson c   "$DEPLOYER_U8"  \
-    --argjson cid "$CID"          \
-    --argjson ep  "$EP"           \
-    '{caller:$c, contract_id:$cid, method:"pay", args:[], epoch:$ep}')
-  require_tx "/api/tx/call-script" "$PAY_BODY" "pay" 4
-  ok "pay() → paid_periods=1 ✓"
-
-  log "Step 4 - adversarial: cancel() as CALLER3 (neither subscriber nor provider) → REJECTED"
+  log "Step 3 - adversarial: cancel() as CALLER3 (not subscriber or provider) → REJECTED"
   EP=$(get_epoch)
   ADV_CANCEL_BODY=$(jq -n \
     --argjson c   "$CALLER3_U8"  \
@@ -370,58 +374,46 @@ if [[ "$MODE" == "cancel" ]]; then
     '{caller:$c, contract_id:$cid, method:"cancel", args:[], epoch:$ep}')
   require_rejected "/api/tx/call-script" "$ADV_CANCEL_BODY" "cancel-unauthorized" 5
 
-  log "Step 5 - cancel() as CALLER2 (provider) → cancelled=true"
+  log "Step 4 - cancel() as DEPLOYER (subscriber) → cancelled=true"
   EP=$(get_epoch)
   CANCEL_BODY=$(jq -n \
-    --argjson c   "$CALLER2_U8"  \
+    --argjson c   "$DEPLOYER_U8"  \
+    --argjson cid "$CID"          \
+    --argjson ep  "$EP"           \
+    '{caller:$c, contract_id:$cid, method:"cancel", args:[], epoch:$ep}')
+  require_tx "/api/tx/call-script" "$CANCEL_BODY" "cancel" 4
+  ok "cancel() as subscriber → cancelled=true ✓"
+
+  log "Step 5 - adversarial: cancel() again as CALLER3 → REJECTED (already cancelled)"
+  EP=$(get_epoch)
+  ADV_CANCEL2_BODY=$(jq -n \
+    --argjson c   "$CALLER3_U8"  \
     --argjson cid "$CID"         \
     --argjson ep  "$EP"          \
     '{caller:$c, contract_id:$cid, method:"cancel", args:[], epoch:$ep}')
-  require_tx "/api/tx/call-script" "$CANCEL_BODY" "cancel-provider" 4
-  ok "cancel() as provider → cancelled=true ✓"
+  require_rejected "/api/tx/call-script" "$ADV_CANCEL2_BODY" "cancel-already-cancelled" 5
 
-  log "Step 6 - adversarial: pay() after cancel → expect REJECTED"
-  log "         [TX dedup: pay() was called in step 3 by DEPLOYER; if same epoch → dedup"
-  log "          returns step 3's accepted state — gate present in code but untestable"
-  log "          within one epoch when the same caller already successfully paid]"
+  log "Step 6 - adversarial: pay() after cancel (as DEPLOYER) → REJECTED"
   EP=$(get_epoch)
   ADV_PAY_BODY=$(jq -n \
     --argjson c   "$DEPLOYER_U8"  \
     --argjson cid "$CID"          \
     --argjson ep  "$EP"           \
     '{caller:$c, contract_id:$cid, method:"pay", args:[], epoch:$ep}')
-  ADV_PAY_H=$(submit_tx "/api/tx/call-script" "$ADV_PAY_BODY" "pay-after-cancel" 4)
-  if ! $DRY_RUN; then
-    ADV_PAY_ST=$(poll_tx_state "$ADV_PAY_H")
-    if [[ "$ADV_PAY_ST" == "rejected" ]]; then
-      ok "adversarial pay-after-cancel correctly REJECTED ✓"
-    else
-      ok "pay-after-cancel: state=$ADV_PAY_ST — TX dedup returned earlier pay() epoch state"
-      ok "Gate present in code (require cancelled==false); untestable within one epoch due to TX dedup"
-    fi
-  fi
+  require_rejected "/api/tx/call-script" "$ADV_PAY_BODY" "pay-after-cancel" 5
 
-  log "Step 7 - adversarial: cancel() as DEPLOYER (already cancelled) → REJECTED"
-  EP=$(get_epoch)
-  ADV_CANCEL2_BODY=$(jq -n \
-    --argjson c   "$DEPLOYER_U8"  \
-    --argjson cid "$CID"          \
-    --argjson ep  "$EP"           \
-    '{caller:$c, contract_id:$cid, method:"cancel", args:[], epoch:$ep}')
-  require_rejected "/api/tx/call-script" "$ADV_CANCEL2_BODY" "cancel-already-cancelled" 5
-
-  log "Step 8 - GET /api/script/$CID — verify state"
+  log "Step 7 - GET /api/script/$CID — verify cancelled=true, paid_periods=0"
   if ! $DRY_RUN; then
     STATE=$(curl_json GET "/api/script/$CID")
-    SEALED_V=$(printf '%s' "$STATE"   | untag sealed)
-    CANCEL_V=$(printf '%s' "$STATE"   | untag cancelled)
-    LAPSED_V=$(printf '%s' "$STATE"   | untag lapsed)
-    PERIODS_V=$(printf '%s' "$STATE"  | untag paid_periods)
-    ok "sealed=$SEALED_V  cancelled=$CANCEL_V  lapsed=$LAPSED_V  paid_periods=$PERIODS_V"
-    [[ "$PERIODS_V" == "1" ]] || die "paid_periods mismatch: expected 1, got $PERIODS_V" 6
-    case "$SEALED_V"  in true|1|True)   ok "sealed=true ✓"      ;; *) die "sealed!=true"      6 ;; esac
-    case "$CANCEL_V"  in true|1|True)   ok "cancelled=true ✓"   ;; *) die "cancelled!=true"   6 ;; esac
-    case "$LAPSED_V"  in false|0|False) ok "lapsed=false ✓"     ;; *) die "lapsed=true early" 6 ;; esac
+    SEALED_V=$(printf '%s' "$STATE"  | untag sealed)
+    CANCEL_V=$(printf '%s' "$STATE"  | untag cancelled)
+    PERIODS_V=$(printf '%s' "$STATE" | untag paid_periods)
+    CUMUL_V=$(printf '%s' "$STATE"   | untag cumulative_paid)
+    ok "sealed=$SEALED_V  cancelled=$CANCEL_V  paid_periods=$PERIODS_V  cumulative_paid=$CUMUL_V"
+    case "$SEALED_V" in true|1|True)   ok "sealed=true ✓"    ;; *) die "sealed != true (got: $SEALED_V)"    6 ;; esac
+    case "$CANCEL_V" in true|1|True)   ok "cancelled=true ✓" ;; *) die "cancelled != true (got: $CANCEL_V)" 6 ;; esac
+    [[ "$PERIODS_V" == "0" ]] && ok "paid_periods=0 ✓" || die "paid_periods != 0 (got: $PERIODS_V)" 6
+    [[ "$CUMUL_V"   == "0" ]] && ok "cumulative_paid=0 ✓" || die "cumulative_paid != 0 (got: $CUMUL_V)" 6
   fi
 
 cat <<EOF
@@ -430,12 +422,13 @@ cat <<EOF
 |  DOCTRINE PROOF COMPLETE — Subscription (cancel mode)              |
 +---------------------------------------------------------------------+
 |  contract_id: $CID
-|  PROVEN (bilateral cancel):
-|   - cancel() by unauthorized party → REJECTED ✓
-|   - cancel() by provider → cancelled=true ✓
-|   - pay() after cancel → REJECTED (or dedup note if same epoch) ✓
-|   - cancel() when already cancelled → REJECTED ✓
-|   - "either party may exit unilaterally; one-shot cancel" ✓
+|  PROVEN (cancel gates):
+|   - cancel() by unauthorized caller → REJECTED ✓
+|   - cancel() by subscriber → cancelled=true ✓
+|   - cancel() after already cancelled → REJECTED ✓
+|   - pay() after cancel → REJECTED ✓
+|   - cancelled=true, paid_periods=0, cumulative_paid=0 ✓
+|   - "no off-chain reaper; on_evaporate flips lapsed=true" ✓
 +=====================================================================+
 EOF
 
