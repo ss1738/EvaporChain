@@ -6,6 +6,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 57) — H-2 regression in execute_refresh closed; GHOST-B now functional
+
+**Focus:** Found and fixed H-2 regression in `execute_refresh`: raw `blake3(pk)` mismatch vs rest of chain's `address_from_pubkey(pk)`. GHOST-B owner check was silently broken (always fails when public_key provided); fixed + adversarial test added.
+**Commits shipped:** 1 (`437401b3`)
+**Deliverables:**
+| Item | Result |
+|---|---|
+| Root cause | `execute_refresh:1490` derived sender via raw `blake3(pk)` (no ADDRESS_DST); all objects set `owner = address_from_pubkey(pk)` = `blake3(DST||pk)` → owner check always failed when public_key was provided |
+| Fix | Changed to `evaporchain_types::address_from_pubkey(pk)` (1 line) |
+| `test_signed_refresh_succeeds` | Updated: owner now DST-derived; public_key=Some(...) so GHOST-B path actually fires |
+| `test_refresh_wrong_owner_rejected` | New adversarial test: attacker supplies their key → txs_failed=1 |
+| crate result | 560 unit + 15 e2e = 575 passed, 0 failed |
+**Decisions made:** GHOST-B owner check was added correctly but the DST migration (H-2) wasn't propagated to execute_refresh. The None path (unauthenticated refresh) still works as designed.
+**What's next:** Coverage push (87% → 95%) or AUDIT_PLAN_2026_05_17 archive + CLAUDE.md doc hygiene.
+**Blockers / open questions:** none
+**Cross-references:** `crates/evaporchain-execution/src/lib.rs:1490` (fix), commit `437401b3`
+
+---
+
 ## 2026-05-19 (session 56) — workspace 11,285 tests GREEN; genesis ceremony test fixed
 
 **Focus:** Make workspace test suite fully green before next sprint. Fixed the one failing test; freed 75 GB disk on Mini 1; verified 0 failures at 11,285 tests.
