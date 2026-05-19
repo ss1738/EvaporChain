@@ -20,7 +20,7 @@ description = "T0.10 Path A — bridge between chain-side Nova RecursiveSNARK an
 # Arkworks side: the wrapper circuit + Groth16 prover live here.
 # Same versions as `ethereum-bridge/wrapper/Cargo.toml` so a future
 # merge / shared-dep refactor stays straightforward.
-ark-bn254              = "0.5"
+ark-bn254              = { version = "0.5", features = ["r1cs"] }
 ark-crypto-primitives  = { version = "0.5", features = ["sponge", "r1cs"] }
 ark-ec                 = "0.5"
 ark-ff                 = "0.5"

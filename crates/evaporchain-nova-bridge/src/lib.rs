@@ -117,6 +117,7 @@ pub mod neptune_dump_parser;
 pub mod neptune_permutation_gadget;
 pub mod neptune_reference;
 pub mod neptune_sponge;
+pub mod cyclefold_aux_circuit;
 pub mod ipa_ck_fold_gadget;
 pub mod ipa_s_tensor;
 pub mod recursion_decider_circuit;
