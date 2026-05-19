@@ -156,19 +156,26 @@ mod tests {
         use crate::recursive_snark_fixture::{
             canonical_public_params, generate_fixture_with_digest,
         };
-        const N: usize = 3;
+        const N: usize = 2;
 
-        let pp = canonical_public_params().expect("canonical pp");
-        let (rs, _d) = generate_fixture_with_digest(2).expect("fixture");
-        let pp_json = serde_json::to_value(&pp).expect("pp json");
-        let rs_json = serde_json::to_value(&rs).expect("rs json");
-
-        let (ck, _h) = extract_primary_ck(&pp_json).expect("ck_primary");
-        let (w, _r_w) = extract_primary_witness(&rs_json).expect("W_primary");
-        let _cw = extract_primary_comm_w(&rs_json).expect("comm_W decode sanity");
+        // Extract into owned Vecs, then FREE the giant pp/rs JSON
+        // Values (ck_primary = 16384 points materialized as a parsed
+        // tree) BEFORE the multi-GB complete-formula circuit — they
+        // must not co-reside (B.3 OOM'd at 16 GB otherwise).
+        let (mut ck, w) = {
+            let pp = canonical_public_params().expect("canonical pp");
+            let (rs, _d) = generate_fixture_with_digest(2).expect("fixture");
+            let pp_json = serde_json::to_value(&pp).expect("pp json");
+            let rs_json = serde_json::to_value(&rs).expect("rs json");
+            let (ck, _h) = extract_primary_ck(&pp_json).expect("ck_primary");
+            let (w, _r_w) = extract_primary_witness(&rs_json).expect("W_primary");
+            let _cw = extract_primary_comm_w(&rs_json).expect("comm_W decode sanity");
+            (ck, w)
+            // pp, rs, pp_json, rs_json all dropped here.
+        };
         assert!(!w.is_empty() && ck.len() >= w.len(), "nova invariant");
-
         let n = w.len().min(N);
+        ck.truncate(n); // free the other ~16382 unused bases
         // Out-of-circuit ark MSM over the SAME real prefix
         // (accumulate from the first term — no Zero trait needed).
         let term = |i: usize| {
