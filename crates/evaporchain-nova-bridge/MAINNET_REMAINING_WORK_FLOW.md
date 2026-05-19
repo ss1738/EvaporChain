@@ -676,6 +676,48 @@ RO / NIFS primitives directly (no new crypto, just composition).
 Bounded; box-verify by running 2 IVC steps and checking the CF
 running instance's commitment evolves correctly.
 
+### 1C INCREMENT 3a — ✅ NIFS FOLD PRIMITIVE + HOMOMORPHISM
+SOUNDNESS GATE [V] (2026-05-19, Mini3, box, HEAD `daeb7bf8`,
+`cyclefold_fold_homomorphism ... 3 passed; 0 failed; 0.11 s`)
+
+**Honest re-scope:** the original "increment 3 = small IVC harness"
+understated the construction (a full IVC harness needs a new
+augmented circuit + step driver — multi-day novel work). Split into
+**3a (this turn)** = the cheapest decisive sub-step: prove the
+Pedersen-on-Grumpkin additive-homomorphism gate the NIFS fold
+relies on (`commit(W_a) + r·commit(W_b) ≡ commit(W_a + r·W_b)`);
+**3b (later)** = full IVC composition using
+`nova_snark::nifs::NIFS<GrumpkinEngine>` on top of the proven
+primitive.
+
+New module `cyclefold_fold_homomorphism.rs`: `CycleFoldRunning/
+IncomingInstance` types + `fold_cf_step` with the standard NIFS
+identities (`comm_w' = comm_w_R + r·comm_w_I`,
+`comm_e' = comm_e_R + r·comm_T`, `u' = u_R + r`,
+`x_i' = x_R[i] + r·x_I[i]`). Out-of-circuit
+`pedersen_commit_grumpkin` (mirror of in-circuit
+`pedersen_msm_grumpkin`).
+
+Three box tests (all randomized via `test_rng`):
+- `pedersen_grumpkin_is_homomorphic_in_witness ... ok` — **THE
+  soundness gate.** If broken, all NIFS folding here is unsound.
+- `fold_cf_step_matches_direct_commitment_of_folded_witness ... ok`
+  — every identity verified against direct computation.
+- `multi_step_fold_accumulation_consistent ... ok` — homomorphism
+  survives 3 successive folds without drift.
+
+**NEXT [code]:** increment 3b — integrate
+`nova_snark::nifs::NIFS<GrumpkinEngine>` to compute `comm_T` and
+derive the fold challenge `r` via RO (replacing the synthetic
+`comm_t` and `r = test_rng()` in 3a's tests with real prover output).
+Plus extract the `R1CSShape` for `CycleFoldInstanceCircuit` from
+arkworks `ConstraintSystem` synthesis and convert to nova-snark's
+`R1CSShape<GrumpkinEngine>` (bridge), so NIFS can act on real CF
+instances. Bounded sub-steps; reuses 3a's `fold_cf_step` as the
+out-of-circuit reference (any NIFS-induced fold must agree with
+it). After 3b, the full IVC harness (primary RecursiveSNARK ⨉ CF
+accumulator across steps) is increment 4.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
