@@ -80,7 +80,9 @@ type FqV = EmulatedFpVar<Bn254Fq, Bn254Fr>;
 
 /// In-circuit bn256-G1 affine point (generic, non-identity).
 pub struct G1AffineVar {
+    /// Affine x-coordinate (emulated bn256 Fq).
     pub x: FqV,
+    /// Affine y-coordinate (emulated bn256 Fq).
     pub y: FqV,
 }
 
@@ -195,8 +197,11 @@ pub fn pedersen_msm_bn256_g1(
 
 /// In-circuit bn256-G1 projective point. Identity = (0, 1, 0).
 pub struct G1ProjVar {
+    /// Projective X (emulated bn256 Fq).
     pub x: FqV,
+    /// Projective Y (emulated bn256 Fq).
     pub y: FqV,
+    /// Projective Z (emulated bn256 Fq); identity ⇔ Z = 0.
     pub z: FqV,
 }
 

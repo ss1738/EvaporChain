@@ -28,15 +28,25 @@ use crate::recursive_snark_fixture::{TrivialIncrementCircuit, E1, E2};
 /// Secondary RelaxedR1CS shape + witness, in `ark_bn254::Fq`,
 /// A/B/C bucketed by row for `enforce_secondary_relaxed_r1cs_sat_nn`.
 pub struct SecondaryR1csWitness {
+    /// `r_W_secondary.W` — secondary witness vector (BN254 Fq).
     pub w: Vec<ArkFq>,
+    /// `r_W_secondary.E` — secondary error vector (BN254 Fq).
     pub e: Vec<ArkFq>,
+    /// `r_U_secondary.u` — relaxation scalar.
     pub u: ArkFq,
+    /// `r_U_secondary.X` — 2 public-IO scalars.
     pub x: [ArkFq; 2],
+    /// A matrix, rows pre-bucketed `(col, coeff)` for the D.1 gadget.
     pub a_rows: Vec<SparseRow>,
+    /// B matrix, rows pre-bucketed.
     pub b_rows: Vec<SparseRow>,
+    /// C matrix, rows pre-bucketed.
     pub c_rows: Vec<SparseRow>,
+    /// `r1cs_shape_secondary.num_cons` (constraint-row count).
     pub num_cons: usize,
+    /// `r1cs_shape_secondary.num_vars` (private-witness count).
     pub num_vars: usize,
+    /// `r1cs_shape_secondary.num_io` (public-IO count).
     pub num_io: usize,
 }
 
