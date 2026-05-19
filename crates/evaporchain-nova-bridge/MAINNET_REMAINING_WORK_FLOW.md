@@ -49,14 +49,14 @@
   on REAL extracted `ck`/`W`/`r_W`; in-circuit == out-of-circuit ark MSM
   + adversarial. (Build-host pivoted node-box→Mini 1; node-box stays
   node-only.)
-- **A.3 [X — deferred scale-gate, NOT skipped]** Full-`W` secondary
-  binding (`r_U_secondary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`, unbounded). This
-  is a *scale* verification, not new soundness logic (logic proven by
-  A.1+A.2). Run on the largest available host (Mini 1 16 GB attempt;
-  satyawan-1 / cluster if 16 GB insufficient — full secondary `W`
-  non-native MSM may exceed 16 GB). Sequenced AFTER B/C critical-path
-  code (per `A→(B,C)→D` critical path); remains a MAINNET EXIT
-  requirement (exit criterion #1: full-`W`, not bounded).
+- **A.3 [V — scale-gate CLEARED on satyawan-1]** Full-`W` secondary
+  soundness closure — BOX-VERIFIED satyawan-1 (119 GB) 2026-05-19:
+  `secondary_msm_binds_full_comm_w ... ok`, 1 passed, 756.75 s, no
+  OOM, training undisturbed (fr143 finished naturally, fr020 alive).
+  FULL real `W` in-circuit MSM == the ACTUAL Section-2-bound
+  `r_U_secondary.comm_W` (`comm_W == Σ Wᵢ·ckᵢ + r_W·h`) + adversarial.
+  The genuine B-1 secondary commitment-binding closure on real data
+  at full scale — NOT bounded, NOT an ark-proxy.
 
 ## PHASE B — S4a primary (bn256-G1) analog  *(RECLASSIFIED: DEEP, not mechanical — box-falsified 2026-05-19)*
 
