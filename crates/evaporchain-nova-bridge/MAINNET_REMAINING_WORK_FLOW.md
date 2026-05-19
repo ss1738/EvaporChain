@@ -125,14 +125,23 @@
 
 ## PHASE C — S4 integration (the actual soundness closure)
 
-- **C.1 [X]** Bind both recomputed MSM points to the **Section-2-bound
-  coordinates** inside the verifier circuit — enforce equality, not just
-  isolated gadgets. This is where commitment-binding becomes a real
-  soundness constraint.
+> **DEPENDENCY CORRECTION (2026-05-19, verify-grounded):** C is NOT a
+> clean post-B step. (1) **C.1-primary** = recompute the primary MSM
+> *inside* the verifier circuit + enforce `== r_U_primary.comm_W` —
+> that IS the **B.3b** full in-circuit complete-formula binding, which
+> EMPIRICALLY OOMs ≤16 GB → C.1-primary inherits the B.3b scale-gate.
+> (2) **C-secondary** needs the secondary `W` *in-circuit* to bind,
+> but the secondary `W` only enters via **PHASE D (S4b)** — so C's
+> secondary side is **downstream of D**, not after B. Real ordering:
+> `A → B(logic) → D → C`, with C's full binding ALSO scale-gated.
+
+- **C.1 [X]** Bind both recomputed MSM points to the Section-2-bound
+  coords inside the verifier circuit. Primary side = B.3b-scale-gated;
+  secondary side gated on D. Gadgets proven `[V]`; *closure* (wiring
+  into `generate_constraints`) is downstream of D + scale.
 - **C.2 [X]** Surface the **primary** `comm_W` into the transcript
-  (currently only secondary is bound — see `S4_DESIGN.md` structural
-  note).
-- Depends on: PHASE A + B verified.
+  (currently only secondary's is — see `S4_DESIGN.md` structural note).
+- Depends on: A + B(logic) `[V]`; **D**; and the B.3b/A.3 scale-gates.
 
 ## PHASE D — S4b: secondary RelaxedR1CS satisfiability *(THE deep one)*
 
