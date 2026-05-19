@@ -302,22 +302,34 @@ mod tests {
         use nova_snark::nova::CompressedSNARK;
         type Cmp = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1, S2>;
 
+        // Build the RS against the SAME pp used for compress+verify
+        // (generate_fixture_with_digest hides its own internal pp →
+        // digest mismatch → "Invalid output hash"). num_steps read
+        // from the proof itself (rs.num_steps()), not hardcoded.
+        let circuit = TrivialIncrementCircuit;
         let pp = canonical_public_params().expect("canonical pp");
-        let (rs, _digest) =
-            generate_fixture_with_digest(2).expect("real 2-step RecursiveSNARK");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+            &pp, &circuit, &z0,
+        )
+        .expect("RecursiveSNARK::new");
+        for i in 0..2 {
+            rs.prove_step(&pp, &circuit)
+                .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
+        }
+        let n = rs.num_steps();
 
         let (pk, vk) = Cmp::setup(&pp).expect("CompressedSNARK::setup");
         let compressed =
             Cmp::prove(&pp, &pk, &rs).expect("CompressedSNARK::prove (Spartan compress)");
-        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
         let out = compressed
-            .verify(&vk, 2, &z0)
+            .verify(&vk, n, &z0)
             .expect("CompressedSNARK::verify must accept the real compressed proof");
-        // TrivialIncrementCircuit: z0=[0], +1/step, 2 steps ⇒ zi=[2].
+        // TrivialIncrementCircuit: z0=[0], +1 per step ⇒ zi=[n].
         assert_eq!(
             out,
-            vec![Scalar1::from(2u64)],
-            "compressed-verified output must equal the real folded zi (=2)"
+            vec![Scalar1::from(n as u64)],
+            "compressed-verified output must equal the real folded zi (= n)"
         );
     }
 }
