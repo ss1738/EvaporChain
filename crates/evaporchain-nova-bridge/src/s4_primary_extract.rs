@@ -169,12 +169,16 @@ mod tests {
         assert!(!w.is_empty() && ck.len() >= w.len(), "nova invariant");
 
         let n = w.len().min(N);
-        // Out-of-circuit ark MSM over the SAME real prefix.
-        let mut expected = Projective::<ark_bn254::g1::Config>::zero();
-        for i in 0..n {
+        // Out-of-circuit ark MSM over the SAME real prefix
+        // (accumulate from the first term — no Zero trait needed).
+        let term = |i: usize| {
             let p = ark_bn254::G1Affine::new_unchecked(ck[i].0, ck[i].1);
             assert!(p.is_on_curve(), "ck[{i}] must be on bn256-G1");
-            expected += Projective::from(p) * w[i];
+            Projective::from(p) * w[i]
+        };
+        let mut expected = term(0);
+        for i in 1..n {
+            expected += term(i);
         }
         let exp = expected.into_affine();
 
