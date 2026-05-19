@@ -117,6 +117,7 @@ pub mod neptune_dump_parser;
 pub mod neptune_permutation_gadget;
 pub mod neptune_reference;
 pub mod neptune_sponge;
+pub mod recursion_decider_circuit;
 pub mod recursive_snark_fixture;
 pub mod scalar_adapter;
 pub mod s4_msm_gadget;
