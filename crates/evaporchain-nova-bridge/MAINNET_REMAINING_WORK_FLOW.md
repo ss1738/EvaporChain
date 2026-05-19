@@ -595,6 +595,39 @@ the next, never the training rig / node box):**
 **NEXT [code]:** increment 1 — aux circuit core + cs probe.
 Bounded, box-verifiable, reuses `pedersen_msm_grumpkin` k=1 surface.
 
+### 1C INCREMENT 1 — ✅ AUX CORE [V] (2026-05-19, Mini3, box, HEAD
+`01add2da`, `cyclefold_aux_circuit ... 3 passed; 0 failed; 0.10 s`)
+
+New module `cyclefold_aux_circuit.rs`: native BN254-G1 ops over a
+**Bn254Fq** constraint system (`ark_bn254::constraints::GVar` —
+enabled the `r1cs` feature) + non-native `EmulatedFpVar<Bn254Fr,
+Bn254Fq>` scalar = the mirror image of `s4_msm_gadget`. Gadget
+verifies `Q = s·P` for the folding scalar × E1 commitment — the
+single load-bearing op of the CycleFold auxiliary circuit. Three box
+tests: `aux_scalar_mul_matches_native ... ok` (correctness vs ark),
+`aux_scalar_mul_wrong_expected_breaks_cs ... ok` (non-vacuity, the
+B-1 guard), `aux_scalar_mul_size_probe ... ok`.
+
+**AUX_PROBE: cs.num_constraints = 2,548, witness = 2,375.**
+
+**Predicted (NOT asserted — to be measured at increments 5/6):**
+- ppsnark padding `S_comm.N = next_pow2(max(total_nz, 2·num_vars,
+  num_cons))` ≈ `next_pow2(2·2375)` = **8,192 = 2¹³**.
+- IPA opening `n_aux ≈ 8,192` — a **16× reduction from the
+  option-(2) dead-end 2¹⁷=131,072**.
+- Solidity Pippenger gas at n=8,192 ≈ **~12M gas** (~40% of L1
+  block; cheap on L2).
+- The CycleFold reduction looks viable on this number; the real
+  end-to-end n_aux + gas wait for the real proof + Foundry, per the
+  assert-without-measuring lesson.
+
+**NEXT [code]:** increment 2 — define the CycleFold instance shape
+the primary commits to per step (a small R1CS instance wrapping
+this aux check, with the primary's NIFS challenge as public input).
+Wire its commitment+folding into the existing nova-snark
+NIFS/transcript primitives. Bounded; uses the measured ~2.5k-cons
+shape as the spec.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
