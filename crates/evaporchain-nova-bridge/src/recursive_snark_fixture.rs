@@ -288,4 +288,36 @@ mod tests {
         assert_eq!(public_inputs.len(), 1);
         assert_eq!(public_inputs[0], ark_bn254::Fr::from(1u64));
     }
+
+    /// ARCHITECTURAL VALIDATION (the real solution): nova-snark's own
+    /// `CompressedSNARK` (Spartan, **sub-linear**) compresses +
+    /// verifies a REAL `RecursiveSNARK` end-to-end. This is the
+    /// production path that makes the 203 M-constraint hand-rolled
+    /// S4b approach moot — Spartan handles RelaxedR1CS-sat succinctly,
+    /// so it is tractable on a 16 GB Mini (no 203 M explosion, no
+    /// scale-gate, no big host, no spend).
+    #[test]
+    #[ignore = "CompressedSNARK e2e: real Nova fixture + Spartan compress (tractable, Mini)"]
+    fn compressed_snark_compresses_real_recursive_snark() {
+        use nova_snark::nova::CompressedSNARK;
+        type Cmp = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1, S2>;
+
+        let pp = canonical_public_params().expect("canonical pp");
+        let (rs, _digest) =
+            generate_fixture_with_digest(2).expect("real 2-step RecursiveSNARK");
+
+        let (pk, vk) = Cmp::setup(&pp).expect("CompressedSNARK::setup");
+        let compressed =
+            Cmp::prove(&pp, &pk, &rs).expect("CompressedSNARK::prove (Spartan compress)");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let out = compressed
+            .verify(&vk, 2, &z0)
+            .expect("CompressedSNARK::verify must accept the real compressed proof");
+        // TrivialIncrementCircuit: z0=[0], +1/step, 2 steps ⇒ zi=[2].
+        assert_eq!(
+            out,
+            vec![Scalar1::from(2u64)],
+            "compressed-verified output must equal the real folded zi (=2)"
+        );
+    }
 }
