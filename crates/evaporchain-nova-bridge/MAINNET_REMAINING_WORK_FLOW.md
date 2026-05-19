@@ -79,10 +79,12 @@
   (wrapper-as-curve-cycle) is far deeper and discards the working
   S2/S3 single circuit. Option 1 is deep (≈ a second S4b) but bounded
   & standard.
-- **B.1 [X — THE deep core]** Non-native bn256-G1 SW point gadget:
-  affine/projective add + double over `EmulatedFpVar<Fq,Fr>`,
-  incomplete-formula-safe. Isolated proof: in-circuit point ops ==
-  out-of-circuit ark bn256-G1. **Effort: DEEP (≈ a second S4b).**
+- **B.1 [V]** Non-native bn256-G1 SW add/double over
+  `EmulatedFpVar<Fq,Fr>` — BOX-VERIFIED on Mini 1 (2026-05-19):
+  `nonnative_bn256_g1_double_add_match_ark ... ok`, 1 passed, 0.34 s,
+  0 errors. In-circuit 2G/3G == out-of-circuit ark bn256-G1 (generic
+  case). The hardest conceptual piece (bespoke non-native foreign-
+  curve arithmetic) is proven; EC math correct first try.
 - **B.2 [X]** Native-`FpVar<Fr>`-scalar double-and-add MSM ladder on
   B.1 → `pedersen_msm_bn256_g1` + isolated MSM proof (== ark MSM).
   Plus the mechanical helpers: bn256-G1 point decoder +

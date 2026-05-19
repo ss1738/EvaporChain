@@ -110,11 +110,59 @@ pub fn g1_add(p: &G1AffineVar, q: &G1AffineVar) -> Result<G1AffineVar, Synthesis
     Ok(G1AffineVar { x: x3, y: y3 })
 }
 
+// ── B.2: native-scalar double-and-add ladder over B.1 ────────────────
+//
+// In-circuit `k·base` for a native `FpVar<Fr>` scalar, MSB-first
+// double-and-add: per bit compute `doubled = 2·acc` and
+// `added = doubled + base`, then `acc = bit ? added : doubled`
+// (always-compute-both + constant-time select). GENERIC-CASE: caller
+// supplies MSB-first bits whose leading bit is 1 and whose
+// intermediates never hit identity / P=±Q (true for `base=G`, small
+// `k` — sufficient for the isolated proof). Full edge-safety
+// (leading zeros, identity, degenerate intermediates → complete
+// formulas or offset trick) is the B.2-hardening follow, documented
+// like B.1's generic→hardening staging.
+
+use ark_r1cs_std::boolean::Boolean;
+use ark_r1cs_std::select::CondSelectGadget;
+
+fn g1_select(
+    cond: &Boolean<Bn254Fr>,
+    t: &G1AffineVar,
+    f: &G1AffineVar,
+) -> Result<G1AffineVar, SynthesisError> {
+    Ok(G1AffineVar {
+        x: FqV::conditionally_select(cond, &t.x, &f.x)?,
+        y: FqV::conditionally_select(cond, &t.y, &f.y)?,
+    })
+}
+
+/// `k·base`, MSB-first double-and-add. `bits_msb_first[0]` must be 1
+/// (generic-case contract); `acc` initialised to `base`.
+pub fn g1_scalar_mul(
+    base: &G1AffineVar,
+    bits_msb_first: &[Boolean<Bn254Fr>],
+) -> Result<G1AffineVar, SynthesisError> {
+    let mut acc = G1AffineVar {
+        x: base.x.clone(),
+        y: base.y.clone(),
+    };
+    for bit in &bits_msb_first[1..] {
+        let doubled = g1_double(&acc)?;
+        let added = g1_add(&doubled, base)?;
+        acc = g1_select(bit, &added, &doubled)?;
+    }
+    Ok(acc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ark_ec::{short_weierstrass::Projective, AffineRepr, CurveGroup};
-    use ark_r1cs_std::{alloc::AllocVar, R1CSVar};
+    use ark_r1cs_std::{
+        alloc::AllocVar, boolean::Boolean, convert::ToBitsGadget,
+        fields::fp::FpVar, R1CSVar,
+    };
     use ark_relations::r1cs::ConstraintSystem;
 
     /// THE B.1 PRIMITIVE PROOF: in-circuit non-native bn256-G1
@@ -147,5 +195,39 @@ mod tests {
         assert_eq!(d.y.value().unwrap(), two_g.y().unwrap(), "2G.y");
         assert_eq!(s.x.value().unwrap(), three_g.x().unwrap(), "3G.x");
         assert_eq!(s.y.value().unwrap(), three_g.y().unwrap(), "3G.y");
+    }
+
+    /// THE B.2 PRIMITIVE PROOF: the native-scalar double-and-add
+    /// ladder over B.1 computes `k·G` matching ark. `k=5` (`101`b,
+    /// MSB-first leading 1; intermediates G,2G,4G,5G all distinct
+    /// non-identity → generic-safe). Scalar bits come from a real
+    /// native `FpVar<Fr>` witness (the variable-scalar path).
+    #[test]
+    fn nonnative_bn256_g1_scalar_mul_matches_ark() {
+        let g_aff = ark_bn254::G1Affine::generator();
+        let g = Projective::from(g_aff);
+        let k = 5u64;
+        let expected = (g * Bn254Fr::from(k)).into_affine();
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mkfq = |v: Bn254Fq| FqV::new_witness(cs.clone(), || Ok(v)).unwrap();
+        let gp = G1AffineVar {
+            x: mkfq(g_aff.x().unwrap()),
+            y: mkfq(g_aff.y().unwrap()),
+        };
+
+        // Scalar from a real native FpVar<Fr> witness → bits.
+        let kv = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k)))
+            .unwrap();
+        let bits_le = kv.to_bits_le().unwrap(); // LSB-first
+        // k=5 fits in 3 bits; take low 3, reverse → MSB-first [1,0,1].
+        let mut msb: Vec<Boolean<Bn254Fr>> = bits_le[..3].to_vec();
+        msb.reverse();
+
+        let out = g1_scalar_mul(&gp, &msb).expect("g1_scalar_mul");
+
+        assert!(cs.is_satisfied().expect("is_satisfied"), "CS must be satisfied");
+        assert_eq!(out.x.value().unwrap(), expected.x().unwrap(), "5G.x");
+        assert_eq!(out.y.value().unwrap(), expected.y().unwrap(), "5G.y");
     }
 }
