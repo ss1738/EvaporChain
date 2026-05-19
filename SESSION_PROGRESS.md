@@ -6,6 +6,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 60) — coverage push: state 90.4%→93.9%, crypto bls/verkle
+
+**Focus:** Multi-crate coverage sprint: evaporchain-state and evaporchain-crypto
+**Commits shipped:** 4 (22606381, 77fa93dd, 565636e7 + state commit)
+**Deliverables:**
+| Crate / file | Before | After | Notes |
+|---|---|---|---|
+| `evaporchain-state` db.rs | 90.4% | 91.4% | MinimalDB covers all StateDB trait default stubs |
+| `evaporchain-state` ghost_bridge.rs | ~89% | 97.3% | replay, attestation-fail, invalid-key |
+| `evaporchain-state` snapshot.rs | — | 95.7% | SnapshotBuilder::create_finalized boundaries |
+| `evaporchain-state` overall | — | 93.89% | 265 tests green |
+| `evaporchain-crypto` verkle.rs | 88.3% | 91.5% | delete paths, verify rejections, default ctor |
+| `evaporchain-crypto` bls_key_store.rs | 87.9% | 97.9% | passphrase_from_env() all branches |
+| `evaporchain-crypto` overall | ~93% | ~93.5% | 262 tests green |
+**Key decisions:**
+- BelowFinalityDepth error path is dead code at SNAPSHOT_MIN_FINALITY_DEPTH=1 — test removed
+- MAX_DEPTH guard lines in VerkleTrie (lines 229, 298, 328) are unreachable with 32-byte keys — skipped
+- Wrong-length decrypt (bls_key_store.rs:225-228) is dead code given blob-length pre-check — skipped
+**What's next:**
+- `evaporchain-crypto` energy_verkle.rs: 93.5% (84 uncovered) — next tractable target
+- `evaporchain-network` service.rs: 81.16% remaining (~400 lines = libp2p event loop, needs integration harness)
+**Cross-references:** commits 22606381, 77fa93dd, 565636e7
+
+---
+
 ## 2026-05-19 (session 59, continued) — execution parallel.rs 80.2% → 91.5%
 
 **Focus:** Coverage push for `evaporchain-execution` parallel.rs
