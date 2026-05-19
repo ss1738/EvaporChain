@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 62, continued) — coverage push: tensor.rs 100%, history.rs 99.6%, retry.rs 99.4%, output.rs 94.2%
+
+**Focus:** Multi-file coverage push: evaporchain-mera + wallet crate
+**Commits shipped:** 4 (74cb3fa5, 8d9930df, 2aabfd5d + session-progress)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `evaporchain-mera` tensor.rs | 83.6% | 100% (131/131) | 6 new tests |
+| `wallet` history.rs | 83.9% | 99.6% (229/230) | 6 new tests |
+| `wallet` retry.rs | 91% | 99.4% (169/170) | 4 new tests |
+| `wallet` output.rs | 87.5% | 94.2% (130/138) | 3 new tests |
+**Tests added:**
+- tensor.rs: zeros(), normalise() non-unit + near-zero no-op, mat_vec() identity + diagonal
+- history.rs: is_empty(), Default::default(), to_csv() all 4 TxOutcome variants, export_csv(), save() nested create_dir_all
+- retry.rs: aggressive() config, transient-then-success sleep path (lines 106-108), is_transient keywords
+- output.rs: print_json() + print_json_error() smoke (json_or json branch skipped — global AtomicBool race)
+**Dead code noted:** retry.rs line 116 `last_error.unwrap()` is structurally unreachable (loop always returns inside body)
+**What's next:**
+- Continue wallet crate: gas.rs (85.7%), offline.rs (84.6%), signer.rs (78.4%)
+- Workspace-wide scan for next tractable substrate crates
+**Cross-references:** commits 74cb3fa5, 8d9930df, 2aabfd5d
+
+---
+
 ## 2026-05-19 (session 62) — coverage push: tracker.rs 78→93%, alarm.rs 84→91%
 
 **Focus:** evaporchain-script-lad tracker.rs and evaporchain-causal-chsh alarm.rs coverage sprint
