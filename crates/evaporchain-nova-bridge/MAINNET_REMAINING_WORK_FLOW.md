@@ -90,10 +90,17 @@
   matches_ark ... ok` (5·G == ark 5G, real FpVar<Fr> bits) +
   B.1 regression ok, 2 passed, 0.66 s. Generic-case; edge-hardening
   (identity/leading-zeros/degenerate) = documented follow.
-- **B.2b [X]** `pedersen_msm_bn256_g1` = Σ scalar-mul(B.2) over bases
-  + blind, isolated MSM proof (== ark bn256-G1 MSM). + mechanical
-  helpers: bn256-G1 point decoder + `bn256::Base→ark_bn254::Fq`
-  converter.
+- **B.2b [V]** `pedersen_msm_bn256_g1` full primary MSM —
+  BOX-VERIFIED Mini 1 (2026-05-19): `nonnative_bn256_g1_msm_matches_
+  ark ... ok` (`Σ sᵢ·baseᵢ + r·h = 35G` == ark) + B.1/B.2 regression,
+  3 passed, 2.23 s, 0 errors, first run. **The hardest crypto
+  obstacle in the whole flow — in-circuit non-native foreign-curve
+  MSM — is proven viable.** Remaining for primary: B.2-hardening
+  (edge-safe arbitrary-`W` scalars) + the mechanical decoder/converter.
+- **B.2-hardening [X]** Edge-safe scalar mul for ARBITRARY 254-bit
+  `W` scalars (complete formulas OR offset-trick): real `W` is not
+  3-bit/leading-1/generic — required for soundness (a wrong edge case
+  = forgeable). Next deep-ish unit before B.3 real-fixture.
 - **B.3 [X]** `extract_primary_*` (mirror of `s4_secondary_extract`,
   scalar = `primary_to_ark_fr`) + bounded + full real-fixture primary
   binding test (`r_U_primary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`) +
