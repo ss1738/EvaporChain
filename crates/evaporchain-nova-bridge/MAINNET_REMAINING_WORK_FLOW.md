@@ -54,16 +54,32 @@
   code (per `A→(B,C)→D` critical path); remains a MAINNET EXIT
   requirement (exit criterion #1: full-`W`, not bounded).
 
-## PHASE B — S4a primary (bn256-G1) analog  *(pinned, mechanical)*
+## PHASE B — S4a primary (bn256-G1) analog  *(RECLASSIFIED: DEEP, not mechanical — box-falsified 2026-05-19)*
 
-- **B.1 [S]** `pedersen_msm_bn256_g1` gadget — field-inverse of the
-  proven Grumpkin one (native `FpVar<Fr>` scalars, non-native
-  `EmulatedFpVar<Fq,Fr>` coords) + isolated primitive proof.
-- **B.2 [S]** bn256-G1 point decoder + `bn256::Base→ark_bn254::Fq` exact
-  converter (analogs of existing proven helpers).
-- **B.3 [S]** `extract_primary_*` + bounded + full real-fixture primary
-  binding test (`r_U_primary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`) + adversarial.
-- Depends on: PHASE A (shared structure must be proven first).
+> **FINDING:** B.1 compile-failed on Mini 1 (15 errors). ark's SW
+> `ProjectiveVar<P,F>` is bounded `F: FieldVar<P::BaseField,
+> BasePrimeField<P>>`; bn256-G1 has `P::BaseField = Fq`, so it
+> demands a field var with constraint field **Fq**. `EmulatedFpVar
+> <Fq,Fr>` is `FieldVar<Fq,Fr>` — does NOT satisfy it. **ark
+> `ProjectiveVar` supports ONLY native curve coords (base==circuit
+> field).** Secondary worked because Grumpkin base=Fr=circuit field.
+> **There is no library drop-in for the primary side.** The earlier
+> "mechanical/days" estimate is withdrawn.
+
+- **B.0 [X — design decision required]** Choose primary-binding
+  strategy: (1) bespoke non-native SW point gadget over
+  `EmulatedFpVar<Fq,Fr>` (~S4b-class depth); (2) avoid in-circuit
+  bn256-G1 arithmetic entirely (bind via the transcript that already
+  absorbs `comm_W.{x,y}` — re-derive the exact soundness obligation);
+  (3) curve-cycle redesign (primary checks in the secondary circuit
+  where bn256 scalars are native). See `s4_primary_msm_gadget.rs`.
+- **B.1 [X]** Primary MSM/binding gadget — per the B.0 decision.
+  **Effort: DEEP** (option 1 ≈ a second S4b; option 2 = design
+  rethink). NOT days.
+- **B.2 [S]** bn256-G1 point decoder + `bn256::Base→ark_bn254::Fq`
+  converter — still mechanical, but only useful once B.0 is decided.
+- **B.3 [X]** Real-fixture primary binding test — gated on B.0/B.1.
+- Depends on: PHASE A (done); now also a **design decision (B.0)**.
 
 ## PHASE C — S4 integration (the actual soundness closure)
 

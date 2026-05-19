@@ -333,12 +333,29 @@ JSON paths (serde derive): `pp_json["ck_primary"]["ck"|"h"]`;
   `bn256::Base → ark_bn254::Fq` exact converter (analog of
   `primary_to_ark_fr`, target Fq).
 
-So: `pedersen_msm_bn256_g1` gadget (native-scalar / non-native-coord
-inverse of `pedersen_msm_grumpkin`) + `extract_primary_*` (mirror of
-`s4_secondary_extract`, scalar=`primary_to_ark_fr`, point=bn256-G1
-decoder) + real-fixture binding test `r_U_primary.comm_W == Σ Wᵢ·ckᵢ
-+ r_W·h`. All paths pinned; no guessing — mechanical once the
-secondary binding validates (it gates the shared structure).
+> **CORRECTION (2026-05-19, box-falsified — supersedes the
+> "mechanical" claim below):** the primary analog is NOT mechanical.
+> ark `ProjectiveVar<P,F>` requires `F: FieldVar<P::BaseField,
+> BasePrimeField<P>>`; bn256-G1 has `P::BaseField = Fq`, so it needs
+> a field var with constraint field Fq. `EmulatedFpVar<Fq,Fr>`
+> (constraint field Fr) does NOT satisfy this — ark's SW
+> `ProjectiveVar` only supports native curve coords. The secondary
+> (Grumpkin, base=Fr=circuit) is native and library-reusable
+> (proven); the **primary (coords in Fq) has NO library drop-in**.
+> The primary side requires a design decision (bespoke non-native SW
+> point gadget ≈ S4b-class depth, OR avoid in-circuit bn256-G1
+> arithmetic, OR a curve-cycle redesign) — see
+> `MAINNET_REMAINING_WORK_FLOW.md` PHASE B.0 and
+> `s4_primary_msm_gadget.rs`. The text below is retained for the
+> pinned JSON paths only; its difficulty estimate is withdrawn.
+>
+> The "zero bespoke crypto primitives remain" / "mechanical" framing
+> elsewhere in this doc holds for the SECONDARY side only.
+
+So (SECONDARY-side only — primary superseded by the correction
+above): `extract_primary_*` JSON paths remain valid; the primary
+binding gadget is deep, not the claimed
+`pedersen_msm_bn256_g1`-as-ProjectiveVar-reuse.
 
 ### CAPACITY FINDING (2026-05-19, empirical — incident)
 
@@ -368,16 +385,21 @@ row-sat — are small and box-validated/validatable).
   in memory and printed explicit `... ok` / `N passed`. An
   OOM-died run is NOT a result.
 
-**Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
-no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
-constants, (b) compose `ProjectiveVar` MSM with the right coord-field
-var per instance, (c) bind to Section 2/3, (d) secondary R1CS in
-`EmulatedFpVar`, (e) S4-verify with real-fixture validation +
-adversarial. Still the true mainnet gate and still substantial
-(constraint cost in §3 unchanged), but **no bespoke cryptographic
-primitives** — the deep risk is now correctness-of-composition +
-curve-config exactness, validated empirically (a real fixture's known
-`comm_W` must reproduce in-circuit; a wrong `W` must fail).
+**Net re-scope (CORRECTED 2026-05-19 — split by side):**
+- **Secondary side:** no pairing, no hand-rolled non-native field, no
+  hand-rolled EC gadget — `ProjectiveVar` reuse holds because Grumpkin
+  base field = Fr = circuit field (native). PROVEN: A.1+A.2 `[V]`.
+- **Primary side:** the "no hand-rolled EC gadget / no bespoke
+  primitives / mechanical" claim is **WITHDRAWN** (box-falsified). bn256
+  G1 coords are Fq, foreign to the Fr circuit; ark `ProjectiveVar`
+  cannot express non-native coords. The primary binding needs a design
+  decision and is **deep, not mechanical** (see PHASE B.0 in
+  `MAINNET_REMAINING_WORK_FLOW.md`). So "no bespoke cryptographic
+  primitives remain" is TRUE for secondary, **FALSE for primary**.
+
+S4 still the true mainnet gate; honest difficulty is now HIGHER than
+the prior framing for the primary commitment binding. The S4-verify
+empirical-validation requirement is unchanged.
 
 ## 5. Honest ceiling (do not overstate)
 
