@@ -1,3 +1,48 @@
+# ⚠️ ARCHITECTURAL CONCLUSION (2026-05-19, source-confirmed) — READ FIRST
+
+The D.3 measurement (≈2.03×10⁸ constraints for the non-native
+secondary R1CS) + reading nova-snark 0.68 source forces an honest
+reframe of the *production* approach:
+
+- Nova's augmented circuits **never recompute the other side's full
+  R1CS** — folding/NIFS verifies only a constant-size step; full
+  RelaxedR1CS-sat is discharged **once at the end**.
+- nova-snark 0.68 **ships `CompressedSNARK`** (Spartan + HyperKZG/IPA;
+  `nova/mod.rs`, `S1/S2: RelaxedR1CSSNARKTrait`, verify@909) — the
+  *intended* succinct wrapper. Spartan (sumcheck) compresses
+  RelaxedR1CS-sat **sub-linearly** — NOT the 203M-constraint
+  explosion.
+- ∴ the hand-rolled S2/S3/S4 path (a Groth16 circuit that explicitly
+  re-verifies *both raw* RelaxedR1CS instances) is **reinventing
+  `CompressedSNARK`, badly**. The 203M secondary blow-up is the
+  symptom of doing this the wrong way; it is NOT fixable by hardware
+  *or* by the curve-cycle redesign of the same raw approach.
+- The legitimate driver for a Groth16 path is an **EVM-cheap proof**
+  (`eip197.rs`/`groth16_wrapper` → BN254 pairing precompile). The
+  CORRECT pipeline for that is: `RecursiveSNARK → CompressedSNARK`
+  (Spartan, sub-linear) **→ a small Groth16 of the CompressedSNARK
+  *verifier*** (a fixed, small circuit verifying the Spartan/KZG
+  proof) — NOT Groth16 of the raw R1CS. Skipping the Spartan
+  compression is the root cause of everything D.3/S4b.
+
+**SOLUTION (the real one): adopt nova-snark `CompressedSNARK`; if
+EVM verification is needed, Groth16-wrap the (small) CompressedSNARK
+verifier.** This makes D.3, S4b non-native, the curve-cycle redesign,
+and the ≫123 GB host problem ALL disappear. No spend, no big machine
+— the library already does, sub-linearly, what S4b was hand-rolling
+to 203M constraints.
+
+**What this session's verified work means, honestly:** S2a/S2b and
+the commitment-binding proofs (B.3b primary, A.3 secondary — real-
+scale box-verified) are valid as a *correctness/learning* exercise
+and their soundness insights transfer — but the **production
+architecture is CompressedSNARK**, not the 203M hand-roll. The
+honest #1-blocker path forward is: validate `CompressedSNARK` end-to-
+end, then a small Groth16-of-verifier for EVM — a scoped, library-
+based effort, not a multi-month bespoke-circuit dead-end.
+
+---
+
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
 
 **Date:** 2026-05-19 · **Status:** NOT mainnet-ready · **Companion:**
