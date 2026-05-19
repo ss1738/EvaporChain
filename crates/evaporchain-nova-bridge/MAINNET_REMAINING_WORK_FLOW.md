@@ -500,6 +500,38 @@ this explicitly rather than burying it.
   stays in your solo-build column).
 - (3) Pause B-1/B-2; revisit when Sonobe's audited release lands.
 
+### SONOBE STAGING PROBE #2 — ⚠️ `solidity-verifiers` NOT ON
+STAGING (2026-05-19, no spend; the third honest correction this
+arc, per the assert-without-measuring lesson)
+
+Probed (HTTP 200/404):
+- `crates/ivc/src/lib.rs` → **200** (Nova+CycleFold IVC on staging
+  ✓).
+- `solidity-verifiers/Cargo.toml` → 404.
+- `crates/solidity-verifiers/Cargo.toml` → 404.
+
+Workspace `[primitives, fs, ivc]`. The `solidity-verifiers` crate
+(EVM Solidity verifier templater for DeciderEth proofs — the
+last-mile piece that makes mainnet EVM verification work) **exists
+only on `main` (pre-refactor layout, ark 0.5) and has not been
+ported to the staging refactor yet**. Staging head pin candidate:
+`3a86594ec6081bdc8050cbaa1fb7389fb8d37c46` (winderica 2026-05-17).
+ark workspace: 0.6.0; edition 2024 / rust 1.85.1.
+
+**Implication for 1B:** pinning staging gets Nova+CycleFold+DeciderEth
+proof generation but NOT the EVM Solidity templater. Honest sub-paths:
+- **1B-α**: pin staging + port `solidity-verifiers` main→staging
+  ourselves (bounded; goes into our audit scope alongside the rest).
+- **1B-β**: pin staging + author our own DeciderEth→Solidity
+  templater (no PSE dependency for templating; tighter control;
+  more work).
+- **1B-γ**: hybrid staging-IVC + main-solidity-verifiers (two ark
+  versions in workspace; type-identity hell; likely impractical).
+
+Plus the ark 0.5 → 0.6 bump of the EvaporChain bridge (touches
+s4_msm_gadget, grumpkin_config, ipa_s_tensor, recursion_decider_
+circuit) is required either way.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
