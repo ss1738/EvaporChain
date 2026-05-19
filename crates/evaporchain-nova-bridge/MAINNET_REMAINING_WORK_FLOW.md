@@ -54,6 +54,42 @@ honest #1-blocker path forward is: validate `CompressedSNARK` end-to-
 end, then a small Groth16-of-verifier for EVM — a scoped, library-
 based effort, not a multi-month bespoke-circuit dead-end.
 
+## EVM-WRAPPER SCOPING (2026-05-19, source-confirmed, calibrated)
+
+State of the two EVM modules in this crate:
+
+- **`eip197.rs`** [V] — 256-byte EIP-197 Groth16 wire codec incl. the
+  BN254-G2 `Fq2 (c1,c0)` swap; tested. **Codec is independent of
+  which circuit produced the proof → reused unchanged.**
+- **`groth16_wrapper.rs`** [~] — `setup/prove/verify` currently key
+  Groth16 over **`NovaVerifierCircuit`** (`verifier_circuit.rs`) =
+  the **old hand-rolled raw-RecursiveSNARK verifier**. That is the
+  S4b 203M path. Must be re-pointed at a CompressedSNARK verifier.
+
+Validated CompressedSNARK PCS config (from `recursive_snark_fixture`):
+`S1/S2 = Spartan`, **EE1 = HyperKZG / Bn256 (primary)**,
+**EE2 = IPA-PC / Grumpkin (secondary)**.
+
+**Calibrated risk (NOT overhyped):** native verify is proven 25 s;
+the *in-circuit* cost of that verifier is a **separate, unmeasured**
+quantity. HyperKZG primary is favorable (KZG open = constant-size
+pairing check, cheap in-circuit). **The Grumpkin/IPA secondary is the
+concentrated unknown** — IPA verify = log-rounds of non-native MSM,
+the exact failure shape S4b hit. Risk is identified and bounded, not
+vague; but "small" is a hypothesis, not a measured fact.
+
+**NEXT DELIVERABLE [ ]:** a *constraint-size prediction* harness for
+the CompressedSNARK-verifier-in-circuit (same no-spend / falsify-
+cheaply method that turned D.3 "buy a VPS?" into "no spend"): from
+the native `(vk, proof)` structure (sumcheck round count = log(n),
+HyperKZG vs IPA opening op-counts) × the per-op constraint costs
+already characterized in `s4_primary_msm_gadget` (g1_add / scalar_mul
+/ MSM), predict total constraints **before** building the full
+circuit. Run on Mini3 (never the training rig / node box). Decision
+gate: if predicted ≪ Groth16-tractable → build the verifier circuit
++ re-point `groth16_wrapper::setup`; if the IPA secondary dominates
+→ that, not "the wrapper", is the real remaining problem to solve.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
