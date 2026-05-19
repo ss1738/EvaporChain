@@ -32,6 +32,19 @@ and the ≫123 GB host problem ALL disappear. No spend, no big machine
 — the library already does, sub-linearly, what S4b was hand-rolling
 to 203M constraints.
 
+**✅ VALIDATED [V] (2026-05-19, Mini3, box-verified):**
+`compressed_snark_compresses_real_recursive_snark ... ok`, 1 passed,
+**25.27 s on a 16 GB Mini, no OOM**. nova-snark `CompressedSNARK
+<E1,E2,TrivialIncrementCircuit, S1=Spartan, S2=Spartan>`
+`setup → prove → verify` on a REAL `RecursiveSNARK` (built against
+the canonical `pp`), asserting compressed-verified `zi == n`. The
+production path is no longer just argued from source — it is
+**empirically proven end-to-end, sub-linear, tractable on modest
+hardware, zero spend**. (One honest iteration: first run failed
+because the test used two different `pp` instances → digest mismatch;
+`setup`+`prove` succeeded even then — never a CompressedSNARK
+problem.)
+
 **What this session's verified work means, honestly:** S2a/S2b and
 the commitment-binding proofs (B.3b primary, A.3 secondary — real-
 scale box-verified) are valid as a *correctness/learning* exercise
