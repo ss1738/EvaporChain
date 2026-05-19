@@ -108,11 +108,11 @@
   254-bit scalars) is *extremely* heavy — B.3 must be bounded on
   Mini 1, full-scale = satyawan-1/cluster (same scale-gate class as
   A.3; a MAINNET EXIT requirement, not a logic gap).
-- **B.3a [I→verify]** Primary extraction decoders correct on REAL
-  fixture data — decode-only (no circuit): `extract_primary_ck/
-  witness/comm_w` → decoded points on bn256-G1 + scalars parse.
-  Memory-tractable. The genuinely-open question (gadget logic is
-  already `[V]`). Mirror of proven `s4_secondary_extract` decoders.
+- **B.3a [V]** Primary extraction decoders correct on REAL data —
+  BOX-VERIFIED Mini 1 (2026-05-19): `primary_extract_decodes_real_
+  data ... ok`, 1 passed, 29.80 s, 0 errors, first run. Real
+  `ck_primary`/`r_W_primary`/`comm_W` decode to on-curve bn256-G1 +
+  parseable Fr. The genuinely-open primary question is RESOLVED.
 - **B.3b [X — HARD SCALE-GATE]** Full in-circuit complete-formula
   primary binding on real data. EMPIRICALLY OOM-killed (SIGKILL) on
   Mini 1's 16 GB even at N=2 with JSON freed pre-circuit — the RCB
