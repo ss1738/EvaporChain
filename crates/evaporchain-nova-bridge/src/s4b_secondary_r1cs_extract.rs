@@ -177,4 +177,68 @@ mod tests {
             }
         }
     }
+
+    /// **D.3 — FULL secondary RelaxedR1CS satisfiability in-circuit**
+    /// (THE deep one; scale-gate → satyawan-1). Composes the
+    /// A.1-verified D.1 gadget (`enforce_secondary_relaxed_r1cs_sat_
+    /// nn`) with the D.2-verified extractor on a REAL fixture: every
+    /// `num_cons` row of the real secondary R1CS enforced non-native
+    /// (`(Az)(Bz)==u(Cz)+E`), asserting the valid Nova instance IS
+    /// satisfied + adversarial (perturbed `W` ⇒ a row breaks ⇒
+    /// UNSATISFIABLE). `extract_secondary_r1cs_witness` does its serde
+    /// internally and returns an owned struct → no JSON co-resides
+    /// with the circuit (B.3 memory pattern, by construction).
+    #[test]
+    #[ignore = "D.3 SCALE-GATE: full secondary R1CS in-circuit; run on satyawan-1 (≫16 GB)"]
+    fn secondary_r1cs_full_sat_real_data() {
+        use crate::recursive_snark_fixture::{
+            canonical_public_params, generate_fixture_with_digest,
+        };
+        use crate::s4b_secondary_r1cs_gadget::{
+            enforce_secondary_relaxed_r1cs_sat_nn, NnFq,
+        };
+        use ark_r1cs_std::alloc::AllocVar;
+        use ark_relations::r1cs::ConstraintSystem;
+
+        let sw = {
+            let pp = canonical_public_params().expect("canonical pp");
+            let (rs, _d) = generate_fixture_with_digest(2).expect("fixture");
+            extract_secondary_r1cs_witness(&rs, &pp).expect("extract secondary R1CS")
+            // pp, rs dropped here; sw is owned (no JSON retained).
+        };
+
+        // Positive: the real secondary instance must be satisfied.
+        let cs = ConstraintSystem::<ark_bn254::Fr>::new_ref();
+        let mk = |v: ArkFq| NnFq::new_witness(cs.clone(), || Ok(v)).unwrap();
+        let w: Vec<NnFq> = sw.w.iter().map(|&v| mk(v)).collect();
+        let e: Vec<NnFq> = sw.e.iter().map(|&v| mk(v)).collect();
+        let u = mk(sw.u);
+        let x = [mk(sw.x[0]), mk(sw.x[1])];
+        enforce_secondary_relaxed_r1cs_sat_nn(
+            &w, &e, &u, &x, &sw.a_rows, &sw.b_rows, &sw.c_rows, sw.num_cons,
+        )
+        .expect("synthesize full secondary R1CS");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "real secondary RelaxedR1CS instance must be SATISFIED"
+        );
+
+        // Adversarial: perturb W[0] → some row must break.
+        let cs2 = ConstraintSystem::<ark_bn254::Fr>::new_ref();
+        let mk2 = |v: ArkFq| NnFq::new_witness(cs2.clone(), || Ok(v)).unwrap();
+        let mut wbad = sw.w.clone();
+        wbad[0] += ArkFq::from(1u64);
+        let w2: Vec<NnFq> = wbad.iter().map(|&v| mk2(v)).collect();
+        let e2: Vec<NnFq> = sw.e.iter().map(|&v| mk2(v)).collect();
+        let u2 = mk2(sw.u);
+        let x2 = [mk2(sw.x[0]), mk2(sw.x[1])];
+        enforce_secondary_relaxed_r1cs_sat_nn(
+            &w2, &e2, &u2, &x2, &sw.a_rows, &sw.b_rows, &sw.c_rows, sw.num_cons,
+        )
+        .expect("synthesize adv");
+        assert!(
+            !cs2.is_satisfied().expect("is_satisfied"),
+            "perturbed W must make the secondary R1CS UNSATISFIABLE"
+        );
+    }
 }
