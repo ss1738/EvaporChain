@@ -97,7 +97,7 @@
   obstacle in the whole flow — in-circuit non-native foreign-curve
   MSM — is proven viable.** Remaining for primary: B.2-hardening
   (edge-safe arbitrary-`W` scalars) + the mechanical decoder/converter.
-- **B.2-hardening [X]** Edge-safe scalar mul for ARBITRARY 254-bit
+- **B.2-hardening [I→verify]** Edge-safe scalar mul for ARBITRARY 254-bit
   `W` scalars (complete formulas OR offset-trick): real `W` is not
   3-bit/leading-1/generic — required for soundness (a wrong edge case
   = forgeable). Next deep-ish unit before B.3 real-fixture.

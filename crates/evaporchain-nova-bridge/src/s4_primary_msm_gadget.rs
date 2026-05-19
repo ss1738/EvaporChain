@@ -184,6 +184,109 @@ pub fn pedersen_msm_bn256_g1(
     g1_add(&acc, &blind_term)
 }
 
+// ── B.2-hardening: COMPLETE formulas (arbitrary-scalar, edge-safe) ────
+//
+// Soundness requires correctness for ARBITRARY 254-bit `W` (leading
+// zeros, identity intermediates, P=±Q). Incomplete affine formulas
+// (B.1) are unsafe there. bn256-G1 is prime-order with a=0, so the
+// Renes–Costello–Batina complete addition (a=0, Algorithm 7) is
+// exception-free for ALL inputs — including the identity (0:1:0) and
+// P=Q. Projective coords; no field inversion in the hot path.
+
+/// In-circuit bn256-G1 projective point. Identity = (0, 1, 0).
+pub struct G1ProjVar {
+    pub x: FqV,
+    pub y: FqV,
+    pub z: FqV,
+}
+
+impl G1ProjVar {
+    fn identity() -> Self {
+        G1ProjVar {
+            x: FqV::constant(Bn254Fq::from(0u64)),
+            y: FqV::constant(Bn254Fq::from(1u64)),
+            z: FqV::constant(Bn254Fq::from(0u64)),
+        }
+    }
+    fn from_affine(p: &G1AffineVar) -> Self {
+        G1ProjVar {
+            x: p.x.clone(),
+            y: p.y.clone(),
+            z: FqV::constant(Bn254Fq::from(1u64)),
+        }
+    }
+}
+
+/// RCB complete addition for short-Weierstrass `a=0` (b3 = 3·b;
+/// bn256 b=3 ⇒ b3=9). Exception-free: correct for any P,Q incl.
+/// identity and P=Q. ("Complete addition formulas for prime order
+/// elliptic curves", Renes–Costello–Batina 2016, Alg. 7.)
+pub fn g1_add_complete(
+    p: &G1ProjVar,
+    q: &G1ProjVar,
+) -> Result<G1ProjVar, SynthesisError> {
+    let b3 = FqV::constant(Bn254Fq::from(9u64));
+    let (x1, y1, z1) = (&p.x, &p.y, &p.z);
+    let (x2, y2, z2) = (&q.x, &q.y, &q.z);
+
+    let t0 = x1 * x2;
+    let t1 = y1 * y2;
+    let t2 = z1 * z2;
+    let t3 = x1 + y1;
+    let t4 = x2 + y2;
+    let t3 = &t3 * &t4;
+    let t4 = &t0 + &t1;
+    let t3 = &t3 - &t4;
+    let t4 = y1 + z1;
+    let x3 = y2 + z2;
+    let t4 = &t4 * &x3;
+    let x3 = &t1 + &t2;
+    let t4 = &t4 - &x3;
+    let x3 = x1 + z1;
+    let y3 = x2 + z2;
+    let x3 = &x3 * &y3;
+    let y3 = &t0 + &t2;
+    let y3 = &x3 - &y3;
+    let x3 = &t0 + &t0;
+    let t0 = &x3 + &t0;
+    let t2 = &b3 * &t2;
+    let z3 = &t1 + &t2;
+    let t1 = &t1 - &t2;
+    let y3 = &b3 * &y3;
+    let x3 = &t4 * &y3;
+    let t2 = &t3 * &t1;
+    let x3 = &t2 - &x3;
+    let y3 = &y3 * &t0;
+    let t1 = &t1 * &z3;
+    let y3 = &t1 + &y3;
+    let t0 = &t0 * &t3;
+    let z3 = &z3 * &t4;
+    let z3 = &z3 + &t0;
+    Ok(G1ProjVar { x: x3, y: y3, z: z3 })
+}
+
+/// Edge-safe `k·base` for an ARBITRARY native `FpVar<Fr>` scalar
+/// (full 254-bit, leading zeros, k=0/1 all correct): MSB-first
+/// double-and-add over the complete formula, `acc` init = identity.
+/// No generic-case contract — exception-free.
+pub fn g1_scalar_mul_complete(
+    base: &G1AffineVar,
+    bits_msb_first: &[Boolean<Bn254Fr>],
+) -> Result<G1ProjVar, SynthesisError> {
+    let bp = G1ProjVar::from_affine(base);
+    let mut acc = G1ProjVar::identity();
+    for bit in bits_msb_first {
+        acc = g1_add_complete(&acc, &acc)?; // double (RCB add handles P=Q)
+        let added = g1_add_complete(&acc, &bp)?;
+        acc = G1ProjVar {
+            x: FqV::conditionally_select(bit, &added.x, &acc.x)?,
+            y: FqV::conditionally_select(bit, &added.y, &acc.y)?,
+            z: FqV::conditionally_select(bit, &added.z, &acc.z)?,
+        };
+    }
+    Ok(acc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +406,51 @@ mod tests {
         assert!(cs.is_satisfied().expect("is_satisfied"), "CS must be satisfied");
         assert_eq!(out.x.value().unwrap(), expected.x().unwrap(), "MSM.x = 35G.x");
         assert_eq!(out.y.value().unwrap(), expected.y().unwrap(), "MSM.y = 35G.y");
+    }
+
+    /// THE B.2-HARDENING PROOF: complete-formula scalar mul is correct
+    /// for ARBITRARY scalars incl. edge cases — k=0 (→ identity,
+    /// Z=0), k=1, k=7, and a large multi-bit k — over the full
+    /// 254-bit ladder, vs ark bn256-G1, CS satisfied. Projective
+    /// equality: (X,Y,Z) ≡ affine (ax,ay) iff X==ax·Z ∧ Y==ay·Z ∧ Z≠0;
+    /// identity iff Z==0.
+    #[test]
+    fn nonnative_bn256_g1_complete_scalar_mul_arbitrary_and_edges() {
+        let g_aff = ark_bn254::G1Affine::generator();
+        let g = Projective::from(g_aff);
+
+        for k in [0u64, 1, 7, 1_234_567_890_123_456_789u64] {
+            let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+            let mkfq = |v: Bn254Fq| FqV::new_witness(cs.clone(), || Ok(v)).unwrap();
+            let gp = G1AffineVar {
+                x: mkfq(g_aff.x().unwrap()),
+                y: mkfq(g_aff.y().unwrap()),
+            };
+            let kv =
+                FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k)))
+                    .unwrap();
+            let mut msb = kv.to_bits_le().unwrap(); // full 254-bit, LSB-first
+            msb.reverse(); // → MSB-first
+
+            let out = g1_scalar_mul_complete(&gp, &msb).expect("complete smul");
+            assert!(
+                cs.is_satisfied().expect("is_satisfied"),
+                "CS must be satisfied for k={k}"
+            );
+
+            let (xv, yv, zv) = (
+                out.x.value().unwrap(),
+                out.y.value().unwrap(),
+                out.z.value().unwrap(),
+            );
+            let exp = (g * Bn254Fr::from(k)).into_affine();
+            if exp.is_zero() {
+                assert_eq!(zv, Bn254Fq::from(0u64), "k={k}: identity ⇒ Z=0");
+            } else {
+                assert_ne!(zv, Bn254Fq::from(0u64), "k={k}: non-identity ⇒ Z≠0");
+                assert_eq!(xv, exp.x().unwrap() * zv, "k={k}: X==ax·Z");
+                assert_eq!(yv, exp.y().unwrap() * zv, "k={k}: Y==ay·Z");
+            }
+        }
     }
 }
