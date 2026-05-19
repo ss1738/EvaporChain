@@ -241,4 +241,101 @@ mod tests {
             "perturbed W must make the secondary R1CS UNSATISFIABLE"
         );
     }
+
+    /// **D.3 SIZE PREDICTION (tractable; the solution to "how big a
+    /// machine")** — measures the non-native gadget's exact
+    /// `num_constraints()` (memory-free, deterministic) on tiny
+    /// synthetic satisfied instances, derives constraints-per-row +
+    /// per-nonzero, then multiplies by the REAL secondary dims (D.2
+    /// extraction on a real fixture) to PREDICT full-D.3 cost —
+    /// without ever building full D.3. Runs on a 16 GB Mini.
+    #[test]
+    #[ignore = "D.3 size-prediction: tiny synthetic sweep + real-dims extract (tractable)"]
+    fn secondary_r1cs_size_prediction() {
+        use crate::recursive_snark_fixture::{
+            canonical_public_params, generate_fixture_with_digest,
+        };
+        use crate::s4b_secondary_r1cs_gadget::{
+            enforce_secondary_relaxed_r1cs_sat_nn, NnFq, SparseRow,
+        };
+        use ark_r1cs_std::alloc::AllocVar;
+        use ark_relations::r1cs::ConstraintSystem;
+
+        // Synthetic SATISFIED instance: num_vars=num_cons=s, num_io=2,
+        // `d` nonzeros/row at col 0. Row: A=B=C=[(0,1)], w[0]=1, u=1,
+        // e=0 ⇒ 1·1 == 1·1 + 0. nnz/row = 3·dummy (we vary `d` by
+        // repeating col-0 entries to scale nnz independently of rows).
+        let measure = |s: usize, d: usize| -> usize {
+            let cs = ConstraintSystem::<ark_bn254::Fr>::new_ref();
+            let mk = |v: u64| {
+                NnFq::new_witness(cs.clone(), || Ok(ArkFq::from(v))).unwrap()
+            };
+            let w: Vec<NnFq> = (0..s).map(|i| mk(if i == 0 { 1 } else { 0 })).collect();
+            let e: Vec<NnFq> = (0..s).map(|_| mk(0)).collect();
+            let u = mk(1);
+            let x = [mk(0), mk(0)];
+            // d entries all at col 0 with coeffs summing to the
+            // satisfied value: A,B = [(0,1)]; C = d entries (0,1) but
+            // that changes the value — instead keep value fixed:
+            // A=[(0,1)], B=[(0,1)], C = [(0,1)] repeated→ Cz=d·w0.
+            // Re-satisfy: w0·w0 == u·(d·w0) + e ⇒ pick w0 s.t.
+            // 1 == d + e ⇒ e=1−d won't be 0 for d>1. Simpler: hold
+            // d=3 fixed (A,B,C one entry each) and vary ONLY s; the
+            // per-row cost (incl 3 non-native muls) is the slope.
+            let _ = d;
+            let row = || -> SparseRow { vec![(0usize, ArkFq::from(1u64))] };
+            let a: Vec<SparseRow> = (0..s).map(|_| row()).collect();
+            let b = a.clone();
+            let c = a.clone();
+            enforce_secondary_relaxed_r1cs_sat_nn(&w, &e, &u, &x, &a, &b, &c, s)
+                .expect("synth gadget");
+            assert!(cs.is_satisfied().expect("sat"), "synthetic must satisfy");
+            cs.num_constraints()
+        };
+
+        let pts: Vec<(usize, usize)> =
+            [8usize, 16, 32, 64].iter().map(|&s| (s, measure(s, 3))).collect();
+        eprintln!("SYNTHETIC SWEEP (s, num_constraints, d=3 nnz/row):");
+        for (s, c) in &pts {
+            eprintln!("  s={s:>3}  constraints={c}");
+        }
+        // Linear fit constraints ≈ k·s + b over the two extreme pts.
+        let (s0, c0) = pts[0];
+        let (s1, c1) = pts[pts.len() - 1];
+        let k = (c1 as f64 - c0 as f64) / (s1 as f64 - s0 as f64);
+        let b = c0 as f64 - k * s0 as f64;
+        // k = constraints per (row + 3 non-native muls). per-nnz ≈ k/3
+        // (each row's 3 nonzeros dominate; row/var overhead amortised).
+        let per_nnz = k / 3.0;
+        eprintln!("FIT: constraints ≈ {k:.1}·s + {b:.0}  ⇒  ~{per_nnz:.1}/nonzero");
+
+        // REAL secondary dims (D.2 — proven, tractable ~30 s).
+        let sw = {
+            let pp = canonical_public_params().expect("pp");
+            let (rs, _d) = generate_fixture_with_digest(2).expect("fixture");
+            extract_secondary_r1cs_witness(&rs, &pp).expect("extract")
+        };
+        let nnz: usize = sw.a_rows.iter().map(|r| r.len()).sum::<usize>()
+            + sw.b_rows.iter().map(|r| r.len()).sum::<usize>()
+            + sw.c_rows.iter().map(|r| r.len()).sum::<usize>();
+        eprintln!(
+            "REAL secondary: num_cons={} num_vars={} total_nnz(A+B+C)={}",
+            sw.num_cons, sw.num_vars, nnz
+        );
+        let predicted = per_nnz * nnz as f64 + k * sw.num_cons as f64;
+        // Honest memory band: arkworks Groth16 setup+witness empirically
+        // ~0.3–1.5 KB per constraint (PK + R1CS matrices + witness).
+        let lo_gb = predicted * 300.0 / 1.073e9;
+        let hi_gb = predicted * 1500.0 / 1.073e9;
+        eprintln!(
+            "PREDICTED full-D.3 ≈ {predicted:.3e} constraints  ⇒  ≈ {lo_gb:.0}–{hi_gb:.0} GB \
+             (0.3–1.5 KB/constraint heuristic — ORDER-OF-MAGNITUDE, not precise)"
+        );
+        eprintln!(
+            "CONCLUSION: if hi_gb ≫ available, the non-native path is the \
+             wrong lever — curve-cycle redesign (B.0 Opt 3) is the real fix."
+        );
+        // No assertion on the prediction — it is a measurement, not a
+        // pass/fail; the eprintln output IS the deliverable.
+    }
 }
