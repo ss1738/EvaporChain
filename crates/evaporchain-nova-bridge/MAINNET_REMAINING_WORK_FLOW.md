@@ -38,16 +38,21 @@
   `1 passed; 0 failed`, 0.31 s, 0 errors. Proves the S4b/D.1 core
   non-native row-sat logic (correct witness satisfies; perturbed row →
   UNSATISFIABLE).
-- **A.2 [I→verify, running]** Bounded-`W` secondary binding
-  (`s4_secondary_extract::secondary_msm_binds_real_prefix`, N=12) — now
-  on **Mini 1** (10c/16 GB), NOT the node-box. Gate: in-circuit MSM ==
-  out-of-circuit ark MSM over the SAME real extracted prefix +
-  adversarial. (Build-host pivoted: node-box was unreliable for builds
-  — dies at crates.io index / OOMs full-`W` — and stays node-only.)
-- **A.3 [X]** Full-`W` secondary binding (`comm_W == Σ Wᵢ·ckᵢ + r_W·h`,
-  unbounded) on a **bigger machine** (M4 Mini / satyawan-1). Gate: real
-  `r_U_secondary.comm_W` equals the in-circuit MSM. Depends on: A.2 +
-  bigger-box provisioning.
+- **A.2 [V]** Bounded-`W` secondary binding — BOX-VERIFIED on **Mini 1**
+  (2026-05-19): `secondary_msm_binds_real_prefix ... ok`, `1 passed`,
+  34.61 s (real Nova fixture + N=12 non-native MSM genuinely ran), 0
+  errors, first run. Extraction decoders + Pedersen-MSM gadget verified
+  on REAL extracted `ck`/`W`/`r_W`; in-circuit == out-of-circuit ark MSM
+  + adversarial. (Build-host pivoted node-box→Mini 1; node-box stays
+  node-only.)
+- **A.3 [X — deferred scale-gate, NOT skipped]** Full-`W` secondary
+  binding (`r_U_secondary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`, unbounded). This
+  is a *scale* verification, not new soundness logic (logic proven by
+  A.1+A.2). Run on the largest available host (Mini 1 16 GB attempt;
+  satyawan-1 / cluster if 16 GB insufficient — full secondary `W`
+  non-native MSM may exceed 16 GB). Sequenced AFTER B/C critical-path
+  code (per `A→(B,C)→D` critical path); remains a MAINNET EXIT
+  requirement (exit criterion #1: full-`W`, not bounded).
 
 ## PHASE B — S4a primary (bn256-G1) analog  *(pinned, mechanical)*
 
