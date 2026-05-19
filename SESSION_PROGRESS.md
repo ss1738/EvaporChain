@@ -6,6 +6,25 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 56) — workspace 11,285 tests GREEN; genesis ceremony test fixed
+
+**Focus:** Make workspace test suite fully green before next sprint. Fixed the one failing test; freed 75 GB disk on Mini 1; verified 0 failures at 11,285 tests.
+**Commits shipped:** 1 (`25355685`)
+**Deliverables:**
+| Item | Result |
+|---|---|
+| `cargo clean` on Mini 1 | Freed 75 GB (60 GB target/ + doc artifacts); disk 100%→17% |
+| Fix `test_genesis_ceremony_full_flow` | Added `remove_dir_all` before `create_dir_all` — pre-cleans stale temp dir left by a prior failed run (duplicate faucet address ff00…00 on finalize) |
+| Full workspace `cargo test --workspace` | **11,285 passed, 0 failed** |
+**Empirical results:** 11,285/11,285 green on Mini 1 (post-clean first compile).
+**Decisions made:**
+- The stale-temp-dir bug was a classic test-isolation failure: cleanup at END only means any mid-run panic leaves state for the next invocation.
+**What's next:** Begin next sprint lane — T0.2 adversarial integration tests (the code sub-track that doesn't need a multi-box cluster); or claim a 🟡 OPEN lane from MAINNET_READINESS.md.
+**Blockers / open questions:** T0.2 soak / T0.6 cluster soak both still 🔴 (T3.1 cluster not up); code lanes available.
+**Cross-references:** `crates/evaporchain-cli/src/main.rs:5424` (fix); commit `25355685`
+
+---
+
 ## 2026-05-19 (session 55) — execution e2e, green first run — DOCTRINE TRIPLET SPRINT COMPLETE
 
 **Focus:** Doctrine triplet e2e for `evaporchain-execution` (9401 LOC). Green first run. Sprint fully closed: all 76 crates with `press_claim_tests` now have `tests/e2e.rs`.
