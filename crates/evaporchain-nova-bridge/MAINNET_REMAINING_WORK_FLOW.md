@@ -314,6 +314,28 @@ increment 3 — wire constant Sections B-D against the same real proof
 MSM decision stays deliberately scheduled (satyawan-1 / a Mini —
 never the training rig / node box).
 
+### INCREMENT-2 KERNEL — `ipa_s_tensor` ✅ [V] (2026-05-19, Mini3,
+box, HEAD `e48f0386`, `ipa_s_tensor ... 4 passed; 0 failed; 0.24 s`)
+
+`ipa_s_tensor::ipa_s_vector` = bit-exact port of `ipa_pc::verify`'s
+`s` derivation (`provider/ipa_pc.rs` L334-349). This is the subtle,
+risk-carrying piece of the real-proof adapter: a wrong index /
+exponent / round-reversal silently yields a different MSM ⇒ a
+vacuous-yet-passing binding (the B-1 hazard). **Falsified
+INDEPENDENTLY:** `Σ sᵢ·ckᵢ` (tensor path) == the literal recursive
+`ck.fold` (`pedersen.rs::fold` L487 weights `(r⁻¹,r)` + `ipa_pc`
+prove loop) at n=8/16/64, plus `s[0]=Πr⁻¹` spot-check. Two unrelated
+code paths converge ⇒ the port is faithful to nova-snark.
+
+**NEXT [ ]:** finish increment 2 — reuse
+`s4_secondary_extract::extract_secondary_ck` for the real
+`ck_secondary` bases at real n; assemble a real-shaped Section-A
+witness (real `ck` + real tensor `s` from `ipa_s_vector(r)` +
+computed `ck_hat`); box-verify `RecursionDeciderCircuit` Section A
+against it **at real n** (CS sat + non-vacuous, Mini3). (Challenges
+`r` may be synthetic-but-valid here; binding `r` to a *specific*
+proof's `L_vec/R_vec` transcript is increment 3, with Sections B-D.)
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
