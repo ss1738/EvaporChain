@@ -64,7 +64,7 @@ pub fn cyclefold_aux_scalar_mul(
 mod tests {
     use super::*;
     use ark_bn254::G1Projective as Bn254G1Proj;
-    use ark_ec::CurveGroup;
+    use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::{Field, UniformRand};
     use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, R1CSVar};
     use ark_relations::r1cs::ConstraintSystem;
