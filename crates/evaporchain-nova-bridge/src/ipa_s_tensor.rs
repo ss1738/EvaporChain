@@ -61,7 +61,7 @@ mod tests {
         CurveGroup,
     };
     use ark_ff::UniformRand;
-    use ark_std::test_rng;
+    use ark_std::{test_rng, Zero};
 
     type GProj = Projective<GrumpkinConfig>;
 
