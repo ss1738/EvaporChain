@@ -532,6 +532,69 @@ Plus the ark 0.5 → 0.6 bump of the EvaporChain bridge (touches
 s4_msm_gadget, grumpkin_config, ipa_s_tensor, recursion_decider_
 circuit) is required either way.
 
+### ARCHITECTURE LOCKED — 1C: nova-snark + custom CycleFold (solo
+build) (2026-05-19, Satyawan's call)
+
+**Why:** Sonobe-state friction was accumulating — audit not yet done
+(staging refactor in progress), `solidity-verifiers` not on staging,
+ark 0.5→0.6 bump required anyway. Pivot keeps us on the **validated
+nova-snark 0.68 substrate** (25 s `snark` + 125 s `ppsnark`
+`CompressedSNARK` e2e tests both pass on Mini3) and aligns with the
+EvaporChain protocol-layer solo-build preference. All 25 commits of
+salvaged work apply.
+
+**Calibrated cost picture (no overhype, per the lesson):** CycleFold
+makes the auxiliary (secondary) circuit ~one in-circuit EC
+scalar-mul check (~few-k R1CS, independent of step circuit size —
+THE architectural win). But ppsnark padding `S_comm.N ≈
+next_pow2(max(total_nz, 2·num_vars, num_cons))` still gives
+secondary IPA opening n ≈ **8-16k**, not "constant ~hundreds." So
+the EVM cost is **~12-25M gas** for the on-chain IPA MSM (Pippenger,
+~1.5k gas/add — Solidity, since Grumpkin is not a precompile curve):
+**in the L1 block ~30M zone, cheap on L2**. "Constant" in CycleFold
+means *independent of step circuit size*, not *trivially small in
+absolute terms*. Gas needs measurement at the chosen n, not
+assertion. *(Architecture viable; absolute gas TBD.)*
+
+**Reusable assets (the 25-commit arc was not wasted):**
+`ipa_s_tensor` (bit-faithful, falsified), `pedersen_msm_grumpkin`
+(~2.5k cons/term — the auxiliary scalar-mul building block;
+characterized), `grumpkin_config`, `s4_msm_gadget`,
+`extract_secondary_ck`, `RecursionDeciderCircuit` Section-A
+non-vacuity pattern + tests, HyperKZG-primary-cheap finding (primary
+side untouched by the pivot), size-probe methodology. The 1C build
+re-uses these wholesale.
+
+**Build roadmap (sequential increments, each box-verified before
+the next, never the training rig / node box):**
+1. **Aux circuit core**: an `FCircuit`-style step that does *one*
+   in-circuit Grumpkin scalar-mul check + an out-of-circuit oracle
+   for the expected output. Measure `cs.num_constraints()` (cheapest
+   decisive test; expect ~few-k from `pedersen_msm_grumpkin` k=1).
+2. **CycleFold instance shape**: define the auxiliary R1CS the
+   primary commits to per step. Wire its (small, constant-size)
+   instance into the IVC harness on top of nova-snark's
+   NIFS/transcript primitives.
+3. **Primary augmented circuit**: step + RO update + fold of two
+   CycleFold instances (no cross-curve EC scalar-mul in the
+   primary; the auxiliary discharges it).
+4. **Cycle plumbing**: IVC step driver that maintains primary
+   running instance + auxiliary running instance + transcript.
+5. **Decider**: `CompressedSNARK<ppsnark>` over the resulting
+   small-secondary running instance; box-validate (analogue of the
+   125 s ppsnark e2e). MEASURE real n_aux post-CycleFold from the
+   real proof's `L_vec.len()` (the lesson — pin n from a real
+   artifact, not from estimates).
+6. **Solidity verifier**: author DeciderEth → Solidity templater
+   for EvaporChain's exact decider shape (primary HyperKZG +
+   small-n IPA secondary). Measure on-chain gas via Foundry.
+7. **Audit prep**: scope review of the CycleFold construction
+   (paper + correctness proofs); EvaporChain-owned, no external
+   library dependency.
+
+**NEXT [code]:** increment 1 — aux circuit core + cs probe.
+Bounded, box-verifiable, reuses `pedersen_msm_grumpkin` k=1 surface.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
