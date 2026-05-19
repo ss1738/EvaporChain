@@ -430,11 +430,43 @@ discipline, the serde-extraction path, the size-probe methodology,
 and the confirmed fact that the **primary (HyperKZG) side is
 constant/EVM-cheap** — only the secondary is the blocker.
 
-**NEXT [decision, not code]:** present options 1/2/3 with these
-measured costs to Satyawan for the architecture call. If a gas
-estimate is wanted first, option (2)-Solidity gas can be estimated
-cheaply (no spend). Do NOT pour more increments into option (2)
-recursion — measured dead-end.
+### OPTION-(2)-SOLIDITY GAS ESTIMATE — ❌ ELIMINATED (2026-05-19,
+analytical, order-of-magnitude decisive, no spend)
+
+Grumpkin is NOT an EVM precompile curve (BN254 precompiles
+0x06/07/08 do not apply). All Grumpkin ops run in pure-EVM
+`MULMOD`-based field arithmetic. Anchors: 256-bit modmul ≈ 50-100
+gas effective; Grumpkin add/double ≈ ~1-2k gas; one 256-bit
+scalar-mul ≈ ~300-575k gas. The secondary IPA verify's unavoidable
+core `ck_hat = ⟨s, ck⟩` is a **size-n=131,072 Grumpkin MSM**:
+Pippenger-best ≈ ~n adds ≈ **~2×10⁸ gas**; naive ≈ ~10⁹⁺. Ethereum
+block/tx gas limit ≈ **3×10⁷**.
+
+**∴ option (2)-Solidity is ~7×–200× over the block limit —
+ELIMINATED at order-of-magnitude (no Foundry harness needed; a
+precise measurement would only pin an already-conclusive number).
+BOTH forms of option (2) (in-circuit Groth16 ~3-5×10⁸ cons AND
+native-Solidity ~10⁸-10⁹ gas) are measured-dead at real n=2¹⁷.**
+
+The choice now cleanly narrows to **(1) CycleFold-constant
+secondary** vs **(3) secondary-off-critical-path**. Recommendation
+(for Satyawan's architecture call): **(1) CycleFold** — it is the
+ecosystem's known-correct answer to *exactly* this problem (Nova
+secondary too big for EVM); CycleFold makes the secondary a single
+O(1) EC scalar-mul, after which a small Groth16 decider + the
+already-confirmed constant HyperKZG primary give a genuinely
+EVM-cheap proof. (3) is a workaround that adds protocol surface
+(fraud/aggregation) without fixing the core. Key sub-decision inside
+(1): adopt **Sonobe** (arkworks folding lib, ships a Decider +
+CycleFold — migrate EvaporChain's Nova usage to its API) vs
+**implement CycleFold around nova-snark** (keep current API, larger
+crypto build). Solo-build-protocol-layer preference applies — his
+call.
+
+**NEXT [decision, not code]:** Satyawan picks (1) vs (3), and if
+(1), Sonobe-adopt vs nova-snark-CycleFold. Do NOT write more code on
+the B-1/B-2 circuit path until that call — both option-(2) branches
+are measured dead-ends.
 
 ---
 
