@@ -174,17 +174,53 @@ sparse-matrix preprocessing; a one-shot final-proof cost, acceptable.
 intrinsic and still the in-circuit blocker. Option (2) is not "done";
 its *base* is proven.
 
-**NEXT [ ]:** scope the residual final-layer recursion precisely —
-what exactly must be Groth16-wrapped after `ppsnark` compression, and
-whether the secondary IPA opening (the size-`n` `ck_hat`) is
-discharged natively in that final Spartan step (making the Groth16'd
-residual small) or still dominates. Concretely: read how
-`CompressedSNARK::verify` invokes the secondary `EE::verify`, and
-whether a one-more-Spartan-step over *that verifier's R1CS* is
-itself `ppsnark`-succinct (the recursion terminates) or re-introduces
-a size-`n` term (recursion does not help → fall to option (3)
-native-Solidity-secondary as the buildable-now mainnet path, flag
-option (1) CycleFold as the long-term architecture).
+### RESIDUAL RECURSION SCOPED — source read #3 (2026-05-19,
+`nova/mod.rs` `CompressedSNARK::verify` L909-1025) — RECURSION
+TERMINATES SUCCINCT (source-grounded design conclusion)
+
+Full `CompressedSNARK::verify` mapped. **Every step is constant-size
+EXCEPT one:**
+- Neptune hash checks (`hash_primary/secondary`) — constant.
+- `nifs_Uf_secondary.verify`, `nifs_Un_secondary.verify`,
+  `nifs_Un_primary.verify` — constant-size NIFS folds.
+- `derandomize` (primary+secondary) — constant.
+- `rayon::join(snark_primary.verify, snark_secondary.verify)`:
+  - `snark_primary.verify` — Spartan ppsnark + **HyperKZG** ⇒
+    constant (one BN254 pairing). EVM-cheap.
+  - `snark_secondary.verify` — Spartan ppsnark + **IPA/Grumpkin**;
+    its sole super-constant op = `ipa_pc::verify` size-`n` `ck_hat`
+    MSM. **THE only non-constant term in the whole verifier.**
+
+**Why everything blew up before, precisely:** that single MSM is
+Grumpkin-group. Grumpkin's *base field* **is BN254-Fr** (the primary
+scalar field; the existing cycle). The 203M/10⁹ explosion was the
+cost of doing this Grumpkin EC **non-natively** (`EmulatedFpVar`,
+foreign field) — S4b/D.3. Done on the **matching native cycle side**
+(a recursion circuit over BN254-Fr), the same MSM is **≈`n` *native*
+constraints (~10⁵)**, linear-Spartan-provable, NOT 10⁹.
+
+**∴ final-layer recursion terminates succinct:** one recursion
+circuit over BN254-Fr does the secondary MSM **natively** (all other
+verifier steps already constant) → ppsnark-compress it (size-`n`
+R1CS is fine for the linear prover; its verifier is succinct) →
+Groth16-wrap the succinct top (HyperKZG ⇒ constant BN254 pairing ⇒
+EVM-cheap). **Option (2) is viable; the EVM mainnet path is not
+blocked.** No hardware spend, no 10⁹ bespoke circuit.
+
+**NO-OVERHYPE LINE (explicit):** the above is a *source-grounded
+design conclusion*, NOT a box-validated number. It is sound because
+the only super-constant term is provably native on the recursion
+field — but the falsifiable next step is to **measure the recursion-
+circuit constraint count** (the proven D.3-style prediction: `n`
+secondary ≈ 10.5k native Grumpkin scalar-muls × native per-op cost +
+the constant HyperKZG-pairing-in-circuit term), not to assert a final
+figure now.
+
+**NEXT [ ]:** D.3-style size *prediction* for the BN254-Fr recursion
+circuit (native secondary MSM term + constant primary-pairing term),
+no build/spend; if predicted ≪ Groth16-tractable (expected ~few ×10⁶)
+→ build the recursion circuit + re-point `groth16_wrapper::setup` at
+its succinct ppsnark verifier; `eip197.rs` codec reused unchanged.
 
 ---
 
