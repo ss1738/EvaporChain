@@ -157,14 +157,34 @@ bounded, none requiring a 203M/10⁹ bespoke circuit or HW spend):**
    fixed ~size-`n` gas cost, no SNARK circuit). *Pragmatic mainnet
    path; gas-heavy but deterministic & buildable now.*
 
-**NEXT [ ]:** evaluate option (2) first (smallest delta, stays in
-nova-snark): confirm `ppsnark` satisfies `RelaxedR1CSSNARKTrait` so
-`CompressedSNARK<…,S1=ppsnark,S2=ppsnark>` type-checks, box-validate
-it end-to-end on Mini3 (the analogue of the 25 s `snark` validation),
-then scope the residual recursion layer. If ppsnark CompressedSNARK
-fails to validate or the residual is still S4b-scale, fall back to
-option (3) as the buildable-now mainnet path and flag option (1) as
-the long-term architecture.
+**OPTION (2) BASE — ✅ VALIDATED [V] (2026-05-19, Mini3, box):**
+`compressed_snark_ppsnark_compresses_real_recursive_snark ... ok`,
+1 passed, **124.71 s on a 16 GB Mini, no OOM** (HEAD `cd9882bf`).
+`CompressedSNARK<E1,E2,_,S1=ppsnark,S2=ppsnark>` e2e on a real
+`RecursiveSNARK`, `zi == n` asserted. Two real API facts surfaced &
+fixed en route: (i) ppsnark `ck_floor()` > `snark`'s →
+`InvalidCommitmentKeyLength` unless `pp` is built with the ppsnark
+floor; (ii) prove is ~5× heavier than `snark` (25 s → 125 s) —
+sparse-matrix preprocessing; a one-shot final-proof cost, acceptable.
+
+**HONEST CAVEAT (kept front, no overhype):** this validates the
+*native* `ppsnark` CompressedSNARK base ONLY. It removes the
+**Spartan-level** size-`n` MSM. It does **NOT** remove the secondary
+**Grumpkin-IPA** size-`n` `ck_hat` MSM in `ipa_pc::verify` — that is
+intrinsic and still the in-circuit blocker. Option (2) is not "done";
+its *base* is proven.
+
+**NEXT [ ]:** scope the residual final-layer recursion precisely —
+what exactly must be Groth16-wrapped after `ppsnark` compression, and
+whether the secondary IPA opening (the size-`n` `ck_hat`) is
+discharged natively in that final Spartan step (making the Groth16'd
+residual small) or still dominates. Concretely: read how
+`CompressedSNARK::verify` invokes the secondary `EE::verify`, and
+whether a one-more-Spartan-step over *that verifier's R1CS* is
+itself `ppsnark`-succinct (the recursion terminates) or re-introduces
+a size-`n` term (recursion does not help → fall to option (3)
+native-Solidity-secondary as the buildable-now mainnet path, flag
+option (1) CycleFold as the long-term architecture).
 
 ---
 
