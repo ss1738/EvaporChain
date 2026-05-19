@@ -628,6 +628,54 @@ Wire its commitment+folding into the existing nova-snark
 NIFS/transcript primitives. Bounded; uses the measured ~2.5k-cons
 shape as the spec.
 
+### 1C INCREMENT 2 — ✅ CF INSTANCE SHAPE [V] (2026-05-19, Mini3,
+box, HEAD `9bb02bc3`, `cyclefold_instance_circuit ... 3 passed;
+0 failed; 0.09 s`)
+
+New module `cyclefold_instance_circuit.rs` source-anchored to
+Sonobe's `circuits.rs` (cycle constraint `C1::BaseField =
+C2::ScalarField`, `cf_U_i: CycleFoldCommittedInstance<C2>`). Wraps
+increment-1's aux scalar-mul with the public input layout the
+primary will absorb: `(P.x, P.y, s_emulated, Q.x, Q.y)`. Binds the
+witnessed `Q` to the public `(Q.x, Q.y)` via `to_affine +
+enforce_equal` — instance-level B-1 vacuity guard (publics aren't
+decorative). Three box tests: positive, non-vacuity (wrong `Q` ⇒
+UNSAT), size probe.
+
+**`CF_INSTANCE_PROBE`: cs.num_constraints = 1,985, witness = 1,812,
+instance = 22** (4 native coords + ~17 emulated-Fr limbs + 1
+reserved).
+
+**Counterintuitive empirical finding (logged):** instance is *1,985
+< 2,548 bare-aux*, not larger. Arkworks `new_input` paths elide
+intermediate witness scaffold that `new_witness` requires. Tripped
+my own size-floor `assert!(≥ 2_000)` initially — yet another
+assert-without-measuring slip, caught on box, corrected to ≥ 1,000
+with the empirical note inline. Non-vacuity test passes ⇒ binding
+holds; not a vacuity bug.
+
+**Refined prediction (still NOT asserted — real n waits for
+increments 5/6):**
+- ppsnark padding `S_comm.N = next_pow2(max(total_nz, 2·num_vars,
+  num_cons))`. With num_vars=1,812 ⇒ 2·num_vars=3,624 ⇒
+  `next_pow2 ≥ 4,096 = 2¹²`. **CAVEAT:** `total_nz` (unknown
+  pre-real-proof) could push it higher; 4,096 is a lower bound.
+- 4,096 = **32× reduction from option-(2) dead-end 2¹⁷** (better
+  than the increment-1-bare 16× estimate).
+- Predicted Solidity gas at n=4,096 ≈ ~6M (~20% of L1 30M block)
+  — very comfortable; cheap on L2.
+
+**NEXT [code]:** increment 3 — cycle plumbing: a small IVC harness
+that maintains a *primary running instance* (nova-snark
+RecursiveSNARK over a step circuit) AND a *CycleFold running
+instance* (this `CycleFoldInstanceCircuit`, folded via NIFS on
+Grumpkin = `pedersen_msm_grumpkin` for the commitment+fold),
+absorbing the primary's per-step cross-curve scalar-mul tuple
+`(P, s, Q)` into the CF instance. Reuses nova-snark's transcript /
+RO / NIFS primitives directly (no new crypto, just composition).
+Bounded; box-verify by running 2 IVC steps and checking the CF
+running instance's commitment evolves correctly.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
