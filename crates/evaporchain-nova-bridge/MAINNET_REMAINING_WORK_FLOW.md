@@ -85,10 +85,15 @@
   0 errors. In-circuit 2G/3G == out-of-circuit ark bn256-G1 (generic
   case). The hardest conceptual piece (bespoke non-native foreign-
   curve arithmetic) is proven; EC math correct first try.
-- **B.2 [X]** Native-`FpVar<Fr>`-scalar double-and-add MSM ladder on
-  B.1 → `pedersen_msm_bn256_g1` + isolated MSM proof (== ark MSM).
-  Plus the mechanical helpers: bn256-G1 point decoder +
-  `bn256::Base→ark_bn254::Fq` exact converter.
+- **B.2 [V]** Native-scalar double-and-add ladder over B.1 —
+  BOX-VERIFIED Mini 1 (2026-05-19): `nonnative_bn256_g1_scalar_mul_
+  matches_ark ... ok` (5·G == ark 5G, real FpVar<Fr> bits) +
+  B.1 regression ok, 2 passed, 0.66 s. Generic-case; edge-hardening
+  (identity/leading-zeros/degenerate) = documented follow.
+- **B.2b [X]** `pedersen_msm_bn256_g1` = Σ scalar-mul(B.2) over bases
+  + blind, isolated MSM proof (== ark bn256-G1 MSM). + mechanical
+  helpers: bn256-G1 point decoder + `bn256::Base→ark_bn254::Fq`
+  converter.
 - **B.3 [X]** `extract_primary_*` (mirror of `s4_secondary_extract`,
   scalar = `primary_to_ark_fr`) + bounded + full real-fixture primary
   binding test (`r_U_primary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`) +

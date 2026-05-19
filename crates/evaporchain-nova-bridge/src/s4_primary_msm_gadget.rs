@@ -155,6 +155,35 @@ pub fn g1_scalar_mul(
     Ok(acc)
 }
 
+// ── B.2b: primary Pedersen/HyperKZG MSM = Σ scalarᵢ·baseᵢ + r·h ───────
+//
+// Composes the proven B.2 ladder over each (base, scalar) + the
+// blind term, accumulating with the proven B.1 `g1_add`. Accumulator
+// is initialised to the FIRST term (NOT identity) to stay in B.1's
+// generic add domain. `scalar_bits[i]` / `blind_bits` are MSB-first
+// with leading 1 (B.2 contract). Edge-safe arbitrary-`W` form =
+// B.2-hardening follow.
+pub fn pedersen_msm_bn256_g1(
+    scalar_bits: &[Vec<Boolean<Bn254Fr>>],
+    bases: &[G1AffineVar],
+    blind_bits: &[Boolean<Bn254Fr>],
+    h: &G1AffineVar,
+) -> Result<G1AffineVar, SynthesisError> {
+    assert_eq!(
+        scalar_bits.len(),
+        bases.len(),
+        "pedersen_msm_bn256_g1: scalars/bases length mismatch"
+    );
+    assert!(!bases.is_empty(), "MSM needs ≥1 base");
+    let mut acc = g1_scalar_mul(&bases[0], &scalar_bits[0])?;
+    for (sb, b) in scalar_bits[1..].iter().zip(&bases[1..]) {
+        let term = g1_scalar_mul(b, sb)?;
+        acc = g1_add(&acc, &term)?;
+    }
+    let blind_term = g1_scalar_mul(h, blind_bits)?;
+    g1_add(&acc, &blind_term)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +258,50 @@ mod tests {
         assert!(cs.is_satisfied().expect("is_satisfied"), "CS must be satisfied");
         assert_eq!(out.x.value().unwrap(), expected.x().unwrap(), "5G.x");
         assert_eq!(out.y.value().unwrap(), expected.y().unwrap(), "5G.y");
+    }
+
+    /// THE B.2b PRIMITIVE PROOF: the full primary MSM
+    /// `Σ sᵢ·baseᵢ + r·h` in-circuit equals out-of-circuit ark
+    /// bn256-G1. Bases [G, 2G], scalars [4, 5], h=3G, blind r=7
+    /// (all 3-bit, MSB=1; intermediates generic-safe).
+    /// Expected = 4·G + 5·(2G) + 7·(3G) = 35G.
+    #[test]
+    fn nonnative_bn256_g1_msm_matches_ark() {
+        let g_aff = ark_bn254::G1Affine::generator();
+        let g = Projective::from(g_aff);
+        let two_g = (g + g).into_affine();
+        let three_g = (g + g + g).into_affine();
+        let expected =
+            (g * Bn254Fr::from(4u64) + (g + g) * Bn254Fr::from(5u64)
+                + (g + g + g) * Bn254Fr::from(7u64))
+            .into_affine();
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mkfq = |v: Bn254Fq| FqV::new_witness(cs.clone(), || Ok(v)).unwrap();
+        let pt = |a: ark_bn254::G1Affine| G1AffineVar {
+            x: mkfq(a.x().unwrap()),
+            y: mkfq(a.y().unwrap()),
+        };
+        // MSB-first 3-bit vec from a real native FpVar<Fr> witness.
+        let bits3 = |k: u64| -> Vec<Boolean<Bn254Fr>> {
+            let kv =
+                FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fr::from(k)))
+                    .unwrap();
+            let mut b = kv.to_bits_le().unwrap()[..3].to_vec();
+            b.reverse();
+            b
+        };
+
+        let bases = [pt(g_aff), pt(two_g)];
+        let scalar_bits = [bits3(4), bits3(5)];
+        let h_v = pt(three_g);
+        let blind_bits = bits3(7);
+
+        let out = pedersen_msm_bn256_g1(&scalar_bits, &bases, &blind_bits, &h_v)
+            .expect("pedersen_msm_bn256_g1");
+
+        assert!(cs.is_satisfied().expect("is_satisfied"), "CS must be satisfied");
+        assert_eq!(out.x.value().unwrap(), expected.x().unwrap(), "MSM.x = 35G.x");
+        assert_eq!(out.y.value().unwrap(), expected.y().unwrap(), "MSM.y = 35G.y");
     }
 }
