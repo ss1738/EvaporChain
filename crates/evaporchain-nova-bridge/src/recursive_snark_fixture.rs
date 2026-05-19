@@ -353,8 +353,19 @@ mod tests {
         use nova_snark::nova::CompressedSNARK;
         type CmpPP = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1pp, S2pp>;
 
+        // ppsnark's ck_floor() is LARGER than snark's (it needs key
+        // space for the preprocessed sparse-matrix commitments) —
+        // canonical_public_params() sizes the key for `snark` →
+        // `InvalidCommitmentKeyLength` at ppsnark setup. Build a pp
+        // with the ppsnark floor; keep RS/setup/prove/verify all on
+        // THIS pp (digest-mismatch lesson).
         let circuit = TrivialIncrementCircuit;
-        let pp = canonical_public_params().expect("canonical pp");
+        let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+            &circuit,
+            &*<S1pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E1>>::ck_floor(),
+            &*<S2pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E2>>::ck_floor(),
+        )
+        .expect("ppsnark PublicParams::setup");
         let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
         let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
             &pp, &circuit, &z0,
