@@ -26,6 +26,7 @@ use ark_r1cs_std::{
     convert::ToBitsGadget,
     eq::EqGadget,
     fields::emulated_fp::EmulatedFpVar,
+    fields::FieldVar,
     groups::{curves::short_weierstrass::ProjectiveVar, CurveVar},
 };
 use ark_relations::r1cs::SynthesisError;
@@ -56,7 +57,7 @@ pub fn tensor_fold_ck_hat(
         .map(|b| GrumpkinVar::constant(Projective::from(*b)))
         .collect();
 
-    let one = EmulatedFpVar::<Bn254Fq, Bn254Fr>::constant(Bn254Fq::from(1u64));
+    let one = EmulatedFpVar::<Bn254Fq, Bn254Fr>::one();
     for round in 0..r.len() {
         // r · r⁻¹ = 1 (binds r_inv to r; non-native, ~negligible).
         let prod = &r[round] * &r_inv[round];
@@ -84,6 +85,7 @@ mod tests {
     use ark_ec::{
         short_weierstrass::SWCurveConfig, CurveGroup,
     };
+    use ark_ff::Field;
     use ark_r1cs_std::{alloc::AllocVar, R1CSVar};
     use ark_relations::r1cs::ConstraintSystem;
 
