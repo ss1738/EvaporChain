@@ -46,6 +46,13 @@ type S1 = nova_snark::spartan::snark::RelaxedR1CSSNARK<E1, EE1>;
 /// Secondary SNARK (Spartan) — needed for `ck_floor()` hint at setup.
 type S2 = nova_snark::spartan::snark::RelaxedR1CSSNARK<E2, EE2>;
 
+/// Primary **preprocessing** SNARK — succinct verifier (no size-`n`
+/// MSM at the Spartan level; EVM-option-2 evaluation, see
+/// MAINNET_REMAINING_WORK_FLOW.md "source read #2").
+type S1pp = nova_snark::spartan::ppsnark::RelaxedR1CSSNARK<E1, EE1>;
+/// Secondary preprocessing SNARK (succinct-verifier variant).
+type S2pp = nova_snark::spartan::ppsnark::RelaxedR1CSSNARK<E2, EE2>;
+
 /// Primary scalar field — BN254 Fr.
 pub type Scalar1 = <E1 as Engine>::Scalar;
 
@@ -330,6 +337,45 @@ mod tests {
             out,
             vec![Scalar1::from(n as u64)],
             "compressed-verified output must equal the real folded zi (= n)"
+        );
+    }
+
+    /// EVM option (2) evaluation: same e2e as the `snark` test but
+    /// with **`ppsnark`** (succinct-verifier Spartan) for both sides.
+    /// If this validates, `CompressedSNARK<…,ppsnark,ppsnark>` is the
+    /// base for a final-layer recursion EVM path. NOTE: this does NOT
+    /// by itself remove the secondary Grumpkin-IPA size-`n` MSM (that
+    /// is in `ipa_pc::verify`, intrinsic) — it removes only the
+    /// Spartan-level size-`n` MSM. See flow doc "source read #2".
+    #[test]
+    #[ignore = "CompressedSNARK<ppsnark> e2e: EVM option-2 eval (Mini)"]
+    fn compressed_snark_ppsnark_compresses_real_recursive_snark() {
+        use nova_snark::nova::CompressedSNARK;
+        type CmpPP = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1pp, S2pp>;
+
+        let circuit = TrivialIncrementCircuit;
+        let pp = canonical_public_params().expect("canonical pp");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+            &pp, &circuit, &z0,
+        )
+        .expect("RecursiveSNARK::new");
+        for i in 0..2 {
+            rs.prove_step(&pp, &circuit)
+                .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
+        }
+        let n = rs.num_steps();
+
+        let (pk, vk) = CmpPP::setup(&pp).expect("CompressedSNARK::<ppsnark>::setup");
+        let compressed = CmpPP::prove(&pp, &pk, &rs)
+            .expect("CompressedSNARK::<ppsnark>::prove");
+        let out = compressed
+            .verify(&vk, n, &z0)
+            .expect("CompressedSNARK::<ppsnark>::verify must accept the real proof");
+        assert_eq!(
+            out,
+            vec![Scalar1::from(n as u64)],
+            "ppsnark compressed-verified output must equal the real folded zi (= n)"
         );
     }
 }
