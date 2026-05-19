@@ -233,4 +233,80 @@ mod tests {
             "length mismatch must map to SynthesisError::Unsatisfiable"
         );
     }
+
+    /// INCREMENT-2 FINISH — real witness-assembly pipeline on REAL
+    /// data: real `pp` → `extract_secondary_ck` (real Grumpkin
+    /// bases) → `ipa_s_vector` (real tensor structure) → real
+    /// `ck_hat` → `RecursionDeciderCircuit` Section A. Proves the
+    /// end-to-end plumbing is correct on real curve points, not toy
+    /// data. Run at a real-bases but **tractable** n = 256 (≈ 0.65M
+    /// cons); the full-n (~16384, ~41M cons) synthesis is the
+    /// deliberately-scheduled heavy step, NOT silently skipped.
+    /// `#[ignore]`: needs `canonical_public_params` (pp setup, secs).
+    #[test]
+    #[ignore = "increment-2: real pp ck_secondary extract + real tensor (Mini)"]
+    fn section_a_real_bases_real_tensor_pipeline() {
+        use crate::ipa_s_tensor::ipa_s_vector;
+        use crate::recursive_snark_fixture::canonical_public_params;
+        use crate::s4_secondary_extract::extract_secondary_ck;
+        use ark_std::Zero;
+
+        let pp = canonical_public_params().expect("canonical pp");
+        let pp_json = serde_json::to_value(&pp).expect("pp to_value");
+        let (ck_full, h) =
+            extract_secondary_ck(&pp_json).expect("extract real ck_secondary");
+        assert!(
+            ck_full.len() >= 256,
+            "real ck_secondary must have ≥256 bases, got {}",
+            ck_full.len()
+        );
+
+        // Real bases, real tensor structure, tractable n = 2^8.
+        let rounds = 8usize;
+        let n = 1usize << rounds;
+        let ck: Vec<Affine<GrumpkinConfig>> = ck_full[..n].to_vec();
+        let r: Vec<Bn254Fq> =
+            (0..rounds).map(|i| Bn254Fq::from(i as u64 + 2)).collect();
+        let s = ipa_s_vector(&r);
+        assert_eq!(s.len(), n, "tensor s must have length n");
+        let blind = Bn254Fq::from(9u64);
+
+        // Out-of-circuit real ck_hat = Σ sᵢ·ckᵢ + blind·h.
+        let claimed = ck
+            .iter()
+            .zip(s.iter())
+            .fold(Projective::<GrumpkinConfig>::zero(), |acc, (c, si)| {
+                acc + Projective::from(*c) * *si
+            })
+            + Projective::from(h) * blind;
+
+        let circuit = RecursionDeciderCircuit::section_a_only(
+            s.clone(),
+            ck.clone(),
+            blind,
+            h,
+            claimed,
+        );
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        circuit.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "real-bases real-tensor Section A must satisfy CS at n={n}"
+        );
+
+        // Non-vacuous on real data too: tamper ⇒ UNSAT.
+        let bad = RecursionDeciderCircuit::section_a_only(
+            s,
+            ck,
+            blind,
+            h,
+            claimed + Projective::from(GrumpkinConfig::GENERATOR),
+        );
+        let cs_bad = ConstraintSystem::<Bn254Fr>::new_ref();
+        bad.generate_constraints(cs_bad.clone()).expect("synthesis");
+        assert!(
+            !cs_bad.is_satisfied().expect("is_satisfied"),
+            "wrong real ck_hat MUST break CS — binding non-vacuous on real data"
+        );
+    }
 }
