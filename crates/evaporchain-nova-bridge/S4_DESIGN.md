@@ -340,6 +340,34 @@ decoder) + real-fixture binding test `r_U_primary.comm_W == Σ Wᵢ·ckᵢ
 + r_W·h`. All paths pinned; no guessing — mechanical once the
 secondary binding validates (it gates the shared structure).
 
+### CAPACITY FINDING (2026-05-19, empirical — incident)
+
+The S4a secondary-binding `#[ignore]` test ran an in-circuit
+**non-native** Pedersen MSM over the **full real secondary `W`**
+(secondary R1CS `num_vars`, ~thousands; each scalar an
+`EmulatedFpVar<Fq,Fr>` ≈254-bit decomposition + `scalar_mul_le`).
+On the 4 GB Hetzner node-box this exhausted RAM (89 MB free, load
+avg 7.6 / 2 vCPU, `sshd` starved — required OOM-kill). **Empirical
+proof of the documented S4a/S4b constraint blow-up: full-real-`W`
+non-native synthesis does NOT fit in 4 GB.** This is a hardware
+boundary, NOT a gadget-correctness failure (the isolated primitive
+proofs — `pedersen_msm_grumpkin`, `secondary_to_ark_fq`, S4b
+row-sat — are small and box-validated/validatable).
+
+**Scoping decision (honest, recorded):**
+- Real-fixture integration tests (`s4_secondary_extract`,
+  primary analog, S4b real-witness) MUST cap the MSM/R1CS to a
+  **bounded `W` prefix** (e.g. `min(W.len(), N)` with small `N`)
+  on the 4 GB box — proves the *binding logic* end-to-end at
+  tractable memory.
+- **Full-length real-`W`** verification is a SEPARATE heavier run
+  on a bigger machine (M4 Mini cluster / `satyawan-1`), tracked as
+  its own item — never run on the node-box again (it endangers the
+  permanent public node).
+- A binding "pass" is ONLY claimable from a run that actually fit
+  in memory and printed explicit `... ok` / `N passed`. An
+  OOM-died run is NOT a result.
+
 **Net re-scope:** no pairing (S4-0), no hand-rolled non-native field,
 no hand-rolled EC gadget. S4 = (a) define 2 curve configs from public
 constants, (b) compose `ProjectiveVar` MSM with the right coord-field
