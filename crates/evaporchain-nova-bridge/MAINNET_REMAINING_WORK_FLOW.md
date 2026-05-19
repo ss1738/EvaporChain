@@ -378,17 +378,63 @@ constraints.**
   correct (box-verified) but must be replaced by the tensor-folded
   form for the real circuit.
 
-**NEXT [ ]:** BEFORE more of increment 3 — implement the
-tensor-folded `ck_hat` recursion gadget (the log-n `ck.fold` form,
-not the flat n-term MSM) and re-measure its constraint count via
-the D.3-style probe at the real n=131,072. Decision gate: if
-tensor-folded ≪ Groth16-tractable (expected low single-digit M) →
-swap `RecursionDeciderCircuit` Section A to it, then resume
-increment 3 (proof-bound `r` via `snark_secondary.eval_arg`; wire
-B-D; re-point `groth16_wrapper`). If tensor-folded is still too
-large → escalate to flow option (1) CycleFold or (3) native-
-Solidity. Heavy Groth16 prove stays deliberately scheduled
-(satyawan-1 / a Mini — never the training rig / node box).
+### TENSOR-FOLD DECISION PROBE — ❌ OPTION (2) DEAD-END AT REAL n
+[V] (2026-05-19, Mini3, box, HEAD `8dd9745b`,
+`ipa_ck_fold_gadget ... 2 passed; 0 failed; 6.06 s`)
+
+`fold_matches_native_recursive_fold ... ok` (in-circuit fold ==
+verified tensor-`s` MSM — correctness closed). **`FOLD_PROBE`:
+n4:16236 n8:34037 n16:66486 n32:128231 ⇒ A_fold≈4000/n;
+fold_pred@131072 ≈ 524M vs flat_pred ≈ 332M, ratio = 1.579.**
+
+**Verdict — clean measured negative (no spin):**
+- The recursive fold is **~1.58× WORSE than flat**, not the
+  "10-100× lever / low single-digit M" two prior turns asserted.
+  That optimism is now **doubly falsified** — by structural
+  analysis AND by box measurement. Logging it as a wrong call.
+- ∴ **option (2) (final-layer recursion, secondary IPA `ck_hat`
+  in-circuit, flat OR fold) is a DEAD-END for the practical EVM
+  path.** Flat ≈332M / fold ≈524M: both ≪1e9 (so the *architecture*
+  claim "terminates finite, native-not-non-native" still literally
+  holds and is not retracted) but **both far beyond practically
+  provable Groth16** (~3-5×10⁸ ⇒ ~2²⁹ SRS, hundreds of GB — not
+  feasible on satyawan-1 or a Mini).
+- Root cause: nova-snark 0.68's **secondary is the full ~2¹⁷
+  augmented circuit** with IPA over non-pairing Grumpkin. No
+  in-circuit re-expression of a size-2¹⁷ MSM is Groth16-cheap.
+
+**This is now an ARCHITECTURE decision (Satyawan's call — it
+changes the mainnet ZK design, protocol-layer he owns), not a code
+increment. The honest remaining options, costs un-sugar-coated:**
+
+1. **CycleFold-constant secondary** — the principled fix: a folding
+   scheme whose secondary circuit is O(1) (single EC scalar-mul),
+   so the size-n MSM becomes size-O(1) and a small Groth16 decider
+   works. Cost: adopt Sonobe (arkworks folding lib w/ Decider) OR
+   fork/upgrade nova-snark's secondary. Largest change; correct end
+   state; the EvaporChain mainnet proof system would be rebuilt on
+   it. (Native CompressedSNARK for non-EVM use is unaffected.)
+2. **Native-Solidity secondary verifier** — emit the secondary IPA
+   proof, verify in Solidity. Honest cost: a size-2¹⁷ Grumpkin MSM
+   on-chain ≈ likely millions–tens-of-millions of gas per opening —
+   probably impractical for L1 mainnet too. Buildable now but may
+   not be economically viable; needs a gas estimate before commit.
+3. **Secondary off the critical EVM path** — aggregate/recurse many
+   proofs so the per-proof secondary cost amortizes, or
+   fraud-proof/optimistic the secondary. Design-level; defers not
+   removes the problem.
+
+Salvaged & reusable regardless of choice: `ipa_s_tensor` (faithful,
+falsified), `RecursionDeciderCircuit` Section-A pattern + non-vacuity
+discipline, the serde-extraction path, the size-probe methodology,
+and the confirmed fact that the **primary (HyperKZG) side is
+constant/EVM-cheap** — only the secondary is the blocker.
+
+**NEXT [decision, not code]:** present options 1/2/3 with these
+measured costs to Satyawan for the architecture call. If a gas
+estimate is wanted first, option (2)-Solidity gas can be estimated
+cheaply (no spend). Do NOT pour more increments into option (2)
+recursion — measured dead-end.
 
 ---
 
