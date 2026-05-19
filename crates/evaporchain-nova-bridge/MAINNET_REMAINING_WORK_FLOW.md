@@ -108,11 +108,20 @@
   254-bit scalars) is *extremely* heavy — B.3 must be bounded on
   Mini 1, full-scale = satyawan-1/cluster (same scale-gate class as
   A.3; a MAINNET EXIT requirement, not a logic gap).
-- **B.3 [X]** `extract_primary_*` (mirror of `s4_secondary_extract`,
-  scalar = `primary_to_ark_fr`) + bounded + full real-fixture primary
-  binding test (`r_U_primary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`) +
-  adversarial.
-- Depends on: B.0 (DECIDED). B.1 is the long pole of PHASE B.
+- **B.3a [I→verify]** Primary extraction decoders correct on REAL
+  fixture data — decode-only (no circuit): `extract_primary_ck/
+  witness/comm_w` → decoded points on bn256-G1 + scalars parse.
+  Memory-tractable. The genuinely-open question (gadget logic is
+  already `[V]`). Mirror of proven `s4_secondary_extract` decoders.
+- **B.3b [X — HARD SCALE-GATE]** Full in-circuit complete-formula
+  primary binding on real data. EMPIRICALLY OOM-killed (SIGKILL) on
+  Mini 1's 16 GB even at N=2 with JSON freed pre-circuit — the RCB
+  complete-formula CS for 2 scalars × 254-bit + a real fixture
+  exceeds 16 GB. SCALE boundary, NOT a logic gap (primary gadget
+  proven `[V]`). Needs a >>16 GB host (satyawan-1/cluster) — same
+  class as A.3; MAINNET EXIT requirement, deferred.
+- Depends on: B.0 (DECIDED). Primary gadget logic B.1→B.2-hardening
+  all `[V]`; only B.3a (cheap, now) + B.3b (scale-gate) remain.
 
 ## PHASE C — S4 integration (the actual soundness closure)
 

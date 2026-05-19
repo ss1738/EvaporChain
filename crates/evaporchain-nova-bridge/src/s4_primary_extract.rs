@@ -143,15 +143,56 @@ mod tests {
 
     type FqV = EmulatedFpVar<ArkFq, ArkFr>;
 
-    /// B.3 bounded real-data proof: extract REAL primary
-    /// `ck`/`W`/`r_W` from a fixture; the in-circuit COMPLETE-formula
-    /// MSM over an N-prefix equals the out-of-circuit ark bn256-G1
-    /// MSM over the SAME real prefix (proves the primary extraction
-    /// decoders + edge-safe gadget compose on real data). Tiny N —
-    /// complete formulas are ~983 s / 4 scalars. Full-`W` ==
-    /// `r_U_primary.comm_W` = the satyawan-1/cluster scale-gate.
+    /// **B.3a (verifiable now)** — primary extraction decoders are
+    /// correct on REAL fixture data: extract real `ck_primary` /
+    /// `r_W_primary` / `r_U_primary.comm_W`; assert decoded points lie
+    /// on bn256-G1 (a wrong decode ⇒ off-curve ⇒ fails) and scalars
+    /// parse. NO constraint system / MSM circuit → memory-tractable
+    /// (the part B.3 was meant to validate that the gadget `[V]`
+    /// proofs don't already cover). The in-circuit binding is B.3b.
     #[test]
-    #[ignore = "B.3: real Nova fixture + complete-formula MSM (very heavy; Mini1)"]
+    #[ignore = "B.3a: real Nova fixture (decode-only, no circuit; tractable on Mini 1)"]
+    fn primary_extract_decodes_real_data() {
+        use crate::recursive_snark_fixture::{
+            canonical_public_params, generate_fixture_with_digest,
+        };
+        let pp = canonical_public_params().expect("canonical pp");
+        let (rs, _d) = generate_fixture_with_digest(2).expect("fixture");
+        let pp_json = serde_json::to_value(&pp).expect("pp json");
+        let rs_json = serde_json::to_value(&rs).expect("rs json");
+
+        let (ck, h) = extract_primary_ck(&pp_json).expect("ck_primary");
+        let (w, _r_w) = extract_primary_witness(&rs_json).expect("W_primary");
+        let (cx, cy) = extract_primary_comm_w(&rs_json).expect("comm_W");
+
+        assert!(!ck.is_empty(), "ck_primary non-empty");
+        assert!(!w.is_empty(), "W_primary non-empty");
+        assert!(ck.len() >= w.len(), "nova invariant ck≥W");
+
+        // On-curve = strong correctness signal for the decoders.
+        let on = |x: ArkFq, y: ArkFq| {
+            ark_bn254::G1Affine::new_unchecked(x, y).is_on_curve()
+        };
+        for i in 0..ck.len().min(8) {
+            assert!(on(ck[i].0, ck[i].1), "ck_primary[{i}] must be on bn256-G1");
+        }
+        assert!(on(h.0, h.1), "ck_primary.h must be on bn256-G1");
+        assert!(on(cx, cy), "r_U_primary.comm_W must be on bn256-G1");
+        // `_r_w`/`w` already parsed to valid `ark_bn254::Fr` (would
+        // have errored in extraction otherwise).
+    }
+
+    /// **B.3b (HARD SCALE-GATE — not Mini-1-runnable)** — full
+    /// in-circuit complete-formula primary binding on real data.
+    /// EMPIRICALLY OOM-killed (SIGKILL) on Mini 1's 16 GB even at
+    /// N=2 with pp/rs JSON freed pre-circuit: the RCB complete-
+    /// formula constraint system for even 2 scalars × 254-bit + a
+    /// real fixture exceeds 16 GB. This is a SCALE boundary, NOT a
+    /// logic gap (primary gadget logic proven `[V]`: B.1/B.2/B.2b/
+    /// B.2-hardening). Requires a >>16 GB host (satyawan-1 / cluster)
+    /// — same class as A.3; a MAINNET EXIT requirement, deferred.
+    #[test]
+    #[ignore = "B.3b SCALE-GATE: OOMs ≤16GB; run only on a >>16GB host (satyawan-1/cluster)"]
     fn primary_msm_binds_real_prefix() {
         use crate::recursive_snark_fixture::{
             canonical_public_params, generate_fixture_with_digest,
