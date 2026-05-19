@@ -71,6 +71,8 @@
 // correctness proof; incomplete-formula edge handling (identity /
 // doubling / negation) is the B.2 ladder's concern.
 
+use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr};
+use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
 use ark_r1cs_std::fields::FieldVar;
 use ark_relations::r1cs::SynthesisError;
 
