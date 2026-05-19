@@ -280,14 +280,39 @@ proof's secondary instance; run at n=10,554; nor are Sections B-D
 deferred stubs and `sections_bcd_wired:false` records that. "Section
 A logic proven", not "the decider works".
 
-**NEXT [ ]:** increment 2 — wire Sections B-D (constant-size; reuse
-`neptune_permutation_gadget` etc.) + flip `sections_bcd_wired`; then
-increment 3 — adapter extracting Section-A inputs from a real
-`CompressedSNARK<ppsnark>` proof's secondary instance (needs a
-nova-snark proof-internals access path; scope that first). The
-heavy 29M Groth16 prove + flat-vs-tensor MSM decision stays
-deliberately scheduled (satyawan-1 / a Mini — never the training
-rig / node box).
+### PREMISE-CHECK — real-proof access path scoped GREEN +
+JUSTIFIED REORDER (2026-05-19, source read #4, no spend)
+
+- `CompressedSNARK` derives `Serialize/Deserialize` (nova/mod.rs:319);
+  `RelaxedR1CSInstance` and the `ppsnark` proof are serde too. The
+  crate ALREADY extracts secondary data this way
+  (`dump_ck_secondary_shape`, `s4b_secondary_r1cs_extract`,
+  `s4_secondary_extract` parse `serde_json::to_value(pp)`). **No
+  private-field blocker — access path GREEN.**
+- Honest nuance: Section-A `ck_hat` inputs are NOT raw serde fields.
+  `s` is the tensor vector the IPA verifier *derives from
+  Fiat-Shamir challenges* (`ipa_pc.rs` L334-349); `ck` =
+  `pp.ck_secondary`; claimed `ck_hat` = reconstructed key. The
+  adapter must **replay that deterministic derivation** (challenges
+  from serde-readable `L_vec/R_vec` via the transcript), not
+  field-read it. Defined, deterministic, buildable, no spend.
+- **REORDER (flagged, not silent):** the original "increment 2 = B-D
+  then increment 3 = adapter" is inverted. The adapter premise is
+  now confirmed viable and MUST precede B-D so every section is
+  keyed over **real** proof data — never synthetic shapes (the B-1
+  `dummy()`-vacuity hazard this whole effort exists to prevent).
+
+**NEXT [ ]:** increment 2 (was 3) — build the real-proof adapter:
+generate a `CompressedSNARK<ppsnark>` proof (the validated
+`cd9882bf` path), serde-extract the secondary instance + `L_vec/
+R_vec`, replay `ipa_pc::verify`'s transcript+`s`-derivation
+(L294-356) OUT of circuit to produce the real `(s, ck, ck_hat)`
+Section-A witness, and box-verify `RecursionDeciderCircuit` Section A
+against it at real n (CS satisfied + non-vacuous, on Mini3). THEN
+increment 3 — wire constant Sections B-D against the same real proof
++ flip `sections_bcd_wired`. Heavy 29M Groth16 prove + flat-vs-tensor
+MSM decision stays deliberately scheduled (satyawan-1 / a Mini —
+never the training rig / node box).
 
 ---
 
