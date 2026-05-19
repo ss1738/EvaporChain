@@ -97,10 +97,17 @@
   obstacle in the whole flow — in-circuit non-native foreign-curve
   MSM — is proven viable.** Remaining for primary: B.2-hardening
   (edge-safe arbitrary-`W` scalars) + the mechanical decoder/converter.
-- **B.2-hardening [I→verify]** Edge-safe scalar mul for ARBITRARY 254-bit
-  `W` scalars (complete formulas OR offset-trick): real `W` is not
-  3-bit/leading-1/generic — required for soundness (a wrong edge case
-  = forgeable). Next deep-ish unit before B.3 real-fixture.
+- **B.2-hardening [V]** Edge-safe arbitrary-scalar mul — BOX-VERIFIED
+  Mini 1 (2026-05-19): `nonnative_bn256_g1_complete_scalar_mul_
+  arbitrary_and_edges ... ok`, 1 passed, **983 s**, 0 errors, first
+  run. RCB complete formulas (SW a=0, projective, identity=(0,1,0)),
+  exception-free; proven for k=0(→identity)/1/7/large over the full
+  254-bit ladder vs ark bn256-G1. **The primary non-native EC stack
+  is now soundness-correct AND edge-safe** — no forgeable edge holes.
+  SCALE NOTE: 983 s for 4 small scalars ⇒ full-`W` (thousands of
+  254-bit scalars) is *extremely* heavy — B.3 must be bounded on
+  Mini 1, full-scale = satyawan-1/cluster (same scale-gate class as
+  A.3; a MAINNET EXIT requirement, not a logic gap).
 - **B.3 [X]** `extract_primary_*` (mirror of `s4_secondary_extract`,
   scalar = `primary_to_ark_fr`) + bounded + full real-fixture primary
   binding test (`r_U_primary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`) +
