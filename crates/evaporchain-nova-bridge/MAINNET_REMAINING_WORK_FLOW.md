@@ -345,17 +345,50 @@ challenges `r` synthetic-but-valid, n=256. NOT yet: `r` bound to a
 transcript; full n≈16384 (~41M-cons) synthesis; Sections B-D. Those
 are increment 3 + the deliberately-scheduled heavy step.
 
-**NEXT [ ]:** increment 3 — (a) generate a real
-`CompressedSNARK<ppsnark>` proof (validated `cd9882bf` path),
-serde-extract its secondary `eval_arg` `L_vec/R_vec`, replay the
-`ipa_pc::verify` transcript to derive the *proof-bound* challenges
-`r` (not synthetic) → fully real Section-A witness; (b) wire
-constant Sections B-D (Neptune/NIFS/HyperKZG) against the same
-proof + flip `sections_bcd_wired`; (c) re-point
-`groth16_wrapper::setup` at the succinct ppsnark verifier;
-`eip197.rs` codec unchanged. Heavy 29M Groth16 prove + flat-vs-
-tensor MSM decision: deliberately scheduled (satyawan-1 / a Mini —
-never the training rig / node box).
+### INCREMENT-3(a) PREMISE-CHECK ✅ [V] + ⚠️ MATERIAL SIZE
+CORRECTION (2026-05-19, Mini3, box, HEAD `7a9857d6`,
+`dump_compressed_ppsnark_proof_structure ... ok`, 1 passed,
+123.80 s)
+
+**GREEN — serde path pinned:** secondary IPA args extract at
+`compressed.snark_secondary.eval_arg.{L_vec, R_vec, a_hat}`;
+`CMP_SERDE_ROUNDTRIP = ok` (lossless). Primary `eval_arg =
+{com,v,w}` (HyperKZG, constant — the cheap side, confirmed). Top
+keys: `snark_primary/secondary, r_U_*, l_u_secondary, nifs_*` — all
+serde-reachable.
+
+**⚠️ CALIBRATION CORRECTION (no overhype — the evidence walks back
+the earlier optimism):** `L_vec.len() = 17` ⇒ **real n = 2¹⁷ =
+131,072**, NOT the ~10,554 (≈2¹⁴) the D.3 `num_cons` implied.
+ppsnark's `S_comm.N` padding sets the IPA vector length. Revised
+flat-MSM size: **131,072 × 2,533 ≈ ~332M + 2M HyperKZG ≈ ~334M
+constraints.**
+- Still ≪ 1e9 → the *architecture* conclusion holds (recursion
+  terminates, finite, native-not-non-native; falsifier intact).
+- BUT ~334M is **~1.6× LARGER than D.3's 2.03×10⁸**, NOT 7× smaller.
+  The prior "~29M / ~7× under D.3" headline was an artifact of
+  using too-small an n; **flat-MSM at the real n does NOT beat the
+  blow-up it was meant to beat.** Correcting that claim explicitly.
+- ∴ the tensor-fold — previously logged as an *optional* "~10-100×
+  lever held in reserve" — is **NOW MANDATORY**. At n=131,072 the
+  tensor-folded `ck_hat` (≈2n native point-adds + 17 scalar-muls ≈
+  low single-digit M) is the *only* Groth16-tractable path. The
+  flat `pedersen_msm_grumpkin` that `RecursionDeciderCircuit`
+  Section A currently uses is **NOT viable at real scale** — it is
+  correct (box-verified) but must be replaced by the tensor-folded
+  form for the real circuit.
+
+**NEXT [ ]:** BEFORE more of increment 3 — implement the
+tensor-folded `ck_hat` recursion gadget (the log-n `ck.fold` form,
+not the flat n-term MSM) and re-measure its constraint count via
+the D.3-style probe at the real n=131,072. Decision gate: if
+tensor-folded ≪ Groth16-tractable (expected low single-digit M) →
+swap `RecursionDeciderCircuit` Section A to it, then resume
+increment 3 (proof-bound `r` via `snark_secondary.eval_arg`; wire
+B-D; re-point `groth16_wrapper`). If tensor-folded is still too
+large → escalate to flow option (1) CycleFold or (3) native-
+Solidity. Heavy Groth16 prove stays deliberately scheduled
+(satyawan-1 / a Mini — never the training rig / node box).
 
 ---
 
