@@ -468,6 +468,38 @@ call.
 the B-1/B-2 circuit path until that call — both option-(2) branches
 are measured dead-ends.
 
+### SONOBE PREMISE-CHECK — ⚠️ FRAMING CORRECTION (2026-05-19,
+README/Cargo.toml fetched, no spend)
+
+**Architectural fit confirmed (the part of my earlier framing that
+held):** Sonobe ships Nova + CycleFold + DeciderEth (Groth16) + a
+`solidity-verifiers` crate generating the Solidity EVM verifier
+("Currently only supports Nova+CycleFold DeciderEth proofs"). Deps
+include `ark-bn254` + `ark-grumpkin` — the cycle is native. Frontend
+is `FCircuit` (arkworks-native), clean migration target. PSE +
+0xPARC built it — ecosystem-aligned.
+
+**⚠️ Correction I must surface (the part I overstated):** README
+verbatim — *"experimental code, do not use in production. The code
+has not been audited."* Version `0.1.0`, pre-1.0. Refactor split:
+`dev` (latest) → `staging` (revamped Nova+CycleFold being PREPARED
+for audit) → `main` (older). Earlier "audit-attention, production-
+trodden" was wrong by half — audit is *being prepared*, not done.
+Per the just-persisted assert-without-measuring lesson, correcting
+this explicitly rather than burying it.
+
+**Honest landing patterns (un-sugar-coated):**
+- (1A) Track Sonobe staging; pin after their audit completes.
+  Build EvaporChain bridge + step circuits against Sonobe's API now
+  so post-audit migration is mechanical. Timeline-dependent on PSE.
+- (1B) Adopt Sonobe staging now + commission/run our own audit on
+  the pinned revision (or do a deep review). Faster ship; real
+  audit-spend item.
+- (1C) Switch to implement-CycleFold-around-nova-snark after all
+  (you bear the crypto risk; nobody else has reviewed it either, but
+  stays in your solo-build column).
+- (3) Pause B-1/B-2; revisit when Sonobe's audited release lands.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
