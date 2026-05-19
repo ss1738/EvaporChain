@@ -196,4 +196,65 @@ mod tests {
             "perturbed W must NOT reproduce the MSM (binding logic is sound)"
         );
     }
+
+    /// **A.3 — FULL-`W` secondary soundness closure** (scale-gate,
+    /// satyawan-1 / ≫16 GB). Unlike A.2 (bounded, in-circuit ==
+    /// ark-over-prefix), this asserts the FULL real `W` MSM equals
+    /// the actual Section-2-bound `r_U_secondary.comm_W` —
+    /// `comm_W == Σ Wᵢ·ckᵢ + r_W·h` — the real B-1 closure for the
+    /// secondary instance. Plus adversarial. JSON freed pre-circuit
+    /// (B.3 memory pattern); ck truncated to |W|.
+    #[test]
+    #[ignore = "A.3 SCALE-GATE: full-W secondary binding; run on satyawan-1 (≫16 GB)"]
+    fn secondary_msm_binds_full_comm_w() {
+        use crate::recursive_snark_fixture::{
+            canonical_public_params, generate_fixture_with_digest,
+        };
+        let (mut ck, w, r_w, comm_w) = {
+            let pp = canonical_public_params().expect("canonical pp");
+            let (rs, _d) = generate_fixture_with_digest(2).expect("fixture");
+            let pp_json = serde_json::to_value(&pp).expect("pp json");
+            let rs_json = serde_json::to_value(&rs).expect("rs json");
+            let (ck, h) = extract_secondary_ck(&pp_json).expect("ck");
+            let (w, r_w) = extract_secondary_witness(&rs_json).expect("W");
+            let cw = extract_secondary_comm_w(&rs_json).expect("comm_W");
+            (ck, w, r_w, (cw, h))
+            // pp/rs/json dropped here.
+        };
+        let (comm_w, h) = comm_w;
+        assert!(!w.is_empty() && ck.len() >= w.len(), "nova invariant");
+        let n = w.len();
+        ck.truncate(n);
+
+        let cs = ConstraintSystem::<ArkFr>::new_ref();
+        let scalars: Vec<EmulatedFpVar<ArkFq, ArkFr>> = w
+            .iter()
+            .map(|v| EmulatedFpVar::new_witness(cs.clone(), || Ok(*v)).unwrap())
+            .collect();
+        let blind = EmulatedFpVar::<ArkFq, ArkFr>::new_witness(cs.clone(), || Ok(r_w)).unwrap();
+        let out = pedersen_msm_grumpkin(&scalars, &ck, &blind, h).expect("full msm");
+
+        assert!(cs.is_satisfied().expect("is_satisfied"), "CS satisfied");
+        assert_eq!(
+            out.value().expect("circuit point").into_affine(),
+            comm_w,
+            "FULL real-W MSM must equal the Section-2-bound r_U_secondary.comm_W"
+        );
+
+        // Adversarial: perturb W[0] → must NOT reproduce comm_W.
+        let cs2 = ConstraintSystem::<ArkFr>::new_ref();
+        let mut wb = w.clone();
+        wb[0] += ArkFq::from(1u64);
+        let sc2: Vec<EmulatedFpVar<ArkFq, ArkFr>> = wb
+            .iter()
+            .map(|v| EmulatedFpVar::new_witness(cs2.clone(), || Ok(*v)).unwrap())
+            .collect();
+        let bl2 = EmulatedFpVar::<ArkFq, ArkFr>::new_witness(cs2.clone(), || Ok(r_w)).unwrap();
+        let out_bad = pedersen_msm_grumpkin(&sc2, &ck, &bl2, h).expect("adv msm");
+        assert_ne!(
+            out_bad.value().expect("adv point").into_affine(),
+            comm_w,
+            "perturbed full W must NOT reproduce comm_W (binding is sound)"
+        );
+    }
 }
