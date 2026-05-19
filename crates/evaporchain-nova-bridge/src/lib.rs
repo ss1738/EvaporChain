@@ -123,6 +123,7 @@ pub mod s4_msm_gadget;
 pub mod s4_primary_extract;
 pub mod s4_primary_msm_gadget;
 pub mod s4_secondary_extract;
+pub mod s4b_secondary_r1cs_extract;
 pub mod s4b_secondary_r1cs_gadget;
 pub mod section2_gadget;
 pub mod section2_witness;
