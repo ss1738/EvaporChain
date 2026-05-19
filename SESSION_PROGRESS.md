@@ -6,6 +6,26 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 62) — coverage push: tracker.rs 78→93%, alarm.rs 84→91%
+
+**Focus:** evaporchain-script-lad tracker.rs and evaporchain-causal-chsh alarm.rs coverage sprint
+**Commits shipped:** 1 (b97d4718)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `evaporchain-script-lad` tracker.rs | ~78% | 92.6% (238/257) | 8 new tests |
+| `evaporchain-causal-chsh` alarm.rs | ~84% | 90.9% (180/198) | 1 new test |
+**Tests added:**
+- tracker.rs: `is_consumed()` all variants, `use_resource` evaporated arm (118-122), `drop_resource` not-live error (140-145), `tick_all` Slot::Evaporated arm (192-195), `snapshot` Consumed/Evaporated slots (214-215), `verdicts()` delegation, `is_empty()`
+- alarm.rs: InputError branch (199-214) triggered via `concurrency_window_secs=1` with blocks 12s apart → 0 concurrent pairs → n_per_bucket < 5
+**Dead code noted:** tracker.rs lines 111-115 (AlreadyConsumed — unreachable from Live slot), 124-127 and 165-168 (Err(e) catch-alls — only 3 OpError variants), 50-56 (Slot::verdict() #[allow(dead_code)])
+**What's next:**
+- `evaporchain-network` service.rs: 81.16% (libp2p event loop, needs multi-node integration harness)
+- Continue scanning workspace for next tractable low-coverage crate
+**Cross-references:** commit b97d4718
+
+---
+
 ## 2026-05-19 (session 61) — coverage push: energy_verkle.rs 93.5%→97.5%
 
 **Focus:** evaporchain-crypto energy_verkle.rs targeted coverage sprint
