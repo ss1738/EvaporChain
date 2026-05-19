@@ -389,4 +389,98 @@ mod tests {
             "ppsnark compressed-verified output must equal the real folded zi (= n)"
         );
     }
+
+    /// INCREMENT-3(a) PREMISE-CHECK (diagnostic, no assert beyond
+    /// serde-roundtrip): generate a real `CompressedSNARK<ppsnark>`
+    /// proof and dump the serde-JSON structure, locating the exact
+    /// path to the secondary IPA `eval_arg`'s `L_vec/R_vec`. This
+    /// decides whether increment-3(a)'s real-proof Section-A witness
+    /// is serde-extractable (and how deep the transcript-replay must
+    /// reach). Cheapest test that gates the approach — run BEFORE
+    /// building any transcript-replay machinery.
+    #[test]
+    #[ignore = "increment-3(a) premise: dump real CompressedSNARK<ppsnark> proof JSON (Mini, ~2min)"]
+    fn dump_compressed_ppsnark_proof_structure() {
+        use nova_snark::nova::CompressedSNARK;
+        type CmpPP = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1pp, S2pp>;
+
+        let circuit = TrivialIncrementCircuit;
+        let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+            &circuit,
+            &*<S1pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E1>>::ck_floor(),
+            &*<S2pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E2>>::ck_floor(),
+        )
+        .expect("ppsnark PublicParams::setup");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+            &pp, &circuit, &z0,
+        )
+        .expect("RecursiveSNARK::new");
+        for i in 0..2 {
+            rs.prove_step(&pp, &circuit)
+                .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
+        }
+        let (pk, _vk) = CmpPP::setup(&pp).expect("CompressedSNARK::<ppsnark>::setup");
+        let compressed =
+            CmpPP::prove(&pp, &pk, &rs).expect("CompressedSNARK::<ppsnark>::prove");
+
+        let v = serde_json::to_value(&compressed).expect("compressed to_value");
+
+        // Top-level keys.
+        if let Some(o) = v.as_object() {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            eprintln!("CMP_TOP_KEYS = {keys:?}");
+        }
+
+        // Recursively print every path whose final key is one of the
+        // IPA-relevant names, with array lengths.
+        fn walk(node: &serde_json::Value, path: &str, hits: &mut Vec<String>) {
+            match node {
+                serde_json::Value::Object(o) => {
+                    for (k, child) in o {
+                        let p = format!("{path}/{k}");
+                        if matches!(
+                            k.as_str(),
+                            "eval_arg" | "L_vec" | "R_vec" | "a_hat" | "comm_W"
+                        ) {
+                            let info = match child {
+                                serde_json::Value::Array(a) => {
+                                    format!("ARRAY len={}", a.len())
+                                }
+                                serde_json::Value::Object(oo) => format!(
+                                    "OBJ keys={:?}",
+                                    oo.keys().collect::<Vec<_>>()
+                                ),
+                                serde_json::Value::String(s) => {
+                                    format!("STR len={}", s.len())
+                                }
+                                other => format!("{other:?}"),
+                            };
+                            hits.push(format!("CMP_PATH {p} = {info}"));
+                        }
+                        walk(child, &p, hits);
+                    }
+                }
+                serde_json::Value::Array(a) => {
+                    if let Some(first) = a.first() {
+                        walk(first, &format!("{path}[0]"), hits);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut hits = Vec::new();
+        walk(&v, "", &mut hits);
+        for h in &hits {
+            eprintln!("{h}");
+        }
+        eprintln!("CMP_HIT_COUNT = {}", hits.len());
+
+        // Premise: a serde round-trip must preserve the proof
+        // (confirms the structure is fully serde, not lossy).
+        let rt: CmpPP = serde_json::from_value(v).expect("compressed round-trip");
+        let _ = rt; // structural round-trip success is the assertion
+        eprintln!("CMP_SERDE_ROUNDTRIP = ok");
+    }
 }
