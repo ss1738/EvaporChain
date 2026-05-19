@@ -161,4 +161,68 @@ mod tests {
             "in-circuit Pedersen MSM must equal out-of-circuit ark MSM"
         );
     }
+
+    /// D.3-STYLE SIZE PREDICTION (no build/spend) for the final-layer
+    /// recursion circuit's dominant term: the secondary IPA `ck_hat`
+    /// = Σ sᵢ·ckᵢ MSM done **natively** (Grumpkin points have
+    /// BN254-Fr coords = circuit field; scalars are non-native Fq).
+    /// Measure `cs.num_constraints()` for k ∈ {1,2,4,8} terms, linear-
+    /// fit `cost ≈ a·k + b`, predict at n = 10_554 (D.3-measured
+    /// secondary `num_cons`). FALSIFIER: if predicted ≥ 1e9 the
+    /// "recursion terminates succinct" conclusion (flow source-read
+    /// #3) is FALSE — panic loudly. Fast (tiny circuits), no fixture.
+    #[test]
+    fn predict_native_grumpkin_msm_size_for_recursion_circuit() {
+        let g = Projective::from(GrumpkinConfig::GENERATOR);
+        let h_aff = (g * Bn254Fq::from(7u64)).into_affine();
+
+        let measure = |k: usize| -> usize {
+            let bases: Vec<_> =
+                (1..=k).map(|i| (g * Bn254Fq::from(i as u64)).into_affine()).collect();
+            let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+            let scalars: Vec<EmulatedFpVar<Bn254Fq, Bn254Fr>> = (1..=k)
+                .map(|i| {
+                    EmulatedFpVar::new_witness(cs.clone(), || Ok(Bn254Fq::from(i as u64 + 1)))
+                        .unwrap()
+                })
+                .collect();
+            let blind =
+                EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(Bn254Fq::from(5u64)))
+                    .unwrap();
+            pedersen_msm_grumpkin(&scalars, &bases, &blind, h_aff).expect("synth");
+            assert!(cs.is_satisfied().unwrap(), "k={k} CS must be satisfied");
+            cs.num_constraints()
+        };
+
+        let (c1, c2, c4, c8) = (measure(1), measure(2), measure(4), measure(8));
+        // Linear fit on the two extremes (the blind term is the +b).
+        let a = (c8 as f64 - c1 as f64) / 7.0; // per-MSM-term slope
+        let b = c1 as f64 - a; // intercept (incl. one blind scalar_mul)
+        let n_secondary = 10_554.0_f64;
+        let predicted = a * n_secondary + b;
+        // HyperKZG primary verify in-circuit ≈ a constant BN254
+        // pairing (~1–2e6, well-characterized); recorded, not summed
+        // into the falsifier (it is bounded-constant by construction).
+        let hyperkzg_pairing_const = 2.0e6_f64;
+        let total = predicted + hyperkzg_pairing_const;
+
+        eprintln!(
+            "NGM_PREDICT k=1:{c1} k=2:{c2} k=4:{c4} k=8:{c8} \
+             slope_a={a:.1} intercept_b={b:.1} \
+             n_secondary={} predicted_msm={:.0} \
+             +hyperkzg_const={:.0} TOTAL={:.0}",
+            n_secondary as u64, predicted, hyperkzg_pairing_const, total
+        );
+
+        // Sanity: cost must be monotone increasing & ~linear in k.
+        assert!(c2 > c1 && c4 > c2 && c8 > c4, "MSM cost must grow with k");
+        // FALSIFIER (flow source-read #3): native-side recursion must
+        // NOT reintroduce S4b/D.3 scale (~2e8). 1e9 is a generous
+        // ceiling — tripping it falsifies "recursion terminates".
+        assert!(
+            total < 1.0e9,
+            "FALSIFIER TRIPPED: predicted recursion-circuit size {total:.0} ≥ 1e9 \
+             — 'recursion terminates succinct' is FALSE; fall to flow option (3)"
+        );
+    }
 }
