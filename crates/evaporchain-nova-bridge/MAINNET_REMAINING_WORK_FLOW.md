@@ -327,14 +327,35 @@ INDEPENDENTLY:** `Σ sᵢ·ckᵢ` (tensor path) == the literal recursive
 prove loop) at n=8/16/64, plus `s[0]=Πr⁻¹` spot-check. Two unrelated
 code paths converge ⇒ the port is faithful to nova-snark.
 
-**NEXT [ ]:** finish increment 2 — reuse
-`s4_secondary_extract::extract_secondary_ck` for the real
-`ck_secondary` bases at real n; assemble a real-shaped Section-A
-witness (real `ck` + real tensor `s` from `ipa_s_vector(r)` +
-computed `ck_hat`); box-verify `RecursionDeciderCircuit` Section A
-against it **at real n** (CS sat + non-vacuous, Mini3). (Challenges
-`r` may be synthetic-but-valid here; binding `r` to a *specific*
-proof's `L_vec/R_vec` transcript is increment 3, with Sections B-D.)
+### INCREMENT 2 COMPLETE ✅ [V] (2026-05-19, Mini3, box, HEAD
+`a356fd55`, `section_a_real_bases_real_tensor_pipeline ... ok`,
+1 passed, 50.94 s)
+
+End-to-end **real-data** witness-assembly pipeline verified:
+`canonical_public_params` → `extract_secondary_ck` (real Grumpkin
+bases) → `ipa_s_vector` (real tensor) → real `ck_hat` →
+`RecursionDeciderCircuit` Section A. Positive (CS sat) AND
+non-vacuous negative (tamper ⇒ UNSAT) on **real curve points** at
+n=256. 50.94 s / ~0.65M cons is consistent with the measured
+2,533-cons/term linear fit — the size model holds on real bases.
+
+**Scope boundary (explicit):** real `ck` + real tensor structure,
+challenges `r` synthetic-but-valid, n=256. NOT yet: `r` bound to a
+*specific* `CompressedSNARK<ppsnark>` proof's `L_vec/R_vec`
+transcript; full n≈16384 (~41M-cons) synthesis; Sections B-D. Those
+are increment 3 + the deliberately-scheduled heavy step.
+
+**NEXT [ ]:** increment 3 — (a) generate a real
+`CompressedSNARK<ppsnark>` proof (validated `cd9882bf` path),
+serde-extract its secondary `eval_arg` `L_vec/R_vec`, replay the
+`ipa_pc::verify` transcript to derive the *proof-bound* challenges
+`r` (not synthetic) → fully real Section-A witness; (b) wire
+constant Sections B-D (Neptune/NIFS/HyperKZG) against the same
+proof + flip `sections_bcd_wired`; (c) re-point
+`groth16_wrapper::setup` at the succinct ppsnark verifier;
+`eip197.rs` codec unchanged. Heavy 29M Groth16 prove + flat-vs-
+tensor MSM decision: deliberately scheduled (satyawan-1 / a Mini —
+never the training rig / node box).
 
 ---
 
