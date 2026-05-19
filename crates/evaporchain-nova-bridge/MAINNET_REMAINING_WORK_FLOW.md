@@ -256,13 +256,38 @@ no 10⁹ circuit, no forced HW spend, EVM verify cheap; prover-side
 ~29M is heavy-but-one-shot and tensor-foldable. The B-1/B-2 #1
 mainnet-blocker architecture question is **resolved**.
 
-**NEXT [ ]:** build the BN254-Fr recursion circuit (reuse
-`pedersen_msm_grumpkin` for the secondary `ck_hat`; constant terms
-for hashes/NIFS/derandomize/HyperKZG), ppsnark-compress it, re-point
-`groth16_wrapper::setup` at its succinct verifier; `eip197.rs` codec
-unchanged. Decide flat-vs-tensor MSM after a first Groth16 prove-cost
-measurement on satyawan-1/Mini (the heavy step — schedule
-deliberately, never on the training rig / node box).
+### BUILD INCREMENT 1 — Section A LIVE ✅ [V] (2026-05-19, Mini3,
+box, HEAD `67625605`)
+
+New module `recursion_decider_circuit.rs`:
+`ConstraintSynthesizer<Bn254Fr>`. **Section A** (secondary IPA
+`ck_hat` MSM — the dominant ~26.7M term) recomputes
+`Σ sᵢ·ckᵢ + r·h` natively via `pedersen_msm_grumpkin` and
+`enforce_equal`s the claimed commitment. Box-verified
+(`recursion_decider_circuit ... 3 passed; 0 failed; 0.27 s`):
+- `section_a_correct_commitment_satisfies_cs` — correct ⇒ CS sat.
+- `section_a_wrong_commitment_breaks_cs` — wrong ⇒ CS **UNSAT**
+  (binding is **non-vacuous** — the exact B-1 `dummy()`-vacuity
+  hazard, proven avoided).
+- `section_a_length_mismatch_is_unsatisfiable` — malformed ⇒
+  `Unsatisfiable` (crate-wide contract).
+
+**Scope boundary (explicit, no overhype):** this proves Section A
+*logic* is correct and non-vacuous at **small controlled scale (3
+bases)**. It is NOT yet: wired to a real `CompressedSNARK<ppsnark>`
+proof's secondary instance; run at n=10,554; nor are Sections B-D
+(constant-size Neptune/NIFS/HyperKZG) wired — they are explicit
+deferred stubs and `sections_bcd_wired:false` records that. "Section
+A logic proven", not "the decider works".
+
+**NEXT [ ]:** increment 2 — wire Sections B-D (constant-size; reuse
+`neptune_permutation_gadget` etc.) + flip `sections_bcd_wired`; then
+increment 3 — adapter extracting Section-A inputs from a real
+`CompressedSNARK<ppsnark>` proof's secondary instance (needs a
+nova-snark proof-internals access path; scope that first). The
+heavy 29M Groth16 prove + flat-vs-tensor MSM decision stays
+deliberately scheduled (satyawan-1 / a Mini — never the training
+rig / node box).
 
 ---
 
