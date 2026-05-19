@@ -145,10 +145,14 @@
 
 ## PHASE D — S4b: secondary RelaxedR1CS satisfiability *(THE deep one)*
 
-- **D.1 [I]** Non-native row-sat gadget (`enforce_secondary_relaxed_
-  r1cs_sat_nn`) — written; primitive proof pending (A.1).
-- **D.2 [X]** Secondary R1CS matrix/witness extraction (a
-  `section3_witness`-class extractor, secondary side, emulated-Fq).
+- **D.1 [V]** Non-native row-sat gadget — proven via A.1
+  (`secondary_relaxed_r1cs_nn_sat_and_adversarial`, Mini 1).
+- **D.2 [V]** Secondary R1CS extractor — BOX-VERIFIED Mini 1
+  (2026-05-19): `secondary_r1cs_extract_decodes_real_data ... ok`,
+  1 passed, 30.81 s, first run. Byte-identical mirror of proven
+  `section3_witness`, secondary/ArkFq, bucketed for D.1; real-data
+  shape self-consistent (dims, W/E lens, A/B/C num_cons buckets,
+  col-in-z-range). Decode-only / tractable.
 - **D.3 [X]** Full secondary RelaxedR1CS enforced in-circuit over
   `EmulatedFpVar<Fq,Fr>` (every `(Az)(Bz)==u(Cz)+E` op non-native).
 - **D.4 [X]** Bounded box-verify + full verify on bigger box.
