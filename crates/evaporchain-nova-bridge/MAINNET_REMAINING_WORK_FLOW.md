@@ -114,12 +114,57 @@ natively** (∴ the 25 s validation is genuine and unaffected) but
   secondary via the folded NIFS relation — **not** a full in-circuit
   IPA. No 10⁹ circuit, no hardware/VPS spend.
 
-**NEXT [ ]:** source-read the Nova/Sonobe decider pattern + confirm
-nova-snark 0.68 exposes the primary `r_U_primary` + HyperKZG opening
-needed to build a *primary-only* Groth16 decider; scope its
-constraint count (HyperKZG-verify-in-circuit ≈ bounded constant
-pairing, the favorable side). The secondary is discharged by the
-existing NIFS fold check, not re-verified in-circuit.
+### RESOLVED by source read #2 (2026-05-19, `ppsnark.rs` verify
+L1388+ vs `snark.rs` vs `ipa_pc.rs` L351) — calibrated, negative-
+leaning, NOT a config-switch win
+
+nova-snark 0.68 ships **two** Spartan variants:
+- `spartan::snark::RelaxedR1CSSNARK` (used by the validated test) —
+  **non-succinct verifier**: `ck_hat = CE::commit(&ck,&s,0)`, `s`
+  length `n` → size-`n` MSM.
+- `spartan::ppsnark::RelaxedR1CSSNARK` — **succinct verifier**:
+  `num_rounds_outer = num_cons.log_2()`, preprocessed `vk` sparse
+  commitments, O(log) sumcheck, **no size-`n` MSM at the Spartan
+  level**.
+
+So switching `S1/S2` → `ppsnark` removes the *Spartan-level*
+blowup (real, good). **BUT** ppsnark still delegates polynomial
+opening to `EE::verify`. For the **secondary** that is
+`ipa_pc::verify` (read #1), whose `ck_hat` size-`n` MSM is
+**intrinsic to IPA over the non-pairing-friendly Grumpkin secondary
+curve** — present regardless of snark vs ppsnark. nova-snark 0.68's
+secondary is the **full ~10.5k augmented circuit, not a
+CycleFold-constant** one. ∴ **no zero-cost in-circuit EVM path for
+the secondary exists in stock 0.68.** (Honest: this is NOT "just
+switch to ppsnark and you're done" — the no-overhype discipline
+forbids selling it that way.)
+
+**The three real EVM options (all genuine engineering, named +
+bounded, none requiring a 203M/10⁹ bespoke circuit or HW spend):**
+
+1. **CycleFold-constant secondary** — make the secondary circuit
+   O(1) (Sonobe/CycleFold design) so its size-`n` MSM is size-O(1).
+   Requires either Sonobe (arkworks folding lib, has a Decider) or
+   upgrading nova-snark's secondary. *Largest architectural change;
+   cleanest end state.*
+2. **Final-layer verifier recursion ("SNARK-of-SNARK")** — run the
+   secondary IPA size-`n` MSM *natively* inside one more Spartan/Nova
+   step whose verifier is `ppsnark`-succinct; Groth16-wrap only that
+   small residual. *Stays within nova-snark; one extra recursion
+   layer.*
+3. **Native-Solidity secondary verifier** — emit the secondary IPA
+   proof, verify it directly in Solidity (Grumpkin scalar-field ops;
+   fixed ~size-`n` gas cost, no SNARK circuit). *Pragmatic mainnet
+   path; gas-heavy but deterministic & buildable now.*
+
+**NEXT [ ]:** evaluate option (2) first (smallest delta, stays in
+nova-snark): confirm `ppsnark` satisfies `RelaxedR1CSSNARKTrait` so
+`CompressedSNARK<…,S1=ppsnark,S2=ppsnark>` type-checks, box-validate
+it end-to-end on Mini3 (the analogue of the 25 s `snark` validation),
+then scope the residual recursion layer. If ppsnark CompressedSNARK
+fails to validate or the residual is still S4b-scale, fall back to
+option (3) as the buildable-now mainnet path and flag option (1) as
+the long-term architecture.
 
 ---
 
