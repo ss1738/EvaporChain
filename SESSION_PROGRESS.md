@@ -6,6 +6,23 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 61) — coverage push: energy_verkle.rs 93.5%→97.5%
+
+**Focus:** evaporchain-crypto energy_verkle.rs targeted coverage sprint
+**Commits shipped:** 1 (8f4cd404)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `evaporchain-crypto` energy_verkle.rs | 93.5% | 97.5% | 23 new tests, 290 green |
+**Tests added (23):** default(), Compressed meta via recompute_meta, resurrection insert into Compressed, delete Empty/Compressed/missing-child/collapse-to-Internal, update_energy Empty/Compressed/leaf-mismatch, node_count empty, prove Compressed-hit/missing-key, verify depth>MAX/length-mismatch/CR-2/None-value-branch, collect_above Empty/Compressed, health() empty (u64::MAX→0), prove_multi Empty-root/missing-key, verify_multi empty-keys
+**Key finding:** depth>0 absence proof DOES verify — bytes_to_scalar([0u8;32])=0 makes the absent slot a no-op in the commitment reconstruction
+**What's next:**
+- `evaporchain-network` service.rs: 81.16% (libp2p event loop, needs multi-node integration harness)
+- Other low-hanging crates TBD
+**Cross-references:** commit 8f4cd404
+
+---
+
 ## 2026-05-19 (session 60) — coverage push: state 90.4%→93.9%, crypto bls/verkle
 
 **Focus:** Multi-crate coverage sprint: evaporchain-state and evaporchain-crypto
