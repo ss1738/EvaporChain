@@ -66,20 +66,32 @@
 > **There is no library drop-in for the primary side.** The earlier
 > "mechanical/days" estimate is withdrawn.
 
-- **B.0 [X — design decision required]** Choose primary-binding
-  strategy: (1) bespoke non-native SW point gadget over
-  `EmulatedFpVar<Fq,Fr>` (~S4b-class depth); (2) avoid in-circuit
-  bn256-G1 arithmetic entirely (bind via the transcript that already
-  absorbs `comm_W.{x,y}` — re-derive the exact soundness obligation);
-  (3) curve-cycle redesign (primary checks in the secondary circuit
-  where bn256 scalars are native). See `s4_primary_msm_gadget.rs`.
-- **B.1 [X]** Primary MSM/binding gadget — per the B.0 decision.
-  **Effort: DEEP** (option 1 ≈ a second S4b; option 2 = design
-  rethink). NOT days.
-- **B.2 [S]** bn256-G1 point decoder + `bn256::Base→ark_bn254::Fq`
-  converter — still mechanical, but only useful once B.0 is decided.
-- **B.3 [X]** Real-fixture primary binding test — gated on B.0/B.1.
-- Depends on: PHASE A (done); now also a **design decision (B.0)**.
+- **B.0 [V — DECIDED, source-grounded 2026-05-19]** Strategy =
+  **Option 1 (bespoke non-native bn256-G1 SW point gadget)**.
+  Justification (nova-snark 0.68 `RecursiveSNARK::verify`,
+  nova/mod.rs:567–651): verify calls `is_sat_relaxed` on BOTH
+  `r_U_primary`(ck_primary) AND `r_U_secondary`(ck_secondary), and
+  `is_sat_relaxed` (r1cs/mod.rs:447–474) recomputes
+  `U.comm_W==Commit(ck,W)`. The transcript/hash check only absorbs
+  `comm_W` coords as field elements — it does NOT verify the MSM
+  relation. ∴ **Option 2 (skip primary MSM) is UNSOUND** (permits
+  the B-1 forgery: hash one comm_W, R1CS-sat a different W). Option 3
+  (wrapper-as-curve-cycle) is far deeper and discards the working
+  S2/S3 single circuit. Option 1 is deep (≈ a second S4b) but bounded
+  & standard.
+- **B.1 [X — THE deep core]** Non-native bn256-G1 SW point gadget:
+  affine/projective add + double over `EmulatedFpVar<Fq,Fr>`,
+  incomplete-formula-safe. Isolated proof: in-circuit point ops ==
+  out-of-circuit ark bn256-G1. **Effort: DEEP (≈ a second S4b).**
+- **B.2 [X]** Native-`FpVar<Fr>`-scalar double-and-add MSM ladder on
+  B.1 → `pedersen_msm_bn256_g1` + isolated MSM proof (== ark MSM).
+  Plus the mechanical helpers: bn256-G1 point decoder +
+  `bn256::Base→ark_bn254::Fq` exact converter.
+- **B.3 [X]** `extract_primary_*` (mirror of `s4_secondary_extract`,
+  scalar = `primary_to_ark_fr`) + bounded + full real-fixture primary
+  binding test (`r_U_primary.comm_W == Σ Wᵢ·ckᵢ + r_W·h`) +
+  adversarial.
+- Depends on: B.0 (DECIDED). B.1 is the long pole of PHASE B.
 
 ## PHASE C — S4 integration (the actual soundness closure)
 

@@ -37,10 +37,29 @@
 //!    secondary circuit of the cycle where bn256 scalars are native —
 //!    a deeper Nova-folding-aware redesign.
 //!
-//! Until decided, there is intentionally NO primary MSM gadget here.
-//! Leaving broken `ProjectiveVar` code would (a) not compile and
-//! (b) misrepresent the difficulty. See `S4_DESIGN.md` (corrected)
-//! and `MAINNET_REMAINING_WORK_FLOW.md` PHASE B (reclassified deep).
+//! ## B.0 DECISION (2026-05-19, source-grounded) — Option 1
+//!
+//! `RecursiveSNARK::verify` (nova-snark 0.68 nova/mod.rs:567–651)
+//! calls `is_sat_relaxed` on BOTH `r_U_primary`(ck_primary) AND
+//! `r_U_secondary`(ck_secondary); `is_sat_relaxed`
+//! (r1cs/mod.rs:447–474) recomputes `U.comm_W == Commit(ck, W)`. The
+//! verify hash-check only absorbs `comm_W` coords as field elements —
+//! it does NOT verify the MSM relation. ∴ **Option 2 (skip the
+//! primary MSM) is UNSOUND** (permits the B-1 forgery). Option 3
+//! (wrapper-as-curve-cycle) discards the working S2/S3 single
+//! circuit. **Chosen: Option 1** — a bespoke non-native bn256-G1 SW
+//! point gadget (`EmulatedFpVar<Fq,Fr>` coords + native-`FpVar<Fr>`-
+//! scalar double-and-add ladder). Deep (≈ a second S4b) but bounded
+//! and standard.
+//!
+//! Implementation plan (PHASE B.1→B.3, `MAINNET_REMAINING_WORK_FLOW`):
+//!   B.1 non-native SW add/double gadget (incomplete-formula-safe) +
+//!       isolated proof vs ark bn256-G1;
+//!   B.2 native-scalar double-and-add MSM ladder + decoder/converter;
+//!   B.3 `extract_primary_*` + real-fixture binding test.
+//!
+//! Intentionally NO gadget code yet — B.1 is the next deep unit.
+//! See `S4_DESIGN.md` (corrected) + `MAINNET_REMAINING_WORK_FLOW.md`.
 
 // No gadget yet — see the FINDING above. This module is deliberately
 // implementation-free so the crate stays green and the difficulty is
