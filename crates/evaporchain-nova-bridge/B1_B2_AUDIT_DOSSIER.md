@@ -65,6 +65,7 @@ practical.
 | (d)-1 | `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit` | Groth16-wrap circuit cs.num_constraints() probe (§7 step 3 discipline gate) | 4/4 k-values (1/2/4/8); per-base=2,533 cons; total at n_aux=16,384 ~43.5M cons | (existing, re-run 2026-05-20) |
 | (d)-2 | `groth16_wrapper::recursion_decider_groth16_*` | Groth16 setup→prove→verify on RecursionDeciderCircuit (§7 step 1) + Groth16-level non-vacuity (tampered witness rejected) + n=64 scaling smoke | 3/3 first-try, 2.67 s release for all three | `2785f818`+`e231282e` |
 | (d)-3 | `recursion_decider_circuit::setup_shape_cons_scaling_validates_d1_prediction` | Circuit-level cs.num_constraints scaling at n in {4,16,64,256,1024} — validates (d)-1 gadget-level fit transfers to full circuit | 1/1 first-try, 4.36 s release; per_base=2,533 EXACT match; predicted n_aux=16,384 → 41,503,214 cons | `190d51a3` |
+| (d)-4 | `groth16_wrapper::recursion_decider_groth16_full_n_aux_16384` | Production-scale Groth16 setup+prove+verify at n_aux=16,384 (satyawan-1 Linux, 128 GB) | 1/1 first-try on satyawan-1 (Mini failed SIGKILL — correction #8); setup 3m1s, prove 3m22s, verify 1.82ms, total 6m24s | (latest commit) |
 
 **Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
@@ -357,16 +358,22 @@ The chosen architecture's open work, in dependency order:
    - **Result: Groth16-wrap is NOT architecturally blocked, and the
      constraint-count prediction is validated at BOTH the gadget and
      full-circuit levels.**
-4. **Groth16 setup + prove + verify** end-to-end on
-   `satyawan-1` (123 GiB Linux, not Mac Mini — see correction #8).
-   Smoke-validated at n=4 and n=64 on Mini (full pipeline 2.67 s
-   release for both). **(d)-4 first attempt on Mini 2 FAILED**
-   with SIGKILL ~60 s into Groth16 setup — Mac Mini RAM is 16 GB
-   (`sysctl hw.memsize`), not the 128 GB I had assumed. The 128 GB
-   box is the dedicated Linux training rig `satyawan-1`
-   (`hardware_satyawan_1_linux.md`). Re-scheduled on satyawan-1;
-   actual per-phase timing will replace this paragraph when the
-   run lands.
+4. **(d)-4 ✅ MEASURED 2026-05-20 on `satyawan-1` (123 GiB
+   Linux):** end-to-end Groth16 setup + prove + verify on
+   `RecursionDeciderCircuit` at the production n_aux=16,384
+   (~41.5M cons Section A). Per-phase timing:
+   - Bases construction: 60 ms
+   - **Groth16 setup: 3 min 1 s** (180.77 s)
+   - Witness assembly: 176 ms
+   - **Groth16 prove: 3 min 22 s** (202.48 s)
+   - **Groth16 verify: 1.82 ms** — matches the on-chain
+     EIP-197 pairing-check anchor from (c)-1a
+   - **Total: 6 min 24 s** (vs projected 10-60 min setup +
+     10-30 min prove — beaten by 3-20× on both)
+   First attempt on Mini 2 failed with SIGKILL (correction #8 —
+   16 GB Mini RAM, not 128 GB); the re-run on satyawan-1 landed
+   first-try with no surprises. The Groth16-wrap pipeline is
+   end-to-end validated at production scale.
 5. **EVM round-trip** — emit the Groth16 proof, feed to the
    existing 256-byte EIP-197 wire codec (`eip197.rs`, validated),
    verify on-chain (Foundry test using the existing
