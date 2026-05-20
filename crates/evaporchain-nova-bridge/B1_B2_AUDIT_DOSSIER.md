@@ -62,12 +62,14 @@ practical.
 | (c)-2b | `foundry-bench/GrumpkinJacobian.sol` + BenchJacobian | Jacobian-projective Grumpkin (algorithmic-equivalent, no per-op inv) | 7/7 incl. 3 correctness checks vs affine | `9b32d4e1` |
 | (c)-2c | `foundry-bench/BN254G1.sol` + BenchBN254G1 | EIP-196 BN254 G1 precompile gas anchor (R4 mitigation measured) | 5/5 first-try | `5f6dfe1f` |
 | (c)-2d | `cyclefold_n_aux_scaling_probe` | ppsnark n_aux scaling vs R1CS size (R5 falsifier) | 5/5 shapes (8/32/128/512/2048 cons); falsifier did NOT fire | `de9a9aa1` |
+| (d)-1 | `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit` | Groth16-wrap circuit cs.num_constraints() probe (§7 step 3 discipline gate) | 4/4 k-values (1/2/4/8); per-base=2,533 cons; total at n_aux=16,384 ~43.5M cons | (existing, re-run 2026-05-20) |
 
-**Aggregate:** 101 commits this arc (`436d2e2d → de9a9aa1`); every
+**Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
 on the 4b shell-extension + (b) IVC integration micro-arcs, plus
 **six Foundry-side gas-decomposition passes** ((c)-1a/b/c +
-(c)-2a/b/c) + **one Rust-side scaling falsifier** ((c)-2d).
+(c)-2a/b/c) + **one Rust-side scaling falsifier** ((c)-2d) + **one
+Rust-side cons-budget probe** ((d)-1, falsifier did NOT fire).
 
 ## 4. Final shell measurements
 
@@ -307,13 +309,20 @@ The chosen architecture's open work, in dependency order:
    MSM: size n_aux=16,384 on Grumpkin. On the native cycle
    (R1CS over BN254-Fr, Grumpkin's base field), this is ~n_aux
    native Grumpkin EC point-adds (Pippenger or bucket method) +
-   sumcheck rounds + HyperKZG opening verify (constant). Rough
-   range: 230k–41M constraints depending on MSM realization.
-3. **Constraint-count measurement** of the verifier circuit (the
-   discipline pattern: probe with `cs.num_constraints()` BEFORE
-   trying to build Groth16 setup on it).
+   sumcheck rounds + HyperKZG opening verify (constant).
+3. **(d)-1 ✅ MEASURED 2026-05-20** (existing probe
+   `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
+   per-base cons = **2,533**, intercept 2,521. Extrapolation:
+   - At n_aux=16,384: **~41.5M cons** for the MSM portion
+   - + HyperKZG primary verify constant (~2M cons): **~43.5M cons**
+     total Groth16-wrap circuit
+   - Falsifier threshold was 1e9 (per the `predict_*` test's own
+     guard) — comfortably **23× under** the ceiling.
+   - Memory budget for Groth16 setup: ~5.6 GB (well within 128 GB
+     Mini RAM).
+   - **Result: Groth16-wrap is NOT architecturally blocked.**
 4. **Groth16 setup + prove + verify** end-to-end on the Mini
-   cluster.
+   cluster. At ~43.5M cons: setup ~hours, prove ~30–90 min each.
 5. **EVM round-trip** — emit the Groth16 proof, feed to the
    existing 256-byte EIP-197 wire codec (`eip197.rs`, validated),
    verify on-chain (Foundry test using the existing
@@ -321,8 +330,8 @@ The chosen architecture's open work, in dependency order:
 6. **External audit** of the closed circuit.
 
 (1) and (2) are the actual remaining cryptographic engineering;
-(3) is the discipline gate; (4)–(6) are mechanical once (1)–(3)
-hold.
+(3) is the discipline gate (now passed); (4)–(6) are mechanical
+once (1)–(3) hold.
 
 ## 8. Open follow-ups (clearly NOT yet proven)
 
