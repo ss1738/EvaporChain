@@ -350,6 +350,103 @@ pub fn assemble_section_b_pi_bundle(
     Ok(bundle)
 }
 
+/// B-1/B-2 1C dossier §6b + SECTION_CD_SCOPING.md: off-chain adapter
+/// for the CompressedSNARK path. The `CompressedSNARK::verify` call
+/// is the SINGLE binding gate that covers Sections B + C + D (per
+/// SECTION_CD_SCOPING.md's source analysis: Section C NIFS folds + D
+/// final spartan-verifies are all internal to `cs.verify`, consumed
+/// by `?` short-circuit).
+///
+/// Key differences vs `assemble_section_b_pi_bundle` (RecursiveSNARK):
+/// - Verify gate: `CompressedSNARK::verify` (includes C + D).
+/// - JSON shape: same field names for `l_u_secondary`, `r_U_primary`,
+///   `ri_secondary`. CompressedSNARK has `zn` (the final state)
+///   instead of RecursiveSNARK's `zi`; no `z0` in JSON (passed to
+///   verify as a parameter).
+///
+/// Same generic parameter constraints as nova-snark's CompressedSNARK.
+/// The caller supplies (pp, vk_cs, cs, num_steps, z0) — verify gate
+/// runs first, then PIs are extracted from cs's JSON serialization.
+pub fn assemble_section_b_pi_bundle_from_compressed_snark<S1, S2>(
+    pp: &PublicParams<E1, E2, TrivialIncrementCircuit>,
+    vk_cs: &nova_snark::nova::VerifierKey<E1, E2, TrivialIncrementCircuit, S1, S2>,
+    cs: &nova_snark::nova::CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1, S2>,
+    num_steps: usize,
+    z0_ark: &[ArkFr],
+) -> Result<SectionBPiBundle, ExtractError>
+where
+    S1: nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E1> + serde::Serialize,
+    S2: nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E2> + serde::Serialize,
+{
+    use crate::scalar_adapter::ark_fr_to_primary;
+    // 1. Verify (THE binding gate — covers Sections B + C + D).
+    let z0_nova: Vec<<E1 as nova_snark::traits::Engine>::Scalar> =
+        z0_ark.iter().copied().map(ark_fr_to_primary).collect();
+    let zn_nova = cs
+        .verify(vk_cs, num_steps, &z0_nova)
+        .map_err(|e| ExtractError::VerifyRejected(format!("{e:?}")))?;
+
+    // 2. pp_digest as ArkFr (exact, not lossy).
+    let pp_digest_ark = primary_to_ark_fr(pp.digest());
+
+    // 3. Extract PIs from cs JSON. Same field paths as RecursiveSNARK
+    //    for the bits we care about.
+    let v = serde_json::to_value(cs)
+        .map_err(|e| ExtractError::Serialize(e.to_string()))?;
+
+    let x = v
+        .get("l_u_secondary")
+        .and_then(|inst| inst.get("X"))
+        .and_then(|x| x.as_array())
+        .ok_or(ExtractError::MissingPath)?;
+    if x.len() < 2 {
+        return Err(ExtractError::TooFewHashes(x.len()));
+    }
+    let hash_primary_reinterp = parse_primary_or_lossy_scalar(x[0].as_str(), 0)?;
+    let hash_secondary_claimed = parse_primary_or_lossy_scalar(x[1].as_str(), 1)?;
+
+    let ri_secondary = parse_primary_or_lossy_scalar(
+        v.get("ri_secondary").and_then(|x| x.as_str()),
+        2,
+    )?;
+
+    let r_u_p = v.get("r_U_primary").ok_or(ExtractError::MissingPath)?;
+    let comm_w = r_u_p
+        .get("comm_W")
+        .ok_or_else(|| ExtractError::MissingField("r_U_primary.comm_W".into()))?;
+    let (r_U_primary_comm_x, r_U_primary_comm_y) =
+        decompress_comm_w_as_fr(comm_w.get("comm").and_then(|s| s.as_str()))?;
+    let r_u_p_x = r_u_p
+        .get("X")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| ExtractError::MissingField("r_U_primary.X".into()))?;
+    if r_u_p_x.len() < 2 {
+        return Err(ExtractError::TooFewHashes(r_u_p_x.len()));
+    }
+    let r_U_primary_x0 = parse_primary_or_lossy_scalar(r_u_p_x[0].as_str(), 5)?;
+    let r_U_primary_x1 = parse_primary_or_lossy_scalar(r_u_p_x[1].as_str(), 6)?;
+
+    // 4. zn from the verifier (authoritative). z0 is caller-supplied
+    //    (CompressedSNARK doesn't store z0 in its serialization).
+    let z0_bundle = z0_ark.to_vec();
+    let zn_bundle: Vec<ArkFr> =
+        zn_nova.iter().copied().map(primary_to_ark_fr).collect();
+
+    Ok(SectionBPiBundle {
+        hash_primary_reinterp,
+        hash_secondary_claimed,
+        pp_digest: pp_digest_ark,
+        num_steps: ArkFr::from(num_steps as u64),
+        ri_secondary,
+        r_U_primary_comm_x,
+        r_U_primary_comm_y,
+        r_U_primary_x0,
+        r_U_primary_x1,
+        z0: z0_bundle,
+        zn: zn_bundle,
+    })
+}
+
 pub fn extract_section_b_pi_bundle(
     rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
     pp_digest: ArkFr,
@@ -587,6 +684,79 @@ mod tests {
         assert!(
             matches!(r, Err(ExtractError::VerifyRejected(_))),
             "wrong num_steps must trigger VerifyRejected: got {r:?}"
+        );
+    }
+
+    /// (CompressedSNARK adapter) — heavy. CompressedSNARK::setup +
+    /// ::prove are ~minutes on a Mini; #[ignore]'d so normal
+    /// cargo test stays fast. Run with --ignored on satyawan-1.
+    ///
+    /// Per SECTION_CD_SCOPING.md: this single test validates
+    /// Sections B + C + D — the CompressedSNARK::verify call covers
+    /// NIFS folds (Section C) + final spartan verifies (Section D)
+    /// in addition to the Section B output-hash checks.
+    #[test]
+    #[ignore = "CompressedSNARK setup + prove are heavy (~minutes); run on satyawan-1"]
+    fn assemble_section_b_pi_bundle_from_compressed_snark_smoke() {
+        use crate::recursive_snark_fixture::{Scalar1, E1, E2};
+        use ff::Field;
+        use nova_snark::nova::{CompressedSNARK, PublicParams, RecursiveSNARK};
+        use nova_snark::provider::hyperkzg::EvaluationEngine;
+        use nova_snark::provider::ipa_pc::EvaluationEngine as IpaEE;
+        use nova_snark::spartan::ppsnark::RelaxedR1CSSNARK;
+        use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
+
+        type S1 = RelaxedR1CSSNARK<E1, EvaluationEngine<E1>>;
+        type S2 = RelaxedR1CSSNARK<E2, IpaEE<E2>>;
+
+        // 1. (pp, rs) build (~tens of seconds for pp).
+        let circuit = TrivialIncrementCircuit;
+        let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+            &circuit, &*S1::ck_floor(), &*S2::ck_floor(),
+        ).expect("pp setup");
+        let z0_nova: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs =
+            RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+                &pp, &circuit, &z0_nova,
+            ).expect("rs new");
+        for _ in 0..2 {
+            rs.prove_step(&pp, &circuit).expect("prove_step");
+        }
+        eprintln!("compressedsnark-adapter: 2-step rs built");
+
+        // 2. Compress (~minutes — this is the heavy part).
+        let (pk_cs, vk_cs) =
+            CompressedSNARK::<_, _, _, S1, S2>::setup(&pp).expect("cs setup");
+        eprintln!("compressedsnark-adapter: setup done");
+        let cs = CompressedSNARK::<_, _, _, S1, S2>::prove(&pp, &pk_cs, &rs)
+            .expect("cs prove");
+        eprintln!("compressedsnark-adapter: prove done");
+
+        // 3. Adapter: verify gate (B+C+D) → extract PIs.
+        let z0_ark = vec![ArkFr::from(0u64)];
+        let bundle = assemble_section_b_pi_bundle_from_compressed_snark(
+            &pp, &vk_cs, &cs, 2, &z0_ark,
+        ).expect("assemble from cs");
+
+        // Sanity: pp_digest non-zero, num_steps echoed, zn[0]=2.
+        assert!(bundle.pp_digest != ArkFr::from(0u64));
+        assert_eq!(bundle.num_steps, ArkFr::from(2u64));
+        assert_eq!(bundle.zn[0], ArkFr::from(2u64),
+            "TrivialIncrementCircuit zn[0] must be 2 after 2 steps from z0=0");
+
+        // Parity: hashes from CompressedSNARK extraction must equal
+        // hashes from the source RecursiveSNARK extraction (both
+        // proofs reference the same l_u_secondary).
+        let (h0, h1) =
+            extract_committed_hashes_via_serde(&rs).expect("legacy extract");
+        assert_eq!(bundle.hash_primary_reinterp, h0,
+            "CompressedSNARK hash_primary must match RecursiveSNARK X[0]");
+        assert_eq!(bundle.hash_secondary_claimed, h1,
+            "CompressedSNARK hash_secondary must match RecursiveSNARK X[1]");
+
+        eprintln!(
+            "COMPRESSED_BUNDLE_VERIFIED pp_digest={} num_steps={} zn[0]={}",
+            bundle.pp_digest, bundle.num_steps, bundle.zn[0]
         );
     }
 
