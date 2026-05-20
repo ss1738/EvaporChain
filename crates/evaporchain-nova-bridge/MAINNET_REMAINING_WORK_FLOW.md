@@ -1132,6 +1132,37 @@ landing given the measurements. Heroic L1 optimization (b) is a
 multi-week gamble; (c) re-architecting is speculative; (d) is
 fine if there are higher-priority tracks elsewhere.
 
+### MAINNET DEPLOYMENT TARGET LOCKED — L2-ONLY (2026-05-20,
+Satyawan's call, post-Foundry-measurement)
+
+**Decision:** EvaporChain mainnet ZK proof verification targets
+**L2 (Optimism / Arbitrum / Base)**, not Ethereum L1. The Foundry
+measurement settled it: L1 verification at the real n_aux=16,384
+costs ~63-88M gas (2-3× over the 30M block limit) with naive
+Solidity; even heavy optimization (~2× speedup) lands ~30-45M,
+borderline-over. L2 gas is 100-1000× cheaper — the same Solidity
+verifier deploys trivially.
+
+**What this decision does and doesn't change:**
+- The CycleFold + ppsnark + Groth16-decider architecture stands.
+- 1C primitives (inc 1-3b-4), accumulator (4a), and primary
+  augmented shell (4b-α + β-1-β-4b) all carry forward unchanged.
+- Section F (4b-β-5) primary NIFS verification is STILL needed
+  for the IVC harness — L1-vs-L2 doesn't affect circuit design.
+- 4b-β-4c (full CF instance absorb in Section R) STILL needed.
+- Audit prep (inc 7) STILL needed.
+- What CHANGES: increment 6's "L1 Solidity templater + Foundry
+  optimization" effort is dropped. L2 deployment is the same
+  Solidity contract, just deployed to a different chain.
+
+**NEXT [code]:** resume 4b-finish: increment 4b-β-4c — Section R
+absorbs the rest of the CF running instance (comm_w/comm_e
+native Grumpkin points + x_vec Bn254Fq limbs). Same pattern as
+β-4b's cf_u_running limb absorb, just extended to multiple fields.
+Then 4b-β-5 Section F (the substantive remaining novel piece —
+primary NIFS fold-relation verification). Then increment 7 audit
+prep / write-up.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
