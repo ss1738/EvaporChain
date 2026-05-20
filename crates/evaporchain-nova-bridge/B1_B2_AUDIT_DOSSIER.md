@@ -477,12 +477,21 @@ The chosen architecture's open work, in dependency order:
        5. `prove_recursion_decider` (Groth16 proof)
        6. EIP-197 codec → 256-byte wire
        7. On-chain `VerkleProofVerifier.verify(proofBytes, 11 PIs)`
-   - **Section B remaining (~minor):**
-     1. CompressedSNARK variant of the adapter — same pattern as
-        `assemble_section_b_pi_bundle` but calls
-        `CompressedSNARK::verify` instead of `RecursiveSNARK::verify`.
-        Per `SECTION_CD_SCOPING.md`, this single function ALSO
-        covers Sections C + D.
+   - **Section B+C+D CompressedSNARK adapter ✅ DONE + VALIDATED
+     2026-05-20 (satyawan-1):**
+     `assemble_section_b_pi_bundle_from_compressed_snark<S1, S2>`
+     calls `cs.verify(vk_cs, num_steps, z0)` as the single binding
+     gate. Per `SECTION_CD_SCOPING.md`: CompressedSNARK::verify
+     covers Sections B + C + D in one call.
+     Test `assemble_section_b_pi_bundle_from_compressed_snark_smoke`
+     PASSED first-try on satyawan-1 (3.18 s total: setup + prove
+     + verify + extract). Output:
+     `COMPRESSED_BUNDLE_VERIFIED pp_digest=15438...249 num_steps=2 zn[0]=2`.
+     Validated that the CompressedSNARK adapter:
+     (a) successfully runs the full verify (B+C+D covered),
+     (b) extracts the expected PI bundle,
+     (c) yields hashes matching the RecursiveSNARK extraction parity,
+     (d) zn[0]=2 confirms the TrivialIncrementCircuit final state.
    - **Sections C + D ✅ NO-OP COLLAPSE (per `SECTION_CD_SCOPING.md`):**
      source re-read of `CompressedSNARK::verify` L965-1025 shows
      all NIFS folds + derandomize + final spartan verifies produce
