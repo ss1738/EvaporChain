@@ -568,27 +568,43 @@ once (1)–(3) hold.
 
 ## 8. Open follow-ups (clearly NOT yet proven)
 
-1. **Byte-level BESPOKE alignment** of the r-from-RO transcript
-   with nova-snark's exact `nifs.rs::prove` ordering (e.g.,
-   absorbing `U2.comm_W_I` too, transcript domain tags). Analogous
-   to `section2_gadget`'s neptune-vs-arkworks reconciliation
-   (already CLOSED). Architectural pattern is in place; bit-level
-   identity is a focused crypto-alignment pass.
+1. **Byte-level BESPOKE alignment** of the in-circuit r-from-RO
+   transcript with nova-snark's exact `nifs.rs::prove` ordering
+   (e.g., absorbing `U2.comm_W_I` too, transcript domain tags).
+   The (b)-1/(b)-2/(b)-2b tests prove end-to-end functionality with
+   real Nova fixtures, but a self-consistent shell-side transcript
+   that DIFFERS from nova-snark's would still pass those tests —
+   bit-level parity is a separate, focused crypto-alignment pass.
+   Analogous to `section2_gadget`'s neptune-vs-arkworks
+   reconciliation (already CLOSED via the byte-correct constants
+   stack).
 2. ~~IVC integration~~ — **CLOSED** at the architectural validation
    level via (b)-1 + (b)-2 + (b)-2b: primary state threading + CF
    accumulator integration + 2-step full chain all box-verified.
-   N-step extensibility is mechanical iteration of the same pattern;
-   the underlying composition (shell ↔ accumulator linkage) is
-   end-to-end-proven on real proofs.
-3. **Solidity decider verifier** (production-quality) for L2
-   deployment. Foundry benchmark `foundry-bench/` is anchor-only;
-   the full ppsnark verifier in Solidity is the L2-deployable
-   artifact. Multi-week crypto + Solidity engineering pass.
-4. **L2 deployment harness** (Optimism / Arbitrum / Base —
-   selection + integration). Depends on (3).
-5. **External audit** of the 1C construction. The discipline
-   pattern in §5 caught four issues during construction; external
-   review covers what construction-time discipline cannot see.
+3. ~~Solidity ppsnark decider verifier~~ — **REMOVED** (pre-
+   delegation framing). The Option (2) direct-ppsnark-on-Solidity
+   path was ELIMINATED at the architecture level (§6 + flow doc
+   line 433); the current 1C path uses Groth16-wrap + delegation
+   per §6b. The on-chain verifier is `VerkleProofVerifier.sol`
+   (~113k-gas EIP-197 4-pair Groth16 check), already validated by
+   the (e)-2 + Section B EVM round-trip tests.
+4. ~~L2 deployment harness~~ — **REMOVED** (depended on 3, also
+   pre-delegation framing). Per §6b: the chosen path is L1 or any
+   L2 (constant ~113k gas — fits everywhere); no special L2
+   harness needed beyond standard Groth16 verifier deployment.
+5. **External audit** of the 1C construction (in-circuit Section A
+   + off-chain delegation soundness + nova-snark `CompressedSNARK::verify`
+   correctness assumption). The discipline pattern in §5 caught
+   NINE issues during construction; external review covers what
+   construction-time discipline cannot see.
+6. **Production hardening — replace `TrivialIncrementCircuit`
+   with EvaporChain's real step circuit.** All current tests use
+   the nova-snark canonical trivial step (z_{i+1} = z_i + 1) for
+   speed. Production deployment threads EvaporChain's actual
+   state-transition circuit through the same adapter +
+   RecursionDeciderCircuit pipeline. The architecture is
+   step-circuit-generic; integration is mechanical but needs
+   the EvaporChain side's R1CS shape pinned.
 
 ## 9. Persisted lessons (auto-memory)
 
