@@ -64,7 +64,7 @@ fn limb_decompose_fq_to_fr(f: Bn254Fq) -> (Bn254Fr, Bn254Fr) {
             if *b {
                 acc += power;
             }
-            power.double_in_place();
+            power = power + power;
         }
         acc
     };
@@ -145,31 +145,46 @@ mod tests {
         assert_ne!(d_base, d_q_changed, "digest must depend on Q");
     }
 
-    /// Limb decomposition is exact: hi<<127 | lo == original Fq.
+    /// Limb decomposition is exact: lo holds bits [0..127], hi
+    /// holds bits [127..254] of the original Fq's LE bit form.
     /// Pins the encoding so 4b-β-2's in-circuit limb gadget has a
-    /// concrete invariant to match.
+    /// concrete bit-level invariant to match. Direct bit-level
+    /// check (no field-arithmetic reconstruction, avoiding the
+    /// Fr↔Fq pow boundary).
     #[test]
     fn limb_decomposition_is_lossless() {
         let mut rng = test_rng();
         for _ in 0..16 {
             let f = Bn254Fq::rand(&mut rng);
             let (lo, hi) = limb_decompose_fq_to_fr(f);
-            // Reconstruct: hi * 2^127 + lo, computed in Fq via the
-            // bigint domain (Fr→Fq via byte transcoding).
-            let lo_fq = {
-                let bytes = lo.into_bigint().to_bytes_le();
-                Bn254Fq::from_le_bytes_mod_order(&bytes)
-            };
-            let hi_fq = {
-                let bytes = hi.into_bigint().to_bytes_le();
-                Bn254Fq::from_le_bytes_mod_order(&bytes)
-            };
-            let two_127 = Bn254Fq::from(2u64).pow([127u64]);
-            assert_eq!(
-                f,
-                hi_fq * two_127 + lo_fq,
-                "(hi << 127) | lo must reconstruct the original Fq"
-            );
+
+            // Re-decompose by bits: lo's LE bits must equal f's
+            // LE bits [0..127]; hi's LE bits must equal [127..].
+            let f_bits = f.into_bigint().to_bits_le();
+            let lo_bits = lo.into_bigint().to_bits_le();
+            let hi_bits = hi.into_bigint().to_bits_le();
+
+            // Compare bit-by-bit on the first 127 LE positions for
+            // lo, and the next 127 for hi. Both lo/hi vecs may be
+            // longer than 127 (depending on field bit width) but
+            // bits beyond the limb's nominal range must be 0.
+            for i in 0..127 {
+                let fb = f_bits.get(i).copied().unwrap_or(false);
+                let lb = lo_bits.get(i).copied().unwrap_or(false);
+                assert_eq!(fb, lb, "lo bit {i}: f={fb}, lo={lb}");
+            }
+            for i in 0..127 {
+                let fb = f_bits.get(127 + i).copied().unwrap_or(false);
+                let hb = hi_bits.get(i).copied().unwrap_or(false);
+                assert_eq!(fb, hb, "hi bit {i} (f bit {}): f={fb}, hi={hb}", 127 + i);
+            }
+            // Padding: both limbs must have 0 in bits ≥127.
+            for (idx, b) in lo_bits.iter().enumerate().skip(127) {
+                assert!(!b, "lo padding bit {idx} must be 0");
+            }
+            for (idx, b) in hi_bits.iter().enumerate().skip(127) {
+                assert!(!b, "hi padding bit {idx} must be 0");
+            }
         }
     }
 }
