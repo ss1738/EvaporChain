@@ -123,7 +123,7 @@ Foundry gas anchors (commit `1917f9e4` + `414c0b26`):
   dominates 99.99%; sumcheck 28k + pairing 113k < 0.01% at the
   1.77-billion-gas Jacobian floor.
 
-## 5. Seven honest mid-arc corrections (the discipline working)
+## 5. Eight honest mid-arc corrections (the discipline working)
 
 Each surfaced via measurement, none buried; each made the story
 tighter, more credible.
@@ -173,6 +173,18 @@ mitigation claim is treated as valid until it has its own Foundry
 measurement.** The original assert-without-measuring lesson now
 applies one level removed — to claims that "we can fix the
 shortfall by X" — not just to the initial anchors.
+
+8. **Mac Mini RAM is 16 GB, NOT 128 GB** (2026-05-20, (d)-4
+   heavy-run attempt). The §7 step 3 / §7 step 4 dossier text
+   asserted "well within 128 GB Mini RAM" without verifying.
+   Reality: `sysctl hw.memsize` on Mini 2 → 16 GiB. The 128 GB
+   box is the Linux training rig `satyawan-1` (verified via
+   `free -h` → 123 GiB total). The (d)-4 background test SIGKILL'd
+   on the Mini at ~60s into Groth16 setup — macOS memory
+   pressure killed it. Rescheduled on satyawan-1. Same framing-
+   error pattern as the (c)-2 ladder: cite a spec without
+   verifying it. Lesson [[lesson-2026-05-20-b1b2-framing-error]]
+   extended.
 
 ## 6. The (c)-2 ladder — what it actually validates (FRAMING CORRECTION 2026-05-20)
 
@@ -335,24 +347,26 @@ The chosen architecture's open work, in dependency order:
    - + Sections B/C/D constant terms when wired: ~+2M cons HyperKZG
      pairing + ~+10k Neptune hashes + ~+5k NIFS folds.
    - **Full circuit at n_aux=16,384: ~43.5M cons.**
-   - Memory budget for Groth16 setup: ~5.6 GB (well within 128 GB
-     Mini RAM).
+   - Memory budget for Groth16 setup: ~5.6 GB naïve extrapolation
+     (matrix storage 4·n·32 B). Real arkworks `circuit_specific_setup`
+     overhead is much higher — actual SIGKILL on Mini 2 at ~60 s into
+     setup (correction #8: Mini RAM is 16 GB, not 128 GB). Heavy run
+     re-scheduled on `satyawan-1` (123 GiB Linux training rig).
    - Falsifiers respected: (d)-1 threshold 1e9 (23× under); (d)-3
      threshold 1e8 (2.4× under).
    - **Result: Groth16-wrap is NOT architecturally blocked, and the
      constraint-count prediction is validated at BOTH the gadget and
      full-circuit levels.**
-4. **Groth16 setup + prove + verify** end-to-end on the Mini
-   cluster. Smoke-validated at n=4 and n=64 (full pipeline 2.67 s
-   release for both). Linear extrapolation to the full
-   n_aux=16,384 suggests setup ~10-60 min on a Mini (was projected
-   "hours" before n=64 measurement — revised down). Prove per
-   proof: ~10-30 min. **(d)-4 heavy run SCHEDULED 2026-05-20** as
-   `groth16_wrapper::recursion_decider_groth16_full_n_aux_16384`
-   (#[ignore]'d, running in background on Mini 2 PID 48244 at
-   commit-time of this dossier update). Reports per-phase elapsed
-   time so the dossier can move from "projected" to "measured" on
-   the final pipeline cost.
+4. **Groth16 setup + prove + verify** end-to-end on
+   `satyawan-1` (123 GiB Linux, not Mac Mini — see correction #8).
+   Smoke-validated at n=4 and n=64 on Mini (full pipeline 2.67 s
+   release for both). **(d)-4 first attempt on Mini 2 FAILED**
+   with SIGKILL ~60 s into Groth16 setup — Mac Mini RAM is 16 GB
+   (`sysctl hw.memsize`), not the 128 GB I had assumed. The 128 GB
+   box is the dedicated Linux training rig `satyawan-1`
+   (`hardware_satyawan_1_linux.md`). Re-scheduled on satyawan-1;
+   actual per-phase timing will replace this paragraph when the
+   run lands.
 5. **EVM round-trip** — emit the Groth16 proof, feed to the
    existing 256-byte EIP-197 wire codec (`eip197.rs`, validated),
    verify on-chain (Foundry test using the existing
