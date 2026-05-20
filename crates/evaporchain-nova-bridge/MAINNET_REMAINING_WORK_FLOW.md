@@ -718,6 +718,37 @@ out-of-circuit reference (any NIFS-induced fold must agree with
 it). After 3b, the full IVC harness (primary RecursiveSNARK ⨉ CF
 accumulator across steps) is increment 4.
 
+### 1C INCREMENT 3b-1 — ✅ SCALAR BRIDGE [V] (2026-05-19, Mini3,
+box, HEAD `8604fb14`, `scalar_adapter ... 9 passed; 0 failed;
+0.01 s`)
+
+Discovered that half the bridge already existed
+(`secondary_to_ark_fq`, value-preserving same-field
+`grumpkin::Scalar → ArkFq`). Added the missing reverse
+[`scalar_adapter::ark_fq_to_secondary`] (mirror of
+`ark_fr_to_primary` template, same-field via LE bytes). Two new
+randomized tests:
+- `ark_fq_secondary_round_trip_random` — 32 random Fq, both
+  directions exact.
+- `ark_fq_to_secondary_preserves_arithmetic` — add + mul commute
+  with the bridge ⇒ **mathematically sound, no modulus mismatch**.
+
+The arkworks ↔ nova-snark<GrumpkinEngine> scalar bridge is now
+GREEN, exact, value-preserving in both directions. The remaining
+3b sub-steps (R1CSShape extraction + NIFS<GrumpkinEngine>::prove
+integration) are mechanical with this primitive in hand.
+
+**NEXT [code]:** increment 3b-2 — extract `R1CSShape` for
+`CycleFoldInstanceCircuit` (synthesize into arkworks
+`ConstraintSystem<Bn254Fq>`, walk `to_matrices()` A/B/C,
+convert each `(row, col, ArkFq)` entry to nova-snark's
+`R1CSShape<GrumpkinEngine>` `(row, col, GrumpkinScalar)` via the
+just-verified `ark_fq_to_secondary`). Box-verify by constructing
+the shape from a real CF instance synthesis and asserting nova-
+snark's `R1CSShape::is_regular_shape()` (sanity) + the shape's
+`num_cons/num_vars` match the increment-2 measurements
+(1,985 / 1,812).
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
