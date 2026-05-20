@@ -170,11 +170,44 @@ measurement.** The original assert-without-measuring lesson now
 applies one level removed — to claims that "we can fix the
 shortfall by X" — not just to the initial anchors.
 
-## 6. Deployment target — L2-only, single-tx-pure-EVM-Grumpkin INFEASIBLE (commits `6e6b0a1f`, `ec51a5a5`, `9b32d4e1`)
+## 6. The (c)-2 ladder — what it actually validates (FRAMING CORRECTION 2026-05-20)
 
-Per Satyawan's post-Foundry decision: EvaporChain mainnet ZK
-verification deploys on L2 (Optimism / Arbitrum / Base), not
-Ethereum L1.
+**Important context this section now makes explicit.** The 1C
+architecture (§2 above) is **nova-snark CompressedSNARK<ppsnark> +
+Groth16 decider wrap**. The on-chain verifier is the Groth16
+verifier (one BN254 pairing check via the 0x08 precompile, ~113k
+gas measured in (c)-1a). On-chain gas at L1 or L2 is NOT the
+mainnet blocker for 1C.
+
+**Direct-ppsnark-on-Solidity ("Option (2)") was ELIMINATED in the
+flow doc before this measurement arc** (`MAINNET_REMAINING_WORK_FLOW.md`
+line 433: "OPTION-(2)-SOLIDITY GAS ESTIMATE — ❌ ELIMINATED"). The
+analytical anchor at the time was ~10⁸-10⁹ gas at n=131,072.
+
+**Re-reading the (c)-2a/b/c/d measurements:** they
+**independently re-confirm the Option (2) elimination at the real
+n=16,384** — affine 2.07B, Jacobian 1.77B (1.17× speedup not 40×),
+BN254 precompile 319M (5.5× speedup not 22×), n_aux scaling
+linear with no ppsnark floor. The measurements are valid and
+useful as audit-grade secondary validation of an
+already-eliminated path. They are NOT a deployment-path analysis
+for 1C — that was a framing error introduced mid-arc.
+
+**1C's actual deployment target:** Ethereum L1 (or any L2),
+single-tx, ~113k gas. The on-chain side is not the mainnet
+blocker. The next-step work for 1C is on the PROVING side: build
+the Groth16-wrap circuit around `CompressedSNARK<ppsnark>::verify`,
+measure its constraint count, run setup + prove on the Mini cluster,
+then connect to the existing `groth16_wrapper.rs` (currently
+keying over the dead `NovaVerifierCircuit`, needs re-pointing).
+
+The (R3)–(R6) deployment options enumerated below remain valid as
+**FALLBACK paths IF the Groth16-wrap circuit itself hits an
+architectural snag** (e.g., the native Grumpkin MSM in BN254-Fr
+turns out to be too large for tractable Groth16 prove). They are
+not the primary path.
+
+### Fallback ladder (only if Groth16-wrap hits a wall)
 
 **Revised (c)-2b-aware verdict:** the Pippenger-measured floor at
 n=16,384 is ~1.77B gas with Jacobian-projective Grumpkin (1.17×
@@ -260,7 +293,38 @@ precompile (expensive on-chain settlement, ~3,300 gas/op pure-EVM).
 The earlier "in-circuit native" win pays for itself with an
 "on-chain economic" cost that the (c)-2 measurements now quantify.
 
-## 7. Open follow-ups (clearly NOT yet proven)
+## 7. Actual 1C remaining mainnet work
+
+The chosen architecture's open work, in dependency order:
+
+1. **Re-point `groth16_wrapper.rs`.** Currently keys Groth16 over
+   `NovaVerifierCircuit` (`verifier_circuit.rs`) = the dead
+   hand-rolled raw-RecursiveSNARK verifier (S4b 203M-cons path).
+   Must be re-pointed at a circuit that verifies the
+   `CompressedSNARK<E1,E2,_,S1=ppsnark,S2=ppsnark>` natively.
+2. **Build the CompressedSNARK-verifier circuit.** The dominant
+   cost is the secondary IPA's `ck_hat = CE::commit(&ck, &s, 0)`
+   MSM: size n_aux=16,384 on Grumpkin. On the native cycle
+   (R1CS over BN254-Fr, Grumpkin's base field), this is ~n_aux
+   native Grumpkin EC point-adds (Pippenger or bucket method) +
+   sumcheck rounds + HyperKZG opening verify (constant). Rough
+   range: 230k–41M constraints depending on MSM realization.
+3. **Constraint-count measurement** of the verifier circuit (the
+   discipline pattern: probe with `cs.num_constraints()` BEFORE
+   trying to build Groth16 setup on it).
+4. **Groth16 setup + prove + verify** end-to-end on the Mini
+   cluster.
+5. **EVM round-trip** — emit the Groth16 proof, feed to the
+   existing 256-byte EIP-197 wire codec (`eip197.rs`, validated),
+   verify on-chain (Foundry test using the existing
+   BN254-pairing precompile path validated in (c)-1a).
+6. **External audit** of the closed circuit.
+
+(1) and (2) are the actual remaining cryptographic engineering;
+(3) is the discipline gate; (4)–(6) are mechanical once (1)–(3)
+hold.
+
+## 8. Open follow-ups (clearly NOT yet proven)
 
 1. **Byte-level BESPOKE alignment** of the r-from-RO transcript
    with nova-snark's exact `nifs.rs::prove` ordering (e.g.,
@@ -284,7 +348,7 @@ The earlier "in-circuit native" win pays for itself with an
    pattern in §5 caught four issues during construction; external
    review covers what construction-time discipline cannot see.
 
-## 8. Persisted lessons (auto-memory)
+## 9. Persisted lessons (auto-memory)
 
 - [`lesson_2026_05_19_zk_size_assert_without_measuring.md`] — RULE:
   no ZK circuit-size claim without a D.3-style `cs.num_constraints()`
@@ -296,7 +360,7 @@ The earlier "in-circuit native" win pays for itself with an
 Both lessons are companion-linked and codify the calibration
 discipline this arc's four corrections demanded.
 
-## 9. How to read the actual code
+## 10. How to read the actual code
 
 Reading order for a reviewer:
 1. `MAINNET_REMAINING_WORK_FLOW.md` (live status, full commit-by-
@@ -314,7 +378,7 @@ Reading order for a reviewer:
 
 All other modules are dependencies of these five.
 
-## 10. r-derivation transcript SPEC (for auditor)
+## 11. r-derivation transcript SPEC (for auditor)
 
 **Honest framing first:** the (a) "BESPOKE alignment" item was
 originally scoped as byte-level parity with
