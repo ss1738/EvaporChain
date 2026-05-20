@@ -63,6 +63,7 @@ practical.
 | (c)-2c | `foundry-bench/BN254G1.sol` + BenchBN254G1 | EIP-196 BN254 G1 precompile gas anchor (R4 mitigation measured) | 5/5 first-try | `5f6dfe1f` |
 | (c)-2d | `cyclefold_n_aux_scaling_probe` | ppsnark n_aux scaling vs R1CS size (R5 falsifier) | 5/5 shapes (8/32/128/512/2048 cons); falsifier did NOT fire | `de9a9aa1` |
 | (d)-1 | `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit` | Groth16-wrap circuit cs.num_constraints() probe (§7 step 3 discipline gate) | 4/4 k-values (1/2/4/8); per-base=2,533 cons; total at n_aux=16,384 ~43.5M cons | (existing, re-run 2026-05-20) |
+| (d)-2 | `groth16_wrapper::recursion_decider_groth16_roundtrip_n4_smoke` | Groth16 setup→prove→verify end-to-end on RecursionDeciderCircuit (§7 step 1) | 1/1 first-try, 0.25 s release | `2785f818` |
 
 **Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
@@ -299,17 +300,26 @@ The earlier "in-circuit native" win pays for itself with an
 
 The chosen architecture's open work, in dependency order:
 
-1. **Re-point `groth16_wrapper.rs`.** Currently keys Groth16 over
-   `NovaVerifierCircuit` (`verifier_circuit.rs`) = the dead
-   hand-rolled raw-RecursiveSNARK verifier (S4b 203M-cons path).
-   Must be re-pointed at a circuit that verifies the
-   `CompressedSNARK<E1,E2,_,S1=ppsnark,S2=ppsnark>` natively.
-2. **Build the CompressedSNARK-verifier circuit.** The dominant
-   cost is the secondary IPA's `ck_hat = CE::commit(&ck, &s, 0)`
-   MSM: size n_aux=16,384 on Grumpkin. On the native cycle
-   (R1CS over BN254-Fr, Grumpkin's base field), this is ~n_aux
-   native Grumpkin EC point-adds (Pippenger or bucket method) +
-   sumcheck rounds + HyperKZG opening verify (constant).
+1. **✅ DONE 2026-05-20 (commit `2785f818`):** Re-point
+   `groth16_wrapper.rs`. Added parallel `setup_recursion_decider` /
+   `prove_recursion_decider` / `verify_recursion_decider` functions
+   keying over the LIVE `RecursionDeciderCircuit` (Section A wired).
+   Smoke test `recursion_decider_groth16_roundtrip_n4_smoke` passes
+   first-try (Groth16 setup → prove → verify at n=4 real Grumpkin
+   bases, 0.25 s release-mode). Dead `NovaVerifierCircuit` functions
+   left in place during transition (existing `#[deprecated]` marker).
+2. **PARTIALLY DONE — Section A LIVE; B/C/D deferred stubs.**
+   `RecursionDeciderCircuit` (`recursion_decider_circuit.rs`)
+   already exists with:
+   - **Section A LIVE:** secondary IPA `ck_hat = Σ sᵢ·ckᵢ + r·h` MSM
+     binding. Box-verified (positive, negative non-vacuity, length-
+     mismatch malformed-witness, real-bases real-tensor pipeline).
+     ~26.7M cons at n=10,554; ~43.5M at n=16,384 per (d)-1.
+   - **Sections B/C/D deferred stubs:** Neptune hash anchors, NIFS
+     folds + derandomize, primary HyperKZG pairing. All constant-size
+     by source analysis (flow doc source-read #3); `sections_bcd_wired:
+     bool` honesty flag prevents Section-A-only being mistaken for a
+     complete decider.
 3. **(d)-1 ✅ MEASURED 2026-05-20** (existing probe
    `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
    per-base cons = **2,533**, intercept 2,521. Extrapolation:
