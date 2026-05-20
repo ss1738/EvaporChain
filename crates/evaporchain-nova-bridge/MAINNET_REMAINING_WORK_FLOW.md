@@ -765,14 +765,46 @@ rows lost, no off-by-one in IO accounting).
   per row — strict ascending col order. Arkworks `to_matrices`
   doesn't sort; bridge must.
 
-**NEXT [code]:** increment 3b-3 — instantiate
-`RelaxedR1CSInstance<GrumpkinEngine>` + `RelaxedR1CSWitness<
-GrumpkinEngine>` from a real CF instance witness + commitment
-(reuse: this bridge for shape, `pedersen_commit_grumpkin` for
-witness commitment, `ark_fq_to_secondary` for scalars).
-3b-4 = `NIFS::<GrumpkinEngine>::prove` integration + verify the
-returned fold agrees with 3a's `fold_cf_step` reference (any
-mismatch ⇒ bug in our composition vs nova-snark's NIFS semantics).
+### 1C INCREMENT 3b-3 — ✅ SATISFIED (shape, U, W) ARTIFACTS [V]
+(2026-05-20, Mini3, box, HEAD `0c929866`,
+`cyclefold_r1cs_bridge ... 2 passed; 0 failed; 0.59 s`)
+
+`arkworks_cs_to_nova_grumpkin_satisfied_pair(circuit, ck_label) →
+NovaGrumpkinR1CSArtifacts { shape, ck, instance, witness }` —
+synthesise in default Prove mode (witness + instance assignments
+populated), bridge matrices via [3b-2], extract assignments via
+`ark_fq_to_secondary`, setup Pedersen `CK` over `GrumpkinEngine::CE`,
+build `R1CSWitness::new` (randomises `r_W`), commit via
+`witness.commit(&ck)` (uses the internal `r_W` so `comm_W` matches),
+build `R1CSInstance::new(&shape, &comm_w, &X)`. **The soundness
+gate:** real `CycleFoldInstanceCircuit` through the full bridge ⇒
+`shape.is_sat(&ck, &U, &W)` accepts.
+
+**Caught and fixed a real column-layout bug the dims-only test
+could not:** arkworks indexes matrix cols `[ONE, X (num_io),
+W (num_vars)]` but nova-snark's `is_sat` (L510) builds
+`z = [W, ONE, X]`. Aggregate dims match either way, but per-row col
+indices were nonsense by layout ⇒ `Az·Bz ≠ Cz` ⇒ `UnSat: R1CS is
+unsatisfiable` on first run. Applied remap to both convert closures
+(0→num_vars, 1..=num_io→num_vars+col, num_io+1..→col-num_io-1) +
+re-sort (cols shuffled). Exactly the silent column-convention
+divergence the is_sat gate was designed to catch.
+
+The layered bridge is now end-to-end sound:
+- 3b-1: scalar `ArkFq ↔ SecondaryScalar` (value-preserving).
+- 3b-2: arkworks `ConstraintSystem` → nova-snark `R1CSShape`
+  (dims preserved exactly).
+- 3b-3: + assignments + Pedersen commitment → `(shape, U, W)`
+  pair that `is_sat` accepts.
+
+**NEXT [code]:** increment 3b-4 — call `NIFS::<GrumpkinEngine>::
+prove(ck, ro_consts, pp_digest, &shape, &U_running, &W_running,
+&u_incoming, &w_incoming)` for a real cross-curve fold of two
+bridged CF instances. Verify the returned folded `(U', W')` is
+itself satisfied (`shape.is_sat_relaxed(...)`), AND that its
+`(U'.comm_W, U'.comm_E, U'.u, U'.X)` agree with 3a's
+`fold_cf_step` applied to the corresponding inputs. Any mismatch ⇒
+bug in our composition vs nova-snark's NIFS semantics.
 
 ---
 
