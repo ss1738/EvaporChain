@@ -55,10 +55,14 @@ practical.
 | (b)-1 | `cyclefold_shell_chain` | Primary state threading across 2 IVC steps | 1/1 (12.69 s) | `d9ce77b1` |
 | (b)-2 | (same) | CF accumulator integration step-0 end-to-end | 1/1 (8.01 s) | `c98fd972` |
 | (b)-2b | `s4_secondary_extract::extract_relaxed_running_inst` + chain test | Full 2-step CF chain (extractor + step-1 chaining) | 1/1 (14.99 s) | `36de2ea4` |
+| (c)-1a | `foundry-bench/Bn254Pairing.sol` + bench | EIP-197 2-pair gas anchor | 1/1 (113,324 gas) | (within `1917f9e4` line) |
+| (c)-1b | `foundry-bench/SumcheckRound.sol` + bench | Cubic sumcheck round gas anchor | 1/1 (709 gas/round, ~28k for 40 rounds) | (within `1917f9e4` line) |
+| (c)-1c | `foundry-bench/GrumpkinMSM.sol` + BenchMSM | Naive MSM upper-bound (worst-case ceiling) | 3/3 (37B gas at n=16,384, 590× Pippenger best) | `414c0b26` |
 
-**Aggregate:** 93 commits this arc (`436d2e2d → 5be5db90`); every
+**Aggregate:** 94 commits this arc (`436d2e2d → 414c0b26`); every
 primitive box-validated; **fourteen consecutive first-try passes**
-on the 4b shell-extension + (b) IVC integration micro-arcs.
+on the 4b shell-extension + (b) IVC integration micro-arcs, plus
+three Foundry-side gas-decomposition passes ((c)-1a/b/c).
 
 ## 4. Final shell measurements
 
@@ -76,10 +80,17 @@ Real ppsnark proof n_aux (commit `da3735a1`):
 - **n_aux = 2¹⁴ = 16,384** (measured, not predicted)
 - 8× reduction from option-2 dead-end (2¹⁷)
 
-Foundry gas anchors (commit `1917f9e4`):
+Foundry gas anchors (commit `1917f9e4` + `414c0b26`):
 - Grumpkin point-add: 3,834 gas
 - Grumpkin 256-bit scalar-mul: 1,545,603 gas
-- Pippenger MSM at n=16,384: best ~62.7M, realistic ~87.8M
+- Bn254Fq mul: 113 gas; inv: 1,993 gas; eval_deg3: 399 gas
+- One cubic sumcheck round: 709 gas → 40-round bound ~28,360 gas
+- EIP-197 BN254 2-pair check: 113,324 gas
+- **Naive MSM** at n=16,384 (linear extrap from n=16): ~37 BILLION gas
+  (~1,200× L1 block — confirms Pippenger non-negotiable)
+- **Pippenger MSM** at n=16,384: best ~62.7M, realistic ~87.8M
+- Full ppsnark verifier (composition): ~63M (Pippenger best) / ~88M
+  (realistic) — IPA MSM dominates 99.77%, sumcheck + pairing < 0.25%
 
 ## 5. Four honest mid-arc corrections (the discipline working)
 
