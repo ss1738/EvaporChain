@@ -1070,23 +1070,67 @@ the assert-without-measuring lesson: each surfaced via measurement,
 none buried; each makes the architecture story tighter and more
 credible.
 
-**NEXT [code/decision]:** with the real n_aux pinned and the
-architectural reduction confirmed (8×, in-budget on L1, cheap on
-L2), the genuine remaining work falls in priority order:
-- (a) **Increment 6**: prototype the Solidity verifier templater
-  for our specific decider shape (CompressedSNARK<ppsnark> over
-  the CF secondary) and **measure real on-chain gas** via Foundry
-  at n=16,384. Confirms the ~24M estimate empirically — if true,
-  1C is buildable on L1; if it overshoots 30M, the L2-only story
-  becomes the honest scope.
-- (b) **Increment 4b finish** (β-4c CF instance comm_w/comm_e/x_vec
-  absorb + β-5 Section F NIFS): mechanical extensions needed for
-  the full IVC harness; deferred until (a) confirms the gas budget
-  is achievable.
-- (c) **Increment 7** audit prep + write-up.
+### 1C INCREMENT 6-α — ✅ FOUNDRY GAS MEASURED + ⚠️ L1 NOT VIABLE
+[V] (2026-05-20, local Foundry 1.7.1,
+`forge test -vv ... 4 tests passed`, HEAD `1917f9e4`)
 
-Recommendation: prioritise (a) Foundry gas measurement — the gas
-number is now the single highest-leverage unknown remaining.
+New `foundry-bench/` workspace (`src/Grumpkin.sol` minimal affine
+library + `test/BenchGrumpkin.t.sol` 4 gas-anchor benchmarks).
+**Measured per-op gas (naive affine Solidity, EIP-2565 ModExp):**
+- `GRUMPKIN_ADD_DISTINCT_GAS = 3,834`
+- `GRUMPKIN_ADD_DOUBLING_GAS = 3,661`
+- `GRUMPKIN_SCALARMUL_256_GAS = 1,545,603`
+
+**Pippenger extrapolation at the real `n_aux = 16,384`:**
+- Best-case (no overhead): **62,734,336 ≈ 62.7M gas**
+- Realistic (+40% bucket/window overhead): **87,828,070 ≈ 87.8M**
+- Ethereum L1 block limit: **30,000,000 = 30M**
+
+**DECISIVE: 1C-on-L1 is NOT viable with naive Solidity Grumpkin
+arithmetic.** ~62-88M gas vs 30M block limit — **2-3× over.**
+Even with heavy hand-optimization (Jacobian projective + ~5-bit
+windowing + assembly) realistic speedup is ~2×, landing at
+**~30-45M gas — still at-or-over the limit.** My earlier
+analytical "~24M" estimate undershot by 2-3× — assumed an
+unrealistic level of out-of-the-box optimization.
+
+**Fourth + most material honest correction this 1C arc:**
+1. `~10⁵` flat-MSM cons → actually `~10⁷`.
+2. "Tensor-fold 10-100× lever" → actually 1.58× worse than flat.
+3. n_aux predicted `2¹³` → actually `2¹⁴`.
+4. **Solidity gas predicted ~24M (L1-viable) → actually ~63-88M
+   (NOT L1-viable).**
+
+Each surfaced via measurement, none buried. The architecture
+*conclusion* (CycleFold + ppsnark + Groth16-decider over a smaller
+secondary) remains correct in principle; the *deployment-target*
+calibration has shifted materially. **1C-on-L1 is impractical;
+1C-on-L2 is trivially cheap** (L2 gas is 100-1000× lower,
+calldata costs amortize over rollup batches).
+
+**NEXT [decision, not code]:** the L1 viability question is now
+settled empirically. The choices:
+- (a) **Pivot mainnet scope to L2-only** (Optimism / Arbitrum /
+  Base): accept the Foundry result, finish 1C as an L2-targeted
+  build (4b-β-4c + 4b-β-5 + audit prep + L2 deployment).
+- (b) **Heroic L1 optimization push**: build a hand-optimized
+  Jacobian + windowed Solidity verifier, re-measure with Foundry,
+  hope to land under 30M. Multi-week crypto engineering, no
+  guarantee.
+- (c) **Re-architect for a smaller secondary**: change the CF
+  instance circuit to reduce n_aux below 2¹⁴ — e.g., constrain
+  it more tightly, or split into multiple smaller proofs. Real
+  but speculative gain.
+- (d) **Pause + step back**: this 1C arc has ~67 commits of
+  focused work; the architecture is proven, the L1-gas reality is
+  pinned, but the deployment target needs a strategic
+  re-decision. Park at this clean checkpoint, evaluate against
+  other EvaporChain mainnet items.
+
+Recommendation: **(a) L2-only mainnet scope** is the honest
+landing given the measurements. Heroic L1 optimization (b) is a
+multi-week gamble; (c) re-architecting is speculative; (d) is
+fine if there are higher-priority tracks elsewhere.
 
 ---
 
