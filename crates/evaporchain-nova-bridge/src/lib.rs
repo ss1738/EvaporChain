@@ -120,6 +120,7 @@ pub mod neptune_sponge;
 pub mod cyclefold_aux_circuit;
 pub mod cyclefold_fold_homomorphism;
 pub mod cyclefold_instance_circuit;
+pub mod cyclefold_ivc_accumulator;
 pub mod cyclefold_r1cs_bridge;
 pub mod ipa_ck_fold_gadget;
 pub mod ipa_s_tensor;
