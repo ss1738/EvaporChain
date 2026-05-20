@@ -1277,16 +1277,64 @@ its own pass.
 
 **Ninth consecutive first-try pass this micro-arc.**
 
-**NEXT [code]:** increment 4b-β-5-δ — extend `cf_x_digest` to bind
-MULTIPLE cross-curve scalar-mul tuples. The primary NIFS fold
-needs two delegated scalar-muls (`r·comm_W_I` AND `r·comm_T`); the
-shell currently exposes only ONE via `(p_step, s_step, q_step)` /
-`cf_x_digest`. Extension: a `Vec<(P, s, Q)>` (or fixed `[;2]`)
-absorbed into Section C's hash, paired with the matching aux-side
-attestations. After β-5-δ: flip `sections_wired:true` (full shell
-structurally done — modulo the byte-level NIFS transcript parity
-that's the section2-style BESPOKE follow-up). Then increment 7
-audit prep / write-up. L2 deployment downstream.
+### 1C INCREMENT 4b-β-5-δ + 4b-β COMPLETE ✅ [V] (2026-05-20,
+Mini3, box, HEADs `4bcd9d3c` + `b1e31951`,
+`cyclefold_primary_augmented_circuit + cyclefold_cf_x_digest ...
+20+15 passed; 0 failed; eleventh first-try this micro-arc)`
+
+**β-5-δ:** new `enforce_cf_x_digest_pair` + `compute_cf_x_digest_
+pair_native` (cf_x_digest now binds TWO cross-curve scalar-mul
+tuples — cf1: `r·comm_W_I`, cf2: `r·comm_T`, matching Sonobe's
+`circuits.rs` cf1/cf2 pattern). Shell refactored: `(p_step, s_
+step, q_step)` → `(t1_*, t2_*)`. Section C uses pair variant.
+Oracle-match gate + `shell_section_c_wrong_t2_p_breaks_cs` pass.
+PRIMARY_SHELL_PROBE: 47,597 cons / 41,580 witness / 11 instance
+(+7,613 cons; less than naive 2× via constraint-system overlap).
+
+**`sections_wired` flipped: false → true.** Existing
+`shell_synthesises_and_cs_is_satisfied` updated to assert the new
+state; 15/15 still pass after the flip.
+
+**1C-4b structurally COMPLETE.** All four sections of the
+`PrimaryAugmentedCircuitShell` wired and non-vacuously gated:
+
+| Section | Binding | Cons |
+|---|---|---|
+| Step (β-α) | `z_{i+1} = z_i + 1` (stub F) | 1 |
+| C (β-3 + β-5-δ) | cf_x_digest pair (cf1+cf2) | ~13.9k |
+| R (β-4 + β-4b + β-4c + β-4d) | 54-element transcript hash | ~29.9k |
+| F (β-5-α + β-5-β + β-5-γ) | native fold (u+X) + r-from-RO with comm_T | ~3.8k |
+
+**Honest scope caveat preserved inline:** byte-level parity with
+nova-snark's exact `nifs.rs::prove` transcript ordering (e.g.,
+absorbing `U2.comm_W_I` into the r-RO too) is a separate BESPOKE-
+style alignment follow-up, analogous to `section2_gadget`'s
+neptune-vs-arkworks reconciliation. The architectural pattern is
+landed; bit-level reconciliation is its own pass.
+
+**Eleven consecutive first-try passes this 4b shell-extension
+micro-arc** (β-1 → β-2 → β-3 → β-4 → β-4b → β-4c → β-4d → β-5-α →
+β-5-β → β-5-γ → β-5-δ + flip). Careful staging (oracle-first
+gadget design + reuse of BESPOKE-aligned Neptune + per-field
+non-vacuity gating) earned consistent dividends.
+
+**NEXT [code/decision]:** with the structural shell complete the
+remaining work cleanly factors:
+- (a) **Increment 4b-β-ε: BESPOKE alignment** — make the r-from-RO
+  transcript byte-identical to `nifs.rs::prove`'s ordering (incl.
+  absorbing `U2.comm_W_I` and any other elements). Required for
+  *true* cryptographic interoperability with stock nova-snark.
+- (b) **Wire shell into IVC harness** — compose 4b shell with 4a's
+  fold accumulator across multiple steps. Box-verify the running
+  primary + CF instances evolve correctly N steps.
+- (c) **Increment 7 audit prep + write-up.**
+- (d) **L2 deployment** of the validated decider on Optimism /
+  Arbitrum / Base (the locked target post-Foundry).
+
+Recommendation: prioritise (c) audit prep next — gathers all
+artifacts in one place for review, surfaces any gaps. (a) BESPOKE
+alignment becomes a focused crypto-pass; (b) IVC integration
+becomes a focused engineering pass; (d) deployment after both.
 
 ---
 
