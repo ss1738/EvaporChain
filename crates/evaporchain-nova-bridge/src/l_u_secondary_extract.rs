@@ -210,6 +210,55 @@ fn parse_primary_or_lossy_scalar(
     Ok(secondary_to_ark_fr_lossy(sec))
 }
 
+/// Decompress a nova `bn256::Affine` GroupEncoding hex blob (single
+/// 32-byte string from JSON), returning the (x, y) coords as ArkFr
+/// via byte-level Fq→Fr lossy reinterpretation (the in-circuit hash
+/// absorbs these as opaque Bn254 Fr).
+fn decompress_comm_w_as_fr(s: Option<&str>) -> Result<(ArkFr, ArkFr), ExtractError> {
+    use ark_ff::PrimeField as ArkPrimeField;
+    use halo2curves::group::GroupEncoding;
+    use halo2curves::bn256::G1Affine as Bn256Affine;
+
+    let s = s.ok_or_else(|| ExtractError::MissingField(
+        "r_U_primary.comm_W.comm (compressed point hex)".into(),
+    ))?;
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    let bytes = hex::decode(stripped).map_err(|e| ExtractError::HexParseFailed {
+        index: 999,
+        reason: format!("comm_W hex decode: {e}"),
+    })?;
+    if bytes.len() != 32 {
+        return Err(ExtractError::HexParseFailed {
+            index: 999,
+            reason: format!("comm_W expected 32 bytes, got {}", bytes.len()),
+        });
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    let repr: <Bn256Affine as GroupEncoding>::Repr = arr.into();
+    let a = Option::<Bn256Affine>::from(Bn256Affine::from_bytes(&repr))
+        .ok_or_else(|| ExtractError::HexParseFailed {
+            index: 999,
+            reason: "could not decompress bn256-G1 comm_W".into(),
+        })?;
+
+    // Reinterpret each Fq coord as ArkFr via 32-byte LE round-trip.
+    // For the in-circuit hash this is the byte-level absorption
+    // pattern nova-snark uses (base_as_scalar via byte identity).
+    let fq_to_fr_lossy = |fq_repr: [u8; 32]| -> ArkFr {
+        // Read as little-endian ArkFr; reduces mod r if needed
+        // (ArkFr::from_le_bytes_mod_order is the documented lossy path).
+        ArkFr::from_le_bytes_mod_order(&fq_repr)
+    };
+    let x_repr = halo2curves::ff::PrimeField::to_repr(&a.x);
+    let y_repr = halo2curves::ff::PrimeField::to_repr(&a.y);
+    let mut x_bytes = [0u8; 32];
+    x_bytes.copy_from_slice(x_repr.as_ref());
+    let mut y_bytes = [0u8; 32];
+    y_bytes.copy_from_slice(y_repr.as_ref());
+    Ok((fq_to_fr_lossy(x_bytes), fq_to_fr_lossy(y_bytes)))
+}
+
 pub fn extract_section_b_pi_bundle(
     rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
     pp_digest: ArkFr,
@@ -236,21 +285,21 @@ pub fn extract_section_b_pi_bundle(
         2,
     )?;
 
-    // 3. r_U_primary.comm_W.{x,y} and r_U_primary.X[0..2].
+    // 3. r_U_primary.comm_W.comm (compressed point) + X[0..2].
+    //    The comm is serialized as ONE 32-byte hex string (nova's
+    //    bn256::Affine GroupEncoding), not separate x/y JSON fields.
+    //    Decompress then byte-reinterpret each Fq coord as Fr
+    //    (the in-circuit hash absorbs them as "opaque Bn254 Fr").
     let r_u_p = v
         .get("r_U_primary")
         .ok_or(ExtractError::MissingPath)?;
     let comm_w = r_u_p
         .get("comm_W")
         .ok_or_else(|| ExtractError::MissingField("r_U_primary.comm_W".into()))?;
-    let r_U_primary_comm_x = parse_primary_or_lossy_scalar(
-        comm_w.get("x").and_then(|v| v.as_str()),
-        3,
-    )?;
-    let r_U_primary_comm_y = parse_primary_or_lossy_scalar(
-        comm_w.get("y").and_then(|v| v.as_str()),
-        4,
-    )?;
+    let (r_U_primary_comm_x, r_U_primary_comm_y) =
+        decompress_comm_w_as_fr(
+            comm_w.get("comm").and_then(|s| s.as_str()),
+        )?;
     let r_u_p_x = r_u_p
         .get("X")
         .and_then(|x| x.as_array())
