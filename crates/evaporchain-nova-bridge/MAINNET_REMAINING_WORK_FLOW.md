@@ -1223,17 +1223,47 @@ not the linear combinations themselves.
 
 **Seventh consecutive first-try pass this micro-arc.**
 
-**NEXT [code]:** increment 4b-β-5-β — wire the **r-from-RO
-derivation**: today `primary_r` is a witness, but in production
-it must be derived from absorbing the previous step's transcript
-(via Section R's `current_step_hash`) + the comm_T commitment +
-the incoming step's hash, then squeezing. Same Neptune
-infrastructure both Section C and Section R use. After β-5-β:
-4b-β-5-γ would EXTEND `cf_x_digest` to bind MULTIPLE cross-curve
-scalar-mul tuples (the primary fold needs `r·comm_W_I` AND
-`r·comm_T`, not just one — currently shell exposes only one).
-Then `sections_wired:true`. Then increment 7 audit prep /
-write-up. L2 deployment downstream.
+### 1C INCREMENT 4b-β-5-β — ✅ r-FROM-RO DERIVATION LIVE [V]
+(2026-05-20, Mini3, box, HEAD `0f27b584`,
+`cyclefold_primary_augmented_circuit ... 13 passed; 0 failed;
+11.48 s`)
+
+`primary_r` is no longer a free witness — bound in-circuit to
+`Neptune250([pp_hash, previous_step_hash, X_I[0], X_I[1]])` via
+`enforce_neptune_sponge_primary` (same BESPOKE-aligned
+infrastructure Sections C/R use). A malicious prover can no
+longer pick an arbitrary fold challenge.
+
+New struct field `previous_step_hash` (witness). Native helper
+`compute_primary_r_native` mirrors the gadget. `consistent_step`
+now uses the real derived `r` and recomputes `u_new`/`X_new`
+consistently. Refactored `primary_x_i` into a shared `[FpVar;2]`
+between the X_new fold and the r-RO absorb (avoids duplicate
+witness allocation).
+
+New non-vacuity gate `shell_section_f_wrong_previous_step_hash_
+breaks_cs` passed first try.
+
+**`PRIMARY_SHELL_PROBE: 37,524 cons / 32,800 witness / 11
+instance`** — r-RO sponge adds **+1,355 cons** (matches Section
+R's native-IO-only +1,361 baseline; one more 4-element Neptune
+absorb).
+
+**Eighth consecutive first-try pass this micro-arc.**
+
+**NEXT [code]:** increment 4b-β-5-γ — extend the r-from-RO
+derivation to absorb `comm_T` (the cross-term commitment, BN254
+G1 point — non-native here; needs limb decomp of the Bn254Fq
+coords just like Section C's P.x/P.y treatment). This completes
+the standard `nova_snark::nifs::NIFS::prove` RO derivation, after
+which `primary_r` will be bound to EVERYTHING `nifs.rs::prove`
+binds (modulo any byte-level transcript-domain-tag differences
+worth verifying against the nova-snark reference). Then β-5-δ
+extends `cf_x_digest` to bind MULTIPLE cross-curve scalar-mul
+tuples (primary fold needs r·comm_W_I AND r·comm_T; shell
+currently exposes only one). After all wired:
+`sections_wired:true`. Then increment 7 audit prep / write-up.
+L2 deployment downstream.
 
 ---
 
