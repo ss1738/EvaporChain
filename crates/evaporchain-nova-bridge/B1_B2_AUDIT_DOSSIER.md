@@ -66,6 +66,8 @@ practical.
 | (d)-2 | `groth16_wrapper::recursion_decider_groth16_*` | Groth16 setup→prove→verify on RecursionDeciderCircuit (§7 step 1) + Groth16-level non-vacuity (tampered witness rejected) + n=64 scaling smoke | 3/3 first-try, 2.67 s release for all three | `2785f818`+`e231282e` |
 | (d)-3 | `recursion_decider_circuit::setup_shape_cons_scaling_validates_d1_prediction` | Circuit-level cs.num_constraints scaling at n in {4,16,64,256,1024} — validates (d)-1 gadget-level fit transfers to full circuit | 1/1 first-try, 4.36 s release; per_base=2,533 EXACT match; predicted n_aux=16,384 → 41,503,214 cons | `190d51a3` |
 | (d)-4 | `groth16_wrapper::recursion_decider_groth16_full_n_aux_16384` | Production-scale Groth16 setup+prove+verify at n_aux=16,384 (satyawan-1 Linux, 128 GB) | 1/1 first-try on satyawan-1 (Mini failed SIGKILL — correction #8); setup 3m1s, prove 3m22s, verify 1.82ms, total 6m24s | `8606b7e0` |
+| (e)-1 | `groth16_wrapper::recursion_decider_groth16_eip197_roundtrip` | EIP-197 wire-format codec round-trip on RecursionDeciderCircuit proof | 1/1 first-try, 0.25 s release; 256-byte length pin, encode↔decode byte-identical, decoded proof verifies | (within 1C arc) |
+| (e)-2 | `RecursionDeciderVerifierTest` (Foundry) + `recursion-decider-fixture-emit` | EVM round-trip — real RecursionDeciderCircuit proof verifies on-chain via VerkleProofVerifier.sol (EIP-197 4-pair) | 2/2 first-try; proofAccepted gas 248,512; tamperedProofByte rejected | (e)-2 commit cluster |
 
 **Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
@@ -374,10 +376,20 @@ The chosen architecture's open work, in dependency order:
    16 GB Mini RAM, not 128 GB); the re-run on satyawan-1 landed
    first-try with no surprises. The Groth16-wrap pipeline is
    end-to-end validated at production scale.
-5. **EVM round-trip** — emit the Groth16 proof, feed to the
-   existing 256-byte EIP-197 wire codec (`eip197.rs`, validated),
-   verify on-chain (Foundry test using the existing
-   BN254-pairing precompile path validated in (c)-1a).
+5. **(e)-1 + (e)-2 ✅ DONE 2026-05-20** — EVM round-trip closed
+   end-to-end at smoke scale (n=4):
+   - (e)-1 EIP-197 wire-format Rust round-trip:
+     setup → prove → 256-byte encode → decode → re-encode
+     byte-identical → decoded proof verifies. 0.25 s release.
+   - (e)-2 Foundry test on real EVM:
+     `RecursionDeciderVerifierTest::test_recursionDecider_proofAccepted`
+     PASSES (gas 248,512 including deployment) — real Groth16 proof
+     from `RecursionDeciderCircuit` (Section A, n=4) verifies on
+     the EVM via `VerkleProofVerifier.sol` (EIP-197 4-pair check).
+     Non-vacuity at EVM level: tampered proof byte → rejected.
+   - **Deployment loop end-to-end validated:** off-chain Rust
+     pipeline ((d)-4 at production n_aux=16,384) + on-chain
+     EVM verifier ((e)-2 with real proof) both green.
 6. **External audit** of the closed circuit.
 
 (1) and (2) are the actual remaining cryptographic engineering;
