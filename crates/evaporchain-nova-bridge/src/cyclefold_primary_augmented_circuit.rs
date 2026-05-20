@@ -67,6 +67,10 @@ pub struct PrimaryAugmentedCircuitShell {
     pub z_0: Bn254Fr,
     /// Current state `z_i`.
     pub z_i: Bn254Fr,
+    /// Next state `z_{i+1}` supplied by the prover. Constraint
+    /// `z_{i+1} == z_i + 1` enforces consistency; a malicious
+    /// prover supplying a wrong `z_i1` must be rejected.
+    pub z_i1: Bn254Fr,
     /// Cross-curve scalar-mul `P_step` (BN254-G1 point) — WITNESS
     /// only (Bn254Fq coords, non-native to this Bn254Fr circuit;
     /// not exposed as public IO — public link is `cf_x_digest`).
@@ -103,6 +107,7 @@ impl PrimaryAugmentedCircuitShell {
         i: Bn254Fr,
         z_0: Bn254Fr,
         z_i: Bn254Fr,
+        z_i1: Bn254Fr,
         p_step: G1Affine,
         s_step: Bn254Fr,
         q_step: G1Affine,
@@ -113,6 +118,7 @@ impl PrimaryAugmentedCircuitShell {
             i,
             z_0,
             z_i,
+            z_i1,
             p_step,
             s_step,
             q_step,
@@ -135,10 +141,10 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let _i_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.i))?;
         let z_0_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_0))?;
         let z_i_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i))?;
-        // z_{i+1} = stub step (z_i + 1) — public output the CF
-        // accumulator's caller reads.
+        // z_{i+1} supplied by the prover (separate field from z_i).
+        // The step constraint below enforces consistency.
         let z_i1_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i + Bn254Fr::from(1u64)))?;
+            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i1))?;
 
         // Cross-curve tuple binding — exposed as a SINGLE Bn254Fr
         // digest, NOT raw curve coords (Bn254Fq, foreign field).
@@ -199,6 +205,7 @@ mod tests {
             Bn254Fr::from(0u64),  // i
             Bn254Fr::from(0u64),  // z_0
             Bn254Fr::from(0u64),  // z_i
+            Bn254Fr::from(1u64),  // z_i1 = z_i + 1 (consistent)
             p,
             s,
             q,
@@ -229,9 +236,9 @@ mod tests {
     #[test]
     fn shell_wrong_next_z_breaks_cs() {
         let mut circuit = consistent_step();
-        // Tamper z_i so claimed next (z_i+1) no longer matches the
-        // stub computation `z_i + 1` against the public z_{i+1}=1.
-        circuit.z_i = Bn254Fr::from(99u64);
+        // Tamper z_i1 (the prover-supplied next state) so the step
+        // constraint `z_i1 == z_i + 1` no longer holds.
+        circuit.z_i1 = Bn254Fr::from(99u64);
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         circuit.generate_constraints(cs.clone()).expect("synthesis");
         assert!(
