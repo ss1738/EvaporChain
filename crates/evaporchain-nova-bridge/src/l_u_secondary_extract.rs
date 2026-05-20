@@ -474,13 +474,43 @@ mod tests {
     /// Positive test: real fixture verifies, adapter returns a
     /// bundle whose hashes match the raw extractor's hashes (parity)
     /// and whose pp_digest is non-zero (verified pp.digest() != 0).
+    /// Helper: build (pp, rs) using the SAME pp instance (the
+    /// fixture functions create a fresh pp each call, so their pp
+    /// has a different digest than `canonical_public_params()`).
+    fn fixture_with_shared_pp(
+        num_steps: usize,
+    ) -> (
+        nova_snark::nova::PublicParams<E1, E2, TrivialIncrementCircuit>,
+        RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
+    ) {
+        use crate::recursive_snark_fixture::{Scalar1, E1 as _E1, E2 as _E2};
+        use ff::Field;
+        use nova_snark::nova::PublicParams;
+        use nova_snark::spartan::ppsnark::RelaxedR1CSSNARK;
+        use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
+        use nova_snark::provider::hyperkzg::EvaluationEngine;
+        use nova_snark::provider::ipa_pc::EvaluationEngine as IpaEE;
+
+        let circuit = TrivialIncrementCircuit;
+        type S1 = RelaxedR1CSSNARK<_E1, EvaluationEngine<_E1>>;
+        type S2 = RelaxedR1CSSNARK<_E2, IpaEE<_E2>>;
+        let pp = PublicParams::<_E1, _E2, TrivialIncrementCircuit>::setup(
+            &circuit, &*S1::ck_floor(), &*S2::ck_floor(),
+        ).expect("pp setup");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs =
+            RecursiveSNARK::<_E1, _E2, TrivialIncrementCircuit>::new(
+                &pp, &circuit, &z0,
+            ).expect("rs new");
+        for _ in 0..num_steps {
+            rs.prove_step(&pp, &circuit).expect("prove_step");
+        }
+        (pp, rs)
+    }
+
     #[test]
     fn assemble_section_b_pi_bundle_real_fixture_verifies() {
-        use crate::recursive_snark_fixture::canonical_public_params;
-        use ff::Field;
-
-        let pp = canonical_public_params().expect("pp");
-        let rs = generate_fixture(2).expect("fixture");
+        let (pp, rs) = fixture_with_shared_pp(2);
 
         // z0 for TrivialIncrementCircuit is [0]. Use ArkFr.
         let z0 = vec![ArkFr::from(0u64)];
@@ -523,10 +553,7 @@ mod tests {
     /// adapter refuses to emit a PI bundle.
     #[test]
     fn assemble_section_b_pi_bundle_rejects_wrong_num_steps() {
-        use crate::recursive_snark_fixture::canonical_public_params;
-
-        let pp = canonical_public_params().expect("pp");
-        let rs = generate_fixture(2).expect("fixture");
+        let (pp, rs) = fixture_with_shared_pp(2);
         let z0 = vec![ArkFr::from(0u64)];
 
         // Caller LIES about num_steps (says 3, fixture ran 2).
@@ -540,10 +567,7 @@ mod tests {
     /// NEGATIVE: tamper z0 ⇒ verify rejects ⇒ adapter refuses.
     #[test]
     fn assemble_section_b_pi_bundle_rejects_wrong_z0() {
-        use crate::recursive_snark_fixture::canonical_public_params;
-
-        let pp = canonical_public_params().expect("pp");
-        let rs = generate_fixture(2).expect("fixture");
+        let (pp, rs) = fixture_with_shared_pp(2);
         // Real z0 was [0]; lie and say [99].
         let z0_bad = vec![ArkFr::from(99u64)];
 
