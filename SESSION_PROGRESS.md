@@ -6,6 +6,27 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 63) — coverage push: gas.rs 85.7%→98.7%
+
+**Focus:** wallet crate gas.rs — all 22 remaining estimate_gas() match arms
+**Commits shipped:** 1 (c757f415)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` gas.rs | 85.7% | 98.7% (471/477) | 2 new tests, 22 arms covered |
+**Tests added:**
+- `test_estimate_gas_constant_variants`: DeployContract, CallContract, DeployScript, CallScript, ValidatorStake, ValidatorExit, ValidatorClaimStake, Governance(CastVote), Delegate, Undelegate, RotateValidatorKey, ClaimDelegation, Refund
+- `test_estimate_gas_size_dependent_variants`: Shield, Unshield, PrivateTransfer (100k+20k*nullifiers+15k*commitments), Deferred, Blob, MultiSig, UserOp, UpgradeContract, DeployTemplate
+**Fix:** `UserOpTx` struct literal was missing `signature: None, public_key: None` fields → added
+**Remaining:** 6 uncovered lines = `from_rpc()` async (needs live RPC mock — skip)
+**What's next:**
+- wallet signer.rs (78.4%, 64 uncovered — deprecated sign_transaction, sign, unlock_by_address)
+- wallet account.rs (74.4%, 270 uncovered — largest remaining wallet target)
+- Workspace-wide scan for next tractable substrate crate
+**Cross-references:** commit c757f415
+
+---
+
 ## 2026-05-19 (session 62, continued) — coverage push: tensor.rs 100%, history.rs 99.6%, retry.rs 99.4%, output.rs 94.2%
 
 **Focus:** Multi-file coverage push: evaporchain-mera + wallet crate
