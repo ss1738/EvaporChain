@@ -330,6 +330,62 @@ precompile (expensive on-chain settlement, ~3,300 gas/op pure-EVM).
 The earlier "in-circuit native" win pays for itself with an
 "on-chain economic" cost that the (c)-2 measurements now quantify.
 
+## 6b. Trust-model decision — Section B/C/D delegation (Satyawan's call, 2026-05-20)
+
+**Decision:** Sections B (output-hash binding), C (NIFS folds +
+derandomize), D (primary HyperKZG pairing) are **delegated as
+public inputs** to the Groth16 wrap. The on-chain Groth16
+verifier binds ONLY Section A's MSM (`ck_hat = Σ sᵢ·ckᵢ + r·h`,
+~41.5M cons). Section B/C/D public inputs are present but the
+in-circuit hash/fold/pairing equalities are NOT enforced
+in-circuit. Off-chain verifiers running
+`CompressedSNARK::verify` on the same PI bundle catch any
+discrepancy.
+
+**Trust model:** EvaporChain mainnet is a **fraud-proof rollup
+with ZK on-chain validity for the secondary-IPA MSM only**.
+Soundness rests on:
+1. **On-chain (Groth16):** Section A MSM binding is fully
+   in-circuit-enforced. A malicious prover CANNOT forge a proof
+   that satisfies `ck_hat = Σ sᵢ·ckᵢ` for the wrong ck or s.
+2. **Off-chain (honest-majority verifiers):** Sections B/C/D
+   are validated by anyone running `CompressedSNARK::verify` on
+   the published PI bundle. A malicious prover CAN produce a
+   Groth16 proof with false Section B/C/D PIs — but the proof
+   is publicly verifiable off-chain, and the resulting
+   state-root discrepancy triggers a fraud proof (or social
+   slashing, depending on the eventual L2 design).
+
+**Why this is the right choice (the architectural cost picture):**
+
+| Approach | On-chain cons | Engineering | Trust model |
+|---|---|---|---|
+| Full in-circuit B+C+D | ~50-80M (3× more) | multi-month | Pure validity |
+| **Hybrid (chosen)** | **~41.5M (A only)** | **~1 week B+C+D adapters** | **Fraud-proof with ZK MSM validity** |
+| Section A only | ~41.5M | 0 (done) | Insufficient (Section A bound but Section B/C/D unbound) |
+
+The full in-circuit path needs:
+- Byte-correct in-circuit Poseidon for E2 RO (Bn254 Fr native, ~5-15k cons per permutation × multiple permutations for 15-20+ field absorbs)
+- Non-native Poseidon for E1 RO (Bn254 Fq foreign — multi-week build, arkworks doesn't ship one)
+- In-circuit NIFS verify (small constant per fold but bigint limb-decomposition non-trivial)
+- In-circuit HyperKZG pairing (bounded constant, but Bn254 G2 in-circuit is heavy)
+
+The hybrid path needs:
+- Off-chain adapter that runs `CompressedSNARK::verify` and emits the PI bundle (mostly mechanical Rust)
+- End-to-end integration test
+- Trust-model documentation (this section)
+
+**Implication for follow-up work:** Section B/C/D close out in
+the **~1 week** range total (off-chain adapters + integration
+tests), not the multi-month per-section range. Section A
+in-circuit is the entire on-chain trust anchor; everything else
+is off-chain.
+
+**Lesson [[lesson-2026-05-20-b1b2-framing-error]] addendum #3
+caught the rev-1 scoping doc's "enforce hash_secondary in-circuit"
+plan being built on inverted RO field directions. The rev-2
+scoping + this decision are the source-grounded recovery.
+
 ## 7. Actual 1C remaining mainnet work
 
 The chosen architecture's open work, in dependency order:
@@ -367,21 +423,29 @@ The chosen architecture's open work, in dependency order:
      Smoke test pins PI delta + zero cons cost.
    - **Section B step C ✅ DONE 2026-05-20:**
      `l_u_secondary_extract::extract_section_b_pi_bundle` pulls all
-     9 fixed + |z0| + |zn| PIs from a real RecursiveSNARK via
-     serde-JSON reflection. Test
-     `extract_section_b_pi_bundle_real_fixture` validates: extraction
-     succeeds; num_steps + pp_digest round-trip; z0/zn arity=1
-     (TrivialIncrementCircuit); non-vacuity (≥1 of 7 extracted
-     scalars non-zero); parity vs legacy `extract_committed_hashes_via_serde`
-     on X[0]/X[1]. Mid-iteration fix: `r_U_primary.comm_W` is a
-     COMPRESSED point (single hex `comm`) not separate x/y JSON;
-     added `decompress_comm_w_as_fr` helper using halo2curves
-     `Bn256Affine::from_bytes` + `ArkFr::from_le_bytes_mod_order`.
-     Full regression: 252/252 lib tests pass (was 251, +1 for new
-     extraction test). Next iteration: step D (in-circuit Poseidon
-     enforcement of `hash_secondary` via `section2_gadget`; the
-     `hash_primary_reinterp` PI is delegated, no in-circuit
-     Poseidon needed).
+     9 fixed + |z0| + |zn| PIs from a real RecursiveSNARK. Test
+     pins extraction + non-vacuity + parity with legacy 2-hash
+     extractor. Helper `decompress_comm_w_as_fr` handles the
+     compressed-point JSON shape. 252/252 lib tests pass.
+   - **Section B step D ✅ COLLAPSED 2026-05-20 (per §6b trust-model
+     decision):** the chosen delegation architecture makes step D
+     a no-op in-circuit (no Poseidon enforcement needed; PIs are
+     decorative, bound off-chain via `CompressedSNARK::verify`).
+     The original "rev-1 step D = in-circuit Poseidon" plan was
+     based on inverted RO field directions (correction #9). After
+     rev-2 scoping + trust-model decision: Section B is essentially
+     CLOSED at the in-circuit level. Remaining is off-chain
+     adapter + integration test.
+   - **Remaining Section B work (per §6b + rev-2 scoping doc):**
+     1. Off-chain `assemble_section_b_pi_bundle_from_compressed_snark`
+        adapter that runs `CompressedSNARK::verify` and emits the
+        full PI bundle. Mostly mechanical Rust.
+     2. End-to-end integration test: real CompressedSNARK proof →
+        adapter → setup_recursion_decider with B interface → prove
+        → on-chain VerkleProofVerifier.verify with PI bundle.
+     3. Sections C + D follow same delegation pattern (~1 week
+        total for B + C + D adapters + tests, NOT multi-month
+        in-circuit enforcement).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
