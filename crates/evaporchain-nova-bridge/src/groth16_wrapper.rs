@@ -454,7 +454,6 @@ mod tests {
     fn recursion_decider_groth16_roundtrip_n4_smoke() {
         use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
         use ark_ec::CurveGroup;
-        use ark_grumpkin::Fq as GrumpkinBase;
         use crate::grumpkin_config::GrumpkinConfig;
         use crate::recursion_decider_circuit::RecursionDeciderCircuit;
 
@@ -491,7 +490,6 @@ mod tests {
             Bn254Fq::from(7u64),
         ];
         let blind = Bn254Fq::from(11u64);
-        let _ = GrumpkinBase::from(0u64); // touch import to keep it
         let claimed = g * scalars[0]
             + g2 * scalars[1]
             + g3 * scalars[2]
