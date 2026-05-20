@@ -92,9 +92,16 @@ pub struct PrimaryAugmentedCircuitShell {
     /// caller-supplied value here (4b-β computes it from a
     /// real Neptune hash of the tuple components).
     pub cf_x_digest: Bn254Fr,
-    /// HONESTY flag: false until 4b-β wires the Neptune RO + the
-    /// primary NIFS verification. A caller cannot mistake a shell
-    /// instance for a complete augmented circuit.
+    /// Neptune sponge params for the in-circuit `cf_x_digest`
+    /// gadget (Section C). Constructed once by the caller via
+    /// `params_from_dump_path("neptune-bn256-standard.json")` and
+    /// shared across IVC steps. Cloned per shell because
+    /// `NeptuneParams` derives `Clone`.
+    pub params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
+    /// HONESTY flag: false until ALL deferred sections (R Neptune
+    /// RO previous-step binding + F primary NIFS verification) are
+    /// also wired. Section C (cf_x_digest) goes live in 4b-β-3 but
+    /// the full shell-as-augmented-circuit needs R + F too.
     pub sections_wired: bool,
 }
 
@@ -112,6 +119,7 @@ impl PrimaryAugmentedCircuitShell {
         s_step: Bn254Fr,
         q_step: G1Affine,
         cf_x_digest: Bn254Fr,
+        params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
             pp_hash,
@@ -123,6 +131,7 @@ impl PrimaryAugmentedCircuitShell {
             s_step,
             q_step,
             cf_x_digest,
+            params,
             sections_wired: false,
         }
     }
@@ -148,18 +157,47 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
 
         // Cross-curve tuple binding — exposed as a SINGLE Bn254Fr
         // digest, NOT raw curve coords (Bn254Fq, foreign field).
-        // 4b-β computes this from a Neptune hash of the tuple; for
-        // now, it's a caller-supplied stub value. The CF aux side
-        // recomputes the matching digest from its own (P, s, Q)
-        // allocation; cross-circuit equality of the digests is the
-        // cross-side binding.
-        let _cf_x_digest_var =
+        let cf_x_digest_var =
             FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.cf_x_digest))?;
-        // Tuple values (P, s, Q) are not exposed publicly here —
-        // they are referenced only by the witness so 4b-β can hash
-        // them. The shell just records they exist via the typed
-        // fields on `self`.
-        let _ = (self.p_step, self.s_step, self.q_step);
+
+        // ── Section C [LIVE since 4b-β-3] ─────────────────────────
+        // Allocate (P, s, Q) as witnesses; in-circuit `cf_x_digest`
+        // recomputed from them via `enforce_cf_x_digest`; enforce
+        // it equals the public `cf_x_digest_var`. A malicious
+        // prover supplying an inconsistent (P, s, Q, cf_x_digest)
+        // is rejected here, before Sections R/F reach for the
+        // tuple. (R and F still deferred — sections_wired stays
+        // false until those are also wired.)
+        use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
+        let p_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(self.p_step.x),
+        )?;
+        let p_y_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(self.p_step.y),
+        )?;
+        let s_step_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.s_step))?;
+        let q_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(self.q_step.x),
+        )?;
+        let q_y_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(self.q_step.y),
+        )?;
+
+        let computed_digest = crate::cyclefold_cf_x_digest::enforce_cf_x_digest(
+            cs.clone(),
+            &p_x_var,
+            &p_y_var,
+            &s_step_var,
+            &q_x_var,
+            &q_y_var,
+            &self.params,
+        )?;
+        computed_digest.enforce_equal(&cf_x_digest_var)?;
 
         // ── Stub step: z_{i+1} = z_i + 1 ──────────────────────────
         // Real step circuit `F` plugs in here in 4b-β.
@@ -200,6 +238,14 @@ mod tests {
         let p = G1Affine::generator();
         let s = Bn254Fr::rand(&mut rng);
         let q = (ark_bn254::G1Projective::from(p) * s).into_affine();
+        // Compute the REAL cf_x_digest via the 4b-β-1 oracle so
+        // Section C's binding is satisfiable.
+        let cf_x_digest =
+            crate::cyclefold_cf_x_digest::compute_cf_x_digest_native(p, s, q);
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
+        )
+        .expect("load neptune params from crate-relative dump");
         PrimaryAugmentedCircuitShell::new(
             Bn254Fr::from(42u64), // pp_hash placeholder
             Bn254Fr::from(0u64),  // i
@@ -209,7 +255,8 @@ mod tests {
             p,
             s,
             q,
-            Bn254Fr::from(123u64), // cf_x_digest stub (4b-β: Neptune(p,s,q))
+            cf_x_digest,
+            params,
         )
     }
 
@@ -247,10 +294,48 @@ mod tests {
         );
     }
 
+    /// SECTION C NON-VACUITY: tamper the witnessed `p_step` so it
+    /// no longer matches the public `cf_x_digest` → in-circuit
+    /// gadget computes a different digest → `enforce_equal` fails
+    /// → CS UNSAT. Proves the wired Section C binding actually
+    /// constrains `(P, s, Q)` against the public IO, not vacuous.
+    #[test]
+    fn shell_section_c_wrong_p_breaks_cs() {
+        let mut c = consistent_step();
+        // Tamper P only — gadget digest will differ from the
+        // public cf_x_digest (which was computed from the
+        // ORIGINAL P).
+        let g = ark_bn254::G1Projective::from(G1Affine::generator());
+        c.p_step = (ark_bn254::G1Projective::from(c.p_step) + g).into_affine();
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered P MUST break Section C's cf_x_digest binding"
+        );
+    }
+
+    /// SECTION C NON-VACUITY (mirror): tamper `s_step` → digest
+    /// mismatch → CS UNSAT. Covers the scalar component of the
+    /// binding (different break path than tampering a point coord).
+    #[test]
+    fn shell_section_c_wrong_s_breaks_cs() {
+        let mut c = consistent_step();
+        c.s_step = c.s_step + Bn254Fr::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered s MUST break Section C's cf_x_digest binding"
+        );
+    }
+
     /// SIZE PROBE: base cons of the shell (public IO allocation +
-    /// stub step + one enforce_equal). Pinned for regression
-    /// tracking; 4b-β's Section R + F + C wiring will grow this
-    /// number measurably.
+    /// stub step + one enforce_equal + Section C cf_x_digest
+    /// gadget). 4b-β-1 baseline was 1 con (Section C deferred);
+    /// the wired Section C adds ~thousands (limb decomp + Neptune
+    /// sponge). Pinned for regression tracking; 4b-β-4 Section R
+    /// and 4b-β-5 Section F will grow it further.
     #[test]
     fn shell_size_probe() {
         let circuit = consistent_step();
@@ -268,7 +353,16 @@ mod tests {
         // non-trivial (catches a regression where the stub got
         // elided). Upper bound is loose; the real budget belongs
         // to 4b-β's Sections R/F/C.
-        assert!(n_cons >= 1, "shell must have ≥1 constraint");
-        assert!(n_cons < 50_000, "shell unexpectedly large: {n_cons}");
+        // With Section C wired (limb decomp + Neptune sponge +
+        // 250-bit truncation), expect ~thousands of cons. Lower
+        // bound bumped: a regression elision would be detected if
+        // we see <500 (essentially "Section C disappeared").
+        assert!(
+            n_cons >= 500,
+            "shell unexpectedly small after Section C wiring: {n_cons}"
+        );
+        // Upper bound bumped generously; tighter once 4b-β-4/5
+        // grow the number predictably.
+        assert!(n_cons < 200_000, "shell unexpectedly large: {n_cons}");
     }
 }
