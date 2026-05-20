@@ -458,15 +458,30 @@ The chosen architecture's open work, in dependency order:
      pass in 4.62 s. 256/256 lib tests (+1 end-to-end). Validates
      the FULL delegation chain at smoke scale (n=4 bases, 2 IVC
      steps, 11 PIs). PI count = 9 fixed + |z0|+|zn| = 11 at arity 1.
-   - **Section B remaining work (~minor):**
-     1. EVM round-trip Foundry test with the 11 PIs (parallels
-        (e)-2 which tested 0 PIs); needs IC_LEN = 12 in the
-        VerkleProofVerifier setup.
-     2. CompressedSNARK variant of the adapter
-        (`assemble_section_b_pi_bundle_from_compressed_snark`)
-        — mostly mechanical type-substitute.
-     3. Sections C + D follow same delegation pattern (~few days
-        each for adapter + end-to-end).
+   - **Section B EVM ROUND-TRIP ✅ DONE 2026-05-20:** 11-PI
+     fixture binary `recursion-decider-b-fixture-emit` emits a
+     real Groth16 proof from the end-to-end pipeline; Foundry
+     test `RecursionDeciderBVerifierTest` deploys VerkleProofVerifier
+     with IC_LEN=12 and verifies. 3/3 tests pass first-try:
+       - proofAccepted (gas 399,877)
+       - tamperedFirstPI_rejected (PI[0] tamper rejected)
+       - tamperedLastPI_rejected (PI[10] tamper rejected)
+     The Groth16 PI binding does its job — tampering after extraction
+     breaks the proof, exactly as the delegation trust model requires.
+   - **Section B is now COMPLETE end-to-end (Rust + Solidity).**
+     The full delegation chain is closed:
+       1. Off-chain `assemble_section_b_pi_bundle` (verify gate)
+       2. `bundle.into_section_b_pis()` (1:1 conversion)
+       3. `setup_recursion_decider_with_b_interface` (Groth16 keys)
+       4. `section_a_with_b_interface` circuit (Section A witness + B bundle)
+       5. `prove_recursion_decider` (Groth16 proof)
+       6. EIP-197 codec → 256-byte wire
+       7. On-chain `VerkleProofVerifier.verify(proofBytes, 11 PIs)`
+   - **Section B remaining (~minor optional):**
+     1. CompressedSNARK variant of the adapter — mostly mechanical
+        type-substitute.
+   - **Sections C + D** follow same delegation pattern (~few days
+     each for adapter + end-to-end + EVM test).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
