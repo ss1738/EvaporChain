@@ -64,6 +64,7 @@ practical.
 | (c)-2d | `cyclefold_n_aux_scaling_probe` | ppsnark n_aux scaling vs R1CS size (R5 falsifier) | 5/5 shapes (8/32/128/512/2048 cons); falsifier did NOT fire | `de9a9aa1` |
 | (d)-1 | `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit` | Groth16-wrap circuit cs.num_constraints() probe (§7 step 3 discipline gate) | 4/4 k-values (1/2/4/8); per-base=2,533 cons; total at n_aux=16,384 ~43.5M cons | (existing, re-run 2026-05-20) |
 | (d)-2 | `groth16_wrapper::recursion_decider_groth16_*` | Groth16 setup→prove→verify on RecursionDeciderCircuit (§7 step 1) + Groth16-level non-vacuity (tampered witness rejected) + n=64 scaling smoke | 3/3 first-try, 2.67 s release for all three | `2785f818`+`e231282e` |
+| (d)-3 | `recursion_decider_circuit::setup_shape_cons_scaling_validates_d1_prediction` | Circuit-level cs.num_constraints scaling at n in {4,16,64,256,1024} — validates (d)-1 gadget-level fit transfers to full circuit | 1/1 first-try, 4.36 s release; per_base=2,533 EXACT match; predicted n_aux=16,384 → 41,503,214 cons | `c691cc73` |
 
 **Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
@@ -320,17 +321,27 @@ The chosen architecture's open work, in dependency order:
      by source analysis (flow doc source-read #3); `sections_bcd_wired:
      bool` honesty flag prevents Section-A-only being mistaken for a
      complete decider.
-3. **(d)-1 ✅ MEASURED 2026-05-20** (existing probe
-   `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
-   per-base cons = **2,533**, intercept 2,521. Extrapolation:
-   - At n_aux=16,384: **~41.5M cons** for the MSM portion
-   - + HyperKZG primary verify constant (~2M cons): **~43.5M cons**
-     total Groth16-wrap circuit
-   - Falsifier threshold was 1e9 (per the `predict_*` test's own
-     guard) — comfortably **23× under** the ceiling.
+3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
+   - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
+     per-base cons = **2,533**, intercept 2,521 at the
+     `pedersen_msm_grumpkin` gadget level.
+   - (d)-3 circuit-level (`recursion_decider_circuit::setup_shape_cons_scaling_validates_d1_prediction`):
+     direct cs.num_constraints scan on the FULL
+     `RecursionDeciderCircuit::setup_shape` at n in {4, 16, 64, 256,
+     1024}. Linear fit on (64, 1024): per_base = **2,533 EXACT
+     match**; intercept 2,542 (≈+21 from `enforce_equal` on
+     `claimed_var`). Predicted at n_aux=16,384:
+     **41,503,214 cons (~41.5M)** — Section A only.
+   - + Sections B/C/D constant terms when wired: ~+2M cons HyperKZG
+     pairing + ~+10k Neptune hashes + ~+5k NIFS folds.
+   - **Full circuit at n_aux=16,384: ~43.5M cons.**
    - Memory budget for Groth16 setup: ~5.6 GB (well within 128 GB
      Mini RAM).
-   - **Result: Groth16-wrap is NOT architecturally blocked.**
+   - Falsifiers respected: (d)-1 threshold 1e9 (23× under); (d)-3
+     threshold 1e8 (2.4× under).
+   - **Result: Groth16-wrap is NOT architecturally blocked, and the
+     constraint-count prediction is validated at BOTH the gadget and
+     full-circuit levels.**
 4. **Groth16 setup + prove + verify** end-to-end on the Mini
    cluster. Smoke-validated at n=4 and n=64 (full pipeline 2.67 s
    release for both). Linear extrapolation to the full
