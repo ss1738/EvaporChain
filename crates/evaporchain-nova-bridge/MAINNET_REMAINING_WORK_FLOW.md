@@ -1006,16 +1006,50 @@ native `FpVar<Bn254Fr>` (no Bn254Fq limb decomp).
 Third consecutive first-try pass — careful staging + reuse of the
 BESPOKE-aligned Neptune infrastructure keeps earning its keep.
 
-**NEXT [code]:** increment 4b-β-4b — finish Section R by also
-absorbing the CF running instance's Bn254Fq fields (`u`, `x`) into
-the transcript via limb decomposition (analogous to the Section C
-limb pattern). Then 4b-β-5 wires Section F (primary NIFS
-verification semantics — fold relation between the previous primary
-instance and the incoming step). After all are wired and box-
-verified: flip `sections_wired:true`. Then increment 5 wraps the
-running CF instance in `CompressedSNARK<ppsnark>` and measures real
-n_aux from the proof's `L_vec.len()` (pinning predicted ~2¹³ vs
-reality per the lesson).
+### 1C INCREMENT 4b-β-4b — ✅ SECTION R cf_u LIMB ABSORB [V]
+(2026-05-20, Mini3, box, HEAD `408b2add`,
+`cyclefold_primary_augmented_circuit ... 8 passed; 0 failed;
+3.90 s`)
+
+Section R now absorbs `cf_u_running: ark_bn254::Fq` via 127-bit
+lo+hi limb decomposition (same canonical encoding `cf_x_digest`
+uses; consistent bit-level invariant across sections). One new
+non-vacuity gate `shell_section_r_wrong_cf_u_running_breaks_cs`
+passed first try.
+
+**`PRIMARY_SHELL_PROBE: 8,858 cons / 7,726 witness / 8 instance`**
+(+1,230 cons from 4b-β-4 = cost of 1 EmulatedFpVar alloc + limb
+decomp + 2 Neptune absorbs). Bn254Fq-limb-into-Section-R pattern
+established and proven non-vacuous.
+
+**Four consecutive first-try passes this micro-arc** (β-1 oracle,
+β-2 gadget, β-3 wire-in, β-4 Section R, β-4b cf_u absorb). Careful
+staging + reuse of BESPOKE Neptune infrastructure keeps earning.
+
+**HONEST PIVOT — bypass non-blocking 4b work for the genuinely
+high-leverage NEXT (5-α):** finishing 4b (β-4c full CF running
+instance comm_w/comm_e/x_vec absorb + β-5 Section F primary NIFS
+verification) is mechanical extension; neither *blocks* the
+increment-5 n_aux measurement, because measuring n_aux requires
+ONLY a `RelaxedR1CSInstance/Witness` over `CycleFoldInstanceCircuit
+` (which we already have via 3b-3) → run `ppsnark::prove` directly
+→ serde-extract the resulting proof's `eval_arg.L_vec.len()`. The
+full Nova IVC harness (which DOES need the complete 4b primary
+augmented circuit) is the integration story, but the *measurement*
+that pins predicted ~2¹³ vs reality stands alone.
+
+**NEXT [code]:** increment 5-α — direct
+`ppsnark::<S2pp = RelaxedR1CSSNARK<GrumpkinEngine, EE2>>::setup` +
+`prove` on a satisfied CF instance pair (3b-3 builds it); serde-
+extract the proof and read `eval_arg.L_vec.len()`. That's the real
+measured n_aux for our CycleFold-shape secondary. Compare to the
+predicted 2¹³=8,192 (the calibration the assert-without-measuring
+lesson demands). Either confirms the architectural reduction
+holds in absolute numbers, or fires the next honest correction.
+
+After 5-α: 4b-β-4c + 4b-β-5 + 4b-β finish (full primary aug),
+then 4a-style accumulator over the real primary, then increment 6
+Solidity templater + Foundry gas, then increment 7 audit prep.
 
 ---
 
