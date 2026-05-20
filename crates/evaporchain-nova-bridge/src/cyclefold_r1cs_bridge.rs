@@ -41,7 +41,9 @@ use ark_relations::r1cs::{
 
 use crate::scalar_adapter::{ark_fq_to_secondary, SecondaryScalar};
 use nova_snark::provider::GrumpkinEngine;
-use nova_snark::r1cs::{R1CSShape, SparseMatrix};
+use nova_snark::r1cs::{R1CSInstance, R1CSShape, R1CSWitness, SparseMatrix};
+use nova_snark::traits::commitment::CommitmentEngineTrait;
+use nova_snark::traits::Engine;
 
 /// Errors returned by [`cyclefold_instance_r1cs_shape`].
 #[derive(Debug, thiserror::Error)]
@@ -125,6 +127,111 @@ where
         .map_err(BridgeError::NovaShapeRejected)
 }
 
+/// CommitmentKey alias to keep call sites readable.
+pub type CK = <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<
+    GrumpkinEngine,
+>>::CommitmentKey;
+
+/// Result of building a real, satisfied `R1CSInstance` + witness +
+/// shape + commitment key for a CF-side arkworks circuit.
+pub struct NovaGrumpkinR1CSArtifacts {
+    pub shape: R1CSShape<GrumpkinEngine>,
+    pub ck: CK,
+    pub instance: R1CSInstance<GrumpkinEngine>,
+    pub witness: R1CSWitness<GrumpkinEngine>,
+}
+
+/// Synthesize a CF-side arkworks `ConstraintSynthesizer<Bn254Fq>`
+/// and build a **satisfied** nova-snark `(R1CSShape, R1CSInstance,
+/// R1CSWitness)` triple over `GrumpkinEngine`, plus the
+/// `CommitmentKey` used to commit the witness. Default synthesis
+/// mode (`Prove { construct_matrices: true }`) so both matrices and
+/// assignments are produced.
+///
+/// `ck_label` is the Pedersen `setup` domain tag (any stable
+/// `&'static [u8]`; nova-snark uses `b"ck"` style tags). Reused
+/// keys across folds must use the same label + a `num_vars ≥`
+/// every folded instance's `num_vars`.
+pub fn arkworks_cs_to_nova_grumpkin_satisfied_pair<C>(
+    circuit: C,
+    ck_label: &'static [u8],
+) -> Result<NovaGrumpkinR1CSArtifacts, BridgeError>
+where
+    C: ConstraintSynthesizer<Bn254Fq>,
+{
+    let cs = ConstraintSystem::<Bn254Fq>::new_ref();
+    cs.set_optimization_goal(OptimizationGoal::None);
+    // Default mode = Prove { construct_matrices: true } — both
+    // matrices AND assignments populated.
+
+    circuit
+        .generate_constraints(cs.clone())
+        .map_err(BridgeError::ArkSynthesis)?;
+    cs.finalize();
+    let cs_borrow = cs.borrow().expect("CS ref must be borrow-able");
+    let m = cs_borrow
+        .to_matrices()
+        .ok_or(BridgeError::MatricesUnavailable)?;
+
+    let num_cons = m.num_constraints;
+    let num_vars = m.num_witness_variables;
+    let num_io = m
+        .num_instance_variables
+        .checked_sub(1)
+        .expect("arkworks num_instance_variables must include the implicit ONE");
+
+    let convert = |rows: &[Vec<(Bn254Fq, usize)>]| -> Vec<(usize, usize, SecondaryScalar)> {
+        let mut out = Vec::new();
+        for (row_idx, row) in rows.iter().enumerate() {
+            let mut row_sorted: Vec<&(Bn254Fq, usize)> = row.iter().collect();
+            row_sorted.sort_by_key(|(_, col)| *col);
+            for (coeff, col) in row_sorted {
+                out.push((row_idx, *col, ark_fq_to_secondary(*coeff)));
+            }
+        }
+        out
+    };
+    let cols = num_io + num_vars + 1;
+    let a_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.a), num_cons, cols);
+    let b_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.b), num_cons, cols);
+    let c_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.c), num_cons, cols);
+    let shape =
+        R1CSShape::<GrumpkinEngine>::new(num_cons, num_vars, num_io, a_sm, b_sm, c_sm)
+            .map_err(BridgeError::NovaShapeRejected)?;
+
+    // Extract assignments. arkworks puts the implicit ONE at
+    // instance_assignment[0]; nova-snark's X excludes it.
+    let w_nova: Vec<SecondaryScalar> = cs_borrow
+        .witness_assignment
+        .iter()
+        .map(|f| ark_fq_to_secondary(*f))
+        .collect();
+    let x_nova: Vec<SecondaryScalar> = cs_borrow
+        .instance_assignment
+        .iter()
+        .skip(1)
+        .map(|f| ark_fq_to_secondary(*f))
+        .collect();
+
+    // Setup CK sized for the witness, commit, build instance.
+    let ck = <<GrumpkinEngine as Engine>::CE as CommitmentEngineTrait<
+        GrumpkinEngine,
+    >>::setup(ck_label, num_vars)
+        .map_err(BridgeError::NovaShapeRejected)?;
+    let witness = R1CSWitness::<GrumpkinEngine>::new(&shape, &w_nova)
+        .map_err(BridgeError::NovaShapeRejected)?;
+    let comm_w = witness.commit(&ck);
+    let instance = R1CSInstance::<GrumpkinEngine>::new(&shape, &comm_w, &x_nova)
+        .map_err(BridgeError::NovaShapeRejected)?;
+
+    Ok(NovaGrumpkinR1CSArtifacts {
+        shape,
+        ck,
+        instance,
+        witness,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +276,35 @@ mod tests {
             21,
             "num_io must equal arkworks num_instance_variables (22) - 1 (the implicit ONE)"
         );
+    }
+
+    /// 1C INCREMENT 3b-3 SOUNDNESS GATE: a real `CycleFoldInstance
+    /// Circuit` synthesised through the full bridge produces a
+    /// `(shape, R1CSInstance, R1CSWitness)` triple that nova-snark's
+    /// own `R1CSShape::is_sat` accepts. This proves the end-to-end
+    /// arkworks→nova-snark pipeline (shape + assignments + Pedersen
+    /// commitment) is consistent; any bug in scalar conversion,
+    /// matrix sort, IO accounting, or witness/instance construction
+    /// breaks this. Required precondition for 3b-4's NIFS prove.
+    #[test]
+    fn cf_instance_through_bridge_is_satisfied_per_nova_is_sat() {
+        let mut rng = test_rng();
+        let p = G1Affine::generator();
+        let s = Bn254Fr::rand(&mut rng);
+        let q = (G1Projective::from(p) * s).into_affine();
+        let circuit = CycleFoldInstanceCircuit::new(p, s, q);
+
+        let art = arkworks_cs_to_nova_grumpkin_satisfied_pair(circuit, b"ev-cf-ck")
+            .expect("bridge must produce a satisfied artifacts triple");
+
+        // Sanity: artifact dims match shape.
+        assert_eq!(art.shape.num_cons(), 1_985);
+        assert_eq!(art.shape.num_vars(), 1_812);
+        assert_eq!(art.shape.num_io(), 21);
+
+        // THE GATE: nova-snark accepts this as a satisfied R1CS pair.
+        art.shape
+            .is_sat(&art.ck, &art.instance, &art.witness)
+            .expect("nova-snark R1CSShape::is_sat must accept bridged CF instance");
     }
 }
