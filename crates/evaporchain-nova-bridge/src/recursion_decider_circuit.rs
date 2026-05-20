@@ -264,6 +264,87 @@ mod tests {
         );
     }
 
+    /// (d)-3 (§7 step 3 EXTENDED): cs.num_constraints() of the FULL
+    /// `RecursionDeciderCircuit::setup_shape` at multiple n. Validates
+    /// the (d)-1 linear-fit prediction (per-base 2,533, intercept
+    /// 2,521) against the actual wrapping circuit — checks for any
+    /// circuit-level overhead the gadget-only probe couldn't see.
+    /// Fast (synthetic doubling-chain bases, no PP setup).
+    #[test]
+    fn setup_shape_cons_scaling_validates_d1_prediction() {
+        use ark_ec::short_weierstrass::SWCurveConfig;
+        use ark_ec::CurveGroup;
+
+        // Synthetic doubling-chain bases — distinct, real Grumpkin
+        // points; shape probe doesn't need real PP.
+        let g = Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR);
+        let h_pt = g * Bn254Fq::from(7u64);
+        let h_aff = h_pt.into_affine();
+
+        let measure = |n: usize| -> usize {
+            let mut bases = Vec::with_capacity(n);
+            let mut cur = g;
+            for _ in 0..n {
+                bases.push(cur.into_affine());
+                cur += g;
+            }
+            let circuit = RecursionDeciderCircuit::setup_shape(bases, h_aff);
+            let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+            circuit.generate_constraints(cs.clone()).expect("synthesis");
+            cs.num_constraints()
+        };
+
+        // Scan n; report each measurement.
+        let ns: [usize; 5] = [4, 16, 64, 256, 1024];
+        let cs_counts: Vec<(usize, usize)> =
+            ns.iter().map(|&n| (n, measure(n))).collect();
+        for (n, c) in &cs_counts {
+            eprintln!(
+                "DECIDER_CONS n={n} cons={c} per_base={}",
+                if *n > 0 { c / n } else { 0 }
+            );
+        }
+
+        // Linear fit on the upper-end pair to avoid small-n overhead
+        // distortion. per_base = (c_1024 - c_64) / (1024 - 64).
+        let c_small = cs_counts[2].1; // n=64
+        let c_big = cs_counts[4].1;   // n=1024
+        let per_base = (c_big - c_small) / (1024 - 64);
+        let intercept = c_big - per_base * 1024;
+
+        // (d)-1 model: per_base=2,533, intercept ≈ 2,521 (the blind
+        // scalar-mul) measured at gadget level.
+        eprintln!(
+            "DECIDER_FIT per_base={per_base} intercept={intercept} \
+             D1_PRED_per_base=2533"
+        );
+
+        // Extrapolation to n_aux=16,384.
+        let pred_at_full = intercept + per_base * 16_384;
+        eprintln!(
+            "DECIDER_PRED_at_n_aux_16384 cons={pred_at_full} ~{}M",
+            pred_at_full / 1_000_000
+        );
+
+        // Sanity: per-base must land near (d)-1's 2,533 — allow ±15%
+        // for circuit-wrapping overhead.
+        let lo = 2533 * 85 / 100;
+        let hi = 2533 * 115 / 100;
+        assert!(
+            per_base >= lo && per_base <= hi,
+            "decider per-base cons {per_base} outside ±15% of (d)-1 model 2533 \
+             ([{lo}, {hi}]) — wrapping overhead unexpected"
+        );
+
+        // FALSIFIER: predicted cons at n_aux=16,384 must stay < 1e8
+        // (Groth16 memory wall on 128 GB at ~1.2 GB / 10M cons).
+        assert!(
+            pred_at_full < 100_000_000,
+            "FALSIFIER TRIPPED: predicted decider cons {pred_at_full} ≥ 1e8 \
+             — Groth16 setup may not fit Mini cluster RAM"
+        );
+    }
+
     /// INCREMENT-2 FINISH — real witness-assembly pipeline on REAL
     /// data: real `pp` → `extract_secondary_ck` (real Grumpkin
     /// bases) → `ipa_s_vector` (real tensor structure) → real
