@@ -6,6 +6,27 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 63, continued 3) — coverage push: offline.rs 84.6%→95.5%
+
+**Focus:** wallet crate offline.rs — Broadcaster async error paths
+**Commits shipped:** 1 (345ec1f0)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` offline.rs | 84.6% | 95.5% (191/200) | 3 new async tests |
+**Tests added:**
+- `test_broadcast_unsupported_type_returns_err`: other match arm (lines 209-212)
+- `test_broadcast_transfer_missing_to_returns_err`: ok_or_else Err (lines 191-194)
+- `test_broadcast_transfer_missing_amount_returns_err`: ok_or_else Err (lines 195-197)
+**Remaining:** 9 lines = rpc.submit_transfer happy path (needs live node)
+**What's next:**
+- wallet auto_refresh.rs (70.3%, 94 uncovered)
+- wallet key_rotation.rs (86.4%, 65 uncovered)
+- workspace-wide scan for next tractable substrate crate
+**Cross-references:** commit 345ec1f0
+
+---
+
 ## 2026-05-19 (session 63, continued 2) — coverage push: account.rs 68.5%→91.2%
 
 **Focus:** wallet crate account.rs — getters, import paths, file I/O, nonce edge case
