@@ -92,6 +92,14 @@ pub struct PrimaryAugmentedCircuitShell {
     /// caller-supplied value here (4b-β computes it from a
     /// real Neptune hash of the tuple components).
     pub cf_x_digest: Bn254Fr,
+    /// PUBLIC: Section-R transcript hash for THIS step — Neptune
+    /// hash of `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest]` (the
+    /// natively-Fr-representable IO fields). The CF running
+    /// instance absorb (Bn254Fq `u`/`x` via limb decomp) is
+    /// deferred to 4b-β-4b. This value is what the NEXT step
+    /// chains against; Section F (4b-β-5) will absorb it as the
+    /// previous-step hash and enforce NIFS fold consistency.
+    pub current_step_hash: Bn254Fr,
     /// Neptune sponge params for the in-circuit `cf_x_digest`
     /// gadget (Section C). Constructed once by the caller via
     /// `params_from_dump_path("neptune-bn256-standard.json")` and
@@ -119,6 +127,7 @@ impl PrimaryAugmentedCircuitShell {
         s_step: Bn254Fr,
         q_step: G1Affine,
         cf_x_digest: Bn254Fr,
+        current_step_hash: Bn254Fr,
         params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
@@ -131,6 +140,7 @@ impl PrimaryAugmentedCircuitShell {
             s_step,
             q_step,
             cf_x_digest,
+            current_step_hash,
             params,
             sections_wired: false,
         }
@@ -145,9 +155,9 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // ── Public inputs (instance `x`) ──────────────────────────
         // Pinned schema; 4b-β extends with cf-running-instance fields
         // + folds them into the Neptune sponge.
-        let _pp_hash_var =
+        let pp_hash_var =
             FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.pp_hash))?;
-        let _i_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.i))?;
+        let i_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.i))?;
         let z_0_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_0))?;
         let z_i_var = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i))?;
         // z_{i+1} supplied by the prover (separate field from z_i).
@@ -199,6 +209,41 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         )?;
         computed_digest.enforce_equal(&cf_x_digest_var)?;
 
+        // ── Section R [LIVE (stub-form) since 4b-β-4] ────────────
+        // current_step_hash = Neptune([pp_hash, i, z_0, z_i, z_{i+1},
+        // cf_x_digest]). Absorbs only the natively-Fr-representable
+        // IO fields; CF running instance absorb (Bn254Fq u/x via
+        // limb decomp) deferred to 4b-β-4b. This hash is what the
+        // next step's Section F (4b-β-5) will absorb as
+        // previous-step-hash and verify NIFS fold consistency
+        // against. Same Neptune infrastructure as Section C.
+        let current_step_hash_var = FpVar::<Bn254Fr>::new_input(
+            cs.clone(),
+            || Ok(self.current_step_hash),
+        )?;
+        let r_absorb: Vec<FpVar<Bn254Fr>> = vec![
+            pp_hash_var.clone(),
+            i_var.clone(),
+            z_0_var.clone(),
+            z_i_var.clone(),
+            z_i1_var.clone(),
+            cf_x_digest_var.clone(),
+        ];
+        let computed_step_hash =
+            crate::section2_gadget::enforce_neptune_sponge_primary(
+                cs.clone(),
+                &self.params,
+                &r_absorb,
+            )?;
+        // Apply 250-bit truncation to match the native helper's
+        // squeeze (NUM_HASH_BITS=250), same pattern as Section C.
+        use ark_r1cs_std::boolean::Boolean;
+        use ark_r1cs_std::convert::ToBitsGadget;
+        let raw_bits = computed_step_hash.to_bits_le()?;
+        let trunc_bits = &raw_bits[..250usize.min(raw_bits.len())];
+        let truncated_step_hash = Boolean::le_bits_to_fp(trunc_bits)?;
+        truncated_step_hash.enforce_equal(&current_step_hash_var)?;
+
         // ── Stub step: z_{i+1} = z_i + 1 ──────────────────────────
         // Real step circuit `F` plugs in here in 4b-β.
         let computed_next = &z_i_var + FpVar::<Bn254Fr>::constant(Bn254Fr::from(1u64));
@@ -233,29 +278,59 @@ mod tests {
     use ark_relations::r1cs::ConstraintSystem;
     use ark_std::test_rng;
 
+    /// Native helper mirroring the in-circuit Section R hash —
+    /// `neptune_hash_primary([pp_hash, i, z_0, z_i, z_{i+1},
+    /// cf_x_digest])` with the same 250-bit truncation the
+    /// in-circuit gadget applies.
+    fn compute_current_step_hash_native(
+        pp_hash: Bn254Fr,
+        i: Bn254Fr,
+        z_0: Bn254Fr,
+        z_i: Bn254Fr,
+        z_i1: Bn254Fr,
+        cf_x_digest: Bn254Fr,
+    ) -> Bn254Fr {
+        use crate::neptune_reference::neptune_hash_primary;
+        use crate::scalar_adapter::{ark_fr_to_primary, primary_to_ark_fr};
+        let absorbed = [pp_hash, i, z_0, z_i, z_i1, cf_x_digest]
+            .map(ark_fr_to_primary);
+        primary_to_ark_fr(neptune_hash_primary(&absorbed))
+    }
+
     fn consistent_step() -> PrimaryAugmentedCircuitShell {
         let mut rng = test_rng();
         let p = G1Affine::generator();
         let s = Bn254Fr::rand(&mut rng);
         let q = (ark_bn254::G1Projective::from(p) * s).into_affine();
-        // Compute the REAL cf_x_digest via the 4b-β-1 oracle so
-        // Section C's binding is satisfiable.
+        // Section C: compute the REAL cf_x_digest via the 4b-β-1
+        // oracle so the binding is satisfiable.
         let cf_x_digest =
             crate::cyclefold_cf_x_digest::compute_cf_x_digest_native(p, s, q);
+        let pp_hash = Bn254Fr::from(42u64);
+        let i = Bn254Fr::from(0u64);
+        let z_0 = Bn254Fr::from(0u64);
+        let z_i = Bn254Fr::from(0u64);
+        let z_i1 = Bn254Fr::from(1u64);
+        // Section R: compute the REAL current_step_hash so its
+        // binding is satisfiable too.
+        let current_step_hash = compute_current_step_hash_native(
+            pp_hash, i, z_0, z_i, z_i1, cf_x_digest,
+        );
         let params = crate::neptune_permutation_gadget::params_from_dump_path(
             concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
         )
         .expect("load neptune params from crate-relative dump");
         PrimaryAugmentedCircuitShell::new(
-            Bn254Fr::from(42u64), // pp_hash placeholder
-            Bn254Fr::from(0u64),  // i
-            Bn254Fr::from(0u64),  // z_0
-            Bn254Fr::from(0u64),  // z_i
-            Bn254Fr::from(1u64),  // z_i1 = z_i + 1 (consistent)
+            pp_hash,
+            i,
+            z_0,
+            z_i,
+            z_i1,
             p,
             s,
             q,
             cf_x_digest,
+            current_step_hash,
             params,
         )
     }
@@ -330,12 +405,47 @@ mod tests {
         );
     }
 
-    /// SIZE PROBE: base cons of the shell (public IO allocation +
-    /// stub step + one enforce_equal + Section C cf_x_digest
-    /// gadget). 4b-β-1 baseline was 1 con (Section C deferred);
-    /// the wired Section C adds ~thousands (limb decomp + Neptune
-    /// sponge). Pinned for regression tracking; 4b-β-4 Section R
-    /// and 4b-β-5 Section F will grow it further.
+    /// SECTION R NON-VACUITY: tamper the absorbed `i` (step
+    /// counter) → in-circuit transcript hash differs from the
+    /// public `current_step_hash` → CS UNSAT. Proves Section R's
+    /// binding actually constrains the public IO + cf_x_digest
+    /// chain through the Neptune sponge.
+    #[test]
+    fn shell_section_r_wrong_i_breaks_cs() {
+        let mut c = consistent_step();
+        // Tamper i only — gadget recomputes hash with the WRONG i,
+        // but public `current_step_hash` was computed with the
+        // original i = 0.
+        c.i = Bn254Fr::from(7u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered i MUST break Section R's transcript binding"
+        );
+    }
+
+    /// SECTION R NON-VACUITY (mirror): tamper `pp_hash` → hash
+    /// chain breaks → CS UNSAT. Different break path than
+    /// tampering i; covers absorbing-position 0 of the Neptune
+    /// sponge.
+    #[test]
+    fn shell_section_r_wrong_pp_hash_breaks_cs() {
+        let mut c = consistent_step();
+        c.pp_hash = c.pp_hash + Bn254Fr::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered pp_hash MUST break Section R's transcript binding"
+        );
+    }
+
+    /// SIZE PROBE: base cons of the shell (public IO + step +
+    /// Section C cf_x_digest + Section R transcript hash). 4b-β-3
+    /// baseline 6,267 cons; Section R adds another Neptune sponge
+    /// (6 absorbs + permute + squeeze + 250-bit truncation) for
+    /// ~few thousand more.
     #[test]
     fn shell_size_probe() {
         let circuit = consistent_step();
@@ -361,8 +471,8 @@ mod tests {
             n_cons >= 500,
             "shell unexpectedly small after Section C wiring: {n_cons}"
         );
-        // Upper bound bumped generously; tighter once 4b-β-4/5
-        // grow the number predictably.
-        assert!(n_cons < 200_000, "shell unexpectedly large: {n_cons}");
+        // Upper bound bumped generously; tighter once 4b-β-5
+        // Section F lands.
+        assert!(n_cons < 300_000, "shell unexpectedly large: {n_cons}");
     }
 }
