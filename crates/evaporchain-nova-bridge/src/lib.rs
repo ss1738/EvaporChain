@@ -124,7 +124,6 @@ pub mod cyclefold_instance_circuit;
 pub mod cyclefold_ivc_accumulator;
 pub mod cyclefold_n_aux_probe;
 pub mod cyclefold_n_aux_scaling_probe;
-pub mod groth16_wrap_msm_cons_probe;
 pub mod cyclefold_primary_augmented_circuit;
 pub mod cyclefold_r1cs_bridge;
 pub mod cyclefold_shell_chain;
