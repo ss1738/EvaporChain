@@ -118,6 +118,7 @@ pub mod neptune_permutation_gadget;
 pub mod neptune_reference;
 pub mod neptune_sponge;
 pub mod cyclefold_aux_circuit;
+pub mod cyclefold_cf_x_digest;
 pub mod cyclefold_fold_homomorphism;
 pub mod cyclefold_instance_circuit;
 pub mod cyclefold_ivc_accumulator;
