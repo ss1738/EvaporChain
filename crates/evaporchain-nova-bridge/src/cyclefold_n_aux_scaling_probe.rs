@@ -44,7 +44,7 @@ use ark_relations::{
 };
 
 use crate::cyclefold_n_aux_probe::measure_cf_secondary_n_aux;
-use crate::nova_compat::BridgeError;
+use crate::cyclefold_r1cs_bridge::BridgeError;
 
 /// A trivially-satisfied parametric-size R1CS:
 ///   - allocates `chain_len` witness variables `w_0, ..., w_{n-1}`
