@@ -568,16 +568,23 @@ once (1)–(3) hold.
 
 ## 8. Open follow-ups (clearly NOT yet proven)
 
-1. **Byte-level BESPOKE alignment** of the in-circuit r-from-RO
-   transcript with nova-snark's exact `nifs.rs::prove` ordering
-   (e.g., absorbing `U2.comm_W_I` too, transcript domain tags).
-   The (b)-1/(b)-2/(b)-2b tests prove end-to-end functionality with
-   real Nova fixtures, but a self-consistent shell-side transcript
-   that DIFFERS from nova-snark's would still pass those tests —
-   bit-level parity is a separate, focused crypto-alignment pass.
-   Analogous to `section2_gadget`'s neptune-vs-arkworks
-   reconciliation (already CLOSED via the byte-correct constants
-   stack).
+1. ~~**Byte-level BESPOKE alignment** of the in-circuit r-from-RO
+   transcript with nova-snark's exact `nifs.rs::prove` ordering~~
+   **ARCHITECTURALLY MOOT under §6b delegation (2026-05-20
+   resumption finding):** the shell (`PrimaryAugmentedCircuitShell`)
+   is NOT in the on-chain Groth16 wrap (which is over
+   `RecursionDeciderCircuit`, Section A only) and NOT in the
+   off-chain adapter (which uses nova-snark's own
+   `CompressedSNARK::verify`). Source comparison verified the
+   divergence is real: shell uses 250-bit truncation + 12-absorb
+   sequence (incl. 127-bit limb decomp of point coords); nova-snark
+   uses NUM_CHALLENGE_BITS=128 + 2-absorb direct coord (`b≠0`
+   branch in pedersen.rs:128-145). But the shell is test
+   scaffolding + design exploration only — its r-derivation
+   divergence has zero on-chain soundness impact in the
+   delegation model. Polish would only matter if pivoting to
+   full in-circuit CycleFold-aware Groth16 wrap, which §6b
+   rules out. **NOT a remaining work item.**
 2. ~~IVC integration~~ — **CLOSED** at the architectural validation
    level via (b)-1 + (b)-2 + (b)-2b: primary state threading + CF
    accumulator integration + 2-step full chain all box-verified.
