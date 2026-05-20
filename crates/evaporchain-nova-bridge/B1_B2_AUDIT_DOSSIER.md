@@ -347,9 +347,12 @@ The chosen architecture's open work, in dependency order:
    release for both). Linear extrapolation to the full
    n_aux=16,384 suggests setup ~10-60 min on a Mini (was projected
    "hours" before n=64 measurement — revised down). Prove per
-   proof: ~10-30 min. The actual heavy run is a separate scheduled
-   Mini-cluster job; the smoke + tampered-witness tests give
-   high confidence the pipeline is correct before paying for it.
+   proof: ~10-30 min. **(d)-4 heavy run SCHEDULED 2026-05-20** as
+   `groth16_wrapper::recursion_decider_groth16_full_n_aux_16384`
+   (#[ignore]'d, running in background on Mini 2 PID 48244 at
+   commit-time of this dossier update). Reports per-phase elapsed
+   time so the dossier can move from "projected" to "measured" on
+   the final pipeline cost.
 5. **EVM round-trip** — emit the Groth16 proof, feed to the
    existing 256-byte EIP-197 wire codec (`eip197.rs`, validated),
    verify on-chain (Foundry test using the existing
