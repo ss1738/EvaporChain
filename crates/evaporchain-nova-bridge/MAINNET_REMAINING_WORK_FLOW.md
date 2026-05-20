@@ -930,21 +930,41 @@ digest. The binding property always held; the test was self-
 defeated. Fix: share one `&mut rng` across the test; use
 constructively-distinct `bogus = q + G` as a belt-and-braces.
 
-**NEXT [code]:** increment 4b-β-2 — the in-circuit `cf_x_digest`
-gadget: allocate `(P, s, Q)` as witness (Bn254Fq coords via
-`EmulatedFpVar<Bn254Fq, Bn254Fr>`, native s), in-circuit limb
-decomposition matching the native bit-level encoding, absorb 9
-`FpVar<Bn254Fr>` into `enforce_poseidon_primary` (existing in
-`section2_gadget`), `enforce_equal` the resulting digest against
-the shell's public `cf_x_digest`. Cross-check: in-circuit digest
-== native `compute_cf_x_digest_native(p, s, q)` on the same
-inputs — that's the oracle-match gate. Then 4b-β-3 wires Section
-R (Neptune RO binding the previous step), 4b-β-4 wires Section F
-(primary NIFS verification semantics). After all four, flip
-`sections_wired:true`. Then increment 5 wraps the running CF
-instance in `CompressedSNARK<ppsnark>` and measures real n_aux
-from the proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality
-per the lesson).
+### 1C INCREMENT 4b-β-2 — ✅ IN-CIRCUIT cf_x_digest + ORACLE-MATCH
+[V] (2026-05-20, Mini3, box, HEAD `da703de8`,
+`cyclefold_cf_x_digest ... 4 passed; 0 failed; 3.48 s`)
+
+`enforce_cf_x_digest(cs, p_x, p_y, s, q_x, q_y, params) →
+FpVar<Bn254Fr>`: in-circuit limb decomposition (Bn254Fq value's
+254 LE bits via `to_bits_le`, split at 127, pack each half into
+`FpVar<Bn254Fr>` via `Boolean::le_bits_to_fp`); absorbs 9 Fr
+elements into the BESPOKE-aligned `enforce_neptune_sponge_primary`
+(byte-identical to `neptune_hash_primary` per section2_gadget's
+PR #103); applies 250-bit LE truncation (matches NUM_HASH_BITS
+native squeeze, same `gadget_bytes_le[31] &= 0x03;` reconciliation
+pattern as existing section2 tests).
+
+**Oracle-match gate `enforce_cf_x_digest_matches_native_oracle`
+passed on first try** — careful staging (4b-β-1 oracle pinned
+first) + reuse of existing BESPOKE infrastructure paid off; all
+the subtle pieces (limb split, sponge alignment, truncation)
+aligned without iteration. Section C of the primary augmented
+circuit (`cf_x_digest` binding) is now end-to-end: native oracle
++ in-circuit gadget, byte-identical, soundness-gated.
+
+**NEXT [code]:** increment 4b-β-3 — wire `enforce_cf_x_digest` into
+`PrimaryAugmentedCircuitShell::generate_constraints` (Section C
+"DEFERRED stub" goes LIVE): allocate `(P, s, Q)` as witnesses
+inside the shell, call `enforce_cf_x_digest`, `enforce_equal` the
+gadget's output against the existing public `cf_x_digest_var`. Then
+4b-β-4 wires Section R (Neptune RO binding previous step) and 4b-β-5
+wires Section F (primary NIFS verification semantics). Only after
+all three are wired and box-verified, flip `sections_wired:true`.
+
+After 4b-β: increment 5 wraps the running CF instance in
+`CompressedSNARK<ppsnark>` and measures real n_aux from the
+proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality per the
+lesson).
 
 ---
 
