@@ -161,3 +161,100 @@ Reading order for a reviewer:
    evidence).
 
 All other modules are dependencies of these five.
+
+## 10. r-derivation transcript SPEC (for auditor)
+
+**Honest framing first:** the (a) "BESPOKE alignment" item was
+originally scoped as byte-level parity with
+`nova_snark::nifs::NIFS::prove`. After (a)-1 we realised this is
+**mis-framed**: nova-snark's `NIFS::prove` derives `r` for the
+*NIFS layer* (folding one `RelaxedR1CSInstance` with one
+`R1CSInstance`); our shell derives `r` for the *IVC layer*
+(CycleFold-augmented primary step). Those are **different fold
+layers** — no apples-to-apples byte parity exists between them by
+definition. The legitimate work is to SPEC our r-derivation
+transcript and argue its Fiat-Shamir soundness, which this section
+provides.
+
+### 10.1 Absorbed sequence (12 elements)
+
+The shell's r-from-RO derivation, post (a)-1:
+
+```
+r = Neptune250([
+    pp_hash,              // primary public-params digest
+    previous_step_hash,   // current_step_hash of step (i-1);
+                          // chains to Section R's transcript hash
+    X_I[0], X_I[1],       // incoming primary instance's public IO
+    comm_W_I_x_lo, x_hi,  // incoming primary instance's witness
+    comm_W_I_y_lo, y_hi,  //   commitment (BN254 G1; 127-bit limbs)
+    comm_T_x_lo, x_hi,    // NIFS cross-term commitment (BN254 G1;
+    comm_T_y_lo, y_hi,    //   127-bit limbs)
+])
+```
+
+Bn254Fq coord limbs use the same canonical 127-bit (lo, hi) split
+as Section C's `cf_x_digest` encoding (see `cyclefold_cf_x_digest`
+module docs for the bit-level invariant).
+
+### 10.2 Why this transcript suffices for Fiat-Shamir soundness
+
+The fold challenge `r` must depend on ALL prover-supplied values
+that influence the soundness of the fold. The required ones are:
+
+- **pp_hash** — binds to the IVC public-parameter setup; prover
+  cannot retroactively change pp.
+- **previous_step_hash** — chains the transcript through prior IVC
+  state (z_0, z_i, prior CF running instance), so the prover
+  cannot replay a different prior fold history.
+- **X_I[0], X_I[1]** — the incoming step's public IO; without this
+  a prover could swap the incoming instance.
+- **comm_W_I** — the incoming step's witness commitment; binds the
+  prover's actual witness choice for the step.
+- **comm_T** — the cross-term commitment the prover supplies for
+  the NIFS fold; without this the prover could pick any `r`
+  favorable to a specific `T`.
+
+These exactly mirror nova-snark NIFS::prove's `U2.absorb_in_ro` +
+`comm_T.absorb_in_ro` (modulo the additional IVC-layer
+`previous_step_hash` and `pp_hash` absorbs, which nova-snark
+absorbs at the RecursiveSNARK level, not inside NIFS::prove
+itself). The composition matches Fiat-Shamir conventions for
+folding-scheme IVC.
+
+### 10.3 What is NOT yet absorbed (auditor-callout)
+
+- **`u_R`** (the running instance's `u` scalar): not currently
+  absorbed. nova-snark's NIFS::prove also does NOT absorb u_R
+  separately (it's deterministically derivable from prior r-chain).
+  Consistent with standard NIFS.
+- **`comm_W_R`, `comm_E_R`** (running's commitments): not
+  separately absorbed. These are encoded into
+  `previous_step_hash` via Section R's transcript hash, which
+  absorbs `cf_x_digest` (which in turn binds the fold's
+  cross-curve scalar-muls).
+- **`X_R`** (running's public IO): same — encoded into
+  `previous_step_hash` via Section F's `u_new`/`X_new` chaining.
+
+The compactification via `previous_step_hash` is safe **iff
+Section R's transcript absorb is collision-resistant**, which it
+is (Neptune 250-bit truncation; 2¹²⁵ pre-image resistance per
+standard arguments). This is the load-bearing reduction that
+makes our r-RO sponge 12 elements instead of much wider.
+
+### 10.4 Soundness assumption summary
+
+The composition is sound under:
+1. **Neptune permutation** is a random oracle (standard for Poseidon-
+   family hashes used in production).
+2. **Pedersen commitments on Grumpkin** are computationally
+   binding (standard discrete-log assumption).
+3. **Limb decomposition is collision-resistant** (proven bit-exact;
+   see `limb_decomposition_is_lossless` test in
+   `cyclefold_cf_x_digest`).
+4. **CycleFold construction** preserves Nova soundness (per the
+   CycleFold paper, eprint 2023/1192).
+
+The architectural pattern follows the CycleFold paper; the
+SPECIFIC absorb sequence above is an audit-relevant choice that
+this section documents for review.
