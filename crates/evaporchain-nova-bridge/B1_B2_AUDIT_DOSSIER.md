@@ -345,16 +345,25 @@ The chosen architecture's open work, in dependency order:
      Poseidon RO gadget. ~5k cons, 9+|z0|+|zn| public inputs.
    - **Section B step A-B ✅ DONE 2026-05-20:** `SectionBPublicInputs`
      struct + `Option<SectionBPublicInputs>` on `RecursionDeciderCircuit`
-     + `section_a_with_b_interface` / `setup_shape_with_b_interface`
-     constructors + `generate_constraints` allocates 9+|z0|+|zn|
-     PIs via `new_input` when `section_b=Some`. NO enforce_equal
-     yet — interface only. `sections_bcd_wired` stays `false`.
-     Smoke test `section_b_interface_wiring_compiles_and_pis_count`
-     passes: PI delta = 9+|z0|+|zn|, cons delta = 0, Section A
-     binding still satisfied. Full regression: 251/251 lib tests
-     pass (was 250, +1 for new smoke). Next iterations per scoping
-     §7: C-D (real PP integration + Poseidon enforcement), E-F
-     (tests + cons re-extrapolation).
+     + constructors + PI allocation in `generate_constraints`.
+     Smoke test pins PI delta + zero cons cost.
+   - **Section B step C ✅ DONE 2026-05-20:**
+     `l_u_secondary_extract::extract_section_b_pi_bundle` pulls all
+     9 fixed + |z0| + |zn| PIs from a real RecursiveSNARK via
+     serde-JSON reflection. Test
+     `extract_section_b_pi_bundle_real_fixture` validates: extraction
+     succeeds; num_steps + pp_digest round-trip; z0/zn arity=1
+     (TrivialIncrementCircuit); non-vacuity (≥1 of 7 extracted
+     scalars non-zero); parity vs legacy `extract_committed_hashes_via_serde`
+     on X[0]/X[1]. Mid-iteration fix: `r_U_primary.comm_W` is a
+     COMPRESSED point (single hex `comm`) not separate x/y JSON;
+     added `decompress_comm_w_as_fr` helper using halo2curves
+     `Bn256Affine::from_bytes` + `ArkFr::from_le_bytes_mod_order`.
+     Full regression: 252/252 lib tests pass (was 251, +1 for new
+     extraction test). Next iteration: step D (in-circuit Poseidon
+     enforcement of `hash_secondary` via `section2_gadget`; the
+     `hash_primary_reinterp` PI is delegated, no in-circuit
+     Poseidon needed).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
