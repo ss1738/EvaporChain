@@ -1369,6 +1369,38 @@ Remaining: (b)-2 CF accumulator integration, (a) BESPOKE
 alignment, (c) Solidity verifier prototype + audit prep, (d) L2
 deployment, (e) external audit.
 
+### 1C INCREMENT (b)-2 — ✅ CF ACCUMULATOR INTEGRATION (step 0
+end-to-end) [V] (2026-05-20, Mini3, box, HEAD `c98fd972`,
+`shell_cf_accumulator_two_step_integration ... ok; 1 passed;
+8.01 s`)
+
+The link between primary shell and secondary-side CF accumulator
+is end-to-end verified for step 0:
+1. Shell synthesised with `cf_*` fields tied to
+   `CycleFoldRunningInstance::zero(21)` ⇒ CS satisfied (Section R
+   transcript binds the running CF state consistently with the
+   absorbed values).
+2. Shell's `t1` tuple `(P, s, Q)` bridged to a CF instance via
+   3b-3's `arkworks_cs_to_nova_grumpkin_satisfied_pair`.
+3. `NIFS::<GrumpkinEngine>::prove` folded the CF instance into the
+   running pair.
+4. `shape.is_sat_relaxed` accepted the post-fold pair.
+
+**Honest scope note preserved in code:** step 1's CF-side chaining
+requires extracting the running CF state into arkworks types
+(nova-snark's `RelaxedR1CSInstance/Witness` fields are
+`pub(crate)`). Sub-step (b)-2b extends the bridge to expose them.
+The architectural pattern — primary Section R commits to running
+CF state; running CF state evolves via 4a's NIFS fold; both speak
+the same Grumpkin/Bn254Fr field layout — is verified at step 0.
+
+**Thirteenth consecutive first-try pass** (counting the trivial
+StdRng-type fix as part of the standard write→box→fix rhythm).
+
+Remaining: (b)-2b multi-step CF chaining (needs pub(crate)
+extraction helpers), (a) BESPOKE alignment, (c) Solidity
+verifier, (d) L2 deployment, (e) external audit.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
