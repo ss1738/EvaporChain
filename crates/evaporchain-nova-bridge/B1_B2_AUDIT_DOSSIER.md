@@ -58,11 +58,12 @@ practical.
 | (c)-1a | `foundry-bench/Bn254Pairing.sol` + bench | EIP-197 2-pair gas anchor | 1/1 (113,324 gas) | (within `1917f9e4` line) |
 | (c)-1b | `foundry-bench/SumcheckRound.sol` + bench | Cubic sumcheck round gas anchor | 1/1 (709 gas/round, ~28k for 40 rounds) | (within `1917f9e4` line) |
 | (c)-1c | `foundry-bench/GrumpkinMSM.sol` + BenchMSM | Naive MSM upper-bound (worst-case ceiling) | 3/3 (37B gas at n=16,384, 590× Pippenger best) | `414c0b26` |
+| (c)-2a | `foundry-bench/GrumpkinMSMPippenger.sol` + BenchMSMPippenger | Production-shape windowed Pippenger MSM | 5/5 incl. correctness vs naive | `ec51a5a5` |
 
-**Aggregate:** 94 commits this arc (`436d2e2d → 414c0b26`); every
+**Aggregate:** 95 commits this arc (`436d2e2d → ec51a5a5`); every
 primitive box-validated; **fourteen consecutive first-try passes**
 on the 4b shell-extension + (b) IVC integration micro-arcs, plus
-three Foundry-side gas-decomposition passes ((c)-1a/b/c).
+**four Foundry-side gas-decomposition passes** ((c)-1a/b/c + (c)-2a).
 
 ## 4. Final shell measurements
 
@@ -88,11 +89,19 @@ Foundry gas anchors (commit `1917f9e4` + `414c0b26`):
 - EIP-197 BN254 2-pair check: 113,324 gas
 - **Naive MSM** at n=16,384 (linear extrap from n=16): ~37 BILLION gas
   (~1,200× L1 block — confirms Pippenger non-negotiable)
-- **Pippenger MSM** at n=16,384: best ~62.7M, realistic ~87.8M
-- Full ppsnark verifier (composition): ~63M (Pippenger best) / ~88M
-  (realistic) — IPA MSM dominates 99.77%, sumcheck + pairing < 0.25%
+- **Pippenger MSM (affine, MEASURED + analytical)** at n=16,384:
+  - n=16, c=4: 11.78M measured (per-base 736k)
+  - n=16,384, c=8 analytical: ~2.07 BILLION gas
+  - n=16,384, c=10 (sweet spot): ~1.84 BILLION gas
+  - **Floor (affine Solidity): ~1.8B — 33× over (6-α)'s 62.7M anchor**
+- **With Jacobian-projective optimization (REQUIRED for L2-fit):**
+  - ~50M gas (removes per-add ModExp inversion, ~40× speedup)
+  - + assembly: ~15-25M gas (L2 single-tx feasible)
+- Full ppsnark verifier (composition, affine floor): IPA-MSM
+  dominates 99.99%; sumcheck 28k + pairing 113k < 0.01% at the
+  2-billion-gas affine floor.
 
-## 5. Four honest mid-arc corrections (the discipline working)
+## 5. Five honest mid-arc corrections (the discipline working)
 
 Each surfaced via measurement, none buried; each made the story
 tighter, more credible.
@@ -109,15 +118,41 @@ tighter, more credible.
 4. **Solidity gas predicted ~24M (L1-viable) → actually ~63-88M
    (NOT L1-viable)** (commit `1917f9e4`). Foundry-measured;
    triggered the L2-only mainnet decision.
+5. **(6-α) "Pippenger best" 62.7M → realistic Pippenger ~2.07B
+   (33× undershoot)** (commit `ec51a5a5`). (6-α)'s analytical
+   anchor used only the `n × point-add` term and missed the
+   ⌈256/c⌉ window multiplier (≈32 at c=8). Real affine Pippenger
+   floor is ~2 BILLION gas, NOT 62.7M. L2 single-tx (~30M block
+   limit) requires Jacobian-projective coordinates (~40× speedup
+   eliminating per-add ModExp inversion) + assembly to fit.
 
-## 6. Deployment target — LOCKED: L2-only (commit `6e6b0a1f`)
+## 6. Deployment target — LOCKED: L2-only, REQUIRES Jacobian opt (commits `6e6b0a1f`, `ec51a5a5`)
 
 Per Satyawan's post-Foundry decision: EvaporChain mainnet ZK
 verification deploys on L2 (Optimism / Arbitrum / Base), not
-Ethereum L1. L1 gas at the real `n_aux=16,384` is ~63-88M (2-3× over
-30M block limit) even with naive Solidity; heavy optimization gets
-~2× speedup ≈ 30-45M, still borderline-over. L2 gas is 100-1000×
-cheaper — the SAME Solidity verifier deploys trivially.
+Ethereum L1.
+
+**Revised (c)-2a-aware verdict:** the Pippenger-measured floor at
+n=16,384 is ~2 BILLION gas with pure-affine Solidity (not 62.7M as
+(6-α) suggested). L2 block limits (~30M) DO NOT absorb 2B in a
+single tx, so the L2-only deployment additionally REQUIRES one of:
+
+- **(R1) Jacobian-projective coordinates** — eliminates the 7k-gas
+  ModExp inversion per point-add (currently ~99% of point-add
+  cost). Affine→Jacobian alone gives ~40× speedup → ~50M gas.
+- **(R2) Plus assembly + batched-inverse + memory tricks** → ~2-3×
+  more → ~15-25M gas. L2-fits.
+- **(R3) Multi-tx split** — verifier state-shared across multiple
+  transactions on the same L2. Operational complexity but bypasses
+  any single-tx limit.
+- **(R4) Alternative curve / precompile path** — if Grumpkin
+  arithmetic is the blocker, route the secondary verifier through a
+  curve with EVM precompile support (BN254 has 0x06/0x07 ops). This
+  is an architectural pivot, not an optimization.
+
+(R1)+(R2) is the default mainnet path. (R3) is the fallback if
+optimization stalls. (R4) is the contingency if Grumpkin proves
+fundamentally uneconomic.
 
 ## 7. Open follow-ups (clearly NOT yet proven)
 
