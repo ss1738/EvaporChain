@@ -653,6 +653,7 @@ mod tests {
     #[ignore = "(d)-4 production-scale Groth16 setup at n_aux=16384 (heavy, Mini)"]
     #[allow(deprecated)]
     fn recursion_decider_groth16_full_n_aux_16384() {
+        use ark_bn254::Fq as Bn254Fq;
         use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
         use ark_ec::CurveGroup;
         use crate::grumpkin_config::GrumpkinConfig;
