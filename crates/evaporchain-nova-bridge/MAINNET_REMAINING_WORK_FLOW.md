@@ -898,20 +898,53 @@ Each surfaced and corrected via the same discipline pattern the
 whole arc has used — the compiler and box runs caught what the
 hand-design didn't.
 
-**NEXT [code]:** increment 4b-β — wire Section R (Neptune RO
-binding the previous step's hash + absorbing the CF running
-instance) using `crate::neptune_permutation_gadget`; Section F
-(primary NIFS verification semantics — fold relation between
-previous primary instance and incoming step); Section C (in-
-circuit hash `cf_x_digest = Neptune(P_x, P_y_emulated_limbs,
-s_emulated_limbs, Q_x, Q_y_emulated_limbs)` — careful, the (P, s,
-Q) raw values are Bn254Fq/Bn254Fr crossings that need emulated
-representation inside the primary's Fr-circuit; the digest itself
-is native Bn254Fr). Flip `sections_wired:true` only once all three
-are real and box-verified. After 4b-β: increment 5 wraps in
-`CompressedSNARK<ppsnark>` and measures real n_aux from the
-proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality, per the
-lesson).
+### 1C INCREMENT 4b-β-1 — ✅ NATIVE cf_x_digest ORACLE [V]
+(2026-05-20, Mini3, box, HEAD `91b31c3a`,
+`cyclefold_cf_x_digest ... 3 passed; 0 failed; 3.36 s`)
+
+New module `cyclefold_cf_x_digest.rs`:
+[`compute_cf_x_digest_native(p, s, q) → Bn254Fr`] with a pinned,
+bit-exact, reproducible encoding (each Bn254Fq coord split into
+127-bit lo+hi Bn254Fr limbs — both `<2¹²⁷`, safely representable in
+either field, lossless reconstruction; concatenate with native `s`
+into a 9-element Bn254Fr vector; absorb into `neptune_hash_primary`;
+squeeze). This is the **oracle 4b-β-2's in-circuit gadget will
+reproduce bit-for-bit** — pinned FIRST so the in-circuit work has
+a known-correct target.
+
+Three box tests, all passing:
+- `limb_decomposition_is_lossless` — lo's LE bits match f's [0..127],
+  hi's match [127..254], both padded zero above. Pins the bit-level
+  invariant.
+- `cf_x_digest_is_deterministic` — same `(P, s, Q)` ⇒ same digest.
+- `cf_x_digest_distinguishes_distinct_tuples` — changing `s` OR `Q`
+  changes the digest. **Binding gate held.**
+
+**One real test-artifact surfaced + fixed (not buried):** first run
+the binding gate appeared to fail — turned out `test_rng()` is
+deterministically seeded, and two independent `test_rng()` calls
+produce identical sequences. My `random_tuple()` used its own
+internal rng + the outer test created another, so `Bn254Fr::rand`
+in both produced the same scalar → `bogus = p · same = q` → identical
+digest. The binding property always held; the test was self-
+defeated. Fix: share one `&mut rng` across the test; use
+constructively-distinct `bogus = q + G` as a belt-and-braces.
+
+**NEXT [code]:** increment 4b-β-2 — the in-circuit `cf_x_digest`
+gadget: allocate `(P, s, Q)` as witness (Bn254Fq coords via
+`EmulatedFpVar<Bn254Fq, Bn254Fr>`, native s), in-circuit limb
+decomposition matching the native bit-level encoding, absorb 9
+`FpVar<Bn254Fr>` into `enforce_poseidon_primary` (existing in
+`section2_gadget`), `enforce_equal` the resulting digest against
+the shell's public `cf_x_digest`. Cross-check: in-circuit digest
+== native `compute_cf_x_digest_native(p, s, q)` on the same
+inputs — that's the oracle-match gate. Then 4b-β-3 wires Section
+R (Neptune RO binding the previous step), 4b-β-4 wires Section F
+(primary NIFS verification semantics). After all four, flip
+`sections_wired:true`. Then increment 5 wraps the running CF
+instance in `CompressedSNARK<ppsnark>` and measures real n_aux
+from the proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality
+per the lesson).
 
 ---
 
