@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 63, continued) — coverage push: signer.rs 67.7%→100%
+
+**Focus:** wallet crate signer.rs — all set_signature arms, deprecated methods, unlock paths
+**Commits shipped:** 1 (f114520f)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` signer.rs | 67.7% | 100% (569/569) | 7 new tests |
+**Tests added:**
+- `test_unlock_fallback_to_derived_address`: line-97 None arm via corrupted stored address
+- `test_unlock_by_address_covers_lines_104_111`: unlock_by_address()
+- `test_deprecated_sign_transaction_covers_lines_147_152`: deprecated sign_transaction()
+- `test_deprecated_sign_covers_lines_160_167`: deprecated sign()
+- `test_set_signature_standard_variants`: 18 set_signature arms via macro (DeployContract through DeployTemplate)
+- `test_set_signature_noop_variants`: MultiSig + Refund no-op arms
+- `test_set_signature_zk_unshield_debug_asserts`: #[should_panic] covers Unshield|PrivateTransfer debug_assert!(false) arm
+**What's next:**
+- wallet account.rs (68.5%, 85 uncovered lines — largest remaining wallet target)
+- wallet auto_refresh.rs (70.3%, 94 uncovered)
+- workspace scan for next tractable substrate crate
+**Cross-references:** commit f114520f
+
+---
+
 ## 2026-05-19 (session 63) — coverage push: gas.rs 85.7%→98.7%
 
 **Focus:** wallet crate gas.rs — all 22 remaining estimate_gas() match arms
