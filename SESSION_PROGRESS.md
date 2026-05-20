@@ -6,6 +6,30 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 63, continued 2) — coverage push: account.rs 68.5%→91.2%
+
+**Focus:** wallet crate account.rs — getters, import paths, file I/O, nonce edge case
+**Commits shipped:** 1 (bdf366cf)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` account.rs | 68.5% | 91.2% (322/353) | 9 new tests |
+**Tests added:**
+- `test_cached_account_state_age_secs`: age_secs() lines 49-51
+- `test_keystore_getter/mut/rpc_getter`: three accessor methods (104-116)
+- `test_import_account_first/second`: import_account() + active guard (139-153)
+- `test_import_account_with_address_first/second`: import_account_with_address() (168-187)
+- `test_save_and_load_roundtrip`: AccountManager::load() + save() file I/O (92-101)
+- `test_increment_nonce_no_cache_entry_is_noop`: address found, no cache entry → inner if-let not taken (line 315)
+**Remaining uncovered:** refresh_balance/refresh_all async (need RPC mock) + line 200 dead code (cache lookup after keystore.remove is always None)
+**What's next:**
+- wallet auto_refresh.rs (70.3%, 94 uncovered)
+- wallet offline.rs (84.6%, 26 uncovered)
+- workspace scan for next tractable substrate crate
+**Cross-references:** commit bdf366cf
+
+---
+
 ## 2026-05-19 (session 63, continued) — coverage push: signer.rs 67.7%→100%
 
 **Focus:** wallet crate signer.rs — all set_signature arms, deprecated methods, unlock paths
