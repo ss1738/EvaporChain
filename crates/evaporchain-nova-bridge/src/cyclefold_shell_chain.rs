@@ -420,6 +420,32 @@ mod tests {
         let _ = s0_step_hash;
         let _ = s0_u_new;
         let _ = s0_x_new;
+
+        // (b)-2b PREMISE-CHECK: dump RelaxedR1CSInstance JSON keys
+        // so the extractor for step 1's CF chaining can be written
+        // against the actual format (not assumed). Once-per-build
+        // diagnostic; bounded.
+        let v = serde_json::to_value(&u_run_after_0)
+            .expect("RelaxedR1CSInstance to_value");
+        if let Some(o) = v.as_object() {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            eprintln!("RELAXED_INST_KEYS = {keys:?}");
+            for k in &keys {
+                let child = &v[*k];
+                let info = match child {
+                    serde_json::Value::Array(a) => format!("ARRAY len={}", a.len()),
+                    serde_json::Value::Object(oo) => {
+                        let mut inner: Vec<&String> = oo.keys().collect();
+                        inner.sort();
+                        format!("OBJ keys={inner:?}")
+                    }
+                    serde_json::Value::String(s) => format!("STR len={}", s.len()),
+                    other => format!("{other:?}"),
+                };
+                eprintln!("RELAXED_INST {k} = {info}");
+            }
+        }
     }
 
     /// 2-STEP CHAIN: synthesise shell_0 then shell_1 with step_1's
