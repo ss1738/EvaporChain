@@ -140,6 +140,156 @@ pub fn extract_committed_hashes_via_serde(
     Ok((secondary_to_ark_fr_lossy(s0), secondary_to_ark_fr_lossy(s1)))
 }
 
+/// B-1/B-2 1C §7 Section B step C: extract ALL Section B public-input
+/// values from a `RecursiveSNARK` via the same serde-JSON reflection
+/// pattern as `extract_committed_hashes_via_serde`. Returns the
+/// nine fixed scalars + z0/zi arrays in the layout the Section B
+/// in-circuit Poseidon gate (next iteration) will consume.
+///
+/// JSON paths (verified empirically by the existing
+/// `debug_dump_l_u_secondary_json_shape` test pattern):
+///   - `pp_digest`             — caller-supplied (lives on the vk,
+///                               not on the RecursiveSNARK; passed in
+///                               separately so this fn doesn't need a
+///                               vk reference).
+///   - `num_steps`             — caller-supplied (passed to
+///                               `prove_step` n times).
+///   - `z0[..]`                — `rs.z0`.
+///   - `zi[..]`                — `rs.zi`.
+///   - `ri_secondary`          — `rs.ri_secondary`.
+///   - `r_U_primary` fields    — `rs.r_U_primary.comm_W.x/y, X[0], X[1]`.
+///   - `hash_primary_reinterp` — `l_u_secondary.X[0]` (via
+///                               `base_as_scalar` ≡ `secondary_to_ark_fr_lossy`).
+///   - `hash_secondary_claimed`— `l_u_secondary.X[1]`.
+///
+/// For full source mapping to nova-snark CompressedSNARK::verify
+/// L935-963, see `SECTION_B_SCOPING.md` §1.
+///
+/// IMPORTANT: this extraction is for the CYCLEFOLD INTEGRATION (the
+/// 1C arc). The RecursiveSNARK fixture is built against
+/// `TrivialIncrementCircuit` (z0/zi arity = 1) — extending to other
+/// step circuits is a straightforward type-parameter change (the
+/// JSON paths are identical).
+#[derive(Clone, Debug)]
+pub struct SectionBPiBundle {
+    /// `hash_primary_reinterp` (= base_as_scalar of l_u_secondary.X[0]).
+    pub hash_primary_reinterp: ArkFr,
+    /// `hash_secondary_claimed` (= l_u_secondary.X[1]).
+    pub hash_secondary_claimed: ArkFr,
+    /// `vk.pp_digest` (caller-supplied).
+    pub pp_digest: ArkFr,
+    /// IVC step count (caller-supplied).
+    pub num_steps: ArkFr,
+    /// `rs.ri_secondary`.
+    pub ri_secondary: ArkFr,
+    /// `rs.r_U_primary` absorbed-in-RO fields.
+    pub r_U_primary_comm_x: ArkFr,
+    pub r_U_primary_comm_y: ArkFr,
+    pub r_U_primary_x0: ArkFr,
+    pub r_U_primary_x1: ArkFr,
+    /// `rs.z0`.
+    pub z0: Vec<ArkFr>,
+    /// `rs.zi` (the "zn" in CompressedSNARK::verify naming).
+    pub zn: Vec<ArkFr>,
+}
+
+/// Helper: parse a primary-side hex scalar (l_u_secondary.X[..] uses
+/// secondary parser, but ri_secondary / r_U_primary fields use the
+/// primary parser via primary_to_ark_fr in scalar_adapter — for now
+/// we route both through secondary_to_ark_fr_lossy since the bit-
+/// pattern reinterpretation is what the in-circuit hash expects).
+fn parse_primary_or_lossy_scalar(
+    s: Option<&str>,
+    index: usize,
+) -> Result<ArkFr, ExtractError> {
+    // Many fields on RecursiveSNARK serialize identically (32-byte
+    // LE hex). The lossy reinterpret is intentional for fields the
+    // hash gate will absorb as "opaque Bn254 Fr" — exactly what
+    // base_as_scalar / scalar_as_base do in nova-snark verify.
+    let sec = parse_secondary_scalar_hex(s, index)?;
+    Ok(secondary_to_ark_fr_lossy(sec))
+}
+
+pub fn extract_section_b_pi_bundle(
+    rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
+    pp_digest: ArkFr,
+    num_steps: u64,
+) -> Result<SectionBPiBundle, ExtractError> {
+    let v = serde_json::to_value(rs)
+        .map_err(|e| ExtractError::Serialize(e.to_string()))?;
+
+    // 1. l_u_secondary.X[0..2] — the two output hashes.
+    let x = v
+        .get("l_u_secondary")
+        .and_then(|inst| inst.get("X"))
+        .and_then(|x| x.as_array())
+        .ok_or(ExtractError::MissingPath)?;
+    if x.len() < 2 {
+        return Err(ExtractError::TooFewHashes(x.len()));
+    }
+    let hash_primary_reinterp = parse_primary_or_lossy_scalar(x[0].as_str(), 0)?;
+    let hash_secondary_claimed = parse_primary_or_lossy_scalar(x[1].as_str(), 1)?;
+
+    // 2. ri_secondary.
+    let ri_secondary = parse_primary_or_lossy_scalar(
+        v.get("ri_secondary").and_then(|x| x.as_str()),
+        2,
+    )?;
+
+    // 3. r_U_primary.comm_W.{x,y} and r_U_primary.X[0..2].
+    let r_u_p = v
+        .get("r_U_primary")
+        .ok_or(ExtractError::MissingPath)?;
+    let comm_w = r_u_p
+        .get("comm_W")
+        .ok_or_else(|| ExtractError::MissingField("r_U_primary.comm_W".into()))?;
+    let r_U_primary_comm_x = parse_primary_or_lossy_scalar(
+        comm_w.get("x").and_then(|v| v.as_str()),
+        3,
+    )?;
+    let r_U_primary_comm_y = parse_primary_or_lossy_scalar(
+        comm_w.get("y").and_then(|v| v.as_str()),
+        4,
+    )?;
+    let r_u_p_x = r_u_p
+        .get("X")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| ExtractError::MissingField("r_U_primary.X".into()))?;
+    if r_u_p_x.len() < 2 {
+        return Err(ExtractError::TooFewHashes(r_u_p_x.len()));
+    }
+    let r_U_primary_x0 = parse_primary_or_lossy_scalar(r_u_p_x[0].as_str(), 5)?;
+    let r_U_primary_x1 = parse_primary_or_lossy_scalar(r_u_p_x[1].as_str(), 6)?;
+
+    // 4. z0 and zi arrays.
+    let parse_arr = |key: &str, base_idx: usize| -> Result<Vec<ArkFr>, ExtractError> {
+        let arr = v
+            .get(key)
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| ExtractError::MissingField(format!("{key} (expected array)")))?;
+        arr.iter()
+            .enumerate()
+            .map(|(i, e)| parse_primary_or_lossy_scalar(e.as_str(), base_idx + i))
+            .collect()
+    };
+    let z0 = parse_arr("z0", 100)?;
+    let zn = parse_arr("zi", 200)?;
+
+    Ok(SectionBPiBundle {
+        hash_primary_reinterp,
+        hash_secondary_claimed,
+        pp_digest,
+        num_steps: ArkFr::from(num_steps),
+        ri_secondary,
+        r_U_primary_comm_x,
+        r_U_primary_comm_y,
+        r_U_primary_x0,
+        r_U_primary_x1,
+        z0,
+        zn,
+    })
+}
+
 /// Reused by `s4_secondary_extract` (audit B-1/B-2 S4a): the
 /// endianness here is "verified empirically", so S4a reuses this
 /// exact parser rather than re-deriving it.
@@ -199,6 +349,74 @@ mod tests {
         eprintln!(
             "l_u_secondary shape: {}",
             serde_json::to_string_pretty(&l_u).unwrap_or_default()
+        );
+    }
+
+    /// (Section B step C): full Section B PI bundle extraction
+    /// from a real RecursiveSNARK fixture. Validates:
+    ///   - extraction succeeds (all JSON paths present)
+    ///   - the 9 fixed scalars are not all trivially zero
+    ///   - z0 / zn arrays have the expected arity (1 for
+    ///     TrivialIncrementCircuit)
+    ///   - hash_primary_reinterp / hash_secondary_claimed match the
+    ///     existing `extract_committed_hashes_via_serde` output
+    ///     (parity gate — the two paths must agree on the X[..]
+    ///     fields they share)
+    #[test]
+    fn extract_section_b_pi_bundle_real_fixture() {
+        let rs = generate_fixture(2).expect("fixture");
+        let pp_digest_placeholder = ArkFr::from(1234u64);
+        let bundle = extract_section_b_pi_bundle(
+            &rs, pp_digest_placeholder, 2,
+        ).expect("extract bundle");
+
+        // Sanity: arities + caller-supplied values.
+        assert_eq!(bundle.num_steps, ArkFr::from(2u64), "num_steps echoed back");
+        assert_eq!(
+            bundle.pp_digest, pp_digest_placeholder,
+            "pp_digest is caller-supplied (vk field)"
+        );
+        assert_eq!(bundle.z0.len(), 1, "TrivialIncrementCircuit z0 arity = 1");
+        assert_eq!(bundle.zn.len(), 1, "TrivialIncrementCircuit zi arity = 1");
+
+        // Non-vacuity: at least one of the 9 fixed scalars is non-zero.
+        let any_nonzero = [
+            bundle.hash_primary_reinterp,
+            bundle.hash_secondary_claimed,
+            bundle.ri_secondary,
+            bundle.r_U_primary_comm_x,
+            bundle.r_U_primary_comm_y,
+            bundle.r_U_primary_x0,
+            bundle.r_U_primary_x1,
+        ]
+        .iter()
+        .any(|f| *f != ArkFr::from(0u64));
+        assert!(
+            any_nonzero,
+            "all 7 extracted scalars zero ⇒ JSON path silent failure"
+        );
+
+        // Parity with the original 2-hash extractor.
+        let (h0, h1) =
+            extract_committed_hashes_via_serde(&rs).expect("legacy extract");
+        assert_eq!(
+            bundle.hash_primary_reinterp, h0,
+            "bundle.hash_primary_reinterp must equal legacy l_u_secondary.X[0]"
+        );
+        assert_eq!(
+            bundle.hash_secondary_claimed, h1,
+            "bundle.hash_secondary_claimed must equal legacy l_u_secondary.X[1]"
+        );
+
+        // For downstream Section B step D wiring: the bundle field
+        // count matches SectionBPublicInputs::pi_count() = 9 + |z0|
+        // + |zn| = 9 + 1 + 1 = 11.
+        let expected_pi_count = 9 + bundle.z0.len() + bundle.zn.len();
+        assert_eq!(expected_pi_count, 11, "TrivialIncrementCircuit gives 11 Section B PIs");
+
+        eprintln!(
+            "SECTION_B_BUNDLE_EXTRACTED: 9 fixed + |z0|={} + |zn|={} = {} PIs",
+            bundle.z0.len(), bundle.zn.len(), expected_pi_count
         );
     }
 
