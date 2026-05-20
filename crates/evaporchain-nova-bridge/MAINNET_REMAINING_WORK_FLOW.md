@@ -1038,18 +1038,55 @@ full Nova IVC harness (which DOES need the complete 4b primary
 augmented circuit) is the integration story, but the *measurement*
 that pins predicted ~2¹³ vs reality stands alone.
 
-**NEXT [code]:** increment 5-α — direct
-`ppsnark::<S2pp = RelaxedR1CSSNARK<GrumpkinEngine, EE2>>::setup` +
-`prove` on a satisfied CF instance pair (3b-3 builds it); serde-
-extract the proof and read `eval_arg.L_vec.len()`. That's the real
-measured n_aux for our CycleFold-shape secondary. Compare to the
-predicted 2¹³=8,192 (the calibration the assert-without-measuring
-lesson demands). Either confirms the architectural reduction
-holds in absolute numbers, or fires the next honest correction.
+### 1C INCREMENT 5-α — ✅ n_aux MEASURED + ⚠️ CALIBRATION
+CORRECTION (2026-05-20, Mini3, box, HEAD `da3735a1`,
+`cf_secondary_n_aux_measurement_real_proof ... ok`, 1 passed,
+13.04 s)
 
-After 5-α: 4b-β-4c + 4b-β-5 + 4b-β finish (full primary aug),
-then 4a-style accumulator over the real primary, then increment 6
-Solidity templater + Foundry gas, then increment 7 audit prep.
+**`N_AUX_MEASURED log_n_aux=14, n_aux=16,384, shape_num_cons=1,985,
+shape_num_vars=1,812`** — real ppsnark proof on the CF instance,
+serde-extracted from `proof.eval_arg.L_vec.len()=14`.
+
+**The architecture reduction HOLDS** (16,384 < 131,072 option-2
+dead-end ⇒ **8× reduction**, falsifier intact at `log_n_aux<17`),
+**but the prior predictions were off by 2×** and the gas estimate
+revises material:
+- 4b-α predicted ~2¹³ = 8,192 (16× reduction).
+- 4b-β-3 predicted "≥ 2¹² = 4,096 (caveat: total_nz could push
+  higher)" — caveat fired: `S_comm.N` is dominated by `total_nz` (~
+  10k) here, not `2·num_vars=3,624`, padding to 16,384.
+- **Real n_aux = 16,384.** Reduction is 8×, not 16×/32×.
+
+**Revised Solidity gas estimate (un-sugar-coated):** Pippenger MSM
+at `n=16,384` in pure-EVM Grumpkin arithmetic ≈ 16k × ~1.5k gas /
+add ≈ **~24M gas (~80 % of L1's 30M block)**, vs prior estimates
+of ~6M (~20 %) and ~12M (~40 %). **Tight on L1 but still buildable;
+cheap on L2.** 1C is viable; the budget is more constrained than the
+earlier optimism suggested.
+
+**Third honest correction this 1C arc** (≈10⁵→~10⁷ flat-MSM size;
+"tensor-fold 10-100× lever" was 1.58× *worse*; now 2¹³→2¹⁴). Per
+the assert-without-measuring lesson: each surfaced via measurement,
+none buried; each makes the architecture story tighter and more
+credible.
+
+**NEXT [code/decision]:** with the real n_aux pinned and the
+architectural reduction confirmed (8×, in-budget on L1, cheap on
+L2), the genuine remaining work falls in priority order:
+- (a) **Increment 6**: prototype the Solidity verifier templater
+  for our specific decider shape (CompressedSNARK<ppsnark> over
+  the CF secondary) and **measure real on-chain gas** via Foundry
+  at n=16,384. Confirms the ~24M estimate empirically — if true,
+  1C is buildable on L1; if it overshoots 30M, the L2-only story
+  becomes the honest scope.
+- (b) **Increment 4b finish** (β-4c CF instance comm_w/comm_e/x_vec
+  absorb + β-5 Section F NIFS): mechanical extensions needed for
+  the full IVC harness; deferred until (a) confirms the gas budget
+  is achievable.
+- (c) **Increment 7** audit prep + write-up.
+
+Recommendation: prioritise (a) Foundry gas measurement — the gas
+number is now the single highest-leverage unknown remaining.
 
 ---
 
