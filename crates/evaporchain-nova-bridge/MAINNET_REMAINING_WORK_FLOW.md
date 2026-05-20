@@ -1194,24 +1194,46 @@ instance (commitments + scalar + x_vec) flows through the
 transcript hash and is non-vacuously bound to the public
 `current_step_hash`.
 
-**NEXT [code]:** increment 4b-β-5 — Section F: **primary NIFS
-verification**, the substantive remaining novel piece. Verifies
-the fold relation between the previous primary running instance
-and the incoming primary step: given `(U_running, U_incoming,
-comm_T)` and challenge `r` derived from RO, the augmented circuit
-must enforce `U_folded.comm_W = U_running.comm_W + r ·
-U_incoming.comm_W`, `comm_E_folded = U_running.comm_E + r ·
-comm_T`, etc. — same identities `cyclefold_fold_homomorphism::
-fold_cf_step` implements out-of-circuit. The primary's
-commitments are BN254 G1 points (non-native in Bn254Fr circuit
-— Bn254Fq coords); scalar-muls there are exactly what
-CycleFold's aux delegates. The shell allocates `(P, s, Q)` and
-binds via cf_x_digest already; Section F closes the loop by
-enforcing the primary fold's structural invariants (commitment
-homomorphism + the r-derivation from RO consistent with the
-previous step's transcript). Substantial; deserves dedicated
-focused effort. Then increment 7 audit prep / write-up. L2
-deployment downstream.
+### 1C INCREMENT 4b-β-5-α — ✅ SECTION F NATIVE FOLD LIVE [V]
+(2026-05-20, Mini3, box, HEAD `98b21a3b`,
+`cyclefold_primary_augmented_circuit ... 12 passed; 0 failed;
+7.83 s`)
+
+Section F native field identities enforced: `u_new = u_R + r` and
+`X_new[i] = X_R[i] + r·X_I[i]` for i=0,1 (Nova `X.len()=2`
+convention; `u_I=1` implicit). EC-side identities (`comm_W_new =
+comm_W_R + r·comm_W_I`, `comm_E_new = comm_E_R + r·comm_T`)
+delegate to CycleFold aux via the existing cf_x_digest binding
+(Section C) — not duplicated in-circuit on the primary side. New
+struct fields: `primary_{u_r, x_r, x_i, r, u_new, x_new}`.
+`u_new` + `X_new` are PUBLIC INPUTS (next step's inputs); rest
+are witnesses.
+
+Two new non-vacuity gates passed first try (different fold-
+identity break paths):
+- `shell_section_f_wrong_u_new_breaks_cs` — tamper `u_new` ⇒ UNSAT.
+- `shell_section_f_wrong_x_new_breaks_cs` — tamper `X_new[0]` ⇒
+  UNSAT.
+
+**`PRIMARY_SHELL_PROBE: 36,169 cons / 31,600 witness / 11 instance`
+— Section F native adds just +5 cons** (1 for u_new equality +
+4 for the two X_new equalities). Native fold is essentially free;
+the cost lives in the EC delegation (cf_x_digest from Section C),
+not the linear combinations themselves.
+
+**Seventh consecutive first-try pass this micro-arc.**
+
+**NEXT [code]:** increment 4b-β-5-β — wire the **r-from-RO
+derivation**: today `primary_r` is a witness, but in production
+it must be derived from absorbing the previous step's transcript
+(via Section R's `current_step_hash`) + the comm_T commitment +
+the incoming step's hash, then squeezing. Same Neptune
+infrastructure both Section C and Section R use. After β-5-β:
+4b-β-5-γ would EXTEND `cf_x_digest` to bind MULTIPLE cross-curve
+scalar-mul tuples (the primary fold needs `r·comm_W_I` AND
+`r·comm_T`, not just one — currently shell exposes only one).
+Then `sections_wired:true`. Then increment 7 audit prep /
+write-up. L2 deployment downstream.
 
 ---
 
