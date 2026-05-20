@@ -830,19 +830,51 @@ built, box-verified, and end-to-end consistent:
 - Inc 3b-4: Real `NIFS::<GrumpkinEngine>::prove` +
   `is_sat_relaxed` accepts + `NIFS::verify` ≡ `NIFS::prove`.
 
-**NEXT [code]:** increment 4 — full IVC harness composition: a
-multi-step driver that (a) runs the primary nova-snark
-`RecursiveSNARK` (already validated, both `snark` 25 s + `ppsnark`
-125 s e2e tests pass), (b) per step extracts the cross-curve
-scalar-mul tuple `(P, s, Q)` the primary's fold implicitly
-performed, (c) builds a `CycleFoldInstanceCircuit` from it,
-(d) bridges to a `(U2_incoming, W2_incoming)` via 3b-3, (e) folds
-into the running `(U_cf, W_cf)` via 3b-4's NIFS prove. Verify the
-running CF instance evolves correctly across ≥2 steps (box-check
-`is_sat_relaxed` after each fold). After this, increment 5 wraps
-the running CF instance in `CompressedSNARK<ppsnark>` and measures
-the real n_aux post-CycleFold from the proof's serde'd
-`L_vec.len()` (pinning the predicted ~2¹³ vs reality).
+### 1C INCREMENT 4a — ✅ FOLD ACCUMULATOR COMPOSITION [V]
+(2026-05-20, Mini3, box, HEAD `710a54db`,
+`cyclefold_ivc_accumulator ... 2 passed; 0 failed; 6.54 s`)
+
+**Honest re-scope logged:** the original "increment 4 = reuse
+nova-snark RecursiveSNARK" was imprecise — that path keeps the
+heavy ~2¹⁷ secondary and DOESN'T deliver CycleFold's reduction.
+Getting the reduction needs a NEW primary augmented circuit (multi-
+day construction, tracked as **4b**). 4a is the cheapest decisive
+sub-step that validates the *composition pattern* without needing
+the real primary yet.
+
+`run_synthetic_cf_accumulator(num_steps, ck_label)`: bridges N
+synthetic cross-curve scalar-mul tuples (placeholder for what 4b's
+primary will emit per step) → `CycleFoldInstanceCircuit` → 3b-3
+satisfied artifacts → 3b-4's `NIFS::<GrumpkinEngine>::prove` folded
+into the running pair. Per-step `is_sat_relaxed` gate inside the
+runner + final `is_sat_relaxed` gate from the caller.
+
+Two box tests:
+- 3 steps: ok.
+- 6 steps stress: ok (catches accumulator drift — relaxed `u`
+  grows, cross-term commitments compose).
+
+**∴ the fold accumulator composition is sound end-to-end across N
+folds.** 4b's job is now narrowly defined: emit the right per-step
+`(P, s, Q)` tuple; the folding side is proven to handle them.
+
+**NEXT [code]:** increment 4b — the real primary augmented circuit
+(arkworks circuit over Bn254Fr): step circuit + Neptune-RO update +
+emit cross-curve scalar-mul tuple `(P_step, s_step, Q_step)` that
+the CF instance circuit attests to. NOT a reuse of nova-snark's
+augmented circuit (which does the heavy non-native E2 verification
+that defeats the reduction); a new construction. Pieces reusable:
+the existing step-circuit pattern (`TrivialIncrementCircuit`),
+`neptune_permutation_gadget`, the in-circuit Pedersen/Fold gadgets,
+the AugmentedFCircuit shape from Sonobe `circuits.rs` as REFERENCE
+(not dependency). Substantial multi-day effort; box-verify with a
+small step circuit + 2 IVC steps + final accumulator check.
+
+After 4b: increment 5 wraps the running CF instance in
+`CompressedSNARK<ppsnark>` and measures the real n_aux post-
+CycleFold from the proof's serde'd `L_vec.len()` (pinning predicted
+~2¹³ vs reality, per the lesson — n is only knowable from a real
+proof, not estimates).
 
 ---
 
