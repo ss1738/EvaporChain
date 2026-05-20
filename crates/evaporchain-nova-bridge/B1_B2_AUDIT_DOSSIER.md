@@ -436,16 +436,29 @@ The chosen architecture's open work, in dependency order:
      rev-2 scoping + trust-model decision: Section B is essentially
      CLOSED at the in-circuit level. Remaining is off-chain
      adapter + integration test.
-   - **Remaining Section B work (per §6b + rev-2 scoping doc):**
-     1. Off-chain `assemble_section_b_pi_bundle_from_compressed_snark`
-        adapter that runs `CompressedSNARK::verify` and emits the
-        full PI bundle. Mostly mechanical Rust.
-     2. End-to-end integration test: real CompressedSNARK proof →
-        adapter → setup_recursion_decider with B interface → prove
-        → on-chain VerkleProofVerifier.verify with PI bundle.
-     3. Sections C + D follow same delegation pattern (~1 week
-        total for B + C + D adapters + tests, NOT multi-month
-        in-circuit enforcement).
+   - **Section B off-chain adapter ✅ DONE 2026-05-20:**
+     `l_u_secondary_extract::assemble_section_b_pi_bundle` runs
+     `RecursiveSNARK::verify` as the soundness gate before emitting
+     the PI bundle. If verify rejects ⇒ adapter returns
+     `ExtractError::VerifyRejected`, no bundle published. 3 tests:
+     positive (real fixture verifies; pp_digest non-zero; hash
+     parity vs legacy extractor; zn[0]=2 for 2-step
+     TrivialIncrementCircuit), 2 negative (wrong num_steps;
+     wrong z0). Mid-iteration fix: `canonical_public_params` and
+     `generate_fixture` each create a separate non-deterministic
+     pp (different digests); test uses `fixture_with_shared_pp`
+     helper to use the same pp instance for setup+verify. Full
+     regression: 255/255 lib tests pass (was 252, +3 adapter).
+   - **Section B remaining work (~minor):**
+     1. CompressedSNARK variant of the adapter
+        (`assemble_section_b_pi_bundle_from_compressed_snark`) —
+        same pattern, calls `CompressedSNARK::verify` instead.
+        Mostly copy + type-substitute.
+     2. End-to-end integration test: real RecursiveSNARK → adapter
+        → setup_recursion_decider with B interface → prove →
+        on-chain VerkleProofVerifier.verify with PI bundle.
+     3. Sections C + D follow same delegation pattern (~few days
+        each for adapter + test).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
