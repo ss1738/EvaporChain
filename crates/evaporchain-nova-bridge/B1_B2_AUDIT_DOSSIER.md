@@ -63,7 +63,7 @@ practical.
 | (c)-2c | `foundry-bench/BN254G1.sol` + BenchBN254G1 | EIP-196 BN254 G1 precompile gas anchor (R4 mitigation measured) | 5/5 first-try | `5f6dfe1f` |
 | (c)-2d | `cyclefold_n_aux_scaling_probe` | ppsnark n_aux scaling vs R1CS size (R5 falsifier) | 5/5 shapes (8/32/128/512/2048 cons); falsifier did NOT fire | `de9a9aa1` |
 | (d)-1 | `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit` | Groth16-wrap circuit cs.num_constraints() probe (§7 step 3 discipline gate) | 4/4 k-values (1/2/4/8); per-base=2,533 cons; total at n_aux=16,384 ~43.5M cons | (existing, re-run 2026-05-20) |
-| (d)-2 | `groth16_wrapper::recursion_decider_groth16_roundtrip_n4_smoke` | Groth16 setup→prove→verify end-to-end on RecursionDeciderCircuit (§7 step 1) | 1/1 first-try, 0.25 s release | `2785f818` |
+| (d)-2 | `groth16_wrapper::recursion_decider_groth16_*` | Groth16 setup→prove→verify on RecursionDeciderCircuit (§7 step 1) + Groth16-level non-vacuity (tampered witness rejected) + n=64 scaling smoke | 3/3 first-try, 2.67 s release for all three | `2785f818`+`8a5c…` |
 
 **Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
@@ -332,7 +332,13 @@ The chosen architecture's open work, in dependency order:
      Mini RAM).
    - **Result: Groth16-wrap is NOT architecturally blocked.**
 4. **Groth16 setup + prove + verify** end-to-end on the Mini
-   cluster. At ~43.5M cons: setup ~hours, prove ~30–90 min each.
+   cluster. Smoke-validated at n=4 and n=64 (full pipeline 2.67 s
+   release for both). Linear extrapolation to the full
+   n_aux=16,384 suggests setup ~10-60 min on a Mini (was projected
+   "hours" before n=64 measurement — revised down). Prove per
+   proof: ~10-30 min. The actual heavy run is a separate scheduled
+   Mini-cluster job; the smoke + tampered-witness tests give
+   high confidence the pipeline is correct before paying for it.
 5. **EVM round-trip** — emit the Groth16 proof, feed to the
    existing 256-byte EIP-197 wire codec (`eip197.rs`, validated),
    verify on-chain (Foundry test using the existing
