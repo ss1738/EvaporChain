@@ -28,7 +28,7 @@ use crate::cyclefold_r1cs_bridge::{
 };
 use crate::scalar_adapter::SecondaryScalar;
 use ark_bn254::{Fr as Bn254Fr, G1Affine, G1Projective};
-use ark_ec::CurveGroup;
+use ark_ec::{AffineRepr, CurveGroup};
 use nova_snark::nova::nifs::NIFS;
 use nova_snark::provider::GrumpkinEngine;
 use nova_snark::r1cs::{
