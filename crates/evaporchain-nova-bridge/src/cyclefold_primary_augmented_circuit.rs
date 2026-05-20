@@ -40,8 +40,12 @@
 //! - The actual `(P, s, Q)` raw values are carried in the witness
 //!   only (so 4b-β can hash them into `cf_x_digest`); they are NOT
 //!   public.
-//! - `sections_wired: bool` — false; flips to true only when the
-//!   RO/fold-verification stubs become real in 4b-β.
+//! - `sections_wired: bool` — flipped to `true` at 4b-β-5-δ. All
+//!   four sections (Step, C cf_x_digest pair, R full transcript,
+//!   F NIFS native + r-from-RO with comm_T) are wired and non-
+//!   vacuously gated. Byte-level parity with nova-snark's exact
+//!   `nifs.rs::prove` transcript ordering remains a separate
+//!   BESPOKE-style alignment follow-up.
 //! - Box-measured base constraint count `cs.num_constraints()`.
 
 use ark_bn254::{Fr as Bn254Fr, G1Affine};
@@ -165,10 +169,16 @@ pub struct PrimaryAugmentedCircuitShell {
     /// shared across IVC steps. Cloned per shell because
     /// `NeptuneParams` derives `Clone`.
     pub params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
-    /// HONESTY flag: false until ALL deferred sections (R Neptune
-    /// RO previous-step binding + F primary NIFS verification) are
-    /// also wired. Section C (cf_x_digest) goes live in 4b-β-3 but
-    /// the full shell-as-augmented-circuit needs R + F too.
+    /// HONESTY flag: flipped to `true` at 4b-β-5-δ — all four
+    /// sections (Step, C cf_x_digest pair, R full transcript, F
+    /// NIFS native fold + r-from-RO with comm_T) are wired and
+    /// non-vacuously gated. **Caveat:** byte-level parity with
+    /// `nova_snark::nifs::NIFS::prove`'s exact transcript order
+    /// (e.g., absorbing `U2.comm_W_I` into the r-RO too) is a
+    /// separate BESPOKE-style follow-up, analogous to
+    /// `section2_gadget`'s neptune-vs-arkworks reconciliation.
+    /// The architectural pattern is landed; bit-level alignment
+    /// is its own pass.
     pub sections_wired: bool,
 }
 
@@ -235,7 +245,7 @@ impl PrimaryAugmentedCircuitShell {
             previous_step_hash,
             primary_comm_t,
             params,
-            sections_wired: false,
+            sections_wired: true,
         }
     }
 }
@@ -724,7 +734,10 @@ mod tests {
     #[test]
     fn shell_synthesises_and_cs_is_satisfied() {
         let circuit = consistent_step();
-        assert!(!circuit.sections_wired, "shell must have sections_wired=false");
+        assert!(
+            circuit.sections_wired,
+            "shell must have sections_wired=true post 4b-β-5-δ"
+        );
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         circuit.generate_constraints(cs.clone()).expect("synthesis");
         assert!(
