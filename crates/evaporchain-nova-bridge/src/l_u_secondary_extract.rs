@@ -54,10 +54,12 @@
 //! changes the layout fires loudly.
 
 use crate::recursive_snark_fixture::{TrivialIncrementCircuit, E1, E2};
-use crate::scalar_adapter::{secondary_to_ark_fr_lossy, SecondaryScalar};
+use crate::scalar_adapter::{
+    ark_fr_to_primary, primary_to_ark_fr, secondary_to_ark_fr_lossy, SecondaryScalar,
+};
 use ark_bn254::Fr as ArkFr;
 use ff::PrimeField;
-use nova_snark::nova::RecursiveSNARK;
+use nova_snark::nova::{PublicParams, RecursiveSNARK};
 
 /// Errors surfaced by [`extract_committed_hashes_via_serde`].
 #[derive(Debug, Clone, thiserror::Error)]
@@ -94,6 +96,12 @@ pub enum ExtractError {
     /// A required field was missing or malformed during Section 3 extraction.
     #[error("missing or malformed field: {0}")]
     MissingField(String),
+
+    /// Section B off-chain adapter binding-gate failure:
+    /// `RecursiveSNARK::verify` rejected the proof, so the adapter
+    /// refuses to emit a PI bundle.
+    #[error("RecursiveSNARK::verify rejected: {0}")]
+    VerifyRejected(String),
 
     /// NCR5 (re-audit 2026-05-14): R1CS shape parameter from the
     /// supplied JSON exceeds the hard sanity cap. Without this
@@ -259,6 +267,63 @@ fn decompress_comm_w_as_fr(s: Option<&str>) -> Result<(ArkFr, ArkFr), ExtractErr
     Ok((fq_to_fr_lossy(x_bytes), fq_to_fr_lossy(y_bytes)))
 }
 
+/// B-1/B-2 1C §7 step 2 / dossier §6b: off-chain adapter for Section
+/// B's PI bundle, with the RecursiveSNARK::verify binding gate.
+///
+/// This is the **soundness anchor** of the delegation architecture
+/// (`B1_B2_AUDIT_DOSSIER.md` §6b). The on-chain Groth16 binds only
+/// Section A's MSM. Section B/C/D PIs are decorative on-chain; their
+/// binding lives off-chain in this adapter:
+///
+/// 1. Run `RecursiveSNARK::verify(pp, num_steps, z0)`. If verify
+///    fails ⇒ refuse to emit PIs (no point making the verifier
+///    trust a proof we ourselves don't accept).
+/// 2. On verify success, the returned `zn` is the canonical final
+///    state — use it in the PI bundle (NOT the `rs.zi` field, which
+///    is also serialized and SHOULD match).
+/// 3. Extract the rest of the PIs from the serialized rs JSON
+///    via `extract_section_b_pi_bundle` and overlay the verified zn.
+///
+/// **Soundness:** any verifier consuming the returned bundle can
+/// rely on the proof being well-formed (since this adapter verified
+/// it). A malicious prover who submitted a forged rs would fail
+/// step 1 and never get a PI bundle to publish. The bundle is the
+/// fraud-proof-rollup-style commitment between on-chain Groth16
+/// (Section A only) and off-chain `CompressedSNARK::verify`-class
+/// trust.
+///
+/// **Failure modes:**
+/// - `verify` rejects: returns `ExtractError::VerifyRejected`
+/// - extraction JSON paths missing: same errors as
+///   `extract_section_b_pi_bundle`
+pub fn assemble_section_b_pi_bundle(
+    pp: &PublicParams<E1, E2, TrivialIncrementCircuit>,
+    rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
+    num_steps: usize,
+    z0_ark: &[ArkFr],
+) -> Result<SectionBPiBundle, ExtractError> {
+    // 1. Verify (the binding gate).
+    let z0_nova: Vec<<E1 as nova_snark::traits::Engine>::Scalar> =
+        z0_ark.iter().copied().map(ark_fr_to_primary).collect();
+    let zn_nova = rs
+        .verify(pp, num_steps, &z0_nova)
+        .map_err(|e| ExtractError::VerifyRejected(format!("{e:?}")))?;
+
+    // 2. pp_digest as ArkFr (primary scalar — exact, not lossy).
+    let pp_digest_ark = primary_to_ark_fr(pp.digest());
+
+    // 3. Extract the rest via the existing serde-JSON path.
+    let mut bundle = extract_section_b_pi_bundle(rs, pp_digest_ark, num_steps as u64)?;
+
+    // 4. Overlay the verified zn — this is the canonical final state
+    //    according to the verifier; rs.zi (serialized) should match
+    //    but the verifier-derived value is authoritative.
+    let zn_ark: Vec<ArkFr> = zn_nova.iter().copied().map(primary_to_ark_fr).collect();
+    bundle.zn = zn_ark;
+
+    Ok(bundle)
+}
+
 pub fn extract_section_b_pi_bundle(
     rs: &RecursiveSNARK<E1, E2, TrivialIncrementCircuit>,
     pp_digest: ArkFr,
@@ -398,6 +463,94 @@ mod tests {
         eprintln!(
             "l_u_secondary shape: {}",
             serde_json::to_string_pretty(&l_u).unwrap_or_default()
+        );
+    }
+
+    /// (Section B off-chain adapter): `assemble_section_b_pi_bundle`
+    /// runs the RecursiveSNARK::verify binding gate before emitting
+    /// the PI bundle. Per the delegation trust-model decision
+    /// (dossier §6b), this IS the soundness anchor for Section B.
+    ///
+    /// Positive test: real fixture verifies, adapter returns a
+    /// bundle whose hashes match the raw extractor's hashes (parity)
+    /// and whose pp_digest is non-zero (verified pp.digest() != 0).
+    #[test]
+    fn assemble_section_b_pi_bundle_real_fixture_verifies() {
+        use crate::recursive_snark_fixture::canonical_public_params;
+        use ff::Field;
+
+        let pp = canonical_public_params().expect("pp");
+        let rs = generate_fixture(2).expect("fixture");
+
+        // z0 for TrivialIncrementCircuit is [0]. Use ArkFr.
+        let z0 = vec![ArkFr::from(0u64)];
+
+        let bundle =
+            assemble_section_b_pi_bundle(&pp, &rs, 2, &z0).expect("assemble");
+
+        // pp_digest is exact (not lossy) and must be non-zero for a
+        // real fixture.
+        assert!(
+            bundle.pp_digest != ArkFr::from(0u64),
+            "pp.digest() must be non-zero for a real fixture"
+        );
+
+        // num_steps round-trips.
+        assert_eq!(bundle.num_steps, ArkFr::from(2u64));
+
+        // Parity vs the raw extractor on the two output hashes.
+        let (h0, h1) =
+            extract_committed_hashes_via_serde(&rs).expect("legacy extract");
+        assert_eq!(bundle.hash_primary_reinterp, h0);
+        assert_eq!(bundle.hash_secondary_claimed, h1);
+
+        // zn comes from the verifier (canonical) — must match what
+        // the raw extractor pulled from rs.zi.
+        assert_eq!(bundle.z0.len(), 1, "z0 arity = 1");
+        assert_eq!(bundle.zn.len(), 1, "zn arity = 1");
+        // TrivialIncrementCircuit: z_{i+1} = z_i + 1, so zn after
+        // 2 steps starting at z0=[0] should be [2].
+        assert_eq!(bundle.zn[0], ArkFr::from(2u64),
+            "TrivialIncrementCircuit z2 must be 2 from z0=0");
+
+        eprintln!(
+            "ADAPTER_BUNDLE_VERIFIED pp_digest={} num_steps={} zn[0]={}",
+            bundle.pp_digest, bundle.num_steps, bundle.zn[0]
+        );
+    }
+
+    /// NEGATIVE: tamper `num_steps` mismatch ⇒ verify rejects ⇒
+    /// adapter refuses to emit a PI bundle.
+    #[test]
+    fn assemble_section_b_pi_bundle_rejects_wrong_num_steps() {
+        use crate::recursive_snark_fixture::canonical_public_params;
+
+        let pp = canonical_public_params().expect("pp");
+        let rs = generate_fixture(2).expect("fixture");
+        let z0 = vec![ArkFr::from(0u64)];
+
+        // Caller LIES about num_steps (says 3, fixture ran 2).
+        let r = assemble_section_b_pi_bundle(&pp, &rs, 3, &z0);
+        assert!(
+            matches!(r, Err(ExtractError::VerifyRejected(_))),
+            "wrong num_steps must trigger VerifyRejected: got {r:?}"
+        );
+    }
+
+    /// NEGATIVE: tamper z0 ⇒ verify rejects ⇒ adapter refuses.
+    #[test]
+    fn assemble_section_b_pi_bundle_rejects_wrong_z0() {
+        use crate::recursive_snark_fixture::canonical_public_params;
+
+        let pp = canonical_public_params().expect("pp");
+        let rs = generate_fixture(2).expect("fixture");
+        // Real z0 was [0]; lie and say [99].
+        let z0_bad = vec![ArkFr::from(99u64)];
+
+        let r = assemble_section_b_pi_bundle(&pp, &rs, 2, &z0_bad);
+        assert!(
+            matches!(r, Err(ExtractError::VerifyRejected(_))),
+            "wrong z0 must trigger VerifyRejected: got {r:?}"
         );
     }
 
