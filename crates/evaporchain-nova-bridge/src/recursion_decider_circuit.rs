@@ -59,10 +59,64 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisE
 use crate::grumpkin_config::GrumpkinConfig;
 use crate::s4_msm_gadget::{pedersen_msm_grumpkin, GrumpkinVar};
 
-/// Witness for the recursion decider's Section A (the secondary IPA
-/// `ck_hat` MSM). Owned, plain data — circuit-agnostic so it can be
-/// produced by a future nova-snark proof adapter without touching
-/// this module.
+/// Section B public-input bundle — the
+/// `CompressedSNARK::verify` output-hash binding inputs
+/// (per `SECTION_B_SCOPING.md`). Owned, plain data.
+///
+/// All fields are Bn254 Fr (the circuit's native field). The
+/// non-native Bn254 Fq values (e.g. `r_U_secondary` E2-scalar
+/// fields) are reinterpreted via `base_as_scalar` / `scalar_as_base`
+/// at proof-extraction time — the decider treats them as opaque
+/// Bn254 Fr public inputs.
+#[derive(Clone, Debug)]
+pub struct SectionBPublicInputs {
+    /// `hash_secondary` — squeezed by E1 RO over (pp_digest_reinterp,
+    /// num_steps, 0, 0, r_U_primary fields, ri_secondary). Native
+    /// Poseidon. Equals `compressed_snark.l_u_secondary.X[1]`.
+    pub hash_secondary_claimed: Bn254Fr,
+    /// `hash_primary` — squeezed by E2 RO (Bn254 Fq, FOREIGN field).
+    /// Reinterpreted to Bn254 Fr via `base_as_scalar::<E1>`. Equals
+    /// `base_as_scalar::<E1>(compressed_snark.l_u_secondary.X[0])`.
+    /// Delegated trick (per SECTION_B_SCOPING.md §2): this is a PI
+    /// from the off-circuit `CompressedSNARK::verify`; no in-circuit
+    /// non-native Poseidon needed.
+    pub hash_primary_reinterp: Bn254Fr,
+    /// `vk.pp_digest` — public-parameter digest.
+    pub pp_digest: Bn254Fr,
+    /// Number of IVC steps (cast to field).
+    pub num_steps: Bn254Fr,
+    /// `compressed_snark.ri_secondary`.
+    pub ri_secondary: Bn254Fr,
+    /// `r_U_primary` fields absorbed in the E1 RO via `absorb_in_ro`:
+    /// per nova-snark's `R1CSInstance::absorb_in_ro` =
+    /// (comm.x, comm.y, X[0], X[1]).
+    pub r_U_primary_comm_x: Bn254Fr,
+    pub r_U_primary_comm_y: Bn254Fr,
+    pub r_U_primary_x0: Bn254Fr,
+    pub r_U_primary_x1: Bn254Fr,
+    /// Initial state `z0[..]` (IVC arity).
+    pub z0: Vec<Bn254Fr>,
+    /// Final state `zn[..]` (same arity as z0).
+    pub zn: Vec<Bn254Fr>,
+}
+
+impl SectionBPublicInputs {
+    /// Total public-input count = 9 fixed + |z0| + |zn|. Useful for
+    /// downstream Groth16 setup expecting a specific PI count.
+    pub fn pi_count(&self) -> usize {
+        9 + self.z0.len() + self.zn.len()
+    }
+}
+
+/// Witness for the recursion decider. Section A (the secondary IPA
+/// `ck_hat` MSM) is always present and live. Section B is optional
+/// (`section_b`); when `Some`, the circuit allocates the Section B
+/// public inputs but **does not yet enforce them** (that's the
+/// next iteration per `SECTION_B_SCOPING.md` §7). Section A always
+/// satisfies its own binding when consistent.
+///
+/// Owned, plain data — circuit-agnostic so it can be produced by a
+/// future nova-snark proof adapter without touching this module.
 #[derive(Clone, Debug)]
 pub struct RecursionDeciderCircuit {
     /// IPA opening scalars `s` (Grumpkin scalar field = BN254 Fq).
@@ -78,10 +132,18 @@ pub struct RecursionDeciderCircuit {
     /// The claimed `ck_hat` commitment the IPA verifier reconstructs.
     /// Section A enforces the in-circuit MSM equals THIS.
     pub claimed_ck_hat: Projective<GrumpkinConfig>,
+    /// Section B public-input bundle. `None` ⇒ Section A only
+    /// (no Section B PIs allocated, all existing fixtures /
+    /// tests unchanged). `Some` ⇒ PIs allocated but NOT YET
+    /// enforced (interface-only — enforcement is the next
+    /// iteration per `SECTION_B_SCOPING.md`).
+    pub section_b: Option<SectionBPublicInputs>,
     /// Explicit honesty flag: `false` until Sections B-D (the
     /// constant-size hash/NIFS/HyperKZG terms) are wired. A complete
     /// EVM decider requires `true`; Section-A-only instances set
     /// `false` so they cannot be mistaken for a full decider.
+    /// Even with `section_b: Some(...)` this stays `false` until
+    /// the enforcement lands.
     pub sections_bcd_wired: bool,
 }
 
@@ -102,6 +164,31 @@ impl RecursionDeciderCircuit {
             blind,
             h,
             claimed_ck_hat,
+            section_b: None,
+            sections_bcd_wired: false,
+        }
+    }
+
+    /// Section-A-plus-Section-B-interface constructor. Allocates
+    /// Section B public inputs in `generate_constraints` but DOES
+    /// NOT enforce the Poseidon binding yet — enforcement is the
+    /// next iteration per `SECTION_B_SCOPING.md` §7 C/D. Use this
+    /// to pin the PI layout against downstream Groth16 setup.
+    pub fn section_a_with_b_interface(
+        scalars: Vec<Bn254Fq>,
+        bases: Vec<Affine<GrumpkinConfig>>,
+        blind: Bn254Fq,
+        h: Affine<GrumpkinConfig>,
+        claimed_ck_hat: Projective<GrumpkinConfig>,
+        section_b: SectionBPublicInputs,
+    ) -> Self {
+        Self {
+            scalars,
+            bases,
+            blind,
+            h,
+            claimed_ck_hat,
+            section_b: Some(section_b),
             sections_bcd_wired: false,
         }
     }
@@ -132,6 +219,44 @@ impl RecursionDeciderCircuit {
             blind: Bn254Fq::zero(),
             h,
             claimed_ck_hat: Projective::<GrumpkinConfig>::zero(),
+            section_b: None,
+            sections_bcd_wired: false,
+        }
+    }
+
+    /// Section-B-aware setup shape. Allocates the same Section A
+    /// shape as `setup_shape` plus all Section B PI slots (with
+    /// zero witness values), so Groth16 setup keys the circuit at
+    /// the FULL Section A + Section B PI layout.
+    ///
+    /// `pi_arity` controls the variable-length z0/zn lengths; for
+    /// canonical `TrivialIncrementCircuit` this is 1.
+    pub fn setup_shape_with_b_interface(
+        bases: Vec<Affine<GrumpkinConfig>>,
+        h: Affine<GrumpkinConfig>,
+        pi_arity: usize,
+    ) -> Self {
+        use ark_std::Zero;
+        let n = bases.len();
+        Self {
+            scalars: vec![Bn254Fq::zero(); n],
+            bases,
+            blind: Bn254Fq::zero(),
+            h,
+            claimed_ck_hat: Projective::<GrumpkinConfig>::zero(),
+            section_b: Some(SectionBPublicInputs {
+                hash_secondary_claimed: Bn254Fr::zero(),
+                hash_primary_reinterp: Bn254Fr::zero(),
+                pp_digest: Bn254Fr::zero(),
+                num_steps: Bn254Fr::zero(),
+                ri_secondary: Bn254Fr::zero(),
+                r_U_primary_comm_x: Bn254Fr::zero(),
+                r_U_primary_comm_y: Bn254Fr::zero(),
+                r_U_primary_x0: Bn254Fr::zero(),
+                r_U_primary_x1: Bn254Fr::zero(),
+                z0: vec![Bn254Fr::zero(); pi_arity],
+                zn: vec![Bn254Fr::zero(); pi_arity],
+            }),
             sections_bcd_wired: false,
         }
     }
@@ -170,7 +295,53 @@ impl ConstraintSynthesizer<Bn254Fr> for RecursionDeciderCircuit {
 
         computed.enforce_equal(&claimed_var)?;
 
-        // ── Section B: Neptune hash anchors [DEFERRED stub] ───────
+        // ── Section B: output-hash binding [INTERFACE WIRED, NOT
+        //               ENFORCED YET — see SECTION_B_SCOPING.md §7
+        //               for the 3-iteration close plan] ────────────
+        //
+        // When `section_b` is `Some`, allocate all the Section B
+        // public inputs via `new_input` so the Groth16 PI layout is
+        // pinned at this milestone (preserves the (e)-1/(e)-2 fixture
+        // contract: changes to PI layout require coordinated fixture
+        // regeneration). NO enforce_equal calls yet — that's the
+        // next iteration. `sections_bcd_wired` stays `false`.
+        use ark_r1cs_std::fields::fp::FpVar;
+        if let Some(b) = &self.section_b {
+            let _hash_sec = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.hash_secondary_claimed),
+            )?;
+            let _hash_pri = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.hash_primary_reinterp),
+            )?;
+            let _pp_digest = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.pp_digest),
+            )?;
+            let _num_steps = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.num_steps),
+            )?;
+            let _ri_sec = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.ri_secondary),
+            )?;
+            let _ru_cx = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.r_U_primary_comm_x),
+            )?;
+            let _ru_cy = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.r_U_primary_comm_y),
+            )?;
+            let _ru_x0 = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.r_U_primary_x0),
+            )?;
+            let _ru_x1 = FpVar::<Bn254Fr>::new_input(
+                cs.clone(), || Ok(b.r_U_primary_x1),
+            )?;
+            for z in &b.z0 {
+                let _ = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(*z))?;
+            }
+            for z in &b.zn {
+                let _ = FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(*z))?;
+            }
+        }
+
         // ── Section C: NIFS folds + derandomize  [DEFERRED stub] ──
         // ── Section D: primary HyperKZG pairing  [DEFERRED stub] ──
         //
@@ -261,6 +432,95 @@ mod tests {
         assert!(
             matches!(r, Err(SynthesisError::Unsatisfiable)),
             "length mismatch must map to SynthesisError::Unsatisfiable"
+        );
+    }
+
+    /// Section B INTERFACE smoke (per SECTION_B_SCOPING.md §7 A-B):
+    /// allocates Section A + Section B PIs; counts public inputs;
+    /// pins that adding Section B's interface (without enforcement)
+    /// does NOT make the CS unsatisfied (Section A's binding is the
+    /// only enforced gate; Section B PIs are decorative until
+    /// enforcement lands in the next iteration). Also counts the
+    /// expected total PIs (9 fixed + |z0| + |zn|) and the extra
+    /// constraint cost over Section-A-only (should be ~0).
+    #[test]
+    fn section_b_interface_wiring_compiles_and_pis_count() {
+        use ark_ec::short_weierstrass::SWCurveConfig;
+        use ark_ec::CurveGroup;
+
+        // Build a consistent Section A witness (so the existing
+        // binding is satisfied).
+        let circuit_a = consistent_witness();
+        let cs_a = ConstraintSystem::<Bn254Fr>::new_ref();
+        circuit_a
+            .clone()
+            .generate_constraints(cs_a.clone())
+            .expect("Section A synthesis");
+        let n_inst_a = cs_a.num_instance_variables();
+        let n_cons_a = cs_a.num_constraints();
+
+        // Now wrap the same Section A witness with a Section B
+        // interface (arity-2 z0/zn, arbitrary values).
+        let b = SectionBPublicInputs {
+            hash_secondary_claimed: Bn254Fr::from(101u64),
+            hash_primary_reinterp: Bn254Fr::from(102u64),
+            pp_digest: Bn254Fr::from(103u64),
+            num_steps: Bn254Fr::from(7u64),
+            ri_secondary: Bn254Fr::from(104u64),
+            r_U_primary_comm_x: Bn254Fr::from(105u64),
+            r_U_primary_comm_y: Bn254Fr::from(106u64),
+            r_U_primary_x0: Bn254Fr::from(107u64),
+            r_U_primary_x1: Bn254Fr::from(108u64),
+            z0: vec![Bn254Fr::from(200u64), Bn254Fr::from(201u64)],
+            zn: vec![Bn254Fr::from(300u64), Bn254Fr::from(301u64)],
+        };
+        let expected_b_pi_count = b.pi_count();
+        assert_eq!(
+            expected_b_pi_count,
+            9 + 2 + 2,
+            "Section B PI count formula = 9 + |z0| + |zn|"
+        );
+
+        let circuit_ab = RecursionDeciderCircuit::section_a_with_b_interface(
+            circuit_a.scalars,
+            circuit_a.bases,
+            circuit_a.blind,
+            circuit_a.h,
+            circuit_a.claimed_ck_hat,
+            b,
+        );
+        assert!(
+            !circuit_ab.sections_bcd_wired,
+            "honesty flag stays false until enforcement lands"
+        );
+
+        let cs_ab = ConstraintSystem::<Bn254Fr>::new_ref();
+        circuit_ab
+            .generate_constraints(cs_ab.clone())
+            .expect("Section A + B-interface synthesis");
+
+        // Section A binding still satisfied (B has no enforcement yet).
+        assert!(
+            cs_ab.is_satisfied().expect("is_satisfied"),
+            "Section B interface (no enforcement) must NOT break Section A"
+        );
+
+        // Public inputs grew by exactly the Section B PI count.
+        let n_inst_ab = cs_ab.num_instance_variables();
+        // cs.num_instance_variables includes the constant-1 input, so
+        // the delta is the user-allocated PIs only.
+        assert_eq!(
+            n_inst_ab - n_inst_a,
+            expected_b_pi_count,
+            "PI delta must equal SectionBPublicInputs::pi_count()"
+        );
+
+        // Constraint count grew by negligible amount (new_input alone
+        // adds no R1CS constraints — just instance allocations).
+        let n_cons_ab = cs_ab.num_constraints();
+        assert_eq!(
+            n_cons_ab, n_cons_a,
+            "Section B interface allocation must add 0 constraints"
         );
     }
 
