@@ -858,23 +858,60 @@ Two box tests:
 folds.** 4b's job is now narrowly defined: emit the right per-step
 `(P, s, Q)` tuple; the folding side is proven to handle them.
 
-**NEXT [code]:** increment 4b — the real primary augmented circuit
-(arkworks circuit over Bn254Fr): step circuit + Neptune-RO update +
-emit cross-curve scalar-mul tuple `(P_step, s_step, Q_step)` that
-the CF instance circuit attests to. NOT a reuse of nova-snark's
-augmented circuit (which does the heavy non-native E2 verification
-that defeats the reduction); a new construction. Pieces reusable:
-the existing step-circuit pattern (`TrivialIncrementCircuit`),
-`neptune_permutation_gadget`, the in-circuit Pedersen/Fold gadgets,
-the AugmentedFCircuit shape from Sonobe `circuits.rs` as REFERENCE
-(not dependency). Substantial multi-day effort; box-verify with a
-small step circuit + 2 IVC steps + final accumulator check.
+### 1C INCREMENT 4b-α — ✅ PRIMARY AUGMENTED CIRCUIT SHELL [V]
+(2026-05-20, Mini3, box, HEAD `1e59253b`,
+`cyclefold_primary_augmented_circuit ... 3 passed; 0 failed; 0.01 s`)
 
-After 4b: increment 5 wraps the running CF instance in
-`CompressedSNARK<ppsnark>` and measures the real n_aux post-
-CycleFold from the proof's serde'd `L_vec.len()` (pinning predicted
-~2¹³ vs reality, per the lesson — n is only knowable from a real
-proof, not estimates).
+New module `cyclefold_primary_augmented_circuit.rs`:
+`PrimaryAugmentedCircuitShell` + `ConstraintSynthesizer<Bn254Fr>`
+with the **pinned CycleFold-augmented IVC public IO schema (all
+Bn254Fr scalars)**: `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest]`
++ reserved ONE = 7 instance vars. Stub step `z_{i+1} = z_i + 1`
+enforced. `(P, s, Q)` carried in witness only (4b-β will hash them
+into `cf_x_digest` via Neptune).
+
+**`PRIMARY_SHELL_PROBE`: 1 cons / 0 witness / 7 instance vars.**
+Pinned regression baseline for 4b-β growth (Section R Neptune RO +
+Section F primary NIFS + Section C tuple hash).
+
+**THREE real findings caught via write→box→fix on this shell,
+surfaced transparently (not buried):**
+1. Compile error 1: tried to allocate BN254 G1 coords (Bn254Fq) as
+   `FpVar<Bn254Fr>` public inputs in the primary's Fr-circuit —
+   **architecture-level IO error.** Fixed per Sonobe `circuits.rs`
+   L230/L280: CF-augmented IO is all Bn254Fr scalars, with raw
+   `(P,s,Q)` linked via a single Bn254Fr `cf_x_digest` hash; the
+   aux side recomputes the matching digest from its Bn254Fq-side
+   allocation. No raw coords cross the field boundary.
+2. Compile error 2: `s_step: Bn254Fq` — but the CycleFold
+   primary-fold challenge is in **E1.scalar = Bn254Fr** (native to
+   BN254 point arithmetic). The aux side already used
+   `EmulatedFpVar<Fr,Fq>` (matches `CycleFoldInstanceCircuit::
+   scalar: Bn254Fr`).
+3. Logic error: first non-vacuity test was tautological — `z_{i+1}`
+   was derived from `self.z_i + 1` at allocation, so tampering
+   `z_i` shifted both values together and the constraint never
+   broke. Fixed by making `z_i1` a separate prover-supplied
+   struct field; constraint `z_i1 == z_i + 1` actually fires.
+
+Each surfaced and corrected via the same discipline pattern the
+whole arc has used — the compiler and box runs caught what the
+hand-design didn't.
+
+**NEXT [code]:** increment 4b-β — wire Section R (Neptune RO
+binding the previous step's hash + absorbing the CF running
+instance) using `crate::neptune_permutation_gadget`; Section F
+(primary NIFS verification semantics — fold relation between
+previous primary instance and incoming step); Section C (in-
+circuit hash `cf_x_digest = Neptune(P_x, P_y_emulated_limbs,
+s_emulated_limbs, Q_x, Q_y_emulated_limbs)` — careful, the (P, s,
+Q) raw values are Bn254Fq/Bn254Fr crossings that need emulated
+representation inside the primary's Fr-circuit; the digest itself
+is native Bn254Fr). Flip `sections_wired:true` only once all three
+are real and box-verified. After 4b-β: increment 5 wraps in
+`CompressedSNARK<ppsnark>` and measures real n_aux from the
+proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality, per the
+lesson).
 
 ---
 
