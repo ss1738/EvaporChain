@@ -60,11 +60,12 @@ practical.
 | (c)-1c | `foundry-bench/GrumpkinMSM.sol` + BenchMSM | Naive MSM upper-bound (worst-case ceiling) | 3/3 (37B gas at n=16,384, 590× Pippenger best) | `414c0b26` |
 | (c)-2a | `foundry-bench/GrumpkinMSMPippenger.sol` + BenchMSMPippenger | Production-shape windowed Pippenger MSM | 5/5 incl. correctness vs naive | `ec51a5a5` |
 | (c)-2b | `foundry-bench/GrumpkinJacobian.sol` + BenchJacobian | Jacobian-projective Grumpkin (algorithmic-equivalent, no per-op inv) | 7/7 incl. 3 correctness checks vs affine | `9b32d4e1` |
+| (c)-2c | `foundry-bench/BN254G1.sol` + BenchBN254G1 | EIP-196 BN254 G1 precompile gas anchor (R4 mitigation measured) | 5/5 first-try | `5f6dfe1f` |
 
-**Aggregate:** 97 commits this arc (`436d2e2d → 9b32d4e1`); every
+**Aggregate:** 99 commits this arc (`436d2e2d → 5f6dfe1f`); every
 primitive box-validated; **fourteen consecutive first-try passes**
 on the 4b shell-extension + (b) IVC integration micro-arcs, plus
-**five Foundry-side gas-decomposition passes** ((c)-1a/b/c + (c)-2a/b).
+**six Foundry-side gas-decomposition passes** ((c)-1a/b/c + (c)-2a/b/c).
 
 ## 4. Final shell measurements
 
@@ -102,14 +103,21 @@ Foundry gas anchors (commit `1917f9e4` + `414c0b26`):
   - Jacobian → affine projection: 2,661 gas (one-shot, amortised)
   - Jacobian Pippenger at n=16,384, c=8: 1.77B gas (1.17× better
     than affine 2.07B). Still ~60× over L2 30M block.
-- **L2 single-tx with pure-EVM Grumpkin: INFEASIBLE.** Requires
-  either (R3) multi-tx split, (R4) BN254-precompile pivot, (R5)
-  smaller n_aux, or (R6) optimistic / fraud-proof model.
+- **BN254 precompile MEASURED ((c)-2c, commit `5f6dfe1f`):**
+  - ECADD (distinct): 666 gas (NOT 150 base-price; overhead
+    dominates by 4.4×)
+  - ECMUL: 6,487 gas
+  - BN254 Pippenger at n=16,384, c=10 (sweet): 319M gas
+  - 5.5× speedup vs Jacobian Grumpkin (1.77B), NOT 22× projected
+  - Still 10.7× over L2 30M block — (R4) alone insufficient
+- **L2 single-tx with pure-EVM Grumpkin: INFEASIBLE.** Even with
+  BN254 precompile pivot, still 10× over single-tx limit. Real
+  path: (R4)+(R5) → ~20M gas → L2 fits.
 - Full ppsnark verifier (composition, Jacobian floor): IPA-MSM
   dominates 99.99%; sumcheck 28k + pairing 113k < 0.01% at the
   1.77-billion-gas Jacobian floor.
 
-## 5. Six honest mid-arc corrections (the discipline working)
+## 5. Seven honest mid-arc corrections (the discipline working)
 
 Each surfaced via measurement, none buried; each made the story
 tighter, more credible.
@@ -139,9 +147,26 @@ tighter, more credible.
    made 32-byte ModExp ~1,700 gas (~50% of point-add, not 99%).
    Jacobian Pippenger at n=16,384 is 1.77B gas, NOT ~50M.
    Single-tx L2 verifier with pure-EVM Grumpkin is INFEASIBLE.
-   Real path forward: BN254-precompile re-routing (R4), multi-tx
-   split (R3), smaller n_aux via recursion (R5), or optimistic
-   fraud-proof model (R6).
+7. **(c)-2b's "(R4) BN254-precompile ~22× speedup" claim →
+   measured 4.91× speedup** (commit `5f6dfe1f`). The 150-gas
+   precompile base-price anchor ignored staticcall + calldata +
+   memory overhead; measured ECADD = 666 gas (4.4× over 150).
+   BN254 precompile Pippenger at n=16,384: ~360M gas (c=8) or
+   ~319M gas (c=10 sweet spot), NOT 80-90M. Still 10.7× over
+   L2 30M block — (R4) alone INSUFFICIENT for L2 single-tx.
+   Forces a combination: **(R4)+(R5) BN254 + reduce n_aux by 16×
+   → ~20M gas → L2 single-tx fits** is now the primary candidate.
+
+**META-PATTERN across corrections 5/6/7:** every mitigation-path
+analytical projection in this arc has overshot reality by 4-40×:
+- (5) Pippenger "best" projection: 33× undershoot
+- (6) Jacobian speedup projection: 34× shortfall (40× → 1.17×)
+- (7) BN254 precompile speedup projection: 4.5× shortfall
+Discipline upgrade (recursive measurement): **no load-bearing
+mitigation claim is treated as valid until it has its own Foundry
+measurement.** The original assert-without-measuring lesson now
+applies one level removed — to claims that "we can fix the
+shortfall by X" — not just to the initial anchors.
 
 ## 6. Deployment target — L2-only, single-tx-pure-EVM-Grumpkin INFEASIBLE (commits `6e6b0a1f`, `ec51a5a5`, `9b32d4e1`)
 
@@ -168,11 +193,16 @@ measurement):
   change. Each tx ~400-500M gas (well over L2 limit) means this
   needs >60 transactions, NOT 3-4. Reframe as expensive but
   buildable.
-- **(R4) BN254 precompile re-routing — NEW PRIMARY CANDIDATE.**
-  BN254 has 0x06 (add) and 0x07 (scalar-mul) precompiles at
-  ~150 gas/op (vs Grumpkin pure-EVM ~3,300 gas). 22× speedup
-  → ~80-90M gas at n=16,384. Still over L2 30M single-tx limit
-  but reachable with smaller n_aux or 2-3 tx split.
+- **(R4) BN254 precompile re-routing — MEASURED (c)-2c.**
+  EIP-196 0x06 ECADD = 666 gas (NOT the 150-gas precompile
+  base-price; staticcall + calldata + memory overhead dominates).
+  Pippenger MSM at n=16,384: ~319M gas (c=10 sweet spot) or
+  ~360M (c=8). **5.5× speedup vs Jacobian Grumpkin, NOT 22× as
+  projected.** Still 10.7× over L2 30M block. (R4) alone is
+  INSUFFICIENT; must combine with (R5) or (R3). Architectural
+  pivot still required: secondary verifier ops must run on BN254
+  rather than Grumpkin (breaks the current curve cycle on the
+  recursion side).
 - **(R5) Smaller n_aux** — restructure recursion so the secondary
   IPA's `ck_hat` MSM has n ≪ 16,384. From n=16,384 → n=256: 64×
   gas reduction → ~30M gas (L2 single-tx fits even with affine
@@ -184,11 +214,16 @@ measurement):
   not per settlement. Trust model shifts from "ZK-validity rollup"
   to "fraud-proof rollup with ZK challenge".
 
-**Recommended next step:** measure n=256 ppsnark proof secondary
-shape (does the recursion machinery allow truncated commitment
-basis?) — this is the cheapest path that keeps the L2-validity
-trust model. If yes, (R5) becomes primary. If no, (R4)+(R3) becomes
-the deployment path. (R6) is the strategic fallback.
+**Recommended next step (post-(c)-2c):** the path that matches the
+measurement evidence is **(R4)+(R5) combined** — BN254-precompile
+re-routing for the on-chain MSM, plus a 16× reduction in n_aux via
+deeper recursion. Projected combined gas: ~20-25M (L2 single-tx
+fits). Next concrete action: Rust-side measurement of whether the
+secondary IPA's `ck_hat` MSM size can be reduced from 16,384 to
+~1,024 by restructuring the recursion stack (more layers, smaller
+each). Falsifier: if `total_nz` floors above ~1,024, (R5) does
+not deliver 16× and (R3) multi-tx OR (R6) optimistic becomes the
+fallback.
 
 **The architectural trade-off the gas measurements made explicit:**
 Grumpkin's base field IS BN254-Fr (cheap in-circuit IPA recursion,
