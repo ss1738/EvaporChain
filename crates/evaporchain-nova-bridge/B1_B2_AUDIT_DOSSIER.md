@@ -65,7 +65,7 @@ practical.
 | (d)-1 | `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit` | Groth16-wrap circuit cs.num_constraints() probe (§7 step 3 discipline gate) | 4/4 k-values (1/2/4/8); per-base=2,533 cons; total at n_aux=16,384 ~43.5M cons | (existing, re-run 2026-05-20) |
 | (d)-2 | `groth16_wrapper::recursion_decider_groth16_*` | Groth16 setup→prove→verify on RecursionDeciderCircuit (§7 step 1) + Groth16-level non-vacuity (tampered witness rejected) + n=64 scaling smoke | 3/3 first-try, 2.67 s release for all three | `2785f818`+`e231282e` |
 | (d)-3 | `recursion_decider_circuit::setup_shape_cons_scaling_validates_d1_prediction` | Circuit-level cs.num_constraints scaling at n in {4,16,64,256,1024} — validates (d)-1 gadget-level fit transfers to full circuit | 1/1 first-try, 4.36 s release; per_base=2,533 EXACT match; predicted n_aux=16,384 → 41,503,214 cons | `190d51a3` |
-| (d)-4 | `groth16_wrapper::recursion_decider_groth16_full_n_aux_16384` | Production-scale Groth16 setup+prove+verify at n_aux=16,384 (satyawan-1 Linux, 128 GB) | 1/1 first-try on satyawan-1 (Mini failed SIGKILL — correction #8); setup 3m1s, prove 3m22s, verify 1.82ms, total 6m24s | (latest commit) |
+| (d)-4 | `groth16_wrapper::recursion_decider_groth16_full_n_aux_16384` | Production-scale Groth16 setup+prove+verify at n_aux=16,384 (satyawan-1 Linux, 128 GB) | 1/1 first-try on satyawan-1 (Mini failed SIGKILL — correction #8); setup 3m1s, prove 3m22s, verify 1.82ms, total 6m24s | `8606b7e0` |
 
 **Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
