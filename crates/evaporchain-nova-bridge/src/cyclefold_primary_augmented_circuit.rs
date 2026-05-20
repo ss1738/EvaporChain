@@ -46,7 +46,8 @@
 
 use ark_bn254::{Fr as Bn254Fr, G1Affine};
 use ark_r1cs_std::{
-    alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, fields::FieldVar,
+    alloc::AllocVar, boolean::Boolean, convert::ToBitsGadget, eq::EqGadget,
+    fields::emulated_fp::EmulatedFpVar, fields::fp::FpVar, fields::FieldVar,
 };
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
@@ -93,13 +94,19 @@ pub struct PrimaryAugmentedCircuitShell {
     /// real Neptune hash of the tuple components).
     pub cf_x_digest: Bn254Fr,
     /// PUBLIC: Section-R transcript hash for THIS step — Neptune
-    /// hash of `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest]` (the
-    /// natively-Fr-representable IO fields). The CF running
-    /// instance absorb (Bn254Fq `u`/`x` via limb decomp) is
-    /// deferred to 4b-β-4b. This value is what the NEXT step
-    /// chains against; Section F (4b-β-5) will absorb it as the
-    /// previous-step hash and enforce NIFS fold consistency.
+    /// hash of `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest,
+    /// cf_u_running_lo, cf_u_running_hi]` (native Fr IO + the CF
+    /// running instance's `u` scalar limb-decomposed from
+    /// Bn254Fq). Full CF instance absorb (comm_w/comm_e native +
+    /// x_vec limbs) deferred to 4b-β-4c. This value is what the
+    /// NEXT step chains against; Section F (4b-β-5) will absorb it
+    /// as the previous-step hash and enforce NIFS fold consistency.
     pub current_step_hash: Bn254Fr,
+    /// CF running instance `u` scalar (Bn254Fq, Grumpkin scalar
+    /// field — non-native in this Bn254Fr circuit; absorbed into
+    /// Section R via 127-bit lo+hi limb decomposition, same pattern
+    /// as Section C's coord-limbs).
+    pub cf_u_running: ark_bn254::Fq,
     /// Neptune sponge params for the in-circuit `cf_x_digest`
     /// gadget (Section C). Constructed once by the caller via
     /// `params_from_dump_path("neptune-bn256-standard.json")` and
@@ -128,6 +135,7 @@ impl PrimaryAugmentedCircuitShell {
         q_step: G1Affine,
         cf_x_digest: Bn254Fr,
         current_step_hash: Bn254Fr,
+        cf_u_running: ark_bn254::Fq,
         params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
@@ -141,6 +149,7 @@ impl PrimaryAugmentedCircuitShell {
             q_step,
             cf_x_digest,
             current_step_hash,
+            cf_u_running,
             params,
             sections_wired: false,
         }
@@ -178,7 +187,6 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // is rejected here, before Sections R/F reach for the
         // tuple. (R and F still deferred — sections_wired stays
         // false until those are also wired.)
-        use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
         let p_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
             cs.clone(),
             || Ok(self.p_step.x),
@@ -221,6 +229,20 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             cs.clone(),
             || Ok(self.current_step_hash),
         )?;
+        // CF running instance `u` (Bn254Fq, non-native): allocate
+        // as EmulatedFpVar, limb-decompose 127-bit lo+hi (same
+        // canonical encoding the cf_x_digest oracle uses, so the
+        // bit-level invariant chain is consistent across sections).
+        let cf_u_running_var =
+            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+                cs.clone(),
+                || Ok(self.cf_u_running),
+            )?;
+        let cf_u_bits = cf_u_running_var.to_bits_le()?;
+        let cf_u_split = 127usize.min(cf_u_bits.len());
+        let cf_u_lo = Boolean::le_bits_to_fp(&cf_u_bits[..cf_u_split])?;
+        let cf_u_hi = Boolean::le_bits_to_fp(&cf_u_bits[cf_u_split..])?;
+
         let r_absorb: Vec<FpVar<Bn254Fr>> = vec![
             pp_hash_var.clone(),
             i_var.clone(),
@@ -228,6 +250,8 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             z_i_var.clone(),
             z_i1_var.clone(),
             cf_x_digest_var.clone(),
+            cf_u_lo,
+            cf_u_hi,
         ];
         let computed_step_hash =
             crate::section2_gadget::enforce_neptune_sponge_primary(
@@ -237,8 +261,6 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             )?;
         // Apply 250-bit truncation to match the native helper's
         // squeeze (NUM_HASH_BITS=250), same pattern as Section C.
-        use ark_r1cs_std::boolean::Boolean;
-        use ark_r1cs_std::convert::ToBitsGadget;
         let raw_bits = computed_step_hash.to_bits_le()?;
         let trunc_bits = &raw_bits[..250usize.min(raw_bits.len())];
         let truncated_step_hash = Boolean::le_bits_to_fp(trunc_bits)?;
@@ -280,8 +302,10 @@ mod tests {
 
     /// Native helper mirroring the in-circuit Section R hash —
     /// `neptune_hash_primary([pp_hash, i, z_0, z_i, z_{i+1},
-    /// cf_x_digest])` with the same 250-bit truncation the
-    /// in-circuit gadget applies.
+    /// cf_x_digest, cf_u_lo, cf_u_hi])` with the same 250-bit
+    /// truncation the in-circuit gadget applies. `cf_u_lo/hi` are
+    /// the 127-bit limb decomposition of `cf_u_running` (the CF
+    /// running instance's `u` scalar; Bn254Fq → 2 Bn254Fr limbs).
     fn compute_current_step_hash_native(
         pp_hash: Bn254Fr,
         i: Bn254Fr,
@@ -289,12 +313,33 @@ mod tests {
         z_i: Bn254Fr,
         z_i1: Bn254Fr,
         cf_x_digest: Bn254Fr,
+        cf_u_running: ark_bn254::Fq,
     ) -> Bn254Fr {
         use crate::neptune_reference::neptune_hash_primary;
         use crate::scalar_adapter::{ark_fr_to_primary, primary_to_ark_fr};
-        let absorbed = [pp_hash, i, z_0, z_i, z_i1, cf_x_digest]
-            .map(ark_fr_to_primary);
-        primary_to_ark_fr(neptune_hash_primary(&absorbed))
+        // Limb-decompose cf_u_running the same way the in-circuit
+        // gadget does: 127-bit lo, hi.
+        use ark_ff::{BigInteger, PrimeField};
+        let bits = cf_u_running.into_bigint().to_bits_le();
+        let split = 127usize.min(bits.len());
+        let pack_le_to_fr = |bs: &[bool]| -> Bn254Fr {
+            let mut acc = Bn254Fr::from(0u64);
+            let mut power = Bn254Fr::from(1u64);
+            for b in bs {
+                if *b {
+                    acc += power;
+                }
+                power = power + power;
+            }
+            acc
+        };
+        let cf_u_lo = pack_le_to_fr(&bits[..split]);
+        let cf_u_hi = pack_le_to_fr(&bits[split..]);
+        let absorbed: [_; 8] = [
+            pp_hash, i, z_0, z_i, z_i1, cf_x_digest, cf_u_lo, cf_u_hi,
+        ];
+        let absorbed_nova = absorbed.map(ark_fr_to_primary);
+        primary_to_ark_fr(neptune_hash_primary(&absorbed_nova))
     }
 
     fn consistent_step() -> PrimaryAugmentedCircuitShell {
@@ -311,10 +356,13 @@ mod tests {
         let z_0 = Bn254Fr::from(0u64);
         let z_i = Bn254Fr::from(0u64);
         let z_i1 = Bn254Fr::from(1u64);
+        // Pick a non-trivial cf_u_running so its limb decomp is
+        // exercised meaningfully (not all-zero, not all-one).
+        let cf_u_running = ark_bn254::Fq::rand(&mut rng);
         // Section R: compute the REAL current_step_hash so its
         // binding is satisfiable too.
         let current_step_hash = compute_current_step_hash_native(
-            pp_hash, i, z_0, z_i, z_i1, cf_x_digest,
+            pp_hash, i, z_0, z_i, z_i1, cf_x_digest, cf_u_running,
         );
         let params = crate::neptune_permutation_gadget::params_from_dump_path(
             concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
@@ -331,6 +379,7 @@ mod tests {
             q,
             cf_x_digest,
             current_step_hash,
+            cf_u_running,
             params,
         )
     }
@@ -441,11 +490,29 @@ mod tests {
         );
     }
 
+    /// SECTION R NON-VACUITY (cf_u limb path): tamper
+    /// `cf_u_running` → its limb decomp differs → Section R hash
+    /// differs from public `current_step_hash` → CS UNSAT. Proves
+    /// the new Bn254Fq-limb-absorbed field is genuinely bound
+    /// through the transcript.
+    #[test]
+    fn shell_section_r_wrong_cf_u_running_breaks_cs() {
+        let mut c = consistent_step();
+        c.cf_u_running = c.cf_u_running + ark_bn254::Fq::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered cf_u_running MUST break Section R (limb absorb path)"
+        );
+    }
+
     /// SIZE PROBE: base cons of the shell (public IO + step +
-    /// Section C cf_x_digest + Section R transcript hash). 4b-β-3
-    /// baseline 6,267 cons; Section R adds another Neptune sponge
-    /// (6 absorbs + permute + squeeze + 250-bit truncation) for
-    /// ~few thousand more.
+    /// Section C cf_x_digest + Section R transcript hash with
+    /// native IO + cf_u limb absorb). 4b-β-4 baseline 7,628 cons;
+    /// β-4b adds 1 Bn254Fq limb decomp (~1.5k cons mirror of
+    /// Section C's per-coord cost / 4, ~300+) + 2 more Neptune
+    /// absorbs.
     #[test]
     fn shell_size_probe() {
         let circuit = consistent_step();
