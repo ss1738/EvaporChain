@@ -135,10 +135,17 @@ pub struct PrimaryAugmentedCircuitShell {
     /// Incoming primary step instance's public IO `X_I` (`u_I = 1`
     /// implicit per non-relaxed R1CSInstance).
     pub primary_x_i: [Bn254Fr; 2],
-    /// Fold challenge `r` (Bn254Fr; derived from RO in production
-    /// — bound to the previous step's transcript via Section R's
-    /// `current_step_hash`. Here a witness for the shell).
+    /// Fold challenge `r` (Bn254Fr). As of β-5-β: bound to
+    /// `Neptune([pp_hash, previous_step_hash, X_I[0], X_I[1]])`
+    /// in-circuit (250-bit truncation). The comm_T absorb that
+    /// completes the RO derivation is the further β-5-γ sub-step.
     pub primary_r: Bn254Fr,
+    /// Previous step's transcript hash — Section R's
+    /// `current_step_hash` from the prior IVC step (consumed here
+    /// as input to the r-derivation RO). For step 0 a base-case
+    /// value; for step i>0 the previous shell's
+    /// `current_step_hash` output.
+    pub previous_step_hash: Bn254Fr,
     /// PUBLIC: new running `u_new` = `u_R + r · 1 = u_R + r`. The
     /// next step's `u`.
     pub primary_u_new: Bn254Fr,
@@ -185,6 +192,7 @@ impl PrimaryAugmentedCircuitShell {
         primary_r: Bn254Fr,
         primary_u_new: Bn254Fr,
         primary_x_new: [Bn254Fr; 2],
+        previous_step_hash: Bn254Fr,
         params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
@@ -210,6 +218,7 @@ impl PrimaryAugmentedCircuitShell {
             primary_r,
             primary_u_new,
             primary_x_new,
+            previous_step_hash,
             params,
             sections_wired: false,
         }
@@ -377,22 +386,54 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let computed_u_new = &primary_u_r_var + &primary_r_var;
         computed_u_new.enforce_equal(&primary_u_new_var)?;
 
+        // Allocate primary_x_i as variables ONCE so they can flow
+        // both into the X_new fold constraints AND the r-from-RO
+        // absorb (instead of duplicating witness allocations).
+        let primary_x_i_vars: [FpVar<Bn254Fr>; 2] = [
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_x_i[0]))?,
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_x_i[1]))?,
+        ];
         for k in 0..2usize {
             let x_r_k = FpVar::<Bn254Fr>::new_witness(
                 cs.clone(),
                 || Ok(self.primary_x_r[k]),
             )?;
-            let x_i_k = FpVar::<Bn254Fr>::new_witness(
-                cs.clone(),
-                || Ok(self.primary_x_i[k]),
-            )?;
             let x_new_k = FpVar::<Bn254Fr>::new_input(
                 cs.clone(),
                 || Ok(self.primary_x_new[k]),
             )?;
-            let computed_x_new_k = &x_r_k + &primary_r_var * &x_i_k;
+            let computed_x_new_k = &x_r_k + &primary_r_var * &primary_x_i_vars[k];
             computed_x_new_k.enforce_equal(&x_new_k)?;
         }
+
+        // ── Section F [β-5-β LIVE]: r-from-RO derivation ─────────
+        // r = Neptune250([pp_hash, previous_step_hash, X_I[0],
+        // X_I[1]]). Binds `primary_r` to the previous step's
+        // transcript + the incoming primary instance's public IO
+        // — a malicious prover can no longer pick an arbitrary `r`
+        // for the fold. comm_T absorb (which completes the standard
+        // NIFS RO derivation per `nifs.rs::prove`) is the β-5-γ
+        // sub-step (it needs limb decomp of a BN254 G1 point).
+        let previous_step_hash_var = FpVar::<Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(self.previous_step_hash),
+        )?;
+        let r_absorb_inputs: Vec<FpVar<Bn254Fr>> = vec![
+            pp_hash_var.clone(),
+            previous_step_hash_var,
+            primary_x_i_vars[0].clone(),
+            primary_x_i_vars[1].clone(),
+        ];
+        let r_squeezed =
+            crate::section2_gadget::enforce_neptune_sponge_primary(
+                cs.clone(),
+                &self.params,
+                &r_absorb_inputs,
+            )?;
+        let r_bits = r_squeezed.to_bits_le()?;
+        let r_trunc_bits = &r_bits[..250usize.min(r_bits.len())];
+        let r_truncated = Boolean::le_bits_to_fp(r_trunc_bits)?;
+        r_truncated.enforce_equal(&primary_r_var)?;
 
         // ── Stub step: z_{i+1} = z_i + 1 ──────────────────────────
         // Real step circuit `F` plugs in here in 4b-β.
@@ -427,6 +468,22 @@ mod tests {
     use ark_ff::UniformRand;
     use ark_relations::r1cs::ConstraintSystem;
     use ark_std::test_rng;
+
+    /// Native helper mirroring the in-circuit β-5-β r-from-RO
+    /// derivation: `r = Neptune250([pp_hash, previous_step_hash,
+    /// X_I[0], X_I[1]])`.
+    fn compute_primary_r_native(
+        pp_hash: Bn254Fr,
+        previous_step_hash: Bn254Fr,
+        x_i_0: Bn254Fr,
+        x_i_1: Bn254Fr,
+    ) -> Bn254Fr {
+        use crate::neptune_reference::neptune_hash_primary;
+        use crate::scalar_adapter::{ark_fr_to_primary, primary_to_ark_fr};
+        let absorbed =
+            [pp_hash, previous_step_hash, x_i_0, x_i_1].map(ark_fr_to_primary);
+        primary_to_ark_fr(neptune_hash_primary(&absorbed))
+    }
 
     /// Native helper mirroring the in-circuit Section R hash —
     /// `neptune_hash_primary([pp_hash, i, z_0, z_i, z_{i+1},
@@ -519,7 +576,17 @@ mod tests {
             [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
         let primary_x_i: [Bn254Fr; 2] =
             [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
-        let primary_r = Bn254Fr::rand(&mut rng);
+        // β-5-β: derive the REAL r from RO so the binding is
+        // satisfiable. previous_step_hash is a witness; consistent_
+        // step picks a random base value (in production for step
+        // i>0 it'd be the prior step's current_step_hash).
+        let previous_step_hash = Bn254Fr::rand(&mut rng);
+        let primary_r = compute_primary_r_native(
+            pp_hash,
+            previous_step_hash,
+            primary_x_i[0],
+            primary_x_i[1],
+        );
         let primary_u_new = primary_u_r + primary_r;
         let primary_x_new: [Bn254Fr; 2] = [
             primary_x_r[0] + primary_r * primary_x_i[0],
@@ -559,6 +626,7 @@ mod tests {
             primary_r,
             primary_u_new,
             primary_x_new,
+            previous_step_hash,
             params,
         )
     }
@@ -666,6 +734,24 @@ mod tests {
         assert!(
             !cs.is_satisfied().expect("is_satisfied"),
             "tampered pp_hash MUST break Section R's transcript binding"
+        );
+    }
+
+    /// SECTION F β-5-β NON-VACUITY (r-from-RO path): tamper
+    /// `previous_step_hash` → in-circuit r-derivation Neptune hash
+    /// differs from the witnessed `primary_r` (which was computed
+    /// off the ORIGINAL previous_step_hash) → enforce_equal fails
+    /// → CS UNSAT. Proves the r-binding to the previous step's
+    /// transcript is real.
+    #[test]
+    fn shell_section_f_wrong_previous_step_hash_breaks_cs() {
+        let mut c = consistent_step();
+        c.previous_step_hash = c.previous_step_hash + Bn254Fr::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered previous_step_hash MUST break r-from-RO binding"
         );
     }
 
