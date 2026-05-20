@@ -1173,15 +1173,45 @@ absorbs will each carry ~1,230 cons of limb-decomp overhead.
 
 **Fifth consecutive first-try pass this micro-arc.**
 
-**NEXT [code]:** increment 4b-β-4d — Section R absorbs the CF
-instance's `x_vec` (Bn254Fq vector — for `CycleFoldInstanceCircuit`
-length is `num_io = 21` per increment-2 measurement). Each element
-needs its own EmulatedFpVar witness + 127-bit limb decomp + 2
-Neptune absorbs, so ~21 × ~1,230 ≈ +25k cons expected — the shell
-roughly triples in cons. Then 4b-β-5 Section F (primary NIFS
-fold-relation verification — the substantive remaining novel
-piece). Then increment 7 audit prep / write-up. L2 deployment
-(now-locked target) is downstream of audit prep.
+### 1C INCREMENT 4b-β-4d — ✅ SECTION R x_vec ABSORB COMPLETE [V]
+(2026-05-20, Mini3, box, HEAD `b93cc1b2`,
+`cyclefold_primary_augmented_circuit ... 10 passed; 0 failed`)
+
+Section R now absorbs the **full CF running instance** — 54 sponge
+elements: `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest, cf_u_lo,
+cf_u_hi, cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
+(x_vec[k]_lo, x_vec[k]_hi for k in 0..21)]`. New non-vacuity gate
+`shell_section_r_wrong_cf_x_vec_breaks_cs` passed.
+
+**`PRIMARY_SHELL_PROBE: 36,164 cons / 31,592 witness / 8 instance`
+— +27,294 cons over β-4c** (21 × ~1,300 = ~27,300, matches the
+β-4b 1,230/element prediction). The shell roughly quadrupled in
+cons (8,870 → 36,164) from the x_vec limb loop.
+
+**Sixth consecutive first-try pass this micro-arc.** Section R is
+now structurally complete — every component of the CF running
+instance (commitments + scalar + x_vec) flows through the
+transcript hash and is non-vacuously bound to the public
+`current_step_hash`.
+
+**NEXT [code]:** increment 4b-β-5 — Section F: **primary NIFS
+verification**, the substantive remaining novel piece. Verifies
+the fold relation between the previous primary running instance
+and the incoming primary step: given `(U_running, U_incoming,
+comm_T)` and challenge `r` derived from RO, the augmented circuit
+must enforce `U_folded.comm_W = U_running.comm_W + r ·
+U_incoming.comm_W`, `comm_E_folded = U_running.comm_E + r ·
+comm_T`, etc. — same identities `cyclefold_fold_homomorphism::
+fold_cf_step` implements out-of-circuit. The primary's
+commitments are BN254 G1 points (non-native in Bn254Fr circuit
+— Bn254Fq coords); scalar-muls there are exactly what
+CycleFold's aux delegates. The shell allocates `(P, s, Q)` and
+binds via cf_x_digest already; Section F closes the loop by
+enforcing the primary fold's structural invariants (commitment
+homomorphism + the r-derivation from RO consistent with the
+previous step's transcript). Substantial; deserves dedicated
+focused effort. Then increment 7 audit prep / write-up. L2
+deployment downstream.
 
 ---
 
