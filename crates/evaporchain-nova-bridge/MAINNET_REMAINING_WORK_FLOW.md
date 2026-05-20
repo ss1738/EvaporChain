@@ -1443,6 +1443,43 @@ micro-arc + the (b) integration follow-on.
 - (d) **L2 deployment** (Optimism / Arbitrum / Base — pick + deploy).
 - (e) **External audit** on the pinned revision.
 
+### 1C INCREMENT (a)-1 — ✅ comm_W_I ABSORB ADDED [V] (2026-05-20,
+Mini3, box, HEAD `30ad7177`,
+`cyclefold_primary_augmented_circuit + cyclefold_shell_chain ...
+17 passed; 0 failed; 27.74 s`)
+
+Per `nova_snark::nifs::NIFS::prove`, the r-RO transcript absorbs
+`U2.absorb_in_ro` (which includes `comm_W_I`) BEFORE `comm_T`.
+Our r-RO previously absorbed only comm_T; this step adds comm_W_I
+absorb with the same 127-bit BN254 G1 limb pattern. Sponge order:
+`[pp_hash, previous_step_hash, X_I[0], X_I[1], comm_W_I (4 limbs),
+comm_T (4 limbs)]` = 12 elements.
+
+New struct field `primary_comm_w_i: G1Affine`. Native helper +
+shell-chain helper + inlined chain-test closure all updated.
+New non-vacuity gate `shell_section_f_wrong_comm_w_i_breaks_cs`
+passed first try.
+
+**`PRIMARY_SHELL_PROBE: 50,057 cons / 43,712 witness / 11 instance`
+— +2,460 cons** (exactly the comm_T-absorb cost, same shape).
+
+**Fifteenth consecutive first-try pass.**
+
+**Remaining (a) sub-steps (byte-level parity completion):**
+- (a)-2 transcript domain tags: `RO::new(consts)` initial state
+  must match nova-snark's specific constants. Currently our
+  Neptune sponge uses `enforce_neptune_sponge_primary`'s standard
+  init via `params_from_dump_path(neptune-bn256-standard.json)` —
+  may already match or may need a domain-separator adjustment.
+- (a)-3 verify against a real nova-snark NIFS::prove run: produce
+  a NIFS proof from `nova_snark::nifs::NIFS<E2>::prove` on a
+  bridged CF instance, extract its derived `r` (would require
+  pub(crate) access — likely via serde or instrumentation), and
+  compare against our in-circuit r. End-to-end byte parity gate.
+
+After (a)-2 / (a)-3: (c) Solidity verifier, (d) L2 deployment,
+(e) external audit.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
