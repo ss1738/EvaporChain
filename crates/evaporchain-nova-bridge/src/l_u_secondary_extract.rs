@@ -201,6 +201,32 @@ pub struct SectionBPiBundle {
     pub zn: Vec<ArkFr>,
 }
 
+impl SectionBPiBundle {
+    /// Convert the off-chain extraction bundle into the in-circuit
+    /// `SectionBPublicInputs` struct that
+    /// `RecursionDeciderCircuit::section_a_with_b_interface` consumes.
+    /// Trivial 1:1 field copy — the two structs were intentionally
+    /// designed to match (one is the off-chain extraction format,
+    /// the other is the in-circuit PI bundle).
+    pub fn into_section_b_pis(
+        self,
+    ) -> crate::recursion_decider_circuit::SectionBPublicInputs {
+        crate::recursion_decider_circuit::SectionBPublicInputs {
+            hash_secondary_claimed: self.hash_secondary_claimed,
+            hash_primary_reinterp: self.hash_primary_reinterp,
+            pp_digest: self.pp_digest,
+            num_steps: self.num_steps,
+            ri_secondary: self.ri_secondary,
+            r_U_primary_comm_x: self.r_U_primary_comm_x,
+            r_U_primary_comm_y: self.r_U_primary_comm_y,
+            r_U_primary_x0: self.r_U_primary_x0,
+            r_U_primary_x1: self.r_U_primary_x1,
+            z0: self.z0,
+            zn: self.zn,
+        }
+    }
+}
+
 /// Helper: parse a primary-side hex scalar (l_u_secondary.X[..] uses
 /// secondary parser, but ri_secondary / r_U_primary fields use the
 /// primary parser via primary_to_ark_fr in scalar_adapter — for now

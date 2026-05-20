@@ -200,6 +200,56 @@ pub fn verify_recursion_decider(
     Groth16::<Bn254>::verify(vk, public_inputs, proof)
 }
 
+/// Section-B-aware Groth16 trusted setup. Keys the circuit over
+/// `RecursionDeciderCircuit::setup_shape_with_b_interface`, which
+/// allocates both Section A's MSM constraints AND Section B's
+/// 9+|z0|+|zn| public-input slots. The prover at prove-time must
+/// supply a circuit constructed via
+/// `section_a_with_b_interface(...)` with matching `pi_arity` so
+/// the PI count aligns with the keyed shape.
+///
+/// Per dossier §6b: Section B is in-circuit allocation only (no
+/// enforcement); the binding lives in the off-chain
+/// `assemble_section_b_pi_bundle` adapter.
+#[deprecated(
+    note = "INSECURE test/dev trusted setup. Same MPC caveat as setup_recursion_decider."
+)]
+pub fn setup_recursion_decider_with_b_interface<R: RngCore + CryptoRng>(
+    bases: Vec<Affine<GrumpkinConfig>>,
+    h: Affine<GrumpkinConfig>,
+    pi_arity: usize,
+    rng: &mut R,
+) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::r1cs::SynthesisError> {
+    let circuit = RecursionDeciderCircuit::setup_shape_with_b_interface(
+        bases, h, pi_arity,
+    );
+    Groth16::<Bn254>::circuit_specific_setup(circuit, rng)
+}
+
+/// Helper: pack a Section B public-input bundle into the `Bn254Fr`
+/// slice that `verify_recursion_decider` consumes. Order matches
+/// the `new_input` calls in `RecursionDeciderCircuit::generate_constraints`:
+///   hash_secondary_claimed, hash_primary_reinterp, pp_digest,
+///   num_steps, ri_secondary, r_U_primary_comm_x, r_U_primary_comm_y,
+///   r_U_primary_x0, r_U_primary_x1, z0[..], zn[..].
+pub fn section_b_public_inputs_slice(
+    b: &crate::recursion_decider_circuit::SectionBPublicInputs,
+) -> Vec<Bn254Fr> {
+    let mut out = Vec::with_capacity(b.pi_count());
+    out.push(b.hash_secondary_claimed);
+    out.push(b.hash_primary_reinterp);
+    out.push(b.pp_digest);
+    out.push(b.num_steps);
+    out.push(b.ri_secondary);
+    out.push(b.r_U_primary_comm_x);
+    out.push(b.r_U_primary_comm_y);
+    out.push(b.r_U_primary_x0);
+    out.push(b.r_U_primary_x1);
+    out.extend_from_slice(&b.z0);
+    out.extend_from_slice(&b.zn);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,6 +780,125 @@ mod tests {
             .map(|b| format!("{:02x}", b))
             .collect();
         eprintln!("EIP197_WIRE_HEX = 0x{hex_str}");
+    }
+
+    /// Section B END-TO-END: chains the off-chain adapter through
+    /// the Groth16-wrap pipeline.
+    ///
+    /// Flow:
+    ///   1. Build (pp, rs) via the shared-pp fixture helper.
+    ///   2. assemble_section_b_pi_bundle(pp, rs, num_steps, z0)
+    ///      → SectionBPiBundle (verify-then-emit gate).
+    ///   3. Convert bundle → SectionBPublicInputs.
+    ///   4. setup_recursion_decider_with_b_interface(bases, h,
+    ///      pi_arity, rng) → (pk, vk) at Section A + Section B PI shape.
+    ///   5. Build RecursionDeciderCircuit::section_a_with_b_interface
+    ///      (Section A's consistent witness + the Section B PI bundle).
+    ///   6. prove_recursion_decider → Groth16 proof.
+    ///   7. verify_recursion_decider with section_b_public_inputs_slice
+    ///      → must verify (Section A binds, Section B PIs flow through).
+    ///
+    /// This validates the delegation architecture end-to-end:
+    ///   off-chain adapter (verify gate) → Groth16-wrap with PI
+    ///   layout → on-chain-shape verifier accepts.
+    #[test]
+    #[allow(deprecated)]
+    fn recursion_decider_section_b_end_to_end_smoke() {
+        use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+        use ark_ec::CurveGroup;
+        use crate::grumpkin_config::GrumpkinConfig;
+        use crate::l_u_secondary_extract::assemble_section_b_pi_bundle;
+        use crate::recursion_decider_circuit::RecursionDeciderCircuit;
+        use crate::recursive_snark_fixture::{
+            Scalar1, TrivialIncrementCircuit, E1, E2,
+        };
+        use ff::Field;
+        use nova_snark::nova::{PublicParams, RecursiveSNARK};
+        use nova_snark::spartan::ppsnark::RelaxedR1CSSNARK;
+        use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
+        use nova_snark::provider::hyperkzg::EvaluationEngine;
+        use nova_snark::provider::ipa_pc::EvaluationEngine as IpaEE;
+
+        // ── 1. Build (pp, rs) with the same pp instance ─────────────
+        let circuit = TrivialIncrementCircuit;
+        type S1 = RelaxedR1CSSNARK<E1, EvaluationEngine<E1>>;
+        type S2 = RelaxedR1CSSNARK<E2, IpaEE<E2>>;
+        let pp =
+            PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+                &circuit, &*S1::ck_floor(), &*S2::ck_floor(),
+            ).expect("pp setup");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs =
+            RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+                &pp, &circuit, &z0,
+            ).expect("rs new");
+        for _ in 0..2 {
+            rs.prove_step(&pp, &circuit).expect("prove_step");
+        }
+
+        // ── 2. Off-chain adapter (verify-then-emit) ─────────────────
+        let z0_ark = vec![Bn254Fr::from(0u64)];
+        let bundle =
+            assemble_section_b_pi_bundle(&pp, &rs, 2, &z0_ark)
+                .expect("assemble");
+        let pi_arity = bundle.z0.len();
+        assert_eq!(pi_arity, 1, "TrivialIncrementCircuit z0 arity = 1");
+
+        // ── 3. Convert bundle → in-circuit PIs ──────────────────────
+        let section_b_pis = bundle.into_section_b_pis();
+        let expected_pi_count = section_b_pis.pi_count();
+        assert_eq!(expected_pi_count, 9 + 1 + 1, "11 PIs at arity 1");
+
+        // ── 4. Set up Groth16 with Section A + Section B interface ──
+        let g = Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR);
+        let g2 = g + g;
+        let g3 = g2 + g;
+        let g5 = g3 + g2;
+        let h = g + g + g + g + g + g + g;
+        let bases: Vec<_> = [g, g2, g3, g5]
+            .into_iter()
+            .map(|p| p.into_affine())
+            .collect();
+        let h_aff = h.into_affine();
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xB);
+        let (pk, vk) = setup_recursion_decider_with_b_interface(
+            bases.clone(), h_aff, pi_arity, &mut rng,
+        ).expect("setup");
+
+        // ── 5. Build the prover circuit with consistent Section A
+        //       witness + the Section B PI bundle ─────────────────────
+        use ark_bn254::Fq as Bn254Fq;
+        let scalars = vec![
+            Bn254Fq::from(2u64),
+            Bn254Fq::from(3u64),
+            Bn254Fq::from(5u64),
+            Bn254Fq::from(7u64),
+        ];
+        let blind = Bn254Fq::from(11u64);
+        let claimed = g * scalars[0]
+            + g2 * scalars[1]
+            + g3 * scalars[2]
+            + g5 * scalars[3]
+            + h * blind;
+        let circuit_ab = RecursionDeciderCircuit::section_a_with_b_interface(
+            scalars, bases, blind, h_aff, claimed, section_b_pis.clone(),
+        );
+
+        // ── 6. Prove ────────────────────────────────────────────────
+        let proof =
+            prove_recursion_decider(&pk, circuit_ab, &mut rng).expect("prove");
+
+        // ── 7. Verify with the PI slice ─────────────────────────────
+        let pis = section_b_public_inputs_slice(&section_b_pis);
+        assert_eq!(pis.len(), expected_pi_count, "PI slice length must match pi_count()");
+
+        let ok = verify_recursion_decider(&vk, &pis, &proof)
+            .expect("verify call");
+        assert!(
+            ok,
+            "Section B end-to-end Groth16 round-trip must verify with the full PI bundle"
+        );
     }
 
     /// (d)-4 PRODUCTION-SCALE SETUP+PROVE+VERIFY at n_aux=16,384 —
