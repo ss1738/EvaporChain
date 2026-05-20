@@ -32,7 +32,7 @@ type GAffine = Affine<GrumpkinConfig>;
 /// Decode one Grumpkin affine from a (bare or `0x`) 32-byte
 /// compressed hex string — the `section2_witness` decompression
 /// path, mapped onto `GrumpkinConfig`.
-fn decode_grumpkin_point(hex: &str) -> Result<GAffine, ExtractError> {
+pub(crate) fn decode_grumpkin_point(hex: &str) -> Result<GAffine, ExtractError> {
     let stripped = hex.strip_prefix("0x").unwrap_or(hex);
     let bytes = hex::decode(stripped).map_err(|e| ExtractError::HexParseFailed {
         index: 0,
@@ -113,6 +113,48 @@ pub fn extract_secondary_comm_w(rs_json: &Value) -> Result<GAffine, ExtractError
         .and_then(|c| c.as_str())
         .ok_or(ExtractError::MissingPath)?;
     decode_grumpkin_point(s)
+}
+
+/// 1C (b)-2b: extract a freestanding `RelaxedR1CSInstance<
+/// GrumpkinEngine>` (serde to_value) into the arkworks
+/// representation the primary shell's Section R absorb expects.
+/// Path schema verified by the (b)-2b premise dump (HEAD
+/// `9344e97a`): top-level keys `{X, comm_E, comm_W, u}`;
+/// comm_W/comm_E are `{comm: <64-hex>}`; u is `<64-hex>`; X is
+/// array of `<64-hex>`. Returns commitments as Affine<GrumpkinConfig>
+/// (Bn254Fr coords native) + u and X as `ArkFq`.
+pub fn extract_relaxed_running_inst(
+    inst_json: &Value,
+) -> Result<(GAffine, GAffine, ArkFq, Vec<ArkFq>), ExtractError> {
+    use crate::l_u_secondary_extract::parse_secondary_scalar_hex;
+    use crate::scalar_adapter::secondary_to_ark_fq;
+    let comm_w_s = inst_json
+        .get("comm_W")
+        .and_then(|c| c.get("comm"))
+        .and_then(|c| c.as_str())
+        .ok_or(ExtractError::MissingPath)?;
+    let comm_e_s = inst_json
+        .get("comm_E")
+        .and_then(|c| c.get("comm"))
+        .and_then(|c| c.as_str())
+        .ok_or(ExtractError::MissingPath)?;
+    let u_s = inst_json
+        .get("u")
+        .and_then(|u| u.as_str())
+        .ok_or(ExtractError::MissingPath)?;
+    let x_arr = inst_json
+        .get("X")
+        .and_then(|x| x.as_array())
+        .ok_or(ExtractError::MissingPath)?;
+    let comm_w = decode_grumpkin_point(comm_w_s)?;
+    let comm_e = decode_grumpkin_point(comm_e_s)?;
+    let u = secondary_to_ark_fq(parse_secondary_scalar_hex(Some(u_s), 0)?);
+    let mut x = Vec::with_capacity(x_arr.len());
+    for (i, e) in x_arr.iter().enumerate() {
+        let s = parse_secondary_scalar_hex(e.as_str(), i)?;
+        x.push(secondary_to_ark_fq(s));
+    }
+    Ok((comm_w, comm_e, u, x))
 }
 
 #[cfg(test)]

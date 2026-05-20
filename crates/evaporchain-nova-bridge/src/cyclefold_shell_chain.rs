@@ -421,31 +421,46 @@ mod tests {
         let _ = s0_u_new;
         let _ = s0_x_new;
 
-        // (b)-2b PREMISE-CHECK: dump RelaxedR1CSInstance JSON keys
-        // so the extractor for step 1's CF chaining can be written
-        // against the actual format (not assumed). Once-per-build
-        // diagnostic; bounded.
+        // (b)-2b: extract the post-step-0 running CF state and
+        // chain it into shell_1. Path schema verified by HEAD
+        // 9344e97a premise dump; extractor in s4_secondary_extract.
         let v = serde_json::to_value(&u_run_after_0)
             .expect("RelaxedR1CSInstance to_value");
-        if let Some(o) = v.as_object() {
-            let mut keys: Vec<&String> = o.keys().collect();
-            keys.sort();
-            eprintln!("RELAXED_INST_KEYS = {keys:?}");
-            for k in &keys {
-                let child = &v[*k];
-                let info = match child {
-                    serde_json::Value::Array(a) => format!("ARRAY len={}", a.len()),
-                    serde_json::Value::Object(oo) => {
-                        let mut inner: Vec<&String> = oo.keys().collect();
-                        inner.sort();
-                        format!("OBJ keys={inner:?}")
-                    }
-                    serde_json::Value::String(s) => format!("STR len={}", s.len()),
-                    other => format!("{other:?}"),
-                };
-                eprintln!("RELAXED_INST {k} = {info}");
-            }
-        }
+        let (cw, ce, u1, x1) =
+            crate::s4_secondary_extract::extract_relaxed_running_inst(&v)
+                .expect("extract running CF state post-step-0");
+        let (cw_x, cw_y) = (cw.x, cw.y);
+        let (ce_x, ce_y) = (ce.x, ce.y);
+
+        // Step 1: shell built with cf_* fields = post-step-0
+        // running CF state; primary fields threaded from step 0's
+        // public outputs.
+        let shell_1 = build_step_with_running(
+            &mut rng,
+            1,
+            s0_z_i1,
+            s0_step_hash,
+            s0_u_new,
+            s0_x_new,
+            cw_x, cw_y, ce_x, ce_y, u1, x1,
+        );
+        let s1_t1 = (shell_1.t1_p, shell_1.t1_s, shell_1.t1_q);
+        let cs_1 = ConstraintSystem::<Bn254Fr>::new_ref();
+        shell_1.generate_constraints(cs_1.clone()).expect("synth 1");
+        assert!(cs_1.is_satisfied().unwrap(), "shell 1 CS must be sat");
+
+        // Fold shell_1.t1 into the running pair (now u_run_after_0).
+        let art1 = bridge_cf_tuple(s1_t1.0, s1_t1.1, s1_t1.2, ck_label)
+            .expect("bridge t1 step 1");
+        let (_nifs1, (u_run_after_1, w_run_after_1)) =
+            NIFS::<GrumpkinEngine>::prove(
+                &art1.ck, &ro_consts, &pp_digest_secondary, &art1.shape,
+                &u_run_after_0, &w_run_after_0, &art1.instance, &art1.witness,
+            )
+            .expect("nifs prove step 1");
+        art1.shape
+            .is_sat_relaxed(&art1.ck, &u_run_after_1, &w_run_after_1)
+            .expect("running CF (post step 1) must be is_sat_relaxed");
     }
 
     /// 2-STEP CHAIN: synthesise shell_0 then shell_1 with step_1's
