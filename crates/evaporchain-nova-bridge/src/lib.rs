@@ -125,6 +125,7 @@ pub mod cyclefold_ivc_accumulator;
 pub mod cyclefold_n_aux_probe;
 pub mod cyclefold_primary_augmented_circuit;
 pub mod cyclefold_r1cs_bridge;
+pub mod cyclefold_shell_chain;
 pub mod ipa_ck_fold_gadget;
 pub mod ipa_s_tensor;
 pub mod recursion_decider_circuit;
