@@ -1251,19 +1251,42 @@ absorb).
 
 **Eighth consecutive first-try pass this micro-arc.**
 
-**NEXT [code]:** increment 4b-β-5-γ — extend the r-from-RO
-derivation to absorb `comm_T` (the cross-term commitment, BN254
-G1 point — non-native here; needs limb decomp of the Bn254Fq
-coords just like Section C's P.x/P.y treatment). This completes
-the standard `nova_snark::nifs::NIFS::prove` RO derivation, after
-which `primary_r` will be bound to EVERYTHING `nifs.rs::prove`
-binds (modulo any byte-level transcript-domain-tag differences
-worth verifying against the nova-snark reference). Then β-5-δ
-extends `cf_x_digest` to bind MULTIPLE cross-curve scalar-mul
-tuples (primary fold needs r·comm_W_I AND r·comm_T; shell
-currently exposes only one). After all wired:
-`sections_wired:true`. Then increment 7 audit prep / write-up.
-L2 deployment downstream.
+### 1C INCREMENT 4b-β-5-γ — ✅ comm_T ABSORB LIVE [V]
+(2026-05-20, Mini3, box, HEAD `24b134f7`,
+`cyclefold_primary_augmented_circuit ... 14 passed; 0 failed;
+11.62 s`)
+
+r-from-RO derivation extended to 8 elements: `[pp_hash,
+previous_step_hash, X_I[0], X_I[1], comm_t_x_lo, comm_t_x_hi,
+comm_t_y_lo, comm_t_y_hi]`. comm_T (BN254 G1; Bn254Fq coords)
+limb-decomposed via the same 127-bit pattern Section C uses for
+P.x/P.y. New non-vacuity gate
+`shell_section_f_wrong_comm_t_breaks_cs` passed first try.
+
+**`PRIMARY_SHELL_PROBE: 39,984 cons / 34,932 witness / 11 instance`
+— comm_T absorb adds +2,460 cons** (2 × ~1,230 limb-decomp cost,
+matches β-4b/β-4d/Section C cost model).
+
+**Honest scope note (in struct docs):** byte-level parity with
+`nifs.rs::prove`'s exact transcript order (e.g., U2.comm_W_I
+absorb too) is a separate later alignment effort, analogous to
+`section2_gadget`'s BESPOKE work. The architectural pattern is
+landed (r bound to pp + previous transcript + incoming primary
+public IO + cross-term commitment); bit-level reconciliation is
+its own pass.
+
+**Ninth consecutive first-try pass this micro-arc.**
+
+**NEXT [code]:** increment 4b-β-5-δ — extend `cf_x_digest` to bind
+MULTIPLE cross-curve scalar-mul tuples. The primary NIFS fold
+needs two delegated scalar-muls (`r·comm_W_I` AND `r·comm_T`); the
+shell currently exposes only ONE via `(p_step, s_step, q_step)` /
+`cf_x_digest`. Extension: a `Vec<(P, s, Q)>` (or fixed `[;2]`)
+absorbed into Section C's hash, paired with the matching aux-side
+attestations. After β-5-δ: flip `sections_wired:true` (full shell
+structurally done — modulo the byte-level NIFS transcript parity
+that's the section2-style BESPOKE follow-up). Then increment 7
+audit prep / write-up. L2 deployment downstream.
 
 ---
 
