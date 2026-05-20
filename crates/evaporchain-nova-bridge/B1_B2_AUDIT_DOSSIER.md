@@ -477,11 +477,26 @@ The chosen architecture's open work, in dependency order:
        5. `prove_recursion_decider` (Groth16 proof)
        6. EIP-197 codec → 256-byte wire
        7. On-chain `VerkleProofVerifier.verify(proofBytes, 11 PIs)`
-   - **Section B remaining (~minor optional):**
-     1. CompressedSNARK variant of the adapter — mostly mechanical
-        type-substitute.
-   - **Sections C + D** follow same delegation pattern (~few days
-     each for adapter + end-to-end + EVM test).
+   - **Section B remaining (~minor):**
+     1. CompressedSNARK variant of the adapter — same pattern as
+        `assemble_section_b_pi_bundle` but calls
+        `CompressedSNARK::verify` instead of `RecursiveSNARK::verify`.
+        Per `SECTION_CD_SCOPING.md`, this single function ALSO
+        covers Sections C + D.
+   - **Sections C + D ✅ NO-OP COLLAPSE (per `SECTION_CD_SCOPING.md`):**
+     source re-read of `CompressedSNARK::verify` L965-1025 shows
+     all NIFS folds + derandomize + final spartan verifies produce
+     internal-only values (consumed via `?` short-circuit); only
+     `self.zn` escapes (already in Section B PIs). In the
+     delegation model, Sections C and D collapse to NO-OP: the
+     off-chain adapter's `CompressedSNARK::verify` call covers
+     them entirely. No new PIs, no in-circuit work, no Foundry
+     tests beyond Section A + B.
+     **Saves ~4-5 days of duplicate-iteration work that the rev-1
+     dossier had planned (separate adapter/end-to-end/EVM tests
+     for C and D).** Catching this at scoping-level: same pattern
+     as the SECTION_B_SCOPING.md rev-2 correction (lesson
+     [[lesson-2026-05-20-b1b2-framing-error]] discipline).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
