@@ -25,21 +25,28 @@
 //! - Struct + arkworks `ConstraintSynthesizer<Bn254Fr>` impl that
 //!   compiles and synthesises against a real `ConstraintSystem`.
 //! - Stub step (z_{i+1} = z_i + 1, same as `TrivialIncrementCircuit`).
-//! - Public IO layout matching the CycleFold IVC schema:
-//!     `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x..., P.x, P.y,
-//!       s_emulated_limbs..., Q.x, Q.y]`.
-//! - Cross-curve tuple `(P, s, Q)` emitted as public outputs (the
-//!   CF aux circuit's [`crate::cyclefold_instance_circuit`] inputs).
+//! - Public IO layout matching the CycleFold IVC schema — ALL
+//!   `Bn254Fr` scalars: `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest]`.
+//!   `cf_x_digest` is a single Bn254Fr hash that binds the cross-
+//!   curve tuple `(P, s, Q)` (a `Bn254Fr` digest of those values,
+//!   recomputed independently on the aux side via the matching RO
+//!   so the link is enforced cross-circuit). Per Sonobe
+//!   `circuits.rs` L230/L280 (`FpVar::new_input(..., x.value())?
+//!   .enforce_equal(&x)?`), CF-augmented IO exposes scalar digests,
+//!   NOT raw curve coordinates — exposing `P.x, P.y` (Bn254Fq) as
+//!   inputs of a Bn254Fr circuit is a type/architecture error
+//!   (caught by the compiler at HEAD `3afabb13` on first build; see
+//!   the fix commit for the full surfaced correction).
+//! - The actual `(P, s, Q)` raw values are carried in the witness
+//!   only (so 4b-β can hash them into `cf_x_digest`); they are NOT
+//!   public.
 //! - `sections_wired: bool` — false; flips to true only when the
 //!   RO/fold-verification stubs become real in 4b-β.
 //! - Box-measured base constraint count `cs.num_constraints()`.
 
 use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr, G1Affine};
 use ark_r1cs_std::{
-    alloc::AllocVar,
-    eq::EqGadget,
-    fields::emulated_fp::EmulatedFpVar,
-    fields::fp::FpVar,
+    alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, fields::FieldVar,
 };
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
@@ -60,13 +67,23 @@ pub struct PrimaryAugmentedCircuitShell {
     pub z_0: Bn254Fr,
     /// Current state `z_i`.
     pub z_i: Bn254Fr,
-    /// Cross-curve scalar-mul `P_step` (BN254-G1 point).
+    /// Cross-curve scalar-mul `P_step` (BN254-G1 point) — WITNESS
+    /// only (Bn254Fq coords, non-native to this Bn254Fr circuit;
+    /// not exposed as public IO — public link is `cf_x_digest`).
     pub p_step: G1Affine,
     /// Cross-curve scalar-mul `s_step` (BN254 scalar = E1 scalar
-    /// field; non-native in this Bn254Fr circuit).
+    /// field; non-native here) — WITNESS only.
     pub s_step: Bn254Fq,
-    /// Cross-curve scalar-mul `Q_step = s_step · P_step`.
+    /// Cross-curve scalar-mul `Q_step = s_step · P_step` — WITNESS
+    /// only.
     pub q_step: G1Affine,
+    /// PUBLIC: Bn254Fr digest binding the cross-curve tuple
+    /// `(p_step, s_step, q_step)`. Recomputed independently on the
+    /// CF aux side via the matching Neptune RO; equality of the
+    /// two digests is the cross-circuit binding. Stubbed as a
+    /// caller-supplied value here (4b-β computes it from a
+    /// real Neptune hash of the tuple components).
+    pub cf_x_digest: Bn254Fr,
     /// HONESTY flag: false until 4b-β wires the Neptune RO + the
     /// primary NIFS verification. A caller cannot mistake a shell
     /// instance for a complete augmented circuit.
@@ -75,6 +92,8 @@ pub struct PrimaryAugmentedCircuitShell {
 
 impl PrimaryAugmentedCircuitShell {
     /// Shell constructor (4b-α). Sets `sections_wired:false`.
+    /// `cf_x_digest` is a stubbed Bn254Fr value; 4b-β will compute
+    /// it from a real Neptune hash of `(p_step, s_step, q_step)`.
     pub fn new(
         pp_hash: Bn254Fr,
         i: Bn254Fr,
@@ -83,6 +102,7 @@ impl PrimaryAugmentedCircuitShell {
         p_step: G1Affine,
         s_step: Bn254Fq,
         q_step: G1Affine,
+        cf_x_digest: Bn254Fr,
     ) -> Self {
         Self {
             pp_hash,
@@ -92,6 +112,7 @@ impl PrimaryAugmentedCircuitShell {
             p_step,
             s_step,
             q_step,
+            cf_x_digest,
             sections_wired: false,
         }
     }
@@ -115,21 +136,20 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let z_i1_var =
             FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.z_i + Bn254Fr::from(1u64)))?;
 
-        // Cross-curve tuple (P, s, Q) — public output for the CF
-        // aux side.
-        let _p_x_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.p_step.x))?;
-        let _p_y_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.p_step.y))?;
-        // s_step is non-native (Bn254Fq) here; expose as emulated.
-        let _s_step_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_input(
-            cs.clone(),
-            || Ok(self.s_step),
-        )?;
-        let _q_x_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.q_step.x))?;
-        let _q_y_var =
-            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.q_step.y))?;
+        // Cross-curve tuple binding — exposed as a SINGLE Bn254Fr
+        // digest, NOT raw curve coords (Bn254Fq, foreign field).
+        // 4b-β computes this from a Neptune hash of the tuple; for
+        // now, it's a caller-supplied stub value. The CF aux side
+        // recomputes the matching digest from its own (P, s, Q)
+        // allocation; cross-circuit equality of the digests is the
+        // cross-side binding.
+        let _cf_x_digest_var =
+            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.cf_x_digest))?;
+        // Tuple values (P, s, Q) are not exposed publicly here —
+        // they are referenced only by the witness so 4b-β can hash
+        // them. The shell just records they exist via the typed
+        // fields on `self`.
+        let _ = (self.p_step, self.s_step, self.q_step);
 
         // ── Stub step: z_{i+1} = z_i + 1 ──────────────────────────
         // Real step circuit `F` plugs in here in 4b-β.
@@ -178,6 +198,7 @@ mod tests {
             p,
             s,
             q,
+            Bn254Fr::from(123u64), // cf_x_digest stub (4b-β: Neptune(p,s,q))
         )
     }
 
