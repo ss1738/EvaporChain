@@ -738,16 +738,41 @@ GREEN, exact, value-preserving in both directions. The remaining
 3b sub-steps (R1CSShape extraction + NIFS<GrumpkinEngine>::prove
 integration) are mechanical with this primitive in hand.
 
-**NEXT [code]:** increment 3b-2 — extract `R1CSShape` for
-`CycleFoldInstanceCircuit` (synthesize into arkworks
-`ConstraintSystem<Bn254Fq>`, walk `to_matrices()` A/B/C,
-convert each `(row, col, ArkFq)` entry to nova-snark's
-`R1CSShape<GrumpkinEngine>` `(row, col, GrumpkinScalar)` via the
-just-verified `ark_fq_to_secondary`). Box-verify by constructing
-the shape from a real CF instance synthesis and asserting nova-
-snark's `R1CSShape::is_regular_shape()` (sanity) + the shape's
-`num_cons/num_vars` match the increment-2 measurements
-(1,985 / 1,812).
+### 1C INCREMENT 3b-2 — ✅ R1CSShape BRIDGE [V] (2026-05-20,
+Mini3, box, HEAD `7e86d394`,
+`cyclefold_r1cs_bridge ... 1 passed; 0 failed; 0.09 s`)
+
+New module `cyclefold_r1cs_bridge.rs`: generic
+`arkworks_cs_to_nova_grumpkin_shape<C: ConstraintSynthesizer<
+Bn254Fq>>` synthesises into arkworks `ConstraintSystem<Bn254Fq>`,
+walks `ConstraintMatrices` A/B/C, sorts each row's `(coeff, col)`
+strictly ascending (nova-snark `SparseMatrix::new` asserts this;
+arkworks `to_matrices` doesn't sort), converts each scalar via
+`ark_fq_to_secondary`, wraps in `SparseMatrix<SecondaryScalar>`
+(rows=num_cons, cols=num_io+num_vars+1 — the +1 is the implicit
+ONE column), and emits `R1CSShape<GrumpkinEngine>`.
+
+End-to-end box test: real `CycleFoldInstanceCircuit` → shape →
+**`num_cons = 1985 / num_vars = 1812 / num_io = 21`** ✓ matches
+increment-2 measurements exactly (R1CS preserved bit-for-bit, no
+rows lost, no off-by-one in IO accounting).
+
+**Two real signature/format facts pinned via write→box→fix:**
+- `R1CSShape::new` takes `SparseMatrix<E::Scalar>`, not raw `Vec`
+  triples (my source-read of just the inner `is_valid` triples
+  was incomplete).
+- `SparseMatrix::new` asserts `windows(2).all(|w| w[0].0 < w[1].0)`
+  per row — strict ascending col order. Arkworks `to_matrices`
+  doesn't sort; bridge must.
+
+**NEXT [code]:** increment 3b-3 — instantiate
+`RelaxedR1CSInstance<GrumpkinEngine>` + `RelaxedR1CSWitness<
+GrumpkinEngine>` from a real CF instance witness + commitment
+(reuse: this bridge for shape, `pedersen_commit_grumpkin` for
+witness commitment, `ark_fq_to_secondary` for scalars).
+3b-4 = `NIFS::<GrumpkinEngine>::prove` integration + verify the
+returned fold agrees with 3a's `fold_cf_step` reference (any
+mismatch ⇒ bug in our composition vs nova-snark's NIFS semantics).
 
 ---
 
