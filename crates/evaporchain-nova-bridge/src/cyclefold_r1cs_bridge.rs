@@ -98,16 +98,39 @@ where
         .checked_sub(1)
         .expect("arkworks num_instance_variables must include the implicit ONE");
 
+    // Column-layout remap: arkworks uses z = [ONE, X (num_io),
+    // W (num_vars)] (col 0 = ONE, cols 1..=num_io = instance vars,
+    // cols num_io+1.. = witness). nova-snark's `is_sat` builds
+    // z = [W (num_vars), ONE, X (num_io)]. The shape's aggregate
+    // dims (num_cons, num_vars, num_io) are layout-invariant, but
+    // per-constraint column indices must be remapped or the R1CS
+    // becomes nonsense (Az·Bz ≠ Cz for valid assignments — exactly
+    // the increment-3b-3 first-run failure).
+    let remap_col = |ark_col: usize| -> usize {
+        if ark_col == 0 {
+            num_vars // ONE → nova col num_vars
+        } else if ark_col <= num_io {
+            num_vars + ark_col // X[i-1] (ark) → nova col num_vars + ark_col
+        } else {
+            ark_col - num_io - 1 // W[k] (ark) → nova col k
+        }
+    };
     // SparseMatrix::new ASSERTS columns within each row are strictly
-    // ascending; arkworks `to_matrices` preserves the order coeffs
-    // were appended (no col-sort guarantee), so sort per row.
+    // ascending; remap shuffles col positions so post-remap sort is
+    // mandatory (the previous "sort the raw arkworks cols" sort no
+    // longer suffices — sort the REMAPPED cols).
     let convert = |rows: &[Vec<(Bn254Fq, usize)>]| -> Vec<(usize, usize, SecondaryScalar)> {
         let mut out = Vec::new();
         for (row_idx, row) in rows.iter().enumerate() {
-            let mut row_sorted: Vec<&(Bn254Fq, usize)> = row.iter().collect();
-            row_sorted.sort_by_key(|(_, col)| *col);
-            for (coeff, col) in row_sorted {
-                out.push((row_idx, *col, ark_fq_to_secondary(*coeff)));
+            let mut remapped: Vec<(usize, SecondaryScalar)> = row
+                .iter()
+                .map(|(coeff, ark_col)| {
+                    (remap_col(*ark_col), ark_fq_to_secondary(*coeff))
+                })
+                .collect();
+            remapped.sort_by_key(|(col, _)| *col);
+            for (col, coeff) in remapped {
+                out.push((row_idx, col, coeff));
             }
         }
         out
@@ -180,13 +203,29 @@ where
         .checked_sub(1)
         .expect("arkworks num_instance_variables must include the implicit ONE");
 
+    // Same arkworks→nova column remap as in the shape-only path
+    // (see comment in `arkworks_cs_to_nova_grumpkin_shape`).
+    let remap_col = |ark_col: usize| -> usize {
+        if ark_col == 0 {
+            num_vars
+        } else if ark_col <= num_io {
+            num_vars + ark_col
+        } else {
+            ark_col - num_io - 1
+        }
+    };
     let convert = |rows: &[Vec<(Bn254Fq, usize)>]| -> Vec<(usize, usize, SecondaryScalar)> {
         let mut out = Vec::new();
         for (row_idx, row) in rows.iter().enumerate() {
-            let mut row_sorted: Vec<&(Bn254Fq, usize)> = row.iter().collect();
-            row_sorted.sort_by_key(|(_, col)| *col);
-            for (coeff, col) in row_sorted {
-                out.push((row_idx, *col, ark_fq_to_secondary(*coeff)));
+            let mut remapped: Vec<(usize, SecondaryScalar)> = row
+                .iter()
+                .map(|(coeff, ark_col)| {
+                    (remap_col(*ark_col), ark_fq_to_secondary(*coeff))
+                })
+                .collect();
+            remapped.sort_by_key(|(col, _)| *col);
+            for (col, coeff) in remapped {
+                out.push((row_idx, col, coeff));
             }
         }
         out
