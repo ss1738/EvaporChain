@@ -61,11 +61,13 @@ practical.
 | (c)-2a | `foundry-bench/GrumpkinMSMPippenger.sol` + BenchMSMPippenger | Production-shape windowed Pippenger MSM | 5/5 incl. correctness vs naive | `ec51a5a5` |
 | (c)-2b | `foundry-bench/GrumpkinJacobian.sol` + BenchJacobian | Jacobian-projective Grumpkin (algorithmic-equivalent, no per-op inv) | 7/7 incl. 3 correctness checks vs affine | `9b32d4e1` |
 | (c)-2c | `foundry-bench/BN254G1.sol` + BenchBN254G1 | EIP-196 BN254 G1 precompile gas anchor (R4 mitigation measured) | 5/5 first-try | `5f6dfe1f` |
+| (c)-2d | `cyclefold_n_aux_scaling_probe` | ppsnark n_aux scaling vs R1CS size (R5 falsifier) | 5/5 shapes (8/32/128/512/2048 cons); falsifier did NOT fire | `de9a9aa1` |
 
-**Aggregate:** 99 commits this arc (`436d2e2d → 5f6dfe1f`); every
+**Aggregate:** 101 commits this arc (`436d2e2d → de9a9aa1`); every
 primitive box-validated; **fourteen consecutive first-try passes**
 on the 4b shell-extension + (b) IVC integration micro-arcs, plus
-**six Foundry-side gas-decomposition passes** ((c)-1a/b/c + (c)-2a/b/c).
+**six Foundry-side gas-decomposition passes** ((c)-1a/b/c +
+(c)-2a/b/c) + **one Rust-side scaling falsifier** ((c)-2d).
 
 ## 4. Final shell measurements
 
@@ -204,26 +206,52 @@ measurement):
   rather than Grumpkin (breaks the current curve cycle on the
   recursion side).
 - **(R5) Smaller n_aux** — restructure recursion so the secondary
-  IPA's `ck_hat` MSM has n ≪ 16,384. From n=16,384 → n=256: 64×
-  gas reduction → ~30M gas (L2 single-tx fits even with affine
-  Grumpkin). Requires re-deriving the recursion stack to feed a
-  smaller commitment basis to the secondary.
+  IPA's `ck_hat` MSM has n ≪ 16,384. From n=16,384 → n=1,024:
+  16× gas reduction → ~20M gas with (R4) BN254 precompile (L2
+  single-tx fits). **MEASUREMENT-VALIDATED ((c)-2d, commit
+  `de9a9aa1`):** ppsnark n_aux scales linearly with R1CS size
+  with NO hidden floor — synthetic chain at 8 cons → n_aux=32.
+  **ARCHITECTURAL CONSTRAINT:** for the actual CycleFold, n_aux
+  is dominated by `total_nz` not num_cons (~8.25× ratio). One
+  full cross-curve 254-bit scalar-mul has total_nz ≈ 8,000 — the
+  architectural floor for n_aux is ~2¹³ = 8,192 with single-step
+  scalar-mul. Getting to n_aux=1,024 REQUIRES per-bit (or
+  per-window) folding splitting the scalar-mul across ~16
+  recursion sub-steps. This is feasible but costs multi-week
+  CycleFold redesign + ~16× prover-side work multiplier.
 - **(R6) Optimistic / fraud-proof model** — settlement is provisional
   and the full ZK verification runs only under challenge. Each
   fraud verification still ~2B gas but happens once per challenge,
   not per settlement. Trust model shifts from "ZK-validity rollup"
   to "fraud-proof rollup with ZK challenge".
 
-**Recommended next step (post-(c)-2c):** the path that matches the
-measurement evidence is **(R4)+(R5) combined** — BN254-precompile
-re-routing for the on-chain MSM, plus a 16× reduction in n_aux via
-deeper recursion. Projected combined gas: ~20-25M (L2 single-tx
-fits). Next concrete action: Rust-side measurement of whether the
-secondary IPA's `ck_hat` MSM size can be reduced from 16,384 to
-~1,024 by restructuring the recursion stack (more layers, smaller
-each). Falsifier: if `total_nz` floors above ~1,024, (R5) does
-not deliver 16× and (R3) multi-tx OR (R6) optimistic becomes the
-fallback.
+**Recommended next step (post-(c)-2d):** all four mitigation
+options now have measurement evidence. The cost / complexity
+ladder for Satyawan's strategic call:
+
+1. **(R6) Optimistic fraud-proof — simplest, biggest trust-model
+   shift.** Verifier runs only under challenge (~320M gas per
+   challenge, acceptable rare cost). Reframes EvaporChain as a
+   fraud-proof rollup with ZK challenge, not ZK-validity rollup.
+2. **(R4)+(R3) BN254 precompile + 11-tx L2 split — simplest
+   architectural change retaining validity model.** Each L2 tx
+   ~29M gas, full verification across ~11 transactions.
+   Operational complexity but no crypto rewrite. Architectural
+   pivot: secondary IPA re-routed to BN254 ops (breaks the
+   current Grumpkin secondary curve cycle).
+3. **(R4)+(R5) BN254 precompile + per-bit CycleFold redesign —
+   cleanest end state, highest engineering cost.** Single-tx L2
+   verifier ~20M gas. (c)-2d confirmed n_aux scaling holds with no
+   ppsnark floor, but the CycleFold cross-curve scalar-mul has a
+   ~8,000-total_nz architectural floor at single-step granularity.
+   Reaching n_aux=1,024 requires per-bit folding (~16 sub-folds
+   per IVC step): multi-week rewrite + ~16× prover-side work
+   multiplier.
+
+The (c)-2d falsifier-not-fired confirms (R5) is *measurement-
+feasible* but its engineering cost is now explicit. The lowest-cost
+validity-preserving path is (R4)+(R3); the cleanest end state is
+(R4)+(R5); the fastest-to-mainnet is (R6).
 
 **The architectural trade-off the gas measurements made explicit:**
 Grumpkin's base field IS BN254-Fr (cheap in-circuit IPA recursion,
