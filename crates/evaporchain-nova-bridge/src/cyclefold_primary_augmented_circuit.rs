@@ -44,7 +44,7 @@
 //!   RO/fold-verification stubs become real in 4b-β.
 //! - Box-measured base constraint count `cs.num_constraints()`.
 
-use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr, G1Affine};
+use ark_bn254::{Fr as Bn254Fr, G1Affine};
 use ark_r1cs_std::{
     alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, fields::FieldVar,
 };
@@ -71,9 +71,13 @@ pub struct PrimaryAugmentedCircuitShell {
     /// only (Bn254Fq coords, non-native to this Bn254Fr circuit;
     /// not exposed as public IO — public link is `cf_x_digest`).
     pub p_step: G1Affine,
-    /// Cross-curve scalar-mul `s_step` (BN254 scalar = E1 scalar
-    /// field; non-native here) — WITNESS only.
-    pub s_step: Bn254Fq,
+    /// Cross-curve scalar-mul `s_step` (E1.scalar = Bn254Fr —
+    /// the primary's folding challenge; NATIVE to this Bn254Fr
+    /// circuit, NON-NATIVE on the CF aux side as
+    /// `EmulatedFpVar<Bn254Fr, Bn254Fq>` —
+    /// matches [`crate::cyclefold_instance_circuit::CycleFold
+    /// InstanceCircuit::scalar`]) — WITNESS only.
+    pub s_step: Bn254Fr,
     /// Cross-curve scalar-mul `Q_step = s_step · P_step` — WITNESS
     /// only.
     pub q_step: G1Affine,
@@ -100,7 +104,7 @@ impl PrimaryAugmentedCircuitShell {
         z_0: Bn254Fr,
         z_i: Bn254Fr,
         p_step: G1Affine,
-        s_step: Bn254Fq,
+        s_step: Bn254Fr,
         q_step: G1Affine,
         cf_x_digest: Bn254Fr,
     ) -> Self {
@@ -188,7 +192,7 @@ mod tests {
     fn consistent_step() -> PrimaryAugmentedCircuitShell {
         let mut rng = test_rng();
         let p = G1Affine::generator();
-        let s = Bn254Fq::rand(&mut rng);
+        let s = Bn254Fr::rand(&mut rng);
         let q = (ark_bn254::G1Projective::from(p) * s).into_affine();
         PrimaryAugmentedCircuitShell::new(
             Bn254Fr::from(42u64), // pp_hash placeholder
