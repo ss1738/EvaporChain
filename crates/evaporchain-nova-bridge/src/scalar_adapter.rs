@@ -139,6 +139,34 @@ pub fn ark_fr_to_secondary_lossy(f: ArkFr) -> SecondaryScalar {
         )
 }
 
+/// Same-field conversion: `ark_bn254::Fq` → nova `grumpkin::Scalar`.
+///
+/// The genuine same-field reverse of [`secondary_to_ark_fq`].
+/// grumpkin's scalar field **is** BN254's base field (`Fq`), so
+/// this is **exact and value-preserving for every input** —
+/// analogous to [`ark_fr_to_primary`], NOT the lossy
+/// [`ark_fr_to_secondary_lossy`] which crosses field moduli.
+///
+/// Audit B-1/B-2 1C / increment 3b: feeds `ark_bn254::Fq` witness
+/// values (from a real arkworks-side `ConstraintSystem<Bn254Fq>`
+/// synthesis of [`crate::cyclefold_instance_circuit`]) into nova-
+/// snark's NIFS<GrumpkinEngine> primitives, which want their
+/// scalars as `grumpkin::Scalar`. Must be exact, NOT modular-
+/// reduced, for the folded relation to verify.
+pub fn ark_fq_to_secondary(f: ArkFq) -> SecondaryScalar {
+    let bigint_le = f.into_bigint().to_bytes_le();
+    let mut bytes = [0u8; 32];
+    let len = bigint_le.len().min(32);
+    bytes[..len].copy_from_slice(&bigint_le[..len]);
+    let repr = <SecondaryScalar as FfPrimeField>::Repr::from(bytes);
+    SecondaryScalar::from_repr_vartime(repr)
+        .expect(
+            "ark Fq value must canonicalise to a valid grumpkin::Scalar (same field); \
+             if this fires the modulus alignment between ark_bn254::Fq and \
+             halo2curves::grumpkin::Fr has drifted.",
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +284,62 @@ mod tests {
             ArkFq::from(0u64),
             "q-1 must map to the true Fq additive inverse of 1 (exactness)"
         );
+    }
+
+    /// 1C increment 3b GATE: the new same-field reverse
+    /// [`ark_fq_to_secondary`] round-trips bidirectionally with
+    /// [`secondary_to_ark_fq`] for **random** Fq values (not just
+    /// small u64s). If this fails, the
+    /// arkworks↔nova-snark<GrumpkinEngine> NIFS bridge is unsound
+    /// and increment 3b is gated.
+    #[test]
+    fn ark_fq_secondary_round_trip_random() {
+        use ark_ff::UniformRand;
+        use ark_std::test_rng;
+        let mut rng = test_rng();
+        for _ in 0..32 {
+            let ark_in = ArkFq::rand(&mut rng);
+            let nova = ark_fq_to_secondary(ark_in);
+            let ark_out = secondary_to_ark_fq(nova);
+            assert_eq!(
+                ark_in, ark_out,
+                "ArkFq → SecondaryScalar → ArkFq must round-trip exactly"
+            );
+            // And the reverse direction.
+            let nova_back = ark_fq_to_secondary(ark_out);
+            assert_eq!(
+                nova, nova_back,
+                "SecondaryScalar value must be stable under round-trip"
+            );
+        }
+    }
+
+    /// Field-arithmetic preservation: addition + multiplication
+    /// commute with the bridge. If `ark_fq_to_secondary(a + b) ≠
+    /// ark_fq_to_secondary(a) + ark_fq_to_secondary(b)`, the bridge
+    /// is mathematically broken (modulus mismatch / reduction bug).
+    #[test]
+    fn ark_fq_to_secondary_preserves_arithmetic() {
+        use ark_ff::UniformRand;
+        use ark_std::test_rng;
+        let mut rng = test_rng();
+        for _ in 0..16 {
+            let a = ArkFq::rand(&mut rng);
+            let b = ArkFq::rand(&mut rng);
+            let sum_then_bridge = ark_fq_to_secondary(a + b);
+            let bridge_then_sum =
+                ark_fq_to_secondary(a) + ark_fq_to_secondary(b);
+            assert_eq!(
+                sum_then_bridge, bridge_then_sum,
+                "bridge must commute with addition"
+            );
+            let prod_then_bridge = ark_fq_to_secondary(a * b);
+            let bridge_then_prod =
+                ark_fq_to_secondary(a) * ark_fq_to_secondary(b);
+            assert_eq!(
+                prod_then_bridge, bridge_then_prod,
+                "bridge must commute with multiplication"
+            );
+        }
     }
 }
