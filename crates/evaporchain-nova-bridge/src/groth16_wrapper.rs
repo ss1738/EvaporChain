@@ -642,4 +642,79 @@ mod tests {
             .expect("n=64 verify");
         assert!(ok, "n=64 Section-A Groth16 round-trip must verify");
     }
+
+    /// (d)-4 PRODUCTION-SCALE SETUP+PROVE+VERIFY at n_aux=16,384 —
+    /// the heavy run that validates the predicted ~41.5M-cons /
+    /// ~5.6 GB-memory pipeline on the Mini cluster. Reports
+    /// per-phase timing for the dossier. `#[ignore]`: heavy
+    /// (estimated 10-60 min setup + 10-30 min prove on a Mini),
+    /// run via `--ignored --nocapture`.
+    #[test]
+    #[ignore = "(d)-4 production-scale Groth16 setup at n_aux=16384 (heavy, Mini)"]
+    #[allow(deprecated)]
+    fn recursion_decider_groth16_full_n_aux_16384() {
+        use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+        use ark_ec::CurveGroup;
+        use crate::grumpkin_config::GrumpkinConfig;
+        use crate::recursion_decider_circuit::RecursionDeciderCircuit;
+        use std::time::Instant;
+
+        let n: usize = 16_384;
+        let g = Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR);
+        let h_pt = g * Bn254Fq::from(7u64);
+        let h_aff = h_pt.into_affine();
+
+        // Doubling-chain bases.
+        let t_bases = Instant::now();
+        let mut bases = Vec::with_capacity(n);
+        let mut cur = g;
+        for _ in 0..n {
+            bases.push(cur.into_affine());
+            cur += g;
+        }
+        eprintln!("D4_BASES n={n} elapsed={:?}", t_bases.elapsed());
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(16_384);
+
+        let t_setup = Instant::now();
+        let (pk, vk) =
+            setup_recursion_decider(bases.clone(), h_aff, &mut rng)
+                .expect("full-n setup");
+        let setup_elapsed = t_setup.elapsed();
+        eprintln!("D4_SETUP n={n} elapsed={setup_elapsed:?}");
+
+        // Consistent witness.
+        let t_witness = Instant::now();
+        let scalars: Vec<Bn254Fq> = (0..n)
+            .map(|i| Bn254Fq::from((i as u64).wrapping_mul(2654435761) ^ 0xCAFE))
+            .collect();
+        let blind = Bn254Fq::from(13u64);
+        let mut claimed = h_pt * blind;
+        let mut cur = g;
+        for s in &scalars {
+            claimed += cur * *s;
+            cur += g;
+        }
+        eprintln!("D4_WITNESS_ASSEMBLY elapsed={:?}", t_witness.elapsed());
+
+        let circuit = RecursionDeciderCircuit::section_a_only(
+            scalars, bases, blind, h_aff, claimed,
+        );
+
+        let t_prove = Instant::now();
+        let proof = prove_recursion_decider(&pk, circuit, &mut rng)
+            .expect("full-n prove");
+        let prove_elapsed = t_prove.elapsed();
+        eprintln!("D4_PROVE n={n} elapsed={prove_elapsed:?}");
+
+        let t_verify = Instant::now();
+        let ok = verify_recursion_decider(&vk, &[], &proof)
+            .expect("full-n verify");
+        eprintln!("D4_VERIFY elapsed={:?}", t_verify.elapsed());
+        assert!(ok, "n=16384 Section-A Groth16 round-trip must verify");
+
+        eprintln!(
+            "D4_TOTAL_PHASES setup={setup_elapsed:?} prove={prove_elapsed:?}"
+        );
+    }
 }
