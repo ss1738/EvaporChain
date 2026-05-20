@@ -952,19 +952,41 @@ aligned without iteration. Section C of the primary augmented
 circuit (`cf_x_digest` binding) is now end-to-end: native oracle
 + in-circuit gadget, byte-identical, soundness-gated.
 
-**NEXT [code]:** increment 4b-β-3 — wire `enforce_cf_x_digest` into
-`PrimaryAugmentedCircuitShell::generate_constraints` (Section C
-"DEFERRED stub" goes LIVE): allocate `(P, s, Q)` as witnesses
-inside the shell, call `enforce_cf_x_digest`, `enforce_equal` the
-gadget's output against the existing public `cf_x_digest_var`. Then
-4b-β-4 wires Section R (Neptune RO binding previous step) and 4b-β-5
-wires Section F (primary NIFS verification semantics). Only after
-all three are wired and box-verified, flip `sections_wired:true`.
+### 1C INCREMENT 4b-β-3 — ✅ SECTION C WIRED LIVE [V] (2026-05-20,
+Mini3, box, HEAD `575e7043`,
+`cyclefold_primary_augmented_circuit ... 5 passed; 0 failed;
+1.62 s`)
 
-After 4b-β: increment 5 wraps the running CF instance in
-`CompressedSNARK<ppsnark>` and measures real n_aux from the
-proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality per the
-lesson).
+`PrimaryAugmentedCircuitShell::generate_constraints` Section C is
+now LIVE: allocates `(P_x, P_y, s, Q_x, Q_y)` as
+`EmulatedFpVar`/`FpVar` witnesses, calls
+[`crate::cyclefold_cf_x_digest::enforce_cf_x_digest`],
+`enforce_equal`s the gadget output against the existing public
+`cf_x_digest_var`. `NeptuneParams<Bn254Fr>` added as a Clone-able
+struct field (loaded once via the crate-relative dump path).
+`sections_wired` stays `false` until R + F are also wired.
+
+Two new non-vacuity gates passed (different break paths through the
+same binding):
+- `shell_section_c_wrong_p_breaks_cs` — tamper P ⇒ digest mismatch
+  ⇒ UNSAT.
+- `shell_section_c_wrong_s_breaks_cs` — tamper s ⇒ digest mismatch
+  ⇒ UNSAT.
+
+**`PRIMARY_SHELL_PROBE: 6,267 cons / 5,455 witness / 7 instance`.**
+Growth from 4b-α: +6,266 cons, +5,455 witness vars (Section C
+cost: 4 × Bn254Fq limb decomp + Neptune sponge 9-element absorb /
+permute / squeeze + 250-bit LE truncation). Pinned baseline for
+4b-β-4/5 Section R + F growth.
+
+**NEXT [code]:** increment 4b-β-4 — Section R (Neptune RO binding
+the previous step's hash). Reuses `enforce_neptune_sponge_primary`
+the same way Section C did. Then 4b-β-5 wires Section F (primary
+NIFS verification semantics). After all three: flip
+`sections_wired:true`. Then increment 5 wraps the running CF
+instance in `CompressedSNARK<ppsnark>` and measures real n_aux
+from the proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality
+per the lesson).
 
 ---
 
