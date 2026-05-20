@@ -105,10 +105,15 @@ mod tests {
     use ark_ff::UniformRand;
     use ark_std::test_rng;
 
-    fn random_tuple() -> (G1Affine, Bn254Fr, G1Affine) {
-        let mut rng = test_rng();
+    /// `random_tuple` takes `&mut rng` so a single rng instance is
+    /// shared across all randomness in a test — test_rng() is
+    /// deterministically seeded, so independent test_rng() calls
+    /// produce identical sequences, which would silently make
+    /// "random" values equal across calls (a real footgun caught
+    /// the first time around).
+    fn random_tuple<R: ark_std::rand::RngCore>(rng: &mut R) -> (G1Affine, Bn254Fr, G1Affine) {
         let p = G1Affine::generator();
-        let s = Bn254Fr::rand(&mut rng);
+        let s = Bn254Fr::rand(rng);
         let q = (ark_bn254::G1Projective::from(p) * s).into_affine();
         (p, s, q)
     }
@@ -117,7 +122,8 @@ mod tests {
     /// regression where the Neptune state init leaked rng state.
     #[test]
     fn cf_x_digest_is_deterministic() {
-        let (p, s, q) = random_tuple();
+        let mut rng = test_rng();
+        let (p, s, q) = random_tuple(&mut rng);
         let d1 = compute_cf_x_digest_native(p, s, q);
         let d2 = compute_cf_x_digest_native(p, s, q);
         assert_eq!(d1, d2, "cf_x_digest must be deterministic");
@@ -125,21 +131,23 @@ mod tests {
 
     /// Non-vacuous: different `(P, s, Q)` ⇒ different digest with
     /// overwhelming probability. The binding gate — if the digest
-    /// is insensitive to `s`, the primary could fold with a wrong
-    /// challenge undetected.
+    /// is insensitive to `s` or `Q`, the primary could fold with a
+    /// wrong challenge undetected.
     #[test]
     fn cf_x_digest_distinguishes_distinct_tuples() {
         let mut rng = test_rng();
-        let (p, s, q) = random_tuple();
+        let (p, s, q) = random_tuple(&mut rng);
         let d_base = compute_cf_x_digest_native(p, s, q);
         // Change s only ⇒ digest must change.
         let s2 = s + Bn254Fr::from(1u64);
         let q2 = (ark_bn254::G1Projective::from(p) * s2).into_affine();
         let d_s_changed = compute_cf_x_digest_native(p, s2, q2);
         assert_ne!(d_base, d_s_changed, "digest must depend on s");
-        // Change Q only (keep P, s same; pick arbitrary unrelated Q).
-        let bogus = (ark_bn254::G1Projective::from(p)
-            * Bn254Fr::rand(&mut rng))
+        // Change Q only (keep P, s same). Construct an
+        // unambiguously different bogus Q via Q + G — guaranteed
+        // distinct from Q regardless of rng state.
+        let bogus = (ark_bn254::G1Projective::from(q)
+            + ark_bn254::G1Projective::from(G1Affine::generator()))
         .into_affine();
         let d_q_changed = compute_cf_x_digest_native(p, s, bogus);
         assert_ne!(d_base, d_q_changed, "digest must depend on Q");
