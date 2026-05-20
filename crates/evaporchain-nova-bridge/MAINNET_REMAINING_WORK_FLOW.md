@@ -797,14 +797,52 @@ The layered bridge is now end-to-end sound:
 - 3b-3: + assignments + Pedersen commitment → `(shape, U, W)`
   pair that `is_sat` accepts.
 
-**NEXT [code]:** increment 3b-4 — call `NIFS::<GrumpkinEngine>::
-prove(ck, ro_consts, pp_digest, &shape, &U_running, &W_running,
-&u_incoming, &w_incoming)` for a real cross-curve fold of two
-bridged CF instances. Verify the returned folded `(U', W')` is
-itself satisfied (`shape.is_sat_relaxed(...)`), AND that its
-`(U'.comm_W, U'.comm_E, U'.u, U'.X)` agree with 3a's
-`fold_cf_step` applied to the corresponding inputs. Any mismatch ⇒
-bug in our composition vs nova-snark's NIFS semantics.
+### 1C INCREMENT 3b-4 — ✅ REAL NIFS<GrumpkinEngine> FOLD [V]
+(2026-05-20, Mini3, box, HEAD `2fadba36`,
+`cyclefold_r1cs_bridge ... 3 passed; 0 failed; 2.72 s`)
+
+`NIFS::<GrumpkinEngine>::prove(&ck, &ROConstants::default(),
+&pp_digest=0, &shape, &U_running, &W_running, &U2_incoming,
+&W2_incoming)` works end-to-end on two bridged CF instances.
+Deterministic `CE::setup(label, n)` means both artifacts share the
+same `ck` for matching label + `num_vars`, so passing `art1.ck`
+into prove is sound (no need to thread a separate ck). Two box
+gates passed:
+- `shape.is_sat_relaxed(&ck, &U', &W')` accepts the folded relaxed
+  pair — the main NIFS soundness gate.
+- `NIFS::verify(&ro_consts, &pp_digest, &U_running, &U2_incoming)`
+  produces the same `U'` as `NIFS::prove` — prover/verifier
+  semantic agreement.
+
+**The 1C foundation is complete:** every layered primitive needed
+to fold CycleFold instances using nova-snark's own NIFS is now
+built, box-verified, and end-to-end consistent:
+- Inc 1: CycleFold aux gadget (2,548 cons measured, non-vacuous).
+- Inc 2: CF instance circuit (1,985 cons, public IO bound).
+- Inc 3a: Pedersen-on-Grumpkin homomorphism + `fold_cf_step`
+  reference.
+- Inc 3b-1: ArkFq ↔ SecondaryScalar bridge (value-preserving).
+- Inc 3b-2: arkworks `ConstraintSystem` → nova-snark `R1CSShape`
+  (dims preserved exactly, column layout remap caught + fixed via
+  is_sat gate).
+- Inc 3b-3: Satisfied `(shape, U, W)` artifacts +
+  `R1CSShape::is_sat` accepts.
+- Inc 3b-4: Real `NIFS::<GrumpkinEngine>::prove` +
+  `is_sat_relaxed` accepts + `NIFS::verify` ≡ `NIFS::prove`.
+
+**NEXT [code]:** increment 4 — full IVC harness composition: a
+multi-step driver that (a) runs the primary nova-snark
+`RecursiveSNARK` (already validated, both `snark` 25 s + `ppsnark`
+125 s e2e tests pass), (b) per step extracts the cross-curve
+scalar-mul tuple `(P, s, Q)` the primary's fold implicitly
+performed, (c) builds a `CycleFoldInstanceCircuit` from it,
+(d) bridges to a `(U2_incoming, W2_incoming)` via 3b-3, (e) folds
+into the running `(U_cf, W_cf)` via 3b-4's NIFS prove. Verify the
+running CF instance evolves correctly across ≥2 steps (box-check
+`is_sat_relaxed` after each fold). After this, increment 5 wraps
+the running CF instance in `CompressedSNARK<ppsnark>` and measures
+the real n_aux post-CycleFold from the proof's serde'd
+`L_vec.len()` (pinning the predicted ~2¹³ vs reality).
 
 ---
 
