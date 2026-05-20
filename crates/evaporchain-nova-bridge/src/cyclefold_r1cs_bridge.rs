@@ -41,7 +41,7 @@ use ark_relations::r1cs::{
 
 use crate::scalar_adapter::{ark_fq_to_secondary, SecondaryScalar};
 use nova_snark::provider::GrumpkinEngine;
-use nova_snark::r1cs::R1CSShape;
+use nova_snark::r1cs::{R1CSShape, SparseMatrix};
 
 /// Errors returned by [`cyclefold_instance_r1cs_shape`].
 #[derive(Debug, thiserror::Error)]
@@ -96,20 +96,32 @@ where
         .checked_sub(1)
         .expect("arkworks num_instance_variables must include the implicit ONE");
 
+    // SparseMatrix::new ASSERTS columns within each row are strictly
+    // ascending; arkworks `to_matrices` preserves the order coeffs
+    // were appended (no col-sort guarantee), so sort per row.
     let convert = |rows: &[Vec<(Bn254Fq, usize)>]| -> Vec<(usize, usize, SecondaryScalar)> {
         let mut out = Vec::new();
         for (row_idx, row) in rows.iter().enumerate() {
-            for (coeff, col) in row.iter() {
+            let mut row_sorted: Vec<&(Bn254Fq, usize)> = row.iter().collect();
+            row_sorted.sort_by_key(|(_, col)| *col);
+            for (coeff, col) in row_sorted {
                 out.push((row_idx, *col, ark_fq_to_secondary(*coeff)));
             }
         }
         out
     };
-    let a = convert(&m.a);
-    let b = convert(&m.b);
-    let c = convert(&m.c);
+    let a_triples = convert(&m.a);
+    let b_triples = convert(&m.b);
+    let c_triples = convert(&m.c);
 
-    R1CSShape::<GrumpkinEngine>::new(num_cons, num_vars, num_io, &a, &b, &c)
+    // SparseMatrix's `cols` = total z-vector width = num_io + num_vars + 1
+    // (the +1 is the implicit constant-ONE column at index 0).
+    let cols = num_io + num_vars + 1;
+    let a_sm = SparseMatrix::<SecondaryScalar>::new(&a_triples, num_cons, cols);
+    let b_sm = SparseMatrix::<SecondaryScalar>::new(&b_triples, num_cons, cols);
+    let c_sm = SparseMatrix::<SecondaryScalar>::new(&c_triples, num_cons, cols);
+
+    R1CSShape::<GrumpkinEngine>::new(num_cons, num_vars, num_io, a_sm, b_sm, c_sm)
         .map_err(BridgeError::NovaShapeRejected)
 }
 
