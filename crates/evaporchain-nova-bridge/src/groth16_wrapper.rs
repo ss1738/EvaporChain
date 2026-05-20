@@ -528,6 +528,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn recursion_decider_groth16_tampered_witness_rejected() {
+        use ark_bn254::Fq as Bn254Fq;
         use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
         use ark_ec::CurveGroup;
         use crate::grumpkin_config::GrumpkinConfig;
@@ -595,6 +596,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn recursion_decider_groth16_roundtrip_n64_smoke() {
+        use ark_bn254::Fq as Bn254Fq;
         use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
         use ark_ec::CurveGroup;
         use crate::grumpkin_config::GrumpkinConfig;
