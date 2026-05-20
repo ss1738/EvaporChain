@@ -59,11 +59,12 @@ practical.
 | (c)-1b | `foundry-bench/SumcheckRound.sol` + bench | Cubic sumcheck round gas anchor | 1/1 (709 gas/round, ~28k for 40 rounds) | (within `1917f9e4` line) |
 | (c)-1c | `foundry-bench/GrumpkinMSM.sol` + BenchMSM | Naive MSM upper-bound (worst-case ceiling) | 3/3 (37B gas at n=16,384, 590× Pippenger best) | `414c0b26` |
 | (c)-2a | `foundry-bench/GrumpkinMSMPippenger.sol` + BenchMSMPippenger | Production-shape windowed Pippenger MSM | 5/5 incl. correctness vs naive | `ec51a5a5` |
+| (c)-2b | `foundry-bench/GrumpkinJacobian.sol` + BenchJacobian | Jacobian-projective Grumpkin (algorithmic-equivalent, no per-op inv) | 7/7 incl. 3 correctness checks vs affine | `9b32d4e1` |
 
-**Aggregate:** 95 commits this arc (`436d2e2d → ec51a5a5`); every
+**Aggregate:** 97 commits this arc (`436d2e2d → 9b32d4e1`); every
 primitive box-validated; **fourteen consecutive first-try passes**
 on the 4b shell-extension + (b) IVC integration micro-arcs, plus
-**four Foundry-side gas-decomposition passes** ((c)-1a/b/c + (c)-2a).
+**five Foundry-side gas-decomposition passes** ((c)-1a/b/c + (c)-2a/b).
 
 ## 4. Final shell measurements
 
@@ -94,14 +95,21 @@ Foundry gas anchors (commit `1917f9e4` + `414c0b26`):
   - n=16,384, c=8 analytical: ~2.07 BILLION gas
   - n=16,384, c=10 (sweet spot): ~1.84 BILLION gas
   - **Floor (affine Solidity): ~1.8B — 33× over (6-α)'s 62.7M anchor**
-- **With Jacobian-projective optimization (REQUIRED for L2-fit):**
-  - ~50M gas (removes per-add ModExp inversion, ~40× speedup)
-  - + assembly: ~15-25M gas (L2 single-tx feasible)
-- Full ppsnark verifier (composition, affine floor): IPA-MSM
+- **Jacobian-projective MEASURED ((c)-2b, commit `9b32d4e1`):**
+  - Jacobian add: 3,271 gas (vs affine 3,834 — 1.17× speedup,
+    NOT 40× as projected in (c)-2a)
+  - Jacobian double: 2,623 gas
+  - Jacobian → affine projection: 2,661 gas (one-shot, amortised)
+  - Jacobian Pippenger at n=16,384, c=8: 1.77B gas (1.17× better
+    than affine 2.07B). Still ~60× over L2 30M block.
+- **L2 single-tx with pure-EVM Grumpkin: INFEASIBLE.** Requires
+  either (R3) multi-tx split, (R4) BN254-precompile pivot, (R5)
+  smaller n_aux, or (R6) optimistic / fraud-proof model.
+- Full ppsnark verifier (composition, Jacobian floor): IPA-MSM
   dominates 99.99%; sumcheck 28k + pairing 113k < 0.01% at the
-  2-billion-gas affine floor.
+  1.77-billion-gas Jacobian floor.
 
-## 5. Five honest mid-arc corrections (the discipline working)
+## 5. Six honest mid-arc corrections (the discipline working)
 
 Each surfaced via measurement, none buried; each made the story
 tighter, more credible.
@@ -122,37 +130,72 @@ tighter, more credible.
    (33× undershoot)** (commit `ec51a5a5`). (6-α)'s analytical
    anchor used only the `n × point-add` term and missed the
    ⌈256/c⌉ window multiplier (≈32 at c=8). Real affine Pippenger
-   floor is ~2 BILLION gas, NOT 62.7M. L2 single-tx (~30M block
-   limit) requires Jacobian-projective coordinates (~40× speedup
-   eliminating per-add ModExp inversion) + assembly to fit.
+   floor is ~2 BILLION gas, NOT 62.7M.
+6. **(c)-2a's "Jacobian ~40× speedup" claim → measured 1.17×
+   speedup (LARGEST correction)** (commit `9b32d4e1`). The (c)-2a
+   closing claim assumed EVM ModExp inversion ~7k gas (~99% of
+   the 3,834-gas point-add). Foundry-measured: Jacobian add is
+   3,271 gas (vs affine 3,834) — only ~15% better per-op. EIP-2565
+   made 32-byte ModExp ~1,700 gas (~50% of point-add, not 99%).
+   Jacobian Pippenger at n=16,384 is 1.77B gas, NOT ~50M.
+   Single-tx L2 verifier with pure-EVM Grumpkin is INFEASIBLE.
+   Real path forward: BN254-precompile re-routing (R4), multi-tx
+   split (R3), smaller n_aux via recursion (R5), or optimistic
+   fraud-proof model (R6).
 
-## 6. Deployment target — LOCKED: L2-only, REQUIRES Jacobian opt (commits `6e6b0a1f`, `ec51a5a5`)
+## 6. Deployment target — L2-only, single-tx-pure-EVM-Grumpkin INFEASIBLE (commits `6e6b0a1f`, `ec51a5a5`, `9b32d4e1`)
 
 Per Satyawan's post-Foundry decision: EvaporChain mainnet ZK
 verification deploys on L2 (Optimism / Arbitrum / Base), not
 Ethereum L1.
 
-**Revised (c)-2a-aware verdict:** the Pippenger-measured floor at
-n=16,384 is ~2 BILLION gas with pure-affine Solidity (not 62.7M as
-(6-α) suggested). L2 block limits (~30M) DO NOT absorb 2B in a
-single tx, so the L2-only deployment additionally REQUIRES one of:
+**Revised (c)-2b-aware verdict:** the Pippenger-measured floor at
+n=16,384 is ~1.77B gas with Jacobian-projective Grumpkin (1.17×
+better than affine 2.07B, NOT 40× as projected). Both ~60× over
+the L2 30M block limit. **Single-tx L2 verification with pure-EVM
+Grumpkin is INFEASIBLE.**
 
-- **(R1) Jacobian-projective coordinates** — eliminates the 7k-gas
-  ModExp inversion per point-add (currently ~99% of point-add
-  cost). Affine→Jacobian alone gives ~40× speedup → ~50M gas.
-- **(R2) Plus assembly + batched-inverse + memory tricks** → ~2-3×
-  more → ~15-25M gas. L2-fits.
-- **(R3) Multi-tx split** — verifier state-shared across multiple
-  transactions on the same L2. Operational complexity but bypasses
-  any single-tx limit.
-- **(R4) Alternative curve / precompile path** — if Grumpkin
-  arithmetic is the blocker, route the secondary verifier through a
-  curve with EVM precompile support (BN254 has 0x06/0x07 ops). This
-  is an architectural pivot, not an optimization.
+The architectural options that remain (R1–R2 ruled out by
+measurement):
 
-(R1)+(R2) is the default mainnet path. (R3) is the fallback if
-optimization stalls. (R4) is the contingency if Grumpkin proves
-fundamentally uneconomic.
+- ~~**(R1) Jacobian-projective coordinates**~~ MEASURED — only
+  1.17× per-op speedup. Insufficient. Removed.
+- ~~**(R2) +assembly + batched-inverse**~~ — at most ~2-3× more
+  on top of (R1), still ~600M gas at n=16,384 (20× over L2 limit).
+  Removed as a single-tx path.
+- **(R3) Multi-tx split — STILL VIABLE.** Verifier state shared
+  across 3–4 L2 transactions. Operational complexity but no crypto
+  change. Each tx ~400-500M gas (well over L2 limit) means this
+  needs >60 transactions, NOT 3-4. Reframe as expensive but
+  buildable.
+- **(R4) BN254 precompile re-routing — NEW PRIMARY CANDIDATE.**
+  BN254 has 0x06 (add) and 0x07 (scalar-mul) precompiles at
+  ~150 gas/op (vs Grumpkin pure-EVM ~3,300 gas). 22× speedup
+  → ~80-90M gas at n=16,384. Still over L2 30M single-tx limit
+  but reachable with smaller n_aux or 2-3 tx split.
+- **(R5) Smaller n_aux** — restructure recursion so the secondary
+  IPA's `ck_hat` MSM has n ≪ 16,384. From n=16,384 → n=256: 64×
+  gas reduction → ~30M gas (L2 single-tx fits even with affine
+  Grumpkin). Requires re-deriving the recursion stack to feed a
+  smaller commitment basis to the secondary.
+- **(R6) Optimistic / fraud-proof model** — settlement is provisional
+  and the full ZK verification runs only under challenge. Each
+  fraud verification still ~2B gas but happens once per challenge,
+  not per settlement. Trust model shifts from "ZK-validity rollup"
+  to "fraud-proof rollup with ZK challenge".
+
+**Recommended next step:** measure n=256 ppsnark proof secondary
+shape (does the recursion machinery allow truncated commitment
+basis?) — this is the cheapest path that keeps the L2-validity
+trust model. If yes, (R5) becomes primary. If no, (R4)+(R3) becomes
+the deployment path. (R6) is the strategic fallback.
+
+**The architectural trade-off the gas measurements made explicit:**
+Grumpkin's base field IS BN254-Fr (cheap in-circuit IPA recursion,
+<10⁸ native cons — earlier validated), but Grumpkin has NO EVM
+precompile (expensive on-chain settlement, ~3,300 gas/op pure-EVM).
+The earlier "in-circuit native" win pays for itself with an
+"on-chain economic" cost that the (c)-2 measurements now quantify.
 
 ## 7. Open follow-ups (clearly NOT yet proven)
 
