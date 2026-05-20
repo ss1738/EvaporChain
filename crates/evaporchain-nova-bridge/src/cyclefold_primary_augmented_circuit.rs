@@ -116,6 +116,14 @@ pub struct PrimaryAugmentedCircuitShell {
     /// commitment). Native Bn254Fr coords; absorbed directly.
     pub cf_comm_e_x: Bn254Fr,
     pub cf_comm_e_y: Bn254Fr,
+    /// CF running instance `x` vector (public IO of the secondary
+    /// R1CS — Bn254Fq elements, Grumpkin scalar field, non-native
+    /// here). Length matches `R1CSShape::num_io` of the CF
+    /// instance circuit (21 for `CycleFoldInstanceCircuit`). Each
+    /// element absorbed via the same 127-bit lo+hi limb pattern
+    /// `cf_u_running` uses — Bn254Fq-into-Section-R cost gradient
+    /// ~1,230 cons per element (measured at β-4b).
+    pub cf_x_vec: Vec<ark_bn254::Fq>,
     /// Neptune sponge params for the in-circuit `cf_x_digest`
     /// gadget (Section C). Constructed once by the caller via
     /// `params_from_dump_path("neptune-bn256-standard.json")` and
@@ -149,6 +157,7 @@ impl PrimaryAugmentedCircuitShell {
         cf_comm_w_y: Bn254Fr,
         cf_comm_e_x: Bn254Fr,
         cf_comm_e_y: Bn254Fr,
+        cf_x_vec: Vec<ark_bn254::Fq>,
         params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
@@ -167,6 +176,7 @@ impl PrimaryAugmentedCircuitShell {
             cf_comm_w_y,
             cf_comm_e_x,
             cf_comm_e_y,
+            cf_x_vec,
             params,
             sections_wired: false,
         }
@@ -272,7 +282,7 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let cf_comm_e_y_var =
             FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_e_y))?;
 
-        let r_absorb: Vec<FpVar<Bn254Fr>> = vec![
+        let mut r_absorb: Vec<FpVar<Bn254Fr>> = vec![
             pp_hash_var.clone(),
             i_var.clone(),
             z_0_var.clone(),
@@ -286,6 +296,21 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             cf_comm_e_x_var,
             cf_comm_e_y_var,
         ];
+        // CF running instance x_vec (Bn254Fq[num_io]): each
+        // element non-native, absorbed as 127-bit lo+hi limbs —
+        // same canonical pattern cf_u_running uses, just iterated.
+        for x_fq in &self.cf_x_vec {
+            let x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+                cs.clone(),
+                || Ok(*x_fq),
+            )?;
+            let x_bits = x_var.to_bits_le()?;
+            let x_split = 127usize.min(x_bits.len());
+            let x_lo = Boolean::le_bits_to_fp(&x_bits[..x_split])?;
+            let x_hi = Boolean::le_bits_to_fp(&x_bits[x_split..])?;
+            r_absorb.push(x_lo);
+            r_absorb.push(x_hi);
+        }
         let computed_step_hash =
             crate::section2_gadget::enforce_neptune_sponge_primary(
                 cs.clone(),
@@ -351,6 +376,7 @@ mod tests {
         cf_comm_w_y: Bn254Fr,
         cf_comm_e_x: Bn254Fr,
         cf_comm_e_y: Bn254Fr,
+        cf_x_vec: &[ark_bn254::Fq],
     ) -> Bn254Fr {
         use crate::neptune_reference::neptune_hash_primary;
         use crate::scalar_adapter::{ark_fr_to_primary, primary_to_ark_fr};
@@ -372,12 +398,20 @@ mod tests {
         };
         let cf_u_lo = pack_le_to_fr(&bits[..split]);
         let cf_u_hi = pack_le_to_fr(&bits[split..]);
-        let absorbed: [_; 12] = [
+        let mut absorbed: Vec<Bn254Fr> = vec![
             pp_hash, i, z_0, z_i, z_i1, cf_x_digest,
             cf_u_lo, cf_u_hi,
             cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
         ];
-        let absorbed_nova = absorbed.map(ark_fr_to_primary);
+        // Append x_vec limbs in matching order (same 127-bit split
+        // as the in-circuit gadget). Empty vec ⇒ no extra absorbs.
+        for x_fq in cf_x_vec {
+            let x_bits = x_fq.into_bigint().to_bits_le();
+            let x_split = 127usize.min(x_bits.len());
+            absorbed.push(pack_le_to_fr(&x_bits[..x_split]));
+            absorbed.push(pack_le_to_fr(&x_bits[x_split..]));
+        }
+        let absorbed_nova: Vec<_> = absorbed.into_iter().map(ark_fr_to_primary).collect();
         primary_to_ark_fr(neptune_hash_primary(&absorbed_nova))
     }
 
@@ -404,11 +438,16 @@ mod tests {
         let cf_comm_w_y = Bn254Fr::rand(&mut rng);
         let cf_comm_e_x = Bn254Fr::rand(&mut rng);
         let cf_comm_e_y = Bn254Fr::rand(&mut rng);
+        // cf_x_vec: 21 elements (= num_io of CycleFoldInstanceCircuit
+        // per the 3b-2 measurement), random non-trivial Bn254Fq.
+        let cf_x_vec: Vec<ark_bn254::Fq> =
+            (0..21).map(|_| ark_bn254::Fq::rand(&mut rng)).collect();
         // Section R: compute the REAL current_step_hash so its
         // binding is satisfiable too.
         let current_step_hash = compute_current_step_hash_native(
             pp_hash, i, z_0, z_i, z_i1, cf_x_digest, cf_u_running,
             cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
+            &cf_x_vec,
         );
         let params = crate::neptune_permutation_gadget::params_from_dump_path(
             concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
@@ -430,6 +469,7 @@ mod tests {
             cf_comm_w_y,
             cf_comm_e_x,
             cf_comm_e_y,
+            cf_x_vec,
             params,
         )
     }
@@ -540,6 +580,23 @@ mod tests {
         );
     }
 
+    /// SECTION R NON-VACUITY (x_vec path): tamper one element of
+    /// `cf_x_vec` (Bn254Fq, absorbed via limbs) → hash differs →
+    /// CS UNSAT. Proves the x_vec absorb pattern (iterated limb
+    /// decomp) binds correctly.
+    #[test]
+    fn shell_section_r_wrong_cf_x_vec_breaks_cs() {
+        let mut c = consistent_step();
+        // Tamper element [7] (mid-vec); any index works.
+        c.cf_x_vec[7] = c.cf_x_vec[7] + ark_bn254::Fq::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered cf_x_vec[7] MUST break Section R (x_vec limb absorb)"
+        );
+    }
+
     /// SECTION R NON-VACUITY (CF commitment path): tamper
     /// `cf_comm_w_x` (CF running comm_w native Fr coord) → Section R
     /// hash differs → CS UNSAT. Proves the CF instance commitments
@@ -604,8 +661,9 @@ mod tests {
             n_cons >= 500,
             "shell unexpectedly small after Section C wiring: {n_cons}"
         );
-        // Upper bound bumped generously; tighter once 4b-β-5
-        // Section F lands.
-        assert!(n_cons < 300_000, "shell unexpectedly large: {n_cons}");
+        // Upper bound bumped: 4b-β-4d's x_vec[21] absorb adds
+        // ~25k cons (21 × ~1,230). Tighter once 4b-β-5 Section F
+        // lands.
+        assert!(n_cons < 500_000, "shell unexpectedly large: {n_cons}");
     }
 }
