@@ -449,16 +449,24 @@ The chosen architecture's open work, in dependency order:
      pp (different digests); test uses `fixture_with_shared_pp`
      helper to use the same pp instance for setup+verify. Full
      regression: 255/255 lib tests pass (was 252, +3 adapter).
+   - **Section B END-TO-END (Rust) ✅ DONE 2026-05-20:**
+     `recursion_decider_section_b_end_to_end_smoke` chains
+     fixture → assemble_section_b_pi_bundle (verify gate) →
+     bundle.into_section_b_pis() → setup_recursion_decider_with_b_interface
+     → section_a_with_b_interface circuit → prove → verify with
+     section_b_public_inputs_slice. 7-step pipeline; 1/1 first-try
+     pass in 4.62 s. 256/256 lib tests (+1 end-to-end). Validates
+     the FULL delegation chain at smoke scale (n=4 bases, 2 IVC
+     steps, 11 PIs). PI count = 9 fixed + |z0|+|zn| = 11 at arity 1.
    - **Section B remaining work (~minor):**
-     1. CompressedSNARK variant of the adapter
-        (`assemble_section_b_pi_bundle_from_compressed_snark`) —
-        same pattern, calls `CompressedSNARK::verify` instead.
-        Mostly copy + type-substitute.
-     2. End-to-end integration test: real RecursiveSNARK → adapter
-        → setup_recursion_decider with B interface → prove →
-        on-chain VerkleProofVerifier.verify with PI bundle.
+     1. EVM round-trip Foundry test with the 11 PIs (parallels
+        (e)-2 which tested 0 PIs); needs IC_LEN = 12 in the
+        VerkleProofVerifier setup.
+     2. CompressedSNARK variant of the adapter
+        (`assemble_section_b_pi_bundle_from_compressed_snark`)
+        — mostly mechanical type-substitute.
      3. Sections C + D follow same delegation pattern (~few days
-        each for adapter + test).
+        each for adapter + end-to-end).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
