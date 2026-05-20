@@ -979,14 +979,43 @@ cost: 4 × Bn254Fq limb decomp + Neptune sponge 9-element absorb /
 permute / squeeze + 250-bit LE truncation). Pinned baseline for
 4b-β-4/5 Section R + F growth.
 
-**NEXT [code]:** increment 4b-β-4 — Section R (Neptune RO binding
-the previous step's hash). Reuses `enforce_neptune_sponge_primary`
-the same way Section C did. Then 4b-β-5 wires Section F (primary
-NIFS verification semantics). After all three: flip
-`sections_wired:true`. Then increment 5 wraps the running CF
-instance in `CompressedSNARK<ppsnark>` and measures real n_aux
-from the proof's `L_vec.len()` (pinning predicted ~2¹³ vs reality
-per the lesson).
+### 1C INCREMENT 4b-β-4 — ✅ SECTION R WIRED LIVE [V] (2026-05-20,
+Mini3, box, HEAD `75b3db29`,
+`cyclefold_primary_augmented_circuit ... 7 passed; 0 failed;
+3.66 s`)
+
+Section R now LIVE: absorbs `[pp_hash, i, z_0, z_i, z_{i+1},
+cf_x_digest]` (the natively-Fr-representable IO fields) into
+`enforce_neptune_sponge_primary`, applies 250-bit truncation,
+`enforce_equal`s against the new public `current_step_hash`.
+CF running-instance absorb (Bn254Fq `u`/`x` via limb decomp)
+explicitly deferred to 4b-β-4b. Native helper
+`compute_current_step_hash_native` mirrors the gadget.
+
+Two new non-vacuity gates passed first try (different break paths
+through the Neptune sponge):
+- `shell_section_r_wrong_i_breaks_cs` — tamper `i` ⇒ UNSAT.
+- `shell_section_r_wrong_pp_hash_breaks_cs` — tamper `pp_hash` ⇒
+  UNSAT.
+
+**`PRIMARY_SHELL_PROBE: 7,628 cons / 6,660 witness / 8 instance`**
+(+1,361 cons, +1 instance var `current_step_hash` over 4b-β-3).
+Section R is ~5× cheaper than Section C because it absorbs 6
+native `FpVar<Bn254Fr>` (no Bn254Fq limb decomp).
+
+Third consecutive first-try pass — careful staging + reuse of the
+BESPOKE-aligned Neptune infrastructure keeps earning its keep.
+
+**NEXT [code]:** increment 4b-β-4b — finish Section R by also
+absorbing the CF running instance's Bn254Fq fields (`u`, `x`) into
+the transcript via limb decomposition (analogous to the Section C
+limb pattern). Then 4b-β-5 wires Section F (primary NIFS
+verification semantics — fold relation between the previous primary
+instance and the incoming step). After all are wired and box-
+verified: flip `sections_wired:true`. Then increment 5 wraps the
+running CF instance in `CompressedSNARK<ppsnark>` and measures real
+n_aux from the proof's `L_vec.len()` (pinning predicted ~2¹³ vs
+reality per the lesson).
 
 ---
 
