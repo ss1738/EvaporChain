@@ -298,15 +298,19 @@ mod tests {
             &params,
         );
 
+        // Extract step 1's z_i BEFORE the move (generate_constraints
+        // consumes self).
+        let step_1_z_i = shell_1.z_i;
+
         let cs_1 = ConstraintSystem::<Bn254Fr>::new_ref();
         shell_1.generate_constraints(cs_1.clone()).expect("synth 1");
         assert!(cs_1.is_satisfied().unwrap(), "shell 1 CS must be sat");
 
         // Cross-check: step 1's `z_i` MUST equal step 0's `z_i+1`
-        // (threading correctness check; the CS sat alone doesn't
+        // (threading correctness check; CS sat alone doesn't
         // explicitly assert this).
         assert_eq!(
-            shell_1.z_i, step_0_z_i1,
+            step_1_z_i, step_0_z_i1,
             "step 1 z_i must = step 0 z_{{i+1}}"
         );
     }
