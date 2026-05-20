@@ -6,6 +6,31 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 63, continued 4) — coverage push: auto_refresh 76.3%, key_rotation 98.8%
+
+**Focus:** wallet crate auto_refresh.rs + key_rotation.rs
+**Commits shipped:** 1 (94baa33e)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` auto_refresh.rs | 70.3% | 76.3% (286/375) | 3 tests (else branches, config getter) |
+| `wallet` key_rotation.rs | 86.4% | 98.8% (598/605) | 18 tests |
+**Tests added (key_rotation.rs):**
+- with_derivation_path, is_not_expired (no expiry + invalid date), age_days invalid created_at, rotation_event_with_notes
+- policy_with_auto_rotate/notify_before, needs_notification (both branches)
+- rotate_inactive_key_returns_invalid_state (lines 315-318)
+- check_policies_skips_inactive_keys (line 360), check_policies_age_based_reason (line 365)
+- keys_needing_notification + excludes_inactive (lines 385-401)
+- key_chain_from_root_walks_successors (lines 432-437), dangling_successor (lines 438-439)
+- rotation_count (446-448), load_or_default_missing_file (478-480), remove_key_not_found
+**Remaining uncovered:** key_rotation lines 344-345 (history cap drain, needs >500 rotations); auto_refresh execute_cycle/run_loop (all async RPC)
+**What's next:**
+- workspace-wide scan: next tractable substrate crate
+- wallet reputation.rs (88.4%), health.rs (88.6%), metrics.rs (88.7%)
+**Cross-references:** commit 94baa33e
+
+---
+
 ## 2026-05-19 (session 63, continued 3) — coverage push: offline.rs 84.6%→95.5%
 
 **Focus:** wallet crate offline.rs — Broadcaster async error paths
