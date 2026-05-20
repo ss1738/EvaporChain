@@ -69,27 +69,37 @@ fn pack_le_to_fr(bs: &[bool]) -> Bn254Fr {
     acc
 }
 
-/// Native r-from-RO derivation (mirrors β-5-γ in-circuit gadget).
+/// Native r-from-RO derivation (mirrors β-5-γ + (a)-1 in-circuit
+/// gadget — absorbs comm_W_I AND comm_T limbs).
 fn primary_r_native(
     pp_hash: Bn254Fr,
     previous_step_hash: Bn254Fr,
     x_i_0: Bn254Fr,
     x_i_1: Bn254Fr,
+    primary_comm_w_i: G1Affine,
     primary_comm_t: G1Affine,
 ) -> Bn254Fr {
-    let x_bits = primary_comm_t.x.into_bigint().to_bits_le();
-    let y_bits = primary_comm_t.y.into_bigint().to_bits_le();
-    let sx = 127usize.min(x_bits.len());
-    let sy = 127usize.min(y_bits.len());
-    let absorbed: [Bn254Fr; 8] = [
+    let cwi_x = primary_comm_w_i.x.into_bigint().to_bits_le();
+    let cwi_y = primary_comm_w_i.y.into_bigint().to_bits_le();
+    let ct_x = primary_comm_t.x.into_bigint().to_bits_le();
+    let ct_y = primary_comm_t.y.into_bigint().to_bits_le();
+    let s_cwi_x = 127usize.min(cwi_x.len());
+    let s_cwi_y = 127usize.min(cwi_y.len());
+    let s_ct_x = 127usize.min(ct_x.len());
+    let s_ct_y = 127usize.min(ct_y.len());
+    let absorbed: [Bn254Fr; 12] = [
         pp_hash,
         previous_step_hash,
         x_i_0,
         x_i_1,
-        pack_le_to_fr(&x_bits[..sx]),
-        pack_le_to_fr(&x_bits[sx..]),
-        pack_le_to_fr(&y_bits[..sy]),
-        pack_le_to_fr(&y_bits[sy..]),
+        pack_le_to_fr(&cwi_x[..s_cwi_x]),
+        pack_le_to_fr(&cwi_x[s_cwi_x..]),
+        pack_le_to_fr(&cwi_y[..s_cwi_y]),
+        pack_le_to_fr(&cwi_y[s_cwi_y..]),
+        pack_le_to_fr(&ct_x[..s_ct_x]),
+        pack_le_to_fr(&ct_x[s_ct_x..]),
+        pack_le_to_fr(&ct_y[..s_ct_y]),
+        pack_le_to_fr(&ct_y[s_ct_y..]),
     ];
     let absorbed_nova = absorbed.map(ark_fr_to_primary);
     primary_to_ark_fr(neptune_hash_primary(&absorbed_nova))
@@ -175,17 +185,20 @@ pub fn build_shell_for_step<R: RngCore>(
     // including the threaded previous_step_hash + the step's
     // incoming primary X_I. comm_T is a step-fresh G1 point.
     let primary_x_i: [Bn254Fr; 2] = [Bn254Fr::rand(rng), Bn254Fr::rand(rng)];
-    let primary_comm_t = {
+    let mk_g1 = |rng: &mut R| {
         let g = G1Affine::generator();
         let s = Bn254Fr::rand(rng);
         (G1Projective::from(g) * s).into_affine()
     };
+    let primary_comm_w_i = mk_g1(rng);
+    let primary_comm_t = mk_g1(rng);
     let i_fr = Bn254Fr::from(step_index);
     let primary_r = primary_r_native(
         pp_hash,
         previous_step_hash,
         primary_x_i[0],
         primary_x_i[1],
+        primary_comm_w_i,
         primary_comm_t,
     );
     let primary_u_new = primary_u_r + primary_r;
@@ -232,6 +245,7 @@ pub fn build_shell_for_step<R: RngCore>(
         primary_x_new,
         previous_step_hash,
         primary_comm_t,
+        primary_comm_w_i,
         params.clone(),
     )
 }
@@ -330,15 +344,17 @@ mod tests {
                 );
             let primary_x_i: [Bn254Fr; 2] =
                 [Bn254Fr::rand(rng), Bn254Fr::rand(rng)];
-            let primary_comm_t = {
+            let inner_mk_g1 = |rng: &mut ark_std::rand::rngs::StdRng| {
                 let g = G1Affine::generator();
                 let s = Bn254Fr::rand(rng);
                 (G1Projective::from(g) * s).into_affine()
             };
+            let primary_comm_w_i = inner_mk_g1(rng);
+            let primary_comm_t = inner_mk_g1(rng);
             let i_fr = Bn254Fr::from(step_index);
             let primary_r = primary_r_native(
                 pp_hash, previous_step_hash, primary_x_i[0], primary_x_i[1],
-                primary_comm_t,
+                primary_comm_w_i, primary_comm_t,
             );
             let primary_u_new = primary_u_r + primary_r;
             let primary_x_new = [
@@ -356,7 +372,7 @@ mod tests {
                 cf_u, cw_x, cw_y, ce_x, ce_y, cf_x,
                 primary_u_r, primary_x_r, primary_x_i,
                 primary_r, primary_u_new, primary_x_new,
-                previous_step_hash, primary_comm_t,
+                previous_step_hash, primary_comm_t, primary_comm_w_i,
                 params.clone(),
             )
         };

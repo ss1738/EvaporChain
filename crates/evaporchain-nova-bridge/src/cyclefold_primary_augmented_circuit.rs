@@ -152,11 +152,15 @@ pub struct PrimaryAugmentedCircuitShell {
     /// `nova_snark::r1cs::R1CSShape::commit_T`'s output). Bn254Fq
     /// coords — non-native; absorbed into the r-RO derivation as
     /// 4 Bn254Fr limbs (x_lo, x_hi, y_lo, y_hi) via the same
-    /// 127-bit pattern Section C uses for P.x/P.y. Completing
-    /// byte-level parity with `nifs.rs::prove`'s exact transcript
-    /// order (e.g., comm_W_I absorb too) is a separate alignment
-    /// effort, analogous to `section2_gadget`'s BESPOKE work.
+    /// 127-bit pattern Section C uses for P.x/P.y.
     pub primary_comm_t: G1Affine,
+    /// Incoming primary instance's witness commitment `comm_W_I`
+    /// (BN254 G1; per `nova_snark::nifs::NIFS::prove`'s
+    /// `U2.absorb_in_ro` step, this MUST be in the r-derivation
+    /// transcript). Added at (a)-1: brings r-from-RO closer to
+    /// byte-identical with `nifs.rs::prove`. Same 127-bit limb
+    /// pattern as comm_T.
+    pub primary_comm_w_i: G1Affine,
     /// PUBLIC: new running `u_new` = `u_R + r · 1 = u_R + r`. The
     /// next step's `u`.
     pub primary_u_new: Bn254Fr,
@@ -214,6 +218,7 @@ impl PrimaryAugmentedCircuitShell {
         primary_x_new: [Bn254Fr; 2],
         previous_step_hash: Bn254Fr,
         primary_comm_t: G1Affine,
+        primary_comm_w_i: G1Affine,
         params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
@@ -244,6 +249,7 @@ impl PrimaryAugmentedCircuitShell {
             primary_x_new,
             previous_step_hash,
             primary_comm_t,
+            primary_comm_w_i,
             params,
             sections_wired: true,
         }
@@ -462,11 +468,32 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let comm_t_x_hi = Boolean::le_bits_to_fp(&comm_t_x_bits[split_x..])?;
         let comm_t_y_lo = Boolean::le_bits_to_fp(&comm_t_y_bits[..split_y])?;
         let comm_t_y_hi = Boolean::le_bits_to_fp(&comm_t_y_bits[split_y..])?;
+        // (a)-1: absorb comm_W_I too (BN254 G1, same limb pattern).
+        let comm_w_i_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(self.primary_comm_w_i.x),
+        )?;
+        let comm_w_i_y_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(self.primary_comm_w_i.y),
+        )?;
+        let cwi_x_bits = comm_w_i_x_var.to_bits_le()?;
+        let cwi_y_bits = comm_w_i_y_var.to_bits_le()?;
+        let s_cwi_x = 127usize.min(cwi_x_bits.len());
+        let s_cwi_y = 127usize.min(cwi_y_bits.len());
+        let cwi_x_lo = Boolean::le_bits_to_fp(&cwi_x_bits[..s_cwi_x])?;
+        let cwi_x_hi = Boolean::le_bits_to_fp(&cwi_x_bits[s_cwi_x..])?;
+        let cwi_y_lo = Boolean::le_bits_to_fp(&cwi_y_bits[..s_cwi_y])?;
+        let cwi_y_hi = Boolean::le_bits_to_fp(&cwi_y_bits[s_cwi_y..])?;
         let r_absorb_inputs: Vec<FpVar<Bn254Fr>> = vec![
             pp_hash_var.clone(),
             previous_step_hash_var,
             primary_x_i_vars[0].clone(),
             primary_x_i_vars[1].clone(),
+            cwi_x_lo,
+            cwi_x_hi,
+            cwi_y_lo,
+            cwi_y_hi,
             comm_t_x_lo,
             comm_t_x_hi,
             comm_t_y_lo,
@@ -527,6 +554,7 @@ mod tests {
         previous_step_hash: Bn254Fr,
         x_i_0: Bn254Fr,
         x_i_1: Bn254Fr,
+        primary_comm_w_i: G1Affine,
         primary_comm_t: G1Affine,
     ) -> Bn254Fr {
         use crate::neptune_reference::neptune_hash_primary;
@@ -543,19 +571,27 @@ mod tests {
             }
             acc
         };
-        let x_bits = primary_comm_t.x.into_bigint().to_bits_le();
-        let y_bits = primary_comm_t.y.into_bigint().to_bits_le();
-        let split_x = 127usize.min(x_bits.len());
-        let split_y = 127usize.min(y_bits.len());
-        let absorbed: [Bn254Fr; 8] = [
+        let cwi_x_bits = primary_comm_w_i.x.into_bigint().to_bits_le();
+        let cwi_y_bits = primary_comm_w_i.y.into_bigint().to_bits_le();
+        let ct_x_bits = primary_comm_t.x.into_bigint().to_bits_le();
+        let ct_y_bits = primary_comm_t.y.into_bigint().to_bits_le();
+        let s_cwi_x = 127usize.min(cwi_x_bits.len());
+        let s_cwi_y = 127usize.min(cwi_y_bits.len());
+        let s_ct_x = 127usize.min(ct_x_bits.len());
+        let s_ct_y = 127usize.min(ct_y_bits.len());
+        let absorbed: [Bn254Fr; 12] = [
             pp_hash,
             previous_step_hash,
             x_i_0,
             x_i_1,
-            pack_le_to_fr(&x_bits[..split_x]),
-            pack_le_to_fr(&x_bits[split_x..]),
-            pack_le_to_fr(&y_bits[..split_y]),
-            pack_le_to_fr(&y_bits[split_y..]),
+            pack_le_to_fr(&cwi_x_bits[..s_cwi_x]),
+            pack_le_to_fr(&cwi_x_bits[s_cwi_x..]),
+            pack_le_to_fr(&cwi_y_bits[..s_cwi_y]),
+            pack_le_to_fr(&cwi_y_bits[s_cwi_y..]),
+            pack_le_to_fr(&ct_x_bits[..s_ct_x]),
+            pack_le_to_fr(&ct_x_bits[s_ct_x..]),
+            pack_le_to_fr(&ct_y_bits[..s_ct_y]),
+            pack_le_to_fr(&ct_y_bits[s_ct_y..]),
         ];
         let absorbed_nova = absorbed.map(ark_fr_to_primary);
         primary_to_ark_fr(neptune_hash_primary(&absorbed_nova))
@@ -665,17 +701,20 @@ mod tests {
         // values (in production: previous step's current_step_hash
         // + the NIFS::prove's commit_T output respectively).
         let previous_step_hash = Bn254Fr::rand(&mut rng);
-        // Non-trivial G1 point for comm_T: random scalar × G.
-        let primary_comm_t = {
+        // Non-trivial G1 points for comm_W_I and comm_T.
+        let mk_g1 = |rng: &mut _| {
             let g = ark_bn254::G1Affine::generator();
-            let s = Bn254Fr::rand(&mut rng);
+            let s = Bn254Fr::rand(rng);
             (ark_bn254::G1Projective::from(g) * s).into_affine()
         };
+        let primary_comm_w_i = mk_g1(&mut rng);
+        let primary_comm_t = mk_g1(&mut rng);
         let primary_r = compute_primary_r_native(
             pp_hash,
             previous_step_hash,
             primary_x_i[0],
             primary_x_i[1],
+            primary_comm_w_i,
             primary_comm_t,
         );
         let primary_u_new = primary_u_r + primary_r;
@@ -722,6 +761,7 @@ mod tests {
             primary_x_new,
             previous_step_hash,
             primary_comm_t,
+            primary_comm_w_i,
             params,
         )
     }
@@ -849,6 +889,24 @@ mod tests {
         assert!(
             !cs.is_satisfied().expect("is_satisfied"),
             "tampered t2_p MUST break Section C pair-binding"
+        );
+    }
+
+    /// SECTION F (a)-1 NON-VACUITY (comm_W_I absorb path): tamper
+    /// `primary_comm_w_i` → derived `r` differs from witnessed
+    /// `primary_r` → enforce_equal breaks → CS UNSAT. Proves the
+    /// new comm_W_I absorb is non-vacuously bound.
+    #[test]
+    fn shell_section_f_wrong_comm_w_i_breaks_cs() {
+        let mut c = consistent_step();
+        let g = ark_bn254::G1Projective::from(G1Affine::generator());
+        c.primary_comm_w_i =
+            (ark_bn254::G1Projective::from(c.primary_comm_w_i) + g).into_affine();
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered primary_comm_w_i MUST break r-from-RO ((a)-1 absorb)"
         );
     }
 
