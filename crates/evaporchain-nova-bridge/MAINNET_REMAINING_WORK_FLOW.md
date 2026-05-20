@@ -1401,6 +1401,48 @@ Remaining: (b)-2b multi-step CF chaining (needs pub(crate)
 extraction helpers), (a) BESPOKE alignment, (c) Solidity
 verifier, (d) L2 deployment, (e) external audit.
 
+### 1C INCREMENT (b)-2b — ✅ FULL 2-STEP CF CHAIN [V] (2026-05-20,
+Mini3, box, HEAD `36de2ea4`,
+`shell_cf_accumulator_two_step_integration ... ok; 14.99 s`)
+
+The (b) IVC integration arc is now architecturally CLOSED at the
+end-to-end level:
+
+1. **Diagnostic** pinned `RelaxedR1CSInstance<GrumpkinEngine>`
+   JSON schema (HEAD `9344e97a`): top keys `{X, comm_E, comm_W,
+   u}`; commitments `{comm: <64-hex>}`; u/X scalars `<64-hex>`.
+2. **Extractor** `pub fn extract_relaxed_running_inst` in
+   `s4_secondary_extract.rs` parses the schema using existing
+   helpers (`decode_grumpkin_point` made `pub(crate)`,
+   `parse_secondary_scalar_hex` + `secondary_to_ark_fq`).
+3. **Full 2-step chain test:**
+   - shell_0 with `running_zero` CF state ⇒ CS sat.
+   - shell_0.t1 → CF instance → NIFS fold into running ⇒
+     `is_sat_relaxed` ok.
+   - Running CF state extracted via serde extractor.
+   - shell_1 with extracted post-step-0 CF state ⇒ CS sat.
+   - shell_1.t1 → CF instance → NIFS fold into running ⇒
+     `is_sat_relaxed` ok.
+
+**The primary↔CF accumulator IVC chain works end-to-end across 2
+steps.** Both shells absorb running CF state into Section R that's
+CONSISTENT with the actual NIFS-folded values. Both NIFS folds
+satisfy `is_sat_relaxed`. The architectural pattern is closed.
+
+**Fourteenth consecutive first-try pass.** Diagnostic → extractor
+→ 2-step chain — every step worked on first attempt this 4b
+micro-arc + the (b) integration follow-on.
+
+**Remaining 1C work (cleaner now that integration is closed):**
+- (a) **BESPOKE alignment** — byte-level `nifs.rs::prove`
+  transcript parity (separate crypto-alignment pass; analogous to
+  section2_gadget's neptune-vs-arkworks reconciliation, already
+  CLOSED).
+- (c) **Production Solidity decider verifier** for L2 — multi-week
+  crypto + Solidity engineering pass.
+- (d) **L2 deployment** (Optimism / Arbitrum / Base — pick + deploy).
+- (e) **External audit** on the pinned revision.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
