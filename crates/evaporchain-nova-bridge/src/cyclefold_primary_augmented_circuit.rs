@@ -124,6 +124,27 @@ pub struct PrimaryAugmentedCircuitShell {
     /// `cf_u_running` uses — Bn254Fq-into-Section-R cost gradient
     /// ~1,230 cons per element (measured at β-4b).
     pub cf_x_vec: Vec<ark_bn254::Fq>,
+
+    // ── Section F primary NIFS fold (4b-β-5-α: native field part) ──
+    /// Previous primary running instance's `u` scalar (Bn254Fr,
+    /// native).
+    pub primary_u_r: Bn254Fr,
+    /// Previous primary running instance's public IO `X_R` (Nova
+    /// convention: 2 scalars).
+    pub primary_x_r: [Bn254Fr; 2],
+    /// Incoming primary step instance's public IO `X_I` (`u_I = 1`
+    /// implicit per non-relaxed R1CSInstance).
+    pub primary_x_i: [Bn254Fr; 2],
+    /// Fold challenge `r` (Bn254Fr; derived from RO in production
+    /// — bound to the previous step's transcript via Section R's
+    /// `current_step_hash`. Here a witness for the shell).
+    pub primary_r: Bn254Fr,
+    /// PUBLIC: new running `u_new` = `u_R + r · 1 = u_R + r`. The
+    /// next step's `u`.
+    pub primary_u_new: Bn254Fr,
+    /// PUBLIC: new running `X_new[i]` = `X_R[i] + r · X_I[i]`. The
+    /// next step's public IO.
+    pub primary_x_new: [Bn254Fr; 2],
     /// Neptune sponge params for the in-circuit `cf_x_digest`
     /// gadget (Section C). Constructed once by the caller via
     /// `params_from_dump_path("neptune-bn256-standard.json")` and
@@ -158,6 +179,12 @@ impl PrimaryAugmentedCircuitShell {
         cf_comm_e_x: Bn254Fr,
         cf_comm_e_y: Bn254Fr,
         cf_x_vec: Vec<ark_bn254::Fq>,
+        primary_u_r: Bn254Fr,
+        primary_x_r: [Bn254Fr; 2],
+        primary_x_i: [Bn254Fr; 2],
+        primary_r: Bn254Fr,
+        primary_u_new: Bn254Fr,
+        primary_x_new: [Bn254Fr; 2],
         params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
@@ -177,6 +204,12 @@ impl PrimaryAugmentedCircuitShell {
             cf_comm_e_x,
             cf_comm_e_y,
             cf_x_vec,
+            primary_u_r,
+            primary_x_r,
+            primary_x_i,
+            primary_r,
+            primary_u_new,
+            primary_x_new,
             params,
             sections_wired: false,
         }
@@ -324,6 +357,43 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let truncated_step_hash = Boolean::le_bits_to_fp(trunc_bits)?;
         truncated_step_hash.enforce_equal(&current_step_hash_var)?;
 
+        // ── Section F [LIVE since 4b-β-5-α: native field part] ───
+        // Primary NIFS fold's native-field identities:
+        //   u_new = u_R + r            (since u_I = 1 implicit)
+        //   X_new[i] = X_R[i] + r·X_I[i]   for i = 0,1
+        // EC-side identities (comm_W_new = comm_W_R + r·comm_W_I,
+        // comm_E_new = comm_E_R + r·comm_T) delegate to CycleFold
+        // aux via the existing cf_x_digest binding (Section C).
+        // The r challenge MUST be derived from RO in production
+        // (bound to the previous step's transcript via Section R's
+        // current_step_hash); for the shell it's a witness pending
+        // the explicit RO-derivation wiring (4b-β-5-β / -γ).
+        let primary_u_r_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_u_r))?;
+        let primary_r_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.primary_r))?;
+        let primary_u_new_var =
+            FpVar::<Bn254Fr>::new_input(cs.clone(), || Ok(self.primary_u_new))?;
+        let computed_u_new = &primary_u_r_var + &primary_r_var;
+        computed_u_new.enforce_equal(&primary_u_new_var)?;
+
+        for k in 0..2usize {
+            let x_r_k = FpVar::<Bn254Fr>::new_witness(
+                cs.clone(),
+                || Ok(self.primary_x_r[k]),
+            )?;
+            let x_i_k = FpVar::<Bn254Fr>::new_witness(
+                cs.clone(),
+                || Ok(self.primary_x_i[k]),
+            )?;
+            let x_new_k = FpVar::<Bn254Fr>::new_input(
+                cs.clone(),
+                || Ok(self.primary_x_new[k]),
+            )?;
+            let computed_x_new_k = &x_r_k + &primary_r_var * &x_i_k;
+            computed_x_new_k.enforce_equal(&x_new_k)?;
+        }
+
         // ── Stub step: z_{i+1} = z_i + 1 ──────────────────────────
         // Real step circuit `F` plugs in here in 4b-β.
         let computed_next = &z_i_var + FpVar::<Bn254Fr>::constant(Bn254Fr::from(1u64));
@@ -442,6 +512,19 @@ mod tests {
         // per the 3b-2 measurement), random non-trivial Bn254Fq.
         let cf_x_vec: Vec<ark_bn254::Fq> =
             (0..21).map(|_| ark_bn254::Fq::rand(&mut rng)).collect();
+        // Section F native fold inputs: pick random U_R/X_R/X_I/r,
+        // compute the satisfiable u_new and X_new.
+        let primary_u_r = Bn254Fr::rand(&mut rng);
+        let primary_x_r: [Bn254Fr; 2] =
+            [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
+        let primary_x_i: [Bn254Fr; 2] =
+            [Bn254Fr::rand(&mut rng), Bn254Fr::rand(&mut rng)];
+        let primary_r = Bn254Fr::rand(&mut rng);
+        let primary_u_new = primary_u_r + primary_r;
+        let primary_x_new: [Bn254Fr; 2] = [
+            primary_x_r[0] + primary_r * primary_x_i[0],
+            primary_x_r[1] + primary_r * primary_x_i[1],
+        ];
         // Section R: compute the REAL current_step_hash so its
         // binding is satisfiable too.
         let current_step_hash = compute_current_step_hash_native(
@@ -470,6 +553,12 @@ mod tests {
             cf_comm_e_x,
             cf_comm_e_y,
             cf_x_vec,
+            primary_u_r,
+            primary_x_r,
+            primary_x_i,
+            primary_r,
+            primary_u_new,
+            primary_x_new,
             params,
         )
     }
@@ -577,6 +666,37 @@ mod tests {
         assert!(
             !cs.is_satisfied().expect("is_satisfied"),
             "tampered pp_hash MUST break Section R's transcript binding"
+        );
+    }
+
+    /// SECTION F NON-VACUITY (u_new path): tamper `primary_u_new`
+    /// → native fold identity `u_R + r == u_new` breaks → CS
+    /// UNSAT. Proves the native NIFS-fold u-binding is real.
+    #[test]
+    fn shell_section_f_wrong_u_new_breaks_cs() {
+        let mut c = consistent_step();
+        c.primary_u_new = c.primary_u_new + Bn254Fr::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered primary_u_new MUST break Section F native fold"
+        );
+    }
+
+    /// SECTION F NON-VACUITY (X_new path): tamper `primary_x_new[0]`
+    /// → X identity `X_R[0] + r·X_I[0] == X_new[0]` breaks → CS
+    /// UNSAT. Different break path than u_new (catches a wrong
+    /// X-row enforcement).
+    #[test]
+    fn shell_section_f_wrong_x_new_breaks_cs() {
+        let mut c = consistent_step();
+        c.primary_x_new[0] = c.primary_x_new[0] + Bn254Fr::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered primary_x_new[0] MUST break Section F native fold"
         );
     }
 
