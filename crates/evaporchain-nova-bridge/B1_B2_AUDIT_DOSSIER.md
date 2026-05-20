@@ -336,6 +336,14 @@ The chosen architecture's open work, in dependency order:
      by source analysis (flow doc source-read #3); `sections_bcd_wired:
      bool` honesty flag prevents Section-A-only being mistaken for a
      complete decider.
+   - **Section B scoping document (`SECTION_B_SCOPING.md`):** source-
+     grounded plan for the output-hash binding. Key finding:
+     `hash_secondary` is native (uses existing
+     `section2_gadget::enforce_poseidon_primary`); `hash_primary` is
+     on Bn254 Fq foreign field — delegation trick (PI from off-circuit
+     `CompressedSNARK::verify`) avoids needing a multi-week non-native
+     Poseidon RO gadget. ~5k cons, 7 new public inputs. Next 3
+     iterations close Section B (interface → wiring → tests).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
