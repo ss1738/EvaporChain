@@ -134,6 +134,72 @@ pub fn public_inputs_for(circuit: &NovaVerifierCircuit) -> Vec<Bn254Fr> {
     out
 }
 
+// ─── B-1/B-2 1C §7 step 1: Groth16 plumbing for RecursionDeciderCircuit ───
+//
+// The old `setup`/`prove`/`verify` above key Groth16 over the dead
+// `NovaVerifierCircuit` (S4b 203M-cons path). The functions below key
+// Groth16 over the LIVE `RecursionDeciderCircuit` (Section A wired,
+// ~26.7M cons at n=10,554; ~43.5M at n=16,384 per (d)-1 measurement).
+// These coexist with the old functions during the transition — the
+// old ones stay until the full B/C/D wiring lands and the dossier
+// can move the NovaVerifierCircuit path to deletion.
+
+use ark_ec::short_weierstrass::Affine;
+use crate::grumpkin_config::GrumpkinConfig;
+use crate::recursion_decider_circuit::RecursionDeciderCircuit;
+
+/// Groth16 trusted setup keyed over
+/// `RecursionDeciderCircuit::setup_shape(bases, h)`. The bases vector
+/// is BAKED INTO THE CIRCUIT shape — setup and prove MUST use the
+/// exact same `bases` (and `h`).
+///
+/// At n=4–8 this is fast (smoke-test scale). At the real n_aux=16,384
+/// it is heavy (hours on the Mini cluster; ~5.6 GB peak memory per
+/// the (d)-1 cons budget).
+///
+/// **Test/dev only** — the same `#[deprecated]` MPC-ceremony caveat
+/// from `setup()` above applies; this function uses arkworks's
+/// insecure test randomness.
+#[deprecated(
+    note = "INSECURE test/dev trusted setup (audit B-1/B-2 S5): \
+            recoverable toxic waste. MUST NOT reach mainnet. The \
+            circuit shape (RecursionDeciderCircuit) is the correct \
+            B-1/B-2 1C path, but production keys require an MPC \
+            ceremony (Powers of Tau + circuit-specific phase 2)."
+)]
+pub fn setup_recursion_decider<R: RngCore + CryptoRng>(
+    bases: Vec<Affine<GrumpkinConfig>>,
+    h: Affine<GrumpkinConfig>,
+    rng: &mut R,
+) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::r1cs::SynthesisError> {
+    let circuit = RecursionDeciderCircuit::setup_shape(bases, h);
+    Groth16::<Bn254>::circuit_specific_setup(circuit, rng)
+}
+
+/// Prove a `RecursionDeciderCircuit` witness with `pk` from
+/// `setup_recursion_decider`. The `circuit`'s `bases` + `h` must
+/// match the bases + h that produced `pk` exactly.
+pub fn prove_recursion_decider<R: RngCore + CryptoRng>(
+    pk: &ProvingKey<Bn254>,
+    circuit: RecursionDeciderCircuit,
+    rng: &mut R,
+) -> Result<Proof<Bn254>, ark_relations::r1cs::SynthesisError> {
+    Groth16::<Bn254>::prove(pk, circuit, rng)
+}
+
+/// Verify a `RecursionDeciderCircuit` Groth16 proof. The Section A
+/// circuit currently allocates ZERO `new_input` calls — Sections
+/// B/C/D will add the (committed_hash_primary, committed_hash_secondary,
+/// z0, zi) public-input layout when wired. For now the public-inputs
+/// slice is empty.
+pub fn verify_recursion_decider(
+    vk: &VerifyingKey<Bn254>,
+    public_inputs: &[Bn254Fr],
+    proof: &Proof<Bn254>,
+) -> Result<bool, ark_relations::r1cs::SynthesisError> {
+    Groth16::<Bn254>::verify(vk, public_inputs, proof)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +441,74 @@ mod tests {
                 Bn254Fr::from(19u64), // zi[1]
             ],
         );
+    }
+
+    // ─── B-1/B-2 1C §7 step 1 SMOKE TEST: end-to-end Groth16 over
+    //     RecursionDeciderCircuit at small n. ─────────────────────────
+    //
+    // At n=4 bases this is fast enough to run in normal `cargo test`
+    // (under a second). The full n_aux=16,384 setup is a separate
+    // scheduled Mini-cluster run, NOT a unit test.
+    #[test]
+    #[allow(deprecated)]
+    fn recursion_decider_groth16_roundtrip_n4_smoke() {
+        use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+        use ark_ec::CurveGroup;
+        use ark_grumpkin::Fq as GrumpkinBase;
+        use crate::grumpkin_config::GrumpkinConfig;
+        use crate::recursion_decider_circuit::RecursionDeciderCircuit;
+
+        // Build n=4 real bases + h via doubling chain (real points,
+        // not toy zeros — the circuit bakes these in as constants and
+        // setup/prove must agree on them exactly).
+        let g = Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR);
+        let g2 = g + g;
+        let g3 = g2 + g;
+        let g5 = g3 + g2;
+        let h = g + g + g + g + g + g + g; // 7G
+        let bases: Vec<_> = [g, g2, g3, g5]
+            .into_iter()
+            .map(|p| p.into_affine())
+            .collect();
+        let h_aff = h.into_affine();
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42);
+
+        // Setup keyed over the shape (zero scalars; bases baked in).
+        let (pk, vk) =
+            setup_recursion_decider(bases.clone(), h_aff, &mut rng)
+                .expect("setup_recursion_decider must succeed");
+
+        // Prove a CONSISTENT non-trivial witness: same bases + h, but
+        // real scalars + the matching ck_hat. (If the witness's bases
+        // differed from the keyed bases the prove would fail at the
+        // CS-shape level — this test pins that contract too.)
+        use ark_bn254::Fq as Bn254Fq;
+        let scalars = vec![
+            Bn254Fq::from(2u64),
+            Bn254Fq::from(3u64),
+            Bn254Fq::from(5u64),
+            Bn254Fq::from(7u64),
+        ];
+        let blind = Bn254Fq::from(11u64);
+        let _ = GrumpkinBase::from(0u64); // touch import to keep it
+        let claimed = g * scalars[0]
+            + g2 * scalars[1]
+            + g3 * scalars[2]
+            + g5 * scalars[3]
+            + h * blind;
+        let circuit = RecursionDeciderCircuit::section_a_only(
+            scalars, bases, blind, h_aff, claimed,
+        );
+        let proof = prove_recursion_decider(&pk, circuit, &mut rng)
+            .expect("prove_recursion_decider must succeed");
+
+        // Section A allocates ZERO new_input calls → no public-inputs
+        // to thread. Sections B-D will add (committed_hash_primary,
+        // committed_hash_secondary, z0, zi) when wired.
+        let public_inputs: Vec<Bn254Fr> = vec![];
+        let ok = verify_recursion_decider(&vk, &public_inputs, &proof)
+            .expect("verify_recursion_decider must succeed");
+        assert!(ok, "Section-A-only Groth16 round-trip must verify");
     }
 }

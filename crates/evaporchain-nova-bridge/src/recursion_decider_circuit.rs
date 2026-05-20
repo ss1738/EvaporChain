@@ -105,6 +105,36 @@ impl RecursionDeciderCircuit {
             sections_bcd_wired: false,
         }
     }
+
+    /// Shape-only constructor for Groth16 trusted setup (§7 step 1 of
+    /// the audit dossier). Allocates `n_aux` zero scalars + identity
+    /// `claimed_ck_hat`, so the CS structure matches a real prover at
+    /// the same `bases` length but no specific witness values bind.
+    ///
+    /// IMPORTANT: the `bases` vector is BAKED INTO THE CIRCUIT as
+    /// constants (per `pedersen_msm_grumpkin`'s `GrumpkinVar::constant`).
+    /// Therefore setup MUST use the EXACT bases the prover will use —
+    /// passing different bases at prove-time produces a circuit with a
+    /// different constraint shape that the keys won't fit.
+    ///
+    /// At zero scalars + zero blind + identity claimed_ck_hat, the CS
+    /// is self-consistent (0 + 0 = 0), so the shape can also be used
+    /// as a smoke test of the trivial witness.
+    pub fn setup_shape(
+        bases: Vec<Affine<GrumpkinConfig>>,
+        h: Affine<GrumpkinConfig>,
+    ) -> Self {
+        use ark_std::Zero;
+        let n = bases.len();
+        Self {
+            scalars: vec![Bn254Fq::zero(); n],
+            bases,
+            blind: Bn254Fq::zero(),
+            h,
+            claimed_ck_hat: Projective::<GrumpkinConfig>::zero(),
+            sections_bcd_wired: false,
+        }
+    }
 }
 
 impl ConstraintSynthesizer<Bn254Fr> for RecursionDeciderCircuit {
