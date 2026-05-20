@@ -643,6 +643,95 @@ mod tests {
         assert!(ok, "n=64 Section-A Groth16 round-trip must verify");
     }
 
+    /// (e)-1 EIP-197 WIRE-FORMAT ROUND-TRIP for the RecursionDeciderCircuit
+    /// proof. The existing `eip197::proof_to_eip197_bytes` was originally
+    /// written for `NovaVerifierCircuit` proofs but it operates on the
+    /// generic `Proof<Bn254>` type (Groth16 proofs are universal across
+    /// BN254 circuits). This test pins that the codec works identically
+    /// on the new circuit's proofs — a prerequisite for the EVM round-
+    /// trip Foundry test.
+    ///
+    /// Validates: setup → prove → EIP-197 encode → 256-byte length →
+    /// decode → verify accepts the round-tripped proof.
+    #[test]
+    #[allow(deprecated)]
+    fn recursion_decider_groth16_eip197_roundtrip() {
+        use ark_bn254::Fq as Bn254Fq;
+        use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+        use ark_ec::CurveGroup;
+        use crate::grumpkin_config::GrumpkinConfig;
+        use crate::recursion_decider_circuit::RecursionDeciderCircuit;
+        use crate::eip197::{
+            proof_to_eip197_bytes, eip197_bytes_to_proof, EIP197_PROOF_BYTES,
+        };
+
+        let g = Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR);
+        let g2 = g + g;
+        let g3 = g2 + g;
+        let g5 = g3 + g2;
+        let h = g + g + g + g + g + g + g;
+        let bases: Vec<_> = [g, g2, g3, g5]
+            .into_iter()
+            .map(|p| p.into_affine())
+            .collect();
+        let h_aff = h.into_affine();
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(197);
+        let (pk, vk) =
+            setup_recursion_decider(bases.clone(), h_aff, &mut rng)
+                .expect("setup");
+
+        let scalars = vec![
+            Bn254Fq::from(2u64),
+            Bn254Fq::from(3u64),
+            Bn254Fq::from(5u64),
+            Bn254Fq::from(7u64),
+        ];
+        let blind = Bn254Fq::from(11u64);
+        let claimed = g * scalars[0]
+            + g2 * scalars[1]
+            + g3 * scalars[2]
+            + g5 * scalars[3]
+            + h * blind;
+        let circuit = RecursionDeciderCircuit::section_a_only(
+            scalars, bases, blind, h_aff, claimed,
+        );
+
+        let proof = prove_recursion_decider(&pk, circuit, &mut rng)
+            .expect("prove");
+
+        // EIP-197 round-trip: encode → 256 bytes → decode → equal proof.
+        let bytes = proof_to_eip197_bytes(&proof);
+        assert_eq!(bytes.len(), EIP197_PROOF_BYTES, "encoded must be 256 B");
+        assert_eq!(bytes.len(), 256, "EIP197_PROOF_BYTES must be 256");
+
+        let decoded =
+            eip197_bytes_to_proof(&bytes).expect("decode round-trip");
+
+        // Re-encode the decoded proof; bytes must be byte-identical.
+        let bytes_after = proof_to_eip197_bytes(&decoded);
+        assert_eq!(
+            bytes, bytes_after,
+            "EIP-197 encode↔decode must be byte-stable on round-trip"
+        );
+
+        // Decoded proof must still pass Groth16 verify.
+        let ok = verify_recursion_decider(&vk, &[], &decoded)
+            .expect("verify of decoded proof");
+        assert!(
+            ok,
+            "decoded EIP-197 proof must verify against the same vk"
+        );
+
+        // Print the wire bytes as hex for downstream Foundry / EVM
+        // test fixture consumption.
+        let hex_str: String = bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        eprintln!("EIP197_WIRE_HEX = 0x{hex_str}");
+    }
+
     /// (d)-4 PRODUCTION-SCALE SETUP+PROVE+VERIFY at n_aux=16,384 —
     /// the heavy run that validates the predicted ~41.5M-cons /
     /// ~5.6 GB-memory pipeline on the Mini cluster. Reports
