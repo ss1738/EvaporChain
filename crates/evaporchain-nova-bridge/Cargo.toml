@@ -41,6 +41,12 @@ ff            = "0.13"
 group         = "0.13"
 generic-array = "1"
 
+# halo2curves: used by Section B off-chain adapter (decompress_comm_w_as_fr)
+# to decode nova's bn256::Affine GroupEncoding hex blobs. Same 0.9 line
+# nova-snark 0.68 pulls. Promoted from dev-deps so it's available to
+# the library and binaries, not just tests.
+halo2curves = "0.9"
+
 # Misc.
 hex        = "0.4"
 serde      = { version = "1", features = ["derive"] }
@@ -53,7 +59,5 @@ thiserror  = "1"
 
 [dev-dependencies]
 rand = "0.8"
-# S4-nn cross-library trust gate: nova-snark commits with halo2curves;
-# the Grumpkin/bn256 ark configs are validated byte-for-byte against
-# it (grumpkin_config::tests). Same 0.9 line nova-snark 0.68 pulls.
-halo2curves = "0.9"
+# (halo2curves promoted to regular dep above — used by Section B
+# off-chain adapter as well as the grumpkin_config tests.)
