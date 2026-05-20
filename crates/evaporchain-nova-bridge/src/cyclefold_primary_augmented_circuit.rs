@@ -72,20 +72,18 @@ pub struct PrimaryAugmentedCircuitShell {
     /// `z_{i+1} == z_i + 1` enforces consistency; a malicious
     /// prover supplying a wrong `z_i1` must be rejected.
     pub z_i1: Bn254Fr,
-    /// Cross-curve scalar-mul `P_step` (BN254-G1 point) — WITNESS
-    /// only (Bn254Fq coords, non-native to this Bn254Fr circuit;
-    /// not exposed as public IO — public link is `cf_x_digest`).
-    pub p_step: G1Affine,
-    /// Cross-curve scalar-mul `s_step` (E1.scalar = Bn254Fr —
-    /// the primary's folding challenge; NATIVE to this Bn254Fr
-    /// circuit, NON-NATIVE on the CF aux side as
-    /// `EmulatedFpVar<Bn254Fr, Bn254Fq>` —
-    /// matches [`crate::cyclefold_instance_circuit::CycleFold
-    /// InstanceCircuit::scalar`]) — WITNESS only.
-    pub s_step: Bn254Fr,
-    /// Cross-curve scalar-mul `Q_step = s_step · P_step` — WITNESS
-    /// only.
-    pub q_step: G1Affine,
+    /// Cross-curve scalar-mul TUPLE 1 — `r·comm_W_I` in standard
+    /// CycleFold cf1 parlance. WITNESS only.
+    pub t1_p: G1Affine,
+    pub t1_s: Bn254Fr,
+    pub t1_q: G1Affine,
+    /// Cross-curve scalar-mul TUPLE 2 — `r·comm_T` in standard
+    /// CycleFold cf2 parlance. WITNESS only. The two-tuple cf_x_
+    /// digest binding handles BOTH delegated scalar-muls of the
+    /// primary's NIFS fold.
+    pub t2_p: G1Affine,
+    pub t2_s: Bn254Fr,
+    pub t2_q: G1Affine,
     /// PUBLIC: Bn254Fr digest binding the cross-curve tuple
     /// `(p_step, s_step, q_step)`. Recomputed independently on the
     /// CF aux side via the matching Neptune RO; equality of the
@@ -184,9 +182,12 @@ impl PrimaryAugmentedCircuitShell {
         z_0: Bn254Fr,
         z_i: Bn254Fr,
         z_i1: Bn254Fr,
-        p_step: G1Affine,
-        s_step: Bn254Fr,
-        q_step: G1Affine,
+        t1_p: G1Affine,
+        t1_s: Bn254Fr,
+        t1_q: G1Affine,
+        t2_p: G1Affine,
+        t2_s: Bn254Fr,
+        t2_q: G1Affine,
         cf_x_digest: Bn254Fr,
         current_step_hash: Bn254Fr,
         cf_u_running: ark_bn254::Fq,
@@ -211,9 +212,12 @@ impl PrimaryAugmentedCircuitShell {
             z_0,
             z_i,
             z_i1,
-            p_step,
-            s_step,
-            q_step,
+            t1_p,
+            t1_s,
+            t1_q,
+            t2_p,
+            t2_s,
+            t2_q,
             cf_x_digest,
             current_step_hash,
             cf_u_running,
@@ -267,34 +271,34 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         // is rejected here, before Sections R/F reach for the
         // tuple. (R and F still deferred — sections_wired stays
         // false until those are also wired.)
-        let p_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.p_step.x),
-        )?;
-        let p_y_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.p_step.y),
-        )?;
-        let s_step_var =
-            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.s_step))?;
-        let q_x_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.q_step.x),
-        )?;
-        let q_y_var = EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
-            cs.clone(),
-            || Ok(self.q_step.y),
-        )?;
+        // β-5-δ: bind TWO cross-curve scalar-mul tuples in one
+        // cf_x_digest (cf1: r·comm_W_I, cf2: r·comm_T).
+        let mkfq = |v| {
+            EmulatedFpVar::<ark_bn254::Fq, Bn254Fr>::new_witness(
+                cs.clone(),
+                || Ok(v),
+            )
+        };
+        let t1_p_x = mkfq(self.t1_p.x)?;
+        let t1_p_y = mkfq(self.t1_p.y)?;
+        let t1_s_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.t1_s))?;
+        let t1_q_x = mkfq(self.t1_q.x)?;
+        let t1_q_y = mkfq(self.t1_q.y)?;
+        let t2_p_x = mkfq(self.t2_p.x)?;
+        let t2_p_y = mkfq(self.t2_p.y)?;
+        let t2_s_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.t2_s))?;
+        let t2_q_x = mkfq(self.t2_q.x)?;
+        let t2_q_y = mkfq(self.t2_q.y)?;
 
-        let computed_digest = crate::cyclefold_cf_x_digest::enforce_cf_x_digest(
-            cs.clone(),
-            &p_x_var,
-            &p_y_var,
-            &s_step_var,
-            &q_x_var,
-            &q_y_var,
-            &self.params,
-        )?;
+        let computed_digest =
+            crate::cyclefold_cf_x_digest::enforce_cf_x_digest_pair(
+                cs.clone(),
+                &t1_p_x, &t1_p_y, &t1_s_var, &t1_q_x, &t1_q_y,
+                &t2_p_x, &t2_p_y, &t2_s_var, &t2_q_x, &t2_q_y,
+                &self.params,
+            )?;
         computed_digest.enforce_equal(&cf_x_digest_var)?;
 
         // ── Section R [LIVE (stub-form) since 4b-β-4] ────────────
@@ -606,13 +610,20 @@ mod tests {
 
     fn consistent_step() -> PrimaryAugmentedCircuitShell {
         let mut rng = test_rng();
-        let p = G1Affine::generator();
-        let s = Bn254Fr::rand(&mut rng);
-        let q = (ark_bn254::G1Projective::from(p) * s).into_affine();
-        // Section C: compute the REAL cf_x_digest via the 4b-β-1
-        // oracle so the binding is satisfiable.
+        let mk_tuple = |rng: &mut _| {
+            let p = G1Affine::generator();
+            let s = Bn254Fr::rand(rng);
+            let q = (ark_bn254::G1Projective::from(p) * s).into_affine();
+            (p, s, q)
+        };
+        let (t1_p, t1_s, t1_q) = mk_tuple(&mut rng);
+        let (t2_p, t2_s, t2_q) = mk_tuple(&mut rng);
+        // Section C: compute the REAL pair cf_x_digest via the
+        // 4b-β-5-δ oracle so the binding is satisfiable.
         let cf_x_digest =
-            crate::cyclefold_cf_x_digest::compute_cf_x_digest_native(p, s, q);
+            crate::cyclefold_cf_x_digest::compute_cf_x_digest_pair_native(
+                t1_p, t1_s, t1_q, t2_p, t2_s, t2_q,
+            );
         let pp_hash = Bn254Fr::from(42u64);
         let i = Bn254Fr::from(0u64);
         let z_0 = Bn254Fr::from(0u64);
@@ -679,9 +690,12 @@ mod tests {
             z_0,
             z_i,
             z_i1,
-            p,
-            s,
-            q,
+            t1_p,
+            t1_s,
+            t1_q,
+            t2_p,
+            t2_s,
+            t2_q,
             cf_x_digest,
             current_step_hash,
             cf_u_running,
@@ -748,7 +762,7 @@ mod tests {
         // public cf_x_digest (which was computed from the
         // ORIGINAL P).
         let g = ark_bn254::G1Projective::from(G1Affine::generator());
-        c.p_step = (ark_bn254::G1Projective::from(c.p_step) + g).into_affine();
+        c.t1_p = (ark_bn254::G1Projective::from(c.t1_p) + g).into_affine();
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         c.generate_constraints(cs.clone()).expect("synthesis");
         assert!(
@@ -763,7 +777,7 @@ mod tests {
     #[test]
     fn shell_section_c_wrong_s_breaks_cs() {
         let mut c = consistent_step();
-        c.s_step = c.s_step + Bn254Fr::from(1u64);
+        c.t1_s = c.t1_s + Bn254Fr::from(1u64);
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         c.generate_constraints(cs.clone()).expect("synthesis");
         assert!(
@@ -805,6 +819,23 @@ mod tests {
         assert!(
             !cs.is_satisfied().expect("is_satisfied"),
             "tampered pp_hash MUST break Section R's transcript binding"
+        );
+    }
+
+    /// SECTION C β-5-δ NON-VACUITY (tuple 2 path): tamper `t2_p`
+    /// → pair cf_x_digest differs from public binding → CS UNSAT.
+    /// Confirms the SECOND delegated scalar-mul tuple (cf2 in
+    /// CycleFold parlance) is non-vacuously bound, not just t1.
+    #[test]
+    fn shell_section_c_wrong_t2_p_breaks_cs() {
+        let mut c = consistent_step();
+        let g = ark_bn254::G1Projective::from(G1Affine::generator());
+        c.t2_p = (ark_bn254::G1Projective::from(c.t2_p) + g).into_affine();
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered t2_p MUST break Section C pair-binding"
         );
     }
 
@@ -958,9 +989,10 @@ mod tests {
             n_cons >= 500,
             "shell unexpectedly small after Section C wiring: {n_cons}"
         );
-        // Upper bound bumped: 4b-β-4d's x_vec[21] absorb adds
-        // ~25k cons (21 × ~1,230). Tighter once 4b-β-5 Section F
-        // lands.
-        assert!(n_cons < 500_000, "shell unexpectedly large: {n_cons}");
+        // Upper bound bumped: 4b-β-5-δ's pair-digest adds another
+        // single-digest sponge (~6.3k cons) for the second tuple.
+        // Tighter once full structural completion + audit prep
+        // pass clarifies expected total.
+        assert!(n_cons < 600_000, "shell unexpectedly large: {n_cons}");
     }
 }

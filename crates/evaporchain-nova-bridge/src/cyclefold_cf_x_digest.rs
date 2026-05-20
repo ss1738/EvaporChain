@@ -117,6 +117,57 @@ pub fn enforce_cf_x_digest(
     Ok(truncated)
 }
 
+/// 4b-β-5-δ multi-tuple variant: bind TWO cross-curve scalar-mul
+/// tuples `(P1, s1, Q1)` and `(P2, s2, Q2)` into a single Bn254Fr
+/// digest. Composes by computing each tuple's individual digest
+/// via [`enforce_cf_x_digest`], then hashing the two digests
+/// through one more Neptune sponge (250-bit truncated). Matches
+/// the CycleFold cf1/cf2 pattern (one delegated scalar-mul for
+/// `r·comm_W_I`, one for `r·comm_T`).
+#[allow(clippy::too_many_arguments)]
+pub fn enforce_cf_x_digest_pair(
+    cs: ConstraintSystemRef<Bn254Fr>,
+    p1_x: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    p1_y: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    s1: &FpVar<Bn254Fr>,
+    q1_x: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    q1_y: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    p2_x: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    p2_y: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    s2: &FpVar<Bn254Fr>,
+    q2_x: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    q2_y: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    params: &crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
+) -> Result<FpVar<Bn254Fr>, SynthesisError> {
+    let d1 = enforce_cf_x_digest(cs.clone(), p1_x, p1_y, s1, q1_x, q1_y, params)?;
+    let d2 = enforce_cf_x_digest(cs.clone(), p2_x, p2_y, s2, q2_x, q2_y, params)?;
+    let raw = crate::section2_gadget::enforce_neptune_sponge_primary(
+        cs,
+        params,
+        &[d1, d2],
+    )?;
+    let raw_bits = raw.to_bits_le()?;
+    let trunc_bits = &raw_bits[..250usize.min(raw_bits.len())];
+    Boolean::le_bits_to_fp(trunc_bits)
+}
+
+/// Native oracle mirroring [`enforce_cf_x_digest_pair`].
+pub fn compute_cf_x_digest_pair_native(
+    p1: G1Affine,
+    s1: Bn254Fr,
+    q1: G1Affine,
+    p2: G1Affine,
+    s2: Bn254Fr,
+    q2: G1Affine,
+) -> Bn254Fr {
+    let d1 = compute_cf_x_digest_native(p1, s1, q1);
+    let d2 = compute_cf_x_digest_native(p2, s2, q2);
+    let absorbed = [d1, d2].map(crate::scalar_adapter::ark_fr_to_primary);
+    crate::scalar_adapter::primary_to_ark_fr(
+        crate::neptune_reference::neptune_hash_primary(&absorbed),
+    )
+}
+
 /// Split a `Bn254Fq` into `(lo, hi)` 127-bit halves represented as
 /// `Bn254Fr` elements. Bit-exact and reversible (the bit-level
 /// concatenation `hi << 127 | lo` recovers the original Fq value).
@@ -335,6 +386,58 @@ mod tests {
         assert!(
             cs.is_satisfied().expect("is_satisfied"),
             "in-circuit cf_x_digest must equal native oracle"
+        );
+    }
+
+    /// 4b-β-5-δ ORACLE-MATCH (pair): same gate as the single-tuple
+    /// version, applied to the 2-tuple composition.
+    #[test]
+    fn enforce_cf_x_digest_pair_matches_native_oracle() {
+        use ark_r1cs_std::alloc::AllocVar;
+        use ark_r1cs_std::eq::EqGadget;
+        use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
+        use ark_relations::r1cs::ConstraintSystem;
+
+        let mut rng = test_rng();
+        let (p1, s1, q1) = random_tuple(&mut rng);
+        let (p2, s2, q2) = random_tuple(&mut rng);
+        let native = compute_cf_x_digest_pair_native(p1, s1, q1, p2, s2, q2);
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        let mkfq = |v| {
+            EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(cs.clone(), || Ok(v))
+                .unwrap()
+        };
+        let mkfr = |v| FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(v)).unwrap();
+        let p1_x = mkfq(p1.x);
+        let p1_y = mkfq(p1.y);
+        let s1_v = mkfr(s1);
+        let q1_x = mkfq(q1.x);
+        let q1_y = mkfq(q1.y);
+        let p2_x = mkfq(p2.x);
+        let p2_y = mkfq(p2.y);
+        let s2_v = mkfr(s2);
+        let q2_x = mkfq(q2.x);
+        let q2_y = mkfq(q2.y);
+
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
+        )
+        .expect("load neptune params");
+
+        let gadget = enforce_cf_x_digest_pair(
+            cs.clone(),
+            &p1_x, &p1_y, &s1_v, &q1_x, &q1_y,
+            &p2_x, &p2_y, &s2_v, &q2_x, &q2_y,
+            &params,
+        )
+        .expect("gadget synth");
+        let native_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(native)).unwrap();
+        gadget.enforce_equal(&native_var).unwrap();
+        assert!(
+            cs.is_satisfied().unwrap(),
+            "pair cf_x_digest must equal native oracle"
         );
     }
 }
