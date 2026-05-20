@@ -126,7 +126,7 @@ Foundry gas anchors (commit `1917f9e4` + `414c0b26`):
   dominates 99.99%; sumcheck 28k + pairing 113k < 0.01% at the
   1.77-billion-gas Jacobian floor.
 
-## 5. Eight honest mid-arc corrections (the discipline working)
+## 5. Nine honest mid-arc corrections (the discipline working)
 
 Each surfaced via measurement, none buried; each made the story
 tighter, more credible.
@@ -188,6 +188,24 @@ shortfall by X" — not just to the initial anchors.
    error pattern as the (c)-2 ladder: cite a spec without
    verifying it. Lesson [[lesson-2026-05-20-b1b2-framing-error]]
    extended.
+9. **Section B scoping had RO field directions + absorb count
+   wildly wrong** (2026-05-20, step D pre-flight check). Rev 1
+   of `SECTION_B_SCOPING.md` said hash_secondary is native, hash_primary
+   is foreign; source re-read (`provider/mod.rs:48`) shows the
+   OPPOSITE — E1::RO = PoseidonRO<E1::Base = Bn254 Fq> (foreign),
+   E2::RO = PoseidonRO<E2::Base = Bn254 Fr> (native). Worse,
+   `RelaxedR1CSInstance::absorb_in_ro` absorbs comm_W + comm_E +
+   u + 2 × (BN_LIMB_WIDTH × BN_N_LIMBS) limbs per X ≈ 15-20+
+   fields, NOT 4 as I assumed. Step C extraction populates the
+   wrong source-side fields (r_U_primary instead of r_U_secondary
+   for native hash_primary check). Caught BEFORE step D
+   enforcement code was written — saved ~3-5 day dead-end. Same
+   framing-error pattern (#6, #7, #8); discipline gate fired.
+   Revised architectural decision: delegate BOTH hashes as PIs
+   (off-circuit `CompressedSNARK::verify` is the binding
+   verifier). Section B in-circuit cost ~0 incremental cons.
+   See `SECTION_B_SCOPING.md` §0 for the full source-grounded
+   correction.
 
 ## 6. The (c)-2 ladder — what it actually validates (FRAMING CORRECTION 2026-05-20)
 
