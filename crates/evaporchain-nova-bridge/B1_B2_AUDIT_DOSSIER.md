@@ -342,8 +342,19 @@ The chosen architecture's open work, in dependency order:
      `section2_gadget::enforce_poseidon_primary`); `hash_primary` is
      on Bn254 Fq foreign field — delegation trick (PI from off-circuit
      `CompressedSNARK::verify`) avoids needing a multi-week non-native
-     Poseidon RO gadget. ~5k cons, 7 new public inputs. Next 3
-     iterations close Section B (interface → wiring → tests).
+     Poseidon RO gadget. ~5k cons, 9+|z0|+|zn| public inputs.
+   - **Section B step A-B ✅ DONE 2026-05-20:** `SectionBPublicInputs`
+     struct + `Option<SectionBPublicInputs>` on `RecursionDeciderCircuit`
+     + `section_a_with_b_interface` / `setup_shape_with_b_interface`
+     constructors + `generate_constraints` allocates 9+|z0|+|zn|
+     PIs via `new_input` when `section_b=Some`. NO enforce_equal
+     yet — interface only. `sections_bcd_wired` stays `false`.
+     Smoke test `section_b_interface_wiring_compiles_and_pis_count`
+     passes: PI delta = 9+|z0|+|zn|, cons delta = 0, Section A
+     binding still satisfied. Full regression: 251/251 lib tests
+     pass (was 250, +1 for new smoke). Next iterations per scoping
+     §7: C-D (real PP integration + Poseidon enforcement), E-F
+     (tests + cons re-extrapolation).
 3. **(d)-1 + (d)-3 ✅ MEASURED 2026-05-20**:
    - (d)-1 gadget-level (`s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit`):
      per-base cons = **2,533**, intercept 2,521 at the
