@@ -346,4 +346,74 @@ mod tests {
             .is_sat(&art.ck, &art.instance, &art.witness)
             .expect("nova-snark R1CSShape::is_sat must accept bridged CF instance");
     }
+
+    /// 1C INCREMENT 3b-4 SOUNDNESS GATE: real
+    /// `NIFS::<GrumpkinEngine>::prove` on TWO bridged CF instances
+    /// produces a satisfied folded relaxed pair. Plus
+    /// `NIFS::verify` ≡ `NIFS::prove` U cross-check (any mismatch
+    /// ⇒ bug in our composition vs nova-snark NIFS semantics).
+    ///
+    /// `CE::setup(label, n)` is deterministic in `(label, n)` —
+    /// two artifacts built with the same label + same shape's
+    /// num_vars share an identical `ck`, so passing `art1.ck` for
+    /// both prove (commitments) and verify (computations) is sound.
+    #[test]
+    fn nifs_prove_two_real_cf_instances_yields_satisfied_folded_pair() {
+        use nova_snark::nova::nifs::NIFS;
+        use nova_snark::r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
+        use nova_snark::traits::ROConstants;
+
+        let mut rng = test_rng();
+        let make = |rng: &mut _| {
+            let p = G1Affine::generator();
+            let s = Bn254Fr::rand(rng);
+            let q = (G1Projective::from(p) * s).into_affine();
+            CycleFoldInstanceCircuit::new(p, s, q)
+        };
+        let art1 = arkworks_cs_to_nova_grumpkin_satisfied_pair(make(&mut rng), b"ev-cf-ck")
+            .expect("art1 bridge");
+        let art2 = arkworks_cs_to_nova_grumpkin_satisfied_pair(make(&mut rng), b"ev-cf-ck")
+            .expect("art2 bridge");
+
+        // Lift art1 → relaxed (running side).
+        let u_running = RelaxedR1CSInstance::<GrumpkinEngine>::from_r1cs_instance(
+            &art1.ck,
+            &art1.shape,
+            &art1.instance,
+        );
+        let w_running = RelaxedR1CSWitness::<GrumpkinEngine>::from_r1cs_witness(
+            &art1.shape,
+            &art1.witness,
+        );
+
+        let ro_consts = ROConstants::<GrumpkinEngine>::default();
+        let pp_digest = SecondaryScalar::from(0u64);
+
+        let (nifs_proof, (u_folded, w_folded)) = NIFS::<GrumpkinEngine>::prove(
+            &art1.ck,
+            &ro_consts,
+            &pp_digest,
+            &art1.shape,
+            &u_running,
+            &w_running,
+            &art2.instance,
+            &art2.witness,
+        )
+        .expect("NIFS::prove must succeed on two bridged CF instances");
+
+        // THE SOUNDNESS GATE: folded relaxed pair satisfies shape.
+        art1.shape
+            .is_sat_relaxed(&art1.ck, &u_folded, &w_folded)
+            .expect("NIFS::prove output must be is_sat_relaxed-accepted");
+
+        // Cross-check: prove's U ≡ verify's U (semantic agreement
+        // of the prover and verifier paths of NIFS).
+        let u_via_verify = nifs_proof
+            .verify(&ro_consts, &pp_digest, &u_running, &art2.instance)
+            .expect("NIFS::verify must succeed");
+        assert_eq!(
+            u_folded, u_via_verify,
+            "NIFS::prove and NIFS::verify must produce the same folded U"
+        );
+    }
 }
