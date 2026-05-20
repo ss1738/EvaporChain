@@ -107,6 +107,15 @@ pub struct PrimaryAugmentedCircuitShell {
     /// Section R via 127-bit lo+hi limb decomposition, same pattern
     /// as Section C's coord-limbs).
     pub cf_u_running: ark_bn254::Fq,
+    /// CF running instance `comm_w` (Grumpkin point witness
+    /// commitment). Native Bn254Fr coords; absorbed directly into
+    /// Section R as 2 `FpVar<Bn254Fr>` slots — no limb decomp.
+    pub cf_comm_w_x: Bn254Fr,
+    pub cf_comm_w_y: Bn254Fr,
+    /// CF running instance `comm_e` (Grumpkin point error
+    /// commitment). Native Bn254Fr coords; absorbed directly.
+    pub cf_comm_e_x: Bn254Fr,
+    pub cf_comm_e_y: Bn254Fr,
     /// Neptune sponge params for the in-circuit `cf_x_digest`
     /// gadget (Section C). Constructed once by the caller via
     /// `params_from_dump_path("neptune-bn256-standard.json")` and
@@ -136,6 +145,10 @@ impl PrimaryAugmentedCircuitShell {
         cf_x_digest: Bn254Fr,
         current_step_hash: Bn254Fr,
         cf_u_running: ark_bn254::Fq,
+        cf_comm_w_x: Bn254Fr,
+        cf_comm_w_y: Bn254Fr,
+        cf_comm_e_x: Bn254Fr,
+        cf_comm_e_y: Bn254Fr,
         params: crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
     ) -> Self {
         Self {
@@ -150,6 +163,10 @@ impl PrimaryAugmentedCircuitShell {
             cf_x_digest,
             current_step_hash,
             cf_u_running,
+            cf_comm_w_x,
+            cf_comm_w_y,
+            cf_comm_e_x,
+            cf_comm_e_y,
             params,
             sections_wired: false,
         }
@@ -243,6 +260,18 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
         let cf_u_lo = Boolean::le_bits_to_fp(&cf_u_bits[..cf_u_split])?;
         let cf_u_hi = Boolean::le_bits_to_fp(&cf_u_bits[cf_u_split..])?;
 
+        // CF running instance commitments comm_w, comm_e — Grumpkin
+        // points with NATIVE Bn254Fr coords (Grumpkin.base = Bn254Fr
+        // = circuit field), absorbed directly without limb decomp.
+        let cf_comm_w_x_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_w_x))?;
+        let cf_comm_w_y_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_w_y))?;
+        let cf_comm_e_x_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_e_x))?;
+        let cf_comm_e_y_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(self.cf_comm_e_y))?;
+
         let r_absorb: Vec<FpVar<Bn254Fr>> = vec![
             pp_hash_var.clone(),
             i_var.clone(),
@@ -252,6 +281,10 @@ impl ConstraintSynthesizer<Bn254Fr> for PrimaryAugmentedCircuitShell {
             cf_x_digest_var.clone(),
             cf_u_lo,
             cf_u_hi,
+            cf_comm_w_x_var,
+            cf_comm_w_y_var,
+            cf_comm_e_x_var,
+            cf_comm_e_y_var,
         ];
         let computed_step_hash =
             crate::section2_gadget::enforce_neptune_sponge_primary(
@@ -314,6 +347,10 @@ mod tests {
         z_i1: Bn254Fr,
         cf_x_digest: Bn254Fr,
         cf_u_running: ark_bn254::Fq,
+        cf_comm_w_x: Bn254Fr,
+        cf_comm_w_y: Bn254Fr,
+        cf_comm_e_x: Bn254Fr,
+        cf_comm_e_y: Bn254Fr,
     ) -> Bn254Fr {
         use crate::neptune_reference::neptune_hash_primary;
         use crate::scalar_adapter::{ark_fr_to_primary, primary_to_ark_fr};
@@ -335,8 +372,10 @@ mod tests {
         };
         let cf_u_lo = pack_le_to_fr(&bits[..split]);
         let cf_u_hi = pack_le_to_fr(&bits[split..]);
-        let absorbed: [_; 8] = [
-            pp_hash, i, z_0, z_i, z_i1, cf_x_digest, cf_u_lo, cf_u_hi,
+        let absorbed: [_; 12] = [
+            pp_hash, i, z_0, z_i, z_i1, cf_x_digest,
+            cf_u_lo, cf_u_hi,
+            cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
         ];
         let absorbed_nova = absorbed.map(ark_fr_to_primary);
         primary_to_ark_fr(neptune_hash_primary(&absorbed_nova))
@@ -359,10 +398,17 @@ mod tests {
         // Pick a non-trivial cf_u_running so its limb decomp is
         // exercised meaningfully (not all-zero, not all-one).
         let cf_u_running = ark_bn254::Fq::rand(&mut rng);
+        // Pick non-trivial CF commitment coords so the absorbs are
+        // exercised meaningfully (not all-zero).
+        let cf_comm_w_x = Bn254Fr::rand(&mut rng);
+        let cf_comm_w_y = Bn254Fr::rand(&mut rng);
+        let cf_comm_e_x = Bn254Fr::rand(&mut rng);
+        let cf_comm_e_y = Bn254Fr::rand(&mut rng);
         // Section R: compute the REAL current_step_hash so its
         // binding is satisfiable too.
         let current_step_hash = compute_current_step_hash_native(
             pp_hash, i, z_0, z_i, z_i1, cf_x_digest, cf_u_running,
+            cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
         );
         let params = crate::neptune_permutation_gadget::params_from_dump_path(
             concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
@@ -380,6 +426,10 @@ mod tests {
             cf_x_digest,
             current_step_hash,
             cf_u_running,
+            cf_comm_w_x,
+            cf_comm_w_y,
+            cf_comm_e_x,
+            cf_comm_e_y,
             params,
         )
     }
@@ -487,6 +537,22 @@ mod tests {
         assert!(
             !cs.is_satisfied().expect("is_satisfied"),
             "tampered pp_hash MUST break Section R's transcript binding"
+        );
+    }
+
+    /// SECTION R NON-VACUITY (CF commitment path): tamper
+    /// `cf_comm_w_x` (CF running comm_w native Fr coord) → Section R
+    /// hash differs → CS UNSAT. Proves the CF instance commitments
+    /// are genuinely bound through the transcript.
+    #[test]
+    fn shell_section_r_wrong_cf_comm_w_x_breaks_cs() {
+        let mut c = consistent_step();
+        c.cf_comm_w_x = c.cf_comm_w_x + Bn254Fr::from(1u64);
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        c.generate_constraints(cs.clone()).expect("synthesis");
+        assert!(
+            !cs.is_satisfied().expect("is_satisfied"),
+            "tampered cf_comm_w_x MUST break Section R (CF comm absorb)"
         );
     }
 
