@@ -1336,6 +1336,39 @@ artifacts in one place for review, surfaces any gaps. (a) BESPOKE
 alignment becomes a focused crypto-pass; (b) IVC integration
 becomes a focused engineering pass; (d) deployment after both.
 
+### 1C INCREMENT (b)-1 — ✅ PRIMARY STATE THREADING [V]
+(2026-05-20, Mini3, box, HEAD `d9ce77b1`,
+`cyclefold_shell_chain ... 1 passed; 12.69 s`)
+
+New module `cyclefold_shell_chain.rs`:
+[`build_shell_for_step`] threads step `i-1`'s outputs into step
+`i`'s inputs (`z_{i+1}→z_i`, `current_step_hash→previous_step_
+hash`, `primary_u_new→u_R`, `primary_x_new→X_R`). Two-step chain
+test synthesises shell_0 and shell_1, both CSes satisfied, plus
+explicit `step_1_z_i == step_0_z_{i+1}` cross-check assertion.
+
+**Honest scope notes preserved inline** (deferred sub-steps):
+- (b)-2: CF running instance threading via 4a's fold accumulator
+  (`cf_u_running`, `cf_comm_*`, `cf_x_vec` must be folded via
+  NIFS-on-Grumpkin across steps).
+- (b)-3: `comm_T` chained from real per-step NIFS prove output
+  (currently independent random per step).
+- (b)-4: aux-side validation across the chain.
+
+Native r-from-RO + current_step_hash helpers inlined locally
+(small duplication vs invasive module-pub refactor of test-only
+helpers in `cyclefold_primary_augmented_circuit` — duplication
+is preferable to API churn at this depth).
+
+**Twelfth consecutive first-try pass** (counting the trivial
+borrow-after-move compile fix as part of the standard write→box→
+fix rhythm; the underlying threading logic was right first time).
+
+Audit dossier updated to include this milestone (next commit).
+Remaining: (b)-2 CF accumulator integration, (a) BESPOKE
+alignment, (c) Solidity verifier prototype + audit prep, (d) L2
+deployment, (e) external audit.
+
 ---
 
 # EvaporChain — Remaining Work to Mainnet (Sequential Flow)
