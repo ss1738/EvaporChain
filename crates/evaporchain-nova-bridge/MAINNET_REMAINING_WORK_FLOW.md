@@ -1155,13 +1155,33 @@ verifier deploys trivially.
   optimization" effort is dropped. L2 deployment is the same
   Solidity contract, just deployed to a different chain.
 
-**NEXT [code]:** resume 4b-finish: increment 4b-β-4c — Section R
-absorbs the rest of the CF running instance (comm_w/comm_e
-native Grumpkin points + x_vec Bn254Fq limbs). Same pattern as
-β-4b's cf_u_running limb absorb, just extended to multiple fields.
-Then 4b-β-5 Section F (the substantive remaining novel piece —
-primary NIFS fold-relation verification). Then increment 7 audit
-prep / write-up.
+### 1C INCREMENT 4b-β-4c — ✅ SECTION R CF COMMITMENTS ABSORB [V]
+(2026-05-20, Mini3, box, HEAD `1932ee2a`,
+`cyclefold_primary_augmented_circuit ... 9 passed; 0 failed;
+4.12 s`)
+
+Section R sponge absorb extended to 12 elements:
+`[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest, cf_u_lo, cf_u_hi,
+cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y]`. New non-
+vacuity gate `shell_section_r_wrong_cf_comm_w_x_breaks_cs` passed.
+
+**`PRIMARY_SHELL_PROBE: 8,870 cons / 7,742 witness / 8 instance`**
+— 4 native `FpVar<Bn254Fr>` absorbs cost just **+12 cons** vs
++1,230 for the cf_u limb absorb (β-4b). Native vs non-native is
+the dominant cost gradient in Section R; further x_vec Bn254Fq
+absorbs will each carry ~1,230 cons of limb-decomp overhead.
+
+**Fifth consecutive first-try pass this micro-arc.**
+
+**NEXT [code]:** increment 4b-β-4d — Section R absorbs the CF
+instance's `x_vec` (Bn254Fq vector — for `CycleFoldInstanceCircuit`
+length is `num_io = 21` per increment-2 measurement). Each element
+needs its own EmulatedFpVar witness + 127-bit limb decomp + 2
+Neptune absorbs, so ~21 × ~1,230 ≈ +25k cons expected — the shell
+roughly triples in cons. Then 4b-β-5 Section F (primary NIFS
+fold-relation verification — the substantive remaining novel
+piece). Then increment 7 audit prep / write-up. L2 deployment
+(now-locked target) is downstream of audit prep.
 
 ---
 
