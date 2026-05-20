@@ -45,6 +45,78 @@ use crate::scalar_adapter::{ark_fr_to_primary, primary_to_ark_fr, PrimaryScalar}
 use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr, G1Affine};
 use ark_ff::{BigInteger, PrimeField};
 
+use ark_r1cs_std::{
+    boolean::Boolean, convert::ToBitsGadget, fields::emulated_fp::EmulatedFpVar,
+    fields::fp::FpVar,
+};
+use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+
+/// In-circuit `cf_x_digest` gadget — produces the same Bn254Fr
+/// digest as [`compute_cf_x_digest_native`] for the same `(P, s,
+/// Q)` inputs. Inputs `p_x/p_y/q_x/q_y` are
+/// `EmulatedFpVar<Bn254Fq, Bn254Fr>` (BN254 G1 coords; non-native
+/// in this Bn254Fr circuit); `s` is native `FpVar<Bn254Fr>`.
+///
+/// The encoding mirrors the native oracle exactly:
+/// - For each Bn254Fq coord, `to_bits_le()` (254 LE bits), split
+///   at bit 127, pack each half into an `FpVar<Bn254Fr>` via
+///   `Boolean::le_bits_to_fp`. Bit-exact w.r.t. the native split.
+/// - Absorb 9 elements `[p_x_lo, p_x_hi, p_y_lo, p_y_hi, s,
+///   q_x_lo, q_x_hi, q_y_lo, q_y_hi]` into `enforce_neptune_
+///   sponge_primary` (the BESPOKE-aligned in-circuit Neptune
+///   sponge).
+/// - Apply 250-bit LE truncation to the squeezed digest (matches
+///   `neptune_hash_primary`'s `NUM_HASH_BITS=250` squeeze, per
+///   `section2_gadget` `gadget_bytes_le[31] &= 0x03;` reconciliation
+///   pattern).
+pub fn enforce_cf_x_digest(
+    cs: ConstraintSystemRef<Bn254Fr>,
+    p_x: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    p_y: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    s: &FpVar<Bn254Fr>,
+    q_x: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    q_y: &EmulatedFpVar<Bn254Fq, Bn254Fr>,
+    params: &crate::neptune_permutation_gadget::NeptuneParams<Bn254Fr>,
+) -> Result<FpVar<Bn254Fr>, SynthesisError> {
+    let limbs_for = |v: &EmulatedFpVar<Bn254Fq, Bn254Fr>|
+     -> Result<(FpVar<Bn254Fr>, FpVar<Bn254Fr>), SynthesisError> {
+        let bits = v.to_bits_le()?;
+        let split = 127usize.min(bits.len());
+        let lo_bits = &bits[..split];
+        let hi_bits = &bits[split..];
+        let lo = Boolean::le_bits_to_fp(lo_bits)?;
+        let hi = Boolean::le_bits_to_fp(hi_bits)?;
+        Ok((lo, hi))
+    };
+
+    let (p_x_lo, p_x_hi) = limbs_for(p_x)?;
+    let (p_y_lo, p_y_hi) = limbs_for(p_y)?;
+    let (q_x_lo, q_x_hi) = limbs_for(q_x)?;
+    let (q_y_lo, q_y_hi) = limbs_for(q_y)?;
+
+    let inputs = vec![
+        p_x_lo,
+        p_x_hi,
+        p_y_lo,
+        p_y_hi,
+        s.clone(),
+        q_x_lo,
+        q_x_hi,
+        q_y_lo,
+        q_y_hi,
+    ];
+
+    let raw =
+        crate::section2_gadget::enforce_neptune_sponge_primary(cs, params, &inputs)?;
+
+    // 250-bit LE truncation (matches NUM_HASH_BITS=250 native
+    // squeeze). Bits 250..254 forced to 0 by repacking the first 250.
+    let raw_bits = raw.to_bits_le()?;
+    let trunc_bits = &raw_bits[..250usize.min(raw_bits.len())];
+    let truncated = Boolean::le_bits_to_fp(trunc_bits)?;
+    Ok(truncated)
+}
+
 /// Split a `Bn254Fq` into `(lo, hi)` 127-bit halves represented as
 /// `Bn254Fr` elements. Bit-exact and reversible (the bit-level
 /// concatenation `hi << 127 | lo` recovers the original Fq value).
@@ -194,5 +266,75 @@ mod tests {
                 assert!(!b, "hi padding bit {idx} must be 0");
             }
         }
+    }
+
+    /// 1C INCREMENT 4b-β-2 ORACLE-MATCH GATE: the in-circuit
+    /// [`enforce_cf_x_digest`] gadget produces the same Bn254Fr
+    /// digest as [`compute_cf_x_digest_native`] for the same
+    /// `(P, s, Q)`. If they diverge, the in-circuit gadget binding
+    /// would commit to a *different* value than the primary's
+    /// public IO — a soundness break.
+    #[test]
+    fn enforce_cf_x_digest_matches_native_oracle() {
+        use ark_r1cs_std::alloc::AllocVar;
+        use ark_r1cs_std::eq::EqGadget;
+        use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
+        use ark_relations::r1cs::ConstraintSystem;
+
+        let mut rng = test_rng();
+        let (p, s, q) = random_tuple(&mut rng);
+        let native_digest = compute_cf_x_digest_native(p, s, q);
+
+        let cs = ConstraintSystem::<Bn254Fr>::new_ref();
+        // Allocate (P, s, Q) as witnesses.
+        let p_x_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(p.x),
+        )
+        .unwrap();
+        let p_y_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(p.y),
+        )
+        .unwrap();
+        let s_var = FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(s)).unwrap();
+        let q_x_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(q.x),
+        )
+        .unwrap();
+        let q_y_var = EmulatedFpVar::<Bn254Fq, Bn254Fr>::new_witness(
+            cs.clone(),
+            || Ok(q.y),
+        )
+        .unwrap();
+
+        let params = crate::neptune_permutation_gadget::params_from_dump_path(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
+        )
+        .expect("load neptune params from crate-relative dump");
+
+        let gadget_digest = enforce_cf_x_digest(
+            cs.clone(),
+            &p_x_var,
+            &p_y_var,
+            &s_var,
+            &q_x_var,
+            &q_y_var,
+            &params,
+        )
+        .expect("gadget synth");
+
+        // Allocate the native digest as a witness and enforce equality.
+        let native_var =
+            FpVar::<Bn254Fr>::new_witness(cs.clone(), || Ok(native_digest)).unwrap();
+        gadget_digest
+            .enforce_equal(&native_var)
+            .expect("enforce_equal");
+
+        assert!(
+            cs.is_satisfied().expect("is_satisfied"),
+            "in-circuit cf_x_digest must equal native oracle"
+        );
     }
 }
