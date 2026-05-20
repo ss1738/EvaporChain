@@ -261,12 +261,15 @@ mod tests {
         use crate::cyclefold_fold_homomorphism::CycleFoldRunningInstance;
         use crate::cyclefold_ivc_accumulator::bridge_cf_tuple;
         use ark_ec::CurveGroup;
+        use ark_std::rand::SeedableRng;
         use nova_snark::nova::nifs::NIFS;
         use nova_snark::provider::GrumpkinEngine;
         use nova_snark::r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
         use nova_snark::traits::ROConstants;
 
-        let mut rng = test_rng();
+        // Concrete StdRng so the closure's &mut StdRng param type
+        // matches (test_rng() returns `impl Rng`, opaque).
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
         let params = crate::neptune_permutation_gadget::params_from_dump_path(
             concat!(env!("CARGO_MANIFEST_DIR"), "/neptune-bn256-standard.json"),
         )
