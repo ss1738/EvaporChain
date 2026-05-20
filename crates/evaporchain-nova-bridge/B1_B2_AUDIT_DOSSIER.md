@@ -63,7 +63,7 @@ practical.
 | (c)-2c | `foundry-bench/BN254G1.sol` + BenchBN254G1 | EIP-196 BN254 G1 precompile gas anchor (R4 mitigation measured) | 5/5 first-try | `5f6dfe1f` |
 | (c)-2d | `cyclefold_n_aux_scaling_probe` | ppsnark n_aux scaling vs R1CS size (R5 falsifier) | 5/5 shapes (8/32/128/512/2048 cons); falsifier did NOT fire | `de9a9aa1` |
 | (d)-1 | `s4_msm_gadget::predict_native_grumpkin_msm_size_for_recursion_circuit` | Groth16-wrap circuit cs.num_constraints() probe (§7 step 3 discipline gate) | 4/4 k-values (1/2/4/8); per-base=2,533 cons; total at n_aux=16,384 ~43.5M cons | (existing, re-run 2026-05-20) |
-| (d)-2 | `groth16_wrapper::recursion_decider_groth16_*` | Groth16 setup→prove→verify on RecursionDeciderCircuit (§7 step 1) + Groth16-level non-vacuity (tampered witness rejected) + n=64 scaling smoke | 3/3 first-try, 2.67 s release for all three | `2785f818`+`8a5c…` |
+| (d)-2 | `groth16_wrapper::recursion_decider_groth16_*` | Groth16 setup→prove→verify on RecursionDeciderCircuit (§7 step 1) + Groth16-level non-vacuity (tampered witness rejected) + n=64 scaling smoke | 3/3 first-try, 2.67 s release for all three | `2785f818`+`e231282e` |
 
 **Aggregate:** 103 commits this arc (`436d2e2d → 58eb0689`); every
 primitive box-validated; **fourteen consecutive first-try passes**
