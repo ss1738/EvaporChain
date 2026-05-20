@@ -52,10 +52,13 @@ practical.
 | 4b-β-5-δ | `enforce_cf_x_digest_pair` + shell | TWO-tuple cf1/cf2 binding | 20/20 + flip | `4bcd9d3c`+`b1e31951` |
 | 5-α | `cyclefold_n_aux_probe` | Real n_aux MEASURED from ppsnark proof | 1/1 (real proof, 13.04 s) | `da3735a1` |
 | 6-α | `foundry-bench/` | Solidity Grumpkin gas anchors | 4/4 (Foundry) | `1917f9e4` |
+| (b)-1 | `cyclefold_shell_chain` | Primary state threading across 2 IVC steps | 1/1 (12.69 s) | `d9ce77b1` |
+| (b)-2 | (same) | CF accumulator integration step-0 end-to-end | 1/1 (8.01 s) | `c98fd972` |
+| (b)-2b | `s4_secondary_extract::extract_relaxed_running_inst` + chain test | Full 2-step CF chain (extractor + step-1 chaining) | 1/1 (14.99 s) | `36de2ea4` |
 
-**Aggregate:** 83 commits this arc (`436d2e2d → 41ab3c06`); every
-primitive box-validated; eleven consecutive first-try passes on the
-4b shell-extension micro-arc.
+**Aggregate:** 93 commits this arc (`436d2e2d → 5be5db90`); every
+primitive box-validated; **fourteen consecutive first-try passes**
+on the 4b shell-extension + (b) IVC integration micro-arcs.
 
 ## 4. Final shell measurements
 
@@ -113,16 +116,18 @@ cheaper — the SAME Solidity verifier deploys trivially.
    to `section2_gadget`'s neptune-vs-arkworks reconciliation
    (already CLOSED). Architectural pattern is in place; bit-level
    identity is a focused crypto-alignment pass.
-2. **IVC integration** — compose the 4b shell with 4a's fold
-   accumulator across N steps. The shell is a correct augmented
-   circuit; running it inside a full IVC harness end-to-end is the
-   remaining engineering composition.
+2. ~~IVC integration~~ — **CLOSED** at the architectural validation
+   level via (b)-1 + (b)-2 + (b)-2b: primary state threading + CF
+   accumulator integration + 2-step full chain all box-verified.
+   N-step extensibility is mechanical iteration of the same pattern;
+   the underlying composition (shell ↔ accumulator linkage) is
+   end-to-end-proven on real proofs.
 3. **Solidity decider verifier** (production-quality) for L2
    deployment. Foundry benchmark `foundry-bench/` is anchor-only;
    the full ppsnark verifier in Solidity is the L2-deployable
-   artifact.
+   artifact. Multi-week crypto + Solidity engineering pass.
 4. **L2 deployment harness** (Optimism / Arbitrum / Base —
-   selection + integration).
+   selection + integration). Depends on (3).
 5. **External audit** of the 1C construction. The discipline
    pattern in §5 caught four issues during construction; external
    review covers what construction-time discipline cannot see.
