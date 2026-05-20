@@ -509,4 +509,135 @@ mod tests {
             .expect("verify_recursion_decider must succeed");
         assert!(ok, "Section-A-only Groth16 round-trip must verify");
     }
+
+    /// NON-VACUITY at the GROTH16 LEVEL: tamper the witness's
+    /// `claimed_ck_hat` and confirm the Groth16 pipeline rejects.
+    /// The CS-level non-vacuity is already pinned by
+    /// `recursion_decider_circuit::tests::section_a_wrong_commitment_breaks_cs`;
+    /// this test pins the contract END-TO-END through Groth16's
+    /// witness assignment + prove, catching any case where the
+    /// SNARK layer could mask a CS violation.
+    ///
+    /// Expected behavior: arkworks Groth16 `prove` on an unsatisfied
+    /// CS returns `SynthesisError::Unsatisfiable` (the prover cannot
+    /// construct a witness assignment that satisfies the keyed
+    /// circuit). If that ever changes (e.g. prove returns a proof
+    /// that verify rejects), the test still passes via the
+    /// alternate-failure branch below — the contract is "tampered
+    /// witness CANNOT round-trip", not the specific failure mode.
+    #[test]
+    #[allow(deprecated)]
+    fn recursion_decider_groth16_tampered_witness_rejected() {
+        use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+        use ark_ec::CurveGroup;
+        use crate::grumpkin_config::GrumpkinConfig;
+        use crate::recursion_decider_circuit::RecursionDeciderCircuit;
+
+        let g = Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR);
+        let g2 = g + g;
+        let g3 = g2 + g;
+        let g5 = g3 + g2;
+        let h = g + g + g + g + g + g + g;
+        let bases: Vec<_> = [g, g2, g3, g5]
+            .into_iter()
+            .map(|p| p.into_affine())
+            .collect();
+        let h_aff = h.into_affine();
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(7);
+        let (pk, vk) =
+            setup_recursion_decider(bases.clone(), h_aff, &mut rng)
+                .expect("setup");
+
+        let scalars = vec![
+            Bn254Fq::from(2u64),
+            Bn254Fq::from(3u64),
+            Bn254Fq::from(5u64),
+            Bn254Fq::from(7u64),
+        ];
+        let blind = Bn254Fq::from(11u64);
+        // CORRECT claimed_ck_hat:
+        let correct_claimed = g * scalars[0]
+            + g2 * scalars[1]
+            + g3 * scalars[2]
+            + g5 * scalars[3]
+            + h * blind;
+        // TAMPERED: shift the claim by +G. The MSM binding must
+        // refuse to round-trip through Groth16.
+        let tampered = correct_claimed + g;
+
+        let bad_circuit = RecursionDeciderCircuit::section_a_only(
+            scalars, bases, blind, h_aff, tampered,
+        );
+
+        match prove_recursion_decider(&pk, bad_circuit, &mut rng) {
+            // Prove rejected — the expected and cleanest failure.
+            Err(_) => { /* contract satisfied */ }
+            // Prove succeeded (unexpected) — verify MUST reject.
+            Ok(proof) => {
+                let ok = verify_recursion_decider(&vk, &[], &proof)
+                    .expect("verify must not error on tampered proof");
+                assert!(
+                    !ok,
+                    "tampered witness produced a verifying proof — \
+                     Section A is VACUOUS at the Groth16 level"
+                );
+            }
+        }
+    }
+
+    /// SCALING SMOKE: same pipeline at n=64. Catches any
+    /// pipeline-level issue (memory layout, key serialisation,
+    /// witness construction) that emerges with more bases before
+    /// paying for the full n_aux=16,384 setup (~hours on the Mini).
+    /// Per (d)-1: at n=64, total cons ≈ 2,521 + 64·2,533 ≈ 164k —
+    /// Groth16 setup should land sub-30 s release-mode on a Mini.
+    #[test]
+    #[allow(deprecated)]
+    fn recursion_decider_groth16_roundtrip_n64_smoke() {
+        use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+        use ark_ec::CurveGroup;
+        use crate::grumpkin_config::GrumpkinConfig;
+        use crate::recursion_decider_circuit::RecursionDeciderCircuit;
+
+        let n: usize = 64;
+        let g = Projective::<GrumpkinConfig>::from(GrumpkinConfig::GENERATOR);
+        let h_pt = g * Bn254Fq::from(7u64);
+
+        // Doubling-chain bases (real points, distinct).
+        let mut bases = Vec::with_capacity(n);
+        let mut cur = g;
+        for _ in 0..n {
+            bases.push(cur.into_affine());
+            cur += g;
+        }
+        let h_aff = h_pt.into_affine();
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(64);
+        let (pk, vk) =
+            setup_recursion_decider(bases.clone(), h_aff, &mut rng)
+                .expect("n=64 setup");
+
+        // Pseudo-random scalars from a deterministic seed.
+        let scalars: Vec<Bn254Fq> = (0..n)
+            .map(|i| Bn254Fq::from((i as u64).wrapping_mul(2654435761) ^ 0xABCD))
+            .collect();
+        let blind = Bn254Fq::from(11u64);
+        // Consistent claimed_ck_hat.
+        let mut claimed = h_pt * blind;
+        let mut cur = g;
+        for s in &scalars {
+            claimed += cur * *s;
+            cur += g;
+        }
+
+        let circuit = RecursionDeciderCircuit::section_a_only(
+            scalars, bases, blind, h_aff, claimed,
+        );
+        let proof = prove_recursion_decider(&pk, circuit, &mut rng)
+            .expect("n=64 prove");
+        let ok = verify_recursion_decider(&vk, &[], &proof)
+            .expect("n=64 verify");
+        assert!(ok, "n=64 Section-A Groth16 round-trip must verify");
+    }
 }
