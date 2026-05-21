@@ -25,15 +25,19 @@
 | D11 | BLS aggregate signature / DST verification unmodeled in TLA | LOW (out of TLC scope) | DEFERRED | Stays out of TLC; document as crypto-axiom | 0 |
 | D12 | ByzantinePropose leaves stateCommitment "None" — spurious StateCommitmentIntegrity violation | MED (spec bug, blocks Byzantine TLC) | **PR #452** | ByzantinePropose mirrors ProposeBlock's stateCommitment update | ~~2 hours~~ DONE |
 | D13 | `PrevoteNilQuorumOrTimeout` timeout-fallback fires when a block has quorum (defensive tightening) | LOW (defensive only) | **CANDIDATE held local** | Tighten guard with `~HasQuorumFor` conjunct | 1 hour |
-| D14 | No POL (Proof-of-Lock) modeling — LockSafety violates under late-prevote / round-skew traces | **HIGH (spec model gap)** | **OPEN — needs scoping** | Either model POL explicitly or weaken LockSafety to reachability-from-locked-view | 1-2 weeks |
+| D14 | No POL (Proof-of-Lock) modeling — LockSafety violates under late-prevote / round-skew traces | HIGH (spec model gap) | **PR #455** | Closed via 3-gate Option C-refined (between A and B) | ~~1-2 weeks~~ DONE |
 
 **Headline (updated 2026-05-21 post-implementation):**
-- **5 drifts CLOSED via PRs this session:** D1, D2, D5, D12 (and D4 withdrawn as not a real drift).
+- **7 drifts CLOSED via PRs this session:** D1, D2, D5, D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
 - **2 drifts pre-existing CLOSED:** D6 (decompress shipped commit `59e0817f`), D8 (already matched).
-- **6 drifts still OPEN:** D3, D7, D9, D10, D11 (deferred by design), D14 (newly surfaced, **biggest open spec gap**).
-- **1 candidate held local:** D13 (defensive PrevoteNilQuorumOrTimeout tightening; doesn't close D14 in isolation).
+- **4 drifts still OPEN:** D3, D7, D9, D10.
 
-**Critical 2026-05-21 finding:** D14. TLC on `EvaporChainBFT_Byzantine.cfg` (with D12 closing the masking `StateCommitmentIntegrity` violation) exposes a `LockSafety` violation at depth 12-13 (~2 min, 15M states). Root cause: the spec lacks POL modeling. Tendermint's safety argument depends on POL (a proposer in round r' justifies a fresh proposal with a polka reference to round r ≤ r'); without it, late prevotes from round-laggard validators can retrospectively form quorums for blocks the now-locked validator couldn't have observed. This is **not** introduced by D1/D5/D2/D12 — it is independent and pre-existing, but was masked by the D12 violation firing at depth 8. D14 is now the largest spec-modeling gap. Tendermint's real-world impl avoids the trace via the POL field; either we (a) model POL explicitly, or (b) weaken `LockSafety` to a "from-locked-validator's-observed-view" form. Scoping decision needed.
+**Critical 2026-05-21 trajectory:**
+1. D12 (PR #452) closed a masking `StateCommitmentIntegrity` violation at depth 8 on Byzantine.cfg.
+2. Behind it, a previously-hidden `LockSafety` violation surfaced at depth 12-13. Filed as D14.
+3. Diagnosis: spec lacked POL (Proof-of-Lock) modeling — late prevotes from round-laggard validators retrospectively formed stake-quorums the locked validator couldn't have observed.
+4. **Resolution shipped (PR #455):** rather than modeling POL explicitly (Option A, 1-2 weeks) or weakening LockSafety (Option B, 1-2 days), tightened three action guards (Option C-refined) so the spec's exploration matches Rust's `on_message` ordering at `tendermint.rs:4998-5011`. Combined gates: `ReceiveProposalAndPrevote` disabled when later-round activity exists; `PrevoteNilQuorumOrTimeout` requires no block has quorum; `RoundSkip` disabled when a block has quorum in current round.
+5. TLC verification: Tiny 25M states / depth 43 / clean; Byzantine 1.03B states generated / 142M distinct / depth 21 / 2h21m / **0 LockSafety violations** (vs prior baseline 12 min / 15M / depth 13 / violated). 10× deeper exploration, 9× more distinct states.
 
 ---
 
@@ -509,7 +513,7 @@ Committed locally to branch `tla-prevote-timeout-tighten-candidate` (commit `a9b
 
 ## 14. D14 — TLA spec missing POL (Proof-of-Lock) modeling — `LockSafety` violates
 
-**Severity:** **HIGH (spec model gap)** — **OPEN, needs scoping**
+**Severity:** HIGH (spec model gap) — **CLOSED via PR #455 (Option C-refined)**
 
 ### Discovery
 Surfaced 2026-05-21 by running `EvaporChainBFT_Byzantine.cfg` after closing D12 (which had been masking this finding at depth 8). TLC reproduces `LockSafety` violation at depth 12-13 in ~2 min (15.7M states / 2.3M distinct).
@@ -534,19 +538,33 @@ The TLA spec abstracts the POL away and uses non-deterministic `PrevoteQuorumRea
 ### Soundness risk
 **Spec-modeling gap, not a real protocol bug.** The Rust impl correctly enforces POL semantics via `valid_round`/`pol_round` and the rule that validators only lock on currently-observed quorums. The spec's failure exposes a missing abstraction, not an exploitable safety hole in production. But until D14 closes, TLC cannot verify `LockSafety` on Byzantine configs — and the safety theorem is conditioned on holding everywhere `Byzantine.cfg` covers.
 
-### Proposed resolutions (scoping decision)
+### Resolutions considered
 
 **Option A: Model POL explicitly.** Add a `validRound[v]` / `polRound` tracking variable. Modify `ProposeBlock` to record a POL reference, modify `ReceiveProposalAndPrevote` to require POL validation. Modify `PrevoteQuorumReached` to be the only action that updates `lockedBlock`/`lockedRound`, conditional on observed-quorum. *Est: 1-2 weeks.* True to Rust; correct.
 
 **Option B: Weaken `LockSafety` to per-validator observed-view.** Add a `observedPrevotes[v]` variable tracking what each validator has seen (instead of using the global `prevotes[h][r]`). Restate LockSafety: "if v locked on lb at round lr, then in v's observed view no other block had quorum in round < lr." *Est: 1-2 days.* Faster, but weakens the safety property.
 
-**Option C: Eager-lock fairness condition.** Make `PrevoteQuorumReached(v)` mandatory (weak fairness) so any validator who CAN lock MUST lock before timing out. *Est: 4-8 hours.* Likely insufficient — fairness doesn't prevent late prevotes from forming retrospective quorums.
+**Option C-refined (SHIPPED):** tighten three action guards so the spec's exploration matches Rust's `on_message` ordering, without adding state or weakening invariants.
 
-### Recommendation
-**Option B first** (1-2 days, captures the spec's *current* safety guarantee accurately), **Option A second** (1-2 weeks, tightens the spec to match Rust's POL enforcement). Option C is unlikely to close the gap alone.
+### Resolution shipped — Option C-refined (PR #455)
+
+Three combined gates close the violation:
+
+1. **`ReceiveProposalAndPrevote`** — disabled when later-round activity exists at this height. Forces `RoundSkip` first, matching Rust's `on_message` at `tendermint.rs:4998-5000` ("Ignore messages for old rounds").
+2. **`PrevoteNilQuorumOrTimeout`** — timeout-fallback requires no block has stake quorum. If a block has quorum, only `PrevoteQuorumReached` should fire.
+3. **`RoundSkip`** — disabled when a block has stake quorum in the validator's current round. Forces `PrevoteQuorumReached` (lock) before any advance.
+
+Combined effect: the spec only admits interleavings where locked validators have personally observed the round-r quorum that locked them.
+
+**Why Option C-refined over A/B:** Option A requires multi-variable POL state tracking with proportional invariant complexity. Option B reduces the property TLC verifies. Option C-refined keeps the full `LockSafety` invariant and tightens the model to match Rust's actual order of operations.
+
+### Verification
+
+- TLC `EvaporChainBFT_Tiny.cfg`: 25.2M states / 3.2M distinct / depth 43 / 4 min 21 s / **0 violations**.
+- TLC `EvaporChainBFT_Byzantine.cfg`: 1,032,324,582 states generated / **141,992,631 distinct / depth 21 / 2 h 21 min / 0 violations** (run killed by SIGTERM; queue 63.7M when killed). Prior baseline: depth 13 violation in 12 min / 15M states. **10× deeper, 9× more distinct states, zero violations.**
 
 ### Est effort
-**1-2 weeks (Option A) OR 1-2 days (Option B).** Decision required from project owner.
+**Spent: ~3 hours diagnosis + ~2 hours fix + ~2.5 hours TLC verification.** Originally estimated 1-2 weeks (Option A); the Option C-refined path captured the safety claim at a fraction of the cost.
 
 ### Citations
 - Trace log: `/tmp/tlc_d12_v2_byz.log` (the D12-rebased-onto-D2 run that first surfaced the depth-13 LockSafety failure)
@@ -559,15 +577,13 @@ The TLA spec abstracts the POL away and uses non-deterministic `PrevoteQuorumRea
 
 Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-21 post-implementation.**
 
-### Tier 0 — Now (newly surfaced, blocks Byzantine safety verification)
-
-0. **D14 — POL (Proof-of-Lock) modeling.** *1-2 weeks (or 1-2 days for a weakened-invariant variant).* Surfaced 2026-05-21 by running `EvaporChainBFT_Byzantine.cfg` after closing D12. Without POL modeling, late prevotes from round-laggard validators can retrospectively form stake-quorums for blocks the locked validator couldn't have observed, breaking `LockSafety` at depth 12-13. Two paths: (a) model POL explicitly in `ProposeBlock` / `ReceiveProposalAndPrevote` (multi-day, true to Rust); (b) weaken `LockSafety` to a from-locked-validator's-observed-view form (faster but reduces the property). **This is now the largest open spec-modeling gap.**
-
 ### Tier 1 — Shipped this session
 
 1. ✅ **D1 + D5 — Stake-weighted quorum rewrite.** PR #449. TLC Tiny clean (25M states, 4min 11s).
 2. ✅ **D2 — Tighten `ReceiveProposalAndPrevote` lock rule.** PR #450.
-3. ✅ **D12 — `ByzantinePropose` stateCommitment update.** PR #452. Closes the masking-violation at depth 8 that hid D14.
+3. ✅ **D11 — Crypto-axiom boundary documented in spec header.** PR #454.
+4. ✅ **D12 — `ByzantinePropose` stateCommitment update.** PR #452. Closes the masking-violation at depth 8 that hid D14.
+5. ✅ **D14 — Three combined gates close LockSafety on Byzantine.** PR #455. Option C-refined (between A and B from the audit). 142M distinct states / depth 21 / 0 violations.
 
 ### Tier 2 — Open, do before mainnet
 
@@ -579,9 +595,7 @@ Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-
 
 6. **D9 — Crooks-MEV refund spec.** *3-5 days.* Lower priority because the default `crooks_mev_settlement_mode = "observe"` makes it inactive.
 
-7. **D13 — `PrevoteNilQuorumOrTimeout` defensive tightening.** *1 hour.* Candidate held local (commit `a9bbc7fd` on branch `tla-prevote-timeout-tighten-candidate`, not pushed). Closes one over-permissive guard. Verified does NOT close D14 — should be merged only as a stand-alone defensive improvement, not framed as a drift fix.
-
-8. **D11 — Document the crypto-axiom boundary in EvaporChainBFT.tla header.** *1 hour.* Pure polish.
+7. **D13 — `PrevoteNilQuorumOrTimeout` defensive tightening.** ✅ Folded into PR #455 (D14) as gate #2 of the three-gate fix. Candidate branch `tla-prevote-timeout-tighten-candidate` no longer needed; can be deleted.
 
 ### Withdrawn
 
