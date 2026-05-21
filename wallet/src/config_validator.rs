@@ -909,4 +909,129 @@ mod tests {
         assert!(v.schemas.is_empty());
         assert!(v.migrations.is_empty());
     }
+
+    #[test]
+    fn test_get_schema_covers_lines_169_171() {
+        let mut v = ConfigValidator::new();
+        assert!(v.get_schema("wallet_config").is_none());
+        v.register_schema(sample_schema()).unwrap();
+        let schema = v.get_schema("wallet_config").unwrap();
+        assert_eq!(schema.id, "wallet_config");
+    }
+
+    #[test]
+    fn test_validate_wrong_float_type_covers_lines_251_255() {
+        let mut v = ConfigValidator::new();
+        v.register_schema(sample_schema()).unwrap();
+        let mut config = valid_config();
+        config.insert("gas_multiplier".to_string(), "not_a_float".to_string());
+        let result = v.validate("wallet_config", &config).unwrap();
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|e| e.field == "gas_multiplier" && e.message.contains("not a valid float")));
+    }
+
+    #[test]
+    fn test_register_duplicate_migration_covers_lines_315_318() {
+        let mut v = ConfigValidator::new();
+        v.register_migration(sample_migration()).unwrap();
+        let err = v.register_migration(sample_migration()).unwrap_err();
+        assert!(matches!(err, ConfigValidatorError::DuplicateSchema(_)));
+    }
+
+    #[test]
+    fn test_apply_migration_not_found_covers_lines_334_338() {
+        let mut v = ConfigValidator::new();
+        let mut config = HashMap::new();
+        let err = v.apply_migration("nonexistent_mig", &mut config).unwrap_err();
+        assert!(matches!(err, ConfigValidatorError::MigrationFailed(_)));
+    }
+
+    #[test]
+    fn test_apply_migration_rename_action_covers_lines_356_361() {
+        let mut v = ConfigValidator::new();
+        let mig = ConfigMigration {
+            id: "mig_rename".to_string(),
+            from_version: 1,
+            to_version: 2,
+            description: "rename a field".to_string(),
+            changes: vec![MigrationChange {
+                field: "old_key".to_string(),
+                action: "rename".to_string(),
+                old_value: None,
+                new_value: Some("new_key".to_string()),
+            }],
+            status: MigrationStatus2::Pending,
+            applied_at: None,
+        };
+        v.register_migration(mig).unwrap();
+        let mut config = HashMap::new();
+        config.insert("old_key".to_string(), "myvalue".to_string());
+        v.apply_migration("mig_rename", &mut config).unwrap();
+        assert!(!config.contains_key("old_key"));
+        assert_eq!(config.get("new_key").unwrap(), "myvalue");
+    }
+
+    #[test]
+    fn test_apply_migration_update_action_covers_lines_363_366() {
+        let mut v = ConfigValidator::new();
+        let mig = ConfigMigration {
+            id: "mig_update".to_string(),
+            from_version: 1,
+            to_version: 2,
+            description: "update a field".to_string(),
+            changes: vec![MigrationChange {
+                field: "rpc_url".to_string(),
+                action: "update".to_string(),
+                old_value: None,
+                new_value: Some("https://new-rpc.example.com".to_string()),
+            }],
+            status: MigrationStatus2::Pending,
+            applied_at: None,
+        };
+        v.register_migration(mig).unwrap();
+        let mut config = HashMap::new();
+        config.insert("rpc_url".to_string(), "https://old-rpc.example.com".to_string());
+        v.apply_migration("mig_update", &mut config).unwrap();
+        assert_eq!(config.get("rpc_url").unwrap(), "https://new-rpc.example.com");
+    }
+
+    #[test]
+    fn test_apply_migration_unknown_action_covers_line_368() {
+        let mut v = ConfigValidator::new();
+        let mig = ConfigMigration {
+            id: "mig_unknown".to_string(),
+            from_version: 1,
+            to_version: 2,
+            description: "unknown action".to_string(),
+            changes: vec![MigrationChange {
+                field: "some_field".to_string(),
+                action: "noop".to_string(),
+                old_value: None,
+                new_value: None,
+            }],
+            status: MigrationStatus2::Pending,
+            applied_at: None,
+        };
+        v.register_migration(mig).unwrap();
+        let mut config = HashMap::new();
+        v.apply_migration("mig_unknown", &mut config).unwrap();
+    }
+
+    #[test]
+    fn test_rollback_migration_not_found_covers_lines_387_391() {
+        let mut v = ConfigValidator::new();
+        let mut config = HashMap::new();
+        let err = v.rollback_migration("nonexistent_mig", &mut config).unwrap_err();
+        assert!(matches!(err, ConfigValidatorError::RollbackFailed(_)));
+    }
+
+    #[test]
+    fn test_rollback_migration_no_backup_covers_lines_397_398() {
+        let mut v = ConfigValidator::new();
+        v.register_migration(sample_migration()).unwrap();
+        // Don't apply first, so no backup exists
+        let mut config = HashMap::new();
+        let err = v.rollback_migration("mig_001", &mut config).unwrap_err();
+        assert!(matches!(err, ConfigValidatorError::RollbackFailed(_)));
+    }
 }

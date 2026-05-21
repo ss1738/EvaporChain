@@ -709,4 +709,88 @@ mod tests {
         e.ended_at = Some(e.started_at.clone());
         assert_eq!(e.duration_secs(), Some(0));
     }
+
+    #[test]
+    fn test_epoch_progress_zero_expected_covers_line_113() {
+        let e = EpochInfo::new(1, 0);
+        assert_eq!(e.progress(50, 0), 0.0);
+    }
+
+    #[test]
+    fn test_tps_samples_pruning_covers_lines_219_220() {
+        let mut m = NetworkHealthMonitor::new();
+        for i in 0..520u64 {
+            m.record_tps(i as f64);
+        }
+        assert_eq!(m.tps_samples.len(), 500);
+    }
+
+    #[test]
+    fn test_median_block_time_empty_covers_line_260() {
+        let m = NetworkHealthMonitor::new();
+        assert_eq!(m.median_block_time(), 0);
+    }
+
+    #[test]
+    fn test_health_grade_poor_covers_line_286() {
+        let mut m = NetworkHealthMonitor::new();
+        for i in 1..=5 {
+            m.record_block(i, 15000); // avg 15000ms → Poor
+        }
+        assert_eq!(m.health_grade(), HealthGrade::Poor);
+    }
+
+    #[test]
+    fn test_health_grade_critical_covers_line_288() {
+        let mut m = NetworkHealthMonitor::new();
+        for i in 1..=5 {
+            m.record_block(i, 25000); // avg 25000ms → Critical
+        }
+        assert_eq!(m.health_grade(), HealthGrade::Critical);
+    }
+
+    #[test]
+    fn test_epoch_progress_none_covers_line_326() {
+        let m = NetworkHealthMonitor::new(); // no epoch recorded
+        assert_eq!(m.epoch_progress(100), 0.0);
+    }
+
+    #[test]
+    fn test_grade_description_remaining_variants_covers_line_365() {
+        assert_eq!(
+            NetworkHealthMonitor::grade_description(&HealthGrade::Good),
+            "Normal operation"
+        );
+        assert_eq!(
+            NetworkHealthMonitor::grade_description(&HealthGrade::Fair),
+            "Some delays detected"
+        );
+        assert_eq!(
+            NetworkHealthMonitor::grade_description(&HealthGrade::Poor),
+            "Significant delays"
+        );
+    }
+
+    #[test]
+    fn test_degrade_all_variants_covers_lines_395_398() {
+        // Trigger degrade via health_grade() with reorgs at different initial grades
+        // Good grade (avg 4000ms) + reorg → Fair
+        let mut m = NetworkHealthMonitor::new();
+        for i in 1..=10 { m.record_block(i, 4000); }
+        assert_eq!(m.health_grade(), HealthGrade::Good);
+        m.record_reorg(9, 5);
+        assert_eq!(m.health_grade(), HealthGrade::Fair);
+
+        // Fair grade (avg 7000ms) + reorg → Poor
+        let mut m2 = NetworkHealthMonitor::new();
+        for i in 1..=10 { m2.record_block(i, 7000); }
+        m2.record_reorg(9, 5);
+        assert_eq!(m2.health_grade(), HealthGrade::Poor);
+
+        // Critical grade (avg 25000ms) + reorg → Critical (stays Critical)
+        let mut m3 = NetworkHealthMonitor::new();
+        for i in 1..=10 { m3.record_block(i, 25000); }
+        m3.record_reorg(9, 5);
+        assert_eq!(m3.health_grade(), HealthGrade::Critical);
+    }
 }

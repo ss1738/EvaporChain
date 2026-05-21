@@ -803,4 +803,67 @@ mod tests {
         let default = RuleEngine::load_or_default(&test_path("nonexistent.json"));
         assert!(default.rules.is_empty());
     }
+
+    #[test]
+    fn test_is_in_cooldown_invalid_timestamp_covers_line_161() {
+        let mut rule = NotificationRule::new("r1", "R1");
+        rule.last_triggered = Some("not-a-valid-timestamp".to_string());
+        rule.cooldown_secs = 3600;
+        assert!(!rule.is_in_cooldown()); // invalid ts → false path
+    }
+
+    #[test]
+    fn test_with_gas_builder_covers_lines_245_248() {
+        let ctx = RuleContext::new().with_gas(100);
+        assert_eq!(ctx.gas, Some(100));
+    }
+
+    #[test]
+    fn test_matches_condition_price_below_and_gas_above_covers_lines_270_272() {
+        let ctx = RuleContext::new()
+            .with_price(5.0)
+            .with_gas(50);
+        assert!(ctx.matches_condition(&RuleCondition::PriceBelow(10.0)));
+        assert!(!ctx.matches_condition(&RuleCondition::PriceBelow(3.0)));
+        assert!(ctx.matches_condition(&RuleCondition::GasAbove(40)));
+        assert!(!ctx.matches_condition(&RuleCondition::GasAbove(60)));
+    }
+
+    #[test]
+    fn test_rule_context_default_covers_lines_279_281() {
+        let ctx = RuleContext::default();
+        assert!(ctx.balance.is_none());
+        assert!(!ctx.has_incoming);
+    }
+
+    #[test]
+    fn test_get_rule_mut_list_active_rules_covers_lines_350_359() {
+        let mut engine = RuleEngine::new();
+        engine.add_rule(NotificationRule::new("r1", "Rule 1")).unwrap();
+        engine.add_rule(NotificationRule::new("r2", "Rule 2")).unwrap();
+        assert!(engine.get_rule_mut("r1").is_some());
+        let all = engine.list_rules();
+        assert_eq!(all.len(), 2);
+        let active = engine.active_rules();
+        assert_eq!(active.len(), 2);
+    }
+
+    #[test]
+    fn test_history_prune_covers_line_394() {
+        let mut engine = RuleEngine::new();
+        engine.add_rule(
+            NotificationRule::new("big", "Big Rule")
+                .with_condition(RuleCondition::NewIncoming)
+                .with_cooldown(0),
+        ).unwrap();
+        // Trigger 501+ times to overflow MAX_HISTORY (500)
+        let ctx = RuleContext::new().with_incoming();
+        for _ in 0..=500 {
+            if let Some(r) = engine.get_rule_mut("big") {
+                r.last_triggered = None; // reset cooldown each time
+            }
+            engine.evaluate_all(&ctx);
+        }
+        assert!(engine.history.len() <= 500);
+    }
 }

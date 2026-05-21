@@ -678,4 +678,102 @@ mod tests {
         assert!(t.is_empty());
         assert_eq!(t.capacity, 10000);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_from_io_error_covers_lines_25_27() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let ae = AnalyticsError::from(io_err);
+        assert!(matches!(ae, AnalyticsError::Io(_)));
+        assert!(ae.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_from_json_error_covers_lines_30_32() {
+        let json_err: serde_json::Error =
+            serde_json::from_str::<serde_json::Value>("{bad}").unwrap_err();
+        let ae = AnalyticsError::from(json_err);
+        assert!(matches!(ae, AnalyticsError::Json(_)));
+    }
+
+    #[test]
+    fn test_event_labels_stake_withdraw_nft_mint_covers_lines_99_103() {
+        assert_eq!(EventType::StakeWithdraw.label(), "Unstake");
+        assert_eq!(EventType::NftMint.label(), "NFT Mint");
+    }
+
+    #[test]
+    fn test_trend_with_previous_period_data_covers_lines_382_398() {
+        let mut t = AnalyticsTracker::new();
+        // 36h ago falls in the previous-period window for Period::Day (24h–48h back)
+        let ts_36h = (chrono::Utc::now() - chrono::Duration::hours(36)).to_rfc3339();
+        t.record_at(&ts_36h, EventType::TransferIn, 5_000, 5_000, "prev_in");
+        t.record_at(&ts_36h, EventType::TransferOut, 1_000, 4_000, "prev_out");
+        t.record_at(&ts_36h, EventType::EnergySpend, 200, 3_800, "prev_energy");
+        t.record_at(&ts_36h, EventType::GasFee, 50, 3_750, "prev_gas");
+        let trend = t.trend(Period::Day);
+        assert!(trend.previous.total_inflow > 0);
+        assert!(trend.previous.total_outflow > 0);
+        assert!(trend.previous.energy_spent > 0);
+        assert!(trend.previous.gas_spent > 0);
+    }
+
+    #[test]
+    fn test_trend_prev_transfer_covers_lines_394_398() {
+        let mut t = AnalyticsTracker::new();
+        let ts_36h = (chrono::Utc::now() - chrono::Duration::hours(36)).to_rfc3339();
+        t.record_at(&ts_36h, EventType::TransferIn, 10_000, 10_000, "prev_txin");
+        let trend = t.trend(Period::Day);
+        assert_eq!(trend.previous.transfer_count, 1);
+        assert_eq!(trend.previous.largest_transfer, 10_000);
+    }
+
+    #[test]
+    fn test_trend_empty_tracker_zero_pct_covers_line_419() {
+        let t = AnalyticsTracker::new();
+        let trend = t.trend(Period::Day);
+        assert_eq!(trend.outflow_change_pct, 0.0);
+        assert_eq!(trend.inflow_change_pct, 0.0);
+        assert_eq!(trend.energy_change_pct, 0.0);
+        assert_eq!(trend.volume_change_pct, 0.0);
+    }
+
+    #[test]
+    fn test_event_labels_token_deploy_bridge_out_covers_lines_104_105() {
+        assert_eq!(EventType::TokenDeploy.label(), "Token Deploy");
+        assert_eq!(EventType::BridgeOut.label(), "Bridge Out");
+    }
+
+    #[test]
+    fn test_period_cutoff_week_month_covers_lines_125_126() {
+        let t = AnalyticsTracker::new();
+        let _ = t.in_period(Period::Week);
+        let _ = t.in_period(Period::Month);
+    }
+
+    #[test]
+    fn test_record_at_capacity_eviction_covers_line_265() {
+        let mut t = AnalyticsTracker::with_capacity(3);
+        let ts = "2025-01-01T00:00:00Z";
+        for i in 0u64..5 {
+            t.record_at(ts, EventType::TransferOut, 100, 1000 - i, &format!("tx_{}", i));
+        }
+        assert_eq!(t.len(), 3);
+        assert_eq!(t.data_points[0].reference, "tx_2");
+    }
+
+    #[test]
+    fn test_trend_week_month_alltime_covers_lines_359_361() {
+        let t = AnalyticsTracker::new();
+        let _ = t.trend(Period::Week);
+        let _ = t.trend(Period::Month);
+        let _ = t.trend(Period::AllTime);
+    }
+
+    #[test]
+    fn test_default_analytics_path_covers_lines_466_468() {
+        let p = default_analytics_path();
+        assert!(p.to_string_lossy().contains("analytics.json"));
+    }
 }

@@ -690,4 +690,48 @@ mod tests {
             "Custom(MyWallet)"
         );
     }
+
+    #[test]
+    fn test_source_wallet_display_remaining_variants_covers_lines_47_50() {
+        assert_eq!(SourceWallet::TrustWallet.to_string(), "TrustWallet");
+        assert_eq!(SourceWallet::Ledger.to_string(), "Ledger");
+        assert_eq!(SourceWallet::Trezor.to_string(), "Trezor");
+        assert_eq!(SourceWallet::Exodus.to_string(), "Exodus");
+    }
+
+    #[test]
+    fn test_set_discovered_count_on_completed_job_covers_lines_172_175() {
+        let mut m = WalletMigrator::new();
+        let id = m.start_migration(SourceWallet::MetaMask);
+        m.complete_migration(&id).unwrap();
+        let err = m.discover_accounts(&id, 5).unwrap_err();
+        assert!(matches!(err, MigrationError::InvalidStatus(_)));
+    }
+
+    #[test]
+    fn test_import_account_on_completed_job_covers_lines_193_196() {
+        let mut m = WalletMigrator::new();
+        let id = m.start_migration(SourceWallet::MetaMask);
+        m.complete_migration(&id).unwrap();
+        let account = ImportedAccount {
+            original_address: "0xaaa".into(),
+            new_address: "0xbbb".into(),
+            source: SourceWallet::MetaMask,
+            key_format: KeyFormat::Hex,
+            label: None,
+            imported_at: chrono::Utc::now().to_rfc3339(),
+            balance_snapshot: 100,
+        };
+        let err = m.import_account(&id, account).unwrap_err();
+        assert!(matches!(err, MigrationError::InvalidStatus(_)));
+    }
+
+    #[test]
+    fn test_fail_migration_on_completed_job_covers_lines_254_257() {
+        let mut m = WalletMigrator::new();
+        let id = m.start_migration(SourceWallet::MetaMask);
+        m.complete_migration(&id).unwrap();
+        let err = m.fail_migration(&id, "retry timeout").unwrap_err();
+        assert!(matches!(err, MigrationError::InvalidStatus(_)));
+    }
 }

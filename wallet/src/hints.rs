@@ -198,4 +198,48 @@ mod tests {
         let hint = hint_for_error("could not resolve dns").unwrap();
         assert!(hint.contains("hostname"));
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_key_not_found_hint_covers_lines_36_38() {
+        let hint = hint_for_error("key not found: alice").unwrap();
+        assert!(hint.contains("List accounts"));
+    }
+
+    #[test]
+    fn test_account_quoted_hint_covers_line_35() {
+        let hint = hint_for_error("account 'alice' not in keystore").unwrap();
+        assert!(hint.contains("List accounts"));
+    }
+
+    #[test]
+    fn test_object_not_found_hint_covers_line_53() {
+        let hint = hint_for_error("object not found on chain").unwrap();
+        assert!(hint.contains("evaporated"));
+    }
+
+    #[test]
+    fn test_nft_not_found_hint_covers_line_64() {
+        let hint = hint_for_error("nft not found in collection").unwrap();
+        assert!(hint.contains("nft list"));
+    }
+
+    #[test]
+    fn test_unauthorized_hint_covers_line_67() {
+        let hint = hint_for_error("unauthorized: not owner").unwrap();
+        assert!(hint.contains("owner"));
+    }
+
+    #[test]
+    fn test_file_not_found_hint_covers_line_83() {
+        let hint = hint_for_error("no such file or directory").unwrap();
+        assert!(hint.contains("file path"));
+    }
+
+    #[test]
+    fn test_invalid_hex_hint_covers_line_91() {
+        let hint = hint_for_error("invalid hex string provided").unwrap();
+        assert!(hint.contains("valid hex"));
+    }
 }

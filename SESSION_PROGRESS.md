@@ -6,6 +6,165 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-19 (session 63, continued 4) — coverage push: auto_refresh 76.3%, key_rotation 98.8%
+
+**Focus:** wallet crate auto_refresh.rs + key_rotation.rs
+**Commits shipped:** 1 (94baa33e)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` auto_refresh.rs | 70.3% | 76.3% (286/375) | 3 tests (else branches, config getter) |
+| `wallet` key_rotation.rs | 86.4% | 98.8% (598/605) | 18 tests |
+**Tests added (key_rotation.rs):**
+- with_derivation_path, is_not_expired (no expiry + invalid date), age_days invalid created_at, rotation_event_with_notes
+- policy_with_auto_rotate/notify_before, needs_notification (both branches)
+- rotate_inactive_key_returns_invalid_state (lines 315-318)
+- check_policies_skips_inactive_keys (line 360), check_policies_age_based_reason (line 365)
+- keys_needing_notification + excludes_inactive (lines 385-401)
+- key_chain_from_root_walks_successors (lines 432-437), dangling_successor (lines 438-439)
+- rotation_count (446-448), load_or_default_missing_file (478-480), remove_key_not_found
+**Remaining uncovered:** key_rotation lines 344-345 (history cap drain, needs >500 rotations); auto_refresh execute_cycle/run_loop (all async RPC)
+**What's next:**
+- workspace-wide scan: next tractable substrate crate
+- wallet reputation.rs (88.4%), health.rs (88.6%), metrics.rs (88.7%)
+**Cross-references:** commit 94baa33e
+
+---
+
+## 2026-05-19 (session 63, continued 3) — coverage push: offline.rs 84.6%→95.5%
+
+**Focus:** wallet crate offline.rs — Broadcaster async error paths
+**Commits shipped:** 1 (345ec1f0)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` offline.rs | 84.6% | 95.5% (191/200) | 3 new async tests |
+**Tests added:**
+- `test_broadcast_unsupported_type_returns_err`: other match arm (lines 209-212)
+- `test_broadcast_transfer_missing_to_returns_err`: ok_or_else Err (lines 191-194)
+- `test_broadcast_transfer_missing_amount_returns_err`: ok_or_else Err (lines 195-197)
+**Remaining:** 9 lines = rpc.submit_transfer happy path (needs live node)
+**What's next:**
+- wallet auto_refresh.rs (70.3%, 94 uncovered)
+- wallet key_rotation.rs (86.4%, 65 uncovered)
+- workspace-wide scan for next tractable substrate crate
+**Cross-references:** commit 345ec1f0
+
+---
+
+## 2026-05-19 (session 63, continued 2) — coverage push: account.rs 68.5%→91.2%
+
+**Focus:** wallet crate account.rs — getters, import paths, file I/O, nonce edge case
+**Commits shipped:** 1 (bdf366cf)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` account.rs | 68.5% | 91.2% (322/353) | 9 new tests |
+**Tests added:**
+- `test_cached_account_state_age_secs`: age_secs() lines 49-51
+- `test_keystore_getter/mut/rpc_getter`: three accessor methods (104-116)
+- `test_import_account_first/second`: import_account() + active guard (139-153)
+- `test_import_account_with_address_first/second`: import_account_with_address() (168-187)
+- `test_save_and_load_roundtrip`: AccountManager::load() + save() file I/O (92-101)
+- `test_increment_nonce_no_cache_entry_is_noop`: address found, no cache entry → inner if-let not taken (line 315)
+**Remaining uncovered:** refresh_balance/refresh_all async (need RPC mock) + line 200 dead code (cache lookup after keystore.remove is always None)
+**What's next:**
+- wallet auto_refresh.rs (70.3%, 94 uncovered)
+- wallet offline.rs (84.6%, 26 uncovered)
+- workspace scan for next tractable substrate crate
+**Cross-references:** commit bdf366cf
+
+---
+
+## 2026-05-19 (session 63, continued) — coverage push: signer.rs 67.7%→100%
+
+**Focus:** wallet crate signer.rs — all set_signature arms, deprecated methods, unlock paths
+**Commits shipped:** 1 (f114520f)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` signer.rs | 67.7% | 100% (569/569) | 7 new tests |
+**Tests added:**
+- `test_unlock_fallback_to_derived_address`: line-97 None arm via corrupted stored address
+- `test_unlock_by_address_covers_lines_104_111`: unlock_by_address()
+- `test_deprecated_sign_transaction_covers_lines_147_152`: deprecated sign_transaction()
+- `test_deprecated_sign_covers_lines_160_167`: deprecated sign()
+- `test_set_signature_standard_variants`: 18 set_signature arms via macro (DeployContract through DeployTemplate)
+- `test_set_signature_noop_variants`: MultiSig + Refund no-op arms
+- `test_set_signature_zk_unshield_debug_asserts`: #[should_panic] covers Unshield|PrivateTransfer debug_assert!(false) arm
+**What's next:**
+- wallet account.rs (68.5%, 85 uncovered lines — largest remaining wallet target)
+- wallet auto_refresh.rs (70.3%, 94 uncovered)
+- workspace scan for next tractable substrate crate
+**Cross-references:** commit f114520f
+
+---
+
+## 2026-05-19 (session 63) — coverage push: gas.rs 85.7%→98.7%
+
+**Focus:** wallet crate gas.rs — all 22 remaining estimate_gas() match arms
+**Commits shipped:** 1 (c757f415)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `wallet` gas.rs | 85.7% | 98.7% (471/477) | 2 new tests, 22 arms covered |
+**Tests added:**
+- `test_estimate_gas_constant_variants`: DeployContract, CallContract, DeployScript, CallScript, ValidatorStake, ValidatorExit, ValidatorClaimStake, Governance(CastVote), Delegate, Undelegate, RotateValidatorKey, ClaimDelegation, Refund
+- `test_estimate_gas_size_dependent_variants`: Shield, Unshield, PrivateTransfer (100k+20k*nullifiers+15k*commitments), Deferred, Blob, MultiSig, UserOp, UpgradeContract, DeployTemplate
+**Fix:** `UserOpTx` struct literal was missing `signature: None, public_key: None` fields → added
+**Remaining:** 6 uncovered lines = `from_rpc()` async (needs live RPC mock — skip)
+**What's next:**
+- wallet signer.rs (78.4%, 64 uncovered — deprecated sign_transaction, sign, unlock_by_address)
+- wallet account.rs (74.4%, 270 uncovered — largest remaining wallet target)
+- Workspace-wide scan for next tractable substrate crate
+**Cross-references:** commit c757f415
+
+---
+
+## 2026-05-19 (session 62, continued) — coverage push: tensor.rs 100%, history.rs 99.6%, retry.rs 99.4%, output.rs 94.2%
+
+**Focus:** Multi-file coverage push: evaporchain-mera + wallet crate
+**Commits shipped:** 4 (74cb3fa5, 8d9930df, 2aabfd5d + session-progress)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `evaporchain-mera` tensor.rs | 83.6% | 100% (131/131) | 6 new tests |
+| `wallet` history.rs | 83.9% | 99.6% (229/230) | 6 new tests |
+| `wallet` retry.rs | 91% | 99.4% (169/170) | 4 new tests |
+| `wallet` output.rs | 87.5% | 94.2% (130/138) | 3 new tests |
+**Tests added:**
+- tensor.rs: zeros(), normalise() non-unit + near-zero no-op, mat_vec() identity + diagonal
+- history.rs: is_empty(), Default::default(), to_csv() all 4 TxOutcome variants, export_csv(), save() nested create_dir_all
+- retry.rs: aggressive() config, transient-then-success sleep path (lines 106-108), is_transient keywords
+- output.rs: print_json() + print_json_error() smoke (json_or json branch skipped — global AtomicBool race)
+**Dead code noted:** retry.rs line 116 `last_error.unwrap()` is structurally unreachable (loop always returns inside body)
+**What's next:**
+- Continue wallet crate: gas.rs (85.7%), offline.rs (84.6%), signer.rs (78.4%)
+- Workspace-wide scan for next tractable substrate crates
+**Cross-references:** commits 74cb3fa5, 8d9930df, 2aabfd5d
+
+---
+
+## 2026-05-19 (session 62) — coverage push: tracker.rs 78→93%, alarm.rs 84→91%
+
+**Focus:** evaporchain-script-lad tracker.rs and evaporchain-causal-chsh alarm.rs coverage sprint
+**Commits shipped:** 1 (b97d4718)
+**Deliverables:**
+| File | Before | After | Notes |
+|---|---|---|---|
+| `evaporchain-script-lad` tracker.rs | ~78% | 92.6% (238/257) | 8 new tests |
+| `evaporchain-causal-chsh` alarm.rs | ~84% | 90.9% (180/198) | 1 new test |
+**Tests added:**
+- tracker.rs: `is_consumed()` all variants, `use_resource` evaporated arm (118-122), `drop_resource` not-live error (140-145), `tick_all` Slot::Evaporated arm (192-195), `snapshot` Consumed/Evaporated slots (214-215), `verdicts()` delegation, `is_empty()`
+- alarm.rs: InputError branch (199-214) triggered via `concurrency_window_secs=1` with blocks 12s apart → 0 concurrent pairs → n_per_bucket < 5
+**Dead code noted:** tracker.rs lines 111-115 (AlreadyConsumed — unreachable from Live slot), 124-127 and 165-168 (Err(e) catch-alls — only 3 OpError variants), 50-56 (Slot::verdict() #[allow(dead_code)])
+**What's next:**
+- `evaporchain-network` service.rs: 81.16% (libp2p event loop, needs multi-node integration harness)
+- Continue scanning workspace for next tractable low-coverage crate
+**Cross-references:** commit b97d4718
+
+---
+
 ## 2026-05-19 (session 61) — coverage push: energy_verkle.rs 93.5%→97.5%
 
 **Focus:** evaporchain-crypto energy_verkle.rs targeted coverage sprint

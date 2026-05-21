@@ -846,4 +846,214 @@ mod tests {
         }
         .evaluate(&vars));
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_from_io_error_covers_lines_35_37() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "test");
+        let se = ScriptError::from(io_err);
+        assert!(matches!(se, ScriptError::Io(_)));
+    }
+
+    #[test]
+    fn test_from_json_error_covers_lines_40_42() {
+        let json_err = serde_json::from_str::<serde_json::Value>("{invalid}").unwrap_err();
+        let se = ScriptError::from(json_err);
+        assert!(matches!(se, ScriptError::Json(_)));
+    }
+
+    #[test]
+    fn test_operation_wait_label_covers_line_81() {
+        assert!(Operation::Wait { seconds: 5 }.label().contains("5s"));
+    }
+
+    #[test]
+    fn test_operation_stake_label_covers_line_83() {
+        let lbl = Operation::Stake {
+            pool_id: "pool1".into(),
+            amount: 200,
+        }
+        .label();
+        assert!(lbl.contains("200"));
+        assert!(lbl.contains("pool1"));
+    }
+
+    #[test]
+    fn test_condition_label_equals_covers_line_128() {
+        let lbl = Condition::Equals {
+            var: "x".into(),
+            value: "ok".into(),
+        }
+        .label();
+        assert!(lbl.contains("=="));
+    }
+
+    #[test]
+    fn test_condition_label_greater_than_covers_line_130() {
+        let lbl = Condition::GreaterThan {
+            var: "x".into(),
+            value: 5,
+        }
+        .label();
+        assert!(lbl.contains("> 5"));
+    }
+
+    #[test]
+    fn test_condition_label_exists_covers_line_131() {
+        let lbl = Condition::Exists { var: "x".into() }.label();
+        assert!(lbl.contains("exists"));
+    }
+
+    #[test]
+    fn test_default_serde_condition_covers_lines_164_169() {
+        let json = r#"{"name":"s","operation":"noop"}"#;
+        let step: Step = serde_json::from_str(json).unwrap();
+        assert_eq!(step.condition, Condition::Always);
+        assert_eq!(step.on_error, OnError::Abort);
+    }
+
+    #[test]
+    fn test_default_serde_max_steps_covers_lines_192_194() {
+        let json = r#"{"name":"s","description":"d","version":"1","author":"a","steps":[{"name":"n","operation":"noop"}]}"#;
+        let script: Script = serde_json::from_str(json).unwrap();
+        assert_eq!(script.max_steps, 100);
+    }
+
+    #[test]
+    fn test_validate_step_empty_name_covers_line_229() {
+        let mut script = make_script();
+        script.steps[0].name = String::new();
+        assert!(matches!(
+            script.validate().unwrap_err(),
+            ScriptError::InvalidScript(_)
+        ));
+    }
+
+    fn make_step(name: &str, op: Operation) -> Step {
+        Step {
+            name: name.to_string(),
+            operation: op,
+            condition: Condition::Always,
+            on_error: OnError::Abort,
+        }
+    }
+
+    fn make_single_step_script(name: &str, op: Operation) -> Script {
+        Script {
+            name: name.to_string(),
+            description: "test".into(),
+            version: "1".into(),
+            author: "a".into(),
+            steps: vec![make_step("step", op)],
+            variables: HashMap::new(),
+            max_steps: 10,
+        }
+    }
+
+    #[test]
+    fn test_refresh_dry_run_covers_lines_370_374() {
+        let script = make_single_step_script(
+            "refresh-dry",
+            Operation::Refresh {
+                object_id: "obj1".into(),
+                energy: 100,
+            },
+        );
+        let mut executor = ScriptExecutor::new(false);
+        let result = executor.execute(&script).unwrap();
+        assert!(result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("obj1"));
+    }
+
+    #[test]
+    fn test_refresh_live_covers_line_372() {
+        let script = make_single_step_script(
+            "refresh-live",
+            Operation::Refresh {
+                object_id: "obj2".into(),
+                energy: 50,
+            },
+        );
+        let mut executor = ScriptExecutor::new(true);
+        let result = executor.execute(&script).unwrap();
+        assert!(!result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("obj2"));
+    }
+
+    #[test]
+    fn test_wait_dry_run_covers_line_403() {
+        let script = make_single_step_script("wait-dry", Operation::Wait { seconds: 3 });
+        let mut executor = ScriptExecutor::new(false);
+        let result = executor.execute(&script).unwrap();
+        assert!(result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("3"));
+    }
+
+    #[test]
+    fn test_wait_live_covers_line_401() {
+        let script = make_single_step_script("wait-live", Operation::Wait { seconds: 1 });
+        let mut executor = ScriptExecutor::new(true);
+        let result = executor.execute(&script).unwrap();
+        assert!(!result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("1s"));
+    }
+
+    #[test]
+    fn test_faucet_dry_run_covers_line_410() {
+        let script = make_single_step_script(
+            "faucet-dry",
+            Operation::Faucet {
+                address: "0xme".into(),
+            },
+        );
+        let mut executor = ScriptExecutor::new(false);
+        let result = executor.execute(&script).unwrap();
+        assert!(result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("0xme"));
+    }
+
+    #[test]
+    fn test_faucet_live_covers_line_408() {
+        let script = make_single_step_script(
+            "faucet-live",
+            Operation::Faucet {
+                address: "0xme".into(),
+            },
+        );
+        let mut executor = ScriptExecutor::new(true);
+        let result = executor.execute(&script).unwrap();
+        assert!(!result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("0xme"));
+    }
+
+    #[test]
+    fn test_stake_dry_run_covers_line_417() {
+        let script = make_single_step_script(
+            "stake-dry",
+            Operation::Stake {
+                pool_id: "pool1".into(),
+                amount: 500,
+            },
+        );
+        let mut executor = ScriptExecutor::new(false);
+        let result = executor.execute(&script).unwrap();
+        assert!(result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("500"));
+    }
+
+    #[test]
+    fn test_stake_live_covers_line_415() {
+        let script = make_single_step_script(
+            "stake-live",
+            Operation::Stake {
+                pool_id: "pool2".into(),
+                amount: 750,
+            },
+        );
+        let mut executor = ScriptExecutor::new(true);
+        let result = executor.execute(&script).unwrap();
+        assert!(!result.step_results[0].output.contains("DRY-RUN"));
+        assert!(result.step_results[0].output.contains("750"));
+    }
 }

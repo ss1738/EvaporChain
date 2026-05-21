@@ -773,4 +773,164 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn test_load_io_error_covers_lines_27_29() {
+        let err = PeerRegistry::load(std::path::Path::new("/tmp/no_such_peer_registry_ever.json"))
+            .unwrap_err();
+        assert!(matches!(err, PeerDiscoveryError::Io(_)));
+    }
+
+    #[test]
+    fn test_load_json_error_covers_lines_33_35() {
+        let path = test_path("bad_json.json");
+        std::fs::write(&path, "{{ not valid json").unwrap();
+        let err = PeerRegistry::load(&path).unwrap_err();
+        assert!(matches!(err, PeerDiscoveryError::Parse(_)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_reliability_zero_calls_covers_line_124() {
+        let p = make_peer("https://fresh.example.com", "fresh");
+        assert_eq!(p.success_count, 0);
+        assert_eq!(p.failure_count, 0);
+        assert!((p.reliability() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_is_available_active_with_future_ban_covers_lines_167_169() {
+        let mut p = make_peer("https://rpc1.example.com", "rpc1");
+        // Active peer but banned_until set to a future timestamp — should return false
+        let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        p.banned_until = Some(future);
+        assert!(!p.is_available());
+    }
+
+    #[test]
+    fn test_is_available_active_with_past_ban_covers_lines_167_169() {
+        let mut p = make_peer("https://rpc1.example.com", "rpc1");
+        // Active peer with banned_until in the past — should return true (ban expired)
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        p.banned_until = Some(past);
+        assert!(p.is_available());
+    }
+
+    #[test]
+    fn test_default_registry_covers_lines_213_215() {
+        let reg = PeerRegistry::default();
+        assert!(reg.peers.is_empty());
+        assert_eq!(reg.failover_count, 0);
+    }
+
+    #[test]
+    fn test_get_mut_covers_lines_252_254() {
+        let mut reg = PeerRegistry::new();
+        reg.add_peer(make_peer("https://rpc1.example.com", "rpc1")).unwrap();
+        let peer = reg.get_mut("https://rpc1.example.com").unwrap();
+        peer.latency_ms = 42;
+        assert_eq!(reg.get("https://rpc1.example.com").unwrap().latency_ms, 42);
+        assert!(reg.get_mut("https://nonexistent.com").is_none());
+    }
+
+    #[test]
+    fn test_list_covers_lines_257_259() {
+        let mut reg = PeerRegistry::new();
+        reg.add_peer(make_peer("https://rpc1.example.com", "rpc1")).unwrap();
+        reg.add_peer(make_peer("https://rpc2.example.com", "rpc2")).unwrap();
+        assert_eq!(reg.list().len(), 2);
+    }
+
+    #[test]
+    fn test_select_peer_no_failover_on_first_call_covers_lines_295_296() {
+        let mut reg = PeerRegistry::new();
+        let mut p = make_peer("https://rpc1.example.com", "rpc1");
+        p.record_success(50);
+        reg.add_peer(p).unwrap();
+        let url = reg.select_peer().unwrap();
+        assert_eq!(url, "https://rpc1.example.com");
+        assert_eq!(reg.failover_count, 0);
+        // Select again — same peer, no failover increment
+        let url2 = reg.select_peer().unwrap();
+        assert_eq!(url2, "https://rpc1.example.com");
+        assert_eq!(reg.failover_count, 0);
+    }
+
+    #[test]
+    fn test_registry_record_success_covers_lines_339_345() {
+        let mut reg = PeerRegistry::new();
+        reg.add_peer(make_peer("https://rpc1.example.com", "rpc1")).unwrap();
+        reg.record_success("https://rpc1.example.com", 75).unwrap();
+        assert_eq!(reg.get("https://rpc1.example.com").unwrap().latency_ms, 75);
+    }
+
+    #[test]
+    fn test_registry_record_success_not_found_covers_error_path() {
+        let mut reg = PeerRegistry::new();
+        let err = reg.record_success("https://nonexistent.com", 50).unwrap_err();
+        assert!(matches!(err, PeerDiscoveryError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_stats_no_latency_covers_line_371() {
+        let mut reg = PeerRegistry::new();
+        // Add peers with no recorded success (latency_ms == 0)
+        reg.add_peer(make_peer("https://rpc1.example.com", "rpc1")).unwrap();
+        reg.add_peer(make_peer("https://rpc2.example.com", "rpc2")).unwrap();
+        let stats = reg.stats();
+        assert_eq!(stats.avg_latency_ms, 0);
+        assert_eq!(stats.total, 2);
+    }
+
+    #[test]
+    fn test_health_summary_with_banned_peer_covers_line_425() {
+        let mut reg = PeerRegistry::new();
+        let mut p1 = make_peer("https://rpc1.example.com", "active");
+        p1.record_success(50);
+        let mut p2 = make_peer("https://rpc2.example.com", "banned");
+        for _ in 0..5 {
+            p2.record_failure();
+        }
+        reg.add_peer(p1).unwrap();
+        reg.add_peer(p2).unwrap();
+        let summary = reg.health_summary();
+        assert_eq!(summary["Active"], 1);
+        assert_eq!(summary["Banned"], 1);
+    }
+
+    #[test]
+    fn test_load_or_default_nonexistent_covers_lines_449_451() {
+        let path = test_path("load_or_default_missing.json");
+        let _ = std::fs::remove_file(&path);
+        let reg = PeerRegistry::load_or_default(&path);
+        assert!(reg.peers.is_empty());
+    }
+
+    #[test]
+    fn test_from_io_error_covers_lines_27_29() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+        let err = PeerDiscoveryError::from(io_err);
+        assert!(matches!(err, PeerDiscoveryError::Io(_)));
+    }
+
+    #[test]
+    fn test_from_serde_json_error_covers_lines_33_35() {
+        let json_err = serde_json::from_str::<PeerRegistry>("{invalid}").unwrap_err();
+        let err = PeerDiscoveryError::from(json_err);
+        assert!(matches!(err, PeerDiscoveryError::Parse(_)));
+    }
+
+    #[test]
+    fn test_is_available_invalid_banned_until_timestamp_covers_line_169() {
+        let mut p = make_peer("https://rpc1.example.com", "rpc1");
+        // Active peer with an unparseable banned_until — parse fails, falls through to true
+        p.banned_until = Some("not_a_valid_timestamp".to_string());
+        assert!(p.is_available());
+    }
+
+    #[test]
+    fn test_select_peer_empty_registry_covers_line_296() {
+        let mut reg = PeerRegistry::new();
+        assert!(reg.select_peer().is_none());
+    }
 }

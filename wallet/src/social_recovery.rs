@@ -735,4 +735,72 @@ mod tests {
         assert_eq!(config.max_guardians, 7);
         assert_eq!(config.auto_expire_hours, 168);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_approve_revoked_guardian_covers_lines_255_257() {
+        let mut mgr = seeded_manager();
+        let id = mgr.initiate_recovery("user1", "pk").unwrap();
+        mgr.revoke_guardian("alice").unwrap();
+        // Alice is now Revoked, not Active → GuardianNotFound
+        let err = mgr.approve_recovery(&id, "alice", "sig").unwrap_err();
+        assert!(matches!(err, SocialRecoveryError::GuardianNotFound(_)));
+    }
+
+    #[test]
+    fn test_approve_non_in_progress_covers_line_266() {
+        let mut mgr = seeded_manager();
+        let id = mgr.initiate_recovery("user1", "pk").unwrap();
+        mgr.cancel_recovery(&id).unwrap(); // status → Rejected
+        let err = mgr.approve_recovery(&id, "bob", "sig").unwrap_err();
+        assert!(matches!(err, SocialRecoveryError::RequestNotInProgress));
+    }
+
+    #[test]
+    fn test_approve_threshold_met_past_timelock_covers_lines_289_293() {
+        let mut mgr = seeded_manager();
+        let id = mgr.initiate_recovery("user1", "pk").unwrap();
+        // Push timelock into the past so auto-approve fires
+        mgr.requests.get_mut(&id).unwrap().timelock_until = "2020-01-01T00:00:00Z".to_string();
+        // threshold=2 by default; two approvals reach it
+        mgr.approve_recovery(&id, "alice", "sig1").unwrap();
+        mgr.approve_recovery(&id, "bob", "sig2").unwrap();
+        let req = mgr.requests.get(&id).unwrap();
+        assert_eq!(req.status, RecoveryStatus::Approved);
+    }
+
+    #[test]
+    fn test_reject_non_in_progress_covers_line_315() {
+        let mut mgr = seeded_manager();
+        let id = mgr.initiate_recovery("user1", "pk").unwrap();
+        mgr.cancel_recovery(&id).unwrap(); // status → Rejected
+        let err = mgr.reject_recovery(&id, "bob").unwrap_err();
+        assert!(matches!(err, SocialRecoveryError::RequestNotInProgress));
+    }
+
+    #[test]
+    fn test_complete_recovery_success_covers_lines_336_340() {
+        let mut mgr = seeded_manager();
+        let id = mgr.initiate_recovery("user1", "pk").unwrap();
+        // Force approved status directly so we bypass timelock
+        mgr.requests.get_mut(&id).unwrap().status = RecoveryStatus::Approved;
+        mgr.complete_recovery(&id).unwrap();
+        let req = mgr.requests.get(&id).unwrap();
+        assert_eq!(req.status, RecoveryStatus::Completed);
+        assert!(req.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_expire_stale_requests_covers_lines_368_387() {
+        let mut mgr = seeded_manager();
+        let id = mgr.initiate_recovery("user1", "pk").unwrap();
+        // Push created_at far into the past (>168h default)
+        let old_ts = (chrono::Utc::now() - chrono::Duration::hours(200)).to_rfc3339();
+        mgr.requests.get_mut(&id).unwrap().created_at = old_ts;
+        let expired = mgr.expire_stale_requests();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0], id);
+        assert_eq!(mgr.requests.get(&id).unwrap().status, RecoveryStatus::TimedOut);
+    }
 }

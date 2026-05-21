@@ -574,4 +574,85 @@ mod tests {
         let gs = GasStation::load_or_default(Path::new("/tmp/noexist_gs.json"));
         assert!(gs.relays.is_empty());
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_relay_with_max_gas_covers_line_79() {
+        let r = make_relay("http://r1").with_max_gas(5000);
+        assert_eq!(r.max_gas, 5000);
+    }
+
+    #[test]
+    fn test_relay_score_zero_latency_covers_line_124() {
+        // Fresh relay has avg_latency_ms == 0 → latency_factor branch = 1.0
+        let r = make_relay("http://r1");
+        assert_eq!(r.avg_latency_ms, 0);
+        let s = r.score();
+        // reliability=1.0, latency_factor=1.0, fee_factor=1/(1+0)=1.0 → score=100.0
+        assert!((s - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_sponsor_inactive_covers_line_169() {
+        let mut s = GasSponsor::new("evap1s", "S", 10000);
+        s.active = false;
+        assert!(!s.can_sponsor("anyone", "transfer", 100));
+    }
+
+    #[test]
+    fn test_sponsor_allowed_tx_types_covers_lines_181_183() {
+        let mut s = GasSponsor::new("evap1s", "S", 10000);
+        s.allowed_tx_types = vec!["refresh".into()];
+        // "transfer" not in allowed_tx_types → false
+        assert!(!s.can_sponsor("anyone", "transfer", 100));
+        // "refresh" IS in list → true
+        assert!(s.can_sponsor("anyone", "refresh", 100));
+    }
+
+    #[test]
+    fn test_sponsor_utilization_zero_budget_covers_line_203() {
+        let s = GasSponsor::new("evap1s", "S", 0);
+        assert_eq!(s.utilization_percent(), 100.0);
+    }
+
+    #[test]
+    fn test_gas_station_get_relay_covers_lines_263_265() {
+        let mut gs = GasStation::new();
+        gs.add_relay(make_relay("http://r1")).unwrap();
+        assert!(gs.get_relay("http://r1").is_some());
+        assert!(gs.get_relay("http://missing").is_none());
+    }
+
+    #[test]
+    fn test_gas_station_get_relay_mut_covers_lines_267_269() {
+        let mut gs = GasStation::new();
+        gs.add_relay(make_relay("http://r1")).unwrap();
+        {
+            let relay = gs.get_relay_mut("http://r1").unwrap();
+            relay.ban();
+        }
+        assert_eq!(gs.get_relay("http://r1").unwrap().status, RelayStatus::Banned);
+        assert!(gs.get_relay_mut("http://missing").is_none());
+    }
+
+    #[test]
+    fn test_gas_station_get_sponsor_covers_lines_294_296() {
+        let mut gs = GasStation::new();
+        gs.add_sponsor(GasSponsor::new("0xsponsor", "S", 1000));
+        assert!(gs.get_sponsor("0xsponsor").is_some());
+        assert!(gs.get_sponsor("0xmissing").is_none());
+    }
+
+    #[test]
+    fn test_gas_station_get_sponsor_mut_covers_lines_298_300() {
+        let mut gs = GasStation::new();
+        gs.add_sponsor(GasSponsor::new("0xsponsor", "S", 1000));
+        {
+            let sp = gs.get_sponsor_mut("0xsponsor").unwrap();
+            sp.add_budget(500);
+        }
+        assert_eq!(gs.get_sponsor("0xsponsor").unwrap().budget, 1500);
+        assert!(gs.get_sponsor_mut("0xmissing").is_none());
+    }
 }

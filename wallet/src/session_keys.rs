@@ -740,4 +740,122 @@ mod tests {
         let json = serde_json::to_string(&store.session_keys[0]).unwrap();
         assert!(json.contains("\"label\":\"dapp-key\""));
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_inactive_key_can_execute_covers_line_79() {
+        let mut store = make_store();
+        store.session_keys[0].active = false;
+        let err = store.session_keys[0].can_execute("transfer", 100).unwrap_err();
+        assert!(matches!(err, AbstractionError::SessionKeyNotFound(_)));
+    }
+
+    #[test]
+    fn test_expired_key_can_execute_covers_line_85() {
+        let mut store = make_store();
+        store.session_keys[0].expires_at = "2020-01-01T00:00:00Z".to_string();
+        let err = store.session_keys[0].can_execute("transfer", 100).unwrap_err();
+        assert!(matches!(err, AbstractionError::SessionKeyExpired(_)));
+    }
+
+    #[test]
+    fn test_remove_guardian_not_found_covers_line_210() {
+        let mut store = AbstractionStore::new();
+        store.setup_recovery("0xme", 2, 24).unwrap();
+        let recovery = store.recovery.as_mut().unwrap();
+        let err = recovery.remove_guardian("0xnonexistent").unwrap_err();
+        assert!(matches!(err, AbstractionError::GuardianNotFound(_)));
+    }
+
+    #[test]
+    fn test_propose_recovery_non_guardian_covers_line_222() {
+        let mut store = AbstractionStore::new();
+        store.setup_recovery("0xme", 2, 24).unwrap();
+        let recovery = store.recovery.as_mut().unwrap();
+        recovery.add_guardian("0xalice", "Alice").unwrap();
+        let err = recovery.propose_recovery("0xstranger", "0xnew").unwrap_err();
+        assert!(matches!(err, AbstractionError::GuardianNotFound(_)));
+    }
+
+    #[test]
+    fn test_approve_recovery_non_guardian_covers_line_253() {
+        let mut store = AbstractionStore::new();
+        store.setup_recovery("0xme", 2, 24).unwrap();
+        let recovery = store.recovery.as_mut().unwrap();
+        recovery.add_guardian("0xalice", "Alice").unwrap();
+        recovery.add_guardian("0xbob", "Bob").unwrap();
+        let proposal_id = recovery
+            .propose_recovery("0xalice", "0xnew")
+            .unwrap()
+            .id
+            .clone();
+        let err = recovery
+            .approve_recovery(&proposal_id, "0xstranger")
+            .unwrap_err();
+        assert!(matches!(err, AbstractionError::GuardianNotFound(_)));
+    }
+
+    #[test]
+    fn test_approve_recovery_already_approved_covers_line_263() {
+        let mut store = AbstractionStore::new();
+        store.setup_recovery("0xme", 2, 24).unwrap();
+        let recovery = store.recovery.as_mut().unwrap();
+        recovery.add_guardian("0xalice", "Alice").unwrap();
+        recovery.add_guardian("0xbob", "Bob").unwrap();
+        let proposal_id = recovery
+            .propose_recovery("0xalice", "0xnew")
+            .unwrap()
+            .id
+            .clone();
+        // Alice approves a second time → returns early Ok without adding duplicate
+        let prop = recovery.approve_recovery(&proposal_id, "0xalice").unwrap();
+        assert_eq!(prop.approvals.iter().filter(|a| *a == "0xalice").count(), 1);
+    }
+
+    #[test]
+    fn test_gas_sponsor_rollover_stale_date_covers_lines_350_351() {
+        let mut sponsor = GasSponsor::new("0xsponsor", 1000, 5000);
+        // Force stale date so rollover fires
+        sponsor.date = "2020-01-01".to_string();
+        sponsor.daily_spent = 4000;
+        // remaining() calls rollover() → resets daily_spent to 0
+        let rem = sponsor.remaining();
+        assert_eq!(rem, 5000);
+        assert_eq!(sponsor.daily_spent, 0);
+    }
+
+    #[test]
+    fn test_get_session_key_covers_lines_430_432() {
+        let store = make_store();
+        let id = store.session_keys[0].id.clone();
+        assert!(store.get_session_key(&id).is_some());
+        assert!(store.get_session_key("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_get_session_key_mut_covers_lines_435_437() {
+        let mut store = make_store();
+        let id = store.session_keys[0].id.clone();
+        {
+            let key = store.get_session_key_mut(&id).unwrap();
+            key.record_tx(100);
+        }
+        assert_eq!(store.session_keys[0].total_spent, 100);
+        assert!(store.get_session_key_mut("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_abstraction_store_default_covers_lines_482_484() {
+        let store = AbstractionStore::default();
+        assert!(store.session_keys.is_empty());
+        assert!(store.recovery.is_none());
+        assert!(store.gas_sponsor.is_none());
+    }
+
+    #[test]
+    fn test_default_abstraction_path_covers_lines_488_490() {
+        let path = default_abstraction_path();
+        assert!(path.to_string_lossy().contains("abstraction.json"));
+    }
 }

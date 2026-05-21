@@ -722,4 +722,36 @@ mod tests {
         assert!(mgr.complete_milestone("e1", "m99").is_err());
         assert!(mgr.release_milestone("e1", "m99").is_err());
     }
+
+    #[test]
+    fn test_escrow_status_display_all_variants_covers_lines_52_56() {
+        assert_eq!(EscrowStatus::Released.to_string(), "Released");
+        assert_eq!(EscrowStatus::Refunded.to_string(), "Refunded");
+        assert_eq!(EscrowStatus::Disputed.to_string(), "Disputed");
+        assert_eq!(EscrowStatus::Resolved.to_string(), "Resolved");
+        assert_eq!(EscrowStatus::Expired.to_string(), "Expired");
+    }
+
+    #[test]
+    fn test_expired_escrows_covers_lines_334_347() {
+        let mut mgr = EscrowManager::new();
+        let mut e1 = make_escrow("e1");
+        e1.expires_at = "2020-01-01T00:00:00+00:00".to_string(); // already expired
+        mgr.create_escrow(e1).unwrap();
+        let e2 = make_escrow("e2"); // not expired
+        mgr.create_escrow(e2).unwrap();
+        let expired = mgr.expired_escrows();
+        assert!(expired.contains(&"e1".to_string()));
+        assert!(!expired.contains(&"e2".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_dispute_release_to_buyer_covers_line_250() {
+        let mut mgr = EscrowManager::new();
+        let mut e = make_escrow("e1");
+        e.status = EscrowStatus::Disputed;
+        mgr.create_escrow(e).unwrap();
+        mgr.resolve_dispute("e1", DisputeResolution::ReleaseToBuyer).unwrap();
+        assert_eq!(mgr.get_escrow("e1").unwrap().status, EscrowStatus::Resolved);
+    }
 }

@@ -788,4 +788,44 @@ mod tests {
             Some("2.0.0".to_string())
         );
     }
+
+    #[test]
+    fn test_change_type_display_remaining_variants_covers_lines_58_63() {
+        assert_eq!(ChangeType::Changed.to_string(), "Changed");
+        assert_eq!(ChangeType::Removed.to_string(), "Removed");
+        assert_eq!(ChangeType::Security.to_string(), "Security");
+        assert_eq!(ChangeType::Deprecated.to_string(), "Deprecated");
+        assert_eq!(ChangeType::Performance.to_string(), "Performance");
+    }
+
+    #[test]
+    fn test_change_scope_display_remaining_variants_covers_lines_86_92() {
+        assert_eq!(ChangeScope::Transaction.to_string(), "Transaction");
+        assert_eq!(ChangeScope::Staking.to_string(), "Staking");
+        assert_eq!(ChangeScope::DeFi.to_string(), "DeFi");
+        assert_eq!(ChangeScope::Security.to_string(), "Security");
+        assert_eq!(ChangeScope::UI.to_string(), "UI");
+        assert_eq!(ChangeScope::Internal.to_string(), "Internal");
+    }
+
+    #[test]
+    fn test_from_serde_json_error_covers_lines_37_39() {
+        let json_err = serde_json::from_str::<i32>("not_valid_json").unwrap_err();
+        let changelog_err = ChangelogError::from(json_err);
+        assert!(matches!(changelog_err, ChangelogError::Parse(_)));
+    }
+
+    #[test]
+    fn test_generate_markdown_with_version_notes_covers_line_271() {
+        let mut cl = Changelog::new();
+        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false)).unwrap();
+        cl.tag_version(
+            "1.0.0",
+            "Release with Notes",
+            vec!["e1".into()],
+            Some("These are release notes.".into()),
+        ).unwrap();
+        let md = cl.generate_markdown();
+        assert!(md.contains("These are release notes."));
+    }
 }

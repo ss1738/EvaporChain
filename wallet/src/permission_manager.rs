@@ -691,4 +691,44 @@ mod tests {
         let mgr = PermissionManager::load_or_default(&path);
         assert_eq!(mgr.permissions.len(), 0);
     }
+
+    #[test]
+    fn test_use_permission_expired_covers_lines_178_179() {
+        let mut mgr = PermissionManager::new();
+        let mut perm = make_permission("p1", "dapp1", PermissionType::ReadBalance);
+        perm.expires_at = Some("2020-01-01T00:00:00Z".to_string()); // already expired
+        perm.status = PermissionStatus3::Granted;
+        mgr.grant_permission(perm).unwrap();
+        let err = mgr.use_permission("p1").unwrap_err();
+        assert!(matches!(err, PermissionManagerError::PermissionExpired(_)));
+    }
+
+    #[test]
+    fn test_use_permission_max_uses_exceeded_covers_lines_202_203() {
+        let mut mgr = PermissionManager::new();
+        let mut perm = make_permission("p1", "dapp1", PermissionType::ReadBalance);
+        perm.max_uses = Some(2);
+        mgr.grant_permission(perm).unwrap();
+        mgr.use_permission("p1").unwrap(); // use 1
+        mgr.use_permission("p1").unwrap(); // use 2
+        let err = mgr.use_permission("p1").unwrap_err(); // over limit
+        assert!(matches!(err, PermissionManagerError::SpendLimitExceeded(_)));
+    }
+
+    #[test]
+    fn test_stats_pending_expired_revoked_covers_lines_313_315() {
+        let mut mgr = PermissionManager::new();
+        let perm1 = make_permission("p1", "dapp1", PermissionType::ReadBalance); // Pending
+        mgr.permissions.insert("p1".to_string(), perm1);
+        let mut perm2 = make_permission("p2", "dapp1", PermissionType::SendTokens);
+        perm2.status = PermissionStatus3::Expired;
+        mgr.permissions.insert("p2".to_string(), perm2);
+        let mut perm3 = make_permission("p3", "dapp1", PermissionType::ReadBalance);
+        perm3.status = PermissionStatus3::Revoked;
+        mgr.permissions.insert("p3".to_string(), perm3);
+        let s = mgr.stats();
+        assert_eq!(s.pending, 1);
+        assert_eq!(s.expired, 1);
+        assert_eq!(s.revoked, 1);
+    }
 }

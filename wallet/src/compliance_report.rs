@@ -903,4 +903,79 @@ mod tests {
         assert!(mgr.reports.is_empty());
         assert!(mgr.rules.is_empty());
     }
+
+    #[test]
+    fn test_from_serde_json_error_covers_lines_36_38() {
+        let json_err = serde_json::from_str::<ComplianceManager>("{invalid}").unwrap_err();
+        let err = ComplianceError::from(json_err);
+        assert!(matches!(err, ComplianceError::Json(_)));
+    }
+
+    #[test]
+    fn test_jurisdiction_key_all_variants_covers_lines_75_78() {
+        assert_eq!(Jurisdiction::EU.key(), "EU");
+        assert_eq!(Jurisdiction::Singapore.key(), "Singapore");
+        assert_eq!(Jurisdiction::Japan.key(), "Japan");
+        assert_eq!(Jurisdiction::Australia.key(), "Australia");
+    }
+
+    #[test]
+    fn test_generate_report_annual_covers_lines_257_261() {
+        let mut mgr = ComplianceManager::new();
+        mgr.add_transaction(make_tx("tx1", TxCategory::Income, 500.0));
+        let id = mgr.generate_report(ReportType::Annual, Jurisdiction::US).unwrap();
+        let report = mgr.get_report(&id).unwrap();
+        assert!(report.period_start.contains("-01-01T"));
+        assert!(report.period_end.contains("-12-31T"));
+    }
+
+    #[test]
+    fn test_generate_report_quarterly_covers_lines_264_281() {
+        let mut mgr = ComplianceManager::new();
+        mgr.add_transaction(make_tx("tx1", TxCategory::Trade, 100.0));
+        let id = mgr.generate_report(ReportType::Quarterly, Jurisdiction::UK).unwrap();
+        let report = mgr.get_report(&id).unwrap();
+        // Period start should follow a quarterly pattern
+        assert!(report.period_start.ends_with("-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn test_generate_report_monthly_covers_lines_284_288() {
+        let mut mgr = ComplianceManager::new();
+        mgr.add_transaction(make_tx("tx1", TxCategory::Staking, 200.0));
+        let id = mgr.generate_report(ReportType::Monthly, Jurisdiction::EU).unwrap();
+        let report = mgr.get_report(&id).unwrap();
+        assert!(report.period_start.ends_with("-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn test_generate_report_transfer_category_covers_line_327() {
+        let mut mgr = ComplianceManager::new();
+        // Transfer falls into the _ => {} catch-all
+        mgr.add_transaction(make_tx("tx1", TxCategory::Transfer, 0.0));
+        mgr.add_transaction(make_tx("tx2", TxCategory::Gift, 50.0));
+        let rt = ReportType::Custom {
+            start: "2020-01-01T00:00:00Z".to_string(),
+            end: "2030-12-31T23:59:59Z".to_string(),
+        };
+        let id = mgr.generate_report(rt, Jurisdiction::US).unwrap();
+        let report = mgr.get_report(&id).unwrap();
+        assert_eq!(report.tx_count, 2);
+        assert_eq!(report.total_income, 0.0);
+    }
+
+    #[test]
+    fn test_generate_report_flagged_tx_covers_line_330() {
+        let mut mgr = ComplianceManager::new();
+        let mut tx = make_tx("tx1", TxCategory::Trade, 1000.0);
+        tx.flagged = true;
+        mgr.add_transaction(tx);
+        let rt = ReportType::Custom {
+            start: "2020-01-01T00:00:00Z".to_string(),
+            end: "2030-12-31T23:59:59Z".to_string(),
+        };
+        let id = mgr.generate_report(rt, Jurisdiction::US).unwrap();
+        let report = mgr.get_report(&id).unwrap();
+        assert_eq!(report.flagged_count, 1);
+    }
 }

@@ -638,4 +638,63 @@ mod tests {
         let entries = mgr.entries_in_cache("c1").unwrap();
         assert_eq!(entries.len(), 2);
     }
+
+    #[test]
+    fn test_get_cache_not_found_covers_line_171() {
+        let mut mgr = CacheManager::new();
+        let err = mgr.get("nonexistent", "k").unwrap_err();
+        assert!(matches!(err, CacheManagerError::CacheNotFound(_)));
+    }
+
+    #[test]
+    fn test_stats_zero_requests_covers_line_272() {
+        let mgr = CacheManager::new();
+        let s = mgr.stats();
+        assert_eq!(s.total_hits, 0);
+        assert_eq!(s.total_misses, 0);
+        assert_eq!(s.hit_rate, 0.0);
+    }
+
+    #[test]
+    fn test_do_evict_empty_cache_covers_line_317() {
+        // max_entries=0 means cache.len() >= 0 is always true →
+        // do_evict called on an empty cache → hits the early return
+        let mut mgr = CacheManager::new();
+        mgr.create_cache(memory_config("c1", 0, EvictionPolicy::Lfu))
+            .unwrap();
+        // put triggers do_evict on the empty cache (len 0 >= max 0)
+        mgr.put("c1", "k1", "v", None).unwrap();
+        // entry was inserted after the no-op eviction
+        assert!(mgr.get("c1", "k1").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_ttl_eviction_expired_covers_lines_341_350() {
+        // TTL eviction with an expired entry: do_evict finds the expired key
+        let mut mgr = CacheManager::new();
+        mgr.create_cache(memory_config("c1", 1, EvictionPolicy::Ttl))
+            .unwrap();
+        // insert k1 with TTL=0 → already expired
+        mgr.put("c1", "k1", "old", Some(0)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        // inserting k2 triggers do_evict → TTL arm finds expired k1
+        mgr.put("c1", "k2", "new", None).unwrap();
+        assert!(mgr.get("c1", "k1").unwrap().is_none());
+        assert!(mgr.get("c1", "k2").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_ttl_eviction_fallback_covers_lines_353_356() {
+        // TTL eviction with no expired entry: falls back to oldest created_at
+        let mut mgr = CacheManager::new();
+        mgr.create_cache(memory_config("c1", 1, EvictionPolicy::Ttl))
+            .unwrap();
+        // insert k1 with no TTL (will not be expired)
+        mgr.put("c1", "k1", "first", None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        // inserting k2 triggers do_evict → no expired entry → fallback evicts k1
+        mgr.put("c1", "k2", "second", None).unwrap();
+        assert!(mgr.get("c1", "k1").unwrap().is_none());
+        assert!(mgr.get("c1", "k2").unwrap().is_some());
+    }
 }

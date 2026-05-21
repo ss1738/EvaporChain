@@ -738,4 +738,108 @@ mod tests {
         assert_eq!(wt.watch_count(), 0);
         assert_eq!(wt.max_alerts, 1000);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_watchtower_load_io_error_covers_lines_28_30() {
+        let err = Watchtower::load("/tmp/no_such_watchtower_ever.json").unwrap_err();
+        assert!(matches!(err, WatchtowerError::Io(_)));
+    }
+
+    #[test]
+    fn test_watchtower_load_json_error_covers_lines_33_35() {
+        let path = std::env::temp_dir().join(format!("evap_wt_bad_{}.json", std::process::id()));
+        std::fs::write(&path, "not json {{{{").unwrap();
+        let err = Watchtower::load(&path).unwrap_err();
+        assert!(matches!(err, WatchtowerError::Json(_)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_watch_target_staking_reward_covers_line_64() {
+        let t = WatchTarget::StakingReward { pool_id: "pool1".into() };
+        assert!(t.label().contains("Staking"));
+    }
+
+    #[test]
+    fn test_condition_changeby_label_covers_lines_90_91() {
+        assert_eq!(Condition::ChangeBy(15.5).label(), "changes by 15.5%");
+    }
+
+    #[test]
+    fn test_condition_status_equals_in_value_check_covers_line_114() {
+        // StatusEquals in check() returns false (value-based check on status condition)
+        assert!(!Condition::StatusEquals("done".into()).check(100.0, None));
+    }
+
+    #[test]
+    fn test_condition_check_status_non_status_eq_covers_line_127() {
+        // Calling check_status on a non-StatusEquals condition → _ => false
+        assert!(!Condition::Below(100.0).check_status("completed"));
+        assert!(!Condition::AnyChange.check_status("anything"));
+    }
+
+    #[test]
+    fn test_watch_action_shell_label_covers_lines_150_152() {
+        let a = WatchAction::Shell { command: "echo hello world".into() };
+        assert!(a.label().contains("Shell"));
+    }
+
+    #[test]
+    fn test_is_due_invalid_timestamp_covers_line_203() {
+        let mut wt = Watchtower::new();
+        wt.add_watch(
+            "bad-ts",
+            WatchTarget::ChainHealth,
+            Condition::AnyChange,
+            WatchAction::Notify,
+            3600,
+        ).unwrap();
+        // Force invalid last_checked timestamp → parse_from_rfc3339 fails → true (is_due)
+        wt.watches[0].last_checked = Some("not_a_timestamp".to_string());
+        assert!(wt.watches[0].is_due());
+    }
+
+    #[test]
+    fn test_get_mut_covers_lines_359_361() {
+        let mut wt = make_wt();
+        {
+            let w = wt.get_mut("low-balance").unwrap();
+            w.trigger_count = 99;
+        }
+        assert_eq!(wt.get("low-balance").unwrap().trigger_count, 99);
+        assert!(wt.get_mut("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_check_status_overflow_trim_covers_line_410() {
+        let mut wt = Watchtower::new();
+        wt.max_alerts = 2;
+        wt.add_watch(
+            "bridge",
+            WatchTarget::BridgeTransfer { transfer_id: "bt1".into() },
+            Condition::StatusEquals("done".into()),
+            WatchAction::Notify,
+            1,
+        ).unwrap();
+        // Trigger 3 status alerts — third one should trim history to max_alerts
+        for _ in 0..3 {
+            wt.watches[0].last_checked = None; // reset so is_due() returns true
+            wt.check_status("bridge", "done");
+        }
+        assert!(wt.alert_count() <= 2);
+    }
+
+    #[test]
+    fn test_list_covers_lines_419_421() {
+        let wt = make_wt();
+        assert_eq!(wt.list().len(), 3);
+    }
+
+    #[test]
+    fn test_default_watchtower_path_covers_lines_456_458() {
+        let path = default_watchtower_path();
+        assert!(path.to_string_lossy().contains("watchtower.json"));
+    }
 }

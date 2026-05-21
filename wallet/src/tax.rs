@@ -673,4 +673,41 @@ mod tests {
         assert_eq!(t.method, CostBasisMethod::Fifo);
         assert!(t.lots.is_empty());
     }
+
+    #[test]
+    fn test_from_io_error_covers_lines_28_30() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let tax_err = TaxError::from(io_err);
+        assert!(matches!(tax_err, TaxError::Io(_)));
+    }
+
+    #[test]
+    fn test_from_json_error_covers_lines_33_35() {
+        let json_err = serde_json::from_str::<i32>("not_json").unwrap_err();
+        let tax_err = TaxError::from(json_err);
+        assert!(matches!(tax_err, TaxError::Json(_)));
+    }
+
+    #[test]
+    fn test_cost_basis_method_label_lifo_hifo_covers_lines_54_55() {
+        assert_eq!(CostBasisMethod::Lifo.label(), "LIFO");
+        assert_eq!(CostBasisMethod::Hifo.label(), "HIFO");
+    }
+
+    #[test]
+    fn test_default_tax_path_covers_lines_461_463() {
+        let path = default_tax_path();
+        assert!(path.to_string_lossy().contains("tax.json"));
+    }
+
+    #[test]
+    fn test_dispose_break_path_covers_line_250() {
+        // Two lots: FIFO disposes exactly lot[0] → remaining=0 → break fires on lot[1]
+        let mut t = TaxTracker::new(CostBasisMethod::Fifo);
+        t.acquire_at("2024-01-01T00:00:00Z", 100, 1.0, "buy", "r1");
+        t.acquire_at("2024-06-01T00:00:00Z", 200, 2.0, "buy", "r2");
+        t.dispose(100, 3.0, "sell", "s1").unwrap();
+        // lot[0] fully consumed, remaining=0; next iteration triggers break
+        assert_eq!(t.total_holdings(), 200);
+    }
 }

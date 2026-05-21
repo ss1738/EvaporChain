@@ -768,4 +768,18 @@ mod tests {
         let sig2 = loaded.sign(msg);
         assert!(HybridVerifier::verify(msg, &sig2, &loaded.public_key_bytes()));
     }
+
+    #[test]
+    fn test_with_http_client_valid_url_covers_lines_66_73() {
+        let client = reqwest::Client::new();
+        let result = PaymasterClient::with_http_client("http://127.0.0.1:8099/", client);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_with_http_client_invalid_url_covers_line_71() {
+        let client = reqwest::Client::new();
+        let result = PaymasterClient::with_http_client("not_a_valid_url", client);
+        assert!(matches!(result, Err(PaymasterClientError::InvalidUrl(_))));
+    }
 }

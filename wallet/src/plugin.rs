@@ -590,4 +590,29 @@ mod tests {
         let reg = PluginRegistry::load_or_default(&path);
         assert_eq!(reg.plugins.len(), 0);
     }
+
+    #[test]
+    fn test_hook_point_name_all_variants_covers_lines_82_91() {
+        assert_eq!(HookPoint::BeforeSign.name(), "before_sign");
+        assert_eq!(HookPoint::AfterSign.name(), "after_sign");
+        assert_eq!(HookPoint::BeforeRefresh.name(), "before_refresh");
+        assert_eq!(HookPoint::AfterRefresh.name(), "after_refresh");
+        assert_eq!(HookPoint::OnBalanceChange.name(), "on_balance_change");
+        assert_eq!(HookPoint::OnEnergyAlert.name(), "on_energy_alert");
+        assert_eq!(HookPoint::OnNewBlock.name(), "on_new_block");
+        assert_eq!(HookPoint::OnError.name(), "on_error");
+        assert_eq!(HookPoint::OnStartup.name(), "on_startup");
+        assert_eq!(HookPoint::OnShutdown.name(), "on_shutdown");
+    }
+
+    #[test]
+    fn test_permission_name_all_variants_covers_lines_123_131() {
+        assert_eq!(Permission::ReadContacts.name(), "read_contacts");
+        assert_eq!(Permission::SendTransactions.name(), "send_transactions");
+        assert_eq!(Permission::SignMessages.name(), "sign_messages");
+        assert_eq!(Permission::ManageKeys.name(), "manage_keys");
+        assert_eq!(Permission::NetworkAccess.name(), "network_access");
+        assert_eq!(Permission::FileAccess.name(), "file_access");
+        assert_eq!(Permission::Notifications.name(), "notifications");
+    }
 }

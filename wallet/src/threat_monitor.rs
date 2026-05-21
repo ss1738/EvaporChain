@@ -729,4 +729,91 @@ mod tests {
         // Clean up.
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn test_with_metadata_covers_lines_114_117() {
+        let t = Threat::new("t1", ThreatType::PhishingUrl, ThreatLevel::High, "src", "tgt", "desc")
+            .with_metadata("source_ip", "1.2.3.4")
+            .with_metadata("region", "EU");
+        assert_eq!(t.metadata.get("source_ip").unwrap(), "1.2.3.4");
+        assert_eq!(t.metadata.get("region").unwrap(), "EU");
+    }
+
+    #[test]
+    fn test_phishing_entry_confirm_covers_lines_141_143() {
+        let mut entry = PhishingEntry::new("https://evil.com", "alice");
+        assert!(!entry.confirmed);
+        entry.confirm();
+        assert!(entry.confirmed);
+    }
+
+    #[test]
+    fn test_malicious_contract_confirm_covers_lines_169_171() {
+        let mut mc = MaliciousContract::new("0xbad", "rug pull", ThreatLevel::Critical);
+        assert!(!mc.confirmed);
+        mc.confirm();
+        assert!(mc.confirmed);
+    }
+
+    #[test]
+    fn test_threat_monitor_default_covers_lines_205_207() {
+        let m = ThreatMonitor::default();
+        assert!(m.threats.is_empty());
+        assert_eq!(m.scan_count, 0);
+    }
+
+    #[test]
+    fn test_report_threat_prune_covers_line_230() {
+        let mut m = ThreatMonitor::new();
+        for i in 0..=MAX_THREATS {
+            m.report_threat(sample_threat(&format!("t{i}"), ThreatType::DustAttack, ThreatLevel::Low));
+        }
+        assert_eq!(m.threats.len(), MAX_THREATS);
+    }
+
+    #[test]
+    fn test_resolve_already_resolved_covers_line_351() {
+        let mut m = ThreatMonitor::new();
+        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
+        m.resolve_threat("t1").unwrap();
+        let err = m.resolve_threat("t1").unwrap_err();
+        assert!(matches!(err, ThreatMonitorError::AlreadyResolved(_)));
+    }
+
+    #[test]
+    fn test_false_positive_not_found_covers_line_365() {
+        let mut m = ThreatMonitor::new();
+        let err = m.false_positive("nonexistent").unwrap_err();
+        assert!(matches!(err, ThreatMonitorError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_false_positive_already_resolved_covers_lines_372_374() {
+        let mut m = ThreatMonitor::new();
+        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
+        m.resolve_threat("t1").unwrap();
+        let err = m.false_positive("t1").unwrap_err();
+        assert!(matches!(err, ThreatMonitorError::AlreadyResolved(_)));
+    }
+
+    #[test]
+    fn test_load_or_default_covers_lines_421_423() {
+        let path = test_path("load_or_default_missing.json");
+        let _ = std::fs::remove_file(&path);
+        let m = ThreatMonitor::load_or_default(&path);
+        assert!(m.threats.is_empty());
+    }
+
+    #[test]
+    fn test_recent_threats_covers_lines_372_374() {
+        let mut m = ThreatMonitor::new();
+        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
+        m.report_threat(sample_threat("t2", ThreatType::DustAttack, ThreatLevel::Medium));
+        m.report_threat(sample_threat("t3", ThreatType::SocialEngineering, ThreatLevel::Critical));
+        let recent = m.recent_threats(2);
+        assert_eq!(recent.len(), 2);
+        // Most recent first
+        assert_eq!(recent[0].id, "t3");
+        assert_eq!(recent[1].id, "t2");
+    }
 }

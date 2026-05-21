@@ -668,4 +668,59 @@ mod tests {
         assert_eq!(conn.get_session(&id).unwrap().request_count, 5);
         assert_eq!(conn.session_requests(&id).len(), 5);
     }
+
+    #[test]
+    fn test_permission_description_all_variants_covers_lines_76_79() {
+        assert!(!Permission::ViewHistory.description().is_empty());
+        assert!(!Permission::ViewAssets.description().is_empty());
+        assert!(!Permission::ViewEnergy.description().is_empty());
+    }
+
+    #[test]
+    fn test_permission_label_all_variants_covers_lines_100_103() {
+        assert_eq!(Permission::ViewHistory.label(), "view_history");
+        assert_eq!(Permission::ViewAssets.label(), "view_assets");
+        assert_eq!(Permission::ViewEnergy.label(), "view_energy");
+    }
+
+    #[test]
+    fn test_list_sessions_covers_lines_278_280() {
+        let conn = make_connector();
+        let sessions = conn.list_sessions();
+        assert_eq!(sessions.len(), 1);
+    }
+
+    #[test]
+    fn test_has_permission_expired_covers_line_299() {
+        let mut conn = DappConnector::new();
+        let past = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        let session = DappSession {
+            id: "sess_exp".into(),
+            origin: "https://exp.com".into(),
+            name: "Expired".into(),
+            permissions: vec![Permission::ViewAccount],
+            status: SessionStatus::Active,
+            account: "0x1".into(),
+            created_at: past.clone(),
+            expires_at: past,
+            request_count: 0,
+            last_request: None,
+        };
+        conn.sessions.push(session);
+        conn.rebuild_indexes();
+        let result = conn.has_permission("sess_exp", Permission::ViewAccount);
+        assert!(matches!(result, Err(DappError::SessionExpired(_))));
+    }
+
+    #[test]
+    fn test_default_covers_lines_396_398() {
+        let conn = DappConnector::default();
+        assert_eq!(conn.session_count(), 0);
+    }
+
+    #[test]
+    fn test_default_dapp_path_covers_lines_402_404() {
+        let path = default_dapp_path();
+        assert!(path.to_string_lossy().contains("dapp_sessions.json"));
+    }
 }

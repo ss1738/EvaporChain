@@ -747,4 +747,78 @@ mod tests {
         // Clean up.
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn test_with_metadata_covers_lines_184_187() {
+        let preview = TxPreview::new("alice", Some("bob"), 100, "transfer")
+            .with_metadata("note", "test payment")
+            .with_metadata("tag", "urgent");
+        assert_eq!(preview.metadata.get("note").unwrap(), "test payment");
+        assert_eq!(preview.metadata.get("tag").unwrap(), "urgent");
+    }
+
+    #[test]
+    fn test_display_with_warnings_covers_lines_224_227() {
+        let mut previewer = TxPreviewer::new();
+        // High value + unknown recipient = warnings → triggers display branches
+        let preview = previewer.preview(
+            "alice",
+            Some("unknown_addr"),
+            200_000,
+            "transfer",
+            default_gas(),
+            500_000,
+        );
+        let output = preview.display();
+        assert!(output.contains("Warnings:"));
+        assert!(output.contains("Summary:"));
+    }
+
+    #[test]
+    fn test_recalculate_status_severe_covers_line_245() {
+        let mut preview = TxPreview::new("alice", Some("bob"), 100, "transfer");
+        // 1 warning total but it's severe (HighValue) → forces status to Warning
+        preview.add_warning(RiskWarning::HighValue);
+        assert_eq!(preview.status, PreviewStatus::Warning);
+    }
+
+    #[test]
+    fn test_preview_history_covers_lines_267_283() {
+        let mut h = PreviewHistory::new();
+        assert!(h.is_empty());
+        assert_eq!(h.len(), 0);
+        h.push(TxPreview::new("alice", None, 100, "transfer"));
+        assert!(!h.is_empty());
+        assert_eq!(h.len(), 1);
+    }
+
+    #[test]
+    fn test_preview_with_none_to_covers_line_361() {
+        let mut previewer = TxPreviewer::new();
+        // to = None → no UnknownRecipient warning; closing brace of if let Some(addr) is hit
+        let preview = previewer.preview("alice", None, 100, "transfer", default_gas(), 500_000);
+        assert!(!preview.warnings.contains(&RiskWarning::UnknownRecipient));
+    }
+
+    #[test]
+    fn test_stats_warning_and_danger_covers_lines_431_433() {
+        let mut previewer = TxPreviewer::new();
+        // 3 warnings → Warning status
+        let mut p1 = TxPreview::new("alice", None, 100, "transfer");
+        p1.add_warning(RiskWarning::HighValue);
+        p1.add_warning(RiskWarning::LargeGas);
+        p1.add_warning(RiskWarning::LowBalance);
+        previewer.history.push(p1);
+        // 5 warnings → Danger status
+        let mut p2 = TxPreview::new("alice", None, 100, "transfer");
+        p2.add_warning(RiskWarning::HighValue);
+        p2.add_warning(RiskWarning::LargeGas);
+        p2.add_warning(RiskWarning::LowBalance);
+        p2.add_warning(RiskWarning::ContractInteraction);
+        p2.add_warning(RiskWarning::UnknownRecipient);
+        previewer.history.push(p2);
+        let stats = previewer.stats();
+        assert_eq!(stats.warning, 1);
+        assert_eq!(stats.danger, 1);
+    }
 }

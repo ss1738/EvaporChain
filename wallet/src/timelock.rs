@@ -682,4 +682,276 @@ mod tests {
         assert_eq!(loaded.list_timelocks().len(), 1);
         let _ = std::fs::remove_file(&path);
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_timelock_cancel_after_claimed_covers_line_115() {
+        let mut lock = Timelock::new("t1", "a", "b", 100, "2020-01-01T00:00:00Z", true);
+        lock.claim("2024-01-01T00:00:00Z").unwrap();
+        assert!(matches!(
+            lock.cancel().unwrap_err(),
+            TimelockError::AlreadyClaimed
+        ));
+    }
+
+    #[test]
+    fn test_timelock_cancel_already_cancelled_covers_line_115() {
+        let mut lock = Timelock::new("t1", "a", "b", 100, "2099-01-01T00:00:00Z", true);
+        lock.cancel().unwrap();
+        assert!(matches!(
+            lock.cancel().unwrap_err(),
+            TimelockError::AlreadyClaimed
+        ));
+    }
+
+    #[test]
+    fn test_timelock_claim_cancelled_lock_covers_line_102() {
+        let mut lock = Timelock::new("t1", "a", "b", 100, "2020-01-01T00:00:00Z", true);
+        lock.cancel().unwrap();
+        assert!(matches!(
+            lock.claim("2024-01-01T00:00:00Z").unwrap_err(),
+            TimelockError::AlreadyClaimed
+        ));
+    }
+
+    #[test]
+    fn test_vesting_with_note_covers_lines_172_175() {
+        let v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2024-07-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap()
+        .with_note("vesting note");
+        assert_eq!(v.note, "vesting note");
+    }
+
+    #[test]
+    fn test_vested_at_zero_total_duration_covers_line_192() {
+        // Directly construct to force total_duration = end - start < 0
+        // cliff (Jan) < start (Jun) and end (May 31) < start (Jun)
+        // so for now in March: now >= cliff, now < end → enters linear branch → total_duration < 0
+        let v = VestingSchedule {
+            id: "v1".to_string(),
+            beneficiary: "alice".to_string(),
+            total_amount: 500,
+            claimed_amount: 0,
+            start_at: "2024-06-01T00:00:00Z".to_string(),
+            cliff_at: "2024-01-01T00:00:00Z".to_string(),
+            end_at: "2024-05-31T00:00:00Z".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            status: LockStatus::Locked,
+            note: String::new(),
+        };
+        let now = chrono::DateTime::parse_from_rfc3339("2024-03-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        assert_eq!(v.vested_at(now), 500);
+    }
+
+    #[test]
+    fn test_vesting_claim_before_cliff_covers_line_212() {
+        let mut v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let pre_cliff = chrono::DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        assert!(matches!(
+            v.claim(pre_cliff).unwrap_err(),
+            TimelockError::NotUnlocked(_)
+        ));
+    }
+
+    #[test]
+    fn test_vesting_claim_already_fully_claimed_covers_line_210() {
+        let mut v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2024-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let after_end = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        v.claim(after_end).unwrap();
+        assert!(matches!(
+            v.claim(after_end).unwrap_err(),
+            TimelockError::AlreadyClaimed
+        ));
+    }
+
+    #[test]
+    fn test_vesting_remaining_covers_lines_223_225() {
+        let mut v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2024-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(v.remaining(), 1000);
+        let mid = chrono::DateTime::parse_from_rfc3339("2024-07-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        let claimed = v.claim(mid).unwrap();
+        assert_eq!(v.remaining(), 1000 - claimed);
+    }
+
+    #[test]
+    fn test_vesting_percent_zero_total_covers_line_228() {
+        let v = VestingSchedule {
+            id: "v1".to_string(),
+            beneficiary: "alice".to_string(),
+            total_amount: 0,
+            claimed_amount: 0,
+            start_at: "2024-01-01T00:00:00Z".to_string(),
+            cliff_at: "2024-01-01T00:00:00Z".to_string(),
+            end_at: "2025-01-01T00:00:00Z".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            status: LockStatus::Locked,
+            note: String::new(),
+        };
+        let now = chrono::DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        assert_eq!(v.percent_vested(now), 100.0);
+    }
+
+    #[test]
+    fn test_store_add_vesting_duplicate_covers_line_264() {
+        let mut store = TimelockStore::new();
+        let v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2024-07-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap();
+        store.add_vesting(v.clone()).unwrap();
+        assert!(matches!(
+            store.add_vesting(v).unwrap_err(),
+            TimelockError::AlreadyExists(_)
+        ));
+    }
+
+    #[test]
+    fn test_store_get_timelock_covers_lines_270_271() {
+        let mut store = TimelockStore::new();
+        let lock = Timelock::new("t1", "a", "b", 100, "2099-01-01T00:00:00Z", false);
+        store.add_timelock(lock).unwrap();
+        assert!(store.get_timelock("t1").is_some());
+        assert!(store.get_timelock("missing").is_none());
+    }
+
+    #[test]
+    fn test_store_get_vesting_covers_lines_274_275() {
+        let mut store = TimelockStore::new();
+        let v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2024-07-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap();
+        store.add_vesting(v).unwrap();
+        assert!(store.get_vesting("v1").is_some());
+        assert!(store.get_vesting("missing").is_none());
+    }
+
+    #[test]
+    fn test_store_get_timelock_mut_covers_lines_278_279() {
+        let mut store = TimelockStore::new();
+        let lock = Timelock::new("t1", "a", "b", 100, "2099-01-01T00:00:00Z", false);
+        store.add_timelock(lock).unwrap();
+        let m = store.get_timelock_mut("t1").unwrap();
+        m.note = "mutated".to_string();
+        assert_eq!(store.get_timelock("t1").unwrap().note, "mutated");
+    }
+
+    #[test]
+    fn test_store_get_vesting_mut_covers_lines_282_283() {
+        let mut store = TimelockStore::new();
+        let v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2024-07-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap();
+        store.add_vesting(v).unwrap();
+        let m = store.get_vesting_mut("v1").unwrap();
+        m.note = "mutated".to_string();
+        assert_eq!(store.get_vesting("v1").unwrap().note, "mutated");
+    }
+
+    #[test]
+    fn test_store_vestings_for_covers_lines_303_308() {
+        let mut store = TimelockStore::new();
+        for i in 0..3_u32 {
+            let v = VestingSchedule::new(
+                &format!("v{}", i),
+                if i < 2 { "alice" } else { "bob" },
+                1000,
+                "2024-01-01T00:00:00Z",
+                "2024-07-01T00:00:00Z",
+                "2025-01-01T00:00:00Z",
+            )
+            .unwrap();
+            store.add_vesting(v).unwrap();
+        }
+        assert_eq!(store.vestings_for("alice").len(), 2);
+        assert_eq!(store.vestings_for("bob").len(), 1);
+    }
+
+    #[test]
+    fn test_store_total_unvested_covers_lines_320_326() {
+        let mut store = TimelockStore::new();
+        let v = VestingSchedule::new(
+            "v1",
+            "alice",
+            1000,
+            "2024-01-01T00:00:00Z",
+            "2024-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap();
+        store.add_vesting(v).unwrap();
+        assert_eq!(store.total_unvested(), 1000);
+        let after_end = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        store.get_vesting_mut("v1").unwrap().claim(after_end).unwrap();
+        assert_eq!(store.total_unvested(), 0);
+    }
+
+    #[test]
+    fn test_store_load_or_default_covers_lines_339_341() {
+        let store = TimelockStore::load_or_default(Path::new(
+            "/tmp/nonexistent_timelock_doctor_xyzabc.json",
+        ));
+        assert!(store.timelocks.is_empty());
+        assert!(store.vestings.is_empty());
+    }
 }

@@ -891,4 +891,238 @@ mod tests {
         // The oldest samples should be trimmed; last sample has amount=9
         assert_eq!(det.samples.last().unwrap().amount, 9);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_analyze_high_velocity_covers_lines_275_292() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("hv", AnomalyType::HighVelocity, 2.0))
+            .unwrap();
+        // 3 samples from alice at hour=10 loaded into self.samples
+        det.record_sample(make_sample("alice", "bob", 100, 20, 10));
+        det.record_sample(make_sample("alice", "carol", 100, 20, 10));
+        det.record_sample(make_sample("alice", "dave", 100, 20, 10));
+        // count_last_hour = 3 > 2.0 → HighVelocity Medium alert
+        let s = make_sample("alice", "eve", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .any(|a| a.anomaly_type == AnomalyType::HighVelocity));
+        let hv: Vec<_> = alerts
+            .iter()
+            .filter(|a| a.anomaly_type == AnomalyType::HighVelocity)
+            .collect();
+        assert_eq!(hv[0].risk_level, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn test_analyze_off_hours_covers_lines_343_357() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("oh", AnomalyType::OffHoursActivity, 1.0))
+            .unwrap();
+        // Build profile at hour=9 → common_hours=[9]
+        det.record_sample(make_sample("alice", "bob", 100, 20, 9));
+        det.record_sample(make_sample("alice", "carol", 100, 20, 9));
+        // hour=22 not in common_hours → OffHoursActivity Low alert
+        let s = make_sample("alice", "bob", 100, 20, 22);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .any(|a| a.anomaly_type == AnomalyType::OffHoursActivity));
+        let oh: Vec<_> = alerts
+            .iter()
+            .filter(|a| a.anomaly_type == AnomalyType::OffHoursActivity)
+            .collect();
+        assert_eq!(oh[0].risk_level, RiskLevel::Low);
+    }
+
+    #[test]
+    fn test_analyze_rapid_sequence_covers_lines_359_376() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("rs", AnomalyType::RapidSequence, 5.0))
+            .unwrap();
+        // 20 samples from alice → rev().take(20).filter(from==alice).count() = 20 > 5.0
+        for i in 0..20u64 {
+            det.record_sample(make_sample("alice", "bob", 100 + i, 20, 10));
+        }
+        let s = make_sample("alice", "carol", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .any(|a| a.anomaly_type == AnomalyType::RapidSequence));
+        let rs: Vec<_> = alerts
+            .iter()
+            .filter(|a| a.anomaly_type == AnomalyType::RapidSequence)
+            .collect();
+        assert_eq!(rs[0].risk_level, RiskLevel::High);
+    }
+
+    #[test]
+    fn test_risk_score_medium_covers_line_484() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("hv", AnomalyType::HighVelocity, 2.0))
+            .unwrap();
+        for _ in 0..3 {
+            det.record_sample(make_sample("alice", "bob", 100, 20, 10));
+        }
+        let s = make_sample("alice", "carol", 100, 20, 10);
+        det.analyze_sample(&s);
+        // HighVelocity = Medium = 10 pts
+        let score = det.risk_score("alice");
+        assert!((score - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_risk_score_low_covers_line_485() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("nr", AnomalyType::NewRecipient, 1.0))
+            .unwrap();
+        det.record_sample(make_sample("alice", "bob", 100, 20, 10));
+        // New recipient → Low alert (5 pts); details contain "sender alice"
+        let s = make_sample("alice", "eve", 100, 20, 10);
+        det.analyze_sample(&s);
+        let score = det.risk_score("alice");
+        assert!((score - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_analyze_no_profile_none_paths_covers_lines_272_319_340_356() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("ua", AnomalyType::UnusualAmount, 2.0))
+            .unwrap();
+        det.add_rule(make_rule("nr", AnomalyType::NewRecipient, 1.0))
+            .unwrap();
+        det.add_rule(make_rule("lg", AnomalyType::LargeGas, 2.0))
+            .unwrap();
+        det.add_rule(make_rule("oh", AnomalyType::OffHoursActivity, 1.0))
+            .unwrap();
+        // No record_sample → profile is None → all profile-gated rules return None
+        let s = make_sample("nobody", "eve", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn test_high_velocity_none_path_covers_line_292() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("hv", AnomalyType::HighVelocity, 10.0))
+            .unwrap();
+        // 1 sample → count_last_hour=1 ≤ 10.0 → None
+        det.record_sample(make_sample("alice", "bob", 100, 20, 10));
+        let s = make_sample("alice", "carol", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .all(|a| a.anomaly_type != AnomalyType::HighVelocity));
+    }
+
+    #[test]
+    fn test_new_recipient_known_covers_line_313() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("nr", AnomalyType::NewRecipient, 1.0))
+            .unwrap();
+        det.record_sample(make_sample("alice", "bob", 100, 20, 10));
+        // Same recipient → already known → None
+        let s = make_sample("alice", "bob", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .all(|a| a.anomaly_type != AnomalyType::NewRecipient));
+    }
+
+    #[test]
+    fn test_new_recipient_tx_count_zero_covers_line_316() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("nr", AnomalyType::NewRecipient, 1.0))
+            .unwrap();
+        // Directly inject a profile with tx_count=0
+        det.profiles.insert(
+            "alice".to_string(),
+            BehaviorProfile {
+                address: "alice".to_string(),
+                avg_amount: 0.0,
+                max_amount: 0,
+                tx_count: 0,
+                unique_recipients: 0,
+                avg_gas: 0.0,
+                common_hours: vec![],
+                last_updated: "2026-01-01T00:00:00Z".to_string(),
+            },
+        );
+        let s = make_sample("alice", "eve", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .all(|a| a.anomaly_type != AnomalyType::NewRecipient));
+    }
+
+    #[test]
+    fn test_large_gas_none_path_covers_line_337() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("lg", AnomalyType::LargeGas, 5.0))
+            .unwrap();
+        det.record_sample(make_sample("alice", "bob", 100, 20, 10));
+        // avg_gas≈20, threshold=5.0: gas=20 must be > 20*5=100 → not exceeded → None
+        let s = make_sample("alice", "bob", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .all(|a| a.anomaly_type != AnomalyType::LargeGas));
+    }
+
+    #[test]
+    fn test_off_hours_known_hour_covers_line_353() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("oh", AnomalyType::OffHoursActivity, 1.0))
+            .unwrap();
+        det.record_sample(make_sample("alice", "bob", 100, 20, 9));
+        // hour=9 IS in common_hours → None
+        let s = make_sample("alice", "bob", 100, 20, 9);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .all(|a| a.anomaly_type != AnomalyType::OffHoursActivity));
+    }
+
+    #[test]
+    fn test_rapid_sequence_none_path_covers_line_376() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("rs", AnomalyType::RapidSequence, 5.0))
+            .unwrap();
+        // Only 1 sample → recent=1 ≤ 5.0 → None
+        det.record_sample(make_sample("alice", "bob", 100, 20, 10));
+        let s = make_sample("alice", "carol", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .all(|a| a.anomaly_type != AnomalyType::RapidSequence));
+    }
+
+    #[test]
+    fn test_dust_attack_none_path_covers_line_391() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule("dust", AnomalyType::DustAttack, 50.0))
+            .unwrap();
+        // amount=100 >= threshold=50.0 → condition false → None
+        let s = make_sample("alice", "bob", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts
+            .iter()
+            .all(|a| a.anomaly_type != AnomalyType::DustAttack));
+    }
+
+    #[test]
+    fn test_custom_rule_always_none_covers_line_394() {
+        let mut det = AnomalyDetector::new();
+        det.add_rule(make_rule(
+            "c1",
+            AnomalyType::Custom("my_rule".to_string()),
+            1.0,
+        ))
+        .unwrap();
+        let s = make_sample("alice", "bob", 100, 20, 10);
+        let alerts = det.analyze_sample(&s);
+        assert!(alerts.is_empty());
+    }
 }

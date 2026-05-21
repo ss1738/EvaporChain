@@ -743,4 +743,101 @@ mod tests {
         let def = AddressScorer::load_or_default(&path);
         assert_eq!(def.profiles.len(), 0);
     }
+
+    #[test]
+    fn test_rule_condition_no_activity_days_covers_lines_198_205() {
+        let rule = ScoringRule::new(
+            "inactive",
+            "No activity",
+            RiskFactor::FreshWallet,
+            RuleCondition::NoActivityDays(7),
+        );
+        // Profile with no last_activity → matches (None => true)
+        let p_none = AddressProfile::new("evap1none");
+        assert!(rule.matches(&p_none));
+        // Profile with old activity (>7 days) → matches
+        let mut p_old = AddressProfile::new("evap1old");
+        p_old.last_activity = Some("2020-01-01T00:00:00Z".to_string());
+        assert!(rule.matches(&p_old));
+        // Profile with recent activity (<7 days) → does not match
+        let mut p_recent = AddressProfile::new("evap1recent");
+        p_recent.last_activity = Some(chrono::Utc::now().to_rfc3339());
+        assert!(!rule.matches(&p_recent));
+        // Profile with invalid timestamp → matches (else { true })
+        let mut p_bad = AddressProfile::new("evap1bad");
+        p_bad.last_activity = Some("not_a_timestamp".to_string());
+        assert!(rule.matches(&p_bad));
+    }
+
+    #[test]
+    fn test_rule_condition_label_contains_covers_lines_209_214() {
+        let rule = ScoringRule::new(
+            "exchange-label",
+            "Has exchange label",
+            RiskFactor::HighValueTarget,
+            RuleCondition::LabelContains("exchange".to_string()),
+        );
+        let mut p_match = AddressProfile::new("evap1exch");
+        p_match.labels.push("binance_exchange".to_string());
+        assert!(rule.matches(&p_match));
+        let p_no_match = AddressProfile::new("evap1plain");
+        assert!(!rule.matches(&p_no_match));
+    }
+
+    #[test]
+    fn test_score_address_blacklisted_covers_lines_258_259() {
+        let mut scorer = AddressScorer::new();
+        scorer.add_to_blacklist("evap1evil");
+        // Score the blacklisted address — should add KnownScam automatically
+        let profile = scorer.score_address("evap1evil");
+        assert!(profile.has_factor(&RiskFactor::KnownScam));
+        assert_eq!(profile.risk_level, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn test_get_profile_mut_covers_lines_282_284() {
+        let mut scorer = AddressScorer::new();
+        scorer.add_profile(AddressProfile::new("evap1mut"));
+        let p = scorer.get_profile_mut("evap1mut").unwrap();
+        p.tx_count = 42;
+        assert_eq!(scorer.get_profile("evap1mut").unwrap().tx_count, 42);
+        assert!(scorer.get_profile_mut("evap1nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_remove_rule_covers_lines_294_298() {
+        let mut scorer = AddressScorer::new();
+        scorer.add_rule(ScoringRule::new("r1", "Rule 1", RiskFactor::FreshWallet, RuleCondition::Always));
+        scorer.add_rule(ScoringRule::new("r2", "Rule 2", RiskFactor::HighValueTarget, RuleCondition::Always));
+        assert_eq!(scorer.rules.len(), 2);
+        assert!(scorer.remove_rule("r1"));
+        assert_eq!(scorer.rules.len(), 1);
+        assert!(!scorer.remove_rule("nonexistent"));
+    }
+
+    #[test]
+    fn test_stats_low_medium_high_covers_lines_370_372() {
+        let mut scorer = AddressScorer::new();
+        // Safe: fresh profile
+        scorer.add_profile(AddressProfile::new("safe1"));
+        // Low: DustAttack alone = 40 pts
+        let mut low = AddressProfile::new("low1");
+        low.add_factor(RiskFactor::DustAttack);
+        scorer.add_profile(low);
+        // Medium: 2 moderate factors ~55+ pts
+        let mut med = AddressProfile::new("med1");
+        med.add_factor(RiskFactor::DustAttack);
+        med.add_factor(RiskFactor::FreshWallet);
+        scorer.add_profile(med);
+        // High: 3 factors pushing into High range
+        let mut high = AddressProfile::new("high1");
+        high.add_factor(RiskFactor::DustAttack);
+        high.add_factor(RiskFactor::FreshWallet);
+        high.add_factor(RiskFactor::HighValueTarget);
+        scorer.add_profile(high);
+        let st = scorer.stats();
+        assert_eq!(st.safe, 1);
+        assert!(st.low >= 1);
+        assert!(st.medium >= 1 || st.high >= 1);
+    }
 }

@@ -738,4 +738,145 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"overall\":\"Healthy\""));
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_health_status_emoji_warning_and_unknown_covers_lines_32_34() {
+        assert_eq!(HealthStatus::Warning.emoji(), "WARN");
+        assert_eq!(HealthStatus::Unknown.emoji(), "????");
+    }
+
+    #[test]
+    fn test_to_text_with_fix_covers_line_157() {
+        let checks = vec![CheckResult::warning("broken", "something wrong", "do this now")];
+        let report = HealthReport::new(checks);
+        let text = report.to_text();
+        assert!(text.contains("Fix: do this now"));
+    }
+
+    #[test]
+    fn test_health_checker_from_defaults_covers_lines_188_195() {
+        let checker = HealthChecker::from_defaults();
+        assert!(checker.keystore_path.to_string_lossy().contains("keystore.json"));
+        assert!(checker.config_path.to_string_lossy().contains("config.json"));
+    }
+
+    #[test]
+    fn test_checker_data_dir_is_file_not_dir_covers_lines_221_224() {
+        let dir = test_dir();
+        let file_path = dir.join("not_a_dir");
+        std::fs::write(&file_path, "hello").unwrap();
+        let checker = HealthChecker::new(file_path.clone(), dir.join("ks.json"), dir.join("config.json"));
+        let result = checker.check_data_dir();
+        assert_eq!(result.status, HealthStatus::Critical);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_checker_config_invalid_json_covers_lines_306_309() {
+        let dir = test_dir();
+        let cfg_path = dir.join("config.json");
+        std::fs::write(&cfg_path, "not valid json {{{").unwrap();
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), cfg_path);
+        let result = checker.check_config();
+        assert_eq!(result.status, HealthStatus::Warning);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_checker_permissions_no_keystore_covers_line_324() {
+        let dir = test_dir();
+        let checker = HealthChecker::new(dir.clone(), dir.join("no_ks.json"), dir.join("config.json"));
+        let result = checker.check_permissions();
+        assert_eq!(result.status, HealthStatus::Healthy);
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_checker_permissions_too_permissive() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_dir();
+        let ks_path = dir.join("ks.json");
+        std::fs::write(&ks_path, "{}").unwrap();
+        std::fs::set_permissions(&ks_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let checker = HealthChecker::new(dir.clone(), ks_path, dir.join("config.json"));
+        let result = checker.check_permissions();
+        assert_eq!(result.status, HealthStatus::Warning);
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_checker_permissions_ok_covers_lines_337_340() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_dir();
+        let ks_path = dir.join("ks.json");
+        std::fs::write(&ks_path, "{}").unwrap();
+        std::fs::set_permissions(&ks_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let checker = HealthChecker::new(dir.clone(), ks_path, dir.join("config.json"));
+        let result = checker.check_permissions();
+        assert_eq!(result.status, HealthStatus::Healthy);
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_checker_data_dir_not_writable_covers_lines_234_237() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_dir();
+        let ro_dir = dir.join("readonly");
+        std::fs::create_dir_all(&ro_dir).unwrap();
+        std::fs::set_permissions(&ro_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let checker = HealthChecker::new(ro_dir.clone(), dir.join("ks.json"), dir.join("config.json"));
+        let result = checker.check_data_dir();
+        // Restore write permission so cleanup works
+        let _ = std::fs::set_permissions(&ro_dir, std::fs::Permissions::from_mode(0o755));
+        assert_eq!(result.status, HealthStatus::Critical);
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_checker_config_unreadable_covers_lines_313_316() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_dir();
+        let cfg_path = dir.join("config.json");
+        std::fs::write(&cfg_path, r#"{"key":"val"}"#).unwrap();
+        std::fs::set_permissions(&cfg_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), cfg_path.clone());
+        let result = checker.check_config();
+        let _ = std::fs::set_permissions(&cfg_path, std::fs::Permissions::from_mode(0o644));
+        assert_eq!(result.status, HealthStatus::Warning);
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_checker_disk_space_write_fails_covers_lines_358_359() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_dir();
+        let ro_dir = dir.join("nospace");
+        std::fs::create_dir_all(&ro_dir).unwrap();
+        std::fs::set_permissions(&ro_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let checker = HealthChecker::new(ro_dir.clone(), dir.join("ks.json"), dir.join("config.json"));
+        let result = checker.check_disk_space();
+        let _ = std::fs::set_permissions(&ro_dir, std::fs::Permissions::from_mode(0o755));
+        // On a read-only dir, write should fail → warning or critical
+        assert!(result.status == HealthStatus::Warning || result.status == HealthStatus::Critical);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_checker_backup_empty_dir_covers_lines_387_390() {
+        let dir = test_dir();
+        let backup_dir = dir.join("backups");
+        std::fs::create_dir_all(&backup_dir).unwrap();
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
+        let result = checker.check_backup_age();
+        assert_eq!(result.status, HealthStatus::Warning);
+        assert!(result.message.contains("empty") || result.message.contains("Empty"));
+        cleanup(&dir);
+    }
 }

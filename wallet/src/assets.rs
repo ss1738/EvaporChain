@@ -351,4 +351,15 @@ mod tests {
         let portfolio = build_portfolio(detail);
         assert_eq!(portfolio.total_energy_at_risk, 2000 + 3000);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_asset_manager_new_and_rpc_covers_lines_88_101() {
+        use crate::rpc::RpcClient;
+        let rpc = RpcClient::new("http://localhost:9999").unwrap();
+        let manager = AssetManager::new(rpc);
+        // rpc() returns a reference — just verify it doesn't panic
+        let _ = manager.rpc();
+    }
 }

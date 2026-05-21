@@ -441,6 +441,66 @@ mod tests {
     }
 
     #[test]
+    fn test_list_and_is_empty_covers_lines_144_156() {
+        let mut book = AddressBook::new();
+        assert!(book.is_empty());
+        assert_eq!(book.list().len(), 0);
+        book.add("alice", "0xabc", None).unwrap();
+        assert!(!book.is_empty());
+        assert_eq!(book.list().len(), 1);
+    }
+
+    #[test]
+    fn test_update_note_covers_line_174() {
+        let mut book = AddressBook::new();
+        book.add("alice", "0xabc", None).unwrap();
+        book.update("alice", None, Some(Some("new note"))).unwrap();
+        assert_eq!(book.get_by_name("alice").unwrap().note.as_deref(), Some("new note"));
+        book.update("alice", None, Some(None)).unwrap();
+        assert!(book.get_by_name("alice").unwrap().note.is_none());
+    }
+
+    #[test]
+    fn test_csv_export_note_with_comma_covers_line_185() {
+        let mut book = AddressBook::new();
+        book.add("alice", "0xabc", Some("savings, main")).unwrap();
+        let csv = book.to_csv();
+        assert!(csv.contains("\"savings, main\""));
+    }
+
+    #[test]
+    fn test_csv_import_skip_malformed_line_covers_line_216() {
+        let mut book = AddressBook::new();
+        let csv = "name,address,note\nonlyonefield\nalice,0xabc,\n";
+        let count = book.import_csv(csv).unwrap();
+        assert_eq!(count, 1); // only alice imported
+    }
+
+    #[test]
+    fn test_csv_import_skip_empty_name_covers_line_224() {
+        let mut book = AddressBook::new();
+        let csv = "name,address,note\n,0xempty,\nalice,0xabc,\n";
+        let count = book.import_csv(csv).unwrap();
+        assert_eq!(count, 1); // only alice imported (empty name skipped)
+    }
+
+    #[test]
+    fn test_json_import_skip_duplicate_covers_line_258() {
+        let mut book = AddressBook::new();
+        book.add("alice", "0xold", None).unwrap();
+        let json = r#"[{"name":"alice","address":"0xnew","note":null,"created_at":"2026-01-01T00:00:00Z"}]"#;
+        let count = book.import_json(json).unwrap();
+        assert_eq!(count, 0); // duplicate skipped
+        assert_eq!(book.get_by_name("alice").unwrap().address, "0xold");
+    }
+
+    #[test]
+    fn test_default_covers_lines_268_270() {
+        let book = AddressBook::default();
+        assert!(book.is_empty());
+    }
+
+    #[test]
     fn test_csv_file_roundtrip() {
         let mut book = AddressBook::new();
         book.add("alice", "0xabc", Some("test")).unwrap();

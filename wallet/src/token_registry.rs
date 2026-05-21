@@ -700,4 +700,80 @@ mod tests {
         let res = reg.update("0xNONE", sample_token("0xNONE", "X", "X"));
         assert!(matches!(res, Err(TokenRegistryError::NotFound(_))));
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_with_logo_and_website_covers_lines_77_86() {
+        let token = sample_token("0xAAA", "Alpha", "ALP")
+            .with_logo("https://example.com/logo.png")
+            .with_website("https://example.com");
+        assert_eq!(token.logo_url.as_deref(), Some("https://example.com/logo.png"));
+        assert_eq!(token.website.as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn test_parse_amount_zero_decimals_covers_lines_144_146() {
+        let token = TokenInfo::new("0xAAA", "NoDec", "ND", 0);
+        assert_eq!(token.parse_amount("42").unwrap(), 42);
+        // parse error for zero-decimal token
+        assert!(token.parse_amount("not_a_num").is_err());
+    }
+
+    #[test]
+    fn test_parse_amount_bad_whole_part_covers_lines_159_160() {
+        let token = sample_token("0xAAA", "Alpha", "ALP"); // decimals=6
+        // "abc.5" → whole="abc" fails parse → InvalidAmount
+        let err = token.parse_amount("abc.5").unwrap_err();
+        assert!(matches!(err, TokenRegistryError::InvalidAmount(_)));
+    }
+
+    #[test]
+    fn test_parse_amount_bad_frac_part_covers_lines_172_173() {
+        let token = sample_token("0xAAA", "Alpha", "ALP"); // decimals=6
+        // "1.abc" → padded="abc000" fails parse::<u64>() → InvalidAmount
+        let err = token.parse_amount("1.abc").unwrap_err();
+        assert!(matches!(err, TokenRegistryError::InvalidAmount(_)));
+    }
+
+    #[test]
+    fn test_import_csv_bad_decimals_covers_line_345() {
+        let mut reg = TokenRegistry::new();
+        // Third line has non-numeric decimals → parse fails → continue
+        let csv = "0xAAA,Alpha,ALP,6\n0xBBB,Bad,BAD,notanumber\n0xCCC,Gamma,GAM,18";
+        let count = reg.import_csv(csv);
+        assert_eq!(count, 2);
+        assert!(reg.get("0xAAA").is_some());
+        assert!(reg.get("0xBBB").is_none());
+    }
+
+    #[test]
+    fn test_load_or_default_existing_file_covers_lines_386_390() {
+        let path = test_path("load_or_default_existing.json");
+        let mut reg = TokenRegistry::new();
+        reg.register(sample_token("0xAAA", "Alpha", "ALP")).unwrap();
+        reg.save(&path).unwrap();
+
+        let loaded = TokenRegistry::load_or_default(&path).unwrap();
+        assert_eq!(loaded.tokens.len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_or_default_nonexistent_covers_lines_393_395() {
+        let path = test_path("load_or_default_new.json");
+        // Ensure file doesn't exist
+        let _ = std::fs::remove_file(&path);
+        let reg = TokenRegistry::load_or_default(&path).unwrap();
+        assert!(reg.tokens.is_empty());
+        // Should have created the file
+        assert!(path.exists());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_token_registry_default_covers_lines_401_403() {
+        let reg = TokenRegistry::default();
+        assert!(reg.tokens.is_empty());
+    }
 }

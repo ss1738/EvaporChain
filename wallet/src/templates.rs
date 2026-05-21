@@ -750,4 +750,82 @@ mod tests {
         let due = store.due();
         assert_eq!(due.len(), 0);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_template_store_load_io_error_covers_lines_32_34() {
+        let err = TemplateStore::load(std::path::Path::new("/tmp/no_such_templates.json")).unwrap_err();
+        assert!(matches!(err, TemplateError::Io(_)));
+    }
+
+    #[test]
+    fn test_template_store_load_json_error_covers_lines_37_39() {
+        let path = std::env::temp_dir().join(format!("evap_tmpl_bad_{}.json", std::process::id()));
+        std::fs::write(&path, "not valid json {{{{").unwrap();
+        let err = TemplateStore::load(&path).unwrap_err();
+        assert!(matches!(err, TemplateError::Json(_)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_template_type_label_all_variants_covers_lines_57_68() {
+        assert_eq!(TemplateType::Transfer.label(), "transfer");
+        assert_eq!(TemplateType::Refresh.label(), "refresh");
+        assert_eq!(TemplateType::Stake.label(), "stake");
+        assert_eq!(TemplateType::Unstake.label(), "unstake");
+        assert_eq!(TemplateType::NftMint.label(), "nft_mint");
+        assert_eq!(TemplateType::NftTransfer.label(), "nft_transfer");
+        assert_eq!(TemplateType::TokenTransfer.label(), "token_transfer");
+        assert_eq!(TemplateType::ContractCall.label(), "contract_call");
+    }
+
+    #[test]
+    fn test_frequency_label_multi_week_month_covers_lines_118_125() {
+        assert_eq!(Frequency::Weekly(3).label(), "every 3w");
+        assert_eq!(Frequency::Monthly(2).label(), "every 2mo");
+    }
+
+    #[test]
+    fn test_frequency_parse_zero_errors_covers_lines_141_155_162() {
+        assert!(Frequency::from_str("hourly:0").is_err());
+        assert!(Frequency::from_str("weekly:0").is_err());
+        assert!(Frequency::from_str("monthly:0").is_err());
+    }
+
+    #[test]
+    fn test_template_is_due_no_next_execution_recurring_covers_line_222() {
+        let mut store = TemplateStore::new();
+        store
+            .create_transfer("recurring", "0xfoo", 100, Frequency::Daily(1))
+            .unwrap();
+        // Clear next_execution to simulate "scheduled but no next time set"
+        let t = store.templates.iter_mut().find(|t| t.name == "recurring").unwrap();
+        t.next_execution = None;
+        t.exec_count = 0;
+        assert!(t.is_due()); // exec_count==0 && freq != Once → true
+    }
+
+    #[test]
+    fn test_record_execution_once_frequency_covers_line_239() {
+        let mut store = TemplateStore::new();
+        store
+            .create_transfer("one-shot", "0xbar", 50, Frequency::Once)
+            .unwrap();
+        store.record_execution("one-shot").unwrap();
+        // Once → next_execution = None
+        assert!(store.get("one-shot").unwrap().next_execution.is_none());
+    }
+
+    #[test]
+    fn test_template_store_default_covers_lines_470_472() {
+        let store = TemplateStore::default();
+        assert!(store.templates.is_empty());
+    }
+
+    #[test]
+    fn test_default_templates_path_covers_lines_476_478() {
+        let path = default_templates_path();
+        assert!(path.to_string_lossy().contains("templates.json"));
+    }
 }

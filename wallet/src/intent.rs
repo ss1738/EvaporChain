@@ -665,4 +665,88 @@ mod tests {
         assert_eq!(IntentType::Swap.name(), "swap");
         assert_eq!(IntentType::Bridge.name(), "bridge");
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_intent_type_all_names_covers_lines_50_53() {
+        assert_eq!(IntentType::Transfer.name(), "transfer");
+        assert_eq!(IntentType::BatchTransfer.name(), "batch_transfer");
+        assert_eq!(IntentType::Conditional.name(), "conditional");
+        assert_eq!(IntentType::Recurring.name(), "recurring");
+    }
+
+    #[test]
+    fn test_constraint_numeric_ops_covers_lines_106_107() {
+        let lt = Constraint::new("amount", ConstraintOp::Lt, "100");
+        assert!(lt.check("50"));
+        assert!(!lt.check("150"));
+
+        let gt = Constraint::new("amount", ConstraintOp::Gt, "100");
+        assert!(gt.check("200"));
+
+        let lte = Constraint::new("amount", ConstraintOp::Lte, "100");
+        assert!(lte.check("100"));
+
+        let gte = Constraint::new("amount", ConstraintOp::Gte, "100");
+        assert!(gte.check("100"));
+    }
+
+    #[test]
+    fn test_constraint_non_numeric_parse_fail_covers_line_112() {
+        let lt = Constraint::new("value", ConstraintOp::Lt, "not_a_number");
+        // actual parse fails → false
+        assert!(!lt.check("also_not_a_number"));
+    }
+
+    #[test]
+    fn test_intent_with_max_gas_covers_lines_165_168() {
+        let intent = make_intent("i1").with_max_gas(5000);
+        assert_eq!(intent.max_gas, Some(5000));
+    }
+
+    #[test]
+    fn test_intent_is_expired_no_deadline_covers_line_178() {
+        let intent = make_intent("i1");
+        assert!(!intent.is_expired("2030-01-01"));
+    }
+
+    #[test]
+    fn test_intent_mark_failed_covers_lines_204_206() {
+        let mut intent = make_intent("i1");
+        intent.mark_failed();
+        assert_eq!(intent.status, IntentStatus::Failed);
+    }
+
+    #[test]
+    fn test_solver_reliability_fresh_covers_line_289() {
+        let solver = Solver::new("s1", "S1", vec![IntentType::Transfer]);
+        assert_eq!(solver.reliability(), 1.0);
+    }
+
+    #[test]
+    fn test_engine_get_intent_covers_lines_332_334() {
+        let mut e = IntentEngine::new();
+        e.submit_intent(make_intent("i1")).unwrap();
+        assert!(e.get_intent("i1").is_some());
+        assert!(e.get_intent("nope").is_none());
+    }
+
+    #[test]
+    fn test_engine_get_intent_mut_covers_lines_336_338() {
+        let mut e = IntentEngine::new();
+        e.submit_intent(make_intent("i1")).unwrap();
+        {
+            let intent = e.get_intent_mut("i1").unwrap();
+            intent.mark_failed();
+        }
+        assert_eq!(e.get_intent("i1").unwrap().status, IntentStatus::Failed);
+        assert!(e.get_intent_mut("nope").is_none());
+    }
+
+    #[test]
+    fn test_engine_load_or_default_covers_lines_435_437() {
+        let e = IntentEngine::load_or_default(std::path::Path::new("/tmp/no_such_intent.json"));
+        assert!(e.intents.is_empty());
+    }
 }

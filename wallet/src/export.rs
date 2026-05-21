@@ -600,4 +600,18 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_from_io_error_covers_lines_26_28() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let exp_err = ExportError::from(io_err);
+        assert!(matches!(exp_err, ExportError::Io(_)));
+    }
+
+    #[test]
+    fn test_from_json_error_covers_lines_31_33() {
+        let json_err = serde_json::from_str::<i32>("not_json").unwrap_err();
+        let exp_err = ExportError::from(json_err);
+        assert!(matches!(exp_err, ExportError::Json(_)));
+    }
 }

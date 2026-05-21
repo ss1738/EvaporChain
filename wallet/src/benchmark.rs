@@ -651,4 +651,78 @@ mod tests {
         assert_eq!(stats.min_ns, 10);
         assert_eq!(stats.max_ns, 40);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_bench_config_thorough_covers_lines_96_101() {
+        let c = BenchConfig::thorough();
+        assert_eq!(c.warmup_iterations, 50);
+        assert_eq!(c.iterations, 1000);
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn test_compute_stats_zero_mean_covers_line_158() {
+        // All-zero timings → mean == 0 → ops_per_sec = f64::INFINITY
+        let mut timings = vec![0u128; 5];
+        let stats = compute_stats("zeros", &mut timings);
+        assert_eq!(stats.ops_per_sec, f64::INFINITY);
+    }
+
+    #[test]
+    fn test_bench_suite_add_covers_lines_194_196() {
+        let config = BenchConfig::quick();
+        let mut suite = BenchSuite::new("adder", config.clone());
+        let dummy_result = run_bench("dummy", &config, || {}).unwrap();
+        suite.add(dummy_result);
+        assert_eq!(suite.results.len(), 1);
+    }
+
+    #[test]
+    fn test_compare_zero_mean_covers_line_259() {
+        let baseline = BenchResult {
+            name: "test".into(),
+            iterations: 10,
+            total_ns: 1000,
+            min_ns: 100,
+            max_ns: 100,
+            mean_ns: 100,
+            median_ns: 100,
+            p99_ns: 100,
+            ops_per_sec: 1_000_000.0,
+        };
+        let zero_current = BenchResult { mean_ns: 0, ..baseline.clone() };
+        let cmp = compare(&baseline, &zero_current, 0.1);
+        assert_eq!(cmp.speedup, f64::INFINITY);
+    }
+
+    #[test]
+    fn test_get_baseline_empty_history_covers_line_353() {
+        let history = BenchHistory::new();
+        assert!(history.get_baseline("anything").is_none());
+    }
+
+    #[test]
+    fn test_check_regressions_with_two_runs_covers_lines_370_392() {
+        let mut history = BenchHistory::new();
+
+        // First run (baseline): fast
+        let config = BenchConfig::quick();
+        let mut baseline_suite = BenchSuite::new("run1", config.clone());
+        baseline_suite.run("op", || {}).unwrap();
+        // Manually set a specific mean so we can control the regression
+        baseline_suite.results[0].mean_ns = 100;
+        history.add_run(baseline_suite);
+
+        // Second run: slower (200ns vs 100ns baseline → 0.5× speedup → regression if threshold < 0.5)
+        let mut slow_suite = BenchSuite::new("run2", config);
+        slow_suite.run("op", || {}).unwrap();
+        slow_suite.results[0].mean_ns = 200;
+        history.add_run(slow_suite);
+
+        let regressions = history.check_regressions(0.1);
+        assert!(!regressions.is_empty());
+        assert!(regressions[0].regression);
+    }
 }

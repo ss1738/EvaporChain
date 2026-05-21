@@ -696,4 +696,76 @@ mod tests {
         assert!(ws.subscriptions.is_empty());
         assert_eq!(ws.max_events, 5000);
     }
+
+    #[test]
+    fn test_matches_filters_lt_covers_lines_232_236() {
+        let mut event = make_event("s1", EventType::NewBlock);
+        event.payload.insert("amount".to_string(), "50.0".to_string());
+        let filters = vec![EventFilter {
+            field: "amount".to_string(),
+            op: FilterOp::Lt,
+            value: "100.0".to_string(),
+        }];
+        assert!(WsSubscriber::matches_filters(&event, &filters));
+        // Flip: value not less than threshold
+        let filters2 = vec![EventFilter {
+            field: "amount".to_string(),
+            op: FilterOp::Lt,
+            value: "10.0".to_string(),
+        }];
+        assert!(!WsSubscriber::matches_filters(&event, &filters2));
+    }
+
+    #[test]
+    fn test_matches_filters_gte_covers_lines_237_241() {
+        let mut event = make_event("s1", EventType::NewBlock);
+        event.payload.insert("amount".to_string(), "100.0".to_string());
+        let filters = vec![EventFilter {
+            field: "amount".to_string(),
+            op: FilterOp::Gte,
+            value: "100.0".to_string(),
+        }];
+        assert!(WsSubscriber::matches_filters(&event, &filters));
+        let filters2 = vec![EventFilter {
+            field: "amount".to_string(),
+            op: FilterOp::Gte,
+            value: "200.0".to_string(),
+        }];
+        assert!(!WsSubscriber::matches_filters(&event, &filters2));
+    }
+
+    #[test]
+    fn test_matches_filters_lte_covers_lines_242_246() {
+        let mut event = make_event("s1", EventType::NewBlock);
+        event.payload.insert("amount".to_string(), "75.0".to_string());
+        let filters = vec![EventFilter {
+            field: "amount".to_string(),
+            op: FilterOp::Lte,
+            value: "75.0".to_string(),
+        }];
+        assert!(WsSubscriber::matches_filters(&event, &filters));
+        let filters2 = vec![EventFilter {
+            field: "amount".to_string(),
+            op: FilterOp::Lte,
+            value: "50.0".to_string(),
+        }];
+        assert!(!WsSubscriber::matches_filters(&event, &filters2));
+    }
+
+    #[test]
+    fn test_stats_epm_with_two_events_covers_lines_315_321() {
+        let mut ws = WsSubscriber::new();
+        ws.subscribe(make_sub("s1", EventType::NewBlock, "ws://localhost:8080"))
+            .unwrap();
+        // Need 2 events with parseable timestamps for epm calculation
+        let mut e1 = make_event("s1", EventType::NewBlock);
+        e1.timestamp = "2026-01-01T00:00:00Z".to_string();
+        let mut e2 = make_event("s1", EventType::NewBlock);
+        e2.timestamp = "2026-01-01T00:01:00Z".to_string();
+        ws.record_event(e1).unwrap();
+        ws.record_event(e2).unwrap();
+        let stats = ws.stats();
+        // epm should be non-zero: 2 events over 60 seconds = 2.0 epm
+        assert!(stats.events_per_minute > 0.0);
+    }
 }

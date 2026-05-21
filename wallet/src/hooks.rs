@@ -716,4 +716,97 @@ mod tests {
         let result = reg.fire(HookEvent::PreSend, &ctx).unwrap();
         assert!(result[0].contains("42"));
     }
+
+    #[test]
+    fn test_default_true_via_deserialization_covers_lines_117_119() {
+        // default_true() is called when `enabled` is absent during deserialization
+        let json = r#"{"name":"h","event":"pre_send","action":{"type":"shell","command":"echo hi"},"blocking":false}"#;
+        let hook: Hook = serde_json::from_str(json).unwrap();
+        assert!(hook.enabled); // default_true() was invoked
+    }
+
+    #[test]
+    fn test_list_covers_lines_268_270() {
+        let reg = make_registry();
+        let hooks = reg.list();
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].name, "log_sends");
+    }
+
+    #[test]
+    fn test_fire_webhook_covers_lines_309_312() {
+        let mut reg = HookRegistry::new();
+        reg.register(Hook {
+            name: "webhook_test".to_string(),
+            event: HookEvent::PostSend,
+            action: HookAction::Webhook {
+                url: "https://example.com/hook".to_string(),
+            },
+            enabled: true,
+            blocking: false,
+        });
+        let ctx = HookContext::transfer(HookEvent::PostSend, "0xa", "0xb", 100);
+        let msgs = reg.fire(HookEvent::PostSend, &ctx).unwrap();
+        assert!(msgs[0].contains("webhook queued"));
+        assert!(msgs[0].contains("example.com"));
+    }
+
+    #[test]
+    fn test_default_covers_lines_331_333() {
+        let reg = HookRegistry::default();
+        assert!(reg.is_empty());
+    }
+
+    #[test]
+    fn test_fire_log_error_path_covers_line_303() {
+        // Use an existing directory path as the log file → open() fails with EISDIR
+        let mut reg = HookRegistry::new();
+        reg.register(Hook {
+            name: "bad_log".to_string(),
+            event: HookEvent::PostSend,
+            action: HookAction::Log {
+                file: std::env::temp_dir().to_string_lossy().to_string(),
+                format: None,
+            },
+            enabled: true,
+            blocking: false,
+        });
+        let ctx = HookContext::transfer(HookEvent::PostSend, "0xa", "0xb", 1);
+        let msgs = reg.fire(HookEvent::PostSend, &ctx).unwrap();
+        assert!(msgs[0].contains("log error"));
+    }
+
+    #[test]
+    fn test_default_hooks_path_covers_lines_414_416() {
+        let path = default_hooks_path();
+        assert!(path.to_string_lossy().contains("hooks.json"));
+    }
+
+    #[test]
+    fn test_shell_ctx_object_energy_hash_error_covers_lines_355_364() {
+        let mut reg = HookRegistry::new();
+        reg.register(Hook {
+            name: "full_ctx".to_string(),
+            event: HookEvent::OnError,
+            action: HookAction::Shell {
+                command: "echo ok".to_string(),
+            },
+            enabled: true,
+            blocking: false,
+        });
+        let ctx = HookContext {
+            event: "on_error".to_string(),
+            tx_type: "transfer".to_string(),
+            from: None,
+            to: None,
+            amount: None,
+            object_id: Some("obj123".to_string()),
+            energy: Some(500),
+            tx_hash: Some("0xdeadbeef".to_string()),
+            error: Some("something failed".to_string()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        let msgs = reg.fire(HookEvent::OnError, &ctx).unwrap();
+        assert!(!msgs.is_empty());
+    }
 }

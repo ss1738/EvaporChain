@@ -247,4 +247,43 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"tx_type\":\"Transfer\""));
     }
+
+    // ─── Additional coverage tests (session 62) ───────────────────────────────
+
+    #[test]
+    fn test_print_json_does_not_panic() {
+        let resp = SuccessResponse::ok("hello");
+        print_json(&resp);
+    }
+
+    #[test]
+    fn test_print_json_error_does_not_panic() {
+        print_json_error("something went wrong");
+    }
+
+    #[test]
+    fn test_print_json_error_with_special_chars() {
+        print_json_error("error: invalid \"key\" value");
+    }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_json_or_json_mode_covers_lines_27_33() {
+        set_json_mode(true);
+        let resp = SuccessResponse::ok("json_mode_test");
+        json_or(&resp, || panic!("human formatter should not be called"));
+        set_json_mode(false);
+    }
+
+    #[test]
+    fn test_json_or_human_mode_covers_else_branch() {
+        set_json_mode(false);
+        let resp = SuccessResponse::ok("human_test");
+        let mut called = false;
+        json_or(&resp, || {
+            called = true;
+        });
+        assert!(called);
+    }
 }

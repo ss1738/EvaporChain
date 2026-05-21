@@ -562,4 +562,58 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_chain_id_label_all_variants_covers_lines_49_54() {
+        assert_eq!(ChainId::Solana.label(), "solana");
+        assert_eq!(ChainId::Sui.label(), "sui");
+        assert_eq!(ChainId::Aptos.label(), "aptos");
+        assert_eq!(ChainId::Polygon.label(), "polygon");
+        assert_eq!(ChainId::Arbitrum.label(), "arbitrum");
+        assert_eq!(ChainId::Custom("mychain".into()).label(), "mychain");
+    }
+
+    #[test]
+    fn test_list_bridges_covers_lines_224_226() {
+        let mgr = make_manager();
+        assert_eq!(mgr.list_bridges().len(), 1);
+        assert_eq!(mgr.list_bridges()[0].id, "evap-eth-v1");
+    }
+
+    #[test]
+    fn test_update_status_bridging_covers_line_310() {
+        let mut mgr = make_manager();
+        let xfer = mgr
+            .initiate_transfer("evap-eth-v1", "EVAP", 500, "0x1", "0x2")
+            .unwrap();
+        let xfer_id = xfer.id.clone();
+        // Bridging triggers the `_ => {}` arm (no tx hash update)
+        mgr.update_transfer_status(&xfer_id, TransferStatus::Bridging, Some("0xhash"))
+            .unwrap();
+        let t = mgr.get_transfer(&xfer_id).unwrap();
+        assert_eq!(t.status, TransferStatus::Bridging);
+        assert!(t.source_tx.is_none());
+    }
+
+    #[test]
+    fn test_list_transfers_covers_lines_325_327() {
+        let mut mgr = make_manager();
+        mgr.initiate_transfer("evap-eth-v1", "EVAP", 100, "0x1", "0x2")
+            .unwrap();
+        assert_eq!(mgr.list_transfers().len(), 1);
+    }
+
+    #[test]
+    fn test_bridge_manager_default_covers_lines_349_351() {
+        let mgr = BridgeManager::default();
+        assert_eq!(mgr.bridge_count(), 0);
+    }
+
+    #[test]
+    fn test_default_bridge_path_covers_lines_355_357() {
+        let p = default_bridge_path();
+        assert!(p.to_string_lossy().contains("bridges.json"));
+    }
 }

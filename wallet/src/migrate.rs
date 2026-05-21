@@ -657,4 +657,137 @@ mod tests {
         assert_eq!(SourceFormat::MetaMaskV3.name(), "MetaMask V3 Keystore");
         assert_eq!(SourceFormat::PhantomJson.name(), "Phantom Export");
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_detect_raw_key_128_no_prefix_covers_line_81() {
+        let key = "a".repeat(128);
+        assert_eq!(detect_format(&key), Some(SourceFormat::RawKey));
+    }
+
+    #[test]
+    fn test_detect_raw_key_0x_128_covers_line_87() {
+        let key = format!("0x{}", "b".repeat(128));
+        assert_eq!(detect_format(&key), Some(SourceFormat::RawKey));
+    }
+
+    #[test]
+    fn test_detect_generic_address_only_covers_line_111() {
+        // JSON with `address` but no `crypto`, not MetaMask/Phantom/EvaporChain
+        let json = r#"{"address":"0x1234abcd"}"#;
+        assert_eq!(detect_format(json), Some(SourceFormat::GenericKeystore));
+    }
+
+    #[test]
+    fn test_plan_phantom_with_mnemonic_covers_lines_249_267() {
+        let m = Migrator::new();
+        let json = r#"{"mnemonic":"word1 word2","publicKey":"abc123"}"#;
+        let plan = m.plan_from_input(json).unwrap();
+        assert_eq!(plan.format, "Phantom Export");
+        assert_eq!(plan.accounts_found, 1);
+        assert_eq!(plan.accounts[0].note, "Phantom mnemonic export");
+        assert_eq!(
+            plan.accounts[0].original_address,
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_plan_phantom_secret_key_covers_lines_249_267() {
+        let m = Migrator::new();
+        let json = r#"{"secretKey":"deadbeef","publicKey":"cafe"}"#;
+        let plan = m.plan_from_input(json).unwrap();
+        assert_eq!(plan.format, "Phantom Export");
+        assert_eq!(plan.accounts[0].note, "Phantom secret key export");
+    }
+
+    #[test]
+    fn test_plan_generic_keystore_covers_lines_269_277() {
+        let m = Migrator::new();
+        let json = r#"{"address":"0xdeadbeef"}"#;
+        let plan = m.plan_from_input(json).unwrap();
+        assert_eq!(plan.format, "Generic JSON Keystore");
+        assert_eq!(plan.accounts_found, 1);
+        assert_eq!(plan.accounts[0].label, "imported-keystore");
+    }
+
+    #[test]
+    fn test_plan_from_file_covers_lines_302_307() {
+        let path = std::env::temp_dir()
+            .join(format!("evap_migrate_plan_file_{}.json", std::process::id()));
+        let key = "a".repeat(64);
+        std::fs::write(&path, &key).unwrap();
+        let m = Migrator::new();
+        let plan = m.plan_from_file(&path).unwrap();
+        assert_eq!(plan.format, "Raw Private Key");
+        assert_eq!(plan.source, path.display().to_string());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_plan_from_file_io_error_covers_error_path() {
+        let m = Migrator::new();
+        let result = m.plan_from_file(Path::new(
+            "/tmp/nonexistent_migrate_xyzabc.json",
+        ));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_source_format_name_all_variants_covers_lines_50_59() {
+        assert_eq!(SourceFormat::RawKey.name(), "Raw Private Key");
+        assert_eq!(SourceFormat::GenericKeystore.name(), "Generic JSON Keystore");
+        assert_eq!(SourceFormat::EvaporChainBackup.name(), "EvaporChain Backup");
+    }
+
+    #[test]
+    fn test_plan_evaporchain_no_accounts_array_covers_line_283() {
+        let m = Migrator::new();
+        // No accounts key → unwrap_or(1) → 1 account
+        let json = r#"{"evaporchain_version":"1.0"}"#;
+        let plan = m.plan_from_input(json).unwrap();
+        assert_eq!(plan.format, "EvaporChain Backup");
+        assert_eq!(plan.accounts_found, 1);
+    }
+
+    #[test]
+    fn test_migrator_default_covers_derive() {
+        let m = Migrator::default();
+        assert!(m.history.is_empty());
+        // default() gives empty supported_formats (vs new() which populates)
+        assert!(m.supported_formats.is_empty());
+    }
+
+    #[test]
+    fn test_detect_12_words_not_all_alpha_covers_line_74() {
+        // 12 words where one contains a digit → all_alpha = false → falls through
+        let input = "abandon ability able about above absent absorb abstract absurd abuse access acc123";
+        let result = detect_format(input);
+        // Should NOT be Mnemonic since not all alpha; check if it returns None or RawKey
+        assert_ne!(result, Some(SourceFormat::Mnemonic));
+    }
+
+    #[test]
+    fn test_detect_0x_short_hex_covers_line_88() {
+        // "0x" prefix but length ≠ 64 or 128 → inner condition false → falls through
+        let result = detect_format("0x1234abcd");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_detect_json_crypto_only_no_address_covers_lines_111_112() {
+        // JSON with crypto but no address, no special keys → GenericKeystore via crypto path
+        let json = r#"{"crypto":{"cipher":"aes-128-ctr"}}"#;
+        // version != 3 (no version field) → not MetaMask; no evaporchain_version; no mnemonic/secretKey
+        // has crypto → GenericKeystore
+        assert_eq!(detect_format(json), Some(SourceFormat::GenericKeystore));
+    }
+
+    #[test]
+    fn test_detect_json_no_special_fields_returns_none_covers_line_112() {
+        // Valid JSON but no address/crypto/mnemonic/version → falls through → None
+        let json = r#"{"foo":"bar","baz":123}"#;
+        assert_eq!(detect_format(json), None);
+    }
 }

@@ -844,4 +844,119 @@ mod tests {
         ctx.trust_level = Some("trusted".into());
         assert!(engine.is_blocked(&ctx).is_none());
     }
+
+    #[test]
+    fn test_from_io_error_covers_lines_28_30() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+        let err = PolicyError::from(io_err);
+        assert!(matches!(err, PolicyError::Io(_)));
+    }
+
+    #[test]
+    fn test_from_serde_json_error_covers_lines_33_35() {
+        let json_err = serde_json::from_str::<PolicyEngine>("{invalid}").unwrap_err();
+        let err = PolicyError::from(json_err);
+        assert!(matches!(err, PolicyError::Json(_)));
+    }
+
+    #[test]
+    fn test_rule_labels_all_variants_covers_lines_71_85() {
+        assert!(Rule::AllowedRecipients(vec!["a".into()]).label().contains("allowed_recipients(1)"));
+        assert!(Rule::BlockedRecipients(vec!["b".into(), "c".into()]).label().contains("blocked_recipients(2)"));
+        assert!(Rule::TimeRestriction { deny_after: 22, deny_before: 6 }.label().contains("22h-6h"));
+        assert!(Rule::MaxRiskScore(80).label().contains("80"));
+        assert!(Rule::MinTrustLevel("neutral".into()).label().contains("neutral"));
+        assert!(Rule::BlockTxTypes(vec!["swap".into()]).label().contains("swap"));
+        assert!(Rule::RateLimit { max_count: 10, window_secs: 3600 }.label().contains("10"));
+        assert!(Rule::Custom("my rule".into()).label().contains("my rule"));
+    }
+
+    #[test]
+    fn test_combine_mode_any_covers_line_307() {
+        let mut engine = PolicyEngine::new();
+        let mut policy = make_policy(
+            "any-test",
+            "CombineMode::Any test",
+            vec![Rule::MaxAmount(1000)],
+            Enforcement::Block,
+            1,
+        );
+        policy.combine = CombineMode::Any;
+        engine.add_policy(policy).unwrap();
+        // Amount 2000 > 1000 → violation, blocked
+        let ctx = make_ctx(2000, "0xrecipient");
+        assert!(engine.is_blocked(&ctx).is_some());
+    }
+
+    #[test]
+    fn test_max_risk_score_no_score_covers_line_389() {
+        let mut engine = PolicyEngine::new();
+        engine.add_policy(make_policy(
+            "risk-check",
+            "Block high risk",
+            vec![Rule::MaxRiskScore(70)],
+            Enforcement::Block,
+            1,
+        )).unwrap();
+        // ctx with no risk_score → rule returns None → not blocked
+        let ctx = make_ctx(100, "0xfoo");
+        assert!(ctx.risk_score.is_none());
+        assert!(engine.is_blocked(&ctx).is_none());
+    }
+
+    #[test]
+    fn test_trust_level_none_ctx_covers_line_421() {
+        let mut engine = PolicyEngine::new();
+        engine.add_policy(make_policy(
+            "trust-check",
+            "Require trusted",
+            vec![Rule::MinTrustLevel("trusted".into())],
+            Enforcement::Block,
+            1,
+        )).unwrap();
+        // ctx with no trust_level → rule returns None → not blocked
+        let ctx = make_ctx(100, "0xfoo");
+        assert!(ctx.trust_level.is_none());
+        assert!(engine.is_blocked(&ctx).is_none());
+    }
+
+    #[test]
+    fn test_custom_rule_covers_lines_451_453() {
+        let mut engine = PolicyEngine::new();
+        engine.add_policy(make_policy(
+            "custom-rule",
+            "Custom informational rule",
+            vec![Rule::Custom("always allow for testing".into())],
+            Enforcement::Block,
+            1,
+        )).unwrap();
+        let ctx = make_ctx(100, "0xfoo");
+        // Custom rules always pass
+        assert!(engine.is_blocked(&ctx).is_none());
+    }
+
+    #[test]
+    fn test_default_policy_path_covers_lines_466_468() {
+        let path = default_policy_path();
+        assert!(path.to_string_lossy().contains("policies.json"));
+    }
+
+    #[test]
+    fn test_time_restriction_daytime_covers_line_364() {
+        let mut engine = PolicyEngine::new();
+        engine.add_policy(make_policy(
+            "daytime-block",
+            "Block 9am-5pm",
+            vec![Rule::TimeRestriction { deny_after: 9, deny_before: 17 }],
+            Enforcement::Block,
+            1,
+        )).unwrap();
+        // Set hour within blocked range
+        let mut ctx = make_ctx(100, "0xfoo");
+        ctx.hour = 12; // noon → should be blocked (9 <= 12 < 17)
+        assert!(engine.is_blocked(&ctx).is_some());
+        // Set hour outside blocked range
+        ctx.hour = 8;
+        assert!(engine.is_blocked(&ctx).is_none());
+    }
 }

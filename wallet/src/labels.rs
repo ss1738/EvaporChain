@@ -704,6 +704,58 @@ mod tests {
     }
 
     #[test]
+    fn test_address_category_label_all_variants_covers_lines_85_91() {
+        assert_eq!(AddressCategory::Defi.label(), "defi");
+        assert_eq!(AddressCategory::Contract.label(), "contract");
+        assert_eq!(AddressCategory::Dao.label(), "dao");
+        assert_eq!(AddressCategory::Staking.label(), "staking");
+        assert_eq!(AddressCategory::Nft.label(), "nft");
+        assert_eq!(AddressCategory::Faucet.label(), "faucet");
+        assert_eq!(AddressCategory::Unknown.label(), "unknown");
+    }
+
+    #[test]
+    fn test_update_address_label_tags_covers_line_251() {
+        let mut store = make_store();
+        store.update_address_label(
+            "0xabc123",
+            None,
+            None,
+            Some(vec!["newTag".to_string(), "anotherTag".to_string()]),
+            None,
+        ).unwrap();
+        let label = store.get_address_label("0xabc123").unwrap();
+        assert!(label.tags.contains(&"newTag".to_string()));
+    }
+
+    #[test]
+    fn test_list_address_labels_covers_lines_273_275() {
+        let store = make_store();
+        let labels = store.list_address_labels();
+        assert_eq!(labels.len(), 2);
+    }
+
+    #[test]
+    fn test_list_tx_annotations_covers_lines_366_368() {
+        let mut store = make_store();
+        store.annotate_tx("0xhash99", Some("note"), vec!["tag".into()], None).unwrap();
+        let annotations = store.list_tx_annotations();
+        assert_eq!(annotations.len(), 1);
+    }
+
+    #[test]
+    fn test_label_store_default_covers_lines_400_402() {
+        let store = LabelStore::default();
+        assert_eq!(store.address_count(), 0);
+    }
+
+    #[test]
+    fn test_default_labels_path_covers_line_406() {
+        let path = default_labels_path();
+        assert!(path.to_string_lossy().contains("labels.json"));
+    }
+
+    #[test]
     fn test_tx_annotation_serializable() {
         let ann = TxAnnotation {
             tx_hash: "0xhash".into(),

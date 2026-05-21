@@ -558,4 +558,50 @@ mod tests {
         let store = DelegationStore::load_or_default(Path::new("/tmp/noexist_deleg.json"));
         assert!(store.delegations.is_empty());
     }
+
+    // ─── Additional coverage tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_delegation_type_name_covers_lines_54_62() {
+        assert_eq!(DelegationType::Transfer.name(), "transfer");
+        assert_eq!(DelegationType::Staking.name(), "staking");
+        assert_eq!(DelegationType::Governance.name(), "governance");
+        assert_eq!(DelegationType::ContractCall.name(), "contract_call");
+        assert_eq!(DelegationType::Any.name(), "any");
+    }
+
+    #[test]
+    fn test_with_note_covers_lines_134_137() {
+        let d = make_delegation("d1").with_note("test note");
+        assert_eq!(d.note, "test note");
+    }
+
+    #[test]
+    fn test_utilization_zero_cap_covers_line_145() {
+        let d = Delegation::new("d1", "a", "b", DelegationType::Transfer, 0);
+        assert_eq!(d.utilization_percent(), 100.0);
+    }
+
+    #[test]
+    fn test_store_get_mut_covers_lines_237_239() {
+        let mut store = DelegationStore::new();
+        store.add(make_delegation("d1")).unwrap();
+        let d = store.get_mut("d1").unwrap();
+        d.note = "mutated".to_string();
+        assert_eq!(store.get("d1").unwrap().note, "mutated");
+    }
+
+    #[test]
+    fn test_store_purge_inactive_covers_lines_299_304() {
+        let mut store = DelegationStore::new();
+        store.add(make_delegation("d1")).unwrap();
+        // Add an already-revoked delegation
+        let mut d2 = make_delegation("d2");
+        d2.status = DelegationStatus::Revoked;
+        store.delegations.insert("d2".into(), d2);
+        let purged = store.purge_inactive();
+        assert_eq!(purged, 1);
+        assert!(store.get("d1").is_some());
+        assert!(store.get("d2").is_none());
+    }
 }

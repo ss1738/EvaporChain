@@ -718,4 +718,52 @@ mod tests {
         let t = truncate(&long);
         assert!(t.contains("..."));
     }
+
+    #[test]
+    fn test_priority_label_all_variants_covers_lines_45_47() {
+        assert_eq!(Priority::Low.label(), "low");
+        assert_eq!(Priority::Medium.label(), "medium");
+        assert_eq!(Priority::High.label(), "high");
+        assert_eq!(Priority::Critical.label(), "critical");
+    }
+
+    #[test]
+    fn test_priority_icon_all_variants_covers_lines_54_57() {
+        assert_eq!(Priority::Low.icon(), "INFO");
+        assert_eq!(Priority::Medium.icon(), "WARN");
+        assert_eq!(Priority::High.icon(), "ALERT");
+        assert_eq!(Priority::Critical.icon(), "CRIT");
+    }
+
+    #[test]
+    fn test_event_category_label_all_variants_covers_lines_80_84() {
+        assert_eq!(EventCategory::TxFailed.label(), "tx_failed");
+        assert_eq!(EventCategory::FeeAlert.label(), "fee_alert");
+        assert_eq!(EventCategory::Security.label(), "security");
+        assert_eq!(EventCategory::SessionExpiry.label(), "session_expiry");
+        assert_eq!(EventCategory::System.label(), "system");
+    }
+
+    #[test]
+    fn test_unread_covers_lines_320_322() {
+        let mut center = make_center();
+        center.notify(Priority::Low, EventCategory::System, "T1", "m1", None);
+        center.notify(Priority::High, EventCategory::Security, "T2", "m2", None);
+        let unread = center.unread();
+        assert_eq!(unread.len(), 2);
+        center.mark_all_read();
+        assert_eq!(center.unread().len(), 0);
+    }
+
+    #[test]
+    fn test_default_covers_lines_377_379() {
+        let center = NotificationCenter::default();
+        assert!(center.is_empty());
+    }
+
+    #[test]
+    fn test_default_notifications_path_covers_line_416() {
+        let path = default_notifications_path();
+        assert!(path.to_string_lossy().contains("notifications.json"));
+    }
 }

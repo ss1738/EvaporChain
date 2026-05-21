@@ -818,4 +818,71 @@ mod tests {
         let default = MempoolMonitor::load_or_default(Path::new("/tmp/nonexistent_mempool_file"));
         assert_eq!(default.pending_count(), 0);
     }
+
+    #[test]
+    fn test_age_secs_invalid_timestamp_covers_lines_116_117() {
+        let tx = make_tx("h1", "a", "b", 500, "transfer");
+        // Set invalid timestamp so fallback to epoch fires
+        let mut tx = tx;
+        tx.first_seen = "not-a-date".to_string();
+        let age = tx.age_secs();
+        // Should be a very large number (years since 1970)
+        assert!(age > 0);
+    }
+
+    #[test]
+    fn test_fee_per_byte_covers_lines_124_126() {
+        let tx = make_tx("h1", "a", "b", 100, "transfer"); // fee=100, 100/250=0, max(1)=1
+        assert_eq!(tx.fee_per_byte(), 1);
+        let tx2 = make_tx("h2", "a", "b", 500, "transfer"); // fee=500, 500/250=2
+        assert_eq!(tx2.fee_per_byte(), 2);
+    }
+
+    #[test]
+    fn test_average_fee_with_samples_covers_lines_197_199() {
+        let mut oracle = GasOracle::new();
+        oracle.record(100, true);
+        oracle.record(200, true);
+        oracle.record(300, true);
+        assert_eq!(oracle.average_fee(), 200);
+    }
+
+    #[test]
+    fn test_gas_oracle_default_covers_lines_209_211() {
+        let oracle = GasOracle::default();
+        assert_eq!(oracle.sample_count(), 0);
+    }
+
+    #[test]
+    fn test_alerts_overflow_covers_line_366() {
+        let mut monitor = MempoolMonitor::new();
+        monitor.max_alerts = 2;
+        monitor.add_tx(make_tx("v", "a", "contract", 1000, "swap")).unwrap();
+        // Add 3 attackers to overflow max_alerts
+        for i in 0..3 {
+            let hash = format!("atk{}", i);
+            monitor.add_tx(make_tx(&hash, "e", "contract", 5000, "swap")).unwrap();
+            let _ = monitor.detect_front_run("v", &hash);
+        }
+        assert!(monitor.alerts.len() <= monitor.max_alerts);
+    }
+
+    #[test]
+    fn test_recommend_fee_covers_lines_389_391() {
+        let mut monitor = MempoolMonitor::new();
+        monitor.record_inclusion(1000);
+        monitor.record_inclusion(2000);
+        let fee = monitor.recommend_fee(&TxPriority::Urgent);
+        assert!(fee > 0);
+        let fee_low = monitor.recommend_fee(&TxPriority::Low);
+        assert!(fee_low <= fee);
+    }
+
+    #[test]
+    fn test_stats_empty_pending_covers_line_402() {
+        let monitor = MempoolMonitor::new();
+        let stats = monitor.stats();
+        assert_eq!(stats.pending_count, 0);
+        assert_eq!(stats.avg_fee, 0);
+    }
 }

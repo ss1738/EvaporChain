@@ -644,4 +644,71 @@ mod tests {
         let log = AuditLog::default();
         assert!(log.is_empty());
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_from_io_error_covers_lines_26_28() {
+        let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let ae: AuditError = AuditError::from(e);
+        assert!(ae.to_string().contains("denied"));
+    }
+
+    #[test]
+    fn test_from_json_error_covers_lines_31_33() {
+        let e: serde_json::Error = serde_json::from_str::<serde_json::Value>("{bad").unwrap_err();
+        let ae: AuditError = AuditError::from(e);
+        assert!(ae.to_string().contains("json error"));
+    }
+
+    #[test]
+    fn test_audit_action_label_all_variants_covers_lines_89_117() {
+        assert_eq!(AuditAction::AccountCreate.label(), "account.create");
+        assert_eq!(AuditAction::AccountSwitch.label(), "account.switch");
+        assert_eq!(AuditAction::AccountImport.label(), "account.import");
+        assert_eq!(AuditAction::TransferSend.label(), "transfer.send");
+        assert_eq!(AuditAction::TransferReceive.label(), "transfer.receive");
+        assert_eq!(AuditAction::ObjectCreate.label(), "object.create");
+        assert_eq!(AuditAction::ObjectRefresh.label(), "object.refresh");
+        assert_eq!(AuditAction::ObjectEvaporate.label(), "object.evaporate");
+        assert_eq!(AuditAction::StakeDeposit.label(), "stake.deposit");
+        assert_eq!(AuditAction::StakeWithdraw.label(), "stake.withdraw");
+        assert_eq!(AuditAction::RewardClaim.label(), "stake.claim");
+        assert_eq!(AuditAction::VoteCast.label(), "governance.vote");
+        assert_eq!(AuditAction::ProposalCreate.label(), "governance.propose");
+        assert_eq!(AuditAction::NftMint.label(), "nft.mint");
+        assert_eq!(AuditAction::NftTransfer.label(), "nft.transfer");
+        assert_eq!(AuditAction::TokenDeploy.label(), "token.deploy");
+        assert_eq!(AuditAction::TokenTransfer.label(), "token.transfer");
+        assert_eq!(AuditAction::PasswordChange.label(), "security.password");
+        assert_eq!(AuditAction::BackupCreate.label(), "security.backup");
+        assert_eq!(AuditAction::BackupRestore.label(), "security.restore");
+        assert_eq!(AuditAction::KeyRotation.label(), "security.rotate");
+        assert_eq!(AuditAction::SpendingPolicyChange.label(), "policy.spending");
+        assert_eq!(AuditAction::MultisigApproval.label(), "policy.multisig");
+        assert_eq!(AuditAction::SessionCreate.label(), "session.create");
+        assert_eq!(AuditAction::SessionRevoke.label(), "session.revoke");
+        assert_eq!(AuditAction::DappConnect.label(), "dapp.connect");
+        assert_eq!(AuditAction::DappDisconnect.label(), "dapp.disconnect");
+        assert_eq!(AuditAction::BridgeInitiate.label(), "bridge.initiate");
+        assert_eq!(AuditAction::BridgeComplete.label(), "bridge.complete");
+        assert_eq!(AuditAction::ConfigChange.label(), "config.change");
+        assert_eq!(AuditAction::Custom("x".into()).label(), "custom.x");
+    }
+
+    #[test]
+    fn test_save_creates_parent_dirs_covers_line_213() {
+        let root = std::env::temp_dir().join("evap_audit_mkdir_213");
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("sub").join("audit.json");
+        AuditLog::new().save(&path).unwrap();
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_default_audit_path_covers_lines_405_407() {
+        let p = default_audit_path();
+        assert!(p.to_string_lossy().contains("audit_log.json"));
+    }
 }
