@@ -356,7 +356,22 @@ PrecommitQuorumCommit(v) ==
                            stateCommitment, equivocations, slashed>>
 
 \* 2f+1 nil precommits → advance round (or reset at max)
-\* Matches advance_round() when check_precommit_quorum() returns Some(None)
+\* Matches advance_round() when check_precommit_quorum() returns Some(None).
+\*
+\* D4 fix 2026-05-21: prevote-set wipe. Rust replaces RoundState
+\* entirely on every advance (tendermint.rs:7341, 7352), dropping the
+\* current round's prevotes, precommits, and proposed_block from
+\* memory. We model only the prevote drop here, because:
+\*   - precommits and proposals are historical AUDITING records used
+\*     by safety invariants (Validity / CommitRequiresQuorum). They
+\*     represent the LOGICAL FACT that votes were broadcast; the Rust
+\*     impl preserves the same fact via the persistent commit log and
+\*     network broadcast, just not in-RAM under RoundState.
+\*   - Prevotes alone capture the round-locality semantics being
+\*     modeled here: no node can use prior-round prevotes after
+\*     advance, regardless of any in-memory shortcut.
+\* lockedBlock / lockedRound live OUTSIDE RoundState in Rust and
+\* survive the wipe (UNCHANGED).
 PrecommitNilAdvanceRound(v) ==
     /\ v \in Honest
     /\ height[v] <= MaxHeight
@@ -368,23 +383,27 @@ PrecommitNilAdvanceRound(v) ==
        /\ HasNilQuorum(precommits[h][r])
        /\ round' = [round EXCEPT ![v] = nextR]
        /\ phase' = [phase EXCEPT ![v] = "Propose"]
+       /\ prevotes' = [prevotes EXCEPT ![h][r] = {}]
        /\ UNCHANGED <<height, lockedBlock, lockedRound, validBlock, validRound,
-                       prevotes, precommits, proposals, committed, daAttested,
+                       precommits, proposals, committed, daAttested,
                        stateCommitment, equivocations, slashed>>
 
 \* Precommit timeout → advance round (or reset at max)
-\* Matches tick() precommit_timeout path + advance_round() max-round reset
+\* Matches tick() precommit_timeout path + advance_round() max-round reset.
+\* D4 fix 2026-05-21: prevote-set wipe (see PrecommitNilAdvanceRound).
 PrecommitTimeout(v) ==
     /\ v \in Honest
     /\ height[v] <= MaxHeight
     /\ phase[v] = "Precommit"
-    /\ LET r == round[v]
+    /\ LET h == height[v]
+           r == round[v]
            nextR == IF r + 1 >= MaxRound THEN 0 ELSE r + 1
        IN
        /\ round' = [round EXCEPT ![v] = nextR]
        /\ phase' = [phase EXCEPT ![v] = "Propose"]
+       /\ prevotes' = [prevotes EXCEPT ![h][r] = {}]
        /\ UNCHANGED <<height, lockedBlock, lockedRound, validBlock, validRound,
-                       prevotes, precommits, proposals, committed, daAttested,
+                       precommits, proposals, committed, daAttested,
                        stateCommitment, equivocations, slashed>>
 
 \* ─────────────────── Byzantine actions ──────────────────────────────────
