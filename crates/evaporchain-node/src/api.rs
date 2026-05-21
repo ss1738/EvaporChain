@@ -7524,6 +7524,22 @@ async fn post_settle_demurrage(
         });
     }
 
+    // A2 (audit 2026-05-17, AUDIT-I1 class): public key must hash to the
+    // claimed `from` address. Without this binding, anyone can settle
+    // demurrage on any account by providing a fresh keypair (they sign
+    // with the new key, the verify passes, but the key has no relation
+    // to the account being mutated).
+    let pk_derived_addr = *blake3::hash(&pk_bytes).as_bytes();
+    if pk_derived_addr != from {
+        return Json(SettleDemurrageResp {
+            status: "error",
+            settled: 0,
+            new_balance: 0,
+            new_last_touched_epoch: 0,
+            detail: "public key does not correspond to the from address".into(),
+        });
+    }
+
     let mut db = safe_lock(&state.db);
     let (balance, _nonce, last_touched_epoch) = match db.get_account(&from) {
         Some(acct) => (acct.balance, acct.nonce, acct.last_touched_epoch),
@@ -13621,13 +13637,21 @@ async fn post_pool_mint(
     Path(id): Path<String>,
     Json(req): Json<PoolMintRequest>,
 ) -> Json<serde_json::Value> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) {
-        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
-    }
+    // A3 (audit 2026-05-17): capture user_id for wallet ownership enforcement.
+    let user_id = match require_tx_auth(&headers, &state, false) {
+        Ok(uid) => uid,
+        Err(resp) => return Json(serde_json::json!({"success": false, "message": resp.0.message})),
+    };
     let holder_addr = match parse_hex_address(&req.holder) {
         Ok(a) => a,
         Err(e) => return Json(serde_json::json!({"success": false, "message": e})),
     };
+    // A3: caller must own the holder address. Without this, any authenticated
+    // user could mint LP shares against an arbitrary holder address, draining
+    // the victim's pool position.
+    if let Err(Json(e)) = require_wallet_ownership(&state, user_id, &account_full(&holder_addr)) {
+        return Json(serde_json::json!({"success": false, "message": e.message}));
+    }
     let amt_x: u128 = match req.amount_x.parse() {
         Ok(v) => v,
         Err(_) => return Json(serde_json::json!({"success": false, "message": "amount_x must be a u128 decimal string"})),
@@ -13674,13 +13698,20 @@ async fn post_pool_withdraw(
     Path(id): Path<String>,
     Json(req): Json<PoolWithdrawRequest>,
 ) -> Json<serde_json::Value> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) {
-        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
-    }
+    // A3 (audit 2026-05-17): capture user_id for wallet ownership enforcement.
+    let user_id = match require_tx_auth(&headers, &state, false) {
+        Ok(uid) => uid,
+        Err(resp) => return Json(serde_json::json!({"success": false, "message": resp.0.message})),
+    };
     let holder_addr = match parse_hex_address(&req.holder) {
         Ok(a) => a,
         Err(e) => return Json(serde_json::json!({"success": false, "message": e})),
     };
+    // A3: caller must own the holder address. Without this, any authenticated
+    // user could withdraw LP shares from an arbitrary holder address.
+    if let Err(Json(e)) = require_wallet_ownership(&state, user_id, &account_full(&holder_addr)) {
+        return Json(serde_json::json!({"success": false, "message": e.message}));
+    }
     let shares: u128 = match req.shares_to_burn.parse() {
         Ok(v) => v,
         Err(_) => return Json(serde_json::json!({"success": false, "message": "shares_to_burn must be a u128 decimal string"})),
@@ -13803,13 +13834,20 @@ async fn post_pool_reanchor(
     Path(id): Path<String>,
     Json(req): Json<PoolReanchorRequest>,
 ) -> Json<serde_json::Value> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) {
-        return Json(serde_json::json!({"success": false, "message": resp.0.message}));
-    }
+    // A3 (audit 2026-05-17): capture user_id for wallet ownership enforcement.
+    let user_id = match require_tx_auth(&headers, &state, false) {
+        Ok(uid) => uid,
+        Err(resp) => return Json(serde_json::json!({"success": false, "message": resp.0.message})),
+    };
     let holder_addr = match parse_hex_address(&req.holder) {
         Ok(a) => a,
         Err(e) => return Json(serde_json::json!({"success": false, "message": e})),
     };
+    // A3: caller must own the holder address. Without this, any authenticated
+    // user could manipulate the energy-clock anchor of an arbitrary holder.
+    if let Err(Json(e)) = require_wallet_ownership(&state, user_id, &account_full(&holder_addr)) {
+        return Json(serde_json::json!({"success": false, "message": e.message}));
+    }
     let mut pools = safe_lock(&state.singh_pools);
     let Some(pool) = pools.get_mut(&id) else {
         return Json(serde_json::json!({"success": false, "message": format!("pool '{}' not found", id)}));
