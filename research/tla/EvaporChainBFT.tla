@@ -266,7 +266,29 @@ ProposeTimeout(v) ==
 \* ─────────────────── Prevote (receive proposal + vote) ──────────────────
 
 \* Honest validator receives proposal and sends prevote
-\* Matches on_message() ConsensusMessage::Proposal handling
+\* Matches on_message() ConsensusMessage::Proposal handling.
+\*
+\* D14 fix 2026-05-21: gate the action on "no later-round activity
+\* exists for this height" — this models Rust's on_message stale-
+\* round handling at tendermint.rs:4998-5011, where a validator
+\* receiving a round-r message while round_state.round > r drops
+\* the message, and a round_state.round < msg.round() triggers
+\* RoundSkip before processing. The net effect: a validator cannot
+\* vote in a stale round when later-round messages are visible.
+\*
+\* Without this gate, TLC's nondeterministic interleaving lets a
+\* round-r validator vote in round r EVEN AFTER other validators
+\* advanced and produced round (r+1) activity, retrospectively
+\* completing a stake-quorum for a different block in round r that
+\* the now-locked validator in round r+1 couldn't have observed.
+\* This was the LockSafety violation surfaced after D12 closed the
+\* depth-8 StateCommitmentIntegrity mask (audit doc § D14).
+\*
+\* The gate is essentially "RoundSkip(v) is not currently enabled
+\* OR v is already at the latest round with activity" — meaning the
+\* validator must take RoundSkip BEFORE this action when both are
+\* enabled. Combined with weak fairness on RoundSkip, this matches
+\* the Rust ordering exactly.
 ReceiveProposalAndPrevote(v) ==
     /\ v \in Honest
     /\ height[v] <= MaxHeight
@@ -274,6 +296,11 @@ ReceiveProposalAndPrevote(v) ==
     /\ LET h == height[v]
            r == round[v]
        IN
+       \* D14 gate: no later-round activity visible at this height
+       /\ ~(\E futureR \in (r+1)..MaxRound :
+               \E w \in Validators, b \in BlockValues :
+                   \/ <<w, b>> \in prevotes[h][futureR]
+                   \/ <<w, b>> \in precommits[h][futureR])
        /\ \E p \in Validators, block \in NonNilBlocks :
            /\ <<p, block>> \in proposals[h][r]
            /\ ~HasVoted(prevotes[h][r], v)
@@ -334,9 +361,17 @@ PrevoteNilQuorumOrTimeout(v) ==
     /\ LET h == height[v]
            r == round[v]
        IN
-       \* Either nil has quorum or we model timeout (nondeterministic)
+       \* D14 fix 2026-05-21: the timeout-fallback must NOT fire when
+       \* any block has stake quorum — otherwise this action can
+       \* preempt the lock that PrevoteQuorumReached should set,
+       \* admitting a LockSafety violation under stake-weighted Byzantine
+       \* model checking. In Rust, PrevoteQuorumReached's effect is
+       \* OBSERVATIONAL on the same vote stream — a validator that sees
+       \* the stake quorum locks; only when no block quorum exists does
+       \* the timer-driven nil precommit fire.
        /\ \/ HasNilQuorum(prevotes[h][r])
-          \/ TotalVoteStake(prevotes[h][r]) * 3 > TotalStake * 2  \* D1/D5: stake-weighted timeout fallback
+          \/ /\ TotalVoteStake(prevotes[h][r]) * 3 > TotalStake * 2
+             /\ \A b \in NonNilBlocks : ~HasQuorumFor(prevotes[h][r], b)
        /\ precommits' = [precommits EXCEPT ![h][r] = @ \cup {<<v, "Nil">>}]
        /\ phase' = [phase EXCEPT ![v] = "Precommit"]
        /\ UNCHANGED <<height, round, lockedBlock, lockedRound, validBlock, validRound,
@@ -462,15 +497,28 @@ DetectEquivocation(v) ==
 
 \* ─────────────────── Round skip ─────────────────────────────────────────
 \* Matches Rust: on_message() round-skip logic when msg.round() > round_state.round
-
+\*
+\* D14 fix 2026-05-21: gate RoundSkip on "no block has stake quorum in
+\* my current round". If a quorum exists for some block b in round r,
+\* the validator MUST lock on b via PrevoteQuorumReached before skipping
+\* to a later round — otherwise the validator advances unlocked, then
+\* votes for a different block in the new round, and a later validator
+\* completing the round-r quorum creates a retrospective quorum the
+\* now-locked-elsewhere validator couldn't have observed. This is the
+\* second half of the LockSafety fix (audit doc § D14); D14a gates
+\* ReceiveProposalAndPrevote on no-later-round-activity, D14b tightens
+\* PrevoteNilQuorumOrTimeout on no-block-has-quorum.
 RoundSkip(v) ==
     /\ v \in Honest
     /\ height[v] <= MaxHeight
     /\ LET h == height[v]
            r == round[v]
        IN
+       \* D14 gate: a block with stake quorum in this round must be
+       \* locked on (via PrevoteQuorumReached) before skipping.
+       /\ \A b \in NonNilBlocks : ~HasQuorumFor(prevotes[h][r], b)
        \* If we see votes from a future round, skip to it
-       \E futureR \in (r+1)..MaxRound :
+       /\ \E futureR \in (r+1)..MaxRound :
            /\ \E w \in Validators, b \in BlockValues :
                \/ <<w, b>> \in prevotes[h][futureR]
                \/ <<w, b>> \in precommits[h][futureR]
