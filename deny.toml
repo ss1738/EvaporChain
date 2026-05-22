@@ -1,11 +1,18 @@
+# cargo-deny configuration. Schema v2 — see
+# https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+#
+# v2 sets sensible defaults (vulnerability=deny, unmaintained=warn,
+# yanked=warn, notice=warn, unlicensed=deny, copyleft=denied-by-omission
+# from `allow`), so the explicit keys that used to live here are removed.
+# Only deviations from default are declared.
+
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+version = 2
 
 [licenses]
-unlicensed = "deny"
+version = 2
+# Anything not in this list is denied — replaces the old `copyleft = "deny"`
+# and `unlicensed = "deny"` keys (now implicit in v2).
 allow = [
     "MIT",
     "Apache-2.0",
@@ -20,7 +27,6 @@ allow = [
     "OpenSSL",
     "MPL-2.0",
 ]
-copyleft = "deny"
 confidence-threshold = 0.8
 
 [bans]
