@@ -31,9 +31,10 @@
 - **10 drifts CLOSED via PRs this session:** D1, D2, D3 (PR #459), D5, D9 (PR #456), D10 (PR #457), D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
 - **2 drifts pre-existing CLOSED:** D6 (decompress shipped commit `59e0817f`), D8 (already matched).
 - **1 drift PARTIAL:** D7 — the EpochTransitionManager state machine is modeled + exhaustively verified (PR #458, 59K distinct states, 0 violations); the remaining piece is proving BFT Agreement/LockSafety hold ACROSS an epoch boundary (consensus-integration, ~1wk).
-- **0 drifts fully OPEN.** Every original D1-D14 finding is closed, partial, or withdrawn. Two follow-up sub-pieces remain: D7-Part2 (consensus-integration across epoch boundary, ~1wk) and D3-MCC (Boltzmann fork-choice spec — the antichain-mempool convergence half is shipped in PR #459).
+- **0 drifts fully OPEN.** Every original D1-D14 finding is closed, partial, or withdrawn. D3-MCC (Boltzmann fork-choice) is now also shipped (PR #460). One follow-up sub-piece remains: D7-Part2 (consensus-integration across epoch boundary, ~1wk).
+- **1 NEW impl finding surfaced by the MCC spec (PR #460):** the `mcc_choose` and `select_tip` code paths break caliber ties in OPPOSITE directions (larger-id vs smaller-id). Propose/evaluate disagreement possible on ties (always at β=0). Filed for owner decision on canonical direction; not yet fixed.
 
-**This session took the drift sweep from 14 open findings to a complete close-out** (10 closed via PRs, 2 pre-existing closed, 1 partial, 1 withdrawn) across 10 PRs + 1 audit-doc PR, creating 4 new exhaustively-verified spec files (`CrooksMEV.tla`, `CrossForkEquivocation.tla`, `ValidatorSetTransition.tla`, `AntichainConsensus.tla`) and tightening `EvaporChainBFT.tla` with stake-weighted quorum + the 3-gate LockSafety fix.
+**This session took the drift sweep from 14 open findings to a complete close-out** (11 closed via PRs incl. D3-MCC, 2 pre-existing closed, 1 partial, 1 withdrawn) across 11 PRs + 1 audit-doc PR, creating 5 new exhaustively-verified spec files (`CrooksMEV.tla`, `CrossForkEquivocation.tla`, `ValidatorSetTransition.tla`, `AntichainConsensus.tla`, `MccForkChoice.tla`) and tightening `EvaporChainBFT.tla` with stake-weighted quorum + the 3-gate LockSafety fix. The MCC spec additionally surfaced a real tie-break inconsistency in the Rust impl.
 
 **Critical 2026-05-21 trajectory:**
 1. D12 (PR #452) closed a masking `StateCommitmentIntegrity` violation at depth 8 on Byzantine.cfg.
@@ -184,13 +185,12 @@ finishes with `{b1,b3}` while the canonical validators finish with
 TLC full exhaustive check: 2,001 states / 625 distinct / queue → 0 / 0
 violations.
 
-**Remaining sub-piece (D3-MCC, follow-up):** MCC Boltzmann fork-choice
-(`parent_acceptance_mode = "mcc"`, `tendermint.rs` MCC pipeline) is a
-related but distinct governance-flag mechanism not covered by this spec.
-It would be a separate `MccForkChoice.tla` verifying the Boltzmann parent-
-selection is deterministic across honest nodes. Lower priority — the
-antichain-mempool convergence (the harder DAG-agreement question) is now
-closed.
+**D3-MCC sub-piece — SHIPPED (PR #460).** MCC Boltzmann fork-choice
+(`parent_acceptance_mode = "mcc"`) is now modeled in `MccForkChoice.tla`:
+per-rule determinism verified (full exhaustive check). The spec also
+surfaced a tie-break-direction inconsistency between `mcc_choose`
+(larger-id) and `select_tip` (smaller-id) — filed as a Rust finding for
+the owner to resolve (canonical direction decision).
 
 ### Est effort
 **~2 hrs (antichain convergence, DONE).** D3-MCC follow-up: ~2-3 days if
@@ -694,13 +694,16 @@ Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-
 6. ✅ **D9 — CrooksMEV settlement state machine.** PR #456. New `CrooksMEV.tla`; full exhaustive check (163M distinct states, queue drained to 0), all 8 invariants hold.
 7. ✅ **D10 — Cross-fork equivocation detector.** PR #457. New `CrossForkEquivocation.tla`; full exhaustive check (6,561 distinct states, queue → 0). Decoupled from D3.
 8. ◑ **D7 (Part 1) — Validator-set transition manager.** PR #458. New `ValidatorSetTransition.tla`; full exhaustive check (59,138 distinct states, queue → 0). Manager invariants verified; consensus-integration is Part 2.
-9. ✅ **D3 — Antichain-mempool convergence + maximality.** PR #459. New `AntichainConsensus.tla`; full exhaustive check (625 distinct states, queue → 0). MCC Boltzmann fork-choice is the remaining sub-piece.
+9. ✅ **D3 — Antichain-mempool convergence + maximality.** PR #459. New `AntichainConsensus.tla`; full exhaustive check (625 distinct states, queue → 0).
+10. ✅ **D3-MCC — Boltzmann fork-choice determinism.** PR #460. New `MccForkChoice.tla`; full exhaustive check (27 distinct states, queue → 0) verifies per-rule determinism. **Surfaced a tie-break inconsistency** (`mcc_choose` larger-id vs `select_tip` smaller-id) — filed for owner decision, not yet fixed.
 
-### Tier 2 — Follow-up sub-pieces (no longer top-14 drifts; smaller scoped efforts)
+### Tier 2 — The single remaining follow-up (no longer a top-14 drift)
 
-10. **D7 (Part 2) — Safety across epoch boundary.** *~1 week.* Refactor `EvaporChainBFT.tla` to take `Validators`/stake from the transition manager's `active` VARIABLE (not static CONSTANTS) and re-verify `Agreement`/`LockSafety` across a set change. Part 1 (PR #458) is the prerequisite. **Best done after the BFT-spec PRs (#449, #450, #452, #455) merge**, since it refactors that spec.
+11. **D7 (Part 2) — Safety across epoch boundary.** *~1 week.* Refactor `EvaporChainBFT.tla` to take `Validators`/stake from the transition manager's `active` VARIABLE (not static CONSTANTS) and re-verify `Agreement`/`LockSafety` across a set change. Part 1 (PR #458) is the prerequisite. **Best done after the BFT-spec PRs (#449, #450, #452, #455) merge**, since it refactors that spec.
 
-11. **D3-MCC — Boltzmann fork-choice determinism.** *~2-3 days.* A `MccForkChoice.tla` verifying `parent_acceptance_mode = "mcc"` Boltzmann parent-selection is deterministic across honest nodes. Lower priority — the harder antichain-mempool DAG-agreement question is closed (PR #459).
+### Open impl finding (not a TLA drift — a Rust inconsistency the spec surfaced)
+
+- **MCC tie-break direction.** `mcc_choose` (choose.rs:37-44, larger-id) vs `select_tip` (fork_choice.rs:261-264, smaller-id) disagree on caliber ties. Propose/evaluate divergence possible (always at β=0). One-line fix once the owner picks the canonical direction; needs a regression test. Surfaced by `MccForkChoice.tla` (PR #460).
 
 ### Closed via folding
 
