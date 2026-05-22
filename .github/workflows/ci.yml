@@ -187,6 +187,9 @@ jobs:
           node-version: 20
       - working-directory: extension
         run: npm ci
+      - name: Regenerate WASM checksums (CI built fresh from source)
+        working-directory: extension
+        run: node scripts/verify-wasm.mjs --update
       - working-directory: extension
         run: npx tsc --noEmit
       - working-directory: extension
