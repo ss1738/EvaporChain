@@ -411,12 +411,24 @@ mod tests {
     }
 
     #[test]
-    fn mcc_accepts_winning_candidate_at_zero_beta() {
+    fn mcc_rejects_larger_id_candidate_at_zero_beta() {
         // β=0 → caliber ties → tie-break by head id (lexicographic
-        // larger wins). id(4) > id(3) → candidate wins → accept.
+        // SMALLER wins, aligned with select_tip 2026-05-22).
+        // local id(3) < candidate id(4) → local wins → reject candidate.
         let lc = lc_two_forks();
         let fc = MccForkChoice::new(lc, 0);
         let v = fc.evaluate(&id(3), &id(4));
+        assert!(!v.accept);
+    }
+
+    #[test]
+    fn mcc_accepts_smaller_id_candidate_at_zero_beta() {
+        // β=0 tie, candidate id(3) < local id(4) → candidate wins → accept.
+        // Confirms the smaller-id rule favors the candidate when it has
+        // the smaller head id (the symmetric case to the test above).
+        let lc = lc_two_forks();
+        let fc = MccForkChoice::new(lc, 0);
+        let v = fc.evaluate(&id(4), &id(3));
         assert!(v.accept);
     }
 
