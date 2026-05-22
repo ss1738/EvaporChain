@@ -4197,7 +4197,7 @@ impl TendermintConsensus {
     /// be rejected by validators even with no caliber tie — a liveness
     /// hazard once `parent_acceptance_mode = "mcc"` is enabled. Surfaced
     /// by `research/tla/MccForkChoice.tla`.
-    fn mcc_fork_choice_beta_mb() -> u64 {
+    pub(crate) fn mcc_fork_choice_beta_mb() -> u64 {
         let half_life = evaporchain_energy_kernel::ChainLambda::new(
             evaporchain_energy_kernel::DEFAULT_LAMBDA,
         )
@@ -9215,7 +9215,7 @@ mod tests {
             let block = Block {
                 number: 1,
                 epoch: 1,
-                parent_hash: [0xFF; 32], // lex max — diverges from default [0; 32]
+                parent_hash: [0x00; 32], // lex min — wins smaller-id tie-break vs local 0xFF
                 state_root: [0u8; 32],
                 transactions: vec![],
                 timestamp: 0,
@@ -9249,8 +9249,10 @@ mod tests {
             }
         };
 
-        // Sanity: tc.parent_hash starts at [0; 32].
-        assert_eq!(tc.parent_hash, [0u8; 32]);
+        // Local parent set to lex max so the candidate's lex-min hash
+        // wins the smaller-id tie-break under MCC (aligned 2026-05-22).
+        tc.parent_hash = [0xFF; 32];
+        assert_eq!(tc.parent_hash, [0xFFu8; 32]);
 
         // ── Mode: linear (default). Diverging parent → reject + RequestSync.
         let actions_linear = tc.on_message(mk_proposal());
@@ -9267,10 +9269,11 @@ mod tests {
         let mut tc2 = make_consensus(1, ids);
         tc2.governance_params
             .insert("parent_acceptance_mode".to_string(), "mcc".to_string());
-        assert_eq!(tc2.parent_hash, [0u8; 32]);
+        tc2.parent_hash = [0xFF; 32]; // local = lex max; candidate 0x00 wins smaller-id tie
+        assert_eq!(tc2.parent_hash, [0xFFu8; 32]);
 
         let actions_mcc = tc2.on_message(mk_proposal());
-        // MCC mode accepts (lex tie-break: FF > 00). The proposal
+        // MCC mode accepts (smaller-id tie-break: 00 < FF). The proposal
         // proceeds past the parent check; we don't assert on what
         // happens after (timestamp, chain_id, sig checks may still
         // intervene), only that the parent-hash gate did NOT
@@ -9284,7 +9287,7 @@ mod tests {
         assert!(
             !mcc_request_sync,
             "mcc mode must NOT emit the parent-hash-divergence RequestSync \
-             at the linear short-circuit site (FF > 00 lex tie-break accepts) \
+             at the linear short-circuit site (00 < FF smaller-id tie-break accepts) \
              — got actions {:?}",
             actions_mcc
         );
@@ -14010,7 +14013,9 @@ mod tests {
         // Argmax contract: first entry of the scored list must equal
         // `MccForkChoice::select_tip`'s pick (with the same DAG + β).
         use crate::fork_choice::ForkChoice;
-        let beta_mb = 1000;
+        // Must use the SAME β as enumerate_candidate_heads (the shared
+        // mcc_fork_choice_beta_mb source), else the argmax can differ.
+        let beta_mb = TendermintConsensus::mcc_fork_choice_beta_mb();
         let fc = crate::fork_choice::MccForkChoice::new(tc.light_cone_dag.clone(), beta_mb);
         let selected = fc.select_tip().expect("non-empty DAG → Some");
         assert_eq!(
