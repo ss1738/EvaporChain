@@ -701,9 +701,15 @@ Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-
 
 11. **D7 (Part 2) — Safety across epoch boundary.** *~1 week.* Refactor `EvaporChainBFT.tla` to take `Validators`/stake from the transition manager's `active` VARIABLE (not static CONSTANTS) and re-verify `Agreement`/`LockSafety` across a set change. Part 1 (PR #458) is the prerequisite. **Best done after the BFT-spec PRs (#449, #450, #452, #455) merge**, since it refactors that spec.
 
-### Open impl finding (not a TLA drift — a Rust inconsistency the spec surfaced)
+### Open impl findings (not TLA drifts — Rust inconsistencies the MCC spec + call-graph trace surfaced)
 
-- **MCC tie-break direction.** `mcc_choose` (choose.rs:37-44, larger-id) vs `select_tip` (fork_choice.rs:261-264, smaller-id) disagree on caliber ties. Propose/evaluate divergence possible (always at β=0). One-line fix once the owner picks the canonical direction; needs a regression test. Surfaced by `MccForkChoice.tla` (PR #460).
+Both gated behind `parent_acceptance_mode = "mcc"` (off by default → no live-chain impact today), but both MUST be fixed before enabling MCC mode. Both produce the same symptom: a proposer's MCC-selected tip is REJECTED by validators → liveness stall. Tracked as task #37 (PR #460).
+
+- **MCC-1 — β mismatch (more severe).** Proposer tip selection (`tendermint.rs:4184` `select_tip`) reads β from `crooks_mev_beta_mb` (default **1000**); block acceptance (`tendermint.rs:5149` `evaluate`→`mcc_choose`) computes β = `1_000_000/half_life` ≈ **244**. Since `caliber = MAX_WEIGHT >> (β·energy/1_000_000)` saturates to 0 at `β·energy ≥ 32M`, the proposer saturates at energy ≥ 32,000 while acceptance saturates at ≥ 131,147. For path-energies in **[32K, 131K]** the proposer sees all-tied-at-0 (smaller-id tie-break) while acceptance sees distinct calibers — **they pick different tips with no exact tie**. Fix: both paths must use the same β source (owner picks which).
+
+- **MCC-2 — tie-break direction.** `mcc_choose` (choose.rs:37-44, larger-id) vs `select_tip` (fork_choice.rs:261-264, smaller-id) disagree on caliber ties. Always fires at β=0. `select_tip`'s comment documents smaller-id as the intended deterministic choice → `mcc_choose` is likely the outlier. One-line fix once the owner confirms the canonical direction; needs a regression test.
+
+Surfaced by `MccForkChoice.tla` (PR #460) + production call-graph trace.
 
 ### Closed via folding
 
