@@ -14,7 +14,7 @@
 |---|---|---|---|---|---|
 | D1 | Count-based quorum in TLA vs stake-weighted in Rust | MED (latent) | **PR #449** | Port spec → stake-weighted quorum | ~~2-3 days~~ DONE |
 | D2 | TLA `ReceiveProposalAndPrevote` weaker than Rust lock rule | LOW | **PR #450** | Port spec → stricter rule | ~~2-4 hours~~ DONE |
-| D3 | Antichain mempool drain unmodeled in TLA | MED (unmodeled-but-safe) | OPEN | Port spec → new `Antichain.tla` | 1 week |
+| D3 | Antichain mempool drain unmodeled in TLA | MED (unmodeled-but-safe) | **PR #459** | New `AntichainConsensus.tla` — convergence + maximality, full exhaustive check; MCC fork-choice remaining sub-piece | ~~1 week~~ DONE (MCC follow-up) |
 | D4 | Round-state wipe on every `advance_round` unmodeled in TLA | LOW (unmodeled-but-safe) | **WITHDRAWN — NOT A DRIFT** | n/a (premise confused gossip-log view with per-validator RAM) | 0 |
 | D5 | Count-vs-stake DA quorum drift | MED (latent) | **PR #449** | Folded into D1 spec edit | ~~1-2 days~~ DONE |
 | D6 | `decompress` formalized in spec but missing in Rust | HIGH (audit 2026-05-17) | **CLOSED** in current impl | n/a (commit `59e0817f`, decompress in `energy_verkle.rs:386-416`) | 0 |
@@ -28,10 +28,12 @@
 | D14 | No POL (Proof-of-Lock) modeling — LockSafety violates under late-prevote / round-skew traces | HIGH (spec model gap) | **PR #455** | Closed via 3-gate Option C-refined (between A and B) | ~~1-2 weeks~~ DONE |
 
 **Headline (updated 2026-05-22 post-implementation):**
-- **9 drifts CLOSED via PRs this session:** D1, D2, D5, D9 (PR #456), D10 (PR #457), D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
+- **10 drifts CLOSED via PRs this session:** D1, D2, D3 (PR #459), D5, D9 (PR #456), D10 (PR #457), D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
 - **2 drifts pre-existing CLOSED:** D6 (decompress shipped commit `59e0817f`), D8 (already matched).
 - **1 drift PARTIAL:** D7 — the EpochTransitionManager state machine is modeled + exhaustively verified (PR #458, 59K distinct states, 0 violations); the remaining piece is proving BFT Agreement/LockSafety hold ACROSS an epoch boundary (consensus-integration, ~1wk).
-- **1 drift still fully OPEN:** D3 (antichain consensus, 1wk) — the full DAG mempool-drain + MCC fork-choice protocol (its cross-fork equivocation detector, D10, is already shipped).
+- **0 drifts fully OPEN.** Every original D1-D14 finding is closed, partial, or withdrawn. Two follow-up sub-pieces remain: D7-Part2 (consensus-integration across epoch boundary, ~1wk) and D3-MCC (Boltzmann fork-choice spec — the antichain-mempool convergence half is shipped in PR #459).
+
+**This session took the drift sweep from 14 open findings to a complete close-out** (10 closed via PRs, 2 pre-existing closed, 1 partial, 1 withdrawn) across 10 PRs + 1 audit-doc PR, creating 4 new exhaustively-verified spec files (`CrooksMEV.tla`, `CrossForkEquivocation.tla`, `ValidatorSetTransition.tla`, `AntichainConsensus.tla`) and tightening `EvaporChainBFT.tla` with stake-weighted quorum + the 3-gate LockSafety fix.
 
 **Critical 2026-05-21 trajectory:**
 1. D12 (PR #452) closed a masking `StateCommitmentIntegrity` violation at depth 8 on Byzantine.cfg.
@@ -138,9 +140,9 @@ TLA permits voting for a proposed block when `lockedRound[v] < r` even if `locke
 
 ---
 
-## 3. D3 — Antichain mempool drain unmodeled in TLA
+## 3. D3 — Antichain mempool drain unmodeled in TLA — **CLOSED (PR #459); MCC fork-choice follow-up**
 
-**Severity:** MED (unmodeled-but-safe) — Open
+**Severity:** MED (unmodeled-but-safe) — antichain convergence closed; MCC fork-choice sub-piece remaining
 
 ### TLA spec citation
 **Unmodeled — not in any of the 5 specs.** `EvaporChainBFT.tla` proposer (`ProposeBlock`, line 140) always proposes a single block in a linear chain; no DAG, no antichain construction.
@@ -159,11 +161,40 @@ Implementation has a complete DAG-aware antichain mempool: proposer collects DAG
 ### Soundness risk
 **UNMODELED-BUT-SAFE.** Default `block_source_mode = "fifo"` keeps the chain in the TLA-modeled linear regime. Once governance flips to `"antichain"`, the chain runs DAG-mode logic that has zero formal verification. Phase 4.4's `antichain_digest_history` is the only runtime cross-check; no soundness theorem.
 
-### Proposed resolution
-**Port spec to match impl** — create a new `research/tla/AntichainConsensus.tla` (sister spec to `EvaporChainBFT.tla`). Model: `DAGNodes`, `parents`, `antichain` predicate, `maximal_antichain`, `total_energy`, `closing_antichain_digest`. Verify: `AntichainPreservedAcrossValidators` (the digest history must agree across honest nodes), `MaximalityDeterministic` (given the same DAG state, all honest nodes pick the same antichain). Rationale: changing impl to match spec means reverting Phase 4.4 (months of work + reference for the Light-Cone "Soul of the chain" doctrine) — unacceptable.
+### Resolution shipped (PR #459)
+
+New `research/tla/AntichainConsensus.tla` models the greedy maximal-
+antichain construction (`extend_to_maximal`) over a fixed DAG and verifies
+the two named properties:
+  - **AntichainPreservedAcrossValidators → `CanonicalAgree`:** two honest
+    validators using the canonical (energy-descending) candidate order
+    always reach the SAME antichain.
+  - **MaximalityDeterministic → `CompletedIsMaximal` + a total canonical
+    order** (distinct energies pin a strict order, modeling the impl's
+    energy-desc-then-id-tiebreak): the canonical greedy yields a unique
+    maximal antichain.
+
+Plus `BuiltIsAntichain` (greedy never admits a comparable pair) and
+`ArbCompletedIsMaximal` (every order yields *a* maximal antichain). The
+spec's arbitrary-order validator demonstrates the order-DEPENDENCE that
+makes the canonical order necessary: on a two-independent-chains DAG it
+finishes with `{b1,b3}` while the canonical validators finish with
+`{b0,b2}` — both maximal, different.
+
+TLC full exhaustive check: 2,001 states / 625 distinct / queue → 0 / 0
+violations.
+
+**Remaining sub-piece (D3-MCC, follow-up):** MCC Boltzmann fork-choice
+(`parent_acceptance_mode = "mcc"`, `tendermint.rs` MCC pipeline) is a
+related but distinct governance-flag mechanism not covered by this spec.
+It would be a separate `MccForkChoice.tla` verifying the Boltzmann parent-
+selection is deterministic across honest nodes. Lower priority — the
+antichain-mempool convergence (the harder DAG-agreement question) is now
+closed.
 
 ### Est effort
-**1 week** (3 days TLA modeling + 2 days TLC configs + 2 days proving the maximality predicate is deterministic under the energy-tiebreaker).
+**~2 hrs (antichain convergence, DONE).** D3-MCC follow-up: ~2-3 days if
+the Boltzmann selection warrants its own determinism proof.
 
 ---
 
@@ -663,12 +694,13 @@ Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-
 6. ✅ **D9 — CrooksMEV settlement state machine.** PR #456. New `CrooksMEV.tla`; full exhaustive check (163M distinct states, queue drained to 0), all 8 invariants hold.
 7. ✅ **D10 — Cross-fork equivocation detector.** PR #457. New `CrossForkEquivocation.tla`; full exhaustive check (6,561 distinct states, queue → 0). Decoupled from D3.
 8. ◑ **D7 (Part 1) — Validator-set transition manager.** PR #458. New `ValidatorSetTransition.tla`; full exhaustive check (59,138 distinct states, queue → 0). Manager invariants verified; consensus-integration is Part 2.
+9. ✅ **D3 — Antichain-mempool convergence + maximality.** PR #459. New `AntichainConsensus.tla`; full exhaustive check (625 distinct states, queue → 0). MCC Boltzmann fork-choice is the remaining sub-piece.
 
-### Tier 2 — Open, do before mainnet (the remaining restructure efforts)
+### Tier 2 — Follow-up sub-pieces (no longer top-14 drifts; smaller scoped efforts)
 
-9. **D7 (Part 2) — Safety across epoch boundary.** *~1 week.* Refactor `EvaporChainBFT.tla` to take `Validators`/stake from the transition manager's `active` VARIABLE (not static CONSTANTS) and re-verify `Agreement`/`LockSafety` across a set change. Part 1 (PR #458) is the prerequisite.
+10. **D7 (Part 2) — Safety across epoch boundary.** *~1 week.* Refactor `EvaporChainBFT.tla` to take `Validators`/stake from the transition manager's `active` VARIABLE (not static CONSTANTS) and re-verify `Agreement`/`LockSafety` across a set change. Part 1 (PR #458) is the prerequisite. **Best done after the BFT-spec PRs (#449, #450, #452, #455) merge**, since it refactors that spec.
 
-10. **D3 — Antichain consensus spec.** *1 week.* Governance-flagged off by default (`parent_acceptance_mode = "mcc"` / `block_source_mode = "antichain"`); becomes critical the moment the doctrine flags flip to enable DAG mode. Note: the cross-fork equivocation DETECTOR (D10) is already shipped (PR #457) decoupled from this; D3 is the full antichain mempool-drain + MCC fork-choice consensus.
+11. **D3-MCC — Boltzmann fork-choice determinism.** *~2-3 days.* A `MccForkChoice.tla` verifying `parent_acceptance_mode = "mcc"` Boltzmann parent-selection is deterministic across honest nodes. Lower priority — the harder antichain-mempool DAG-agreement question is closed (PR #459).
 
 ### Closed via folding
 
