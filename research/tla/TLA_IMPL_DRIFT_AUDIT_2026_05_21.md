@@ -18,7 +18,7 @@
 | D4 | Round-state wipe on every `advance_round` unmodeled in TLA | LOW (unmodeled-but-safe) | **WITHDRAWN — NOT A DRIFT** | n/a (premise confused gossip-log view with per-validator RAM) | 0 |
 | D5 | Count-vs-stake DA quorum drift | MED (latent) | **PR #449** | Folded into D1 spec edit | ~~1-2 days~~ DONE |
 | D6 | `decompress` formalized in spec but missing in Rust | HIGH (audit 2026-05-17) | **CLOSED** in current impl | n/a (commit `59e0817f`, decompress in `energy_verkle.rs:386-416`) | 0 |
-| D7 | Key rotation / jailing / tombstoning / epoch transitions unmodeled in TLA | MED (unmodeled-but-safe) | OPEN | Port spec → dynamic validator set | 1-2 weeks |
+| D7 | Key rotation / jailing / tombstoning / epoch transitions unmodeled in TLA | MED (unmodeled-but-safe) | **PR #458 (PARTIAL)** | Manager modeled + verified (PR #458); consensus-integration remaining | manager DONE; integration ~1wk |
 | D8 | Max-rounds reset to round 0 — once unmodeled | LOW | **CLOSED** in spec | n/a (TLA `PrecommitNilAdvanceRound::nextR` already matches; Rust comment cites the rule) | 0 |
 | D9 | Crooks-MEV refund validation / settlement unmodeled in TLA | MED (unmodeled-but-safe) | **PR #456** | New `CrooksMEV.tla` — full exhaustive check, 163M states, 0 violations | ~~3-5 days~~ DONE |
 | D10 | Cross-fork equivocation tracking unmodeled in TLA | LOW (unmodeled-but-safe) | **PR #457** | New `CrossForkEquivocation.tla` — full exhaustive check, detection completeness | ~~3-5 days~~ DONE |
@@ -30,7 +30,8 @@
 **Headline (updated 2026-05-22 post-implementation):**
 - **9 drifts CLOSED via PRs this session:** D1, D2, D5, D9 (PR #456), D10 (PR #457), D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
 - **2 drifts pre-existing CLOSED:** D6 (decompress shipped commit `59e0817f`), D8 (already matched).
-- **2 drifts still OPEN:** D3 (antichain consensus, 1wk), D7 (dynamic validator set, 1-2wk). Both are the larger DAG/epoch-restructure efforts that warrant a focused dedicated session.
+- **1 drift PARTIAL:** D7 — the EpochTransitionManager state machine is modeled + exhaustively verified (PR #458, 59K distinct states, 0 violations); the remaining piece is proving BFT Agreement/LockSafety hold ACROSS an epoch boundary (consensus-integration, ~1wk).
+- **1 drift still fully OPEN:** D3 (antichain consensus, 1wk) — the full DAG mempool-drain + MCC fork-choice protocol (its cross-fork equivocation detector, D10, is already shipped).
 
 **Critical 2026-05-21 trajectory:**
 1. D12 (PR #452) closed a masking `StateCommitmentIntegrity` violation at depth 8 on Byzantine.cfg.
@@ -297,9 +298,9 @@ Audit 2026-05-17 §7 marked this HIGH ("Both formalise a `decompress` operation 
 
 ---
 
-## 7. D7 — Key rotation / jailing / tombstoning / epoch transitions unmodeled in TLA
+## 7. D7 — Key rotation / jailing / tombstoning / epoch transitions unmodeled in TLA — **PARTIAL (PR #458)**
 
-**Severity:** MED (unmodeled-but-safe) — Open
+**Severity:** MED (unmodeled-but-safe) — manager modeled; consensus-integration remaining
 
 ### TLA spec citation
 **Unmodeled — not in any of the 5 specs.** `EvaporChainBFT.tla:24-31` declares `CONSTANTS Validators, ... Faulty` as a flat static set. No `jailed`, no `tombstoned`, no `bls_public_key`, no `prev_key_expiry_epoch`, no `BONDING_PERIOD_EPOCHS`. TLA equivocation handling (`DetectEquivocation`, lines 374-399) adds to a `slashed` set but never removes from `Validators`.
@@ -319,11 +320,32 @@ Implementation supports a fully dynamic validator set: joins with bonding period
 ### Soundness risk
 **UNMODELED-BUT-SAFE** for the modeled epoch (no key rotation during a single height). At validator-set churn boundaries the spec gives ZERO safety guarantees: a malicious quorum at epoch N could rotate out honest validators before epoch N+1 finalizes, and TLA can't see it. The 500-miss / 1000-miss thresholds + churn cap are runtime-only invariants.
 
-### Proposed resolution
-**Port spec to match impl** — add a dynamic-validators layer. Suggested shape: `Validators` becomes a VARIABLE (not CONSTANT); add `ValidatorState : [Validators -> {"Active", "Jailed", "Tombstoned", "Pending"}]`, `ValidatorStake : VARIABLE`, `EpochBoundary` action that drains pending join/leave queues. Verify: `SafetyAcrossEpochBoundary` (Agreement holds when the set changes between height h and h+1), `MinValidatorsInvariant` (set never drops below MIN_VALIDATORS), `ChurnCap` (≤ ⌈n×0.33⌉ changes per epoch).
+### Resolution — PART 1 shipped (PR #458), PART 2 remaining
+
+**Part 1 (DONE — PR #458):** new `research/tla/ValidatorSetTransition.tla`
+models the `EpochTransitionManager` in isolation: `Validators`-as-VARIABLE
+`active` set, queued joins/leaves with bonding/unbonding deadlines, and an
+`ApplyEpochTransition` action that drains the queues under churn-cap and
+min-set constraints. Verifies `MinValidatorsHeld` (set never < MIN_VALIDATORS),
+`ChurnBounded` (≤ max-churn applied per epoch), `BondingRespected` (activate
+only at/after bonding), and `LeavesBlockedOnlyByFloor` (a past-due leave that
+stays active is blocked only by the min-validators floor — mirrors the impl's
+sole permanent rejection branch). TLC full exhaustive check: 59,138 distinct
+states, queue → 0, 0 violations. An earlier draft's `LeaveConsistency`
+invariant was falsified by TLC (a validator legitimately stays active when
+removing it would breach MIN_VALIDATORS) and reframed.
+
+**Part 2 (REMAINING, ~1wk):** `SafetyAcrossEpochBoundary` — proving BFT
+`Agreement`/`LockSafety` in `EvaporChainBFT.tla` still hold when the validator
+set (and quorum threshold) changes between height h and h+1. This requires
+refactoring `EvaporChainBFT.tla` to take `Validators`/stake from the transition
+manager's `active`/stake VARIABLEs instead of static CONSTANTS, then re-running
+the safety suite across an epoch boundary. This is the substantial restructuring
+piece; the manager being independently safe (Part 1) is a prerequisite.
 
 ### Est effort
-**1-2 weeks** (substantial spec restructuring; need a new sister spec `ValidatorSetTransitions.tla` and refactor `EvaporChainBFT.tla` to depend on it).
+**Part 1: ~2 hrs (DONE).** Part 2: ~1 week (refactor EvaporChainBFT.tla to a
+dynamic validator set + re-verify safety across the boundary).
 
 ---
 
@@ -640,12 +662,13 @@ Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-
 5. ✅ **D14 — Three combined gates close LockSafety on Byzantine.** PR #455. Option C-refined (between A and B from the audit). 142M distinct states / depth 21 / 0 violations.
 6. ✅ **D9 — CrooksMEV settlement state machine.** PR #456. New `CrooksMEV.tla`; full exhaustive check (163M distinct states, queue drained to 0), all 8 invariants hold.
 7. ✅ **D10 — Cross-fork equivocation detector.** PR #457. New `CrossForkEquivocation.tla`; full exhaustive check (6,561 distinct states, queue → 0). Decoupled from D3.
+8. ◑ **D7 (Part 1) — Validator-set transition manager.** PR #458. New `ValidatorSetTransition.tla`; full exhaustive check (59,138 distinct states, queue → 0). Manager invariants verified; consensus-integration is Part 2.
 
-### Tier 2 — Open, do before mainnet (the two larger restructure efforts)
+### Tier 2 — Open, do before mainnet (the remaining restructure efforts)
 
-8. **D7 — Dynamic validator set spec.** *1-2 weeks.* Biggest blind spot today: ALL safety claims are conditioned on a static validator set, but the production chain rotates keys, jails, and churns at every epoch boundary. Pre-mainnet, this needs to ship.
+9. **D7 (Part 2) — Safety across epoch boundary.** *~1 week.* Refactor `EvaporChainBFT.tla` to take `Validators`/stake from the transition manager's `active` VARIABLE (not static CONSTANTS) and re-verify `Agreement`/`LockSafety` across a set change. Part 1 (PR #458) is the prerequisite.
 
-9. **D3 — Antichain consensus spec.** *1 week.* Governance-flagged off by default (`parent_acceptance_mode = "mcc"` / `block_source_mode = "antichain"`); becomes critical the moment the doctrine flags flip to enable DAG mode. Note: the cross-fork equivocation DETECTOR (D10) is already shipped (PR #457) decoupled from this; D3 is the full antichain mempool-drain + MCC fork-choice consensus.
+10. **D3 — Antichain consensus spec.** *1 week.* Governance-flagged off by default (`parent_acceptance_mode = "mcc"` / `block_source_mode = "antichain"`); becomes critical the moment the doctrine flags flip to enable DAG mode. Note: the cross-fork equivocation DETECTOR (D10) is already shipped (PR #457) decoupled from this; D3 is the full antichain mempool-drain + MCC fork-choice consensus.
 
 ### Closed via folding
 
