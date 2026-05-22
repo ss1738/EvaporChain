@@ -2,12 +2,33 @@
 # https://embarkstudios.github.io/cargo-deny/checks/cfg.html
 #
 # v2 sets sensible defaults (vulnerability=deny, unmaintained=warn,
-# yanked=warn, notice=warn, unlicensed=deny, copyleft=denied-by-omission
-# from `allow`), so the explicit keys that used to live here are removed.
-# Only deviations from default are declared.
+# yanked=warn, notice=warn, unlicensed=deny), so the explicit keys
+# that used to live here are removed. Only deviations from default
+# are declared.
 
 [advisories]
 version = 2
+# Ignored: each entry is "unmaintained" or "notice" only — no
+# active vulnerability. Listed here with reason so the CI gate
+# focuses on real security issues. Real vulnerability + unsound
+# advisories are NOT in this list and will continue to fail CI
+# until addressed by `cargo update` on the corresponding crate.
+ignore = [
+    # bincode 1.x is unmaintained; transitive dep we can't easily
+    # remove without auditing the consumer graph (likely libp2p chain).
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x unmaintained; transitive, scheduled for upstream resolution" },
+    # derivative unmaintained; transitive from libp2p / substrate-style deps.
+    { id = "RUSTSEC-2024-0388", reason = "derivative unmaintained; transitive, no direct replacement available" },
+    # instant unmaintained; tokio/legacy timers chain in via libp2p.
+    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via libp2p/tokio legacy" },
+    # paste unmaintained; macro-only, no runtime risk.
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; proc-macro only, no runtime surface" },
+    # ring <0.17 unmaintained; pinned by reqwest's older rustls chain.
+    { id = "RUSTSEC-2025-0010", reason = "ring <0.17 unmaintained; bump blocked on transitive reqwest update" },
+    # rustls-pemfile unmaintained; rustls-pki-types is the replacement,
+    # already on dep tree but pemfile remains pulled in.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; replacement (rustls-pki-types) already in tree" },
+]
 
 [licenses]
 version = 2
@@ -28,6 +49,10 @@ allow = [
     "MPL-2.0",
 ]
 confidence-threshold = 0.8
+# Workspace's own private crates aren't published, so omitting a
+# `license = "…"` field is fine — they're not licensed to anyone
+# outside the workspace anyway.
+private = { ignore = true }
 
 [bans]
 multiple-versions = "warn"
