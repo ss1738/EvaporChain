@@ -21,16 +21,16 @@
 | D7 | Key rotation / jailing / tombstoning / epoch transitions unmodeled in TLA | MED (unmodeled-but-safe) | OPEN | Port spec → dynamic validator set | 1-2 weeks |
 | D8 | Max-rounds reset to round 0 — once unmodeled | LOW | **CLOSED** in spec | n/a (TLA `PrecommitNilAdvanceRound::nextR` already matches; Rust comment cites the rule) | 0 |
 | D9 | Crooks-MEV refund validation / settlement unmodeled in TLA | MED (unmodeled-but-safe) | **PR #456** | New `CrooksMEV.tla` — full exhaustive check, 163M states, 0 violations | ~~3-5 days~~ DONE |
-| D10 | Cross-fork equivocation tracking unmodeled in TLA | LOW (unmodeled-but-safe) | OPEN | Port spec → DAG-aware equivocation | 3-5 days |
+| D10 | Cross-fork equivocation tracking unmodeled in TLA | LOW (unmodeled-but-safe) | **PR #457** | New `CrossForkEquivocation.tla` — full exhaustive check, detection completeness | ~~3-5 days~~ DONE |
 | D11 | BLS aggregate signature / DST verification unmodeled in TLA | LOW (out of TLC scope) | DEFERRED | Stays out of TLC; document as crypto-axiom | 0 |
 | D12 | ByzantinePropose leaves stateCommitment "None" — spurious StateCommitmentIntegrity violation | MED (spec bug, blocks Byzantine TLC) | **PR #452** | ByzantinePropose mirrors ProposeBlock's stateCommitment update | ~~2 hours~~ DONE |
 | D13 | `PrevoteNilQuorumOrTimeout` timeout-fallback fires when a block has quorum (defensive tightening) | LOW (defensive only) | **CANDIDATE held local** | Tighten guard with `~HasQuorumFor` conjunct | 1 hour |
 | D14 | No POL (Proof-of-Lock) modeling — LockSafety violates under late-prevote / round-skew traces | HIGH (spec model gap) | **PR #455** | Closed via 3-gate Option C-refined (between A and B) | ~~1-2 weeks~~ DONE |
 
 **Headline (updated 2026-05-22 post-implementation):**
-- **8 drifts CLOSED via PRs this session:** D1, D2, D5, D9 (PR #456), D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
+- **9 drifts CLOSED via PRs this session:** D1, D2, D5, D9 (PR #456), D10 (PR #457), D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
 - **2 drifts pre-existing CLOSED:** D6 (decompress shipped commit `59e0817f`), D8 (already matched).
-- **3 drifts still OPEN:** D3 (antichain, 1wk), D7 (dynamic validator set, 1-2wk), D10 (cross-fork equivocation, 3-5d).
+- **2 drifts still OPEN:** D3 (antichain consensus, 1wk), D7 (dynamic validator set, 1-2wk). Both are the larger DAG/epoch-restructure efforts that warrant a focused dedicated session.
 
 **Critical 2026-05-21 trajectory:**
 1. D12 (PR #452) closed a masking `StateCommitmentIntegrity` violation at depth 8 on Byzantine.cfg.
@@ -422,7 +422,7 @@ captured the safety surface at a fraction of the cost.
 
 ---
 
-## 10. D10 — Cross-fork equivocation tracking unmodeled in TLA
+## 10. D10 — Cross-fork equivocation tracking unmodeled in TLA — **CLOSED (PR #457)**
 
 **Severity:** LOW (unmodeled-but-safe) — Open (newly identified)
 
@@ -445,11 +445,37 @@ TLA equivocation is single-chain. Rust tracks DAG-fork equivocation independentl
 ### Soundness risk
 **UNMODELED-BUT-SAFE.** Same status as D3 (antichain) — both gated behind doctrine-mode governance flags whose default keeps the chain in the TLA-modeled regime.
 
-### Proposed resolution
-**Port spec to match impl** alongside D3's `AntichainConsensus.tla`. Add a `dag_prevotes : [Tip -> ...]` map and a `DetectCrossForkEquivocation` action that fires when a validator's vote appears under two incomparable tips.
+### Resolution shipped (PR #457)
+
+New `research/tla/CrossForkEquivocation.tla` + `.cfg`, modeling the
+detector standalone rather than combined with D3's full antichain
+consensus. Variables `dagPrecommits : [Tips -> [Validators -> [Round -> Vote]]]`
+and `crossForkEquivocations : SUBSET Validators`. The `RecordDagPrecommit`
+action mirrors Rust's `record_dag_precommit` — on each precommit, scan
+all other tips at the same round and flag the validator on disagreement.
+
+**Decoupled from D3:** the detector rides on top of whatever tips
+exist, so it can be verified independently of the (larger) antichain
+consensus protocol. This unblocked D10 now while D3 stays a focused
+future effort.
+
+**Invariants verified:** `CrossForkEquivocationDetected` (detection
+completeness — the slashing-soundness property), `NoFalsePositive`
+(honest validators consistent per-round never flagged), `DetectionStable`
+(monotone, mirrors the Rust counter only incrementing).
+
+### Verification
+
+TLC `CrossForkEquivocation.cfg`: 34,993 states / **6,561 distinct /
+0 states left on queue / 0 violations**. Full exhaustive model check.
+Small model (2 validators, 2 tips, 2 blocks, 2 rounds) but exhaustive
+— covers every interleaving of conflicting votes, which is exactly
+what a detection-completeness property needs.
 
 ### Est effort
-**3-5 days** (likely combined with D3's antichain spec — same DAG primitives).
+**~1 hour (spec + cfg + seconds-long TLC exhaustion).** Originally
+estimated 3-5 days combined with D3; decoupling the detector from the
+full DAG consensus captured the safety surface at a fraction of the cost.
 
 ---
 
@@ -613,12 +639,13 @@ Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-
 4. ✅ **D12 — `ByzantinePropose` stateCommitment update.** PR #452. Closes the masking-violation at depth 8 that hid D14.
 5. ✅ **D14 — Three combined gates close LockSafety on Byzantine.** PR #455. Option C-refined (between A and B from the audit). 142M distinct states / depth 21 / 0 violations.
 6. ✅ **D9 — CrooksMEV settlement state machine.** PR #456. New `CrooksMEV.tla`; full exhaustive check (163M distinct states, queue drained to 0), all 8 invariants hold.
+7. ✅ **D10 — Cross-fork equivocation detector.** PR #457. New `CrossForkEquivocation.tla`; full exhaustive check (6,561 distinct states, queue → 0). Decoupled from D3.
 
-### Tier 2 — Open, do before mainnet
+### Tier 2 — Open, do before mainnet (the two larger restructure efforts)
 
-7. **D7 — Dynamic validator set spec.** *1-2 weeks.* Biggest blind spot today: ALL safety claims are conditioned on a static validator set, but the production chain rotates keys, jails, and churns at every epoch boundary. Pre-mainnet, this needs to ship.
+8. **D7 — Dynamic validator set spec.** *1-2 weeks.* Biggest blind spot today: ALL safety claims are conditioned on a static validator set, but the production chain rotates keys, jails, and churns at every epoch boundary. Pre-mainnet, this needs to ship.
 
-8. **D3 + D10 — Antichain + cross-fork equivocation spec.** *1 week combined.* Both governance-flagged off by default; both become critical the moment the doctrine flags flip to enable DAG mode.
+9. **D3 — Antichain consensus spec.** *1 week.* Governance-flagged off by default (`parent_acceptance_mode = "mcc"` / `block_source_mode = "antichain"`); becomes critical the moment the doctrine flags flip to enable DAG mode. Note: the cross-fork equivocation DETECTOR (D10) is already shipped (PR #457) decoupled from this; D3 is the full antichain mempool-drain + MCC fork-choice consensus.
 
 ### Closed via folding
 
