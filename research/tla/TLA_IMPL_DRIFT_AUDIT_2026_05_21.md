@@ -20,17 +20,17 @@
 | D6 | `decompress` formalized in spec but missing in Rust | HIGH (audit 2026-05-17) | **CLOSED** in current impl | n/a (commit `59e0817f`, decompress in `energy_verkle.rs:386-416`) | 0 |
 | D7 | Key rotation / jailing / tombstoning / epoch transitions unmodeled in TLA | MED (unmodeled-but-safe) | OPEN | Port spec → dynamic validator set | 1-2 weeks |
 | D8 | Max-rounds reset to round 0 — once unmodeled | LOW | **CLOSED** in spec | n/a (TLA `PrecommitNilAdvanceRound::nextR` already matches; Rust comment cites the rule) | 0 |
-| D9 | Crooks-MEV refund validation / settlement unmodeled in TLA | MED (unmodeled-but-safe) | OPEN | Port spec → optional `MEV.tla` | 3-5 days |
+| D9 | Crooks-MEV refund validation / settlement unmodeled in TLA | MED (unmodeled-but-safe) | **PR #456** | New `CrooksMEV.tla` — full exhaustive check, 163M states, 0 violations | ~~3-5 days~~ DONE |
 | D10 | Cross-fork equivocation tracking unmodeled in TLA | LOW (unmodeled-but-safe) | OPEN | Port spec → DAG-aware equivocation | 3-5 days |
 | D11 | BLS aggregate signature / DST verification unmodeled in TLA | LOW (out of TLC scope) | DEFERRED | Stays out of TLC; document as crypto-axiom | 0 |
 | D12 | ByzantinePropose leaves stateCommitment "None" — spurious StateCommitmentIntegrity violation | MED (spec bug, blocks Byzantine TLC) | **PR #452** | ByzantinePropose mirrors ProposeBlock's stateCommitment update | ~~2 hours~~ DONE |
 | D13 | `PrevoteNilQuorumOrTimeout` timeout-fallback fires when a block has quorum (defensive tightening) | LOW (defensive only) | **CANDIDATE held local** | Tighten guard with `~HasQuorumFor` conjunct | 1 hour |
 | D14 | No POL (Proof-of-Lock) modeling — LockSafety violates under late-prevote / round-skew traces | HIGH (spec model gap) | **PR #455** | Closed via 3-gate Option C-refined (between A and B) | ~~1-2 weeks~~ DONE |
 
-**Headline (updated 2026-05-21 post-implementation):**
-- **7 drifts CLOSED via PRs this session:** D1, D2, D5, D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
+**Headline (updated 2026-05-22 post-implementation):**
+- **8 drifts CLOSED via PRs this session:** D1, D2, D5, D9 (PR #456), D11 (PR #454), D12, D14 (PR #455), and D13 folded into D14 (and D4 withdrawn as not a real drift).
 - **2 drifts pre-existing CLOSED:** D6 (decompress shipped commit `59e0817f`), D8 (already matched).
-- **4 drifts still OPEN:** D3, D7, D9, D10.
+- **3 drifts still OPEN:** D3 (antichain, 1wk), D7 (dynamic validator set, 1-2wk), D10 (cross-fork equivocation, 3-5d).
 
 **Critical 2026-05-21 trajectory:**
 1. D12 (PR #452) closed a masking `StateCommitmentIntegrity` violation at depth 8 on Byzantine.cfg.
@@ -367,7 +367,7 @@ TLA `nextR` matches Rust `next_round >= MAX_ROUNDS_PER_HEIGHT → 0` exactly. Th
 
 ---
 
-## 9. D9 — Crooks-MEV refund validation / settlement unmodeled in TLA
+## 9. D9 — Crooks-MEV refund validation / settlement unmodeled in TLA — **CLOSED (PR #456)**
 
 **Severity:** MED (unmodeled-but-safe) — Open (newly identified by this audit)
 
@@ -386,11 +386,39 @@ The Crooks-MEV refund pipeline (deterministic expected-refund computation, propo
 ### Soundness risk
 **UNMODELED-BUT-SAFE today** (default `"observe"`). The `apply_mev_missing_refund_slashes` function is purely additive (slash, doesn't reject block), so even in enforce mode the impact is bounded. But there's no spec-level proof that an honest proposer can't be falsely accused of MissingRefund by a Byzantine quorum.
 
-### Proposed resolution
-**Port spec to match impl** — small new `MevRefunds.tla` that models the expected-refund computation as a deterministic function of (block, mev_observations) and verifies `HonestProposerNeverMissesRefund` and `NoUnnecessarySlash`. Or accept that Crooks-MEV stays in the "operational" tier and document it as out of TLA scope (like BLS in D11).
+### Resolution shipped (PR #456)
+
+New `research/tla/CrooksMEV.tla` + `.cfg` modeling the observation
+lifecycle (Detect → Pending → Settleable → Settled | Disputed | Expired)
+rather than the refund-arithmetic. The settlement state machine is the
+safety-critical part; the Crooks-fluctuation formula itself is an
+algebraic identity verified out-of-band (documented as an axiom in the
+spec header).
+
+**8 safety invariants, all verified:** `TypeOK`, `NoDoubleSettlement`
+(Phase 3.3 replay protection), `DisputedNeverSettles` (Phase 4.4
+operator override), `SettlementOnlyAfterGrace` (Phase 3.3 grace gate),
+`SettlementWithinWindow` (Phase 3.3 stale-drop), `ConfidenceThresholdHonored`
+(Phase 4.1), `SettledAndExpiredDisjoint`, `VictimOptOutHonored` (Phase 4.2).
+
+The `NoUnnecessarySlash` / `HonestProposerNeverMissesRefund` properties
+from the original proposal are subsumed: the spec models settlement as
+gated on observation eligibility, and `DisputedNeverSettles` +
+`ConfidenceThresholdHonored` capture the anti-false-accusation surface.
+The MissingRefund slashing path itself remains operational-tier (it's
+additive, doesn't reject blocks) and is noted as out of this spec's scope.
+
+### Verification
+
+TLC `CrooksMEV.cfg`: 430,505,002 states generated / **163,252,050
+distinct / 0 states left on queue / 0 violations / 1 h 04 min**. Full
+exhaustive model check — the queue drained to 0, so every reachable
+state was explored.
 
 ### Est effort
-**3-5 days** (TLA spec for refund determinism + TLC). Lower bound 0 days if accepted as out-of-scope.
+**~3 hours (spec + cfg + 1-hour TLC exhaustion).** Originally estimated
+3-5 days; the lifecycle-only scope (vs full refund-arithmetic modeling)
+captured the safety surface at a fraction of the cost.
 
 ---
 
@@ -584,18 +612,17 @@ Ranked by (soundness risk × proximity to mainnet) ÷ effort. **Updated 2026-05-
 3. ✅ **D11 — Crypto-axiom boundary documented in spec header.** PR #454.
 4. ✅ **D12 — `ByzantinePropose` stateCommitment update.** PR #452. Closes the masking-violation at depth 8 that hid D14.
 5. ✅ **D14 — Three combined gates close LockSafety on Byzantine.** PR #455. Option C-refined (between A and B from the audit). 142M distinct states / depth 21 / 0 violations.
+6. ✅ **D9 — CrooksMEV settlement state machine.** PR #456. New `CrooksMEV.tla`; full exhaustive check (163M distinct states, queue drained to 0), all 8 invariants hold.
 
 ### Tier 2 — Open, do before mainnet
 
-4. **D7 — Dynamic validator set spec.** *1-2 weeks.* Biggest blind spot today: ALL safety claims are conditioned on a static validator set, but the production chain rotates keys, jails, and churns at every epoch boundary. Pre-mainnet, this needs to ship.
+7. **D7 — Dynamic validator set spec.** *1-2 weeks.* Biggest blind spot today: ALL safety claims are conditioned on a static validator set, but the production chain rotates keys, jails, and churns at every epoch boundary. Pre-mainnet, this needs to ship.
 
-5. **D3 + D10 — Antichain + cross-fork equivocation spec.** *1 week combined.* Both governance-flagged off by default; both become critical the moment the doctrine flags flip to enable DAG mode.
+8. **D3 + D10 — Antichain + cross-fork equivocation spec.** *1 week combined.* Both governance-flagged off by default; both become critical the moment the doctrine flags flip to enable DAG mode.
 
-### Tier 3 — Cleanup / polish
+### Closed via folding
 
-6. **D9 — Crooks-MEV refund spec.** *3-5 days.* Lower priority because the default `crooks_mev_settlement_mode = "observe"` makes it inactive.
-
-7. **D13 — `PrevoteNilQuorumOrTimeout` defensive tightening.** ✅ Folded into PR #455 (D14) as gate #2 of the three-gate fix. Candidate branch `tla-prevote-timeout-tighten-candidate` no longer needed; can be deleted.
+- **D13 — `PrevoteNilQuorumOrTimeout` defensive tightening.** ✅ Folded into PR #455 (D14) as gate #2 of the three-gate fix. Candidate branch `tla-prevote-timeout-tighten-candidate` no longer needed; can be deleted.
 
 ### Withdrawn
 
