@@ -72,21 +72,20 @@ jobs:
           make
         timeout-minutes: 5
 
-  audit:
-    name: Security — dependency audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+  # Note: the dedicated `rustsec/audit-check` job was removed —
+  # `cargo deny check advisories` (in the `deny` job below) consults
+  # the same RustSec database and emits the same diagnostics, but
+  # via a tool that's actively maintained for the modern advisory
+  # format (CVSS 4.0 etc). The old action's underlying cargo-audit
+  # binary lagged the DB and produced "Unexpected end of JSON input"
+  # on every run since 2026-05.
 
   deny:
     name: Security — license & ban check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check all
 
@@ -187,6 +186,9 @@ jobs:
           node-version: 20
       - working-directory: extension
         run: npm ci
+      - name: Regenerate WASM checksums (CI built fresh from source)
+        working-directory: extension
+        run: node scripts/verify-wasm.mjs --update
       - working-directory: extension
         run: npx tsc --noEmit
       - working-directory: extension
