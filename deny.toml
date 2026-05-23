@@ -1,11 +1,70 @@
+# cargo-deny configuration. Schema v2 — see
+# https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+#
+# v2 sets sensible defaults (vulnerability=deny, unmaintained=warn,
+# yanked=warn, notice=warn, unlicensed=deny), so the explicit keys
+# that used to live here are removed. Only deviations from default
+# are declared.
+
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+version = 2
+# Two-class ignore list: (A) unmaintained-only advisories that don't
+# carry an active vulnerability, and (B) real vulnerabilities that
+# require a major dep-version bump in a dependency chain we don't
+# own. Each class is tracked separately so the security posture
+# stays visible. The (B) entries each name the upstream chain that
+# pins us to the vulnerable version + the bump action needed.
+ignore = [
+    # ── (A) Unmaintained-only — no active vulnerability ──
+    # bincode 1.x is unmaintained; transitive dep we can't easily
+    # remove without auditing the consumer graph (likely libp2p chain).
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x unmaintained; transitive, scheduled for upstream resolution" },
+    # derivative unmaintained; transitive from libp2p / substrate-style deps.
+    { id = "RUSTSEC-2024-0388", reason = "derivative unmaintained; transitive, no direct replacement available" },
+    # instant unmaintained; tokio/legacy timers chain in via libp2p.
+    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via libp2p/tokio legacy" },
+    # paste unmaintained; macro-only, no runtime risk.
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; proc-macro only, no runtime surface" },
+    # rustls-pemfile unmaintained; rustls-pki-types is the replacement,
+    # already on dep tree but pemfile remains pulled in.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; replacement (rustls-pki-types) already in tree" },
+
+    # core2 yanked — transitive from hickory-proto 0.25.2; will go
+    # away when libp2p ships against a hickory that doesn't depend
+    # on core2, or when we move to libp2p that supports
+    # hickory-proto 0.26+ which drops core2.
+    { id = "RUSTSEC-2026-0105", reason = "core2 yanked; transitive via hickory-proto 0.25.2 → libp2p-mdns; resolved by libp2p adopting hickory 0.26+" },
+
+    # ── (B) Real vulnerabilities — TODO: dep-version bumps in Cargo.toml ──
+    # FIXED 2026-05-23: bumping libp2p 0.54 → 0.56 closed
+    #   RUSTSEC-2026-0119 (hickory-proto 0.24.x DNS CPU exhaustion)
+    #   RUSTSEC-2026-0098 (rustls-webpki 0.101.7 URI name constraints)
+    #   RUSTSEC-2026-0099 (rustls-webpki 0.101.7 wildcard name)
+    #   RUSTSEC-2026-0104 (rustls-webpki 0.101.7 CRL panic)
+    # Not removed: hickory got bumped 0.24.4 → 0.25.2 which introduced
+    # a fresh vulnerability (next entry).
+    #
+    # TODO(security): both DNS advisories below need libp2p that uses
+    # hickory-proto >= 0.26.0 (the patched series). 0.25.x has no
+    # patch — only 0.26+. libp2p 0.56 still pins hickory 0.25.x.
+    # Track upstream libp2p for the next major.
+    { id = "RUSTSEC-2026-0118", reason = "hickory-proto 0.25.x NSEC3 unbounded loop; no 0.25.x patch (only 0.26+); waiting on libp2p to bump hickory" },
+    { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.25.x O(n²) name-compression CPU exhaustion; same fix path as RUSTSEC-2026-0118 (hickory 0.26+)" },
+    # FIXED 2026-05-23 by ark 0.5 → 0.6 bump:
+    #   RUSTSEC-2025-0055  tracing-subscriber 0.2.25 ANSI log poisoning
+    #
+    # PARTIAL after ark 0.6: tracing-subscriber 0.2.25 is gone, but
+    # ark-std 0.6.0 still pulls in rand 0.8.5 directly (not via the
+    # logger surface). The unsound advisory still fires on the lock.
+    # Real fix is upstream: ark-std → rand 0.9. Newer cargo-deny
+    # (>=0.20) detects it where 0.19.7 didn't.
+    { id = "RUSTSEC-2026-0097", reason = "rand 0.8.5 unsound; pinned via ark-std 0.6.0; needs ark-std to bump rand to 0.9" },
+]
 
 [licenses]
-unlicensed = "deny"
+version = 2
+# Anything not in this list is denied — replaces the old `copyleft = "deny"`
+# and `unlicensed = "deny"` keys (now implicit in v2).
 allow = [
     "MIT",
     "Apache-2.0",
@@ -13,15 +72,30 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
     "BSL-1.0",
     "CC0-1.0",
     "OpenSSL",
     "MPL-2.0",
+    # CDLA-Permissive-2.0: permissive Community Data License, used by
+    # webpki-roots (Mozilla's bundled CA cert set). OSI-recognised as
+    # equivalent to permissive open-source distribution.
+    "CDLA-Permissive-2.0",
 ]
-copyleft = "deny"
 confidence-threshold = 0.8
+# Workspace's own private crates (publish = false) aren't licensed to
+# anyone outside the workspace, so they don't need a `license = "…"`
+# field. Combined with `publish = false` in their Cargo.toml, this
+# rule skips them.
+private = { ignore = true }
+# Per-crate license clarifications for crates whose Cargo.toml metadata
+# doesn't carry a SPDX expression cargo-deny can match. `ring` ships
+# its LICENSE file with mixed terms (the historical fork from BoringSSL
+# carries OpenSSL + ISC + MIT) but its package metadata is empty.
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = []
 
 [bans]
 multiple-versions = "warn"

@@ -491,4 +491,60 @@ mod tests {
         let err = format_plaintext_for_disk(&too_short).unwrap_err();
         assert!(err.contains("32 bytes"));
     }
+
+    #[test]
+    fn test_passphrase_from_env_direct_var() {
+        // Temporarily set the direct passphrase env var.
+        // Run under a unique env key name to avoid cross-test interference.
+        unsafe { std::env::remove_var(ENV_PASSPHRASE_FILE) };
+        unsafe { std::env::set_var(ENV_PASSPHRASE, "hunter2") };
+        let result = passphrase_from_env();
+        unsafe { std::env::remove_var(ENV_PASSPHRASE) };
+        assert_eq!(result, Some(b"hunter2".to_vec()));
+    }
+
+    #[test]
+    fn test_passphrase_from_env_returns_none_when_unset() {
+        unsafe { std::env::remove_var(ENV_PASSPHRASE_FILE) };
+        unsafe { std::env::remove_var(ENV_PASSPHRASE) };
+        let result = passphrase_from_env();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_passphrase_from_env_file_var_reads_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("bls_pass_test.txt");
+        std::fs::write(&path, b"correct-horse-battery\n").unwrap();
+        unsafe { std::env::set_var(ENV_PASSPHRASE_FILE, path.to_str().unwrap()) };
+        unsafe { std::env::remove_var(ENV_PASSPHRASE) };
+        let result = passphrase_from_env();
+        unsafe { std::env::remove_var(ENV_PASSPHRASE_FILE) };
+        std::fs::remove_file(&path).ok();
+        // trailing \n must be stripped
+        assert_eq!(result, Some(b"correct-horse-battery".to_vec()));
+    }
+
+    #[test]
+    fn test_passphrase_from_env_file_strips_crlf() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("bls_pass_crlf_test.txt");
+        std::fs::write(&path, b"my-pass\r\n").unwrap();
+        unsafe { std::env::set_var(ENV_PASSPHRASE_FILE, path.to_str().unwrap()) };
+        unsafe { std::env::remove_var(ENV_PASSPHRASE) };
+        let result = passphrase_from_env();
+        unsafe { std::env::remove_var(ENV_PASSPHRASE_FILE) };
+        std::fs::remove_file(&path).ok();
+        assert_eq!(result, Some(b"my-pass".to_vec()));
+    }
+
+    #[test]
+    fn test_passphrase_from_env_file_missing_falls_back_to_direct() {
+        unsafe { std::env::set_var(ENV_PASSPHRASE_FILE, "/tmp/__no_such_bls_pass_file__") };
+        unsafe { std::env::set_var(ENV_PASSPHRASE, "fallback-pass") };
+        let result = passphrase_from_env();
+        unsafe { std::env::remove_var(ENV_PASSPHRASE_FILE) };
+        unsafe { std::env::remove_var(ENV_PASSPHRASE) };
+        assert_eq!(result, Some(b"fallback-pass".to_vec()));
+    }
 }

@@ -157,8 +157,8 @@ pub(crate) fn real_provable_circuit() -> Option<NovaVerifierCircuit> {
 mod tests {
     use super::*;
     use crate::recursive_snark_fixture::generate_fixture;
-    use ark_relations::r1cs::ConstraintSynthesizer;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSynthesizer;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// End-to-end pin: real fixture → adapter → satisfied CS.
     ///
@@ -207,7 +207,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+                Err(ark_relations::gr1cs::SynthesisError::Unsatisfiable)
             ),
             "section-less fixture circuit must be Unsatisfiable under S2b, got {result:?}"
         );
@@ -248,7 +248,7 @@ mod tests {
     #[ignore]
     fn build_circuit_with_section2_alone_is_unsatisfiable() {
         use crate::recursive_snark_fixture::generate_fixture_with_digest;
-        use ark_relations::r1cs::ConstraintSystem;
+        use ark_relations::gr1cs::ConstraintSystem;
 
         let dump = std::path::Path::new("/tmp/neptune-bn256-standard.json");
         if !dump.exists() {
@@ -266,7 +266,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+                Err(ark_relations::gr1cs::SynthesisError::Unsatisfiable)
             ),
             "section2-only circuit must be Unsatisfiable under S2b, got {result:?}"
         );
@@ -307,7 +307,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+                Err(ark_relations::gr1cs::SynthesisError::Unsatisfiable)
             ),
             "section3-only circuit must be Unsatisfiable under S2b, got {result:?}"
         );
