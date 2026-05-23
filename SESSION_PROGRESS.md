@@ -6,6 +6,40 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-23 (afternoon) — B-1/B-2 audit blocker CLOSED: S2a + S2b + S6 + 1C verifier soundness arc all merged
+
+**Focus:** drive the full Nova→Groth16 ZK verifier soundness rebuild end-to-end. The audit's #1 mainnet-blocker (B-1 constraint-vacuity + B-2 forgeable keys) had a 6-stage rebuild plan (`crates/evaporchain-nova-bridge/SOUNDNESS_REBUILD_SPEC.md`); 4 stages were open as separate PRs and one was a 100-commit work-in-progress. Today: all 4 merged.
+**Commits shipped:** 4 PR merges to main + manual conflict resolution + ark 0.5 → 0.6 migration of the s4-grumpkin-config branch's 16 new files.
+**Deliverables:**
+| PR | Commit | Stage | What |
+|---|---|---|---|
+| #439 (re-resolved) | `655c6cd2` | S2a | Section-bearing `NovaVerifierCircuit::setup_shape()` replaces vacuous `dummy()` as the trusted-setup keying circuit. `params_from_embedded()` keeps `setup()` API unchanged. `Section{2,3}Witness::canonical_shape` returns zero-valued witnesses at exact prover R1CS dims. |
+| #466 (was #440) | `5df2bc26` | S6 | Empirical determinism proof: `setup_shape()` R1CS bit-identical to real-prover R1CS (CI-checkable invariant). |
+| #467 (was #441) | `2b73e614` | S2b | `generate_constraints` emits Section 2/3 bindings unconditionally; `validate_structurally` rejects section-less / dim-mismatched witnesses. Tests flipped to assert rejection (the soundness invariant). |
+| #448 | `558c800e` | S4 (1C arc) | 100-commit CycleFold + Groth16-wrap delegation. On-chain Groth16 binds Section A's MSM (~41.5M cons at n_aux=16,384, 113k gas EIP-197); off-chain CompressedSNARK::verify binds Sections B+C+D. Fraud-proof rollup trust model. |
+**Empirical results:**
+- nova-bridge full test suite: **256 passed, 0 failed, 42 ignored** (1256s ≈ 21min on Mini after #448 merge).
+- Foundry tests: 7 / 7 (5 VerkleProofVerifier + 2 RecursionDeciderBVerifier 11-PI).
+- On-chain Groth16 verify: 113k gas (EIP-197 4-pair).
+- Groth16 setup: 3m 1s · prove: 3m 22s · verify: 1.82ms (production-shape on satyawan-1).
+- EVM round-trip with 11 PIs: PASS, gas 399k incl. deployment, PI tampering rejected.
+- 9 honest mid-arc corrections preserved in `B1_B2_AUDIT_DOSSIER.md` §5.
+**Decisions made:**
+- B-1 (constraint vacuity) is CLOSED at the engineering level. Combined: S2a sets up a section-bearing circuit, S2b makes the bindings unconditional, S6 proves the setup/real R1CS are bit-identical.
+- Trust model for B-1/B-2 1C verifier: fraud-proof rollup with on-chain Groth16 MSM validity (NOT pure validity rollup). On-chain anchors Section A; off-chain CompressedSNARK adapter covers B+C+D.
+- ark 0.5 → 0.6 migration of #448's 16 new files done as part of the merge: `ark_relations::r1cs` → `gr1cs`, `R1CSVar` → `GR1CSVar`, `to_matrices()` → BTreeMap, `witness_assignment`/`instance_assignment` → method calls, `enforce_constraint(a,b,c)` → `enforce_r1cs_constraint(||a,||b,||c)`, `Affine.infinity` → `AffineRepr::is_zero`. No constraint semantics changed.
+- `recursion_decider_groth16_tampered_witness_rejected` wrapped in `catch_unwind`: ark-groth16 0.6 added a defensive assert that panics on unsatisfiable witnesses (was `Err` in 0.5); the test contract is "tampered witness CANNOT round-trip", agnostic to mode.
+**What's next:**
+- B-2 (toxic-waste / forgeable keys): only S5 (MPC ceremony) remains. Operational/legal work — not addressable in code. `#[deprecated]` marker on `setup()` keeps the insecure dev path from silently shipping.
+- S4 (KZG commitment binding + non-native secondary R1CS in-circuit) is the separate, deeper soundness ceiling per the spec — multi-week and beyond the 1C delegation that #448 ships.
+- Of 32+ open PRs that existed this morning, **25 are now MERGEABLE** on Ext/Lic/WASM after PR #463 made CI usable. Only #462 (the user's active D7-Part2 branch) has a merge-conflict with main.
+**Blockers / open questions:**
+- MPC ceremony for S5 — non-engineering, owner+counsel work.
+- 25 mergeable PRs need owner review judgment.
+**Cross-references:** commits 655c6cd2, 5df2bc26, 2b73e614, 558c800e; PRs #439, #466, #467, #448; spec `crates/evaporchain-nova-bridge/SOUNDNESS_REBUILD_SPEC.md`; dossier `crates/evaporchain-nova-bridge/B1_B2_AUDIT_DOSSIER.md`.
+
+---
+
 ## 2026-05-23 (morning) — CI infrastructure unblock + libp2p 0.56 + ark 0.6 + Cargo.lock tracked
 
 **Focus:** unblock the 3 CI jobs failing on every PR (Extension typecheck, Security license & ban, Security dep audit) AND close as many RUSTSEC advisories as possible without owner judgment.
