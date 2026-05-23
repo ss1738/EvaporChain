@@ -706,4 +706,130 @@ mod tests {
         assert!(r.gauge_set("c", 1.0).is_err());
         assert!(r.gauge_get("c").is_err());
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_metric_name_and_type_name_covers_lines_58_70() {
+        let c = Metric::Counter(Counter {
+            name: "my_counter".into(),
+            help: "h".into(),
+            value: 0.0,
+            labels: BTreeMap::new(),
+        });
+        let g = Metric::Gauge(Gauge {
+            name: "my_gauge".into(),
+            help: "h".into(),
+            value: 0.0,
+            labels: BTreeMap::new(),
+        });
+        let h = Metric::Histogram(Histogram {
+            name: "my_hist".into(),
+            help: "h".into(),
+            buckets: vec![1.0],
+            counts: vec![0],
+            sum: 0.0,
+            count: 0,
+            labels: BTreeMap::new(),
+        });
+        assert_eq!(c.name(), "my_counter");
+        assert_eq!(g.name(), "my_gauge");
+        assert_eq!(h.name(), "my_hist");
+        assert_eq!(c.type_name(), "counter");
+        assert_eq!(g.type_name(), "gauge");
+        assert_eq!(h.type_name(), "histogram");
+    }
+
+    #[test]
+    fn test_counter_get_errors_covers_lines_125_130() {
+        let mut r = reg();
+        r.register_gauge("g", "gauge", BTreeMap::new());
+        assert!(r.counter_get("g").is_err()); // TypeMismatch
+        assert!(r.counter_get("nope").is_err()); // NotFound
+    }
+
+    #[test]
+    fn test_gauge_set_not_found_covers_line_159() {
+        let mut r = reg();
+        assert!(r.gauge_set("nope", 1.0).is_err());
+    }
+
+    #[test]
+    fn test_gauge_add_errors_covers_lines_177_182() {
+        let mut r = reg();
+        r.register_counter("c", "counter", BTreeMap::new());
+        assert!(r.gauge_add("c", 1.0).is_err()); // TypeMismatch
+        assert!(r.gauge_add("nope", 1.0).is_err()); // NotFound
+    }
+
+    #[test]
+    fn test_gauge_get_not_found_covers_line_194() {
+        let r = reg();
+        assert!(r.gauge_get("nope").is_err());
+    }
+
+    #[test]
+    fn test_histogram_observe_not_found_covers_line_253() {
+        let mut r = reg();
+        assert!(r.histogram_observe("nope", 1.0).is_err());
+    }
+
+    #[test]
+    fn test_histogram_get_not_found_covers_line_265() {
+        let r = reg();
+        assert!(r.histogram_get("nope").is_err());
+    }
+
+    #[test]
+    fn test_reset_histogram_covers_lines_288_293() {
+        let mut r = reg();
+        r.register_histogram("h", "hist", vec![10.0, 100.0], BTreeMap::new()).unwrap();
+        r.histogram_observe("h", 5.0).unwrap();
+        r.reset();
+        let h = r.histogram_get("h").unwrap();
+        assert_eq!(h.sum, 0.0);
+        assert_eq!(h.count, 0);
+        assert_eq!(h.counts, vec![0, 0]);
+    }
+
+    #[test]
+    fn test_prometheus_histogram_covers_lines_326_346() {
+        let mut r = reg();
+        r.register_histogram(
+            "latency",
+            "request latency ms",
+            vec![100.0, 500.0, f64::INFINITY],
+            BTreeMap::new(),
+        )
+        .unwrap();
+        r.histogram_observe("latency", 50.0).unwrap();
+        r.histogram_observe("latency", 200.0).unwrap();
+        let prom = r.to_prometheus();
+        assert!(prom.contains("# HELP latency request latency ms"));
+        assert!(prom.contains("# TYPE latency histogram"));
+        assert!(prom.contains("latency_bucket"));
+        assert!(prom.contains("+Inf"));
+        assert!(prom.contains("latency_sum"));
+        assert!(prom.contains("latency_count"));
+    }
+
+    #[test]
+    fn test_default_bucket_helpers_covers_lines_425_432() {
+        let lb = default_latency_buckets();
+        assert!(!lb.is_empty());
+        assert_eq!(lb[0], 10.0);
+        let sb = default_size_buckets();
+        assert!(!sb.is_empty());
+        assert_eq!(sb[0], 64.0);
+    }
+
+    #[test]
+    fn test_exponential_buckets_zero_count() {
+        assert!(exponential_buckets(1.0, 2.0, 0).is_err());
+    }
+
+    #[test]
+    fn test_linear_buckets_zero_count_covers_line_469() {
+        assert!(linear_buckets(10.0, 5.0, 0).is_err());
+    }
 }

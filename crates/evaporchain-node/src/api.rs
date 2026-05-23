@@ -1405,6 +1405,40 @@ fn require_wallet_ownership(
     }
 }
 
+/// Audit A1 (calibrated 2026-05-18): strict, FAIL-CLOSED ownership gate
+/// for the *custodial* signing endpoints (`/api/wallet/sign-tx`,
+/// `/api/wallet/submit`) where the NODE holds the key and signs on the
+/// caller's behalf. Unlike the lenient `require_wallet_ownership`
+/// (used broadly incl. signature-auth/genesis paths, which legitimately
+/// return Ok on a missing owner row), custodial signing must require:
+///   1. an authenticated session (no `user_id` None bypass), and
+///   2. an explicit owner row whose owner == that session's user.
+/// No session, no user DB, or no owner row ⇒ DENY. This closes the two
+/// residual fail-OPEN edges (`require_tx_auth` Ok(None) when no auth
+/// configured; `require_wallet_ownership` Ok(()) on owner-row absent)
+/// specifically for the path where the node would sign with a held key.
+fn require_custodial_ownership(
+    state: &ApiState,
+    user_id: Option<i64>,
+    addr_hex: &str,
+) -> Result<(), String> {
+    let user_id =
+        user_id.ok_or("custodial signing requires an authenticated session")?;
+    let user_db = state
+        .user_db
+        .as_ref()
+        .ok_or("user database not configured — custodial signing unavailable")?;
+    match user_db.get_wallet_owner(addr_hex) {
+        Ok(Some(owner_id)) if owner_id == user_id => Ok(()),
+        Ok(Some(_)) => Err("address does not belong to your account".into()),
+        Ok(None) => {
+            Err("no owner record for this address — custodial signing denied"
+                .into())
+        }
+        Err(e) => Err(format!("unable to verify wallet ownership: {e}")),
+    }
+}
+
 /// Admin-endpoint auth gate. Fail-CLOSED if `EVAPORCHAIN_ADMIN_KEY`
 /// is unset or empty.
 ///
@@ -3458,7 +3492,7 @@ async fn post_hbct_seed_demo(
     headers: HeaderMap,
 ) -> Json<HbctSeedDemoResp> {
     // Audit E5: seed endpoints write demo state; admin-gate to prevent pollution.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(HbctSeedDemoResp { status: "error", minted_positions: 0, detail: "unauthorized".into() });
     }
     // Realistic-shaped demo positions. Locations are GB BMU codes +
@@ -3675,7 +3709,7 @@ async fn post_hbct_tick(
     Json(req): Json<HbctTickReq>,
 ) -> Json<HbctTickResp> {
     // Audit E5: auto-burn tick is a state mutation; admin-gate to prevent unauthorized burns.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(HbctTickResp { entries_removed: 0, mwh_burnt: 0 });
     }
     let mut book = safe_lock(&state.hbct_book);
@@ -3968,7 +4002,7 @@ async fn post_sentinel_seed_demo(
     headers: HeaderMap,
 ) -> Json<SentinelSeedDemoResp> {
     // Audit E5: governance demo seed writes to state; admin-gate.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelSeedDemoResp { status: "error", registered: vec![], detail: "unauthorized".into() });
     }
     // (id, current, min, max). Realistic-shaped chain knobs.
@@ -4027,7 +4061,7 @@ async fn post_sentinel_seed_votes(
     Json(q): Json<SentinelSeedVotesQuery>,
 ) -> Json<SentinelSeedVotesResp> {
     // Audit E5: governance vote seeding writes to state; admin-gate.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelSeedVotesResp { status: "error", votes_recorded: 0, detail: "unauthorized".into() });
     }
     // Deterministic vote slate: 3 demo validators, each voting for a
@@ -4151,7 +4185,7 @@ async fn post_sentinel_tick(
     Json(req): Json<SentinelTickReq>,
 ) -> Json<SentinelParameterResp> {
     // Audit E4: sentinel tick (parameter adjustment) must be admin-gated.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelParameterResp { id: req.parameter_id, current: 0, min: 0, max: 0, vote_count: 0 });
     }
     let mut db = safe_lock(&state.db);
@@ -12866,11 +12900,14 @@ async fn wallet_sign_tx(
     };
     let from_full = account_full(&from_addr);
 
-    // A1: reject cross-account signing — caller must own the `from` wallet.
-    if let Err(Json(e)) = require_wallet_ownership(&state, user_id, &from_full) {
+    // A1 (hardened 2026-05-18): custodial signing — FAIL CLOSED. Requires
+    // an authenticated session AND an owner row matching it; no owner
+    // row / no session / no user-DB ⇒ deny (the node will not sign with
+    // a held key for an address it cannot positively attribute).
+    if let Err(msg) = require_custodial_ownership(&state, user_id, &from_full) {
         return Json(WalletSignTxResp {
             success: false,
-            message: e.message,
+            message: msg,
             signed_tx: None,
             tx_hash: None,
         });
@@ -12944,9 +12981,14 @@ async fn wallet_submit_tx(
     };
     let from_full = account_full(&from_addr);
 
-    // A1: reject cross-account submission — caller must own the `from` wallet.
-    if let Err(resp) = require_wallet_ownership(&state, user_id, &from_full) {
-        return resp;
+    // A1 (hardened 2026-05-18): custodial sign+submit — FAIL CLOSED
+    // (mandatory session + matching owner row; see require_custodial_ownership).
+    if let Err(msg) = require_custodial_ownership(&state, user_id, &from_full) {
+        return Json(TxResultResponse {
+            success: false,
+            message: msg,
+            tx_hash: None,
+        });
     }
 
     let mut tx: Transaction = match serde_json::from_value(req.tx) {
@@ -12990,6 +13032,21 @@ async fn faucet_html() -> impl IntoResponse {
 
 async fn docs_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/docs.html"))
+}
+
+async fn erasure_html() -> impl IntoResponse {
+    // Self-contained embedded copy is the production default. If an
+    // on-disk override exists at <data-dir or CWD>/erasure.html it is
+    // served instead — a tightly-scoped hot-reload hook so this
+    // actively-iterated public page can be updated without a full
+    // node rebuild. Any read error silently falls back to embedded.
+    const EMBEDDED: &str = include_str!("../dashboard/erasure.html");
+    let override_path =
+        std::env::var("EVAPORCHAIN_ERASURE_HTML").unwrap_or_else(|_| "erasure.html".to_string());
+    match tokio::fs::read_to_string(&override_path).await {
+        Ok(s) if s.contains("Proof-of-Erasure") => Html(s),
+        _ => Html(EMBEDDED.to_string()),
+    }
 }
 
 async fn manifest_json() -> impl IntoResponse {
@@ -17889,7 +17946,17 @@ async fn get_encrypted_mempool_status(State(state): State<Arc<ApiState>>) -> imp
 }
 
 fn hex_to_32(s: &str) -> Option<[u8; 32]> {
-    let bytes = hex::decode(s).ok()?;
+    // A4 (audit 2026-05-17): cap input length BEFORE hex::decode allocates.
+    // R1 (parse_hex32:3412) applied this guard; the later-added hex_to_32
+    // helper missed it. A 2 MiB hex blob (within the body cap) would force
+    // a ~1 MiB Vec allocation before the post-decode length check rejects.
+    // 32 bytes encode to exactly 64 hex chars; accept an optional "0x"
+    // prefix that the chain's other parsers tolerate.
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    if stripped.len() != 64 {
+        return None;
+    }
+    let bytes = hex::decode(stripped).ok()?;
     if bytes.len() != 32 {
         return None;
     }
@@ -18747,6 +18814,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/wallet", get(wallet_html))
         // Explorer (developer dashboard)
         .route("/explorer", get(dashboard_html))
+        // Public Proof-of-Erasure / GDPR-Erasure on-ramp
+        .route("/erasure", get(erasure_html))
         .route("/health", get(health))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -19382,10 +19451,20 @@ fn is_mcp_gated_path(method: &axum::http::Method, path: &str) -> bool {
     if *method != axum::http::Method::POST {
         return false;
     }
-    // Exact-match endpoints.
+    // A5 (audit 2026-05-17): MCP compute-only POST endpoints that the
+    // 26-tool inventory exposes (`compute_demurrage`,
+    // `check_annealing_temperature`, `check_conservation`). Pre-fix
+    // these paths were not in the gate's allowlist; pure compute, no
+    // state mutation, but the gate's claim of "every MCP-tool path is
+    // gated" was technically false.
     if matches!(
         path,
-        "/api/faucet" | "/api/fork_cert/prove" | "/api/mera/commit"
+        "/api/faucet"
+            | "/api/fork_cert/prove"
+            | "/api/mera/commit"
+            | "/api/demurrage/owed"
+            | "/api/annealing/temperature"
+            | "/api/energy_kernel/conservation_check"
     ) {
         return true;
     }

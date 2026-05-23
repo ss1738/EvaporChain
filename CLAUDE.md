@@ -9,12 +9,10 @@ Read exactly these five state-of-chain docs in order. Stop after the top 2-3 ent
 1. **`SESSION_PROGRESS.md`** — most recent operational state. Newest entry at top. Read FIRST to know where the build is.
 2. **`MAINNET_READINESS.md`** — lane-claim board (🟡 OPEN / 🟢 CLAIMED / ✅ DONE). Pick the lane you'll drive in this session here.
 3. **`DOCTRINE_PUNCH_LIST.md`** — layered build plan (Layers 0–7), what's already shipped at the doctrine level.
-4. **`AUDIT_2026_05_11.md`** — most recent findings (the only audit doc at root; older audits live in `docs/archive/obsolete-audits/`).
+4. **`AUDIT_2026_05_17.md`** — most recent findings (all 9 CRITICAL + 14 HIGH + 25 MEDIUM + 13 LOW closed as of 2026-05-18). Older audits live in `docs/archive/obsolete-audits/`.
 5. **`CHANGELOG.md`** — grep for your area; do not read top-to-bottom.
 
-Sprint narrative + doc / dead-crate audit lives in **`MAINNET_SPRINT_PLAN_2026_05_11.md`**. Read it once on your first session; not required thereafter.
-
-Completed plan docs (CROOKS_MEV, LAMBDA_FOLD, LIGHT_CONE, MCC_FULL) live in `docs/archive/completed-plans/`. Older audits in `docs/archive/obsolete-audits/`. Deprecated punch-lists in `docs/archive/deprecated/`. Treat as read-only history.
+Completed plan docs (CROOKS_MEV, LAMBDA_FOLD, LIGHT_CONE, MCC_FULL, POST_EXEC, MAINNET_SPRINT_2026_05_11) live in `docs/archive/completed-plans/`. Older audits in `docs/archive/obsolete-audits/`. Deprecated punch-lists in `docs/archive/deprecated/`. Treat as read-only history.
 
 ## Before ending any session
 
@@ -137,6 +135,11 @@ Flags are set via `POST /api/governance/param` and read via `GET /api/governance
 ## Formal verification
 
 5 Coq proofs in `research/coq/` + `research/proofs/LLSAInvariantPreservation.v`, all zero-Admitted under Rocq 9.1.1. CI `coq` job runs `make` in `research/coq/` on every PR. Do not add `Admitted` — fix the proof instead.
+
+**Qualification (audit 2026-05-17):**
+- `PoHAFreeloading.v` — theorem is Qed, but proved relative to 9 cryptographic `Axiom`s (hash collision-resistance, BLS unforgeability, sampling-seed unmanipulability, negligibility closure). This is standard practice for crypto-game proofs in Coq; the axioms name exactly what remains unproved.
+- `EvaporChainSafetyLiveness.v` — BIG theorem is Qed, but conditional on user-supplied `Safety ss0` and `Liveness ss0` hypotheses (the base-case preservation obligations). It proves a reachability-induction; it does **not** prove the base invariants from scratch.
+- The other 4 proofs (`EnergyDecayMonotonicity`, `EnergyVerkleCompression`, `LazyEagerEquivalence`, `LLSAInvariantPreservation`) are fully unconditional Qed (no hiding axioms, no user-supplied hypotheses).
 
 5 TLA+ specs in `research/tla/` (`EvaporChainBFT`, `ConservationInvariant`, `PoHA`, `RuleBasedConsensus`, `EnergyVerkleTrie`). All `.cfg` files have `CHECK_DEADLOCK FALSE` — the bounded model reaches a terminal state at MaxHeight, which TLC flags as deadlock by design.
 

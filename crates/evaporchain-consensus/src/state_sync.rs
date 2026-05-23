@@ -177,6 +177,8 @@ pub struct StateSyncManager {
     pending_requests: HashSet<usize>,
     /// Genesis checkpoint for safe initial sync.
     genesis_checkpoint: Option<GenesisCheckpoint>,
+    /// Chain ID bound into BLS vote messages.
+    chain_id: String,
 }
 
 impl StateSyncManager {
@@ -192,7 +194,13 @@ impl StateSyncManager {
             received_chunks: HashMap::new(),
             pending_requests: HashSet::new(),
             genesis_checkpoint: None,
+            chain_id: String::new(),
         }
+    }
+
+    /// Set the chain ID used for BLS vote message binding.
+    pub fn set_chain_id(&mut self, chain_id: &str) {
+        self.chain_id = chain_id.to_string();
     }
 
     /// Create a state sync manager with a hardcoded genesis checkpoint.
@@ -437,7 +445,7 @@ impl StateSyncManager {
                     return vec![];
                 }
             }
-            self.light_client = Some(LightClientVerifier::new(header.clone(), current_time));
+            self.light_client = Some(LightClientVerifier::new(header.clone(), current_time, &self.chain_id));
             info!(
                 height = target,
                 has_checkpoint = self.genesis_checkpoint.is_some(),
@@ -847,8 +855,11 @@ mod tests {
         (vs, kps)
     }
 
-    fn bls_vote_message(height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(48);
+    fn bls_vote_message(chain_id: &str, height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
+        let chain_id_bytes = chain_id.as_bytes();
+        let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 9 + 8 + 4 + 32);
+        msg.push(chain_id_bytes.len() as u8);
+        msg.extend_from_slice(chain_id_bytes);
         msg.extend_from_slice(b"precommit");
         msg.extend_from_slice(&height.to_le_bytes());
         msg.extend_from_slice(&round.to_le_bytes());
@@ -862,7 +873,7 @@ mod tests {
         kps: &[BlsKeypair],
         ids: &[u64],
     ) -> CommitCertificate {
-        let msg = bls_vote_message(height, 0, &block_hash);
+        let msg = bls_vote_message("", height, 0, &block_hash);
         let sigs: Vec<BlsSignature> = ids.iter().map(|&id| kps[id as usize].sign(&msg)).collect();
         let agg = BlsVerifier::aggregate_signatures(&sigs).unwrap();
         CommitCertificate {
@@ -1891,5 +1902,300 @@ mod tests {
             )),
             "consensus at 200, not stale 50"
         );
+    }
+
+    // ─── handle_header_response coverage ──────────────────────────────────
+
+    #[test]
+    fn test_set_chain_id_stores_value() {
+        let mut sync = StateSyncManager::new(0);
+        sync.set_chain_id("evaporchain-mainnet");
+        assert_eq!(sync.chain_id, "evaporchain-mainnet");
+    }
+
+    #[test]
+    fn test_header_response_wrong_phase_returns_empty() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        sync.start(); // DiscoveringTip phase
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty(), "HeaderResponse in wrong phase should be ignored");
+    }
+
+    #[test]
+    fn test_snapshot_metadata_request_as_client_returns_empty() {
+        // Client receives SnapshotMetadataRequest (a server-side msg) — must ignore it.
+        let mut sync = StateSyncManager::new(0);
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataRequest { height: 100 });
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_header_response_verifying_header_no_target_returns_empty() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        // target_height is None
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty(), "no target → should return empty");
+    }
+
+    #[test]
+    fn test_header_response_height_mismatch_rejected() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps); // height=100
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(200); // differs from header.height
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty(), "height mismatch must be rejected");
+    }
+
+    #[test]
+    fn test_header_response_bootstrap_no_checkpoint_inits_light_client() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        sync.peer_tips.insert(1, (100, [0u8; 32]));
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(!sync.is_failed(), "bootstrap without checkpoint should succeed");
+        assert!(sync.light_client.is_some(), "light client should be initialized");
+        // Should emit SnapshotMetadataRequest to peer 1
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            SyncAction::SendToPeer {
+                peer_id: 1,
+                message: SyncMessage::SnapshotMetadataRequest { height: 100 }
+            }
+        )), "should request snapshot metadata after bootstrap");
+    }
+
+    #[test]
+    fn test_header_response_bootstrap_no_checkpoint_no_peer_for_snapshot_fails() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(100, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        // No peer_tips — any_peer_at_height returns None
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "no peer for snapshot → Failed");
+    }
+
+    #[test]
+    fn test_header_response_checkpoint_below_height_rejected() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let header = make_header(50, &vs, &kps); // height=50 < checkpoint.height=100
+        let cp = GenesisCheckpoint {
+            height: 100,
+            state_root: [0xAAu8; 32],
+            block_hash: [0xBBu8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, cp);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(50);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "header below checkpoint height must fail");
+    }
+
+    #[test]
+    fn test_header_response_checkpoint_state_root_mismatch_rejected() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        // header.state_root = [0x11; 32], checkpoint.state_root = [0xAA; 32]
+        let header = make_header_with_state_root(100, &vs, &kps, [0x11u8; 32]);
+        let cp = GenesisCheckpoint {
+            height: 100, // same height triggers state_root comparison
+            state_root: [0xAAu8; 32],
+            block_hash: [0xBBu8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, cp);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "state root mismatch with checkpoint must fail");
+    }
+
+    #[test]
+    fn test_header_response_bootstrap_empty_cert_rejected() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let hash = [100u8; 32];
+        // Empty signer_ids — commit cert has no signers
+        let cert = CommitCertificate {
+            height: 100,
+            round: 0,
+            block_hash: hash,
+            aggregate_signature: vec![],
+            signer_ids: vec![],
+        };
+        let header = LightBlockHeader {
+            height: 100,
+            epoch: 1,
+            block_hash: hash,
+            parent_hash: [99u8; 32],
+            state_root: blake3_hash(&[100u8; 64]),
+            timestamp: 1000,
+            validator_set: vs,
+            commit_certificate: cert,
+        };
+        // Checkpoint at height=1 (below 100) so only empty-cert check fires
+        let cp = GenesisCheckpoint {
+            height: 1,
+            state_root: [0u8; 32],
+            block_hash: [0u8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, cp);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        let _ = kps; // used for make_vs
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "empty cert must be rejected");
+    }
+
+    #[test]
+    fn test_header_response_bootstrap_lacks_quorum_rejected() {
+        let (vs, kps) = make_vs_with_bls(4, 1000); // 4 validators, quorum = 4*2/3+1 = 3
+        let hash = [100u8; 32];
+        // Only 1 signer — below quorum of 3
+        let msg = bls_vote_message("", 100, 0, &hash);
+        let sig = kps[0].sign(&msg);
+        let agg = BlsVerifier::aggregate_signatures(&[sig]).unwrap();
+        let cert = CommitCertificate {
+            height: 100,
+            round: 0,
+            block_hash: hash,
+            aggregate_signature: agg.0,
+            signer_ids: vec![0], // only 1 signer
+        };
+        let header = LightBlockHeader {
+            height: 100,
+            epoch: 1,
+            block_hash: hash,
+            parent_hash: [99u8; 32],
+            state_root: blake3_hash(&[100u8; 64]),
+            timestamp: 1000,
+            validator_set: vs,
+            commit_certificate: cert,
+        };
+        let cp = GenesisCheckpoint {
+            height: 1,
+            state_root: [0u8; 32],
+            block_hash: [0u8; 32],
+        };
+        let mut sync = StateSyncManager::with_checkpoint(0, cp);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(100);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "below-quorum cert must be rejected");
+    }
+
+    #[test]
+    fn test_header_response_existing_light_client_valid() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let genesis = make_header(100, &vs, &kps);
+        // Initialize light client with header at 100
+        let lc = LightClientVerifier::new(genesis, 1000, "");
+        let next_header = make_header(101, &vs, &kps); // sequential → Valid
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(101);
+        sync.peer_tips.insert(1, (101, [0u8; 32]));
+        sync.light_client = Some(lc);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header: next_header });
+        assert!(!sync.is_failed(), "valid sequential header should succeed");
+        // Should emit SnapshotMetadataRequest
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            SyncAction::SendToPeer {
+                message: SyncMessage::SnapshotMetadataRequest { .. },
+                ..
+            }
+        )), "valid verification should request snapshot");
+    }
+
+    #[test]
+    fn test_header_response_existing_light_client_need_bisection() {
+        use evaporchain_consensus_types::MAX_SKIP_HEIGHT_GAP;
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let genesis = make_header(100, &vs, &kps);
+        let lc = LightClientVerifier::new(genesis, 1000, "");
+        // Gap > MAX_SKIP_HEIGHT_GAP → NeedBisection
+        let far_height = 100 + MAX_SKIP_HEIGHT_GAP + 2;
+        let far_header = make_header(far_height, &vs, &kps);
+        let mid = (100 + far_height) / 2;
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(far_height);
+        // Peer must be at height >= mid for bisection request
+        sync.peer_tips.insert(1, (far_height, [0u8; 32]));
+        sync.light_client = Some(lc);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header: far_header });
+        // Should request the midpoint header for bisection
+        assert!(!actions.is_empty(), "bisection should produce a request");
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            SyncAction::SendToPeer { message: SyncMessage::HeaderRequest { height: h }, .. }
+            if *h == mid
+        )), "should request mid-point header");
+    }
+
+    #[test]
+    fn test_header_response_existing_light_client_invalid_signature() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let genesis = make_header(100, &vs, &kps);
+        let lc = LightClientVerifier::new(genesis, 1000, "");
+        // Corrupt the commit certificate signature → Invalid
+        let hash = [101u8; 32];
+        let cert = CommitCertificate {
+            height: 101,
+            round: 0,
+            block_hash: hash,
+            aggregate_signature: vec![0u8; 96], // invalid BLS sig
+            signer_ids: vec![0, 1, 2],
+        };
+        let bad_header = LightBlockHeader {
+            height: 101,
+            epoch: 1,
+            block_hash: hash,
+            parent_hash: [100u8; 32],
+            state_root: blake3_hash(&[101u8; 64]),
+            timestamp: 1010,
+            validator_set: vs,
+            commit_certificate: cert,
+        };
+        let _ = kps;
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(101);
+        sync.light_client = Some(lc);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header: bad_header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "invalid signature → Failed");
+    }
+
+    #[test]
+    fn test_header_response_bisection_no_peer_fails() {
+        use evaporchain_consensus_types::MAX_SKIP_HEIGHT_GAP;
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let genesis = make_header(100, &vs, &kps);
+        let lc = LightClientVerifier::new(genesis, 1000, "");
+        let far_height = 100 + MAX_SKIP_HEIGHT_GAP + 2;
+        let far_header = make_header(far_height, &vs, &kps);
+        let mut sync = StateSyncManager::new(0);
+        sync.phase = SyncPhase::VerifyingHeader;
+        sync.target_height = Some(far_height);
+        // No peer for bisection mid-point
+        sync.light_client = Some(lc);
+        let actions = sync.on_message(1, SyncMessage::HeaderResponse { header: far_header });
+        assert!(actions.is_empty());
+        assert!(sync.is_failed(), "bisection with no peer → Failed");
     }
 }

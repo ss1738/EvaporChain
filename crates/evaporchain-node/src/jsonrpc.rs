@@ -293,7 +293,11 @@ fn rpc_send_raw_tx(state: &ApiState, params: &Value, id: Value) -> JsonRpcRespon
         Ok(t) => t,
         Err(e) => return JsonRpcResponse::invalid_params(id, format!("invalid tx: {}", e)),
     };
-    let hash = hex::encode(blake3::hash(&serde_json::to_vec(&tx).unwrap_or_default()).as_bytes());
+    // A8 (audit 2026-05-17): hash via tx.signable_bytes() so the
+    // JSON-RPC reply matches the chain-recorded hash. Pre-fix this
+    // used blake3(serde_json::to_vec(&tx)) — clients polling
+    // /api/tx/<hash> would see "pending" forever even after inclusion.
+    let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
     state.submit_tx(tx);
     JsonRpcResponse::ok(id, Value::String(format!("0x{}", hash)))
 }
@@ -1265,7 +1269,8 @@ fn block_to_json(block: &evaporchain_types::Block, full_txs: bool) -> Value {
             .transactions
             .iter()
             .map(|tx| {
-                let h = blake3::hash(&serde_json::to_vec(tx).unwrap_or_default());
+                // A8-B: use signable_bytes so block-enumerated hashes match chain records.
+                let h = blake3::hash(&tx.signable_bytes());
                 format!("0x{}", hex::encode(h.as_bytes()))
             })
             .collect();
