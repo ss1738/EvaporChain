@@ -1,5 +1,7 @@
 //! Total-Programming EvaporScript — structural totality checker.
 //!
+//! **Doctrine:** `INVENTION_STACK.md §4.2` — Tier-2 VM paradigm.
+//!
 //! ## What this crate is
 //!
 //! A restricted AST and a static checker that statically rejects

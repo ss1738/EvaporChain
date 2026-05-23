@@ -4,6 +4,8 @@
 //! and sign attestations. When a supermajority of stake attests, a DA certificate
 //! is produced and included in the block.
 
+use std::collections::HashSet;
+
 use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsSignature, BlsVerifier};
 use serde::{Deserialize, Serialize};
 
@@ -210,6 +212,9 @@ pub struct CertificateBuilder {
     total_stake: u64,
     attestations: Vec<DAAttestation>,
     attested_stake: u64,
+    // audit 2026-05-18 (DA-Q2-BUILD): dedup guard — replaying the same
+    // attestation N times must not inflate attested_stake.
+    seen_validators: HashSet<u64>,
 }
 
 impl CertificateBuilder {
@@ -221,13 +226,21 @@ impl CertificateBuilder {
             total_stake,
             attestations: Vec::new(),
             attested_stake: 0,
+            seen_validators: HashSet::new(),
         }
     }
 
     /// Add a validator attestation. Returns false and rejects the attestation if
-    /// the BLS signature is invalid or the attestation is for a different block/data_root.
+    /// the BLS signature is invalid, the attestation is for a different block/data_root,
+    /// or we have already accepted an attestation from this validator_id.
     pub fn add_attestation(&mut self, att: DAAttestation) -> bool {
         if att.block_number != self.block_number || att.data_root != self.data_root {
+            return false;
+        }
+
+        // audit 2026-05-18 (DA-Q2-BUILD): reject duplicate validator before
+        // touching attested_stake — a replayed attestation must not inflate stake.
+        if self.seen_validators.contains(&att.validator_id) {
             return false;
         }
 
@@ -248,6 +261,7 @@ impl CertificateBuilder {
             return false;
         }
 
+        self.seen_validators.insert(att.validator_id);
         self.attested_stake += att.stake;
         self.attestations.push(att);
         true

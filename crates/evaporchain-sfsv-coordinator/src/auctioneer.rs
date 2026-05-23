@@ -40,6 +40,9 @@ pub enum AuctioneerError {
     BadBid(#[from] evaporchain_sddc::bid::BidError),
     #[error("market error: {0}")]
     Market(#[from] MarketError),
+    // audit 2026-05-18 (F2): short hex was silently zero-padded to genesis address.
+    #[error("bidder_hex must decode to exactly 32 bytes (got {0} bytes)")]
+    InvalidBidderHex(usize),
 }
 
 /// Summary of a just-cleared listing returned to the coordinator loop.
@@ -74,6 +77,12 @@ pub struct BidRequest {
 
 pub struct Auctioneer {
     listings: HashMap<ContractId, ListingState>,
+}
+
+impl Default for Auctioneer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Auctioneer {
@@ -122,7 +131,12 @@ impl Auctioneer {
             .get_mut(&req.contract_id)
             .ok_or(AuctioneerError::NotListed(req.contract_id))?;
 
-        let bidder = hex_to_addr(&req.bidder_hex);
+        let bidder = hex_to_addr(&req.bidder_hex)
+            .ok_or_else(|| {
+                let raw = req.bidder_hex.trim_start_matches("0x");
+                let byte_len = raw.len() / 2;
+                AuctioneerError::InvalidBidderHex(byte_len)
+            })?;
         match Bid::new(bidder, req.max_price, req.lambda_tolerance, req.submitted_at) {
             Ok(bid) => {
                 info!(
@@ -181,11 +195,14 @@ impl Auctioneer {
     }
 }
 
-fn hex_to_addr(hex: &str) -> AccountAddress {
-    let mut addr = [0u8; 32];
-    if let Ok(bytes) = hex::decode(hex.trim_start_matches("0x")) {
-        let len = bytes.len().min(32);
-        addr[..len].copy_from_slice(&bytes[..len]);
+// audit 2026-05-18 (F2): returns None if hex does not decode to exactly 32 bytes.
+// Previously zero-padded short strings, silently mapping them to the genesis address [0u8;32].
+fn hex_to_addr(hex: &str) -> Option<AccountAddress> {
+    let bytes = hex::decode(hex.trim_start_matches("0x")).ok()?;
+    if bytes.len() != 32 {
+        return None;
     }
-    addr
+    let mut addr = [0u8; 32];
+    addr.copy_from_slice(&bytes);
+    Some(addr)
 }

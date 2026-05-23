@@ -1951,6 +1951,329 @@ mod tests {
         assert_eq!(root, [0u8; 32]);
         assert!(EnergyVerkleTrie::verify(&proof, &root));
     }
+
+    // ─── Additional coverage tests (session 61) ───────────────────────────────
+
+    #[test]
+    fn test_default_creates_empty_trie() {
+        let trie = EnergyVerkleTrie::default();
+        assert_eq!(trie.len(), 0);
+        assert_eq!(trie.root(), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_compressed_node_meta_via_compress_cold() {
+        let mut trie = EnergyVerkleTrie::new();
+        // k1 and k2 share byte[0]=0, creating a nested Internal that compress_cold
+        // can compress.  recompute_meta() then walks the Compressed child ->
+        // hits the Compressed arm of EnergyNode::meta().
+        let mut k1 = [0u8; 32];
+        let mut k2 = [0u8; 32];
+        k1[0] = 0;
+        k1[1] = 0;
+        k2[0] = 0;
+        k2[1] = 1;
+        trie.insert(k1, make_value(1), 0, 10, 0);
+        trie.insert(k2, make_value(2), 0, 10, 0);
+        let count = trie.compress_cold();
+        assert!(count > 0, "nested Internal with energy=0 must be compressed");
+        assert_eq!(trie.root_meta().leaf_count, 2);
+    }
+
+    #[test]
+    fn test_insert_into_compressed_region_resurrection() {
+        let mut trie = EnergyVerkleTrie::new();
+        let mut k1 = [0u8; 32];
+        let mut k2 = [0u8; 32];
+        k1[0] = 0;
+        k1[1] = 0;
+        k2[0] = 0;
+        k2[1] = 1;
+        trie.insert(k1, make_value(1), 0, 10, 0);
+        trie.insert(k2, make_value(2), 0, 10, 0);
+        trie.compress_cold();
+        // Insert a new key that routes through the Compressed subtree -
+        // triggers the EnergyNode::Compressed branch in insert_recursive.
+        let mut k3 = [0u8; 32];
+        k3[0] = 0;
+        k3[1] = 2;
+        trie.insert(k3, make_value(3), 500, 50, 1);
+        assert_eq!(trie.get(&k3), Some(make_value(3)));
+    }
+
+    #[test]
+    fn test_delete_on_empty_trie_returns_false() {
+        let mut trie = EnergyVerkleTrie::new();
+        assert!(!trie.delete(&make_key(1)));
+    }
+
+    #[test]
+    fn test_delete_returns_false_for_compressed_region() {
+        let mut trie = EnergyVerkleTrie::new();
+        let mut k1 = [0u8; 32];
+        let mut k2 = [0u8; 32];
+        k1[0] = 0;
+        k1[1] = 0;
+        k2[0] = 0;
+        k2[1] = 1;
+        trie.insert(k1, make_value(1), 0, 10, 0);
+        trie.insert(k2, make_value(2), 0, 10, 0);
+        trie.compress_cold();
+        // delete on a key whose path hits the Compressed node -> returns false
+        assert!(!trie.delete(&k1));
+    }
+
+    #[test]
+    fn test_delete_internal_missing_child_returns_false() {
+        let mut trie = EnergyVerkleTrie::new();
+        trie.insert(make_key(0), make_value(0), 100, 10, 0);
+        trie.insert(make_key(1), make_value(1), 100, 10, 0);
+        // byte[0]=5 has no child in the root Internal -> missing child -> false
+        assert!(!trie.delete(&make_key(5)));
+    }
+
+    #[test]
+    fn test_delete_collapses_to_internal_when_remaining_child_not_leaf() {
+        let mut trie = EnergyVerkleTrie::new();
+        // k1 and k2 share byte[0]=0 -> nested Internal under root at idx=0.
+        let mut k1 = [0u8; 32];
+        k1[0] = 0;
+        k1[1] = 0;
+        let mut k2 = [0u8; 32];
+        k2[0] = 0;
+        k2[1] = 1;
+        let k3 = make_key(1); // byte[0]=1, different branch
+        trie.insert(k1, make_value(1), 1000, 10, 0);
+        trie.insert(k2, make_value(2), 1000, 10, 0);
+        trie.insert(k3, make_value(3), 1000, 10, 0);
+        // Root = Internal{0->Internal{0->Leaf(k1),1->Leaf(k2)}, 1->Leaf(k3)}
+        // Delete k3: root has 1 remaining child (Internal) - NOT a Leaf ->
+        // hits the collapse-to-Internal path (lines 503-506).
+        assert!(trie.delete(&k3));
+        assert_eq!(trie.get(&k1), Some(make_value(1)));
+        assert_eq!(trie.get(&k2), Some(make_value(2)));
+        assert_eq!(trie.get(&k3), None);
+    }
+
+    #[test]
+    fn test_update_energy_on_empty_trie_returns_false() {
+        let mut trie = EnergyVerkleTrie::new();
+        assert!(!trie.update_energy(&make_key(1), 500, 1));
+    }
+
+    #[test]
+    fn test_update_energy_on_compressed_subtree_returns_false() {
+        let mut trie = EnergyVerkleTrie::new();
+        let mut k1 = [0u8; 32];
+        let mut k2 = [0u8; 32];
+        k1[0] = 0;
+        k1[1] = 0;
+        k2[0] = 0;
+        k2[1] = 1;
+        trie.insert(k1, make_value(1), 0, 10, 0);
+        trie.insert(k2, make_value(2), 0, 10, 0);
+        trie.compress_cold();
+        // Compressed arm of update_energy_recursive -> false
+        assert!(!trie.update_energy(&k1, 500, 1));
+    }
+
+    #[test]
+    fn test_update_energy_leaf_key_mismatch_returns_false() {
+        let mut trie = EnergyVerkleTrie::new();
+        let k1 = [0u8; 32]; // all zeros
+        let mut k2 = [0u8; 32];
+        k2[0] = 0;
+        k2[1] = 1; // shares byte[0] with k1
+        trie.insert(k1, make_value(1), 100, 10, 0);
+        trie.insert(k2, make_value(2), 200, 10, 0);
+        // k_mismatch shares the path to Leaf(k1) at depth[1]=0 but the full
+        // key differs (byte[31]=1) - exercises the Leaf key-mismatch branch.
+        let mut k_mismatch = [0u8; 32];
+        k_mismatch[31] = 1;
+        assert!(!trie.update_energy(&k_mismatch, 999, 1));
+    }
+
+    #[test]
+    fn test_node_count_empty() {
+        let trie = EnergyVerkleTrie::new();
+        // Empty root -> EnergyNode::Empty arm in count_nodes -> 0.
+        assert_eq!(trie.node_count(), 0);
+    }
+
+    #[test]
+    fn test_prove_hits_compressed_node() {
+        let mut trie = EnergyVerkleTrie::new();
+        let mut k1 = [0u8; 32];
+        let mut k2 = [0u8; 32];
+        k1[0] = 0;
+        k1[1] = 0;
+        k2[0] = 0;
+        k2[1] = 1;
+        trie.insert(k1, make_value(1), 0, 10, 0);
+        trie.insert(k2, make_value(2), 0, 10, 0);
+        trie.compress_cold();
+        // prove descends into the root Internal, then finds Compressed at idx=0 ->
+        // hit_compressed=true, breaks.
+        let proof = trie.prove(&k1);
+        assert!(proof.hit_compressed);
+        assert_eq!(proof.value, None);
+    }
+
+    #[test]
+    fn test_prove_missing_key_through_internal() {
+        let mut trie = EnergyVerkleTrie::new();
+        trie.insert(make_key(0), make_value(0), 100, 10, 0);
+        trie.insert(make_key(1), make_value(1), 100, 10, 0);
+        // byte[0]=7 has no child in root Internal ->
+        // None => break path in the prove loop.
+        let absent = make_key(7);
+        let proof = trie.prove(&absent);
+        assert!(proof.value.is_none());
+        assert!(!proof.hit_compressed);
+        assert_eq!(proof.depth, 1); // root commitment was captured before break
+    }
+
+    #[test]
+    fn test_verify_depth_exceeds_max_returns_false() {
+        let proof = EnergyVerkleProof {
+            key: [0u8; 32],
+            value: None,
+            depth: MAX_DEPTH + 1,
+            commitments: Vec::new(),
+            path_indices: Vec::new(),
+            siblings: Vec::new(),
+            energy_path: Vec::new(),
+            hit_compressed: false,
+        };
+        assert!(!EnergyVerkleTrie::verify(&proof, &[0u8; 32]));
+    }
+
+    #[test]
+    fn test_verify_mismatched_lengths_returns_false() {
+        // depth=2 but only 1 commitment -> length mismatch -> false
+        let proof = EnergyVerkleProof {
+            key: [0u8; 32],
+            value: None,
+            depth: 2,
+            commitments: vec![[0u8; 32]],
+            path_indices: vec![0, 0],
+            siblings: vec![vec![], vec![]],
+            energy_path: Vec::new(),
+            hit_compressed: false,
+        };
+        assert!(!EnergyVerkleTrie::verify(&proof, &[0u8; 32]));
+    }
+
+    #[test]
+    fn test_verify_cr2_path_indices_mismatch_returns_false() {
+        let mut key = [0u8; 32];
+        key[0] = 5;
+        let proof = EnergyVerkleProof {
+            key,
+            value: Some([1u8; 32]),
+            depth: 1,
+            commitments: vec![[0u8; 32]],
+            path_indices: vec![3], // 3 != key[0]=5 -> CR-2 violation
+            siblings: vec![vec![]],
+            energy_path: Vec::new(),
+            hit_compressed: false,
+        };
+        assert!(!EnergyVerkleTrie::verify(&proof, &[0u8; 32]));
+    }
+
+    #[test]
+    fn test_verify_none_value_exercises_zero_leaf_hash_branch() {
+        // Build a 2-key trie so root is Internal, then prove an absent key.
+        // prove() captures the root commitment (depth=1, value=None).
+        // verify() hits the `None => [0u8; 32]` branch when building leaf_hash.
+        let mut trie = EnergyVerkleTrie::new();
+        trie.insert(make_key(0), make_value(0), 100, 10, 0);
+        trie.insert(make_key(1), make_value(1), 100, 10, 0);
+        let absent = make_key(7);
+        let proof = trie.prove(&absent);
+        assert_eq!(proof.depth, 1);
+        assert!(proof.value.is_none());
+        let root = trie.root();
+        // None value -> leaf_hash=[0u8;32] -> scalar=0 -> zero contribution to
+        // commitment -> the reconstructed commitment matches the real root.
+        // So a depth>0 absence proof DOES verify (the absent slot is a no-op).
+        assert!(EnergyVerkleTrie::verify(&proof, &root));
+    }
+
+    #[test]
+    fn test_collect_above_empty_trie() {
+        let trie = EnergyVerkleTrie::new();
+        assert!(trie.keys_above_energy(0).is_empty());
+    }
+
+    #[test]
+    fn test_collect_above_skips_compressed_child() {
+        let mut trie = EnergyVerkleTrie::new();
+        let mut k1 = [0u8; 32];
+        let mut k2 = [0u8; 32];
+        k1[0] = 0;
+        k1[1] = 0;
+        k2[0] = 0;
+        k2[1] = 1;
+        trie.insert(k1, make_value(1), 0, 10, 0); // cold
+        trie.insert(k2, make_value(2), 0, 10, 0); // cold
+        let k3 = make_key(1); // alive, different byte[0]
+        trie.insert(k3, make_value(3), 1000, 100, 0);
+        trie.compress_cold();
+        // Root Internal max_energy=1000 > 500 -> recurse into children.
+        // Child at idx=0 is Compressed -> EnergyNode::Compressed arm -> skipped.
+        // Child at idx=1 is Leaf(k3, energy=1000) -> collected.
+        let above = trie.keys_above_energy(500);
+        assert_eq!(above.len(), 1);
+        assert_eq!(above[0].0, k3);
+        assert_eq!(above[0].1, 1000);
+    }
+
+    #[test]
+    fn test_health_on_empty_trie_min_half_life_is_zero() {
+        let trie = EnergyVerkleTrie::new();
+        let h = trie.health();
+        // Empty trie meta has min_half_life=u64::MAX;
+        // health() converts that sentinel to 0.
+        assert_eq!(h.min_half_life, 0);
+        assert_eq!(h.active_leaves, 0);
+        assert_eq!(h.max_energy, 0);
+    }
+
+    #[test]
+    fn test_prove_multi_empty_root_arm() {
+        // prove_multi on an empty trie -> collect_mp receives EnergyNode::Empty root.
+        let trie = EnergyVerkleTrie::new();
+        let mp = trie.prove_multi(&[make_key(1)]);
+        assert_eq!(mp.values[0], None);
+        assert!(!mp.compressed[0]);
+    }
+
+    #[test]
+    fn test_prove_multi_missing_key_through_internal_none_arm() {
+        let mut trie = EnergyVerkleTrie::new();
+        trie.insert(make_key(0), make_value(0), 100, 10, 0);
+        trie.insert(make_key(1), make_value(1), 100, 10, 0);
+        // byte[0]=7 absent from Internal root -> None arm in collect_mp.
+        let mp = trie.prove_multi(&[make_key(7)]);
+        assert_eq!(mp.values[0], None);
+        assert!(!mp.compressed[0]);
+    }
+
+    #[test]
+    fn test_verify_multi_empty_keys_returns_true_for_zero_root() {
+        let proof = EnergyVerkleMultiProof {
+            keys: vec![],
+            values: vec![],
+            depths: vec![],
+            siblings: std::collections::BTreeMap::new(),
+            energy_data: std::collections::BTreeMap::new(),
+            compressed: vec![],
+        };
+        assert!(EnergyVerkleTrie::verify_multi(&proof, &[0u8; 32]));
+        assert!(!EnergyVerkleTrie::verify_multi(&proof, &[1u8; 32]));
+    }
+
 }
 
 // ═══════════════════════════════════════════════════════════════════
