@@ -394,7 +394,7 @@ mod tests {
         keypairs: &[BlsKeypair],
         signer_ids: &[u64],
     ) -> CommitCertificate {
-        let msg = bls_vote_message(height, round, &block_hash);
+        let msg = bls_vote_message("", height, round, &block_hash);
         let sigs: Vec<BlsSignature> = signer_ids
             .iter()
             .map(|&id| keypairs[id as usize].sign(&msg))
@@ -435,7 +435,7 @@ mod tests {
         // Genesis at height 1
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // Height 2 — sequential
         let block_hash2 = [2u8; 32];
@@ -454,7 +454,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // Jump to height 50 — same validator set, full overlap
         let block_hash50 = [50u8; 32];
@@ -473,7 +473,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps1, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs1.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // New validator set: keep validators 0,1 (2000 stake overlap out of 4000 total)
         // Add new validators 4,5
@@ -499,7 +499,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // Only 1 signer (need 3 for quorum with 4 validators)
         let block_hash2 = [2u8; 32];
@@ -521,7 +521,7 @@ mod tests {
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
         // Trust period = 1000 seconds
-        let mut lc = LightClientVerifier::with_trust_period(genesis, 100, 1000);
+        let mut lc = LightClientVerifier::with_trust_period(genesis, 100, 1000, "");
 
         // Try to verify at time 1200 (trust expired at 1100)
         let block_hash2 = [2u8; 32];
@@ -542,7 +542,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // Certificate signed over different hash than header claims
         let block_hash2 = [2u8; 32];
@@ -565,7 +565,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // Jump > MAX_SKIP_HEIGHT_GAP
         let target = 1 + MAX_SKIP_HEIGHT_GAP + 1;
@@ -591,7 +591,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let cert = make_commit_certificate(1, 0, [1u8; 32], &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs, cert);
-        let lc = LightClientVerifier::new(genesis, 100);
+        let lc = LightClientVerifier::new(genesis, 100, "");
 
         assert_eq!(lc.bisection_target(1, 101), 51);
         assert_eq!(lc.bisection_target(100, 200), 150);
@@ -603,7 +603,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, [1u8; 32], &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::with_trust_period(genesis, 100, 500);
+        let mut lc = LightClientVerifier::with_trust_period(genesis, 100, 500, "");
 
         // Add height 2 at time 200
         let cert2 = make_commit_certificate(2, 0, [2u8; 32], &kps, &[0, 1, 2]);
@@ -625,7 +625,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, [1u8; 32], &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // Verify a chain of 10 sequential headers
         for h in 2..=11u64 {
@@ -650,7 +650,7 @@ mod tests {
 
         let cert1 = make_commit_certificate(1, 0, block_hash, &kps, &[0, 1, 2]);
         let genesis = make_light_header(1, 0, vs.clone(), cert1);
-        let mut lc = LightClientVerifier::new(genesis, 100);
+        let mut lc = LightClientVerifier::new(genesis, 100, "");
 
         // Create cert with wrong keys (generate fresh keypairs)
         let (_, fake_kps) = make_validator_set_with_bls(4, 1000);
@@ -972,7 +972,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let cert = make_commit_certificate(100, 0, [100u8; 32], &kps, &[0, 1, 2]);
         let genesis = make_light_header(100, 0, vs, cert);
-        let lc = LightClientVerifier::new(genesis, 1000);
+        let lc = LightClientVerifier::new(genesis, 1000, "");
 
         let snap = make_test_snapshot(1, 1000, 10, 0);
         let proof = make_epoch_proof(&[snap], 0, 10);
@@ -987,7 +987,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let cert = make_commit_certificate(50, 0, [50u8; 32], &kps, &[0, 1, 2]);
         let genesis = make_light_header(50, 0, vs, cert);
-        let lc = LightClientVerifier::new(genesis, 1000);
+        let lc = LightClientVerifier::new(genesis, 1000, "");
 
         let snap = make_test_snapshot(1, 1000, 10, 0);
         let proof = make_epoch_proof(&[snap], 0, 10);

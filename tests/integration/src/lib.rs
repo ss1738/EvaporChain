@@ -401,7 +401,8 @@ mod tests {
             commit_certificate: cert1.clone(),
         };
 
-        let mut lc = LightClientVerifier::new(genesis, b1.timestamp);
+        // chain_id "" matches new_for_test which sets chain_id: String::new()
+        let mut lc = LightClientVerifier::new(genesis, b1.timestamp, "");
 
         // Verify subsequent blocks via light client
         for block in &blocks[1..] {

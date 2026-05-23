@@ -34,6 +34,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use evaporchain_energy_kernel::ChainLambda;
 use evaporchain_proving::nova::{RealBlockProver, ThermodynamicWitness};
 use evaporchain_proving::{CompressedProof, ProvingError};
 use evaporchain_types::{Block, DualCommitment};
@@ -100,6 +101,10 @@ pub struct NovaFolder {
     total_energy_remaining: u128,
     step_count: u64,
     latest_epoch: u64,
+    /// L0-A (audit 2026-05-17): chain-level λ for aggregate energy decay.
+    /// Pre-fix used the first object's per-object half_life (or hardcoded 100),
+    /// which is wrong for the aggregate `total_energy_remaining` sum.
+    chain_lambda: ChainLambda,
 }
 
 impl NovaFolder {
@@ -111,6 +116,21 @@ impl NovaFolder {
             total_energy_remaining: 0,
             step_count: 0,
             latest_epoch: 0,
+            chain_lambda: ChainLambda::default_genesis(),
+        })
+    }
+
+    /// Variant that accepts an explicit ChainLambda (e.g. from governance).
+    pub fn new_with_lambda(
+        genesis: &DualCommitment,
+        chain_lambda: ChainLambda,
+    ) -> Result<Self, NovaFoldError> {
+        Ok(Self {
+            prover: RealBlockProver::new(genesis)?,
+            total_energy_remaining: 0,
+            step_count: 0,
+            latest_epoch: 0,
+            chain_lambda,
         })
     }
 
@@ -150,12 +170,12 @@ impl NovaFolder {
             self.total_energy_remaining
         } else {
             let prev_u64 = self.total_energy_remaining.min(u64::MAX as u128) as u64;
-            let half_life = thermo
-                .object_energies
-                .first()
-                .map(|(_, _, hl)| *hl)
-                .unwrap_or(100);
-            let decayed = evaporchain_types::energy_at_epoch(prev_u64, half_life, elapsed);
+            // L0-A: use chain-level λ, not first object's per-object half_life.
+            let decayed = evaporchain_types::energy_at_epoch(
+                prev_u64,
+                self.chain_lambda.half_life(),
+                elapsed,
+            );
             decayed as u128
         };
         self.total_energy_remaining = decayed_prev.saturating_add(step_energy as u128);

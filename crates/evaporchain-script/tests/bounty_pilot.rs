@@ -517,6 +517,31 @@ fn on_evaporate_after_accept_does_not_refund() {
     }
 }
 
+/// BOUNTY-1 (audit 2026-05-17): submission_of(who) must return ""
+/// for addresses that have never submitted, not the U64(0) that maps
+/// return for missing keys.
+#[test]
+fn bounty1_submission_of_nonsubmitter_returns_empty_string() {
+    let bc = compile_pilot();
+    let poster = [0xAAu8; 32];
+    let stranger = [0xBBu8; 32];
+    let bounty = post(&bc, poster, "task", 500);
+    // No one has submitted yet — submission_of(stranger) must be "".
+    let r = EvaporVM::execute(
+        &bc,
+        "submission_of",
+        vec![Value::Address(stranger)],
+        bounty,
+        &ctx(poster, poster, 10, 1000),
+    )
+    .expect("submission_of should not error");
+    assert_eq!(
+        r.return_value,
+        Value::Str(String::new()),
+        "BOUNTY-1: missing submitter should return empty string, not U64(0)"
+    );
+}
+
 #[test]
 fn lifecycle_hooks_execute_cleanly() {
     let bc = compile_pilot();

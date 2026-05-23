@@ -610,4 +610,132 @@ mod tests {
         assert_eq!(monitor.schedules().len(), 1);
         assert_eq!(monitor.schedules()[0].asset_id, "0xobj2");
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_forecast_nft_covers_lines_169_182() {
+        let monitor = EnergyMonitor::new();
+        let nft = make_nft(800, 1000, 100);
+        let forecast = monitor.forecast_nft(&nft);
+        assert_eq!(forecast.asset_type, AssetType::Nft);
+        assert_eq!(forecast.current_energy, 800);
+        assert!(!forecast.milestones.is_empty());
+    }
+
+    #[test]
+    fn test_check_schedules_nft_covers_lines_201_211() {
+        let mut monitor = EnergyMonitor::new();
+        monitor.add_schedule(RefreshSchedule {
+            asset_type: AssetType::Nft,
+            asset_id: "1".to_string(), // matches nft.id.to_string()
+            trigger_at_pct: 50.0,
+            energy_amount: 500,
+            auto_execute: true,
+        });
+        let portfolio = Portfolio {
+            address: "0xaa".to_string(),
+            balance: 10000,
+            nonce: 0,
+            objects: vec![],
+            nfts: vec![make_nft(200, 1000, 100)], // 20% — below 50% trigger
+            tokens: vec![],
+            total_energy_at_risk: 200,
+        };
+        let triggered = monitor.check_schedules(&portfolio);
+        assert_eq!(triggered.len(), 1);
+        assert!(triggered[0].current_energy_pct < 50.0);
+    }
+
+    #[test]
+    fn test_check_schedules_object_zero_max_energy_covers_line_196() {
+        let mut monitor = EnergyMonitor::new();
+        monitor.add_schedule(RefreshSchedule {
+            asset_type: AssetType::Object,
+            asset_id: "0xobj".to_string(),
+            trigger_at_pct: 10.0,
+            energy_amount: 100,
+            auto_execute: false,
+        });
+        let mut obj = make_object(0, 0, 100); // max_energy == 0
+        obj.max_energy = 0;
+        let portfolio = Portfolio {
+            address: "0xaa".to_string(),
+            balance: 0,
+            nonce: 0,
+            objects: vec![obj],
+            nfts: vec![],
+            tokens: vec![],
+            total_energy_at_risk: 0,
+        };
+        let triggered = monitor.check_schedules(&portfolio);
+        // pct = 0.0 ≤ 10.0 → should trigger
+        assert_eq!(triggered.len(), 1);
+    }
+
+    #[test]
+    fn test_check_schedules_asset_not_in_portfolio_covers_line_221() {
+        let mut monitor = EnergyMonitor::new();
+        monitor.add_schedule(RefreshSchedule {
+            asset_type: AssetType::Object,
+            asset_id: "0xmissing".to_string(), // not in portfolio
+            trigger_at_pct: 50.0,
+            energy_amount: 100,
+            auto_execute: false,
+        });
+        let portfolio = Portfolio {
+            address: "0xaa".to_string(),
+            balance: 0,
+            nonce: 0,
+            objects: vec![make_object(200, 1000, 100)], // different id
+            nfts: vec![],
+            tokens: vec![],
+            total_energy_at_risk: 0,
+        };
+        let triggered = monitor.check_schedules(&portfolio);
+        assert!(triggered.is_empty()); // asset not found → pct = None → skip
+    }
+
+    #[test]
+    fn test_energy_monitor_default_covers_lines_229_231() {
+        let monitor = EnergyMonitor::default();
+        assert!(monitor.schedules().is_empty());
+    }
+
+    #[test]
+    fn test_energy_pct_zero_max_covers_line_285() {
+        let obj = make_object(0, 0, 100); // max_energy = 0 → energy_pct returns 0.0
+        assert!(check_object_alert(&obj).is_none()); // max_energy==0 → early return None
+    }
+
+    #[test]
+    fn test_check_nft_alert_ghost_covers_line_321() {
+        let mut nft = make_nft(50, 1000, 100);
+        nft.state = "Ghost".to_string();
+        assert!(check_nft_alert(&nft).is_none());
+    }
+
+    #[test]
+    fn test_check_nft_alert_zero_max_energy_covers_line_321() {
+        let nft = make_nft(0, 0, 100); // max_energy == 0
+        assert!(check_nft_alert(&nft).is_none());
+    }
+
+    #[test]
+    fn test_compute_milestones_zero_half_life_covers_line_339() {
+        let milestones = compute_milestones(1000, 1000, 0); // half_life == 0
+        assert!(milestones.is_empty());
+    }
+
+    #[test]
+    fn test_compute_milestones_zero_energy_covers_line_339() {
+        let milestones = compute_milestones(0, 1000, 100); // current_energy == 0
+        assert!(milestones.is_empty());
+    }
+
+    #[test]
+    fn test_check_nft_alert_no_alert_above_50_covers_line_385() {
+        let nft = make_nft(700, 1000, 100); // 70% — no alert
+        assert!(check_nft_alert(&nft).is_none());
+    }
 }

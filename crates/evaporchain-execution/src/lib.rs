@@ -1258,7 +1258,7 @@ impl SimpleExecutor {
             _ => tx.sender(),
         };
         if let Some(claimed) = binding_addr {
-            let derived: [u8; 32] = *blake3::hash(pk).as_bytes();
+            let derived: [u8; 32] = evaporchain_types::address_from_pubkey(pk);
             if &derived != claimed {
                 return Err(ExecutionError::InvalidSignature);
             }
@@ -1470,21 +1470,54 @@ impl SimpleExecutor {
     }
 
     /// Execute an energy refresh transaction.
+    ///
+    /// GHOST-B (audit 2026-05-17): refresh + resurrect now require the
+    /// tx public_key to derive to the active object's owner / ghost's owner.
+    /// Pre-fix anyone with funds to pay the fee could resurrect any ghost.
+    /// Object reverts to original owner so no asset theft, but forced
+    /// state inflation + lifecycle hooks + decay obligations on an
+    /// unwilling owner. None public_key remains permissive for
+    /// internal protocol-driven refreshes.
     fn execute_refresh(
         &self,
         db: &mut dyn StateDB,
         tx: &RefreshTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
+        // H-2 (audit 2026-05-17): use DST-aware address derivation so the
+        // derived sender matches the owner field set by execute_deploy/execute_call.
+        let sender: Option<[u8; 32]> = tx
+            .public_key
+            .as_ref()
+            .map(|pk| evaporchain_types::address_from_pubkey(pk));
+
         // Try refresh on active/grace object first
-        if db.get_object(&tx.object_id).is_some() {
+        if let Some(obj) = db.get_object(&tx.object_id) {
+            if let Some(sender_addr) = sender {
+                if sender_addr != obj.owner {
+                    return Err(ExecutionError::RefreshFailed(format!(
+                        "GHOST-B: refresh caller must be object owner; got {} expected {}",
+                        hex::encode(sender_addr),
+                        hex::encode(obj.owner),
+                    )));
+                }
+            }
             RefreshEngine::refresh(db, &tx.object_id, tx.energy_deposit, epoch)
                 .map_err(|e| ExecutionError::RefreshFailed(e.to_string()))?;
             return Ok(());
         }
 
         // Try resurrection from ghost
-        if db.get_ghost(&tx.object_id).is_some() {
+        if let Some(ghost) = db.get_ghost(&tx.object_id) {
+            if let Some(sender_addr) = sender {
+                if sender_addr != ghost.owner {
+                    return Err(ExecutionError::RefreshFailed(format!(
+                        "GHOST-B: resurrect caller must be ghost owner; got {} expected {}",
+                        hex::encode(sender_addr),
+                        hex::encode(ghost.owner),
+                    )));
+                }
+            }
             RefreshEngine::resurrect(db, &tx.object_id, tx.energy_deposit, epoch)
                 .map_err(|e| ExecutionError::RefreshFailed(e.to_string()))?;
             return Ok(());
@@ -1604,7 +1637,10 @@ impl SimpleExecutor {
         let args: serde_json::Value = serde_json::from_str(&tx.args)
             .map_err(|e| ExecutionError::ContractError(format!("invalid args JSON: {e}")))?;
 
-        self.call_depth += 1;
+        // EXEC-1 (audit 2026-05-17): use saturating_add for symmetry with
+        // the saturating_sub decrements below. Overflow is impossible given
+        // the MAX_CALL_DEPTH guard above, but the asymmetry is a code smell.
+        self.call_depth = self.call_depth.saturating_add(1);
         let result = self
             .contract_engine
             .call(tx.contract_id, &tx.method, &args, &tx.caller, tx.epoch)
@@ -1804,7 +1840,8 @@ impl SimpleExecutor {
                 .map_err(|e| ExecutionError::ScriptError(format!("invalid args JSON: {e}")))?
         };
 
-        self.call_depth += 1;
+        // EXEC-1 (audit 2026-05-17): saturating_add for symmetry.
+        self.call_depth = self.call_depth.saturating_add(1);
 
         let result = self
             .script_engine
@@ -2484,9 +2521,10 @@ impl SimpleExecutor {
                         .into(),
                 )
             })?;
-            // Bind paymaster public key to paymaster address (same
-            // blake3 derivation as `generate_address_from_pubkey`).
-            let derived_pm_addr: [u8; 32] = *blake3::hash(pm_pk).as_bytes();
+            // Bind paymaster public key to paymaster address — must go
+            // through the DST-aware `address_from_pubkey` helper so the
+            // verification side matches the producer side (H-2).
+            let derived_pm_addr: [u8; 32] = evaporchain_types::address_from_pubkey(pm_pk);
             if &derived_pm_addr != paymaster {
                 return Err(ExecutionError::ContractError(format!(
                     "UserOpTx: paymaster_public_key does not derive to paymaster address \
@@ -2797,7 +2835,7 @@ impl SimpleExecutor {
             // derivation across the chain is `blake3(public_key_bytes)`
             // — see `generate_address_from_pubkey` in
             // crates/evaporchain-node/src/auth.rs L115-120.
-            let derived_addr: [u8; 32] = *blake3::hash(pk_bytes).as_bytes();
+            let derived_addr: [u8; 32] = evaporchain_types::address_from_pubkey(pk_bytes);
             if derived_addr != admin_addr {
                 return Err(ExecutionError::ContractError(format!(
                     "UpgradeContract: admin_public_key does not match \
@@ -4012,7 +4050,7 @@ mod tests {
     /// Use this for the `from` / `creator` field of any test that
     /// signs a tx and expects the binding check to pass.
     fn addr_from_kp(kp: &MlDsaKeypair) -> [u8; 32] {
-        *blake3::hash(&kp.public_key_bytes()).as_bytes()
+        evaporchain_types::address_from_pubkey(&kp.public_key_bytes())
     }
 
     /// Helper: sign a transaction with the given keypair.
@@ -5330,9 +5368,13 @@ mod tests {
     #[test]
     fn test_signed_refresh_succeeds() {
         let mut db = InMemoryStateDB::new();
+        let kp = MlDsaKeypair::generate();
+        // H-2 fix: owner must be derived via address_from_pubkey (DST-prefixed)
+        // so it matches what execute_refresh now computes from the public_key field.
+        let owner: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         db.put_object(StateObject {
             id: obj_id(1),
-            owner: addr(1),
+            owner,
             energy: 100,
             half_life: 10,
             created_at: 0,
@@ -5345,19 +5387,58 @@ mod tests {
         });
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
-        let kp = MlDsaKeypair::generate();
 
+        // Authenticated path: provide public_key so GHOST-B ownership check fires.
         let mut tx = Transaction::Refresh(RefreshTx {
             object_id: obj_id(1),
             energy_deposit: 500,
             signature: None,
-            public_key: None,
+            public_key: Some(kp.public_key_bytes()),
         });
         sign_tx(&mut tx, &kp);
 
         let block = make_block(1, 5, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
+    }
+
+    #[test]
+    fn test_refresh_wrong_owner_rejected() {
+        let mut db = InMemoryStateDB::new();
+        let owner_kp = MlDsaKeypair::generate();
+        let attacker_kp = MlDsaKeypair::generate();
+        let owner: [u8; 32] =
+            evaporchain_types::address_from_pubkey(&owner_kp.public_key_bytes());
+        db.put_object(StateObject {
+            id: obj_id(1),
+            owner,
+            energy: 100,
+            half_life: 10,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![],
+            decay_curve: None,
+            lad_mode: None,
+        });
+
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
+
+        // Attacker supplies their own public_key → derived address ≠ owner → REJECTED.
+        let mut tx = Transaction::Refresh(RefreshTx {
+            object_id: obj_id(1),
+            energy_deposit: 500,
+            signature: None,
+            public_key: Some(attacker_kp.public_key_bytes()),
+        });
+        sign_tx(&mut tx, &attacker_kp);
+
+        let block = make_block(1, 5, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        // GHOST-B: wrong owner → tx fails; executed count = 0.
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
     }
 
     // ═══════════════════ EvaporScript Integration Tests ═══════════════════
@@ -7434,7 +7515,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_admin_path_ok() {
         let kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
 
         let mut db = InMemoryStateDB::new();
         // Owner needs an account so nonce check works.
@@ -7466,7 +7547,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_admin_signature_invalid_rejects() {
         let admin_kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&admin_kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&admin_kp.public_key_bytes());
         // Different keypair — the wrong admin.
         let attacker_kp = MlDsaKeypair::generate();
 
@@ -7587,7 +7668,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_state_preserved() {
         let kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
 
         let mut db = InMemoryStateDB::new();
         db.put_account(Account {
@@ -7641,7 +7722,7 @@ contract Counter {
     #[test]
     fn upgrade_contract_immutable_when_admin_none_rejects() {
         let kp = MlDsaKeypair::generate();
-        let admin_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let admin_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
 
         let mut db = InMemoryStateDB::new();
         db.put_account(Account {
@@ -7756,7 +7837,7 @@ contract Counter {
     ) -> (evaporchain_types::UserOpTx, [u8; 32], HybridKeypair) {
         let kp = HybridKeypair::generate();
         let pk = kp.public_key_bytes();
-        let paymaster_addr: [u8; 32] = *blake3::hash(&pk).as_bytes();
+        let paymaster_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&pk);
 
         let mut tx = evaporchain_types::UserOpTx {
             sender: addr(sender_byte),
@@ -7894,7 +7975,7 @@ contract Counter {
             vesting: None,
         });
         let kp = HybridKeypair::generate();
-        let victim_pm: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let victim_pm: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         fund_account_at(&mut db, victim_pm, 1_000_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -7966,7 +8047,7 @@ contract Counter {
         // Fund a real-looking paymaster address. Whoever owns the matching
         // private key isn't producing this tx — the attacker is.
         let kp = HybridKeypair::generate();
-        let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let victim_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         fund_account_at(&mut db, victim_addr, 1_000_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -7989,7 +8070,7 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         let kp = HybridKeypair::generate();
-        let victim_addr: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        let victim_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         fund_account_at(&mut db, victim_addr, 1_000_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
@@ -9314,12 +9395,12 @@ contract Counter {
         let mut db = InMemoryStateDB::default();
         // Victim has balance.
         let victim_kp = MlDsaKeypair::generate();
-        let victim_addr: [u8; 32] = *blake3::hash(&victim_kp.public_key_bytes()).as_bytes();
+        let victim_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&victim_kp.public_key_bytes());
         db.get_or_create_account(&victim_addr).balance = 1_000_000;
 
         // Attacker keypair — different from victim's.
         let attacker_kp = MlDsaKeypair::generate();
-        let attacker_addr: [u8; 32] = *blake3::hash(&attacker_kp.public_key_bytes()).as_bytes();
+        let attacker_addr: [u8; 32] = evaporchain_types::address_from_pubkey(&attacker_kp.public_key_bytes());
 
         // Forge: tx.from = victim, but signed by attacker.
         let chain_id = "testchain";

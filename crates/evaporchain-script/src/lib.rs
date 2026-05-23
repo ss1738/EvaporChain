@@ -60,6 +60,14 @@ impl Value {
 
     /// Convert a value to a string key for map indexing.
     /// Type-prefixed to prevent cross-type collisions (e.g. U64(42) vs Str("42")).
+    ///
+    /// SCR-N4 (audit 2026-05-15): Map and Array variants previously
+    /// collapsed to the constant strings `"m:map"` / `"r:array"`, so
+    /// any two Maps (or any two Arrays) used as map keys would alias
+    /// to the same slot — silent collision, lost writes, wrong
+    /// reads. Now hashed via BLAKE3 of the canonical `Display`
+    /// representation (Map keys are already sorted in `Display`,
+    /// making the form deterministic across runs).
     pub fn to_map_key(&self) -> String {
         match self {
             Value::U64(n) => format!("u:{n}"),
@@ -67,8 +75,8 @@ impl Value {
             Value::Str(s) => format!("s:{s}"),
             Value::Address(a) => format!("a:{}", hex::encode(a)),
             Value::Null => "n:null".to_string(),
-            Value::Map(_) => "m:map".to_string(),
-            Value::Array(_) => "r:array".to_string(),
+            Value::Map(_) => format!("m:{}", hex::encode(blake3::hash(self.to_string().as_bytes()).as_bytes())),
+            Value::Array(_) => format!("r:{}", hex::encode(blake3::hash(self.to_string().as_bytes()).as_bytes())),
         }
     }
 }
@@ -1611,7 +1619,42 @@ contract Tiny {
         a[0] = 0xAB;
         assert!(Value::Address(a).to_map_key().starts_with("a:"));
         assert_eq!(Value::Null.to_map_key(), "n:null");
-        assert_eq!(Value::Map(Default::default()).to_map_key(), "m:map");
-        assert_eq!(Value::Array(vec![]).to_map_key(), "r:array");
+        // SCR-N4 (audit 2026-05-15): Map / Array variants now hash
+        // their canonical Display form rather than collapsing to a
+        // constant string. The key starts with the type tag and a
+        // 64-char hex digest.
+        let m_key = Value::Map(Default::default()).to_map_key();
+        assert!(m_key.starts_with("m:") && m_key.len() == 2 + 64);
+        let r_key = Value::Array(vec![]).to_map_key();
+        assert!(r_key.starts_with("r:") && r_key.len() == 2 + 64);
+    }
+
+    /// SCR-N4 (audit 2026-05-15) regression: distinct Maps must
+    /// produce distinct map keys (previously both collapsed to
+    /// `"m:map"`).
+    #[test]
+    fn scr_n4_distinct_maps_produce_distinct_keys() {
+        let mut a = HashMap::new();
+        a.insert("k".to_string(), Value::U64(1));
+        let mut b = HashMap::new();
+        b.insert("k".to_string(), Value::U64(2));
+        let ka = Value::Map(a).to_map_key();
+        let kb = Value::Map(b).to_map_key();
+        assert_ne!(
+            ka, kb,
+            "SCR-N4: Map(k=1) and Map(k=2) must produce different keys"
+        );
+    }
+
+    /// SCR-N4: distinct Arrays must produce distinct map keys.
+    #[test]
+    fn scr_n4_distinct_arrays_produce_distinct_keys() {
+        let a = Value::Array(vec![Value::U64(1)]);
+        let b = Value::Array(vec![Value::U64(2)]);
+        assert_ne!(
+            a.to_map_key(),
+            b.to_map_key(),
+            "SCR-N4: Array([1]) and Array([2]) must produce different keys"
+        );
     }
 }

@@ -220,9 +220,10 @@ fn oldest_phase_drops_when_window_saturates_on_advance() {
     //     push fresh → window = [p1(3), p2=empty]
     // Phase 0's 3 entries dropped. Phase 1's 3 still live.
     let mut t = PhasedNullifierTree::new(2).unwrap();
-    for i in 0..3u8 { t.insert_nullifier(n(0 * 10 + i)).unwrap(); }
+    // Phase 0: nullifiers 0..3 (template `phase * 10 + i` with phase=0).
+    for i in 0..3u8 { t.insert_nullifier(n(i)).unwrap(); }
     t.advance_phase();
-    for i in 0..3u8 { t.insert_nullifier(n(1 * 10 + i)).unwrap(); }
+    for i in 0..3u8 { t.insert_nullifier(n(10 + i)).unwrap(); }
     t.advance_phase(); // saturates: pops phase 0
 
     assert_eq!(t.live_count(), 3, "only phase 1's 3 entries still live");

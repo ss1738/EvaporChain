@@ -224,7 +224,7 @@ mod tests {
     fn ignored_token_dies_faster_than_engaged_token() {
         // Doctrine claim: loved art slows; ignored art accelerates.
         // Construct two identical tokens; engage one, ignore the other.
-        let mut ignored = fresh(0xAA);
+        let ignored = fresh(0xAA);
         let mut engaged = fresh(0xAA);
         // Engage the second token at every epoch with weight 200,
         // sustaining attention near saturation.
@@ -317,7 +317,7 @@ mod tests {
         // other; far in the future, the sustained one has higher
         // energy AND the abandoned one is closer to evaporation.
         let mut sustained = fresh(0xAA);
-        let mut abandoned = fresh(0xBB);
+        let abandoned = fresh(0xBB);
         // Sustain attention on the first across 100 epochs.
         for ep in (0..1000).step_by(10) {
             sustained.register_engagement(500, ep).unwrap();
