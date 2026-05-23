@@ -124,10 +124,24 @@ fn generate_verification_code() -> String {
 }
 
 /// Generate a wallet address derived from the ML-DSA public key.
-/// Address = "0x" + hex(blake3(public_key_bytes)[..32]).
+///
+/// AUDIT H-2 (2026-05-18): MUST use the canonical, domain-separated
+/// `evaporchain_types::address_from_pubkey` (`blake3(ADDRESS_DST ‖ pk)`)
+/// — the SAME derivation the execution layer uses everywhere it turns
+/// a tx pubkey into a sender/owner `AccountAddress`
+/// (evaporchain-execution/src/lib.rs:1261/2525/2836/…). The prior raw
+/// `blake3(pk)` (no DST) put wallet/auth addresses in a DIFFERENT
+/// space than the chain attributed those wallets' txs to, breaking
+/// the pubkey↔address ownership binding `require_wallet_ownership`
+/// relies on. Returns the same `0x`+hex string shape as before.
+///
+/// Migration note: wallets created before this fix used the raw
+/// derivation and were already non-functional (their stored address
+/// never matched the chain's tx attribution); a real deployment with
+/// pre-fix wallets must re-derive. The sandbox user DB is throwaway.
 fn generate_address_from_pubkey(pk_bytes: &[u8]) -> String {
-    let hash = blake3::hash(pk_bytes);
-    format!("0x{}", hex::encode(hash.as_bytes()))
+    let addr = evaporchain_types::address_from_pubkey(pk_bytes);
+    format!("0x{}", hex::encode(addr))
 }
 
 /// Derive the 32-byte master encryption key for wallet private keys.

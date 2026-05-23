@@ -905,7 +905,7 @@ mod tests {
     fn audit_c2_has_supermajority_no_overflow_near_u64_max() {
         let total: u64 = u64::MAX / 2 + 1; // above the old overflow boundary
         // 2/3 of total (rounded up) — just enough for supermajority
-        let attested: u64 = ((total as u128 * 2 + 2) / 3) as u64;
+        let attested: u64 = (total as u128 * 2).div_ceil(3) as u64;
         let dummy_cert = make_cert(1, [0u8; 32], vec![]);
         let rec = FinalityRecord {
             height: 1,

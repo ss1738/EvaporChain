@@ -35,7 +35,7 @@ The spec encodes five invariants:
 These map to specific design choices in `crates/evaporchain-da/poha.rs`:
 
 - **Energy cap.** Production code caps energy at `E_0` on each re-attestation: `E_new = min(E_current + delta, E_0)`. Without this cap, re-attestation could indefinitely extend a certificate's lifetime past its declared half-life, defeating the whole "decaying" semantic.
-- **Quorum at Active.** `is_supermajority()` at `da/poha.rs:131-133` enforces `attested_stake * 3 >= total_stake * 2`. The spec encodes this as a parameterised quorum (default 2/3) that all Active certs must satisfy.
+- **Quorum at Active.** `is_supermajority()` at `da/poha.rs:153` enforces `attested_stake * 3 > total_stake * 2` (strict `>` since Q4 fix). The spec encodes this as a parameterised quorum (default 2/3) that all Active certs must satisfy.
 - **Ghost terminality.** The DA storage layer prunes shard data once a cert is Ghost; the data is gone, so re-attestation isn't physically possible. The state machine reflects that by rejecting ReAttest when the cert is Ghost.
 
 If any of these invariants fails under TLC's bounded check, the implementation has a bug.
@@ -61,7 +61,7 @@ The TLA+ spec proves (modulo bounded TLC coverage):
 
 > **Theorem (PoHA lifecycle, state-machine):** For any reachable state of the model, the five invariants in §2 hold simultaneously. In particular: (a) energy is bounded by `InitialEnergy[c]`, (b) Active certs have quorum-stake attesters, (c) Ghost certs are terminal, (d) the attester set never references unknown validators.
 
-Combined with the production code's BLS signature verification at `da/certificate.rs` and the supermajority check at `da/poha.rs:131`, this gives a **lifecycle-correct, signature-verified** PoHA implementation — assuming attesters are honest about their sampling claims.
+Combined with the production code's BLS signature verification at `da/certificate.rs` and the supermajority check at `da/poha.rs:153`, this gives a **lifecycle-correct, signature-verified** PoHA implementation — assuming attesters are honest about their sampling claims.
 
 That last assumption is precisely the open security concern.
 

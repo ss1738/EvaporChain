@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn trivial_increment_circuit_default_constructs() {
         let _ = TrivialIncrementCircuit;
-        let _ = TrivialIncrementCircuit::default();
+        let _ = TrivialIncrementCircuit;
     }
 
     #[test]

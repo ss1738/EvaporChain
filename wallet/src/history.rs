@@ -298,4 +298,87 @@ mod tests {
         let h = TxHistory::load_or_empty(&path).unwrap();
         assert_eq!(h.len(), 0);
     }
+
+    // ─── Additional coverage tests (session 62) ───────────────────────────────
+
+    #[test]
+    fn test_is_empty_reflects_entries() {
+        let mut h = TxHistory::new();
+        assert!(h.is_empty());
+        h.record_success("Transfer", "0xaaa", None, None, "0xh1");
+        assert!(!h.is_empty());
+    }
+
+    #[test]
+    fn test_default_creates_empty_history() {
+        let h = TxHistory::default();
+        assert_eq!(h.len(), 0);
+        assert_eq!(h.version, 1);
+    }
+
+    #[test]
+    fn test_to_csv_header_and_all_outcome_variants() {
+        let mut h = TxHistory::new();
+        h.record_success("Transfer", "0xaaa", Some("0xbbb"), Some(100), "0xh1");
+        h.record_failure("Refresh", "0xaaa", "object not found");
+        h.entries.push(HistoryEntry {
+            tx_hash: Some("0xh3".into()),
+            tx_type: "Transfer".into(),
+            from: "0xccc".into(),
+            to: None,
+            amount: None,
+            outcome: TxOutcome::Confirmed,
+            error: None,
+            submitted_at: "2026-01-01T00:00:00Z".into(),
+            note: None,
+        });
+        h.entries.push(HistoryEntry {
+            tx_hash: None,
+            tx_type: "Transfer".into(),
+            from: "0xddd".into(),
+            to: None,
+            amount: None,
+            outcome: TxOutcome::Pending,
+            error: None,
+            submitted_at: "2026-01-01T00:00:00Z".into(),
+            note: None,
+        });
+
+        let csv = h.to_csv();
+        assert!(csv.starts_with("timestamp,type,from,to,amount,status,tx_hash,error\n"));
+        assert!(csv.contains("accepted"));
+        assert!(csv.contains("rejected"));
+        assert!(csv.contains("confirmed"));
+        assert!(csv.contains("pending"));
+        assert_eq!(csv.lines().count(), 5);
+    }
+
+    #[test]
+    fn test_to_csv_empty_history_has_only_header() {
+        let h = TxHistory::new();
+        let csv = h.to_csv();
+        assert_eq!(csv.trim(), "timestamp,type,from,to,amount,status,tx_hash,error");
+    }
+
+    #[test]
+    fn test_export_csv_writes_file() {
+        let path = std::env::temp_dir().join("evaporchain_history_export_test.csv");
+        let mut h = TxHistory::new();
+        h.record_success("Transfer", "0xaaa", Some("0xbbb"), Some(50), "0xh1");
+        h.export_csv(&path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("accepted"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_save_creates_nested_parent_dirs() {
+        let base = std::env::temp_dir().join("ev_hist_nested_test").join("a").join("b");
+        let path = base.join("history.json");
+        let mut h = TxHistory::new();
+        h.record_success("Transfer", "0xaaa", None, None, "0xh1");
+        h.save(&path).unwrap();
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("ev_hist_nested_test"));
+    }
 }

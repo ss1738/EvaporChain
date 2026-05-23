@@ -771,4 +771,192 @@ mod tests {
         // Clean up
         let _ = std::fs::remove_file(&path);
     }
+
+    // ─── Additional coverage tests (session 63) ───────────────────────────────
+
+    #[test]
+    fn test_with_derivation_path() {
+        let key = ManagedKey::new("k1", KeyType::Signing, "pub1")
+            .with_derivation_path("m/44'/0'/0'");
+        assert_eq!(key.derivation_path.as_deref(), Some("m/44'/0'/0'"));
+    }
+
+    #[test]
+    fn test_is_not_expired_when_no_expiry_set() {
+        // expires_at = None → false (lines 118-119)
+        let key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        assert!(!key.is_expired());
+    }
+
+    #[test]
+    fn test_is_not_expired_when_expiry_is_invalid_date() {
+        // expires_at = Some(invalid) → parse fails → false (line 117-119)
+        let mut key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        key.expires_at = Some("not-a-date".into());
+        assert!(!key.is_expired());
+    }
+
+    #[test]
+    fn test_age_days_returns_zero_for_invalid_created_at() {
+        // parse failure → else branch → 0 (line 128)
+        let mut key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        key.created_at = "not-a-date".into();
+        assert_eq!(key.age_days(), 0);
+    }
+
+    #[test]
+    fn test_rotation_event_with_notes() {
+        let event = RotationEvent::new("e1", "k1", "k2", RotationReason::Manual)
+            .with_notes("scheduled quarterly rotation");
+        assert_eq!(event.notes, "scheduled quarterly rotation");
+    }
+
+    #[test]
+    fn test_policy_with_auto_rotate() {
+        let policy = RotationPolicy::new(KeyType::Signing, 30).with_auto_rotate();
+        assert!(policy.auto_rotate);
+    }
+
+    #[test]
+    fn test_policy_with_notify_before() {
+        let policy = RotationPolicy::new(KeyType::Signing, 30).with_notify_before(14);
+        assert_eq!(policy.notify_before_days, 14);
+    }
+
+    #[test]
+    fn test_needs_notification_max_age_gte_notify_before() {
+        // max_age_days (30) >= notify_before_days (7) → takes true branch
+        // fresh key age_days=0, threshold=30-7=23 → 0 > 23 is false → not notified
+        let policy = RotationPolicy::new(KeyType::Signing, 30).with_notify_before(7);
+        let key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        assert!(!policy.needs_notification(&key));
+    }
+
+    #[test]
+    fn test_needs_notification_max_age_lt_notify_before() {
+        // max_age_days (5) < notify_before_days (7) → else branch → always true
+        let policy = RotationPolicy::new(KeyType::Signing, 5).with_notify_before(7);
+        let key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        assert!(policy.needs_notification(&key));
+    }
+
+    #[test]
+    fn test_rotate_inactive_key_returns_invalid_state() {
+        // lines 315-318: rotate_key on a non-active key
+        let mut mgr = make_manager();
+        mgr.add_key(ManagedKey::new("k1", KeyType::Signing, "pub1"))
+            .unwrap();
+        mgr.get_key_mut("k1").unwrap().mark_compromised();
+        let err = mgr
+            .rotate_key("k1", "pub2", RotationReason::Manual)
+            .unwrap_err();
+        assert!(matches!(err, KeyRotationError::InvalidState(_)));
+    }
+
+    #[test]
+    fn test_check_policies_skips_inactive_keys() {
+        // line 360: continue for non-active key
+        let mut mgr = make_manager();
+        let mut key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        key.usage_count = 200;
+        key.status = KeyStatus::Rotated;
+        mgr.add_key(key).unwrap();
+        mgr.add_policy(RotationPolicy::new(KeyType::Signing, 0).with_max_usage(100));
+        // Rotated key must not appear in check_policies results
+        let results = mgr.check_policies();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_check_policies_age_based_reason() {
+        // line 365: format "age N days exceeds max M"
+        let mut mgr = make_manager();
+        let mut key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        key.created_at = "2020-01-01T00:00:00+00:00".into(); // very old key
+        mgr.add_key(key).unwrap();
+        // max_age_days=1 → age of a 2020 key exceeds 1 day → age branch fires
+        mgr.add_policy(RotationPolicy::new(KeyType::Signing, 1));
+        let results = mgr.check_policies();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.contains("age"), "expected age-based reason, got: {}", results[0].1);
+    }
+
+    #[test]
+    fn test_keys_needing_notification() {
+        // lines 385-401
+        let mut mgr = make_manager();
+        mgr.add_key(ManagedKey::new("k1", KeyType::Signing, "pub1"))
+            .unwrap();
+        // max_age_days=5 < notify_before_days=7 → always notifies
+        mgr.add_policy(RotationPolicy::new(KeyType::Signing, 5).with_notify_before(7));
+        let notif = mgr.keys_needing_notification();
+        assert_eq!(notif.len(), 1);
+        assert_eq!(notif[0].id, "k1");
+    }
+
+    #[test]
+    fn test_keys_needing_notification_excludes_inactive() {
+        let mut mgr = make_manager();
+        let mut key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        key.status = KeyStatus::Revoked;
+        mgr.add_key(key).unwrap();
+        mgr.add_policy(RotationPolicy::new(KeyType::Signing, 5).with_notify_before(7));
+        let notif = mgr.keys_needing_notification();
+        assert!(notif.is_empty());
+    }
+
+    #[test]
+    fn test_key_chain_from_root_walks_successors() {
+        // lines 432-437: forward walk via successor links
+        let mut mgr = make_manager();
+        mgr.add_key(ManagedKey::new("k1", KeyType::Signing, "pub1"))
+            .unwrap();
+        let k2 = mgr.rotate_key("k1", "pub2", RotationReason::Manual).unwrap();
+        let k3 = mgr.rotate_key(&k2, "pub3", RotationReason::Manual).unwrap();
+
+        // Call from root (k1): backward walk = [k1], forward walk adds k2, k3
+        let chain = mgr.key_chain("k1");
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0].id, "k1");
+        assert_eq!(chain[2].id, k3);
+    }
+
+    #[test]
+    fn test_key_chain_dangling_successor_breaks_forward_walk() {
+        // lines 438-439: else break when successor key not found
+        let mut mgr = make_manager();
+        let mut key = ManagedKey::new("k1", KeyType::Signing, "pub1");
+        key.successor_id = Some("nonexistent".into());
+        mgr.add_key(key).unwrap();
+        // Forward walk: current_id = Some("nonexistent") → keys.get() = None → break
+        let chain = mgr.key_chain("k1");
+        assert_eq!(chain.len(), 1); // only k1 itself
+    }
+
+    #[test]
+    fn test_rotation_count() {
+        // lines 446-448
+        let mut mgr = make_manager();
+        assert_eq!(mgr.rotation_count(), 0);
+        mgr.add_key(ManagedKey::new("k1", KeyType::Signing, "pub1"))
+            .unwrap();
+        mgr.rotate_key("k1", "pub2", RotationReason::Manual).unwrap();
+        assert_eq!(mgr.rotation_count(), 1);
+    }
+
+    #[test]
+    fn test_load_or_default_missing_file() {
+        // lines 478-480: file doesn't exist → unwrap_or_default → empty manager
+        let path = test_path("nonexistent_xyzzy.json");
+        let mgr = KeyRotationManager::load_or_default(&path);
+        assert_eq!(mgr.rotation_count(), 0);
+        assert!(mgr.keys.is_empty());
+    }
+
+    #[test]
+    fn test_remove_key_not_found() {
+        let mut mgr = make_manager();
+        let err = mgr.remove_key("nonexistent").unwrap_err();
+        assert!(matches!(err, KeyRotationError::NotFound(_)));
+    }
 }

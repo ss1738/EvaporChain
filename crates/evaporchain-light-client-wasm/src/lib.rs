@@ -122,7 +122,7 @@ impl WasmLightClient {
         let header: LightBlockHeader = fetch_json(&node_url, &path)
             .await
             .map_err(map_transport_err)?;
-        let inner = LightClient::new(header, current_time_secs, /* vk_bytes */ None);
+        let inner = LightClient::new(header, current_time_secs, "", /* vk_bytes */ None);
         Ok(Self {
             inner,
             base_url: node_url,

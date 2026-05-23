@@ -82,7 +82,7 @@ mod press_claim_tests {
             // Every template's class is in the reserved A5.* range.
             let cls_id = t.class.0;
             assert!(
-                cls_id >= APP_TEMPLATE_RANGE_START && cls_id <= APP_TEMPLATE_RANGE_END,
+                (APP_TEMPLATE_RANGE_START..=APP_TEMPLATE_RANGE_END).contains(&cls_id),
                 "template class {:?} ({:#x}) out of A5.* range [{:#x}, {:#x}]",
                 t.class,
                 cls_id,

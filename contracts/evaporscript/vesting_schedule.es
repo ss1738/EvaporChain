@@ -15,7 +15,7 @@
 //
 // EvaporScript has no contract-internal method dispatch, so the vest
 // math is duplicated across `vested_now`, `claim`, `pending_amount`,
-// and `on_evaporate`. Three branches each — kept identical by hand.
+// and `on_evaporate`. Three branches each -- kept identical by hand.
 //
 // VEST-1 (audit 2026-05-17): all five vesting-math sites use
 // division-first arithmetic to avoid u64 overflow at large grants.
@@ -102,7 +102,7 @@ contract VestingSchedule {
     }
 
     // Grantor cancels the schedule. Allowed only while nothing has
-    // been claimed — once the beneficiary has touched the grant the
+    // been claimed -- once the beneficiary has touched the grant the
     // schedule is immutable (the chain became the source of truth).
     fn cancel() {
         require(self.sealed == true, "terms not yet set")
@@ -169,7 +169,7 @@ contract VestingSchedule {
     }
 
     on_grace() {
-        emit("vesting energy low — claim window may close")
+        emit("vesting energy low -- claim window may close")
     }
 
     on_refresh() {
@@ -192,6 +192,6 @@ contract VestingSchedule {
         }
         self.vested_at_evaporate = vested
         self.forfeit_signaled = true
-        emit("vesting evaporated — unclaimed remainder forfeits")
+        emit("vesting evaporated -- unclaimed remainder forfeits")
     }
 }

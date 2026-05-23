@@ -1,9 +1,10 @@
 /**
  * WalletConnect v2 client wrapper for EvaporChain browser extension.
  *
- * Wraps `@walletconnect/web3wallet` (the wallet-side WC v2 SDK) and exposes
- * a small façade tailored to the popup UI (`WalletConnectScreen`,
- * `WcApprovalModal`).
+ * Wraps `@reown/walletkit` (the wallet-side WC v2 SDK — formerly
+ * `@walletconnect/web3wallet`, renamed when WalletConnect rebranded to
+ * Reown in 2025). Exposes a small façade tailored to the popup UI
+ * (`WalletConnectScreen`, `WcApprovalModal`).
  *
  * Storage: WC v2's `Core` writes its own state to `localStorage` by default —
  * fine inside the MV3 popup process. The service worker does NOT need any WC
@@ -24,7 +25,7 @@
  */
 
 import { Core } from "@walletconnect/core";
-import { Web3Wallet, type IWeb3Wallet, type Web3WalletTypes } from "@walletconnect/web3wallet";
+import { WalletKit, type IWalletKit, type WalletKitTypes } from "@reown/walletkit";
 import type { ProposalTypes, SessionTypes } from "@walletconnect/types";
 import { getSdkError } from "@walletconnect/utils";
 
@@ -45,11 +46,11 @@ export interface WcNamespace {
 
 /**
  * Session proposal shape — a thin re-export of the SDK's
- * `Web3WalletTypes.SessionProposal` payload, kept in this module so
+ * `WalletKitTypes.SessionProposal` payload, kept in this module so
  * `WcApprovalModal.tsx` and `WalletConnectScreen.tsx` don't need to import
  * SDK types directly.
  */
-export type WcSessionProposal = Web3WalletTypes.SessionProposal;
+export type WcSessionProposal = WalletKitTypes.SessionProposal;
 
 export interface WcSession {
   topic: string;
@@ -214,7 +215,7 @@ function structToWcSession(struct: SessionTypes.Struct): WcSession {
 export class WalletConnectManager {
   private initialized = false;
   private initPromise: Promise<void> | null = null;
-  private client: IWeb3Wallet | null = null;
+  private client: IWalletKit | null = null;
 
   // Event handlers exposed to the UI.
   private _onProposal: WcEventHandler<WcSessionProposal> | null = null;
@@ -240,13 +241,13 @@ export class WalletConnectManager {
 
     this.initPromise = (async () => {
       try {
-        // Cast the Core instance — `@walletconnect/web3wallet` re-bundles
-        // its own copy of `@walletconnect/types`, which makes the structural
+        // Cast the Core instance — `@reown/walletkit` re-bundles its own
+        // copy of `@walletconnect/types`, which makes the structural
         // `ICore` interface technically incompatible across the package
         // boundary even though the runtime classes are identical. The cast
         // is safe and matches what every WC v2 wallet integration does.
         const core = new Core({ projectId: id });
-        this.client = await Web3Wallet.init({
+        this.client = await WalletKit.init({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           core: core as any,
           metadata: {

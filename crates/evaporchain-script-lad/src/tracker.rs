@@ -332,4 +332,91 @@ mod tests {
         let mut tracker = LadResourceTracker::from_annotations(&anns, 0);
         assert!(tracker.use_resource("nonexistent", 1).is_err());
     }
+
+    // ─── Additional coverage tests (session 61) ───────────────────────────────
+
+    #[test]
+    fn is_consumed_method_returns_true_only_for_consumed() {
+        assert!(ResourceVerdict::Consumed.is_consumed());
+        assert!(!ResourceVerdict::Live { value: 42 }.is_consumed());
+        assert!(!ResourceVerdict::Evaporated.is_consumed());
+    }
+
+    #[test]
+    fn use_resource_on_evaporated_decaying_returns_err() {
+        // Decaying resource with window=5 at epoch=0; use at epoch=100 ->
+        // LAD VM's use_resource detects expiry -> Err(OpError::Evaporated) ->
+        // tracker hits lines 118-122.
+        let anns = vec![ann("tok", Mode::Decaying, 100, Some(5))];
+        let mut tracker = LadResourceTracker::from_annotations(&anns, 0);
+        let err = tracker.use_resource("tok", 100).unwrap_err();
+        assert!(
+            matches!(err, LadScriptError::LadVmError { ref detail, .. } if detail.contains("evaporated")),
+            "expected evaporated error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn drop_resource_on_consumed_slot_returns_not_live_error() {
+        // After use_resource the slot is Consumed. drop_resource then takes
+        // the Slot::Consumed arm at lines 140-145.
+        let anns = vec![ann("cap", Mode::Affine, 100, None)];
+        let mut tracker = LadResourceTracker::from_annotations(&anns, 0);
+        tracker.use_resource("cap", 1).unwrap();
+        let err = tracker.drop_resource("cap").unwrap_err();
+        assert!(
+            matches!(err, LadScriptError::LadVmError { ref detail, .. } if detail.contains("not live")),
+            "expected not-live error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn tick_all_with_already_evaporated_slot() {
+        // First tick_all past the decay window turns the slot to Evaporated.
+        // A second tick_all finds Slot::Evaporated and hits lines 192-195.
+        let anns = vec![ann("voucher", Mode::Decaying, 100, Some(5))];
+        let mut tracker = LadResourceTracker::from_annotations(&anns, 0);
+        tracker.tick_all(10); // epoch 10 > window 5 -> slot becomes Evaporated
+        let verdicts = tracker.tick_all(11); // second tick: Slot::Evaporated arm
+        assert_eq!(verdicts["voucher"], ResourceVerdict::Evaporated);
+    }
+
+    #[test]
+    fn snapshot_of_consumed_slot() {
+        // After use_resource, the slot is Slot::Consumed. snapshot() must
+        // return ResourceVerdict::Consumed (line 214).
+        let anns = vec![ann("tok", Mode::Affine, 100, None)];
+        let mut tracker = LadResourceTracker::from_annotations(&anns, 0);
+        tracker.use_resource("tok", 1).unwrap();
+        let snap = tracker.snapshot(2);
+        assert_eq!(snap["tok"], ResourceVerdict::Consumed);
+    }
+
+    #[test]
+    fn snapshot_of_evaporated_slot() {
+        // After tick_all evaporates the resource, the slot is Slot::Evaporated.
+        // snapshot() must return ResourceVerdict::Evaporated (line 215).
+        let anns = vec![ann("voucher", Mode::Decaying, 100, Some(5))];
+        let mut tracker = LadResourceTracker::from_annotations(&anns, 0);
+        tracker.tick_all(10); // slot -> Evaporated
+        let snap = tracker.snapshot(11);
+        assert_eq!(snap["voucher"], ResourceVerdict::Evaporated);
+    }
+
+    #[test]
+    fn verdicts_method_delegates_to_snapshot() {
+        let anns = vec![ann("tok", Mode::Affine, 77, None)];
+        let tracker = LadResourceTracker::from_annotations(&anns, 0);
+        let v = tracker.verdicts(1);
+        assert!(matches!(v["tok"], ResourceVerdict::Live { value: 77 }));
+    }
+
+    #[test]
+    fn is_empty_returns_true_for_empty_tracker() {
+        let tracker = LadResourceTracker::default();
+        assert!(tracker.is_empty());
+        assert_eq!(tracker.len(), 0);
+    }
 }

@@ -2344,6 +2344,20 @@ async fn main() -> Result<()> {
         eprintln!("\x1b[1;31m{}\x1b[0m", e);
         std::process::exit(1);
     }
+    // Q12 (audit 2026-05-17): refuse to start with an empty chain_id.
+    // An empty chain_id falls back to legacy unscoped gossipsub topics,
+    // opening cross-testnet contamination (the same bug fixed by the
+    // chain-id-scoped topics patch). The default ("evaporchain-testnet-1")
+    // prevents this in normal usage; this guard catches an explicit
+    // `--chain-id ""` which would otherwise silently downgrade the protection.
+    if args.chain_id.trim().is_empty() {
+        eprintln!(
+            "error: --chain-id must not be empty.\n       \
+             An empty chain-id falls back to unscoped gossipsub topics, enabling\n       \
+             cross-testnet contamination. Use a non-empty identifier (e.g. evaporchain-testnet-1)."
+        );
+        std::process::exit(1);
+    }
     let node_tag = make_tag(&args.node_id);
     if args.mainnet_strict {
         println!(
@@ -3595,7 +3609,7 @@ async fn main() -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        Arc::new(Mutex::new(LightClientVerifier::new(genesis_header, now)))
+        Arc::new(Mutex::new(LightClientVerifier::new(genesis_header, now, &args.chain_id)))
     };
 
     // ── API server ──
@@ -3752,6 +3766,8 @@ async fn main() -> Result<()> {
                 evaporchain_pnt::PhasedNullifierTree::new(16).expect("window_depth=16 is valid"),
             )),
             snapshot_dir: Some(snapshot_dir_path.clone()),
+            // A6 (audit 2026-05-17): per-IP snapshot-download bucket.
+            snapshot_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
             network_sybil: net_sybil_state.clone(),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
@@ -4373,6 +4389,7 @@ async fn main() -> Result<()> {
                                 to.saturating_sub(from)
                             );
                             let mut ssm = StateSyncManager::new(from);
+                            ssm.set_chain_id(&args.chain_id);
                             let actions = ssm.start();
                             for action in actions {
                                 if let SyncAction::Broadcast { message } = action {
@@ -5525,6 +5542,7 @@ async fn main() -> Result<()> {
                                     to.saturating_sub(from)
                                 );
                                 let mut ssm = StateSyncManager::new(from);
+                                ssm.set_chain_id(&args.chain_id);
                                 let actions = ssm.start();
                                 for action in actions {
                                     if let SyncAction::Broadcast { message } = action {
@@ -6473,6 +6491,7 @@ async fn main() -> Result<()> {
                                 node_tag, gap
                             );
                             let mut ssm = StateSyncManager::new(local_height);
+                            ssm.set_chain_id(&args.chain_id);
                             let actions = ssm.start();
                             for action in actions {
                                 if let SyncAction::Broadcast { message } = action {
@@ -7062,6 +7081,7 @@ async fn main() -> Result<()> {
                             tip_height.saturating_sub(local_height)
                         );
                         let mut ssm = StateSyncManager::new(local_height);
+                        ssm.set_chain_id(&args.chain_id);
                         let actions = ssm.start();
                         for action in actions {
                             if let SyncAction::Broadcast { message } = action {

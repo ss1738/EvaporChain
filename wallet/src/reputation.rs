@@ -694,4 +694,121 @@ mod tests {
         let record = store.get("0xbad").unwrap();
         assert!(record.risk_score <= 100);
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_from_io_error_covers_lines_26_28() {
+        let e = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let re: ReputationError = ReputationError::from(e);
+        assert!(re.to_string().contains("file missing"));
+    }
+
+    #[test]
+    fn test_from_json_error_covers_lines_31_33() {
+        let e: serde_json::Error = serde_json::from_str::<serde_json::Value>("{invalid").unwrap_err();
+        let re: ReputationError = ReputationError::from(e);
+        assert!(re.to_string().contains("json error"));
+    }
+
+    #[test]
+    fn test_trust_level_label_and_icon_covers_lines_54_74() {
+        assert_eq!(TrustLevel::Dangerous.label(), "DANGEROUS");
+        assert_eq!(TrustLevel::Suspicious.label(), "Suspicious");
+        assert_eq!(TrustLevel::Unknown.label(), "Unknown");
+        assert_eq!(TrustLevel::Neutral.label(), "Neutral");
+        assert_eq!(TrustLevel::Trusted.label(), "Trusted");
+        assert_eq!(TrustLevel::Verified.label(), "Verified");
+        assert!(!TrustLevel::Dangerous.icon().is_empty());
+        assert!(!TrustLevel::Suspicious.icon().is_empty());
+        assert!(!TrustLevel::Unknown.icon().is_empty());
+        assert!(!TrustLevel::Neutral.icon().is_empty());
+        assert!(!TrustLevel::Trusted.icon().is_empty());
+        assert!(!TrustLevel::Verified.icon().is_empty());
+    }
+
+    #[test]
+    fn test_risk_flag_label_all_variants_covers_lines_113_119_133() {
+        assert_eq!(RiskFlag::CommunityReport.label(), "Community Report");
+        assert_eq!(RiskFlag::FreshWallet.label(), "Fresh Wallet");
+        assert_eq!(RiskFlag::DustAttack.label(), "Dust Attack");
+        assert_eq!(RiskFlag::TaintedFunds.label(), "Tainted Funds");
+        assert_eq!(RiskFlag::UnverifiedContract.label(), "Unverified Contract");
+        assert_eq!(RiskFlag::Mixer.label(), "Mixer/Tumbler");
+        assert_eq!(RiskFlag::Custom("x".into()).label(), "Custom: x");
+        assert_eq!(RiskFlag::Custom("y".into()).severity(), 2);
+    }
+
+    #[test]
+    fn test_save_creates_parent_dirs_covers_line_219() {
+        let root = std::env::temp_dir().join("evap_rep_mkdir_test_219");
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("nested").join("rep.json");
+        ReputationStore::new().save(&path).unwrap();
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_upsert_new_record_covers_lines_246_247() {
+        let mut store = ReputationStore::new();
+        let rep = AddressReputation {
+            address: "0xbrand_new".to_string(),
+            trust_level: TrustLevel::Neutral,
+            flags: vec![],
+            risk_score: 0,
+            address_type: AddressType::Eoa,
+            label: None,
+            first_seen: None,
+            tx_count: 1,
+            notes: vec![],
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.upsert(rep);
+        assert_eq!(store.count(), 1);
+        assert!(store.get("0xbrand_new").is_some());
+    }
+
+    #[test]
+    fn test_flag_with_note_on_existing_record_covers_line_263() {
+        let mut store = ReputationStore::new();
+        store.flag("0xaddr", RiskFlag::FreshWallet, None).unwrap();
+        store.flag("0xaddr", RiskFlag::DustAttack, Some("scanner alert")).unwrap();
+        let rec = store.get("0xaddr").unwrap();
+        assert_eq!(rec.notes.len(), 1);
+        assert_eq!(rec.notes[0], "scanner alert");
+    }
+
+    #[test]
+    fn test_verify_existing_record_covers_lines_311_317() {
+        let mut store = make_store();
+        store.verify("0xfresh", Some("confirmed safe"));
+        let rec = store.get("0xfresh").unwrap();
+        assert_eq!(rec.trust_level, TrustLevel::Verified);
+        assert_eq!(rec.risk_score, 0);
+        assert!(rec.flags.is_empty());
+        assert_eq!(rec.label.as_deref(), Some("confirmed safe"));
+    }
+
+    #[test]
+    fn test_score_to_trust_neutral_covers_line_436() {
+        let mut store = ReputationStore::new();
+        store.flag("0xaddr", RiskFlag::CommunityReport, None).unwrap(); // severity 4
+        let rec = store.get("0xaddr").unwrap();
+        assert_eq!(rec.trust_level, TrustLevel::Neutral);
+        assert_eq!(rec.risk_score, 4);
+    }
+
+    #[test]
+    fn test_reputation_store_default_covers_lines_444_446() {
+        let store: ReputationStore = ReputationStore::default();
+        assert_eq!(store.block_threshold, 80);
+        assert_eq!(store.count(), 0);
+    }
+
+    #[test]
+    fn test_default_reputation_path_covers_lines_450_452() {
+        let path = default_reputation_path();
+        assert!(path.to_string_lossy().contains("reputation.json"));
+    }
 }

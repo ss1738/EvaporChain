@@ -52,7 +52,7 @@ fn empty_user_op(sender: [u8; 32]) -> UserOpTx {
 fn address_is_blake3_of_public_key() {
     let dir = TempDir::new().unwrap();
     let kp = HybridKeypair::generate();
-    let expected = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+    let expected = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
     let pm = Paymaster::new_with_config(
         kp,
         CHAIN_ID,
