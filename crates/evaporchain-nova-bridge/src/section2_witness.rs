@@ -35,7 +35,9 @@
 //! `PublicParams::digest()` via `generate_fixture_with_digest`.
 
 use crate::l_u_secondary_extract::ExtractError;
-use crate::neptune_permutation_gadget::{params_from_dump_path, NeptuneParams};
+use crate::neptune_permutation_gadget::{
+    params_from_dump_path, params_from_embedded, NeptuneParams,
+};
 use crate::recursive_snark_fixture::{TrivialIncrementCircuit, Scalar1, E1, E2};
 use crate::scalar_adapter::{primary_to_ark_fr, secondary_to_ark_fr_lossy, SecondaryScalar};
 use ark_bn254::Fr as ArkFr;
@@ -82,6 +84,27 @@ pub struct Section2Witness {
 }
 
 impl Section2Witness {
+    /// Audit B-1/B-2 S2a: canonical shape — embedded Neptune params +
+    /// `pp_digest`; value fields zeroed. The Neptune sponge gadget
+    /// absorbs a fixed 18-element sequence and emits fixed permutation
+    /// rounds independent of values, so a zeroed witness yields a
+    /// bit-identical R1CS. No proof needed; no runtime dump path.
+    pub fn canonical_shape(pp_digest: Scalar1) -> Result<Self, ExtractError> {
+        let z = ArkFr::from(0u64);
+        Ok(Self {
+            params: params_from_embedded().map_err(ExtractError::Serialize)?,
+            pp_digest: primary_to_ark_fr(pp_digest),
+            comm_W_x: z,
+            comm_W_y: z,
+            comm_E_x: z,
+            comm_E_y: z,
+            u_as_base: z,
+            x0_limbs: [z; 4],
+            x1_limbs: [z; 4],
+            ri_primary: z,
+        })
+    }
+
     /// Build the 18-element absorb sequence for the primary Neptune hash.
     ///
     /// Order matches nova-snark `nova/mod.rs:598-609`. For `z_arity = 1`

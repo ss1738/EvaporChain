@@ -46,6 +46,13 @@ type S1 = nova_snark::spartan::snark::RelaxedR1CSSNARK<E1, EE1>;
 /// Secondary SNARK (Spartan) — needed for `ck_floor()` hint at setup.
 type S2 = nova_snark::spartan::snark::RelaxedR1CSSNARK<E2, EE2>;
 
+/// Primary **preprocessing** SNARK — succinct verifier (no size-`n`
+/// MSM at the Spartan level; EVM-option-2 evaluation, see
+/// MAINNET_REMAINING_WORK_FLOW.md "source read #2").
+type S1pp = nova_snark::spartan::ppsnark::RelaxedR1CSSNARK<E1, EE1>;
+/// Secondary preprocessing SNARK (succinct-verifier variant).
+type S2pp = nova_snark::spartan::ppsnark::RelaxedR1CSSNARK<E2, EE2>;
+
 /// Primary scalar field — BN254 Fr.
 pub type Scalar1 = <E1 as Engine>::Scalar;
 
@@ -95,6 +102,20 @@ impl<F: PrimeField> StepCircuit<F> for TrivialIncrementCircuit {
 /// **Setup cost.** `PublicParams::setup` takes ~1-3 seconds on a
 /// modern dev machine for this trivial circuit. Per-step `prove_step`
 /// is ~hundreds of milliseconds. For Phase 2.2 PoC work this is fast
+/// Audit B-1/B-2 S2a: canonical, deterministic `PublicParams` for the
+/// fixed production step circuit — the trusted-setup *shape* source.
+/// Identical to the `pp` `generate_fixture` builds; needs NO proof.
+pub fn canonical_public_params(
+) -> Result<PublicParams<E1, E2, TrivialIncrementCircuit>, String> {
+    let circuit = TrivialIncrementCircuit;
+    PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+        &circuit,
+        &*S1::ck_floor(),
+        &*S2::ck_floor(),
+    )
+    .map_err(|e| format!("canonical_public_params setup: {:?}", e))
+}
+
 /// enough to iterate.
 pub fn generate_fixture(
     num_steps: usize,
@@ -273,5 +294,193 @@ mod tests {
         let public_inputs = public_inputs_for_bridge(&rs);
         assert_eq!(public_inputs.len(), 1);
         assert_eq!(public_inputs[0], ark_bn254::Fr::from(1u64));
+    }
+
+    /// ARCHITECTURAL VALIDATION (the real solution): nova-snark's own
+    /// `CompressedSNARK` (Spartan, **sub-linear**) compresses +
+    /// verifies a REAL `RecursiveSNARK` end-to-end. This is the
+    /// production path that makes the 203 M-constraint hand-rolled
+    /// S4b approach moot — Spartan handles RelaxedR1CS-sat succinctly,
+    /// so it is tractable on a 16 GB Mini (no 203 M explosion, no
+    /// scale-gate, no big host, no spend).
+    #[test]
+    #[ignore = "CompressedSNARK e2e: real Nova fixture + Spartan compress (tractable, Mini)"]
+    fn compressed_snark_compresses_real_recursive_snark() {
+        use nova_snark::nova::CompressedSNARK;
+        type Cmp = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1, S2>;
+
+        // Build the RS against the SAME pp used for compress+verify
+        // (generate_fixture_with_digest hides its own internal pp →
+        // digest mismatch → "Invalid output hash"). num_steps read
+        // from the proof itself (rs.num_steps()), not hardcoded.
+        let circuit = TrivialIncrementCircuit;
+        let pp = canonical_public_params().expect("canonical pp");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+            &pp, &circuit, &z0,
+        )
+        .expect("RecursiveSNARK::new");
+        for i in 0..2 {
+            rs.prove_step(&pp, &circuit)
+                .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
+        }
+        let n = rs.num_steps();
+
+        let (pk, vk) = Cmp::setup(&pp).expect("CompressedSNARK::setup");
+        let compressed =
+            Cmp::prove(&pp, &pk, &rs).expect("CompressedSNARK::prove (Spartan compress)");
+        let out = compressed
+            .verify(&vk, n, &z0)
+            .expect("CompressedSNARK::verify must accept the real compressed proof");
+        // TrivialIncrementCircuit: z0=[0], +1 per step ⇒ zi=[n].
+        assert_eq!(
+            out,
+            vec![Scalar1::from(n as u64)],
+            "compressed-verified output must equal the real folded zi (= n)"
+        );
+    }
+
+    /// EVM option (2) evaluation: same e2e as the `snark` test but
+    /// with **`ppsnark`** (succinct-verifier Spartan) for both sides.
+    /// If this validates, `CompressedSNARK<…,ppsnark,ppsnark>` is the
+    /// base for a final-layer recursion EVM path. NOTE: this does NOT
+    /// by itself remove the secondary Grumpkin-IPA size-`n` MSM (that
+    /// is in `ipa_pc::verify`, intrinsic) — it removes only the
+    /// Spartan-level size-`n` MSM. See flow doc "source read #2".
+    #[test]
+    #[ignore = "CompressedSNARK<ppsnark> e2e: EVM option-2 eval (Mini)"]
+    fn compressed_snark_ppsnark_compresses_real_recursive_snark() {
+        use nova_snark::nova::CompressedSNARK;
+        type CmpPP = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1pp, S2pp>;
+
+        // ppsnark's ck_floor() is LARGER than snark's (it needs key
+        // space for the preprocessed sparse-matrix commitments) —
+        // canonical_public_params() sizes the key for `snark` →
+        // `InvalidCommitmentKeyLength` at ppsnark setup. Build a pp
+        // with the ppsnark floor; keep RS/setup/prove/verify all on
+        // THIS pp (digest-mismatch lesson).
+        let circuit = TrivialIncrementCircuit;
+        let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+            &circuit,
+            &*<S1pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E1>>::ck_floor(),
+            &*<S2pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E2>>::ck_floor(),
+        )
+        .expect("ppsnark PublicParams::setup");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+            &pp, &circuit, &z0,
+        )
+        .expect("RecursiveSNARK::new");
+        for i in 0..2 {
+            rs.prove_step(&pp, &circuit)
+                .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
+        }
+        let n = rs.num_steps();
+
+        let (pk, vk) = CmpPP::setup(&pp).expect("CompressedSNARK::<ppsnark>::setup");
+        let compressed = CmpPP::prove(&pp, &pk, &rs)
+            .expect("CompressedSNARK::<ppsnark>::prove");
+        let out = compressed
+            .verify(&vk, n, &z0)
+            .expect("CompressedSNARK::<ppsnark>::verify must accept the real proof");
+        assert_eq!(
+            out,
+            vec![Scalar1::from(n as u64)],
+            "ppsnark compressed-verified output must equal the real folded zi (= n)"
+        );
+    }
+
+    /// INCREMENT-3(a) PREMISE-CHECK (diagnostic, no assert beyond
+    /// serde-roundtrip): generate a real `CompressedSNARK<ppsnark>`
+    /// proof and dump the serde-JSON structure, locating the exact
+    /// path to the secondary IPA `eval_arg`'s `L_vec/R_vec`. This
+    /// decides whether increment-3(a)'s real-proof Section-A witness
+    /// is serde-extractable (and how deep the transcript-replay must
+    /// reach). Cheapest test that gates the approach — run BEFORE
+    /// building any transcript-replay machinery.
+    #[test]
+    #[ignore = "increment-3(a) premise: dump real CompressedSNARK<ppsnark> proof JSON (Mini, ~2min)"]
+    fn dump_compressed_ppsnark_proof_structure() {
+        use nova_snark::nova::CompressedSNARK;
+        type CmpPP = CompressedSNARK<E1, E2, TrivialIncrementCircuit, S1pp, S2pp>;
+
+        let circuit = TrivialIncrementCircuit;
+        let pp = PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+            &circuit,
+            &*<S1pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E1>>::ck_floor(),
+            &*<S2pp as nova_snark::traits::snark::RelaxedR1CSSNARKTrait<E2>>::ck_floor(),
+        )
+        .expect("ppsnark PublicParams::setup");
+        let z0: Vec<Scalar1> = vec![Scalar1::ZERO];
+        let mut rs = RecursiveSNARK::<E1, E2, TrivialIncrementCircuit>::new(
+            &pp, &circuit, &z0,
+        )
+        .expect("RecursiveSNARK::new");
+        for i in 0..2 {
+            rs.prove_step(&pp, &circuit)
+                .unwrap_or_else(|e| panic!("prove_step {i}: {e:?}"));
+        }
+        let (pk, _vk) = CmpPP::setup(&pp).expect("CompressedSNARK::<ppsnark>::setup");
+        let compressed =
+            CmpPP::prove(&pp, &pk, &rs).expect("CompressedSNARK::<ppsnark>::prove");
+
+        let v = serde_json::to_value(&compressed).expect("compressed to_value");
+
+        // Top-level keys.
+        if let Some(o) = v.as_object() {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            eprintln!("CMP_TOP_KEYS = {keys:?}");
+        }
+
+        // Recursively print every path whose final key is one of the
+        // IPA-relevant names, with array lengths.
+        fn walk(node: &serde_json::Value, path: &str, hits: &mut Vec<String>) {
+            match node {
+                serde_json::Value::Object(o) => {
+                    for (k, child) in o {
+                        let p = format!("{path}/{k}");
+                        if matches!(
+                            k.as_str(),
+                            "eval_arg" | "L_vec" | "R_vec" | "a_hat" | "comm_W"
+                        ) {
+                            let info = match child {
+                                serde_json::Value::Array(a) => {
+                                    format!("ARRAY len={}", a.len())
+                                }
+                                serde_json::Value::Object(oo) => format!(
+                                    "OBJ keys={:?}",
+                                    oo.keys().collect::<Vec<_>>()
+                                ),
+                                serde_json::Value::String(s) => {
+                                    format!("STR len={}", s.len())
+                                }
+                                other => format!("{other:?}"),
+                            };
+                            hits.push(format!("CMP_PATH {p} = {info}"));
+                        }
+                        walk(child, &p, hits);
+                    }
+                }
+                serde_json::Value::Array(a) => {
+                    if let Some(first) = a.first() {
+                        walk(first, &format!("{path}[0]"), hits);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut hits = Vec::new();
+        walk(&v, "", &mut hits);
+        for h in &hits {
+            eprintln!("{h}");
+        }
+        eprintln!("CMP_HIT_COUNT = {}", hits.len());
+
+        // Premise: a serde round-trip must preserve the proof
+        // (confirms the structure is fully serde, not lossy).
+        let rt: CmpPP = serde_json::from_value(v).expect("compressed round-trip");
+        let _ = rt; // structural round-trip success is the assertion
+        eprintln!("CMP_SERDE_ROUNDTRIP = ok");
     }
 }
