@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 repository.workspace = true
 description = "EvaporChain go/no-go prototype: Nova IVC folding benchmark"
+publish = false
 
 [dependencies]
 nova-snark = { version = "0.68", features = ["test-utils"] }

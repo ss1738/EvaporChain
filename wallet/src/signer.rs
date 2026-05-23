@@ -490,4 +490,321 @@ mod tests {
         let hybrid_signer = make_hybrid_signer();
         assert_ne!(mldsa_signer.address(), hybrid_signer.address());
     }
+
+    // ─── Additional coverage tests (session 63) ───────────────────────────────
+
+    #[test]
+    fn test_unlock_fallback_to_derived_address() {
+        let mut store = KeyStore::new();
+        store.generate_key("fallback_test", "pass").unwrap();
+        // Corrupt the stored address so parse_address_hex_32 fails → None arm (line 97)
+        store
+            .entries
+            .iter_mut()
+            .find(|e| e.name == "fallback_test")
+            .unwrap()
+            .address = "not-valid-hex".into();
+        let signer = WalletSigner::unlock(&store, "fallback_test", "pass").unwrap();
+        let expected = derive_address(&signer.public_key_bytes());
+        assert_eq!(*signer.address(), expected);
+    }
+
+    #[test]
+    fn test_unlock_by_address_covers_lines_104_111() {
+        let override_addr: AccountAddress = [0x42; 32];
+        let kp = MlDsaKeypair::generate();
+        let pk_bytes = kp.public_key_bytes();
+        let sk_bytes = kp.secret_key().to_vec();
+        let mut store = KeyStore::new();
+        store
+            .import_key_with_address("byaddr_test", "pass", &pk_bytes, &sk_bytes, override_addr)
+            .unwrap();
+        let signer = WalletSigner::unlock_by_address(&store, &override_addr, "pass").unwrap();
+        assert_eq!(*signer.address(), override_addr);
+        assert!(!signer.sign_bytes(b"test").is_empty());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_sign_transaction_covers_lines_147_152() {
+        let signer = make_signer();
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: *signer.address(),
+            to: [3u8; 32],
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        signer.sign_transaction(&mut tx);
+        assert!(tx.signature().is_some());
+        assert!(tx.public_key().is_some());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_sign_covers_lines_160_167() {
+        let signer = make_signer();
+        let tx = Transaction::Transfer(TransferTx {
+            from: *signer.address(),
+            to: [3u8; 32],
+            amount: 200,
+            nonce: 1,
+            signature: None,
+            public_key: None,
+            mev_refund_eligible: None,
+        });
+        let signed = signer.sign(&tx);
+        assert!(tx.signature().is_none(), "original must be unchanged");
+        assert!(signed.signature().is_some());
+    }
+
+    #[test]
+    fn test_set_signature_standard_variants() {
+        use evaporchain_types::{
+            BlobTx, CallContractTx, CallScriptTx, ClaimDelegationTx, DelegateTx,
+            DeployContractTx, DeployScriptTx, DeployTemplateTx, DeferredTx,
+            GovernanceAction, GovernanceTx, RotateValidatorKeyTx, ShieldTx,
+            UndelegateTx, UpgradeContractTx, UserOpTx, ValidatorClaimStakeTx,
+            ValidatorExitTx, ValidatorStakeTx,
+        };
+
+        let signer = make_signer();
+
+        macro_rules! signed {
+            ($tx:expr) => {{
+                let mut tx = $tx;
+                signer.sign_transaction_for_chain(&mut tx, "testnet");
+                assert!(tx.signature().is_some(), "signature must be set");
+                assert!(tx.public_key().is_some(), "public_key must be set");
+            }};
+        }
+
+        signed!(Transaction::DeployContract(DeployContractTx {
+            deployer: [0u8; 32],
+            template: "T".into(),
+            init_args: "{}".into(),
+            energy: 0,
+            half_life: 0,
+            rules: None,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::CallContract(CallContractTx {
+            caller: [0u8; 32],
+            contract_id: 1,
+            method: "f".into(),
+            args: "{}".into(),
+            epoch: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::DeployScript(DeployScriptTx {
+            deployer: [0u8; 32],
+            source_code: "let x = 1;".into(),
+            energy: 0,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::CallScript(CallScriptTx {
+            caller: [0u8; 32],
+            contract_id: 1,
+            method: "run".into(),
+            args: "{}".into(),
+            epoch: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: [0u8; 32],
+            stake_amount: 0,
+            validator_id: 0,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: [0u8; 32],
+            validator_id: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: [0u8; 32],
+            validator_id: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::Shield(ShieldTx {
+            from: [0u8; 32],
+            amount: 0,
+            nonce: 0,
+            note_owner_hash: [0u8; 32],
+            value_blinding: [0u8; 32],
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::Deferred(DeferredTx {
+            submitter: [0u8; 32],
+            nonce: 0,
+            deposit: 0,
+            guards: vec![],
+            inner_tx_bytes: vec![],
+            gas_limit: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::Blob(BlobTx {
+            submitter: [0u8; 32],
+            data: vec![],
+            nonce: 0,
+            namespace_id: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::Governance(GovernanceTx {
+            action: GovernanceAction::CastVote {
+                proposal_id: 1,
+                vote: true,
+            },
+            sender: [0u8; 32],
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::UserOp(UserOpTx {
+            sender: [0u8; 32],
+            nonce: 0,
+            call_data: vec![],
+            call_gas_limit: 0,
+            paymaster: None,
+            paymaster_nonce: None,
+            paymaster_data: None,
+            paymaster_signature: None,
+            paymaster_public_key: None,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::UpgradeContract(UpgradeContractTx {
+            owner: [0u8; 32],
+            contract_id: 0,
+            new_bytecode: vec![],
+            new_bytecode_hash: [0u8; 32],
+            nonce: 0,
+            admin_signature: None,
+            admin_public_key: None,
+            endorser_stakes: vec![],
+            required_stake: 0,
+            governance_approved: false,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::Delegate(DelegateTx {
+            delegator: [0u8; 32],
+            validator_id: 0,
+            amount: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::Undelegate(UndelegateTx {
+            delegator: [0u8; 32],
+            validator_id: 0,
+            amount: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+            validator_address: [0u8; 32],
+            validator_id: 0,
+            new_bls_public_key: vec![],
+            bls_pop_old: vec![],
+            bls_pop_new: vec![],
+            effective_epoch: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::ClaimDelegation(ClaimDelegationTx {
+            delegator: [0u8; 32],
+            validator_id: 0,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        signed!(Transaction::DeployTemplate(DeployTemplateTx {
+            deployer: [0u8; 32],
+            template_class: 0,
+            params: vec![],
+            nonce: 0,
+            submitted_at_epoch: 0,
+            signature: None,
+            public_key: None,
+        }));
+    }
+
+    #[test]
+    fn test_set_signature_noop_variants() {
+        use evaporchain_types::{MultiSigTx, RefundTx};
+
+        let signer = make_signer();
+
+        // MultiSig uses threshold signatures — single-signer set_signature is a no-op
+        let mut multisig = Transaction::MultiSig(MultiSigTx {
+            multisig_address: [0u8; 32],
+            threshold: 2,
+            signers: vec![],
+            inner_tx_bytes: vec![],
+            signatures: vec![],
+            public_keys: vec![],
+            nonce: 0,
+        });
+        signer.sign_transaction_for_chain(&mut multisig, "");
+        assert!(multisig.signature().is_none());
+
+        // Refund is protocol-issued — no caller signature
+        let mut refund = Transaction::Refund(RefundTx {
+            source_block_height: 0,
+            source_observation_idx: 0,
+            attacker: [0u8; 32],
+            victim: [1u8; 32],
+            amount: 0,
+            settle_block_height: 0,
+        });
+        signer.sign_transaction_for_chain(&mut refund, "");
+        assert!(refund.signature().is_none());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_signature_zk_unshield_debug_asserts() {
+        use evaporchain_types::UnshieldTx;
+        let signer = make_signer();
+        let mut tx = Transaction::Unshield(UnshieldTx {
+            to: [0u8; 32],
+            amount: 0,
+            input_nullifiers: vec![],
+            anchor: [0u8; 32],
+            balance_binding: [0u8; 32],
+            input_amounts: vec![],
+            input_blindings: vec![],
+            input_value_commitments: vec![],
+            input_note_commitments: vec![],
+            input_merkle_proofs: vec![],
+            output_blindings: vec![],
+            change_commitments: vec![],
+            energy_proofs: vec![],
+        });
+        signer.sign_transaction_for_chain(&mut tx, "");
+    }
 }

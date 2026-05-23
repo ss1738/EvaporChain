@@ -8,11 +8,20 @@
  * otherwise. Wired in as the `prebuild` script in package.json.
  *
  * Pure Node — no npm dependencies. Uses crypto + fs from stdlib.
+ *
+ * Modes:
+ *   (default)          verify and exit non-zero on mismatch
+ *   --update           rewrite checksums.json to match the current artifacts
+ *                      and exit 0. Use this after a deliberate rebuild
+ *                      (`bash scripts/build-wasm.sh`) or in CI where the
+ *                      WASM artifact was just produced from trusted source.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+
+const UPDATE = process.argv.includes("--update");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,18 +68,21 @@ const REQUIRED_FILE_FIELDS = [
 const ZERO_HASH = "0".repeat(64);
 
 const mismatches = [];
+const actualHashes = {};
 
 for (const fileName of REQUIRED_FILE_FIELDS) {
   const expected = manifest[fileName];
-  if (typeof expected !== "string") {
-    fail(`checksums.json missing required field '${fileName}'.`);
-  }
-  if (expected === ZERO_HASH) {
-    fail(
-      `checksums.json contains the placeholder zero hash for '${fileName}'. ` +
-        `Run 'bash scripts/build-wasm.sh' on a Mini with the pinned toolchain ` +
-        `to produce real hashes, then commit the resulting checksums.json.`,
-    );
+  if (!UPDATE) {
+    if (typeof expected !== "string") {
+      fail(`checksums.json missing required field '${fileName}'.`);
+    }
+    if (expected === ZERO_HASH) {
+      fail(
+        `checksums.json contains the placeholder zero hash for '${fileName}'. ` +
+          `Run 'bash scripts/build-wasm.sh' on a Mini with the pinned toolchain ` +
+          `to produce real hashes, then commit the resulting checksums.json.`,
+      );
+    }
   }
 
   const filePath = resolve(WASM_DIR, fileName);
@@ -81,10 +93,21 @@ for (const fileName of REQUIRED_FILE_FIELDS) {
   const actual = createHash("sha256")
     .update(readFileSync(filePath))
     .digest("hex");
+  actualHashes[fileName] = actual;
 
-  if (actual !== expected) {
+  if (!UPDATE && actual !== expected) {
     mismatches.push({ fileName, expected, actual });
   }
+}
+
+if (UPDATE) {
+  for (const [fileName, hash] of Object.entries(actualHashes)) {
+    manifest[fileName] = hash;
+  }
+  manifest.built_at = new Date().toISOString();
+  writeFileSync(CHECKSUMS_PATH, JSON.stringify(manifest, null, 2) + "\n");
+  info(`updated — rewrote checksums for ${REQUIRED_FILE_FIELDS.length} file(s).`);
+  process.exit(0);
 }
 
 if (mismatches.length > 0) {
@@ -96,7 +119,9 @@ if (mismatches.length > 0) {
   }
   process.stderr.write(
     `\n${YELLOW}If you intentionally rebuilt the WASM, run 'bash scripts/build-wasm.sh' ` +
-      `to regenerate checksums.json and commit it alongside the new artifacts.${RESET}\n`,
+      `to regenerate checksums.json and commit it alongside the new artifacts. ` +
+      `In CI (where the WASM artifact was just built from source), pass --update ` +
+      `instead of expecting a match.${RESET}\n`,
   );
   process.exit(1);
 }

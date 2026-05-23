@@ -4933,4 +4933,479 @@ mod tests {
         let r = ex.execute_block(&mut db, &block).unwrap();
         assert_eq!(r.txs_failed, 1, "invalid DeployScript source must fail");
     }
+
+    // ─── extract_access_keys coverage for uncommon tx types ───────────────
+
+    #[test]
+    fn test_extract_access_keys_deploy_and_call_contract() {
+        use evaporchain_types::{CallContractTx, DeployContractTx};
+        let keys = extract_access_keys(&Transaction::DeployContract(DeployContractTx {
+            deployer: addr(1),
+            template: "DecayingToken".to_string(),
+            init_args: "{}".to_string(),
+            energy: 1000,
+            half_life: 100,
+            rules: None,
+            signature: None,
+            public_key: None,
+        }));
+        assert!(keys.contains(&AccessKey::Account(addr(1))));
+        assert!(keys.contains(&AccessKey::ContractEngine));
+
+        let keys = extract_access_keys(&Transaction::CallContract(CallContractTx {
+            caller: addr(2),
+            contract_id: 1,
+            method: "transfer".to_string(),
+            args: "{}".to_string(),
+            epoch: 5,
+            signature: None,
+            public_key: None,
+        }));
+        assert!(keys.contains(&AccessKey::Account(addr(2))));
+        assert!(keys.contains(&AccessKey::ContractEngine));
+    }
+
+    #[test]
+    fn test_extract_access_keys_deploy_and_call_script() {
+        use evaporchain_types::{CallScriptTx, DeployScriptTx};
+        let keys = extract_access_keys(&Transaction::DeployScript(DeployScriptTx {
+            deployer: addr(3),
+            source_code: "let x = 1".to_string(),
+            energy: 500,
+            half_life: 50,
+            signature: None,
+            public_key: None,
+        }));
+        assert!(keys.contains(&AccessKey::Account(addr(3))));
+        assert!(keys.contains(&AccessKey::ScriptEngine));
+
+        let keys = extract_access_keys(&Transaction::CallScript(CallScriptTx {
+            caller: addr(4),
+            contract_id: 2,
+            method: "run".to_string(),
+            args: "{}".to_string(),
+            epoch: 1,
+            signature: None,
+            public_key: None,
+        }));
+        assert!(keys.contains(&AccessKey::Account(addr(4))));
+        assert!(keys.contains(&AccessKey::ScriptEngine));
+    }
+
+    #[test]
+    fn test_extract_access_keys_validator_exit_and_claim() {
+        use evaporchain_types::ValidatorClaimStakeTx;
+        let keys = extract_access_keys(&Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(5),
+            validator_id: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        assert!(keys.contains(&AccessKey::Account(addr(5))));
+
+        let keys = extract_access_keys(&Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: addr(6),
+            validator_id: 2,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }));
+        assert!(keys.contains(&AccessKey::Account(addr(6))));
+    }
+
+    #[test]
+    fn test_extract_access_keys_deploy_template() {
+        use evaporchain_types::DeployTemplateTx;
+        let keys = extract_access_keys(&Transaction::DeployTemplate(DeployTemplateTx {
+            deployer: addr(7),
+            template_class: 0x0001_0001,
+            params: b"{}".to_vec(),
+            nonce: 0,
+            submitted_at_epoch: 1,
+            signature: None,
+            public_key: None,
+        }));
+        assert!(keys.contains(&AccessKey::Account(addr(7))));
+    }
+
+    // ─── OverlayStateDB direct method coverage ────────────────────────────
+
+    fn make_state_object(id: u8) -> StateObject {
+        StateObject {
+            id: obj_id(id),
+            owner: addr(id),
+            energy: 1000,
+            half_life: 100,
+            created_at: 1,
+            last_refreshed: 1,
+            state: evaporchain_types::ObjectState::Active,
+            grace_epoch: None,
+            data: vec![id],
+            decay_curve: None,
+            lad_mode: None,
+        }
+    }
+
+    fn make_ghost(id: u8) -> GhostRecord {
+        GhostRecord {
+            object_id: obj_id(id),
+            owner: addr(id),
+            evaporated_at: 5,
+            data_hash: [id; 32],
+            original_data: Some(vec![id]),
+            mmr_position: None,
+            original_half_life: None,
+        }
+    }
+
+    #[test]
+    fn test_overlay_db_object_operations() {
+        let mut db = OverlayStateDB::new();
+        let obj = make_state_object(1);
+        db.put_object(obj.clone());
+        assert_eq!(db.object_count(), 1);
+        let ids = db.all_object_ids();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], obj_id(1));
+        let deleted = db.delete_object(&obj_id(1));
+        assert!(deleted.is_some());
+        assert_eq!(db.object_count(), 0);
+        assert!(db.deleted_objects.contains(&obj_id(1)));
+    }
+
+    #[test]
+    fn test_overlay_db_ghost_operations() {
+        let mut db = OverlayStateDB::new();
+        let ghost = make_ghost(2);
+        db.put_ghost(ghost.clone());
+        assert_eq!(db.ghost_count(), 1);
+        let ids = db.all_ghost_ids();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], obj_id(2));
+        let fetched = db.get_ghost(&obj_id(2));
+        assert!(fetched.is_some());
+        let removed = db.remove_ghost(&obj_id(2));
+        assert!(removed.is_some());
+        assert_eq!(db.ghost_count(), 0);
+        assert!(db.removed_ghosts.contains(&obj_id(2)));
+    }
+
+    #[test]
+    fn test_overlay_db_account_operations() {
+        let mut db = OverlayStateDB::new();
+        db.put_account(Account {
+            address: addr(10),
+            balance: 500,
+            nonce: 1,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        let addrs = db.all_account_addresses();
+        assert_eq!(addrs.len(), 1);
+        let acct_mut = db.get_account_mut(&addr(10));
+        assert!(acct_mut.is_some());
+        acct_mut.unwrap().balance = 999;
+        let deleted = db.delete_account(&addr(10));
+        assert!(deleted.is_some());
+        assert_eq!(db.all_account_addresses().len(), 0);
+        // get_or_create_account creates a zero-balance entry if missing
+        let created = db.get_or_create_account(&addr(20));
+        assert_eq!(created.balance, 0);
+    }
+
+    #[test]
+    fn test_overlay_db_state_root_and_trie_stubs() {
+        let mut db = OverlayStateDB::new();
+        assert_eq!(db.compute_state_root(), [0u8; 32]);
+        assert_eq!(db.prune_before_height(100), 0);
+        assert_eq!(db.compress_cold_subtrees(), 0);
+        let health = db.trie_health();
+        assert_eq!(health.active_leaves, 0);
+        let proof_a = db.prove_account(&addr(1));
+        assert_eq!(proof_a.depth, 0);
+        let proof_o = db.prove_object(&obj_id(1));
+        assert_eq!(proof_o.depth, 0);
+        let proof_k = db.prove_at_key(&[1u8; 32]);
+        assert_eq!(proof_k.depth, 0);
+        let snap = db.trie_snapshot();
+        assert!(snap.is_empty());
+        let r = db.load_trie_snapshot(&[]);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_overlay_db_privacy_and_stake_stubs() {
+        let mut db = OverlayStateDB::new();
+        // Privacy stubs
+        db.put_note_tree_root([0u8; 32]);
+        assert_eq!(db.get_note_tree_root(), [0u8; 32]);
+        assert!(!db.spend_nullifier(&[1u8; 32]));
+        assert!(!db.is_nullifier_spent(&[1u8; 32]));
+        assert_eq!(db.nullifier_count(), 0);
+        assert!(db.all_nullifiers().is_empty());
+        db.put_shielded_pool_balance(100);
+        assert_eq!(db.get_shielded_pool_balance(), 0);
+        db.put_note_count(5);
+        assert_eq!(db.get_note_count(), 0);
+        db.append_note_commitment(0, [0u8; 32]);
+        assert!(db.get_all_note_commitments().is_empty());
+        // Stake/delegation/governance stubs
+        assert!(db.get_stake(1).is_none());
+        db.put_stake(evaporchain_types::StakeRecord {
+            validator_id: 1,
+            validator_address: addr(1),
+            staked_amount: 1000,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+        assert!(db.remove_stake(1).is_none());
+        assert!(db.all_stakes().is_empty());
+        assert!(db.get_proposal(1).is_none());
+        db.put_proposal(evaporchain_types::GovernanceProposal {
+            proposal_id: 1, proposer: addr(1), title: "T".to_string(),
+            param_key: "k".to_string(), param_value: "v".to_string(),
+            start_epoch: 0, end_epoch: 10, votes_for: 0, votes_against: 0,
+            status: evaporchain_types::ProposalStatus::Active,
+            created_at: 0, voters: Default::default(),
+        });
+        assert!(db.all_proposals().is_empty());
+        assert!(db.get_governance_param("k").is_none());
+        db.put_governance_param("k".to_string(), "v".to_string());
+        db.commit_state_snapshot(1);
+        assert!(db.get_account_at_height(&addr(1), 1).is_none());
+        assert!(db.get_object_at_height(&obj_id(1), 1).is_none());
+        assert!(db.earliest_snapshot_height().is_none());
+        assert!(db.latest_snapshot_height().is_none());
+        db.prune_snapshots_before(5);
+    }
+
+    #[test]
+    fn test_overlay_db_delegation_stubs() {
+        let mut db = OverlayStateDB::new();
+        assert!(db.get_delegation(&addr(1), 1).is_none());
+        db.put_delegation(evaporchain_types::DelegationRecord {
+            delegator: addr(1), validator_id: 1, amount: 100,
+            delegated_at_epoch: 0, unbonding_amount: 0, unbonding_epoch: None,
+        });
+        assert!(db.remove_delegation(&addr(1), 1).is_none());
+        assert!(db.delegations_for_validator(1).is_empty());
+        assert!(db.delegations_for_delegator(&addr(1)).is_empty());
+        assert!(db.all_delegations().is_empty());
+    }
+
+    #[test]
+    fn test_empty_verkle_proof_is_zero_depth() {
+        let proof = empty_verkle_proof();
+        assert_eq!(proof.depth, 0);
+        assert!(proof.commitments.is_empty());
+        assert!(proof.value.is_none());
+    }
+
+    #[test]
+    fn test_overlay_populate_from_engine_keys_is_noop() {
+        let base = InMemoryStateDB::new();
+        let mut overlay = OverlayStateDB::new();
+        overlay.populate_from(&base, &[
+            AccessKey::ContractEngine,
+            AccessKey::ScriptEngine,
+            AccessKey::PrivacyEngine,
+            AccessKey::TemporalEngine,
+        ]);
+        assert_eq!(overlay.accounts.len(), 0);
+        assert_eq!(overlay.objects.len(), 0);
+    }
+
+    // ─── ParallelExecutor constructor coverage ────────────────────────────
+
+    #[test]
+    fn test_parallel_executor_new_constructor() {
+        let ex = ParallelExecutor::new(10);
+        assert!(!ex.verify_signatures);
+        assert!(ex.fee_controller.is_none());
+    }
+
+    #[test]
+    fn test_parallel_executor_new_with_sig_verification_for_test() {
+        let ex = ParallelExecutor::new_with_sig_verification_for_test(10);
+        assert!(ex.verify_signatures);
+    }
+
+    #[test]
+    fn test_parallel_executor_new_with_sig_verification() {
+        let ex = ParallelExecutor::new_with_sig_verification(10);
+        assert!(ex.verify_signatures);
+        assert!(ex.fee_controller.is_none());
+    }
+
+    #[test]
+    fn test_parallel_executor_new_devnet() {
+        let ex = ParallelExecutor::new_devnet(10, fees::PidFeeController::testnet_config(), 500_000);
+        assert!(!ex.verify_signatures);
+        assert!(ex.fee_controller.is_some());
+    }
+
+    #[test]
+    fn test_parallel_executor_new_production() {
+        let ex = ParallelExecutor::new_production(10, fees::PidFeeController::testnet_config(), 500_000);
+        assert!(ex.verify_signatures);
+        assert!(ex.fee_controller.is_some());
+        assert_eq!(ex.block_gas_limit, 500_000);
+    }
+
+    #[test]
+    fn test_parallel_executor_fee_controller_accessors() {
+        let mut ex = ParallelExecutor::new_for_test(100);
+        assert!(ex.fee_controller().is_none());
+        assert!(ex.fee_controller_mut().is_none());
+        let mut ex2 = ParallelExecutor::new_production(10, fees::PidFeeController::testnet_config(), 0);
+        assert!(ex2.fee_controller().is_some());
+        assert!(ex2.fee_controller_mut().is_some());
+    }
+
+    #[test]
+    fn test_parallel_executor_reward_accumulator_accessors() {
+        use evaporchain_types::genesis::Tokenomics;
+        let mut ex = ParallelExecutor::new_for_test(100);
+        assert!(ex.reward_accumulator().is_none());
+        assert!(ex.reward_accumulator_mut().is_none());
+        ex.enable_rewards(Tokenomics {
+            total_supply: 1_000_000_000,
+            block_reward: 100,
+            reward_half_life: 1000,
+            fee_burn_rate: 0.5,
+            staker_fee_share: 0.5,
+            target_staking_apy: 0.1,
+            ..Default::default()
+        });
+        assert!(ex.reward_accumulator().is_some());
+        assert!(ex.reward_accumulator_mut().is_some());
+    }
+
+    #[test]
+    fn test_tick_lyapunov_fee_state() {
+        let mut ex = ParallelExecutor::new_for_test(100);
+        let result = ex.tick_lyapunov_fee_state(1000, 1);
+        assert!(result.is_ok(), "tick should succeed");
+    }
+
+    // ─── estimate_gas for all missing tx types ────────────────────────────
+
+    #[test]
+    fn test_estimate_gas_all_tx_types() {
+        use evaporchain_types::{
+            BlobTx, CallContractTx, CallScriptTx, ClaimDelegationTx, DeferredTx,
+            DelegateTx, DeployContractTx, DeployScriptTx, DeployTemplateTx,
+            GovernanceTx, MultiSigTx, PrivateTransferTx, RefundTx, RotateValidatorKeyTx,
+            ShieldTx, UndelegateTx, UnshieldTx, UpgradeContractTx, UserOpTx, ValidatorClaimStakeTx,
+        };
+
+        // Cover all gas arms
+        assert!(ParallelExecutor::estimate_gas(&Transaction::DeployContract(DeployContractTx {
+            deployer: addr(1), template: "T".to_string(), init_args: "{}".to_string(),
+            energy: 0, half_life: 0, rules: None, signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::CallContract(CallContractTx {
+            caller: addr(1), contract_id: 1, method: "m".to_string(),
+            args: "{}".to_string(), epoch: 0, signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::DeployScript(DeployScriptTx {
+            deployer: addr(1), source_code: "x".to_string(),
+            energy: 0, half_life: 0, signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::CallScript(CallScriptTx {
+            caller: addr(1), contract_id: 1, method: "m".to_string(),
+            args: "{}".to_string(), epoch: 0, signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: addr(1), validator_id: 1, nonce: 0,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+            validator_address: addr(1), validator_id: 1, nonce: 0,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Governance(GovernanceTx {
+            sender: addr(1), nonce: 0,
+            action: evaporchain_types::GovernanceAction::CastVote { proposal_id: 1, vote: true },
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::MultiSig(MultiSigTx {
+            multisig_address: addr(1),
+            inner_tx_bytes: vec![], signatures: vec![], public_keys: vec![], signers: vec![],
+            threshold: 1, nonce: 0,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Blob(BlobTx {
+            submitter: addr(1), data: vec![1,2,3], nonce: 0, namespace_id: 0,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Deferred(DeferredTx {
+            submitter: addr(1), nonce: 0, deposit: 0, guards: vec![],
+            inner_tx_bytes: vec![], gas_limit: 0,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::UpgradeContract(UpgradeContractTx {
+            owner: addr(1), contract_id: 1, new_bytecode: vec![0u8; 10], nonce: 0,
+            new_bytecode_hash: [0u8; 32],
+            admin_signature: None, admin_public_key: None,
+            endorser_stakes: vec![], required_stake: 0, governance_approved: false,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Delegate(DelegateTx {
+            delegator: addr(1), validator_id: 1, amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Undelegate(UndelegateTx {
+            delegator: addr(1), validator_id: 1, amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+            validator_address: addr(1), validator_id: 1, new_bls_public_key: vec![0u8; 48],
+            bls_pop_old: vec![0u8; 48], bls_pop_new: vec![0u8; 48], effective_epoch: 10,
+            nonce: 0, signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::ClaimDelegation(ClaimDelegationTx {
+            delegator: addr(1), validator_id: 1, nonce: 0,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Refund(RefundTx {
+            attacker: addr(1), victim: addr(2), amount: 50,
+            source_block_height: 1, source_observation_idx: 0, settle_block_height: 2,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::DeployTemplate(DeployTemplateTx {
+            deployer: addr(1), template_class: 1, params: vec![1, 2, 3],
+            nonce: 0, submitted_at_epoch: 1, signature: None, public_key: None,
+        })) > 0);
+        // UserOp with call_data
+        assert!(ParallelExecutor::estimate_gas(&Transaction::UserOp(UserOpTx {
+            sender: addr(1), call_data: vec![0u8; 100], call_gas_limit: 0,
+            paymaster: None, paymaster_nonce: None, paymaster_data: None,
+            paymaster_signature: None, paymaster_public_key: None,
+            nonce: 0, signature: None, public_key: None,
+        })) > 0);
+        // Shield/Unshield/PrivateTransfer
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Shield(ShieldTx {
+            from: addr(1), amount: 100, nonce: 0,
+            note_owner_hash: [0u8; 32], value_blinding: [0u8; 32], half_life: 0,
+            energy: None, energy_blinding: None,
+            signature: None, public_key: None,
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::Unshield(UnshieldTx {
+            to: addr(1), amount: 100,
+            input_nullifiers: vec![], anchor: [0u8; 32], balance_binding: [0u8; 32],
+            input_amounts: vec![], input_blindings: vec![], input_value_commitments: vec![],
+            input_note_commitments: vec![], input_merkle_proofs: vec![],
+            output_blindings: vec![], change_commitments: vec![], energy_proofs: vec![],
+        })) > 0);
+        assert!(ParallelExecutor::estimate_gas(&Transaction::PrivateTransfer(PrivateTransferTx {
+            input_nullifiers: vec![], output_commitments: vec![],
+            anchor: [0u8; 32], balance_binding: [0u8; 32], fee: 0,
+            input_amounts: vec![], input_blindings: vec![], input_value_commitments: vec![],
+            input_note_commitments: vec![], input_merkle_proofs: vec![],
+            output_amounts: vec![], output_blindings: vec![], energy_proofs: vec![],
+        })) > 0);
+    }
 }
