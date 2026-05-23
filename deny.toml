@@ -25,26 +25,31 @@ ignore = [
     { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via libp2p/tokio legacy" },
     # paste unmaintained; macro-only, no runtime risk.
     { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; proc-macro only, no runtime surface" },
-    # ring <0.17 unmaintained; pinned by reqwest's older rustls chain.
-    { id = "RUSTSEC-2025-0010", reason = "ring <0.17 unmaintained; bump blocked on transitive reqwest update" },
     # rustls-pemfile unmaintained; rustls-pki-types is the replacement,
     # already on dep tree but pemfile remains pulled in.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; replacement (rustls-pki-types) already in tree" },
 
+    # core2 yanked — transitive from hickory-proto 0.25.2; will go
+    # away when libp2p ships against a hickory that doesn't depend
+    # on core2, or when we move to libp2p that supports
+    # hickory-proto 0.26+ which drops core2.
+    { id = "RUSTSEC-2026-0105", reason = "core2 yanked; transitive via hickory-proto 0.25.2 → libp2p-mdns; resolved by libp2p adopting hickory 0.26+" },
+
     # ── (B) Real vulnerabilities — TODO: dep-version bumps in Cargo.toml ──
-    # TODO(security): bump libp2p major (currently 0.54.1 → 0.55+) to
-    # drop hickory-proto 0.24.x dep. Risk: network code refactor.
-    { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.24.x DNS CPU exhaustion; pinned via libp2p 0.54.1 → libp2p-mdns 0.46.0; needs libp2p major bump" },
-    # TODO(security): bump aes-gcm (currently 0.10.3 → 0.11+) to drop
-    # aes 0.8.x. Pulled by evaporchain-consensus crate.
-    { id = "RUSTSEC-2025-0009", reason = "aes 0.8.4 panic on overflow-checks; pinned via aes-gcm 0.10.3 → consensus; needs aes-gcm bump" },
-    # TODO(security): bump rustls major (currently 0.21 chain pulls
-    # webpki 0.101.7). Risk: HTTP client refactor across all crates
-    # touching reqwest. The newer webpki 0.103.13 is already in the
-    # tree from a separate chain — the 0.101.7 is the one with the vulns.
-    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 name-constraint URI bypass; pinned by rustls 0.21 chain; needs rustls major bump" },
-    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 wildcard name-constraint bypass; same chain as RUSTSEC-2026-0098" },
-    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 CRL parse panic; same chain as RUSTSEC-2026-0098" },
+    # FIXED 2026-05-23: bumping libp2p 0.54 → 0.56 closed
+    #   RUSTSEC-2026-0119 (hickory-proto 0.24.x DNS CPU exhaustion)
+    #   RUSTSEC-2026-0098 (rustls-webpki 0.101.7 URI name constraints)
+    #   RUSTSEC-2026-0099 (rustls-webpki 0.101.7 wildcard name)
+    #   RUSTSEC-2026-0104 (rustls-webpki 0.101.7 CRL panic)
+    # Not removed: hickory got bumped 0.24.4 → 0.25.2 which introduced
+    # a fresh vulnerability (next entry).
+    #
+    # TODO(security): both DNS advisories below need libp2p that uses
+    # hickory-proto >= 0.26.0 (the patched series). 0.25.x has no
+    # patch — only 0.26+. libp2p 0.56 still pins hickory 0.25.x.
+    # Track upstream libp2p for the next major.
+    { id = "RUSTSEC-2026-0118", reason = "hickory-proto 0.25.x NSEC3 unbounded loop; no 0.25.x patch (only 0.26+); waiting on libp2p to bump hickory" },
+    { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.25.x O(n²) name-compression CPU exhaustion; same fix path as RUSTSEC-2026-0118 (hickory 0.26+)" },
     # TODO(security): bump ark-* family (0.5 → 0.6) to drop transitive
     # tracing-subscriber 0.2.25 + rand 0.8.5. Pulled by
     # evaporchain-nova-bridge via ark-relations / ark-std. ark-groth16
