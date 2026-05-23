@@ -125,8 +125,26 @@ pub fn slash_delegations_for_validator(
 /// Minimum number of active validators (safety floor).
 const MIN_VALIDATORS: usize = 3;
 
-/// Maximum fraction of validators that can change per epoch (1/3).
+/// Maximum fraction of validators (by COUNT) that can change per epoch (1/3).
 const MAX_CHURN_FRACTION: f64 = 0.33;
+
+/// Maximum fraction of total STAKE that may churn per epoch — the sum of
+/// joining stake + leaving stake + |stake-update deltas|. Cross-epoch
+/// agreement (research/tla/CrossEpochAgreement.tla, rule C5, TLC-verified)
+/// requires this be < 1/3 − f, where f is the max Byzantine STAKE fraction.
+/// The count-based cap above does NOT bound stake-quorum drift under unequal
+/// stake; without this cap an epoch-N quorum and an epoch-N+1 quorum can
+/// intersect only in a Byzantine validator (cross-boundary equivocation →
+/// reorg of finalized history). At the tightened safety bound f < 1/4 the
+/// budget must be < 1/12 ≈ 0.083; we use 1/16 = 0.0625 for margin.
+const MAX_STAKE_CHURN_FRACTION: f64 = 1.0 / 16.0;
+
+/// Epochs a stake-update waits before taking effect. The one-epoch delay
+/// freezes continuing validators' stakes across any single boundary, so the
+/// boundary quorum uses one consistent stake distribution (the "frozen
+/// stayers" half of C5). Without it, a stake-update at the boundary lets the
+/// quorum structure shift mid-transition.
+const STAKE_UPDATE_DELAY_EPOCHS: u64 = 1;
 
 /// Epochs a new validator must wait before entering the active set.
 const BONDING_PERIOD_EPOCHS: u64 = 2;
@@ -173,17 +191,29 @@ struct PendingLeave {
     unlock_at_epoch: u64,
 }
 
+/// Pending stake update with a one-epoch activation delay (C5 frozen-stayers).
+#[derive(Debug, Clone)]
+struct PendingStakeUpdate {
+    validator_id: u64,
+    new_stake: u64,
+    ready_at_epoch: u64,
+}
+
 /// Manages validator set transitions at epoch boundaries.
 ///
 /// Safety invariants:
 /// - Validator set never drops below `MIN_VALIDATORS`
-/// - At most `MAX_CHURN_FRACTION` of validators change per epoch
-/// - Joins require a bonding period; leaves require an unbonding period
+/// - At most `MAX_CHURN_FRACTION` of validators change per epoch (by count)
+/// - At most `MAX_STAKE_CHURN_FRACTION` of total stake churns per epoch
+///   (join + leave + stake-delta) — the cross-epoch agreement guarantee
+///   (C5, research/tla/CrossEpochAgreement.tla)
+/// - Joins require a bonding period; leaves require an unbonding period;
+///   stake updates take effect after a one-epoch activation delay
 pub struct EpochTransitionManager {
     /// Queued changes waiting to be applied.
     pending_joins: Vec<PendingJoin>,
     pending_leaves: Vec<PendingLeave>,
-    pending_stake_updates: Vec<(u64, u64)>, // (validator_id, new_stake)
+    pending_stake_updates: Vec<PendingStakeUpdate>,
     /// Current epoch (updated on each transition).
     current_epoch: u64,
 }
@@ -217,7 +247,11 @@ impl EpochTransitionManager {
                 validator_id,
                 new_stake,
             } => {
-                self.pending_stake_updates.push((validator_id, new_stake));
+                self.pending_stake_updates.push(PendingStakeUpdate {
+                    validator_id,
+                    new_stake,
+                    ready_at_epoch: current_epoch + STAKE_UPDATE_DELAY_EPOCHS,
+                });
             }
         }
     }
@@ -230,10 +264,18 @@ impl EpochTransitionManager {
     /// Apply pending transitions to the validator set at an epoch boundary.
     ///
     /// Returns a summary of what was applied, deferred, and rejected.
+    /// Apply pending transitions. `enforce_stake_churn` gates the C5 cross-epoch
+    /// agreement rule (default off via governance flag `cross_epoch_churn_mode`):
+    /// when false, behaviour is unchanged (stake updates apply immediately, no
+    /// stake-churn cap); when true, stake updates respect their one-epoch
+    /// activation delay and the total join+leave+stake-delta churn is capped at
+    /// `MAX_STAKE_CHURN_FRACTION` of total stake (see
+    /// research/tla/CrossEpochAgreement.tla, rule C5).
     pub fn apply_epoch_transition(
         &mut self,
         validator_set: &mut ValidatorSet,
         epoch: u64,
+        enforce_stake_churn: bool,
     ) -> EpochTransitionResult {
         self.current_epoch = epoch;
         let mut result = EpochTransitionResult::default();
@@ -243,27 +285,64 @@ impl EpochTransitionManager {
         let max_churn = max_churn.max(1); // at least 1 change allowed
         let mut changes_this_epoch = 0usize;
 
-        // 1. Apply stake updates first (no churn cost).
-        let updates: Vec<_> = self.pending_stake_updates.drain(..).collect();
-        for (vid, new_stake) in updates {
-            if new_stake < MIN_STAKE {
+        // Stake-churn budget (C5). Computed against the pre-transition total so
+        // the boundary quorum is bounded against the OLD distribution.
+        let total_stake: u64 = validator_set.validators().iter().map(|v| v.stake).sum();
+        let stake_budget = (total_stake as f64 * MAX_STAKE_CHURN_FRACTION) as u64;
+        let mut stake_churned: u64 = 0;
+        let stake_of = |vs: &ValidatorSet, id: u64| -> u64 {
+            vs.validators().iter().find(|v| v.id == id).map(|v| v.stake).unwrap_or(0)
+        };
+
+        // 1. Stake updates. Under enforcement: only those past their one-epoch
+        //    activation delay, and each |delta| counts against the churn budget
+        //    (frozen-stayers half of C5). Otherwise: apply all immediately.
+        let (ready_updates, deferred_updates): (Vec<_>, Vec<_>) = self
+            .pending_stake_updates
+            .drain(..)
+            .partition(|u| !enforce_stake_churn || u.ready_at_epoch <= epoch);
+        self.pending_stake_updates = deferred_updates;
+        for u in &self.pending_stake_updates {
+            result.deferred.push(format!(
+                "StakeUpdate for validator {} deferred until epoch {}",
+                u.validator_id, u.ready_at_epoch
+            ));
+        }
+        for u in ready_updates {
+            if u.new_stake < MIN_STAKE {
                 result.rejected.push(format!(
                     "StakeUpdate for validator {} rejected: {} < MIN_STAKE {}",
-                    vid, new_stake, MIN_STAKE
+                    u.validator_id, u.new_stake, MIN_STAKE
                 ));
                 continue;
             }
-            if let Some(v) = validator_set.get_mut(vid) {
-                let old = v.stake;
-                v.stake = new_stake;
-                result.applied.push(format!(
-                    "Validator {} stake updated: {} → {}",
-                    vid, old, new_stake
-                ));
-            } else {
+            let old = stake_of(validator_set, u.validator_id);
+            if validator_set.get_mut(u.validator_id).is_none() {
                 result.rejected.push(format!(
                     "StakeUpdate for validator {} rejected: not found",
-                    vid
+                    u.validator_id
+                ));
+                continue;
+            }
+            let delta = old.abs_diff(u.new_stake);
+            if enforce_stake_churn && stake_churned + delta > stake_budget {
+                self.pending_stake_updates.push(PendingStakeUpdate {
+                    validator_id: u.validator_id,
+                    new_stake: u.new_stake,
+                    ready_at_epoch: epoch + 1,
+                });
+                result.deferred.push(format!(
+                    "StakeUpdate for validator {} deferred: stake-churn budget reached",
+                    u.validator_id
+                ));
+                continue;
+            }
+            if let Some(v) = validator_set.get_mut(u.validator_id) {
+                v.stake = u.new_stake;
+                stake_churned += delta;
+                result.applied.push(format!(
+                    "Validator {} stake updated: {} → {}",
+                    u.validator_id, old, u.new_stake
                 ));
             }
         }
@@ -295,6 +374,17 @@ impl EpochTransitionManager {
                 ));
                 continue;
             }
+            if enforce_stake_churn && stake_churned + pj.info.stake > stake_budget {
+                self.pending_joins.push(PendingJoin {
+                    info: pj.info.clone(),
+                    ready_at_epoch: epoch + 1,
+                });
+                result.deferred.push(format!(
+                    "Join for validator {} deferred: stake-churn budget reached",
+                    pj.info.id
+                ));
+                continue;
+            }
             if validator_set
                 .validators()
                 .iter()
@@ -307,8 +397,10 @@ impl EpochTransitionManager {
                 continue;
             }
             let vid = pj.info.id;
+            let joined_stake = pj.info.stake;
             validator_set.add_validator(pj.info);
             changes_this_epoch += 1;
+            stake_churned += joined_stake;
             result.applied.push(format!("Validator {} joined", vid));
         }
 
@@ -339,6 +431,18 @@ impl EpochTransitionManager {
                 ));
                 continue;
             }
+            let leave_stake = stake_of(validator_set, pl.validator_id);
+            if enforce_stake_churn && stake_churned + leave_stake > stake_budget {
+                self.pending_leaves.push(PendingLeave {
+                    validator_id: pl.validator_id,
+                    unlock_at_epoch: epoch + 1,
+                });
+                result.deferred.push(format!(
+                    "Leave for validator {} deferred: stake-churn budget reached",
+                    pl.validator_id
+                ));
+                continue;
+            }
             // Safety: don't drop below minimum
             if validator_set.active_count() <= MIN_VALIDATORS {
                 result.rejected.push(format!(
@@ -349,6 +453,7 @@ impl EpochTransitionManager {
             }
             if validator_set.remove_validator(pl.validator_id) {
                 changes_this_epoch += 1;
+                stake_churned += leave_stake;
                 result
                     .applied
                     .push(format!("Validator {} left", pl.validator_id));
@@ -844,12 +949,12 @@ mod tests {
         assert_eq!(mgr.pending_count(), 1);
 
         // Epoch 6: bonding not elapsed (needs epoch 7)
-        let result = mgr.apply_epoch_transition(&mut vs, 6);
+        let result = mgr.apply_epoch_transition(&mut vs, 6, false);
         assert_eq!(vs.len(), 4, "Should not join yet");
         assert_eq!(result.deferred.len(), 1);
 
         // Epoch 7: bonding elapsed
-        let result = mgr.apply_epoch_transition(&mut vs, 7);
+        let result = mgr.apply_epoch_transition(&mut vs, 7, false);
         assert_eq!(vs.len(), 5);
         assert_eq!(result.applied.len(), 1);
         assert!(result.applied[0].contains("joined"));
@@ -864,12 +969,12 @@ mod tests {
         mgr.queue_change(ValidatorSetChange::Leave { validator_id: 5 }, 10);
 
         // Epoch 13: not yet (needs 14)
-        let result = mgr.apply_epoch_transition(&mut vs, 13);
+        let result = mgr.apply_epoch_transition(&mut vs, 13, false);
         assert_eq!(vs.len(), 5);
         assert_eq!(result.deferred.len(), 1);
 
         // Epoch 14: unbonding elapsed
-        let result = mgr.apply_epoch_transition(&mut vs, 14);
+        let result = mgr.apply_epoch_transition(&mut vs, 14, false);
         assert_eq!(vs.len(), 4);
         assert!(result.applied[0].contains("left"));
     }
@@ -881,7 +986,7 @@ mod tests {
 
         mgr.queue_change(ValidatorSetChange::Leave { validator_id: 1 }, 0);
 
-        let result = mgr.apply_epoch_transition(&mut vs, 10);
+        let result = mgr.apply_epoch_transition(&mut vs, 10, false);
         assert_eq!(vs.len(), 3, "Should not drop below MIN_VALIDATORS");
         assert_eq!(result.rejected.len(), 1);
         assert!(result.rejected[0].contains("MIN_VALIDATORS"));
@@ -900,7 +1005,7 @@ mod tests {
             0,
         );
 
-        let result = mgr.apply_epoch_transition(&mut vs, 1);
+        let result = mgr.apply_epoch_transition(&mut vs, 1, false);
         assert_eq!(vs.get(2).unwrap().stake, 5000);
         assert_eq!(result.applied.len(), 1);
     }
@@ -918,7 +1023,7 @@ mod tests {
             0,
         );
 
-        let result = mgr.apply_epoch_transition(&mut vs, 1);
+        let result = mgr.apply_epoch_transition(&mut vs, 1, false);
         assert_eq!(vs.get(1).unwrap().stake, 1000, "Stake should be unchanged");
         assert_eq!(result.rejected.len(), 1);
     }
@@ -933,7 +1038,7 @@ mod tests {
             mgr.queue_change(ValidatorSetChange::Join(make_validator(id, 1000)), 0);
         }
 
-        let result = mgr.apply_epoch_transition(&mut vs, 2);
+        let result = mgr.apply_epoch_transition(&mut vs, 2, false);
         // Should apply at most 2 joins, defer the rest
         assert!(vs.len() <= 6, "Max churn should limit joins");
         assert!(
@@ -950,7 +1055,7 @@ mod tests {
         // Try to join with id=1 which already exists
         mgr.queue_change(ValidatorSetChange::Join(make_validator(1, 2000)), 0);
 
-        let result = mgr.apply_epoch_transition(&mut vs, 2);
+        let result = mgr.apply_epoch_transition(&mut vs, 2, false);
         assert_eq!(vs.len(), 4);
         assert_eq!(result.rejected.len(), 1);
         assert!(result.rejected[0].contains("already exists"));
@@ -973,7 +1078,7 @@ mod tests {
         );
 
         // Epoch 4: leave unbonding done, join bonding done at epoch 2
-        let result = mgr.apply_epoch_transition(&mut vs, 4);
+        let result = mgr.apply_epoch_transition(&mut vs, 4, false);
 
         // Stake update should apply
         assert_eq!(vs.get(1).unwrap().stake, 3000);
@@ -983,6 +1088,101 @@ mod tests {
             "Stake update + at least one more: {:?}",
             result
         );
+    }
+
+    // ─── C5 cross-epoch agreement: stake-churn cap + activation delay ──
+    // research/tla/CrossEpochAgreement.tla rule C5 (TLC-verified). These
+    // exercise the `enforce_stake_churn = true` path; the legacy path
+    // (false) is covered by the tests above.
+
+    #[test]
+    fn test_c5_stake_update_activation_delay() {
+        // total 40_000, budget = 40_000 / 16 = 2_500. delta 1_000 fits.
+        let mut vs = make_validator_set(4, 10_000);
+        let mut mgr = EpochTransitionManager::new();
+        mgr.queue_change(
+            ValidatorSetChange::StakeUpdate {
+                validator_id: 2,
+                new_stake: 11_000,
+            },
+            0,
+        ); // ready_at_epoch = 1
+
+        // Epoch 0: one-epoch delay not elapsed → frozen across the boundary.
+        let r0 = mgr.apply_epoch_transition(&mut vs, 0, true);
+        assert_eq!(
+            vs.get(2).unwrap().stake,
+            10_000,
+            "stayer stake must be frozen across the boundary under C5"
+        );
+        assert!(r0.applied.is_empty());
+        assert!(!r0.deferred.is_empty());
+
+        // Epoch 1: delay elapsed, delta within budget → applied.
+        let r1 = mgr.apply_epoch_transition(&mut vs, 1, true);
+        assert_eq!(vs.get(2).unwrap().stake, 11_000);
+        assert_eq!(r1.applied.len(), 1);
+    }
+
+    #[test]
+    fn test_c5_stake_churn_budget_defers_excess() {
+        // budget = 2_500; delta 10_000 blows it.
+        let mut vs = make_validator_set(4, 10_000);
+        let mut mgr = EpochTransitionManager::new();
+        mgr.queue_change(
+            ValidatorSetChange::StakeUpdate {
+                validator_id: 2,
+                new_stake: 20_000,
+            },
+            0,
+        );
+
+        let r = mgr.apply_epoch_transition(&mut vs, 1, true);
+        assert_eq!(
+            vs.get(2).unwrap().stake,
+            10_000,
+            "stake-delta exceeding the churn budget must defer"
+        );
+        assert!(r.applied.is_empty());
+        assert!(r
+            .deferred
+            .iter()
+            .any(|d| d.contains("stake-churn budget")));
+    }
+
+    #[test]
+    fn test_c5_join_exceeding_stake_budget_deferred() {
+        // budget = 2_500; joining stake 10_000 blows it even though the
+        // count-churn cap (ceil(4*0.33)=2) would otherwise allow it.
+        let mut vs = make_validator_set(4, 10_000);
+        let mut mgr = EpochTransitionManager::new();
+        mgr.queue_change(ValidatorSetChange::Join(make_validator(5, 10_000)), 0); // ready at epoch 2
+
+        let r = mgr.apply_epoch_transition(&mut vs, 2, true);
+        assert_eq!(vs.len(), 4, "join exceeding stake-churn budget must defer");
+        assert!(r
+            .deferred
+            .iter()
+            .any(|d| d.contains("stake-churn budget")));
+    }
+
+    #[test]
+    fn test_c5_observe_mode_unchanged() {
+        // enforce=false: immediate apply, no delay, no stake-churn cap —
+        // bit-compatible with legacy behaviour even for a huge delta.
+        let mut vs = make_validator_set(4, 10_000);
+        let mut mgr = EpochTransitionManager::new();
+        mgr.queue_change(
+            ValidatorSetChange::StakeUpdate {
+                validator_id: 2,
+                new_stake: 50_000,
+            },
+            0,
+        );
+
+        let r = mgr.apply_epoch_transition(&mut vs, 0, false);
+        assert_eq!(vs.get(2).unwrap().stake, 50_000);
+        assert_eq!(r.applied.len(), 1);
     }
 
     // ─── P0 #4 Phase 5 + 6: Delegation slashing & voting-power roll-up ──
