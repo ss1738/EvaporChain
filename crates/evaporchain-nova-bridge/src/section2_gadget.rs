@@ -62,7 +62,7 @@ use ark_crypto_primitives::sponge::poseidon::traits::find_poseidon_ark_and_mds;
 use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
 use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 /// Build a PLACEHOLDER `PoseidonConfig<Bn254Fr>` whose **shape**
 /// matches neptune's Bn256/U24/Strength::Standard sponge: state
@@ -330,7 +330,7 @@ pub fn enforce_section_2_primary(
 mod tests {
     use super::*;
     use ark_r1cs_std::alloc::AllocVar;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// Smoke test: gadget compiles, runs over a 6-scalar absorb,
     /// emits a single squeezed FpVar, and the constraint count
@@ -448,7 +448,7 @@ mod tests {
     #[ignore = "requires /tmp/neptune-bn256-standard.json from dump-neptune-constants binary"]
     fn fully_aligned_gadget_byte_parity_with_neptune() {
         use crate::neptune_reference::{neptune_hash_primary, PrimaryScalar};
-        use ark_r1cs_std::R1CSVar;
+        use ark_r1cs_std::GR1CSVar;
         use ff::PrimeField as _;
 
         let dump_path = "/tmp/neptune-bn256-standard.json";
@@ -628,7 +628,7 @@ mod tests {
     fn placeholder_gadget_diverges_from_neptune_oracle() {
         use crate::neptune_reference::{neptune_hash_primary, PrimaryScalar};
         use ff::{Field as _, PrimeField as _};
-        use ark_r1cs_std::R1CSVar;
+        use ark_r1cs_std::GR1CSVar;
 
         // Neptune-side: the pinned minimal absorb (PR #77).
         let neptune_inputs = vec![
@@ -699,7 +699,7 @@ mod tests {
     fn neptune_sponge_gadget_pinned_42_7_99() {
         use crate::neptune_permutation_gadget::params_from_dump_path;
         use crate::neptune_sponge::our_neptune_hash_primary_native;
-        use ark_r1cs_std::R1CSVar;
+        use ark_r1cs_std::GR1CSVar;
 
         let dump_path = "/tmp/neptune-bn256-standard.json";
         let params = params_from_dump_path(dump_path).expect("load neptune params");
