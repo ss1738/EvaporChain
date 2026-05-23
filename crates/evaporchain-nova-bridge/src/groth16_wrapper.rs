@@ -70,14 +70,16 @@ use crate::verifier_circuit::NovaVerifierCircuit;
 )]
 pub fn setup<R: RngCore + CryptoRng>(
     rng: &mut R,
-) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::r1cs::SynthesisError> {
+) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::gr1cs::SynthesisError> {
     // Audit B-1/B-2 S2a: key the circuit over the section-bearing
     // setup_shape() (sections at exact prover R1CS shape) — NOT the
     // constraint-vacuous dummy() — so the soundness bindings are part
-    // of the keyed circuit. (#[deprecated] insecure-randomness still
-    // applies; the MPC ceremony is the separate S5 gap.)
+    // of the keyed circuit. The `#[deprecated]` marker above still
+    // applies: B-1 vacuity is closed once S2b lands (mandatory
+    // generate_constraints emission); B-2 toxic-waste closes only
+    // with the S5 MPC ceremony.
     let circuit = NovaVerifierCircuit::setup_shape()
-        .map_err(|_| ark_relations::r1cs::SynthesisError::Unsatisfiable)?;
+        .map_err(|_| ark_relations::gr1cs::SynthesisError::Unsatisfiable)?;
     Groth16::<Bn254>::circuit_specific_setup(circuit, rng)
 }
 
@@ -92,7 +94,7 @@ pub fn prove<R: RngCore + CryptoRng>(
     pk: &ProvingKey<Bn254>,
     circuit: NovaVerifierCircuit,
     rng: &mut R,
-) -> Result<Proof<Bn254>, ark_relations::r1cs::SynthesisError> {
+) -> Result<Proof<Bn254>, ark_relations::gr1cs::SynthesisError> {
     Groth16::<Bn254>::prove(pk, circuit, rng)
 }
 
@@ -110,7 +112,7 @@ pub fn verify(
     vk: &VerifyingKey<Bn254>,
     public_inputs: &[Bn254Fr],
     proof: &Proof<Bn254>,
-) -> Result<bool, ark_relations::r1cs::SynthesisError> {
+) -> Result<bool, ark_relations::gr1cs::SynthesisError> {
     Groth16::<Bn254>::verify(vk, public_inputs, proof)
 }
 
