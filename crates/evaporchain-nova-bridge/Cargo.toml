@@ -21,7 +21,7 @@ description = "T0.10 Path A — bridge between chain-side Nova RecursiveSNARK an
 # Same versions as `ethereum-bridge/wrapper/Cargo.toml` so a future
 # merge / shared-dep refactor stays straightforward.
 ark-bn254              = "0.6"
-ark-crypto-primitives  = { version = "0.6", features = ["sponge", "constraints"] }
+ark-crypto-primitives  = { version = "0.6", features = ["sponge", "constraints", "ark-r1cs-std"] }
 ark-ec                 = "0.6"
 ark-ff                 = "0.6"
 ark-groth16            = "0.6"
