@@ -416,8 +416,8 @@ PrevoteNilQuorumOrTimeout(v) ==
        \* the stake quorum locks; only when no block quorum exists does
        \* the timer-driven nil precommit fire.
        /\ \/ HasNilQuorum(prevotes[h][r])
-          \/ /\ TotalVoteStake(prevotes[h][r]) * 3 > TotalStake * 2
-             /\ \A b \in NonNilBlocks : ~HasQuorumFor(prevotes[h][r], b)
+          \/ /\ TotalVoteStake(prevotes[h][r]) * 3 > TotalStake * 2  \* D1/D5: stake-weighted
+             /\ \A b \in NonNilBlocks : ~HasQuorumFor(prevotes[h][r], b)  \* D14: only when no block quorum
        /\ precommits' = [precommits EXCEPT ![h][r] = @ \cup {<<v, "Nil">>}]
        /\ phase' = [phase EXCEPT ![v] = "Precommit"]
        /\ UNCHANGED <<height, round, lockedBlock, lockedRound, validBlock, validRound,
