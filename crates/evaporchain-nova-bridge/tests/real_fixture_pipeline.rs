@@ -16,88 +16,53 @@
 //!     → groth16_wrapper::verify                 (#146)
 //! ```
 //!
-//! Pins:
-//! - Real (non-zero) committed hashes flow through.
-//! - The encoded → decoded proof verifies against the real
-//!   public-input slice.
-//! - A different fixture (different num_steps) produces a proof
-//!   that does NOT verify against the original public inputs —
-//!   guards against the proof being "universal" for any binding.
+//! Audit B-1/B-2 S2b: `build_circuit_from_fixture` attaches NO
+//! section witnesses. Under the mandatory-binding contract such a
+//! circuit is no longer provable, so these tests pin the SECURITY
+//! property end-to-end via the public crate API: the section-less
+//! pipeline is rejected (the constraint-vacuity hole is closed all
+//! the way to `prove()`).
 //!
-//! Runs `generate_fixture` 2× per test, so expect ~30s on Mini 1.
+//! The POSITIVE real-fixture+sections pipeline (real proof, codec
+//! round-trip, fixture-specific proof binding) is covered by the S6
+//! determinism proof (`circuit_builder::tests::
+//! s2a_setup_shape_matches_real_prover_r1cs`) and the `#[ignore]`d
+//! `build_circuit_with_section2/3_synthesizes_and_is_satisfied`
+//! tests; full public-API positive wiring is the dedicated
+//! S2b-prover sub-stage (SOUNDNESS_REBUILD_SPEC.md).
+//!
+//! Runs `generate_fixture` once, so expect ~15s on Mini 1.
 
 use ark_bn254::Fr as Bn254Fr;
 use evaporchain_nova_bridge::circuit_builder::build_circuit_from_fixture;
-use evaporchain_nova_bridge::eip197::{eip197_bytes_to_proof, proof_to_eip197_bytes, EIP197_PROOF_BYTES};
-use evaporchain_nova_bridge::groth16_wrapper::{prove, public_inputs_for, setup, verify};
+use evaporchain_nova_bridge::groth16_wrapper::{prove, setup};
 use evaporchain_nova_bridge::recursive_snark_fixture::generate_fixture;
 
 use ark_std::rand::SeedableRng;
 
+/// Section-less real-fixture circuit is unprovable end-to-end —
+/// the vacuity hole is closed through the public crate API, not
+/// just at the unit level.
 #[test]
-fn real_fixture_pipeline_accepts_through_eip197_round_trip() {
+fn real_fixture_section_less_pipeline_is_rejected() {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(606);
-    let (pk, vk) = setup(&mut rng).expect("setup");
+    let (pk, _vk) = setup(&mut rng).expect("setup");
 
     let rs = generate_fixture(2).expect("nova fixture");
     let circuit = build_circuit_from_fixture(&rs).expect("build circuit from fixture");
 
-    // Real hashes (non-zero) — same pin as
-    // `circuit_builder::fixture_to_circuit_to_satisfied_cs` but
-    // through the public crate API.
+    // Extraction still works (real, non-zero committed hashes) —
+    // the rejection is the *binding* contract, not an extraction
+    // failure.
     assert!(
         circuit.committed_hash_primary != Bn254Fr::from(0u64)
             || circuit.committed_hash_secondary != Bn254Fr::from(0u64),
-        "real fixture must produce at least one non-zero committed hash"
+        "real fixture must still produce at least one non-zero committed hash"
     );
 
-    let public_inputs = public_inputs_for(&circuit);
-    let proof = prove(&pk, circuit, &mut rng).expect("prove");
-
-    // Codec round-trip.
-    let bytes = proof_to_eip197_bytes(&proof);
-    assert_eq!(bytes.len(), EIP197_PROOF_BYTES);
-    let decoded = eip197_bytes_to_proof(&bytes).expect("decode");
-
-    // Verify against the DECODED proof + the REAL public inputs.
-    let accepted = verify(&vk, &public_inputs, &decoded).expect("verify");
+    let result = prove(&pk, circuit, &mut rng);
     assert!(
-        accepted,
-        "real-fixture proof must accept against real public inputs after eip197 round-trip"
-    );
-}
-
-#[test]
-fn real_fixture_proof_is_bound_to_its_specific_public_inputs() {
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(707);
-    let (pk, vk) = setup(&mut rng).expect("setup");
-
-    // Two distinct fixtures — different num_steps so the
-    // committed hashes AND zi differ.
-    let rs_a = generate_fixture(2).expect("fixture a");
-    let rs_b = generate_fixture(3).expect("fixture b");
-
-    let circuit_a = build_circuit_from_fixture(&rs_a).expect("build a");
-    let circuit_b = build_circuit_from_fixture(&rs_b).expect("build b");
-
-    let pi_a = public_inputs_for(&circuit_a);
-    let pi_b = public_inputs_for(&circuit_b);
-
-    // Sanity: different fixtures → different public-input slices.
-    assert_ne!(
-        pi_a, pi_b,
-        "different fixtures must produce different public-input slices"
-    );
-
-    // Prove fixture A; verify accepts pi_a, rejects pi_b.
-    let proof_a = prove(&pk, circuit_a, &mut rng).expect("prove a");
-
-    assert!(
-        verify(&vk, &pi_a, &proof_a).expect("verify a/a"),
-        "proof_a must accept against pi_a"
-    );
-    assert!(
-        !verify(&vk, &pi_b, &proof_a).expect("verify a/b"),
-        "proof_a must REJECT against pi_b — proof is bound to its specific public inputs"
+        result.is_err(),
+        "section-less real-fixture circuit must be unprovable under S2b, got Ok"
     );
 }
