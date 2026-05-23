@@ -69,6 +69,10 @@ allow = [
     "CC0-1.0",
     "OpenSSL",
     "MPL-2.0",
+    # CDLA-Permissive-2.0: permissive Community Data License, used by
+    # webpki-roots (Mozilla's bundled CA cert set). OSI-recognised as
+    # equivalent to permissive open-source distribution.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 # Workspace's own private crates (publish = false) aren't licensed to
