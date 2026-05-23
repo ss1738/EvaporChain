@@ -2,6 +2,7 @@
 name = "evaporchain-oracle"
 version.workspace = true
 edition = "2021"
+publish = false
 
 [lib]
 name = "evaporchain_oracle"
