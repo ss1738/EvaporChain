@@ -85,16 +85,25 @@ where
         .map_err(BridgeError::ArkSynthesis)?;
     cs.finalize();
     let cs_borrow = cs.borrow().expect("CS ref must be borrow-able");
-    let m = cs_borrow
+    // ark-relations 0.6: to_matrices() returns Result<BTreeMap<Label,
+    // Vec<Matrix>>>. For R1CS the predicate's matrices are [A, B, C].
+    // Counts now come from the CS directly (were on R1CSMatrices in 0.5).
+    let matrices_map = cs_borrow
         .to_matrices()
+        .map_err(|_| BridgeError::MatricesUnavailable)?;
+    let r1cs_mats = matrices_map
+        .get(ark_relations::gr1cs::predicate::polynomial_constraint::R1CS_PREDICATE_LABEL)
         .ok_or(BridgeError::MatricesUnavailable)?;
+    let m_a = &r1cs_mats[0];
+    let m_b = &r1cs_mats[1];
+    let m_c = &r1cs_mats[2];
 
     // Arkworks counts the implicit ONE in `num_instance_variables`;
     // nova-snark's `num_io` excludes it.
-    let num_cons = m.num_constraints;
-    let num_vars = m.num_witness_variables;
-    let num_io = m
-        .num_instance_variables
+    let num_cons = cs_borrow.num_constraints();
+    let num_vars = cs_borrow.num_witness_variables();
+    let num_io = cs_borrow
+        .num_instance_variables()
         .checked_sub(1)
         .expect("arkworks num_instance_variables must include the implicit ONE");
 
@@ -135,9 +144,9 @@ where
         }
         out
     };
-    let a_triples = convert(&m.a);
-    let b_triples = convert(&m.b);
-    let c_triples = convert(&m.c);
+    let a_triples = convert(m_a);
+    let b_triples = convert(m_b);
+    let c_triples = convert(m_c);
 
     // SparseMatrix's `cols` = total z-vector width = num_io + num_vars + 1
     // (the +1 is the implicit constant-ONE column at index 0).
@@ -192,14 +201,22 @@ where
         .map_err(BridgeError::ArkSynthesis)?;
     cs.finalize();
     let cs_borrow = cs.borrow().expect("CS ref must be borrow-able");
-    let m = cs_borrow
+    // ark-relations 0.6 to_matrices: same shape as the helper above —
+    // pull the R1CS predicate's [A, B, C], counts from cs directly.
+    let matrices_map = cs_borrow
         .to_matrices()
+        .map_err(|_| BridgeError::MatricesUnavailable)?;
+    let r1cs_mats = matrices_map
+        .get(ark_relations::gr1cs::predicate::polynomial_constraint::R1CS_PREDICATE_LABEL)
         .ok_or(BridgeError::MatricesUnavailable)?;
+    let m_a = &r1cs_mats[0];
+    let m_b = &r1cs_mats[1];
+    let m_c = &r1cs_mats[2];
 
-    let num_cons = m.num_constraints;
-    let num_vars = m.num_witness_variables;
-    let num_io = m
-        .num_instance_variables
+    let num_cons = cs_borrow.num_constraints();
+    let num_vars = cs_borrow.num_witness_variables();
+    let num_io = cs_borrow
+        .num_instance_variables()
         .checked_sub(1)
         .expect("arkworks num_instance_variables must include the implicit ONE");
 
@@ -231,22 +248,25 @@ where
         out
     };
     let cols = num_io + num_vars + 1;
-    let a_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.a), num_cons, cols);
-    let b_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.b), num_cons, cols);
-    let c_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.c), num_cons, cols);
+    let a_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_a), num_cons, cols);
+    let b_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_b), num_cons, cols);
+    let c_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_c), num_cons, cols);
     let shape =
         R1CSShape::<GrumpkinEngine>::new(num_cons, num_vars, num_io, a_sm, b_sm, c_sm)
             .map_err(BridgeError::NovaShapeRejected)?;
 
     // Extract assignments. arkworks puts the implicit ONE at
     // instance_assignment[0]; nova-snark's X excludes it.
+    // ark-relations 0.6: these are methods returning Result<&[F]>.
     let w_nova: Vec<SecondaryScalar> = cs_borrow
-        .witness_assignment
+        .witness_assignment()
+        .map_err(|_| BridgeError::MatricesUnavailable)?
         .iter()
         .map(|f| ark_fq_to_secondary(*f))
         .collect();
     let x_nova: Vec<SecondaryScalar> = cs_borrow
-        .instance_assignment
+        .instance_assignment()
+        .map_err(|_| BridgeError::MatricesUnavailable)?
         .iter()
         .skip(1)
         .map(|f| ark_fq_to_secondary(*f))

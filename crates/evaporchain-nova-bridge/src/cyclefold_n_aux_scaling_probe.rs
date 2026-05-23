@@ -86,10 +86,14 @@ impl ConstraintSynthesizer<Bn254Fq> for TrivialChainCircuit {
             let next_val = cur_val * self.scalar;
             let next_var = cs.new_witness_variable(|| Ok(next_val))?;
             // Constraint: cur · scalar = next.
-            cs.enforce_constraint(
-                LinearCombination::from(cur_var),
-                LinearCombination::from(scalar_var),
-                LinearCombination::from(next_var),
+            // ark-relations 0.6: enforce_constraint took 3 LCs in 0.5;
+            // in 0.6 it's predicate-label + boxed-closure-iter. For
+            // plain R1CS use enforce_r1cs_constraint(a, b, c) — takes
+            // 3 LC-producing closures, same semantics.
+            cs.enforce_r1cs_constraint(
+                || LinearCombination::from(cur_var),
+                || LinearCombination::from(scalar_var),
+                || LinearCombination::from(next_var),
             )?;
             cur_val = next_val;
             cur_var = next_var;
@@ -97,10 +101,10 @@ impl ConstraintSynthesizer<Bn254Fq> for TrivialChainCircuit {
 
         // Public-input pin: the final value (claim).
         let claim_var = cs.new_input_variable(|| Ok(cur_val))?;
-        cs.enforce_constraint(
-            LinearCombination::from(cur_var),
-            lc!() + (Bn254Fq::ONE, Variable::One),
-            LinearCombination::from(claim_var),
+        cs.enforce_r1cs_constraint(
+            || LinearCombination::from(cur_var),
+            || lc!() + (Bn254Fq::ONE, Variable::One),
+            || LinearCombination::from(claim_var),
         )?;
 
         Ok(())

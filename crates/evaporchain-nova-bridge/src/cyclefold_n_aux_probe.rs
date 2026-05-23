@@ -83,14 +83,22 @@ pub fn measure_cf_secondary_n_aux<C: ConstraintSynthesizer<Bn254Fq>>(
         .map_err(BridgeError::ArkSynthesis)?;
     cs.finalize();
     let cs_borrow = cs.borrow().expect("CS ref must be borrow-able");
-    let m = cs_borrow
+    // ark-relations 0.6 to_matrices: Result<BTreeMap<Label, Vec<Matrix>>>.
+    // R1CS predicate matrices = [A, B, C]; counts come from cs directly.
+    let matrices_map = cs_borrow
         .to_matrices()
+        .map_err(|_| BridgeError::MatricesUnavailable)?;
+    let r1cs_mats = matrices_map
+        .get(ark_relations::gr1cs::predicate::polynomial_constraint::R1CS_PREDICATE_LABEL)
         .ok_or(BridgeError::MatricesUnavailable)?;
+    let m_a = &r1cs_mats[0];
+    let m_b = &r1cs_mats[1];
+    let m_c = &r1cs_mats[2];
 
-    let num_cons = m.num_constraints;
-    let num_vars = m.num_witness_variables;
-    let num_io = m
-        .num_instance_variables
+    let num_cons = cs_borrow.num_constraints();
+    let num_vars = cs_borrow.num_witness_variables();
+    let num_io = cs_borrow
+        .num_instance_variables()
         .checked_sub(1)
         .expect("arkworks num_instance_variables includes the implicit ONE");
 
@@ -122,19 +130,23 @@ pub fn measure_cf_secondary_n_aux<C: ConstraintSynthesizer<Bn254Fq>>(
         out
     };
     let cols = num_io + num_vars + 1;
-    let a_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.a), num_cons, cols);
-    let b_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.b), num_cons, cols);
-    let c_sm = SparseMatrix::<SecondaryScalar>::new(&convert(&m.c), num_cons, cols);
+    let a_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_a), num_cons, cols);
+    let b_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_b), num_cons, cols);
+    let c_sm = SparseMatrix::<SecondaryScalar>::new(&convert(m_c), num_cons, cols);
     let shape = R1CSShape::<GrumpkinEngine>::new(num_cons, num_vars, num_io, a_sm, b_sm, c_sm)
         .map_err(BridgeError::NovaShapeRejected)?;
 
+    // ark-relations 0.6: witness_assignment / instance_assignment are
+    // now methods returning Result<&[F]> (were public Vec fields).
     let w_nova: Vec<SecondaryScalar> = cs_borrow
-        .witness_assignment
+        .witness_assignment()
+        .map_err(|_| BridgeError::MatricesUnavailable)?
         .iter()
         .map(|f| ark_fq_to_secondary(*f))
         .collect();
     let x_nova: Vec<SecondaryScalar> = cs_borrow
-        .instance_assignment
+        .instance_assignment()
+        .map_err(|_| BridgeError::MatricesUnavailable)?
         .iter()
         .skip(1)
         .map(|f| ark_fq_to_secondary(*f))
