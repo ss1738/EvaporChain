@@ -3,14 +3,27 @@
  *
  * Initializes the WASM binary once, then exposes keygen / sign / verify
  * that call into real Dilithium3 (ML-DSA-65) post-quantum cryptography.
+ *
+ * Namespace import: different wasm-pack versions produce slightly
+ * different `.d.ts` shapes — some emit named exports, some only emit a
+ * default export with the functions as namespace members. Importing
+ * the whole module + destructuring at runtime works for both, which
+ * keeps the bridge buildable whether CI's wasm-pack is ahead or
+ * behind whatever generated the locally-committed .d.ts.
  */
 
-import init, {
-  mlDsaKeygen,
-  mlDsaSign,
-  mlDsaVerify,
-  deriveAddress as wasmDeriveAddress,
-} from "./wasm/evaporchain_crypto_wasm";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+import * as wasm from "./wasm/evaporchain_crypto_wasm";
+
+const init = (wasm as { default: () => Promise<unknown> }).default;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mlDsaKeygen = (wasm as any).mlDsaKeygen as () => unknown;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mlDsaSign = (wasm as any).mlDsaSign as (sk: Uint8Array, msg: Uint8Array) => Uint8Array;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mlDsaVerify = (wasm as any).mlDsaVerify as (msg: Uint8Array, sig: Uint8Array, pk: Uint8Array) => boolean;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const wasmDeriveAddress = (wasm as any).deriveAddress as (pk: Uint8Array) => string;
 
 let initialized = false;
 
