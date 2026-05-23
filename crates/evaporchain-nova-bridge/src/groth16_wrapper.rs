@@ -623,11 +623,27 @@ mod tests {
             scalars, bases, blind, h_aff, tampered,
         );
 
-        match prove_recursion_decider(&pk, bad_circuit, &mut rng) {
-            // Prove rejected — the expected and cleanest failure.
-            Err(_) => { /* contract satisfied */ }
-            // Prove succeeded (unexpected) — verify MUST reject.
-            Ok(proof) => {
+        // ark-groth16 0.6 added a defensive `assert!(cs.is_satisfied())`
+        // inside `prove` (panics instead of returning Err on
+        // unsatisfiable input). 0.5 returned Err. Either is fine for our
+        // contract — "tampered witness CANNOT round-trip" — so we accept
+        // panic OR Err OR (rare) Ok-but-verify-rejects.
+        let bad_circuit_for_panic = bad_circuit.clone();
+        let prove_outcome = std::panic::catch_unwind(
+            std::panic::AssertUnwindSafe(|| {
+                let mut rng_inner = ark_std::rand::rngs::StdRng::seed_from_u64(7);
+                prove_recursion_decider(&pk, bad_circuit_for_panic, &mut rng_inner)
+            }),
+        );
+        let _ = bad_circuit;
+
+        match prove_outcome {
+            // ark 0.6: assert-panic inside prove. Contract satisfied.
+            Err(_panic) => { /* contract satisfied */ }
+            // ark 0.5-style: Err from prove. Contract satisfied.
+            Ok(Err(_)) => { /* contract satisfied */ }
+            // Unexpected: prove succeeded — verify MUST reject.
+            Ok(Ok(proof)) => {
                 let ok = verify_recursion_decider(&vk, &[], &proof)
                     .expect("verify must not error on tampered proof");
                 assert!(
