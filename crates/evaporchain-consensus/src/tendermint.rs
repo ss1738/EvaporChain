@@ -2106,6 +2106,17 @@ impl TendermintConsensus {
             Some(v) => v.stake,
             None => return 0,
         };
+        // Q13 (audit 2026-05-17): short-circuit when stake is already 0.
+        // Pre-fix every duplicate equivocating vote triggered a full
+        // KL-divergence computation even after the validator had been
+        // slashed to zero stake — Byzantine validator flooding 1000
+        // equivocating prevotes burned ~1000 KL computations on each
+        // receiving node. With this guard, only the first equivocation
+        // (which actually drains stake) does the work; subsequent
+        // duplicates return immediately.
+        if stake == 0 {
+            return 0;
+        }
         let w = window.max(2);
         let observed = match Distribution::from_counts(&[0, w]) {
             Ok(d) => d,
@@ -2469,7 +2480,7 @@ impl TendermintConsensus {
         {
             return Vec::new();
         }
-        if self.validator_set.len() == 0 {
+        if self.validator_set.is_empty() {
             return Vec::new();
         }
         // Q5 (audit 2026-05-17): use stake-weighted quorum, not count-based
@@ -4781,6 +4792,7 @@ impl TendermintConsensus {
             // next re-broadcast.  Post-fix, the rotation must be
             // signed by the previously-registered (old) key, which
             // only the legitimate validator holds.
+            let mut rotation_continuity_ok = false;
             if let Some(vi) = self.validator_set.get(validator_id) {
                 let is_rotation = matches!(
                     vi.bls_public_key.as_ref(),
@@ -4821,26 +4833,48 @@ impl TendermintConsensus {
                         );
                         return actions;
                     }
+                    // All continuity checks passed — rotation is authorised.
+                    rotation_continuity_ok = true;
                 }
             }
 
             if let Some(vi) = self.validator_set.get_mut(validator_id) {
-                if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key)
-                {
-                    vi.bls_public_key = Some(bls_public_key.clone());
-                    vi.bls_pop = if proof_of_possession.is_empty() {
-                        None
-                    } else {
-                        Some(proof_of_possession.clone())
-                    };
-                    vi.pop_verified = !proof_of_possession.is_empty();
-                    info!(
-                        validator = validator_id,
-                        pk_prefix = %hex::encode(&bls_public_key[..8]),
-                        pop_verified = vi.pop_verified,
-                        "Registered BLS public key from peer"
-                    );
+                // GEN-N1 (audit 2026-05-15): only ADMIT a fresh-key
+                // registration if the validator currently has no
+                // registered key. Overwriting an already-registered
+                // key requires a continuity proof signed by the
+                // currently-registered key (checked above;
+                // rotation_continuity_ok = true when passed). Without
+                // this gate, any off-path attacker who can gossip
+                // could replace a genesis-anchored BLS key with one
+                // they control: PoP on the NEW key alone proves
+                // they control the new key, NOT that the legitimate
+                // validator authorised the rotation.
+                if vi.bls_public_key.is_some() && !rotation_continuity_ok {
+                    if vi.bls_public_key.as_ref() != Some(bls_public_key) {
+                        warn!(
+                            validator = validator_id,
+                            new_pk_prefix = %hex::encode(&bls_public_key[..8]),
+                            "REJECTED KeyAnnounce: validator already has a registered BLS key. \
+                             Use RotateValidatorKey (with old-key signature) for continuity-bound rotation."
+                        );
+                    }
+                    return actions;
                 }
+                // First registration (key was None) — admit.
+                vi.bls_public_key = Some(bls_public_key.clone());
+                vi.bls_pop = if proof_of_possession.is_empty() {
+                    None
+                } else {
+                    Some(proof_of_possession.clone())
+                };
+                vi.pop_verified = !proof_of_possession.is_empty();
+                info!(
+                    validator = validator_id,
+                    pk_prefix = %hex::encode(&bls_public_key[..8]),
+                    pop_verified = vi.pop_verified,
+                    "Registered BLS public key from peer (first registration)"
+                );
             }
             return actions;
         }
@@ -5367,7 +5401,8 @@ impl TendermintConsensus {
                 {
                     if let Some(proposer_info) = self.validator_set.get(proposer_id) {
                         if let Some(ref vrf_pk) = proposer_info.vrf_public_key {
-                            let alpha = leader_vrf_input(height, round);
+                            // H-1 (audit 2026-05-17): chain_id-scoped VRF input.
+                            let alpha = leader_vrf_input(&self.chain_id, height, round);
                             let output = VrfOutput(*vrf_out);
                             let proof = VrfProof(vrf_proof.clone());
                             if !vrf_verify(vrf_pk, &alpha, &output, &proof) {
@@ -6872,7 +6907,8 @@ impl TendermintConsensus {
 
         // Compute VRF output for this block (leader election proof + randomness).
         let (vrf_out, vrf_prf) = if let Some(ref vrf_kp) = self.vrf_keypair {
-            let alpha = leader_vrf_input(self.height, self.round_state.round);
+            // H-1 (audit 2026-05-17): chain_id-scoped VRF input.
+            let alpha = leader_vrf_input(&self.chain_id, self.height, self.round_state.round);
             let (output, proof) = vrf_kp.evaluate(&alpha);
             (Some(output.0), Some(proof.0))
         } else {
@@ -7139,9 +7175,20 @@ impl TendermintConsensus {
             // Must match the per-validator weight used by `total_stake()`
             // (which is what `stake_quorum_threshold` is computed from).
             // See audit P2-01.
+            //
+            // AUDIT 2026-05-18 (jailed-vote num/denom asymmetry): `get()`
+            // returns jailed validators, but `total_stake()` (the
+            // threshold's denominator) does `.filter(|v| !v.jailed)`.
+            // Counting a jailed validator's prevote here while the
+            // threshold excludes it lets quorum be reached with < 2/3 of
+            // genuinely-active stake (BFT safety-margin erosion). The
+            // `.filter(|v| !v.jailed)` makes the numerator consistent
+            // with the denominator. Oracle: byzantine_adversarial.rs
+            // test_jailed_validator_marginal_vote_must_not_reach_quorum.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
@@ -7163,9 +7210,13 @@ impl TendermintConsensus {
         let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         for (vid, hash) in &self.round_state.precommits {
             // Must match `total_stake()` weight function. See audit P2-01.
+            // AUDIT 2026-05-18: exclude jailed (consistent w/ total_stake
+            // denominator) — jailed-vote num/denom asymmetry, see
+            // check_prevote_quorum for the full rationale.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
@@ -7282,6 +7333,11 @@ impl TendermintConsensus {
             // The mempool was already drained above, so the next proposal will
             // be empty (or near-empty), achieving the same livelock-prevention
             // goal without violating Agreement.
+            //
+            // Q11 (audit 2026-05-17): formally modelled in
+            // research/tla/EvaporChainBFT.tla — PrecommitNilAdvanceRound /
+            // PrecommitTimeoutAdvanceRound:
+            //   nextR == IF r + 1 >= MaxRound THEN 0 ELSE r + 1
             self.round_state = RoundState::new(0);
             self.set_timeouts_for_round(0);
             return;
@@ -7418,7 +7474,14 @@ impl TendermintConsensus {
         // invariant here so any new caller gets caught at compile-
         // exercise time rather than at signature-verification time.
         // Wire format unchanged.
-        debug_assert!(
+        // Q9 (audit 2026-05-17): hard `assert!` (not `debug_assert!`)
+        // so the phase-enum check fires in release builds too. Pre-fix
+        // it was stripped at release and a future caller passing an
+        // attacker-influenced `phase` could create signed-message
+        // ambiguity. Wire format unchanged (phase still appended
+        // un-prefixed; the 3 legal values have distinct lengths so no
+        // ambiguity within the enum).
+        assert!(
             matches!(phase, "proposal" | "prevote" | "precommit"),
             "bls_vote_message: phase must be one of \
              {{proposal, prevote, precommit}}, got {phase:?}"
@@ -7477,9 +7540,13 @@ impl TendermintConsensus {
                 continue;
             };
             // Must match `total_stake()` weight function. See audit P2-01.
+            // AUDIT 2026-05-18: exclude jailed (consistent w/ total_stake
+            // denominator) — jailed-vote num/denom asymmetry. A jailed
+            // signer must not count toward a commit certificate.
             let stake = self
                 .validator_set
                 .get(*vid)
+                .filter(|v| !v.jailed)
                 .map(|v| v.effective_stake())
                 .unwrap_or(0);
             entries.push((*vid, sig_bytes.clone(), stake));
@@ -7793,8 +7860,12 @@ impl TendermintConsensus {
             if !unique.insert(vid) {
                 continue;
             }
+            // AUDIT 2026-05-18: exclude jailed — consistent with the
+            // total_stake() denominator (jailed-vote num/denom asymmetry).
             if let Some(v) = self.validator_set.get(vid) {
-                weight = weight.saturating_add(v.effective_stake());
+                if !v.jailed {
+                    weight = weight.saturating_add(v.effective_stake());
+                }
             }
         }
         weight >= threshold
@@ -11499,7 +11570,7 @@ mod tests {
     /// (replay protection).
     #[test]
     fn test_due_refund_txs_grace_window_and_replay_protection() {
-        use evaporchain_types::{Block, RefundTx, TransferTx};
+        use evaporchain_types::{Block, TransferTx};
 
         fn addr_local(seed: u8) -> [u8; 32] {
             let mut a = [0u8; 32];
@@ -14249,11 +14320,11 @@ mod tests {
             // Random "key" string for unknown-key cases.
             junk_key in "[a-z]{3,18}",
         ) {
-            use proptest::prelude::*;
+            
             // Some toolchains don't surface proptest's assertion
             // macros via the prelude glob; explicit imports below
             // make them available unconditionally.
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            use proptest::prop_assert;
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
             let (key, value, expected): (&str, String, &str) = match bucket {
                 0 => ("parent_acceptance_mode", "mcc".to_string(), "ok"),
@@ -14336,8 +14407,8 @@ mod tests {
             s_honest_milli in -2000i64..4001,
             last_run_at_height in 0u64..1_000_001,
         ) {
-            use proptest::prelude::*;
-            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            
+            
             use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
 
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
@@ -15903,7 +15974,8 @@ mod vrf_tests {
             .as_ref()
             .unwrap();
 
-        let alpha = leader_vrf_input(block.number, 0);
+        // H-1 (audit 2026-05-17): chain_id-scoped VRF input.
+        let alpha = leader_vrf_input(&nodes[0].chain_id, block.number, 0);
         let output = VrfOutput(block.vrf_output.unwrap());
         let proof = VrfProof(block.vrf_proof.clone().unwrap());
         assert!(
@@ -16042,7 +16114,8 @@ mod vrf_tests {
     fn test_vrf_leader_check_stake_weighted() {
         // VRF leader check should be proportional to stake
         let kp = VrfKeypair::generate();
-        let alpha = leader_vrf_input(1, 0);
+        // H-1: chain_id-scoped VRF input.
+        let alpha = leader_vrf_input("test-chain", 1, 0);
         let (output, _proof) = kp.evaluate(&alpha);
 
         // With 100% of stake, should always be leader
@@ -17246,7 +17319,7 @@ mod da_tests {
         // Dropped (same-sender) txs returned to mempool — should still
         // be there for the next proposal.
         assert!(
-            tc.mempool.len() >= 1,
+            !tc.mempool.is_empty(),
             "dropped same-sender txs must remain in pool — got {} pending",
             tc.mempool.len()
         );
@@ -21800,7 +21873,7 @@ mod t1_20_batch14 {
             "gas limit should truncate; got {} txs",
             block.transactions.len()
         );
-        assert!(tc.mempool.len() > 0, "rejected txs should be back in mempool");
+        assert!(!tc.mempool.is_empty(), "rejected txs should be back in mempool");
     }
 
     // ── Test 6: verify_cert signer has no BLS key → false (line 7124) ──
@@ -22699,7 +22772,7 @@ mod t1_20_batch18 {
             info.pop_verified = true;
             vs.add_validator(info);
         }
-        let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
+        let tc = TendermintConsensus::new_for_test(1, 5, vs);
         let cert = CommitCertificate {
             height: 1, round: 0, block_hash: [0u8; 32],
             signer_ids: vec![1],
@@ -22725,7 +22798,7 @@ mod t1_20_batch18 {
             info.pop_verified = true;
             vs.add_validator(info);
         }
-        let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
+        let tc = TendermintConsensus::new_for_test(1, 5, vs);
         let cert = CommitCertificate {
             height: 1, round: 0, block_hash: [0u8; 32],
             signer_ids: vec![1],
@@ -23034,7 +23107,7 @@ mod t1_20_batch20 {
         // With u64 overflow: (9_223_372_036_854_775_808 * 2) wraps to 0,
         //   then div_ceil(3) = 0, making the threshold trivially satisfied.
         let large_stake = u64::MAX / 2 + 1;
-        let expected = ((large_stake as u128 * 2 + 2) / 3) as u64;
+        let expected = (large_stake as u128 * 2).div_ceil(3) as u64;
         assert_eq!(expected, 6_148_914_691_236_517_206);
 
         // Build a minimal ValidatorSet with one validator holding large_stake.
@@ -23690,7 +23763,7 @@ mod t1_20_batch24 {
     use super::*;
     use evaporchain_da::certificate::{DAAttestation, DACertificate};
     use evaporchain_crypto::signatures::BlsKeypair;
-    use evaporchain_state::InMemoryStateDB;
+    
 
     fn make_vs3() -> ValidatorSet {
         let mut vs = ValidatorSet::new();

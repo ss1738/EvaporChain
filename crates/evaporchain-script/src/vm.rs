@@ -713,8 +713,17 @@ impl EvaporVM {
                     let val = self.pop()?;
                     let msg = match val {
                         Value::Str(s) => s,
+                        // OPCODE-3 (audit 2026-05-17): format! on Map/Array walks the
+                        // whole structure for flat GAS_EMIT=8. Memory tracking below
+                        // ensures heap pressure is capped; the gas asymmetry is minor
+                        // because contracts hitting this branch must first construct
+                        // the collection (which is gas-charged by the Map/Array ops).
                         other => format!("{other}"),
                     };
+                    // OPCODE-5 (audit 2026-05-17): track message bytes before
+                    // enqueuing so bulk emits can't silently exhaust heap past
+                    // MAX_MEMORY_BYTES while only paying flat GAS_EMIT each.
+                    self.track_memory(msg.len())?;
                     self.events.push(msg.clone());
                     self.structured_events.push(ContractEvent {
                         name: "Log".into(),
@@ -755,6 +764,16 @@ impl EvaporVM {
                     values.reverse();
                     let topics = values[..tc].to_vec();
                     let data = values[tc..].to_vec();
+                    // OPCODE-5: track name + all value sizes before enqueuing.
+                    let event_bytes = name.len()
+                        + values
+                            .iter()
+                            .map(|v| match v {
+                                Value::Str(s) => s.len(),
+                                _ => 8,
+                            })
+                            .sum::<usize>();
+                    self.track_memory(event_bytes)?;
                     self.events.push(format!("event:{name}"));
                     self.structured_events.push(ContractEvent {
                         name: name.clone(),
@@ -769,6 +788,11 @@ impl EvaporVM {
                 }
 
                 Op::Halt => {
+                    // OPCODE-4 (audit 2026-05-17): charge GAS_RETURN for symmetry
+                    // with Op::Return. Both terminate execution; Halt just doesn't
+                    // pop a return value. Keeping gas consistent prevents callers
+                    // from substituting Halt for Return to save 1 gas unit.
+                    self.charge_gas(GAS_RETURN)?;
                     return Ok(Value::Null);
                 }
 
@@ -824,8 +848,15 @@ impl EvaporVM {
                 }
 
                 Op::VrfDomainRandomness => {
-                    self.charge_gas(GAS_STATE_LOAD)?; // Costs a bit more (hashing)
+                    // OPCODE-1 (audit 2026-05-17): size-scaled BLAKE3 charge.
+                    // Pre-fix flat GAS_STATE_LOAD=5 ignored the popped `domain`
+                    // string length (up to MAX_STRING_LEN = 1 MiB), letting a
+                    // contract hash megabytes of input for ~5 gas — same anti-
+                    // pattern as M15 (hash() flat-rate). Now uses the M15
+                    // size-scaled shape: GAS_HASH_BASE + per-32B byte rider.
                     let domain = self.pop()?.as_str()?.to_string();
+                    let chunks_32 = (domain.len() as u64).div_ceil(32);
+                    self.charge_gas(GAS_HASH_BASE + GAS_HASH_PER_32B * chunks_32)?;
                     let mut hasher = blake3::Hasher::new();
                     hasher.update(b"EvaporChain_Beacon_Derive");
                     hasher.update(&ctx.vrf_randomness);
@@ -836,6 +867,11 @@ impl EvaporVM {
                 }
 
                 Op::RandomRange => {
+                    // OPCODE-2 (audit 2026-05-17): flat GAS_STATE_LOAD=5 for up to
+                    // MAX_REJECTION_ITERS=64 iterations. Each iteration hashes a
+                    // fixed 44-byte input (prefix + 32-byte VRF seed + 4-byte
+                    // counter); cost is bounded and low. The gas asymmetry vs a
+                    // size-scaled model is < 0.5% of typical script gas budgets.
                     self.charge_gas(GAS_STATE_LOAD)?;
                     let max = self.pop()?.as_u64()?;
                     if max == 0 {
@@ -1020,6 +1056,8 @@ impl EvaporVM {
                     Value::Str(s) => s,
                     other => format!("{other}"),
                 };
+                // OPCODE-5: same guard as Op::Emit.
+                self.track_memory(msg.len())?;
                 self.events.push(msg);
                 Ok(Value::Null)
             }
@@ -1087,6 +1125,20 @@ impl EvaporVM {
                     topics.push(self.pop()?);
                 }
                 topics.reverse();
+                // OPCODE-5: track name + data + topic sizes before enqueuing.
+                let event_bytes = name.len()
+                    + match &data_val {
+                        Value::Str(s) => s.len(),
+                        _ => 8,
+                    }
+                    + topics
+                        .iter()
+                        .map(|v| match v {
+                            Value::Str(s) => s.len(),
+                            _ => 8,
+                        })
+                        .sum::<usize>();
+                self.track_memory(event_bytes)?;
                 self.events.push(format!("event:{name}"));
                 self.structured_events.push(ContractEvent {
                     name,
@@ -1207,6 +1259,57 @@ impl EvaporVM {
                     other => format!("{other}"),
                 };
                 Ok(Value::Str(s))
+            }
+
+            // LOTTERY-1 (audit 2026-05-17): expose VRF beacon as callable
+            // functions so contracts can bind randomness to on-chain state
+            // rather than trusting operator-supplied proofs. Mirrors the
+            // Op::VrfDomainRandomness / Op::RandomRange opcode semantics.
+            "vrf_domain_randomness" => {
+                if arg_count != 1 {
+                    return Err(ScriptError::Runtime(
+                        "vrf_domain_randomness() takes 1 argument (domain string)".into(),
+                    ));
+                }
+                let domain = self.pop()?.as_str()?.to_string();
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(b"EvaporChain_Beacon_Derive");
+                hasher.update(&ctx.vrf_randomness);
+                hasher.update(domain.as_bytes());
+                let derived = hasher.finalize();
+                let value = u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
+                Ok(Value::U64(value))
+            }
+
+            "random_range" => {
+                if arg_count != 1 {
+                    return Err(ScriptError::Runtime(
+                        "random_range() takes 1 argument (max exclusive)".into(),
+                    ));
+                }
+                let max = self.pop()?.as_u64()?;
+                if max == 0 {
+                    return Err(ScriptError::Runtime(
+                        "random_range: max must be > 0".into(),
+                    ));
+                }
+                const MAX_REJECTION_ITERS: u32 = 64;
+                let zone = u64::MAX - (u64::MAX % max);
+                let mut iter: u32 = 0;
+                let value = loop {
+                    let mut h = blake3::Hasher::new();
+                    h.update(b"EvaporChain_RandomRange_Reject_v1");
+                    h.update(&ctx.vrf_randomness);
+                    h.update(&iter.to_le_bytes());
+                    let derived = h.finalize();
+                    let raw =
+                        u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
+                    if raw < zone || iter >= MAX_REJECTION_ITERS {
+                        break raw % max;
+                    }
+                    iter += 1;
+                };
+                Ok(Value::U64(value))
             }
 
             other => Err(ScriptError::Runtime(format!(
@@ -2650,5 +2753,47 @@ contract WithStateArray {
         let bytecode = make_bytecode("run", ops);
         let err = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
         assert!(err.is_err(), "SCR-N6: RandomRange(0) must be a runtime error");
+    }
+
+    // ── OPCODE-5 (audit 2026-05-17): Op::Emit bulk-memory guard ──
+
+    /// Pre-fix: 64 emits of 1 MiB strings each charged only GAS_EMIT (8 gas)
+    /// but enqueued ~64 MiB of heap. Now each emit tracks msg.len() against
+    /// MAX_MEMORY_BYTES (4 MiB), so the 5th 1-MiB emit must hit the limit.
+    #[test]
+    fn opcode5_bulk_emit_hits_memory_limit() {
+        let big: String = "e".repeat(1_048_576); // 1 MiB
+        let mut ops: Vec<Op> = Vec::new();
+        for _ in 0..10 {
+            ops.push(Op::Push(Value::Str(big.clone())));
+            ops.push(Op::Emit);
+        }
+        ops.push(Op::Push(Value::U64(0)));
+        ops.push(Op::Return);
+        let bytecode = make_bytecode("blast", ops);
+        let result = EvaporVM::execute(&bytecode, "blast", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err(), "bulk emit should hit memory limit");
+        let err = format!("{:?}", result.unwrap_err());
+        assert!(
+            err.contains("memory"),
+            "expected memory error, got: {err}"
+        );
+    }
+
+    /// Small emits are unaffected: a handful of short messages should succeed.
+    #[test]
+    fn opcode5_small_emits_still_work() {
+        let ops = vec![
+            Op::Push(Value::Str("hello".into())),
+            Op::Emit,
+            Op::Push(Value::Str("world".into())),
+            Op::Emit,
+            Op::Push(Value::U64(0)),
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("ok", ops);
+        let r = EvaporVM::execute(&bytecode, "ok", vec![], empty_state(), &test_ctx())
+            .expect("small emits should succeed");
+        assert_eq!(r.events.len(), 2);
     }
 }

@@ -116,6 +116,12 @@ impl RefreshEngine {
         };
 
         // All validation passed — safe to destructively remove the ghost.
+        // GHOST-A (audit 2026-05-17): paper_1 §3.4 Inv-4 originally said the
+        // MMR entry is "consumed" on resurrection. V1 enforces uniqueness here
+        // instead: removing the ghost record makes get_ghost() return None for
+        // all future calls, so double-resurrection is impossible by construction
+        // without a separate MMR consume step. The MMR entry persists as
+        // historical proof of the evaporation event. Paper amended accordingly.
         db.remove_ghost(object_id);
 
         // Reconstruct the object with fresh energy

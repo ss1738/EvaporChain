@@ -86,6 +86,17 @@ pub fn verify(msg: &[u8], sig_bytes: &[u8], pk_bytes: &[u8], dst: &[u8]) -> bool
 /// fast_aggregate_verify works by aggregating the public keys (sum in
 /// G1) and then doing a single pairing check:
 ///   e(G1::generator(), agg_sig) == e(sum(pks), hash_to_g2(msg, dst))
+///
+/// # Rogue-key precondition
+///
+/// This function assumes that every key in `pk_byte_slices` has already
+/// had its Proof-of-Possession (PoP) verified (e.g. at validator
+/// registration via `BlsVerifier::verify_proof_of_possession`).
+/// Callers that receive keys from untrusted sources — browser dApps,
+/// light clients, indexers — MUST use [`aggregate_verify_with_pop`]
+/// instead. Summing unverified G1 points is vulnerable to the rogue-key
+/// attack (RFC 9380 §3.3): an adversary picks a "public key" that cancels
+/// honest keys in the aggregated sum and produces forgeable signatures.
 pub fn aggregate_verify(
     msg: &[u8],
     agg_sig_bytes: &[u8],
@@ -117,6 +128,48 @@ pub fn aggregate_verify(
     lhs == rhs
 }
 
+/// Verify a Proof-of-Possession for a G1 public key.
+///
+/// A PoP is a BLS signature of the key's own compressed bytes produced
+/// under `BLS_POP_DST`. This proves the signer owns the corresponding
+/// secret key, preventing rogue-key attacks at aggregation time.
+///
+/// Returns `true` iff the PoP is a valid G2 signature over `pk_bytes`
+/// under `BLS_POP_DST` with `pk_bytes` as the signing key.
+pub fn verify_pop(pk_bytes: &[u8], pop_bytes: &[u8]) -> bool {
+    // H-4: PoP = sign(pk_bytes, BLS_POP_DST) under the same pk.
+    verify(pk_bytes, pop_bytes, pk_bytes, crate::signatures::BLS_POP_DST)
+}
+
+/// Aggregate-verify with per-key Proof-of-Possession checks.
+///
+/// Safe drop-in for [`aggregate_verify`] when keys arrive from untrusted
+/// sources. Verifies each key's PoP before summing in G1 — the check
+/// closes the rogue-key window for browser dApps, light clients, and
+/// indexers that cannot rely on validator-registration vetting.
+///
+/// `pk_pop_pairs` — slice of `(pk_bytes, pop_bytes)` tuples.
+/// Returns `false` if any PoP is invalid or if the aggregate signature
+/// does not verify.
+pub fn aggregate_verify_with_pop(
+    msg: &[u8],
+    agg_sig_bytes: &[u8],
+    pk_pop_pairs: &[(&[u8], &[u8])],
+    dst: &[u8],
+) -> bool {
+    if pk_pop_pairs.is_empty() {
+        return false;
+    }
+    // H-4: verify each key's PoP before aggregating.
+    for (pk_bytes, pop_bytes) in pk_pop_pairs {
+        if !verify_pop(pk_bytes, pop_bytes) {
+            return false;
+        }
+    }
+    let pk_slices: Vec<&[u8]> = pk_pop_pairs.iter().map(|(pk, _)| *pk).collect();
+    aggregate_verify(msg, agg_sig_bytes, &pk_slices, dst)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +193,44 @@ mod tests {
     fn empty_aggregate_verify_returns_false() {
         let agg_sig = vec![0u8; 96];
         assert!(!aggregate_verify(b"msg", &agg_sig, &[], b"dst"));
+    }
+
+    /// H-4: verify_pop must reject garbage/wrong-length PoP bytes.
+    ///
+    /// A real PoP is a G2 signature (96 bytes) over the public key's own
+    /// compressed G1 bytes (48 bytes) under BLS_POP_DST. Supplying wrong
+    /// lengths or all-zero blobs must return false.
+    #[test]
+    fn h4_verify_pop_rejects_invalid_pop_bytes() {
+        let g1 = G1Affine::generator();
+        let pk_bytes = g1.to_compressed().to_vec(); // 48-byte valid G1 pk
+
+        // Wrong length PoP.
+        assert!(!verify_pop(&pk_bytes, &[0u8; 95]));
+        // Correct length but all-zero G2 (not a valid curve point).
+        assert!(!verify_pop(&pk_bytes, &[0u8; 96]));
+        // Correct length, non-zero garbage.
+        assert!(!verify_pop(&pk_bytes, &[0xABu8; 96]));
+    }
+
+    /// H-4: aggregate_verify_with_pop must reject keys that lack a valid PoP.
+    ///
+    /// A caller supplying unverified keys to aggregate_verify is exposed to
+    /// the rogue-key attack. aggregate_verify_with_pop closes this by
+    /// rejecting any key whose PoP does not verify before summing in G1.
+    #[test]
+    fn h4_aggregate_verify_with_pop_rejects_missing_pop() {
+        let g1 = G1Affine::generator();
+        let pk_bytes = g1.to_compressed().to_vec();
+        let bad_pop = vec![0xFFu8; 96]; // not a valid G2 point signature
+        let agg_sig = vec![0u8; 96];
+
+        let result = aggregate_verify_with_pop(
+            b"msg",
+            &agg_sig,
+            &[(&pk_bytes, &bad_pop)],
+            b"dst",
+        );
+        assert!(!result, "must reject aggregate when any PoP is invalid");
     }
 }

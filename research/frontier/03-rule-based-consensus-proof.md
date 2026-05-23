@@ -60,7 +60,7 @@ Five properties are stated in the spec; the first four are strict invariants and
 | `AnchorSanity` | `anchor_epoch ≤ epoch`, anchor map covers all objects | PASS |
 | `ReAnchorEquivalenceApprox` | Re-anchoring is approximately equivalent to lazy from the previous anchor | **APPROXIMATE — see §4** |
 
-If any of `QueryDeterminism`, `MonotoneDecay`, `BoundedByInitial`, or `AnchorSanity` fails under TLC, the integer `LazyEnergy` formula in `crates/evaporchain-state/src/evaporation.rs` has a bug. That would be the kind of bug an audit firm should find.
+If any of `QueryDeterminism`, `MonotoneDecay`, `BoundedByInitial`, or `AnchorSanity` fails under TLC, the integer `LazyEnergy` formula in `crates/evaporchain-types/src/lib.rs` has a bug. That would be the kind of bug an audit firm should find.
 
 ## 4. The integer-rounding gap (the subtlety the frontier doc hides)
 
@@ -94,7 +94,9 @@ For the protocol's intended use:
 - An object whose energy crosses zero between anchors will have its energy quantum-collapsed to 0 at the next anchor.
 - The cumulative rounding error after $\frac{T}{\text{AnchorInterval}}$ re-anchors over a long horizon $T$ is at most $\frac{T}{\text{AnchorInterval}}$ energy units.
 
-For real parameters (`InitialEnergy` ≈ $10^6$, `HalfLife` ≈ $10^4$, $T$ ≈ $10^7$), this is $10^3$ units of error against $10^6$ initial — a relative error below 0.1%.
+For real parameters (`InitialEnergy` ≈ $10^6$, `HalfLife` ≈ $10^4$, $T$ ≈ $10^7$), this is $10^3$ units of error against $10^6$ initial — a relative error below 0.1% **for these specific parameters**.
+
+**Caveat (Frontier #3, audit 2026-05-17):** this 0.1% figure is an arithmetic example, not a mechanized bound. `research/coq/LazyEagerEquivalence.v` proves only the one-sided bound `lazy ≤ eager`; it does not mechanize the magnitude. The above calculation is correct for the given concrete parameters but should not be cited as a general mechanized result. Mechanizing the magnitude bound is open work (see §5.1).
 
 ### 4.2 Why this matters for consensus
 
@@ -184,7 +186,7 @@ This spec models an honest cluster. An adversarial validator may propose a bad a
 
 For an external audit firm engaging with EvaporChain:
 
-1. Read the Rust implementation `crates/evaporchain-state/src/evaporation.rs` and confirm `energy_at_epoch` matches the formula in `LazyEnergy` (§3 of the .tla file).
+1. Read the Rust implementation `crates/evaporchain-types/src/lib.rs` and confirm `energy_at_epoch` matches the formula in `LazyEnergy` (§3 of the .tla file).
 2. Run TLC on `RuleBasedConsensus.cfg` and confirm all PASS-marked invariants pass.
 3. Read §4 of this document and confirm the bounded-error argument is acceptable for the protocol's parameters.
 4. Note that §5 (Coq mechanization, BFT composition, resurrection, adversarial cases) is open work — the audit should flag these as in-scope or out-of-scope per the engagement terms.
@@ -197,7 +199,7 @@ A mature audit would cover all four points and produce written findings on §4 s
 - `research/tla/RuleBasedConsensus.tla` — formal spec
 - `research/tla/RuleBasedConsensus.cfg` — TLC configuration
 - `research/tla/EvaporChainBFT.tla` — Tendermint BFT spec (anchor-agreement layer)
-- `crates/evaporchain-state/src/evaporation.rs` — Rust implementation of `LazyEnergy`
+- `crates/evaporchain-types/src/lib.rs` — Rust implementation of `LazyEnergy`
 - Lamport, L. *Specifying Systems*. Addison-Wesley, 2002. (TLA+ canonical reference)
 - Yu, Y. et al. *Model Checking TLA+ Specifications*. CHARME 1999.
 - Pnueli, A. *The Temporal Logic of Programs*. FOCS 1977. (Liveness foundations)

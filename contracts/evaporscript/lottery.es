@@ -1,9 +1,10 @@
 // Lottery — tenth pilot EvaporScript contract.
 //
-// Single-draw lottery with operator-supplied VRF proof. The operator
-// deploys, configures `prize` + `stake`, then opens enrolment. Any
-// address can enter exactly once. The operator submits the VRF proof
-// and the winning address; the winner pulls the prize.
+// Single-draw lottery with chain-VRF draw. The operator deploys,
+// configures `prize` + `stake`, then opens enrolment. Any address can
+// enter exactly once. The operator calls draw(); random_range(entry_count)
+// selects the winner from the chain's VRF beacon — the operator cannot
+// influence who wins, only when the draw fires.
 //
 // Doctrine moment: an unresolved draw at evaporation is void by
 // physics — entries refund themselves because the prize-funding
@@ -20,11 +21,14 @@ contract Lottery {
         sealed: bool = false
 
         entered: map[address -> u64]
+        // LOTTERY-1 (audit 2026-05-17): track entry order so `draw` can
+        // pick by random index. Maps have no ordered iteration in
+        // EvaporScript; parallel index→address map is the workaround.
+        entry_by_index: map[u64 -> address]
         entry_count: u64 = 0
 
         drawn: bool = false
         winner: address
-        vrf_blob: string = ""
         claimed: bool = false
 
         voided: bool = false
@@ -49,22 +53,25 @@ contract Lottery {
         require(self.drawn == false, "draw already happened")
         let already = self.entered[caller]
         require(already == 0, "already entered")
+        // LOTTERY-1: stamp the parallel index-keyed map BEFORE
+        // incrementing so `draw` can look up by the random index.
+        self.entry_by_index[self.entry_count] = caller
         self.entered[caller] = 1
         self.entry_count += 1
         emit("entry recorded")
     }
 
-    // Operator picks the winner with a VRF proof. Requires the winner
-    // to have entered. One-shot.
-    fn set_winner(winner_addr: address, proof: string) {
+    // LOTTERY-1 (audit 2026-05-17): chain-VRF draw. The operator
+    // triggers the draw, but random_range(n) derives the winning index
+    // deterministically from the chain's VRF beacon. The operator can
+    // only choose WHEN to draw, not WHO wins.
+    fn draw() {
         require(self.sealed == true, "lottery not configured")
-        require(caller == owner, "only operator can draw")
+        require(caller == owner, "only operator can trigger draw")
         require(self.drawn == false, "lottery already drawn")
         require(self.entry_count > 0, "no entries to draw from")
-        let present = self.entered[winner_addr]
-        require(present > 0, "winner did not enter")
-        self.winner = winner_addr
-        self.vrf_blob = proof
+        let winner_index = random_range(self.entry_count)
+        self.winner = self.entry_by_index[winner_index]
         self.drawn = true
         emit("winner drawn")
     }
@@ -90,10 +97,6 @@ contract Lottery {
 
     fn winner_of() -> address {
         return self.winner
-    }
-
-    fn vrf_proof() -> string {
-        return self.vrf_blob
     }
 
     fn is_drawn() -> bool {

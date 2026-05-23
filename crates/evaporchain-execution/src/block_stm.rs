@@ -2227,7 +2227,8 @@ impl ExecutionEngine for BlockStmExecutor {
             db,
             self.refresh_pool.total_accrued(),
         );
-        let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+        // CONS-A (audit 2026-05-17): governance-read for chain λ.
+        let lambda = crate::governance_chain_lambda(db);
         let epochs_elapsed = self
             .last_audit_epoch
             .map(|prev| block.epoch.saturating_sub(prev))

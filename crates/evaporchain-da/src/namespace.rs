@@ -88,7 +88,12 @@ impl NmtNode {
     }
 
     fn is_empty(&self) -> bool {
-        self.hash == [0u8; 32]
+        // Q10 (audit 2026-05-17): use inverted namespace range as the empty
+        // sentinel — NmtNode::empty() sets min=NAMESPACE_MAX/max=NAMESPACE_MIN
+        // which is structurally impossible for any real leaf or internal node.
+        // A hash==0 check is theoretically ambiguous (2^-256 BLAKE3 collision);
+        // the inverted range is a hard structural invariant, not a hash value.
+        self.min_namespace == NAMESPACE_MAX && self.max_namespace == NAMESPACE_MIN
     }
 
     fn internal(left: &NmtNode, right: &NmtNode) -> Self {

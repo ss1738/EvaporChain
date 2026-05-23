@@ -141,6 +141,10 @@ contract SDDC {
     // exceed ceiling either. The coordinator passes the agreed price in
     // `confirmed_price` (which is the current_price at the clearing epoch).
     fn try_clear(winner_addr: address, confirmed_price: u64) {
+        // SDDC-1 (audit 2026-05-17): gate on owner so an adversary cannot
+        // race the legitimate coordinator by submitting their own address
+        // as winner_addr. Owner = deployer = coordinator service account.
+        require(caller == owner, "only coordinator can clear")
         require(self.sealed == true, "lot not configured")
         require(self.phase == 0, "auction not open")
         require(self.bid_max_price[winner_addr] > 0, "winner has no bid on file")

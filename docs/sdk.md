@@ -245,6 +245,67 @@ const result = await chain.callContract(
 );
 ```
 
+> The methods above target the **template** contract path
+> (`/api/tx/deploy-contract`, `/api/tx/call-contract`,
+> `/api/contract/:id`). Every energy-decay dApp (SFSV, Dead Drop,
+> EvaporCash) instead uses the **EvaporScript** path below — a
+> *different* API surface. Don't mix them.
+
+## EvaporScript Contracts (`.es`)
+
+For `.es` contracts use the EvaporScript surface. Two non-obvious
+rules the node enforces (getting these wrong is the #1 integration
+bug): tx routes need a **session token**, and call args are an
+**externally-tagged** `Value` array — never bare JSON.
+
+### Authenticate
+
+```typescript
+// testnet auto-verifies the email; login stores the bearer on the client
+await chain.register("dev@example.com", "pw", "dev");
+await chain.login("dev@example.com", "pw");
+// or, if you already have a token:  chain.setAuthToken(tok)
+```
+
+### Encode arguments (externally-tagged `Value`)
+
+```typescript
+// u8 account index → 32-byte address; index 0 = genesis-funded faucet
+EvaporChain.esAddr(0);     // { Address: [0, …31 zeros] }
+EvaporChain.esU64(1000);   // { U64: 1000 }
+EvaporChain.esStr("hi");   // { Str: "hi" }
+EvaporChain.esBool(true);  // { Bool: true }
+// Bare positionals (e.g. ["0x..", 1000]) are REJECTED by the node.
+```
+
+### Deploy / call / read
+
+```typescript
+const dep = await chain.deployScript(
+  0,                 // deployer u8 (0 = faucet — clears the balance pre-check)
+  esSource,          // .es source string
+  120000,            // energy (the contract's own decaying budget)
+  6,                 // half_life
+);
+const cid = await chain.waitForScriptContractId(dep.tx_hash!); // polls /api/tx/:hash
+
+await chain.callScript(
+  0, cid, "set_terms",
+  [EvaporChain.esAddr(2), EvaporChain.esU64(0),
+   EvaporChain.esU64(200), EvaporChain.esU64(1000)],
+  await chain.getEpoch(),                  // epoch is REQUIRED
+);
+
+const s = await chain.getScript(cid);      // GET /api/script/:id (NOT /api/contract/:id)
+// s.state is the externally-tagged map: s.state.released => { Bool: true }
+const txs = await chain.getScripts();      // GET /api/scripts
+```
+
+`getScript` hits the **script** engine store. `/api/contract/:id` is
+the unrelated *template* store and 404s for an `.es` contract — a real
+bug this SDK avoids. Reference end-to-end flows:
+`scripts/deploy-{sfsv,dead-drop,evaporcash}.sh`.
+
 ## Faucet
 
 ```typescript

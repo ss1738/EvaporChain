@@ -117,7 +117,7 @@ mod tests {
     fn sync_to_height_no_op_when_at_or_below_target() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(5, [0u8; 32], [0xaa; 32], vs, &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis, 100, None);
+        let mut lc = LightClient::new(genesis, 100, "", None);
 
         let mock = MockTransport::new();
         // Target 3 < trusted 5 → no-op.
@@ -135,7 +135,7 @@ mod tests {
     fn sync_to_height_walks_sequential_chain() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis.clone(), 100, None);
+        let mut lc = LightClient::new(genesis.clone(), 100, "", None);
 
         // Build a 4-block chain: heights 2, 3, 4, 5. Each block's
         // parent_hash matches its predecessor's block_hash.
@@ -165,7 +165,7 @@ mod tests {
     fn sync_to_latest_walks_to_newest_header() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis.clone(), 100, None);
+        let mut lc = LightClient::new(genesis.clone(), 100, "", None);
 
         let mock = MockTransport::new();
         let mut prev_hash = genesis.block_hash;
@@ -192,7 +192,7 @@ mod tests {
     fn sync_partial_failure_preserves_trusted_tip_at_last_good() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis.clone(), 100, None);
+        let mut lc = LightClient::new(genesis.clone(), 100, "", None);
 
         let mock = MockTransport::new();
         let mut prev_hash = genesis.block_hash;
@@ -226,7 +226,7 @@ mod tests {
     fn sync_returns_transport_error_on_missing_header() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs, &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis, 100, None);
+        let mut lc = LightClient::new(genesis, 100, "", None);
 
         let mock = MockTransport::new(); // empty — no headers.
         let err = lc
@@ -262,7 +262,7 @@ mod tests {
         // Make sure the cert's block_hash matches the header's.
         header.commit_certificate.block_hash = header.block_hash;
 
-        let lc = LightClient::new(header, 100, None);
+        let lc = LightClient::new(header, 100, "", None);
 
         let mock = MockTransport::new();
         mock.insert_state_proof(key, proof);
@@ -277,7 +277,7 @@ mod tests {
     fn fetch_and_verify_state_missing_proof_surfaces_transport_error() {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis = make_signed_header(1, [0u8; 32], [0xaa; 32], vs, &kps, &[0, 1, 2]);
-        let lc = LightClient::new(genesis, 100, None);
+        let lc = LightClient::new(genesis, 100, "", None);
 
         let mock = MockTransport::new();
         let err = lc

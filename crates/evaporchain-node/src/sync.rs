@@ -335,9 +335,18 @@ pub async fn fetch_snapshot_blob_from_peer(
         .await
         .map_err(|e| format!("read body {}: {}", dl_url, e))?;
 
-    // 3. Verify integrity hash + double-check chain_id from the blob
-    //    itself (the metadata endpoint is informational only).
-    let file = evaporchain_state::SnapshotFile::from_bytes(&bytes)
+    // 3. Verify integrity hash + quorum certificate + double-check
+    //    chain_id from the blob itself (the metadata endpoint is
+    //    informational only).
+    //
+    // Audit NET-1 (2026-05-18): fast-sync is a TRUST-BOOTSTRAP hot path.
+    // The lenient `from_bytes` accepts any self-consistent blob (the
+    // integrity hash is attacker-recomputable), so a single malicious
+    // `--fast-sync` peer could seed a forged validator-set/balances.
+    // `from_bytes_strict` additionally requires a valid 2f+1 quorum
+    // certificate over the snapshot (T0.8 sub-task 2). `from_bytes`
+    // stays for tooling / pre-cert legacy snapshots only, NOT this path.
+    let file = evaporchain_state::SnapshotFile::from_bytes_strict(&bytes)
         .map_err(|e| format!("verify: {}", e))?;
     if file.chain_id != expected_chain_id {
         return Err(format!(

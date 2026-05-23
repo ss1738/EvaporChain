@@ -68,7 +68,7 @@ DecompressOnInsert(s, newLeaf) ==
     /\ UNCHANGED <<epoch>>
 ```
 
-This corresponds to `energy_verkle.rs:352-355` — the implementation's branch where inserting into a Compressed node creates a new internal node with the compressed node as one child:
+This corresponds to `energy_verkle.rs` (currently around line 386, in the `EnergyNode::Compressed` arm of the `insert_recursive` function) — the implementation's branch where inserting into a Compressed node creates a new internal node with the compressed node as one child:
 
 ```rust
 EnergyNode::Compressed(_) => {
@@ -77,6 +77,8 @@ EnergyNode::Compressed(_) => {
     // a new internal node with the compressed node as one child and ...
 }
 ```
+
+**Implementation note (Frontier #2, audit 2026-05-17):** there is no standalone `decompress()` function in `energy_verkle.rs`. Decompression is implicit within `insert_recursive`: when the insert path traverses a `Compressed` node, it wraps the node as one child of a new internal node. The Coq companion (`EnergyVerkleCompression.v`) correctly documents this: "there is no `decompress` in the Rust impl." The TLA `DecompressOnInsert` action models this insertion-triggered expansion. Prior text cited stale line numbers `352-355`; corrected to reflect the current codebase.
 
 The spec's claim: as long as `subtree_leaf_count` is preserved and the new leaf is a fresh active leaf, the post-decompression state is consistent. TLC verifies this invariant holds across all reachable schedules.
 

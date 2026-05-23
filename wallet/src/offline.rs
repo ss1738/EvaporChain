@@ -305,4 +305,44 @@ mod tests {
         assert_ne!(sig1.signature, sig2.signature);
         assert_ne!(sig1.public_key, sig2.public_key);
     }
+
+    // ─── Additional coverage tests (session 63) — Broadcaster error paths ────
+
+    fn dummy_signed(tx_type: &str, to: Option<String>, amount: Option<u64>) -> SignedTransaction {
+        SignedTransaction {
+            tx_type: tx_type.into(),
+            from: "0xaaa".into(),
+            to,
+            amount,
+            nonce: 0,
+            signature: "0xsig".into(),
+            public_key: "0xpk".into(),
+            extra: None,
+            signed_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_unsupported_type_returns_err() {
+        let rpc = RpcClient::new("http://localhost:3000").unwrap();
+        let signed = dummy_signed("Refresh", None, None);
+        let result = Broadcaster::broadcast(&rpc, &signed).await;
+        assert!(matches!(result, Err(OfflineError::UnsupportedType(_))));
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_transfer_missing_to_returns_err() {
+        let rpc = RpcClient::new("http://localhost:3000").unwrap();
+        let signed = dummy_signed("Transfer", None, Some(1000));
+        let result = Broadcaster::broadcast(&rpc, &signed).await;
+        assert!(matches!(result, Err(OfflineError::UnsupportedType(_))));
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_transfer_missing_amount_returns_err() {
+        let rpc = RpcClient::new("http://localhost:3000").unwrap();
+        let signed = dummy_signed("Transfer", Some("0xbbb".into()), None);
+        let result = Broadcaster::broadcast(&rpc, &signed).await;
+        assert!(matches!(result, Err(OfflineError::UnsupportedType(_))));
+    }
 }

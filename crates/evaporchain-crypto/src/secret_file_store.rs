@@ -26,6 +26,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use rand::RngCore;
+use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 4] = b"EVKV";
 const SALT_LEN: usize = 16;
@@ -49,9 +50,13 @@ pub fn is_evkv(bytes: &[u8]) -> bool {
 /// Derive a 32-byte symmetric key from a passphrase using Argon2id.
 /// Same parameters as `bls_key_store::kdf` so an operator who's tuned
 /// one envelope's cost has tuned both.
+///
+/// M-1 (audit 2026-05-17): bumped `t` from 3 to 4 to match the EVK1
+/// envelope's GEN-N5 closure. Same threat model (same-host adversary
+/// with disk image) → same OWASP-2026 KDF cost.
 fn kdf(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
     let params =
-        Params::new(64 * 1024, 3, 1, Some(32)).map_err(|e| format!("argon2 params: {e}"))?;
+        Params::new(64 * 1024, 4, 1, Some(32)).map_err(|e| format!("argon2 params: {e}"))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; 32];
     argon
@@ -79,9 +84,12 @@ pub fn encrypt_blob(plaintext: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, Stri
     rand::rngs::OsRng.fill_bytes(&mut salt);
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
 
-    let key = kdf(passphrase, &salt)?;
-    let cipher =
-        XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
+    // M-2 (audit 2026-05-17): wrap KDF-derived key in Zeroizing so the
+    // 32-byte material is overwritten on drop. Matches the CLI-KDF-001
+    // closure already applied to EVK1.
+    let key = Zeroizing::new(kdf(passphrase, &salt)?);
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+        .map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, plaintext)
@@ -137,9 +145,9 @@ pub fn decrypt_blob(blob: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, String> {
     }
     let ciphertext = &blob[cursor..];
 
-    let key = kdf(passphrase, salt)?;
-    let cipher =
-        XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
+    let key = Zeroizing::new(kdf(passphrase, salt)?);
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+        .map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)

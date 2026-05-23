@@ -548,10 +548,22 @@ fn constant_fold(opcodes: &mut Vec<Op>) -> bool {
 pub const MAX_FOLD_STRING_LEN: usize = 65_536;
 
 fn fold_binop(a: &Value, b: &Value, op: BinOp) -> Option<Value> {
+    // SCR-N2 (audit 2026-05-15): the compile-time folder previously
+    // used `saturating_*` for Add/Sub/Mul. The runtime VM uses
+    // `checked_*` and would `Err(arithmetic overflow)` on the same
+    // input. That semantic divergence let an adversarial author
+    // fold `u64::MAX + 1` to `u64::MAX` at compile time while the
+    // chain rejected it at runtime — an auditor comparing "what
+    // the source says" against "what the chain runs" got two
+    // different answers. Worse, conservation/auth predicates could
+    // be folded to constant `true`/`false`. Fix: refuse to fold on
+    // overflow / div-zero / mod-zero so the compiler emits an
+    // explicit Op::Add / Op::Sub / Op::Mul instead, letting the
+    // runtime do the checked arithmetic.
     match (a, b, op) {
-        (Value::U64(x), Value::U64(y), BinOp::Add) => Some(Value::U64(x.saturating_add(*y))),
-        (Value::U64(x), Value::U64(y), BinOp::Sub) => Some(Value::U64(x.saturating_sub(*y))),
-        (Value::U64(x), Value::U64(y), BinOp::Mul) => Some(Value::U64(x.saturating_mul(*y))),
+        (Value::U64(x), Value::U64(y), BinOp::Add) => x.checked_add(*y).map(Value::U64),
+        (Value::U64(x), Value::U64(y), BinOp::Sub) => x.checked_sub(*y).map(Value::U64),
+        (Value::U64(x), Value::U64(y), BinOp::Mul) => x.checked_mul(*y).map(Value::U64),
         (Value::U64(x), Value::U64(y), BinOp::Div) if *y != 0 => Some(Value::U64(x / y)),
         (Value::U64(x), Value::U64(y), BinOp::Mod) if *y != 0 => Some(Value::U64(x % y)),
         (Value::U64(x), Value::U64(y), BinOp::Eq) => Some(Value::Bool(x == y)),
@@ -647,6 +659,20 @@ fn optimize(opcodes: &mut Vec<Op>, methods: &HashMap<String, usize>) {
 
 /// Compile a parsed Contract AST into EvaporBytecode.
 pub fn compile(contract: &Contract) -> Result<EvaporBytecode, ScriptError> {
+    // NFT-1 (audit 2026-05-17): reject state fields that shadow builtin names.
+    // Bare `owner`/`caller`/`epoch`/`energy` always resolve to the execution-
+    // context builtin in EvaporScript; a state field with the same name would
+    // be silently inaccessible without the `self.` prefix, misleading authors.
+    const RESERVED: &[&str] = &["owner", "caller", "epoch", "energy"];
+    for field in &contract.state_fields {
+        if RESERVED.contains(&field.name.as_str()) {
+            return Err(ScriptError::Compile(format!(
+                "state field '{}' shadows a builtin reserved name; use a different name (e.g. 'holder' instead of 'owner')",
+                field.name
+            )));
+        }
+    }
+
     let mut compiler = Compiler::new();
     compiler.compile_contract(contract)?;
 

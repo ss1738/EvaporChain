@@ -13115,13 +13115,39 @@ impl DeployedToken {
     }
 
     /// Apply proportional decay to all holder balances.
+    ///
+    /// TOK-A (audit 2026-05-17): the previous implementation applied
+    /// `energy_at_epoch(bal, half_life, elapsed_since_last_tick)` to
+    /// each balance individually. Repeated calls compound per-balance
+    /// floor-rounding, so the sum of balances drifts below
+    /// `current_supply(epoch)` — silent supply destruction proportional
+    /// to `num_holders × num_ticks`. Fix: scale each balance by the
+    /// ratio new_total / old_total, keeping the sum within num_holders
+    /// units of `current_supply(epoch)` regardless of tick frequency.
     pub fn tick_decay(&mut self, epoch: u64) {
         if epoch <= self.last_decay_epoch {
             return;
         }
-        let elapsed = epoch - self.last_decay_epoch;
+        let old_supply = evaporchain_types::energy_at_epoch(
+            self.total_supply,
+            self.decay_half_life,
+            self.last_decay_epoch.saturating_sub(self.deployed_epoch),
+        );
+        let new_supply = evaporchain_types::energy_at_epoch(
+            self.total_supply,
+            self.decay_half_life,
+            epoch.saturating_sub(self.deployed_epoch),
+        );
         for bal in self.balances.values_mut() {
-            *bal = evaporchain_types::energy_at_epoch(*bal, self.decay_half_life, elapsed);
+            if old_supply == 0 {
+                *bal = 0;
+            } else {
+                // u128 intermediate to avoid overflow when bal * new_supply
+                // exceeds u64::MAX (possible when total_supply is large).
+                *bal = ((*bal as u128)
+                    .saturating_mul(new_supply as u128)
+                    / old_supply as u128) as u64;
+            }
         }
         self.last_decay_epoch = epoch;
     }

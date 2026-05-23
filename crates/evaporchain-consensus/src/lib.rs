@@ -1855,4 +1855,77 @@ mod tests {
         // Block produced — it has a producer_id.
         assert!(result.block.producer_id.is_some());
     }
+
+    // ─── validate_block_header error paths ──────────────────────────────
+
+    #[test]
+    fn test_apply_block_rejects_epoch_regression() {
+        let mut db = InMemoryStateDB::new();
+        let mut mc = MockConsensus::new_for_test(5);
+        // Produce block (epoch advances to 1)
+        let produced = mc.produce_block(&mut db).unwrap();
+        // Follower applies the block (now at epoch=1)
+        let mut follower_db = InMemoryStateDB::new();
+        let mut follower = MockConsensus::new_for_test(5);
+        follower.apply_block(&mut follower_db, &produced.block).unwrap();
+        assert_eq!(follower.epoch(), 1);
+        // Try to apply a block with epoch=0 (regression) — must fail
+        let mut stale = produced.block.clone();
+        stale.number = produced.block.number + 1;
+        stale.epoch = 0; // epoch < follower.epoch (1)
+        let r = follower.apply_block(&mut follower_db, &stale);
+        assert!(r.is_err(), "epoch regression must be rejected");
+    }
+
+    #[test]
+    fn test_apply_block_rejects_parent_hash_mismatch() {
+        let mut db = InMemoryStateDB::new();
+        let mut mc = MockConsensus::new_for_test(5);
+        let produced = mc.produce_block(&mut db).unwrap();
+        // Follower applies block 1
+        let mut follower_db = InMemoryStateDB::new();
+        let mut follower = MockConsensus::new_for_test(5);
+        follower.apply_block(&mut follower_db, &produced.block).unwrap();
+        // Build a block 2 with wrong parent hash
+        let mut block2 = produced.block.clone();
+        block2.number = produced.block.number + 1;
+        block2.epoch = produced.block.epoch + 1;
+        block2.parent_hash = [0xAAu8; 32]; // wrong parent hash
+        let r = follower.apply_block(&mut follower_db, &block2);
+        assert!(r.is_err(), "parent hash mismatch must be rejected");
+    }
+
+    #[test]
+    fn test_apply_block_rejects_future_timestamp() {
+        let mut db = InMemoryStateDB::new();
+        let mut mc = MockConsensus::new_for_test(5);
+        let produced = mc.produce_block(&mut db).unwrap();
+        let mut future_block = produced.block.clone();
+        // 2 hours in the future (well beyond the 30s tolerance)
+        future_block.timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() + 7200;
+        // Reuse as block 1 at a fresh follower (no previous blocks → block_number=0)
+        let mut follower = MockConsensus::new_for_test(5);
+        let mut follower_db = InMemoryStateDB::new();
+        let r = follower.apply_block(&mut follower_db, &future_block);
+        assert!(r.is_err(), "far-future timestamp must be rejected");
+    }
+
+    #[test]
+    fn test_rotating_consensus_new_production_constructor() {
+        // Cover the production (non-test) RotatingConsensus::new path.
+        let validators = vec![
+            make_validator(1, 1000),
+            make_validator(2, 1000),
+            make_validator(3, 1000),
+        ];
+        let vs = ValidatorSet::with_validators(validators);
+        let rc = RotatingConsensus::new(1, 5, vs);
+        assert_eq!(rc.my_id(), 1);
+        assert_eq!(rc.epoch(), 0);
+        assert_eq!(rc.block_number(), 0);
+        assert!(rc.leader_for_epoch(0).is_some());
+    }
 }
