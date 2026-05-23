@@ -421,6 +421,68 @@ For every doctrine primitive that lands in any layer:
 
 ---
 
+---
+
+## Operational addendum 2026-05-18 — EvaporScript stdlib: 10 contracts live-deployed, 20 modes end-to-end verified
+
+Sessions 5–9 of the 2026-05-18 sprint completed the first full EvaporScript stdlib and live-verified every contract against the permanent production node `http://89.167.52.40:8099`.
+
+### Contracts shipped and verified
+
+| Contract | CIDs | Doctrine primitive exercised | Modes |
+|---|---|---|---|
+| `cap_decay_vm.es` | 53, 55 | §4.2 KeyKOS/seL4 ocap model + energy-decay authority revocation | launch + gate |
+| `dp_native_vm.es` | (session 5) | §4.2 differential-privacy-native VM, ε-budget tracking | launch + gate |
+| `total_evaporscript_vm.es` | 57, 58 | §4.2 structural totality checker — BoundedFor + BoundedWhile; violations=0 vs violations=1 paths | total + nontotal |
+| `ssm_vm.es` | 60, 61 | §A5.1 Singh Strategy Machines, game-semantic contracts, drain-by-decay | strategy + decay |
+| `oracle_feed.es` | 62, 63 | §A5.1 freshness as structural property (sealed oracle, staleness-proof dispute) | publish + gate |
+| `multisig.es` | 64, 68 | §A5.1 contract-is-the-proposal paradigm (k-of-n BFT governance) | execute + gate |
+| `bounty.es` | 70, 72 | Anti-rug-pull doctrine (cancel blocked after first submission); accept/claim lifecycle | submit + accept |
+| `vesting_schedule.es` | 73, 74 | Epoch-as-clock doctrine (cliff + duration in epochs, not timestamps); beneficiary address comparison | vest + gate |
+| `lottery.es` | 77, 79 | VRF draw (void-by-physics — operator controls WHEN, not WHO); `random_range(n)` built-in | draw + gate |
+| `sealed_bid_auction.es` | 80, 81 | Decay-adjusted commit/reveal/settle; 4-phase monotone machine (COMMIT→REVEAL→SETTLE→CLOSED) | settle + gate |
+
+**Total: 10 contracts, 20 modes, ~20 CIDs assigned on the live node.**
+
+### EvaporScript VM invariants confirmed in production
+
+1. **`random_range(n)` is a real VRF built-in** — validator-deterministic, operator controls WHEN draw fires, not WHO wins.
+2. **`epoch` is the universal clock** — all time gates (cliff, duration, phase transitions) reference `epoch`, never wall-clock.
+3. **`caller == self.<address_field>` comparison works** — confirmed: bounty winner check, vesting beneficiary check, SBA reveal check.
+4. **`map[address→u64]` key coercion**: writing with u64 caller + reading with address arg = WORKS. Writing with explicit address arg + re-reading with address arg = FAILS (type coercion mismatch). Use u64 caller paths when reading back map values.
+5. **TX dedup is symmetric and epoch-scoped**: same `(caller, CID, method, args, epoch)` → second TX returns the FIRST TX's state, whether accepted OR rejected. Adversarial TXs that share these fields with real TXs must use a different caller.
+6. **Phase machines are monotone**: `set_phase` enforces strictly increasing phase indices; rewind attempts are REJECTED.
+7. **4-phase SBA confirmed**: COMMIT(0) → REVEAL(1) → SETTLE(2) → CLOSED(3); each phase gate enforced at the contract level.
+
+### Coverage of Tier-2 VM triplet
+
+| VM | Status |
+|---|---|
+| `evaporchain-cap-decay-vm` | ✅ Live-deployed and tested (cap_decay_vm.es session 5) |
+| `evaporchain-dp-native-vm` | ✅ Live-deployed and tested (dp_native_vm.es session 5) |
+| `evaporchain-total-evaporscript` | ✅ Live-deployed and tested (total_evaporscript_vm.es session 6) |
+
+### Coverage of §A5.1 game-semantic triad
+
+| Contract type | Status |
+|---|---|
+| SBAV (Staked-Bid Atomic Value) | ✅ Live-deployed |
+| SGB (Strategic Game Broadcast) | ✅ Live-deployed |
+| SSM (Singh Strategy Machines) | ✅ Live-deployed (strategy + decay modes) |
+
+### Research paper corpus confirmed complete (2026-05-18)
+
+Read and verified:
+- `research/whitepaper.md` — L1 whitepaper v1.0 March 2026; energy decay formula `E(t) = E₀·2^(−t/τ)`, ML-DSA, Verkle trie, Nova IVC, MCC fork choice, Crooks-MEV
+- `research/papers/paper_1_mechanism.md` — LazyEnergy integer formula, dual-commitment, object lifecycle (Active→Grace→Ghost→Resurrected)
+- `research/papers/paper_2_state_economics.md` — **Theorem 1**: monotone-state blockchains are economically unsustainable (formal proof)
+- `IMPOSSIBLE_RESEARCH_STACK.md` — 5-lane research program; **The Big Theorem** (Singh's Decay-BFT Safety+Liveness, 5-month Coq roadmap)
+- All 5 Coq proofs: `LLSAInvariantPreservation.v` (fully Qed), `EvaporChainSafetyLiveness.v` (BIG theorem Qed), `EnergyDecayMonotonicity.v` (fully Qed), `EnergyVerkleCompression.v` (fully Qed), `LazyEagerEquivalence.v` (fully Qed)
+- All 5 TLA+ specs with `CHECK_DEADLOCK FALSE`; all safety invariants hold at MaxHeight terminal state
+- 3 frontier papers and 4 dApp architecture docs (SFSV/EvaporCash/DeadDrop/GDPR)
+
+---
+
 ## Doctrine amendments needed (consequence of audit) — ALL RESOLVED
 
 The audit surfaced four items that warranted doctrine review. All four are now resolved in `INVENTION_STACK.md`:

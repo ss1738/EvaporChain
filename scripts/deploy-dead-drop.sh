@@ -45,7 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/mortal_message.es"
 
-NODE_URL="${NODE_URL:-http://127.0.0.1:9001}"
+NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
 DEPLOYER_U8="${DEPLOYER_U8:-0}"          # 0 = genesis-funded faucet account
 RECIPIENT_U8="${RECIPIENT_U8:-0}"        # read() allows caller==owner, so 0 is fine
@@ -59,7 +59,7 @@ POLL_TIMEOUT_SEC=240
 usage() { cat <<'EOF'
 deploy-dead-drop.sh [options]
   --dry-run            validate + print intended calls; no network
-  --node URL           node base URL (default http://127.0.0.1:9001)
+  --node URL           node base URL (default http://89.167.52.40:8099)
   --token TOKEN        auth bearer ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8        deployer/caller account index (default 0 = faucet)
   --recipient U8       set_payload recipient index (default 0)

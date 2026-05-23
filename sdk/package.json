@@ -2,8 +2,8 @@
   "name": "@evaporchain/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for EvaporChain — the blockchain that gets lighter over time",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "files": [
     "dist"
   ],

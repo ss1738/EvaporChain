@@ -41,6 +41,9 @@ pub struct LightClient {
     /// Trust period in seconds (mirrored from the BFT verifier
     /// for surface-level operator visibility).
     trust_period_secs: u64,
+
+    /// Chain ID bound into BLS vote messages.
+    chain_id: String,
 }
 
 impl LightClient {
@@ -53,9 +56,10 @@ impl LightClient {
     pub fn new(
         genesis_header: LightBlockHeader,
         current_time: u64,
+        chain_id: &str,
         vk_bytes: Option<Vec<u8>>,
     ) -> Self {
-        let bft = LightClientVerifier::new(genesis_header.clone(), current_time);
+        let bft = LightClientVerifier::new(genesis_header.clone(), current_time, chain_id);
         Self {
             bft,
             vk_bytes,
@@ -63,6 +67,7 @@ impl LightClient {
             // Default 2-week trust period from
             // evaporchain-consensus::light_client::TRUST_PERIOD_SECS.
             trust_period_secs: 14 * 24 * 3600,
+            chain_id: chain_id.to_string(),
         }
     }
 
@@ -73,18 +78,21 @@ impl LightClient {
         genesis_header: LightBlockHeader,
         current_time: u64,
         trust_period_secs: u64,
+        chain_id: &str,
         vk_bytes: Option<Vec<u8>>,
     ) -> Self {
         let bft = evaporchain_consensus_types::LightClientVerifier::with_trust_period(
             genesis_header.clone(),
             current_time,
             trust_period_secs,
+            chain_id,
         );
         Self {
             bft,
             vk_bytes,
             trusted_tip: genesis_header,
             trust_period_secs,
+            chain_id: chain_id.to_string(),
         }
     }
 
@@ -224,13 +232,13 @@ pub(crate) mod test_fixtures {
     use evaporchain_crypto::signatures::{BlsKeypair, BlsSignature, BlsVerifier};
     use evaporchain_types::CommitCertificate;
 
-    /// Canonical BLS vote message format — matches
-    /// `evaporchain-consensus::light_client::bls_vote_message`
-    /// (private fn there; inline copy here so SDK tests can build
-    /// matching certs without exposing a new public surface in
-    /// consensus).
-    pub fn bls_vote_message(height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(48);
+    /// Canonical BLS vote message format — matches tendermint.rs format exactly.
+    /// Format: u8(len(chain_id)) || chain_id || "precommit" || height_le8 || round_le4 || block_hash
+    pub fn bls_vote_message(chain_id: &str, height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
+        let chain_id_bytes = chain_id.as_bytes();
+        let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 9 + 8 + 4 + 32);
+        msg.push(chain_id_bytes.len() as u8);
+        msg.extend_from_slice(chain_id_bytes);
         msg.extend_from_slice(b"precommit");
         msg.extend_from_slice(&height.to_le_bytes());
         msg.extend_from_slice(&round.to_le_bytes());
@@ -264,7 +272,7 @@ pub(crate) mod test_fixtures {
         keypairs: &[BlsKeypair],
         signer_ids: &[u64],
     ) -> CommitCertificate {
-        let msg = bls_vote_message(height, round, &block_hash);
+        let msg = bls_vote_message("", height, round, &block_hash);
         let sigs: Vec<BlsSignature> = signer_ids
             .iter()
             .map(|&id| keypairs[id as usize].sign(&msg))
@@ -314,6 +322,7 @@ mod tests {
         let lc = LightClient::new(
             genesis,
             100,
+            "",
             None,
         );
         assert_eq!(lc.current_height(), 1);
@@ -328,6 +337,7 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
+            "",
             None,
         );
 
@@ -344,6 +354,7 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
+            "",
             None,
         );
         // Same-height block — must be rejected before any BFT check.
@@ -376,6 +387,7 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
+            "",
             None,
         );
         // Adjacent block (height 2) with an unrelated parent_hash —
@@ -394,6 +406,7 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
+            "",
             None,
         );
         // Only 1 of 4 signers — below quorum (need ≥3).
@@ -411,6 +424,7 @@ mod tests {
         let mut lc = LightClient::new(
             genesis,
             100,
+            "",
             None,
         );
         // Build a valid header, then corrupt the aggregate sig.
@@ -433,6 +447,7 @@ mod tests {
             genesis,
             100,
             1,
+            "",
             None,
         );
         // Wait past the trust period.
@@ -450,6 +465,7 @@ mod tests {
         let lc = LightClient::new(
             genesis,
             100,
+            "",
             None,
         );
         assert_eq!(lc.trust_period_secs(), 14 * 24 * 3600);
@@ -463,6 +479,7 @@ mod tests {
             genesis,
             100,
             3600,
+            "",
             None,
         );
         assert_eq!(lc.trust_period_secs(), 3600);
