@@ -39,6 +39,11 @@ impl CurveConfig for GrumpkinConfig {
 }
 
 impl SWCurveConfig for GrumpkinConfig {
+    /// ark-ec 0.6 added `ZeroFlag` for explicit point-at-infinity
+    /// tracking in hash-to-curve maps (WB / SWU). Grumpkin doesn't
+    /// use those code paths, so `()` is correct — matches the
+    /// standard SW-curve impls in ark-bn254/ark-bls12-381 0.6.
+    type ZeroFlag = ();
     /// A = 0.
     const COEFF_A: Bn254Fr = MontFp!("0");
     /// B = −17 mod p, p = BN254 Fr modulus

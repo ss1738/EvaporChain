@@ -37,7 +37,7 @@ use ark_bn254::Fq as Bn254Fq;
 use ark_ff::Field;
 use ark_relations::{
     lc,
-    r1cs::{
+    gr1cs::{
         ConstraintSynthesizer, ConstraintSystemRef, LinearCombination,
         SynthesisError, Variable,
     },
