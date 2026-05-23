@@ -43,7 +43,7 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::fields::FieldVar;
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 /// Off-circuit reference for one neptune **full** round:
 ///
@@ -902,8 +902,8 @@ mod tests {
     use super::*;
     use ark_bn254::Fr as Bn254Fr;
     use ark_r1cs_std::alloc::AllocVar;
-    use ark_r1cs_std::R1CSVar;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_r1cs_std::GR1CSVar;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// Hand-computed sanity: width-3 state, identity MDS, zero
     /// post-ARK → after one full round, state[i] = state[i]^5.
