@@ -86,6 +86,13 @@ pub struct Tokenomics {
     /// Half-life for block reward decay (in epochs).
     /// Reward halves every `reward_half_life` epochs.
     /// Set to 0 to disable reward decay (constant reward).
+    ///
+    /// **L0-C (audit 2026-05-17):** intentionally distinct from chain λ.
+    /// `chain_lambda` governs object-energy evaporation (state-bloat
+    /// reduction). `reward_half_life` is a Bitcoin-style issuance
+    /// schedule — the two parameters serve orthogonal goals and are tuned
+    /// independently. Doctrine "single-λ" applies to the energy-decay
+    /// primitive; issuance schedules are not in scope.
     pub reward_half_life: u64,
 
     /// Fraction of fees burned (0.0 = none burned, 1.0 = all burned).

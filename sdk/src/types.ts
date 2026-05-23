@@ -186,6 +186,77 @@ export interface ClientOptions {
   wsReconnectDelay?: number;
   /** Maximum WebSocket reconnect attempts (default: 10, 0 = infinite) */
   wsMaxReconnects?: number;
+  /**
+   * Session bearer token for authenticated tx routes (deploy-script /
+   * call-script require it). Mint one with `register()` + `login()`,
+   * or set it here / via `setAuthToken()`.
+   */
+  authToken?: string;
+}
+
+// ── EvaporScript (.es contracts) ──
+//
+// The EvaporScript path (deploy-script / call-script / get_script) is
+// distinct from the template-contract path (deploy-contract /
+// call-contract / get_contract). All energy-decay dApps (SFSV, Dead
+// Drop, EvaporCash, …) run here. Verified against the live node API
+// 2026-05-17 — see scripts/deploy-{sfsv,dead-drop,evaporcash}.sh.
+
+/**
+ * A runtime value passed to / read from an EvaporScript contract.
+ * Externally-tagged, exactly matching `evaporchain_script::Value`:
+ * a u64 is `{ U64: n }`, an address is `{ Address: [b0..b31] }`
+ * (32 bytes). Bare positionals are REJECTED by the node — use the
+ * `EvaporChain.es*` encoders, never raw JSON.
+ */
+export type ScriptValue =
+  | { U64: number }
+  | { Bool: boolean }
+  | { Str: string }
+  | { Address: number[] }
+  | { Null: null };
+
+/** A single entry from `GET /api/scripts`. */
+export interface ScriptInfo {
+  id: number;
+  name: string;
+  creator: string;
+  energy: number;
+  half_life: number;
+  created_epoch: number;
+  evaporated: boolean;
+  methods: string[];
+}
+
+/** Full `GET /api/script/:id` payload. `.state` is the tagged map. */
+export interface ScriptContract extends ScriptInfo {
+  last_refreshed: number;
+  abi: unknown;
+  state_schema: { name: string; type: string }[];
+  state: Record<string, ScriptValue>;
+  opcode_count: number;
+  admin: string | null;
+  upgrade_count: number;
+}
+
+/** `GET /api/tx/:hash` status. state ∈ pending|mempool|included|finalised|rejected. */
+export interface TxStatus {
+  hash: string;
+  state: string;
+  block_height?: number;
+  epoch?: number;
+  error?: string;
+  confirmations?: number;
+  contract_id?: number;
+  gas_used?: number;
+}
+
+/** `POST /api/auth/login` response. */
+export interface AuthSession {
+  success: boolean;
+  message: string;
+  token?: string;
+  user?: { id: number; email: string; display_name: string; email_verified: boolean };
 }
 
 // ── WebSocket Event Types ──

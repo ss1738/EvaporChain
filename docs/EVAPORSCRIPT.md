@@ -107,25 +107,45 @@ return expression
 
 ## Built-in Functions
 
+> **Verified 2026-05-17 against `crates/evaporchain-script/src/vm.rs`
+> builtin dispatch (the authoritative callable set).** The previous
+> table listed builtins that **do not exist** in the VM — a forker
+> using them hits a compile/runtime wall (the same class as the
+> EvaporCash design block). This table is now exactly the vm.rs
+> dispatch arms. Removed phantoms: `block_number`, `energy_of`,
+> `require_epoch_range`, `vrf_randomness` (only the domain-separated
+> form exists), and **`compute_decay`** — **there is NO in-script
+> decay primitive**: a contract reads its *own* live `energy` builtin
+> (engine-decayed) and nothing more; per-value decay arithmetic is not
+> available (this is exactly why EvaporCash uses the one-note=one-
+> contract model — see `research/EVAPORCASH_ARCHITECTURE.md`).
+> `call_external` is a host-side Rust trait (`vm.rs` /
+> `lib.rs::call_external`), **not** a source-level builtin — do not
+> rely on it from `.es`.
+
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `caller` | `address` | Address of the transaction sender |
 | `owner` | `address` | Address of the contract deployer |
 | `epoch` | `u64` | Current chain epoch |
-| `block_number` | `u64` | Current chain block number |
-| `energy` | `u64` | Contract's remaining energy |
-| `energy_of(obj_id)` | `u64` | Remaining energy of an arbitrary object |
+| `energy` | `u64` | The contract's *own* live remaining energy (engine-decayed). The only decay signal a contract gets — there is no `compute_decay`/per-value decay. |
 | `balance(addr)` | `u64` | On-chain EVAP balance of an address |
 | `transfer(to, amount)` | — | Transfer EVAP tokens to an address |
 | `emit(msg)` | — | Emit a freeform-string contract event |
 | `emit_event(name, [topics], data)` | — | Emit a structured event with topic + data |
 | `require(cond, msg)` | — | Revert execution if condition is false |
-| `require_epoch_range(min, max)` | — | Revert unless current epoch ∈ [min, max) |
-| `compute_decay(initial, half_life, elapsed)` | `u64` | Compute decayed energy from initial value |
-| `vrf_randomness()` | `u64` | Current block's VRF beacon value (truncated) |
+| `allen_relation(...)` | `u64` | Allen interval-algebra relation code |
+| `min(a, b)` | `u64` | Minimum of two values |
+| `max(a, b)` | `u64` | Maximum of two values |
+| `hash(...)` | `u64` | Hash of the arguments |
+| `len(x)` | `u64` | Length of a string/array/map |
+| `to_string(x)` | `string` | String rendering of a value |
 | `vrf_domain_randomness(dom)` | `u64` | Domain-separated VRF randomness |
-| `random_range(max)` | `u64` | Uniform `u64` in `[0, max)` derived from beacon |
-| `call_external(contract_id, method, args…)` | `value` | Cross-contract call (gas-bounded) |
+| `random_range(max)` | `u64` | Uniform `u64` in `[0, max)` derived from the beacon |
+
+Authoritative source: the `match` arms in
+`crates/evaporchain-script/src/vm.rs` (builtin dispatch). If it is not
+an arm there, it is not a callable builtin — do not document or use it.
 
 The compiler also surfaces array primitives as opcodes (`array_new`,
 `array_get`, `array_set`) and map primitives (`map_get`, `map_set`),

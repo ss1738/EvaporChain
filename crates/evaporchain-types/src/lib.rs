@@ -9,6 +9,27 @@ pub type ObjectId = [u8; 32];
 /// 32-byte account address.
 pub type AccountAddress = [u8; 32];
 
+/// Domain-separation tag for address derivation from a public key.
+///
+/// H-2 (audit 2026-05-17): pre-fix every site derived addresses via
+/// raw `blake3::hash(pk)` with no DST — the highest-leverage 32-byte
+/// target on the chain shared its preimage space with every other
+/// 1952-byte BLAKE3 call in the workspace. H4 applied DST hardening
+/// to MMR leaves/nodes; this closes the same class for addresses.
+/// Pre-mainnet hard-fork: every address on the chain changes once this
+/// helper is wired into the genesis path.
+pub const ADDRESS_DST: &[u8] = b"evaporchain:address:v1\0";
+
+/// Canonical address derivation. Use this everywhere a public key
+/// becomes an `AccountAddress`. See `ADDRESS_DST` for the audit
+/// rationale.
+pub fn address_from_pubkey(pk: &[u8]) -> AccountAddress {
+    let mut data = Vec::with_capacity(ADDRESS_DST.len() + pk.len());
+    data.extend_from_slice(ADDRESS_DST);
+    data.extend_from_slice(pk);
+    *blake3::hash(&data).as_bytes()
+}
+
 /// Epoch number (monotonically increasing).
 pub type Epoch = u64;
 
@@ -2053,6 +2074,16 @@ pub const BASE_INCLUSION_ENERGY: u64 = 1_000_000;
 /// Block-count half-life for tx inclusion priority. Tuned for 2-second
 /// block intervals — 4 blocks ≈ 8 seconds halving, comparable to the
 /// Ethereum 12-second slot window.
+///
+/// **L0-B (audit 2026-05-17):** intentionally distinct from chain λ.
+/// Chain λ (`GenesisConfig::chain_lambda`) governs object-energy decay
+/// over epoch timescales (thousands of blocks). This constant governs
+/// MEV-resistance tx-priority decay over block timescales (seconds) and
+/// is dimensioned for that specific problem — a single-λ design would
+/// either make MEV resistance too slow or object evaporation too fast.
+/// Doctrine "single-λ" refers to object-level energy; this constant is
+/// an approved MEV-domain boundary value (analogous to how Bitcoin has a
+/// separate block-reward halving schedule and a mempool fee market).
 pub const MEV_INCLUSION_HALF_LIFE_BLOCKS: u64 = 4;
 
 /// Mechanized monotonicity proof: `research/coq/EnergyDecayMonotonicity.v`
@@ -3473,7 +3504,7 @@ mod proptests {
         // Marker bytes 0x01..=0x06 must all appear.
         for marker in 1u8..=6 {
             assert!(
-                sb.iter().any(|&b| b == marker),
+                sb.contains(&marker),
                 "guard marker 0x{:02x} missing from signable_bytes",
                 marker
             );

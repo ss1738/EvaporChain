@@ -86,6 +86,13 @@ export interface TxResult {
 // Validator delegation (P0 #4) — wire shapes match
 // crates/evaporchain-node/src/api.rs::{DelegateRequest, UndelegateRequest,
 // ClaimDelegationRequest, ValidatorDelegationsResponse, DelegationView}.
+// Price feed entry — returned by GET /api/prices.
+export interface PriceData {
+  symbol: string;
+  price_usd: number;
+  change_24h_pct: number;
+}
+
 export interface DelegateRequest {
   delegator: string;
   validatorId: number;
@@ -804,6 +811,12 @@ class EvaporChainAPI {
   async getObjectsByOwner(address: string): Promise<StateObject[]> {
     const all = await this.getObjects();
     return all.filter(o => o.owner === address);
+  }
+
+  // ── Prices ──
+
+  async getPrices(): Promise<PriceData[]> {
+    return this.get("/api/prices");
   }
 
   // ── Transactions ──

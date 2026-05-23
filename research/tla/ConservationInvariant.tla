@@ -86,9 +86,18 @@ vars == << accounts, stake, refresh_pool, slashed_pool, epoch >>
 TotalEnergy == accounts + stake + refresh_pool + slashed_pool
 
 \* Lambda decay floor for a given prior total and elapsed epochs.
-\* Models energy_at_epoch(total, HALF_LIFE, elapsed):
-\*   retained = total * (1/2)^(elapsed / HALF_LIFE)
-\* We use integer arithmetic: retained = total >> (elapsed \div HALF_LIFE).
+\* ABSTRACTION NOTE (audit 2026-05-17): this formula is a COARSER abstraction
+\* of the Rust `energy_at_epoch`. Rust uses:
+\*   retained = (e0 >> halvings) - linear_decay(e0 >> halvings, rem, half_life)
+\* where rem = elapsed mod HALF_LIFE. The linear interpolation term makes the
+\* Rust floor TIGHTER (smaller) than this bit-shift-only model. This spec
+\* therefore over-approximates energy (a CONSERVATIVE direction for conservation
+\* proofs: if TotalEnergy >= DecayFloor holds under the looser model, it also
+\* holds under the tighter Rust formula since DecayFloor_Rust <= DecayFloor_TLA).
+\* The spec is sound for conservation checking; it would be WRONG for energy
+\* upper-bound proofs.
+\* Models energy_at_epoch(total, HALF_LIFE, elapsed) — halving term only:
+\*   retained_floor = total >> (elapsed \div HALF_LIFE).
 DecayFloor(prior_total, elapsed) ==
     LET halvings == elapsed \div HALF_LIFE
     IN  prior_total \div (2 ^ halvings)

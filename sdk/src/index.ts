@@ -67,4 +67,9 @@ export type {
   BellBeaconLatest,
   BellBeaconRequest,
   BellBeaconResponse,
+  ScriptValue,
+  ScriptInfo,
+  ScriptContract,
+  TxStatus,
+  AuthSession,
 } from "./types";

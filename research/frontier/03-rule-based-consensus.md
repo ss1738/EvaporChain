@@ -78,8 +78,10 @@ This holds for exponential decay. It also holds for any decay function that is:
 2. For any object O with energy E_O and half_life H_O at epoch E_0:
    - Eager evaluation at epoch E: apply decay at each intermediate epoch E_0+1, E_0+2, ..., E
    - Lazy evaluation at epoch E: compute E_O * 2^(-(E - E_0) / H_O) directly
-3. Since exponential decay is multiplicative: the product of per-epoch decay factors equals the direct computation.
-4. QED for exponential decay. Generalizes to any function where f(t1+t2) = f(t1) * f(t2).
+3. Since exponential decay is multiplicative: the product of per-epoch decay factors equals the direct computation **in continuous arithmetic**.
+4. QED for exponential decay in the continuous case. Generalizes to any function where f(t1+t2) = f(t1) * f(t2).
+
+**Implementation note (Frontier #3, audit 2026-05-17):** EvaporChain uses integer arithmetic with floor-division, so each step rounds down. Composition of two lazy applications therefore accumulates a bounded rounding error (at most 1 unit per composition step). This does NOT break consensus determinism — every validator applies the same function so they accumulate the same error — but it means lazy re-anchoring drifts slightly from a hypothetical genesis-evaluation. The magnitude (< 0.1% for typical parameters) is calculated in `03-rule-based-consensus-proof.md §4.1`. That figure is an arithmetic example for specific parameters, not a general mechanized bound; the Coq mechanization is open work.
 
 The key constraint: decay must be a **semigroup homomorphism** over time. Exponential decay satisfies this. Linear decay does not (but EvaporChain uses exponential).
 

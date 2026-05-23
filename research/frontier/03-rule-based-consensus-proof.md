@@ -60,7 +60,7 @@ Five properties are stated in the spec; the first four are strict invariants and
 | `AnchorSanity` | `anchor_epoch ≤ epoch`, anchor map covers all objects | PASS |
 | `ReAnchorEquivalenceApprox` | Re-anchoring is approximately equivalent to lazy from the previous anchor | **APPROXIMATE — see §4** |
 
-If any of `QueryDeterminism`, `MonotoneDecay`, `BoundedByInitial`, or `AnchorSanity` fails under TLC, the integer `LazyEnergy` formula in `crates/evaporchain-state/src/evaporation.rs` has a bug. That would be the kind of bug an audit firm should find.
+If any of `QueryDeterminism`, `MonotoneDecay`, `BoundedByInitial`, or `AnchorSanity` fails under TLC, the integer `LazyEnergy` formula in `crates/evaporchain-types/src/lib.rs` has a bug. That would be the kind of bug an audit firm should find.
 
 ## 4. The integer-rounding gap (the subtlety the frontier doc hides)
 
@@ -186,7 +186,7 @@ This spec models an honest cluster. An adversarial validator may propose a bad a
 
 For an external audit firm engaging with EvaporChain:
 
-1. Read the Rust implementation `crates/evaporchain-state/src/evaporation.rs` and confirm `energy_at_epoch` matches the formula in `LazyEnergy` (§3 of the .tla file).
+1. Read the Rust implementation `crates/evaporchain-types/src/lib.rs` and confirm `energy_at_epoch` matches the formula in `LazyEnergy` (§3 of the .tla file).
 2. Run TLC on `RuleBasedConsensus.cfg` and confirm all PASS-marked invariants pass.
 3. Read §4 of this document and confirm the bounded-error argument is acceptable for the protocol's parameters.
 4. Note that §5 (Coq mechanization, BFT composition, resurrection, adversarial cases) is open work — the audit should flag these as in-scope or out-of-scope per the engagement terms.
@@ -199,7 +199,7 @@ A mature audit would cover all four points and produce written findings on §4 s
 - `research/tla/RuleBasedConsensus.tla` — formal spec
 - `research/tla/RuleBasedConsensus.cfg` — TLC configuration
 - `research/tla/EvaporChainBFT.tla` — Tendermint BFT spec (anchor-agreement layer)
-- `crates/evaporchain-state/src/evaporation.rs` — Rust implementation of `LazyEnergy`
+- `crates/evaporchain-types/src/lib.rs` — Rust implementation of `LazyEnergy`
 - Lamport, L. *Specifying Systems*. Addison-Wesley, 2002. (TLA+ canonical reference)
 - Yu, Y. et al. *Model Checking TLA+ Specifications*. CHARME 1999.
 - Pnueli, A. *The Temporal Logic of Programs*. FOCS 1977. (Liveness foundations)

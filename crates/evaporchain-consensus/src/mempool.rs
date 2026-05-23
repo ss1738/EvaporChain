@@ -262,7 +262,7 @@ impl Mempool {
                     _ => tx.sender(),
                 };
                 if let Some(claimed) = binding_addr {
-                    let derived: [u8; 32] = *blake3::hash(pk).as_bytes();
+                    let derived: [u8; 32] = evaporchain_types::address_from_pubkey(pk);
                     if &derived != claimed {
                         self.rejected_count += 1;
                         return false;

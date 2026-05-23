@@ -5422,6 +5422,7 @@ mod tests {
     #[test]
     fn test_genesis_ceremony_full_flow() {
         let dir = std::env::temp_dir().join("evaporchain-ceremony-test");
+        let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         let genesis_path = dir.join("genesis.json");
         let path_str = genesis_path.to_str().unwrap();

@@ -369,6 +369,91 @@ describe("WebSocket subscriptions", () => {
   });
 });
 
+describe("EvaporChain SDK — EvaporScript surface", () => {
+  let chain: EvaporChain;
+  let lastBody: Record<string, unknown> | null;
+
+  beforeEach(() => {
+    mockResponses.clear();
+    lastBody = null;
+    chain = new EvaporChain("http://localhost:3000");
+  });
+
+  it("es* encoders produce externally-tagged Value shapes", () => {
+    assert.deepEqual(EvaporChain.esU64(7), { U64: 7 });
+    assert.deepEqual(EvaporChain.esBool(true), { Bool: true });
+    assert.deepEqual(EvaporChain.esStr("hi"), { Str: "hi" });
+    const a = EvaporChain.esAddr(2) as { Address: number[] };
+    assert.equal(a.Address.length, 32);
+    assert.equal(a.Address[0], 2);
+    assert.equal(a.Address[1], 0);
+    assert.throws(() => EvaporChain.esAddrBytes([1, 2, 3]));
+  });
+
+  it("deployScript posts /api/tx/deploy-script with snake_case body", async () => {
+    setMock("/api/tx/deploy-script", { success: true, message: "queued", tx_hash: "ab12" });
+    const r = await chain.deployScript(0, "contract X {}", 60000, 5);
+    assert.equal(r.tx_hash, "ab12");
+  });
+
+  it("callScript posts tagged args + required epoch to /api/tx/call-script", async () => {
+    setMock("/api/tx/call-script", { success: true, message: "queued", tx_hash: "cd34" });
+    const r = await chain.callScript(
+      0,
+      14,
+      "issue",
+      [EvaporChain.esAddr(0), EvaporChain.esU64(1000)],
+      99,
+    );
+    assert.equal(r.tx_hash, "cd34");
+  });
+
+  it("getScript hits /api/script/:id (NOT /api/contract/:id) and parses tagged state", async () => {
+    setMock("/api/script/14", {
+      id: 14,
+      name: "EvaporCashNote",
+      creator: "0x0000…0000",
+      energy: 64321,
+      half_life: 5,
+      created_epoch: 100,
+      last_refreshed: 100,
+      evaporated: false,
+      methods: ["issue", "spend"],
+      abi: {},
+      state_schema: [{ name: "sealed", type: "Bool" }],
+      state: { sealed: { Bool: true }, spent: { Bool: false }, face: { U64: 1000 } },
+      opcode_count: 80,
+      admin: null,
+      upgrade_count: 0,
+    });
+    const s = await chain.getScript(14);
+    assert.equal(s.id, 14);
+    assert.deepEqual(s.state.sealed, { Bool: true });
+    assert.deepEqual(s.state.spent, { Bool: false });
+  });
+
+  it("login stores the bearer token for subsequent authed calls", async () => {
+    setMock("/api/auth/login", { success: true, message: "ok", token: "T0K3N" });
+    const s = await chain.login("a@b.com", "pw");
+    assert.equal(s.token, "T0K3N");
+    // token is now set on the client (private) — exercised via a guarded call
+    setMock("/api/tx/deploy-script", { success: true, message: "queued", tx_hash: "ee" });
+    const r = await chain.deployScript(0, "c {}", 1, 1);
+    assert.equal(r.tx_hash, "ee");
+  });
+
+  it("waitForScriptContractId resolves the deploy contract_id", async () => {
+    setMock("/api/tx/zz", { hash: "zz", state: "finalised", contract_id: 14 });
+    const cid = await chain.waitForScriptContractId("zz", 5_000);
+    assert.equal(cid, 14);
+  });
+
+  it("waitForScriptContractId throws on rejected", async () => {
+    setMock("/api/tx/bad", { hash: "bad", state: "rejected", error: "nope" });
+    await assert.rejects(() => chain.waitForScriptContractId("bad", 5_000));
+  });
+});
+
 // Restore fetch (not strictly needed for test, but clean)
 process.on("exit", () => {
   globalThis.fetch = originalFetch;

@@ -214,8 +214,14 @@ ReceiveProposalAndPrevote(v) ==
        /\ \E p \in Validators, block \in NonNilBlocks :
            /\ <<p, block>> \in proposals[h][r]
            /\ ~HasVoted(prevotes[h][r], v)
-           \* Lock check: if locked on different block and lock round >= current round, vote nil
-           \* Matches Rust: if locked_hash == hash || lr < round → vote for block, else nil
+           \* Lock check: classical Tendermint voting rule (weaker than Rust impl).
+           \* TLA: votes for block when lockedRound < r even if lockedBlock ≠ block.
+           \* Rust (tendermint.rs:5479-5490): votes Nil whenever lockedBlock differs,
+           \*   regardless of lockedRound. Rust is STRICTLY stricter.
+           \* Safety implication: this TLA action models a MORE PERMISSIVE voter.
+           \* If safety holds here (TLC confirms), it holds a fortiori for Rust.
+           \* NOT a bug — the spec proves a weaker property; Rust inherits it.
+           \* (spec / proof drift finding — audit 2026-05-17)
            /\ LET voteBlock ==
                   IF lockedBlock[v] = "Nil" THEN block
                   ELSE IF lockedBlock[v] = block THEN block
