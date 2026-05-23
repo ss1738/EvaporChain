@@ -101,15 +101,23 @@ canary_function_contains() {
         FAIL=$((FAIL + 1))
         return
     fi
-    # Slice from `^async fn fn_name(` (or `^fn fn_name(`) to the next `^}`.
+    # Slice from `<indent>(pub )?(async )?fn fn_name(` to the next
+    # close-brace at the SAME indent. Supports both top-level fns
+    # (e.g. axum handlers) and indented impl-block methods.
     local body
     body="$(awk -v fn="$fn_name" '
-        BEGIN { in_fn = 0 }
-        /^(pub )?(async )?fn / {
-            if (in_fn) { exit 0 }
-            if ($0 ~ ("^(pub )?(async )?fn " fn "[ (]")) { in_fn = 1; print; next }
+        BEGIN { in_fn = 0; close_re = "" }
+        !in_fn {
+            if ($0 ~ ("^[[:space:]]*(pub )?(async )?fn " fn "[ (]")) {
+                in_fn = 1
+                indent = $0
+                sub("[^ \t].*", "", indent)
+                close_re = "^" indent "}"
+                print
+                next
+            }
         }
-        in_fn && /^}/ { print; exit 0 }
+        in_fn && $0 ~ close_re { print; exit 0 }
         in_fn { print }
     ' "$file")"
     if [[ -z "$body" ]]; then
