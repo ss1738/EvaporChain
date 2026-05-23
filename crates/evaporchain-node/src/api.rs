@@ -1405,6 +1405,40 @@ fn require_wallet_ownership(
     }
 }
 
+/// Audit A1 (calibrated 2026-05-18): strict, FAIL-CLOSED ownership gate
+/// for the *custodial* signing endpoints (`/api/wallet/sign-tx`,
+/// `/api/wallet/submit`) where the NODE holds the key and signs on the
+/// caller's behalf. Unlike the lenient `require_wallet_ownership`
+/// (used broadly incl. signature-auth/genesis paths, which legitimately
+/// return Ok on a missing owner row), custodial signing must require:
+///   1. an authenticated session (no `user_id` None bypass), and
+///   2. an explicit owner row whose owner == that session's user.
+/// No session, no user DB, or no owner row ⇒ DENY. This closes the two
+/// residual fail-OPEN edges (`require_tx_auth` Ok(None) when no auth
+/// configured; `require_wallet_ownership` Ok(()) on owner-row absent)
+/// specifically for the path where the node would sign with a held key.
+fn require_custodial_ownership(
+    state: &ApiState,
+    user_id: Option<i64>,
+    addr_hex: &str,
+) -> Result<(), String> {
+    let user_id =
+        user_id.ok_or("custodial signing requires an authenticated session")?;
+    let user_db = state
+        .user_db
+        .as_ref()
+        .ok_or("user database not configured — custodial signing unavailable")?;
+    match user_db.get_wallet_owner(addr_hex) {
+        Ok(Some(owner_id)) if owner_id == user_id => Ok(()),
+        Ok(Some(_)) => Err("address does not belong to your account".into()),
+        Ok(None) => {
+            Err("no owner record for this address — custodial signing denied"
+                .into())
+        }
+        Err(e) => Err(format!("unable to verify wallet ownership: {e}")),
+    }
+}
+
 /// Admin-endpoint auth gate. Fail-CLOSED if `EVAPORCHAIN_ADMIN_KEY`
 /// is unset or empty.
 ///
@@ -12866,11 +12900,14 @@ async fn wallet_sign_tx(
     };
     let from_full = account_full(&from_addr);
 
-    // A1: reject cross-account signing — caller must own the `from` wallet.
-    if let Err(Json(e)) = require_wallet_ownership(&state, user_id, &from_full) {
+    // A1 (hardened 2026-05-18): custodial signing — FAIL CLOSED. Requires
+    // an authenticated session AND an owner row matching it; no owner
+    // row / no session / no user-DB ⇒ deny (the node will not sign with
+    // a held key for an address it cannot positively attribute).
+    if let Err(msg) = require_custodial_ownership(&state, user_id, &from_full) {
         return Json(WalletSignTxResp {
             success: false,
-            message: e.message,
+            message: msg,
             signed_tx: None,
             tx_hash: None,
         });
@@ -12944,9 +12981,14 @@ async fn wallet_submit_tx(
     };
     let from_full = account_full(&from_addr);
 
-    // A1: reject cross-account submission — caller must own the `from` wallet.
-    if let Err(resp) = require_wallet_ownership(&state, user_id, &from_full) {
-        return resp;
+    // A1 (hardened 2026-05-18): custodial sign+submit — FAIL CLOSED
+    // (mandatory session + matching owner row; see require_custodial_ownership).
+    if let Err(msg) = require_custodial_ownership(&state, user_id, &from_full) {
+        return Json(TxResultResponse {
+            success: false,
+            message: msg,
+            tx_hash: None,
+        });
     }
 
     let mut tx: Transaction = match serde_json::from_value(req.tx) {
@@ -12990,6 +13032,21 @@ async fn faucet_html() -> impl IntoResponse {
 
 async fn docs_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/docs.html"))
+}
+
+async fn erasure_html() -> impl IntoResponse {
+    // Self-contained embedded copy is the production default. If an
+    // on-disk override exists at <data-dir or CWD>/erasure.html it is
+    // served instead — a tightly-scoped hot-reload hook so this
+    // actively-iterated public page can be updated without a full
+    // node rebuild. Any read error silently falls back to embedded.
+    const EMBEDDED: &str = include_str!("../dashboard/erasure.html");
+    let override_path =
+        std::env::var("EVAPORCHAIN_ERASURE_HTML").unwrap_or_else(|_| "erasure.html".to_string());
+    match tokio::fs::read_to_string(&override_path).await {
+        Ok(s) if s.contains("Proof-of-Erasure") => Html(s),
+        _ => Html(EMBEDDED.to_string()),
+    }
 }
 
 async fn manifest_json() -> impl IntoResponse {
@@ -18757,6 +18814,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/wallet", get(wallet_html))
         // Explorer (developer dashboard)
         .route("/explorer", get(dashboard_html))
+        // Public Proof-of-Erasure / GDPR-Erasure on-ramp
+        .route("/erasure", get(erasure_html))
         .route("/health", get(health))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))

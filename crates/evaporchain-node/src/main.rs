@@ -3609,7 +3609,7 @@ async fn main() -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        Arc::new(Mutex::new(LightClientVerifier::new(genesis_header, now)))
+        Arc::new(Mutex::new(LightClientVerifier::new(genesis_header, now, &args.chain_id)))
     };
 
     // ── API server ──
@@ -4389,6 +4389,7 @@ async fn main() -> Result<()> {
                                 to.saturating_sub(from)
                             );
                             let mut ssm = StateSyncManager::new(from);
+                            ssm.set_chain_id(&args.chain_id);
                             let actions = ssm.start();
                             for action in actions {
                                 if let SyncAction::Broadcast { message } = action {
@@ -5541,6 +5542,7 @@ async fn main() -> Result<()> {
                                     to.saturating_sub(from)
                                 );
                                 let mut ssm = StateSyncManager::new(from);
+                                ssm.set_chain_id(&args.chain_id);
                                 let actions = ssm.start();
                                 for action in actions {
                                     if let SyncAction::Broadcast { message } = action {
@@ -6489,6 +6491,7 @@ async fn main() -> Result<()> {
                                 node_tag, gap
                             );
                             let mut ssm = StateSyncManager::new(local_height);
+                            ssm.set_chain_id(&args.chain_id);
                             let actions = ssm.start();
                             for action in actions {
                                 if let SyncAction::Broadcast { message } = action {
@@ -7078,6 +7081,7 @@ async fn main() -> Result<()> {
                             tip_height.saturating_sub(local_height)
                         );
                         let mut ssm = StateSyncManager::new(local_height);
+                        ssm.set_chain_id(&args.chain_id);
                         let actions = ssm.start();
                         for action in actions {
                             if let SyncAction::Broadcast { message } = action {

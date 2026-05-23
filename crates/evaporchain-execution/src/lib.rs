@@ -1484,10 +1484,12 @@ impl SimpleExecutor {
         tx: &RefreshTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
+        // H-2 (audit 2026-05-17): use DST-aware address derivation so the
+        // derived sender matches the owner field set by execute_deploy/execute_call.
         let sender: Option<[u8; 32]> = tx
             .public_key
             .as_ref()
-            .map(|pk| *blake3::hash(pk).as_bytes());
+            .map(|pk| evaporchain_types::address_from_pubkey(pk));
 
         // Try refresh on active/grace object first
         if let Some(obj) = db.get_object(&tx.object_id) {
@@ -1635,7 +1637,10 @@ impl SimpleExecutor {
         let args: serde_json::Value = serde_json::from_str(&tx.args)
             .map_err(|e| ExecutionError::ContractError(format!("invalid args JSON: {e}")))?;
 
-        self.call_depth += 1;
+        // EXEC-1 (audit 2026-05-17): use saturating_add for symmetry with
+        // the saturating_sub decrements below. Overflow is impossible given
+        // the MAX_CALL_DEPTH guard above, but the asymmetry is a code smell.
+        self.call_depth = self.call_depth.saturating_add(1);
         let result = self
             .contract_engine
             .call(tx.contract_id, &tx.method, &args, &tx.caller, tx.epoch)
@@ -1835,7 +1840,8 @@ impl SimpleExecutor {
                 .map_err(|e| ExecutionError::ScriptError(format!("invalid args JSON: {e}")))?
         };
 
-        self.call_depth += 1;
+        // EXEC-1 (audit 2026-05-17): saturating_add for symmetry.
+        self.call_depth = self.call_depth.saturating_add(1);
 
         let result = self
             .script_engine
@@ -5363,9 +5369,9 @@ mod tests {
     fn test_signed_refresh_succeeds() {
         let mut db = InMemoryStateDB::new();
         let kp = MlDsaKeypair::generate();
-        // GHOST-B: refresh caller must match object owner — derive owner
-        // from the keypair so the test exercises the happy path.
-        let owner: [u8; 32] = *blake3::hash(&kp.public_key_bytes()).as_bytes();
+        // H-2 fix: owner must be derived via address_from_pubkey (DST-prefixed)
+        // so it matches what execute_refresh now computes from the public_key field.
+        let owner: [u8; 32] = evaporchain_types::address_from_pubkey(&kp.public_key_bytes());
         db.put_object(StateObject {
             id: obj_id(1),
             owner,
@@ -5382,17 +5388,57 @@ mod tests {
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
 
+        // Authenticated path: provide public_key so GHOST-B ownership check fires.
         let mut tx = Transaction::Refresh(RefreshTx {
             object_id: obj_id(1),
             energy_deposit: 500,
             signature: None,
-            public_key: None,
+            public_key: Some(kp.public_key_bytes()),
         });
         sign_tx(&mut tx, &kp);
 
         let block = make_block(1, 5, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
+    }
+
+    #[test]
+    fn test_refresh_wrong_owner_rejected() {
+        let mut db = InMemoryStateDB::new();
+        let owner_kp = MlDsaKeypair::generate();
+        let attacker_kp = MlDsaKeypair::generate();
+        let owner: [u8; 32] =
+            evaporchain_types::address_from_pubkey(&owner_kp.public_key_bytes());
+        db.put_object(StateObject {
+            id: obj_id(1),
+            owner,
+            energy: 100,
+            half_life: 10,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![],
+            decay_curve: None,
+            lad_mode: None,
+        });
+
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
+
+        // Attacker supplies their own public_key → derived address ≠ owner → REJECTED.
+        let mut tx = Transaction::Refresh(RefreshTx {
+            object_id: obj_id(1),
+            energy_deposit: 500,
+            signature: None,
+            public_key: Some(attacker_kp.public_key_bytes()),
+        });
+        sign_tx(&mut tx, &attacker_kp);
+
+        let block = make_block(1, 5, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        // GHOST-B: wrong owner → tx fails; executed count = 0.
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
     }
 
     // ═══════════════════ EvaporScript Integration Tests ═══════════════════

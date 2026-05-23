@@ -424,9 +424,9 @@ mod tests {
         assert_eq!(returned.paymaster_nonce, Some(0));
 
         // The same two checks `execute_user_op` runs at chain time:
-        // (a) blake3(pk) derives to paymaster_address.
+        // (a) address_from_pubkey(pk) derives to paymaster_address.
         let pk = returned.paymaster_public_key.as_deref().unwrap();
-        let derived: AccountAddress = *blake3::hash(pk).as_bytes();
+        let derived: AccountAddress = evaporchain_types::address_from_pubkey(pk);
         assert_eq!(derived, pm_addr);
         // (b) sig verifies under the canonical sponsorship payload.
         let payload = returned
@@ -534,7 +534,7 @@ mod tests {
 
         // Wallet-side keypair (the user).
         let user_kp = HybridKeypair::generate();
-        let sender: AccountAddress = *blake3::hash(&user_kp.public_key_bytes()).as_bytes();
+        let sender: AccountAddress = evaporchain_types::address_from_pubkey(&user_kp.public_key_bytes());
 
         // Wallet reads paymaster info.
         let info = client.info().await.unwrap();
@@ -584,7 +584,7 @@ mod tests {
         // Sender address must derive from user_pk (chain wires this in
         // verify_tx_signature via the Transaction's `from` field; for
         // UserOp the sender is committed in signable_bytes).
-        let derived_sender: AccountAddress = *blake3::hash(user_pk).as_bytes();
+        let derived_sender: AccountAddress = evaporchain_types::address_from_pubkey(user_pk);
         assert_eq!(derived_sender, sender);
 
         // 3b. Paymaster sig verifies against the sponsorship payload.
@@ -597,7 +597,7 @@ mod tests {
             HybridVerifier::verify(&pm_payload, pm_sig, pm_pk),
             "paymaster signature must verify under chain rules"
         );
-        let derived_pm: AccountAddress = *blake3::hash(pm_pk).as_bytes();
+        let derived_pm: AccountAddress = evaporchain_types::address_from_pubkey(pm_pk);
         assert_eq!(derived_pm, pm_addr);
 
         // Paymaster-stamped paymaster commitment matches what the user

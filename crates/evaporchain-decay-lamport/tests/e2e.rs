@@ -119,9 +119,6 @@ fn overflow_guard_saturates_never_panics() {
     // ZeroQuantum which quantum=1 does not trigger.
     let clock = LamportClock::new(1);
     let c = clock.tick(u64::MAX).expect("quantum=1 must not error");
-    // With quantum=1 and spend=u64::MAX the tick must saturate exactly at
-    // u64::MAX (advances = total / 1 = u64::MAX). Asserting `<= u64::MAX`
-    // would be tautological (the type itself enforces it) — clippy's
-    // `absurd_extreme_comparisons` is right.
+    // quantum=1: advances = u64::MAX / 1 = u64::MAX; saturating_add(0, u64::MAX) = u64::MAX.
     assert_eq!(c.current_tick, u64::MAX);
 }

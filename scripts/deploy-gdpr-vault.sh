@@ -31,7 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/gdpr_vault.es"
 
-NODE_URL="${NODE_URL:-http://127.0.0.1:9001}"
+NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
 DEPLOYER_U8="${DEPLOYER_U8:-0}"          # controller = owner; 0 = genesis faucet
 SUBJECT_U8="${SUBJECT_U8:-1}"            # data-subject ref (and withdraw_consent caller)
@@ -46,7 +46,7 @@ POLL_TIMEOUT_SEC=300
 usage() { cat <<'EOF'
 deploy-gdpr-vault.sh [options]
   --dry-run            validate + print intended calls; no network
-  --node URL           node base URL (default http://127.0.0.1:9001)
+  --node URL           node base URL (default http://89.167.52.40:8099)
   --token TOKEN        auth bearer ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8        controller/owner index (default 0 = faucet)
   --subject U8         data-subject ref + withdraw caller (default 1)
@@ -176,10 +176,17 @@ saw_active=0
 if $DRY_RUN; then
   log "[DRY-RUN] would assert sealed=true, lawful_basis=$BASIS, evaporated=false"
 else
-  ST=$(curl_json GET "/api/script/$CID")
-  SEALED=$(printf '%s' "$ST" | untag sealed)
-  BASIS_ON=$(printf '%s' "$ST" | jq -r '.state.lawful_basis | if type=="object" then .U64 else . end')
-  EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
+  # poll_tx returns on `included`; executed state can lag a beat on a
+  # busy shared node — settle-retry instead of a single-shot read.
+  SEALED= BASIS_ON= EVAP=
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    ST=$(curl_json GET "/api/script/$CID")
+    SEALED=$(printf '%s' "$ST" | untag sealed)
+    BASIS_ON=$(printf '%s' "$ST" | jq -r '.state.lawful_basis | if type=="object" then .U64 else . end')
+    EVAP=$(printf '%s' "$ST" | jq -r '.evaporated // false')
+    [[ "$SEALED" == "true" && "$BASIS_ON" == "$BASIS" && "$EVAP" == "false" ]] && break
+    sleep 2
+  done
   if [[ "$SEALED" == "true" && "$BASIS_ON" == "$BASIS" && "$EVAP" == "false" ]]; then
     saw_active=1
     log "CONFIRMED: sealed=true lawful_basis=$BASIS_ON evaporated=false (retention clock running)"
@@ -208,8 +215,13 @@ if [[ "$MODE" == "withdraw" ]]; then
     '{caller:$c, contract_id:$cid, method:"withdraw_consent", args:[], epoch:$ep}')
   WH=$(submit_tx "/api/tx/call-script" "$WBODY" withdraw 6)
   poll_tx "$WH" withdraw 6 >/dev/null
-  ST=$(curl_json GET "/api/script/$CID")
-  FORCED=$(printf '%s' "$ST" | untag expiry_forced)
+  FORCED=
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    ST=$(curl_json GET "/api/script/$CID")
+    FORCED=$(printf '%s' "$ST" | untag expiry_forced)
+    [[ "$FORCED" == "true" ]] && break
+    sleep 2
+  done
   log "Step 5/5 - verdict (withdraw)"
   (( saw_active == 1 )) || die "non-vacuity: never confirmed an active vault" 5
   [[ "$FORCED" == "true" ]] || die "withdraw_consent did not set expiry_forced (got '$FORCED') — early trigger unproven" 6

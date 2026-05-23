@@ -247,4 +247,22 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"tx_type\":\"Transfer\""));
     }
+
+    // ─── Additional coverage tests (session 62) ───────────────────────────────
+
+    #[test]
+    fn test_print_json_does_not_panic() {
+        let resp = SuccessResponse::ok("hello");
+        print_json(&resp);
+    }
+
+    #[test]
+    fn test_print_json_error_does_not_panic() {
+        print_json_error("something went wrong");
+    }
+
+    #[test]
+    fn test_print_json_error_with_special_chars() {
+        print_json_error("error: invalid \"key\" value");
+    }
 }
