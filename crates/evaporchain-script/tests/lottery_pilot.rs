@@ -10,8 +10,9 @@
 //!   1. set_event one-shot + operator-only; prize > 0, stake > 0.
 //!   2. enter open + one-per-address; bumps entry_count.
 //!   3. enter post-draw rejects.
-//!   4. set_winner operator-only, requires winner has entered,
-//!      one-shot, blocks post-draw.
+//!   4. draw() operator-only; uses chain-VRF random_range; one-shot.
+//!      LOTTERY-1 (audit 2026-05-17): operator triggers draw but cannot
+//!      influence outcome — random_range derives winner from VRF beacon.
 //!   5. claim_prize winner-only + post-draw + once.
 //!   6. on_evaporate without draw flips voided=true; with draw
 //!      already recorded, voided stays false.
@@ -79,12 +80,11 @@ fn parses_and_compiles_cleanly() {
     let public = [
         "set_event",
         "enter",
-        "set_winner",
+        "draw",
         "claim_prize",
         "entries_total",
         "is_entered",
         "winner_of",
-        "vrf_proof",
         "is_drawn",
         "is_voided",
         "prize_size",
@@ -170,7 +170,6 @@ fn enter_records_and_blocks_double_enter() {
     .unwrap();
     assert_eq!(total.return_value, Value::U64(2));
 
-    // Alice tries to enter again — must reject.
     let err = EvaporVM::execute(
         &bc,
         "enter",
@@ -185,12 +184,13 @@ fn enter_records_and_blocks_double_enter() {
     );
 }
 
+// LOTTERY-1 adversarial: draw() is operator-only; a participant cannot
+// steer the VRF by choosing when to trigger it.
 #[test]
-fn set_winner_must_have_entered() {
+fn lottery1_draw_is_operator_only() {
     let bc = compile_pilot();
     let operator = [0xAAu8; 32];
     let alice = [0xB1u8; 32];
-    let bob = [0xB2u8; 32];
     let configured = configure(&bc, operator, 1000, 10);
     let after_a = EvaporVM::execute(
         &bc,
@@ -200,17 +200,16 @@ fn set_winner_must_have_entered() {
         &ctx(alice, operator, 200, 10_000),
     )
     .unwrap();
-    // Operator picks Bob who never entered.
     let err = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![Value::Address(bob), Value::Str("vrf-proof".to_string())],
+        "draw",
+        vec![],
         after_a.state_changes,
-        &ctx(operator, operator, 300, 10_000),
+        &ctx(alice, operator, 300, 10_000),
     )
-    .expect_err("winner must have entered");
+    .expect_err("non-operator draw must reject");
     assert!(
-        format!("{err:?}").contains("did not enter"),
+        format!("{err:?}").contains("only operator"),
         "wrong revert: {err:?}"
     );
 }
@@ -229,13 +228,11 @@ fn full_draw_and_claim_round_trip() {
         &ctx(alice, operator, 200, 10_000),
     )
     .unwrap();
+    // Only alice is entered (index 0); random_range(1) == 0 deterministically.
     let drawn = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![
-            Value::Address(alice),
-            Value::Str("vrf-proof-blob".to_string()),
-        ],
+        "draw",
+        vec![],
         entered.state_changes,
         &ctx(operator, operator, 300, 10_000),
     )
@@ -260,7 +257,6 @@ fn full_draw_and_claim_round_trip() {
     .unwrap();
     assert_eq!(winner.return_value, Value::Address(alice));
 
-    // Alice claims.
     let claimed = EvaporVM::execute(
         &bc,
         "claim_prize",
@@ -271,7 +267,6 @@ fn full_draw_and_claim_round_trip() {
     .unwrap();
     assert_eq!(claimed.return_value, Value::U64(5000));
 
-    // Double claim must reject.
     let err = EvaporVM::execute(
         &bc,
         "claim_prize",
@@ -311,19 +306,32 @@ fn non_winner_claim_rejects() {
     .unwrap();
     let drawn = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![Value::Address(alice), Value::Str("p".to_string())],
+        "draw",
+        vec![],
         s.state_changes,
         &ctx(operator, operator, 300, 10_000),
     )
     .unwrap();
-    // Bob (non-winner) claims.
+    // Determine actual winner; test the other address is rejected.
+    let winner_result = EvaporVM::execute(
+        &bc,
+        "winner_of",
+        vec![],
+        drawn.state_changes.clone(),
+        &ctx(operator, operator, 301, 10_000),
+    )
+    .unwrap();
+    let non_winner = if winner_result.return_value == Value::Address(alice) {
+        bob
+    } else {
+        alice
+    };
     let err = EvaporVM::execute(
         &bc,
         "claim_prize",
         vec![],
         drawn.state_changes,
-        &ctx(bob, operator, 310, 10_000),
+        &ctx(non_winner, operator, 310, 10_000),
     )
     .expect_err("non-winner claim must reject");
     assert!(
@@ -347,10 +355,11 @@ fn enter_post_draw_rejects() {
         &ctx(alice, operator, 200, 10_000),
     )
     .unwrap();
+    // alice at index 0; random_range(1) == 0 → alice wins.
     let drawn = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![Value::Address(alice), Value::Str("p".to_string())],
+        "draw",
+        vec![],
         entered.state_changes,
         &ctx(operator, operator, 300, 10_000),
     )
@@ -370,7 +379,7 @@ fn enter_post_draw_rejects() {
 }
 
 #[test]
-fn double_set_winner_rejects() {
+fn double_draw_rejects() {
     let bc = compile_pilot();
     let operator = [0xAAu8; 32];
     let alice = [0xB1u8; 32];
@@ -394,16 +403,16 @@ fn double_set_winner_rejects() {
     .unwrap();
     let drawn = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![Value::Address(alice), Value::Str("p1".to_string())],
+        "draw",
+        vec![],
         s.state_changes,
         &ctx(operator, operator, 300, 10_000),
     )
     .unwrap();
     let err = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![Value::Address(bob), Value::Str("p2".to_string())],
+        "draw",
+        vec![],
         drawn.state_changes,
         &ctx(operator, operator, 310, 10_000),
     )
@@ -415,15 +424,14 @@ fn double_set_winner_rejects() {
 }
 
 #[test]
-fn set_winner_with_no_entries_rejects() {
+fn draw_with_no_entries_rejects() {
     let bc = compile_pilot();
     let operator = [0xAAu8; 32];
-    let alice = [0xB1u8; 32];
     let configured = configure(&bc, operator, 1000, 10);
     let err = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![Value::Address(alice), Value::Str("p".to_string())],
+        "draw",
+        vec![],
         configured,
         &ctx(operator, operator, 300, 10_000),
     )
@@ -479,10 +487,11 @@ fn on_evaporate_after_draw_does_not_void() {
         &ctx(alice, operator, 200, 10_000),
     )
     .unwrap();
+    // alice at index 0; random_range(1) == 0 → alice wins.
     let drawn = EvaporVM::execute(
         &bc,
-        "set_winner",
-        vec![Value::Address(alice), Value::Str("p".to_string())],
+        "draw",
+        vec![],
         entered.state_changes,
         &ctx(operator, operator, 300, 10_000),
     )

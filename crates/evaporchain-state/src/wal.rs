@@ -21,6 +21,12 @@ const MARKER_BEGIN: u8 = 0x00;
 const MARKER_COMMIT: u8 = 0x01;
 const HEADER_SIZE: usize = 8; // magic
 
+/// WAL-1 (audit 2026-05-17): This WAL module is **unwired** — RocksDB WAL is
+/// the production crash-recovery mechanism (AUDIT-2026-05-15 S3). If this
+/// module is ever wired in, the `[u8; 20]` address fields below will
+/// silently truncate the chain's 32-byte AccountAddress / ObjectId, causing
+/// silent state corruption. Change all `[u8; 20]` to `[u8; 32]` before
+/// wiring. Left as-is to avoid churn while the module is dead code.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalMutation {
     PutAccount { address: [u8; 20], data: Vec<u8> },

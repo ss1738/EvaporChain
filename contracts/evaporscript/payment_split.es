@@ -64,7 +64,13 @@ contract PaymentSplit {
         require(self.sealed == true, "payment split not yet sealed")
         let bps = self.shares[caller]
         require(bps > 0, "not a recipient")
-        let entitlement = self.total_deposited * bps / 10000
+        // SPLIT-1 (audit 2026-05-17): division-first to avoid u64 overflow at
+        // total_deposited > u64::MAX/bps (~1.8e15 for bps=10000). Pre-fix
+        // `total * bps / 10000` overflowed u64 silently, bricking all claims.
+        // Rounding error: at most 1 unit per recipient (lost to integer division).
+        let whole = self.total_deposited / 10000
+        let rem   = self.total_deposited % 10000
+        let entitlement = whole * bps + rem * bps / 10000
         let already = self.claimed[caller]
         require(entitlement > already, "nothing to claim")
         let delta = entitlement - already
@@ -76,13 +82,17 @@ contract PaymentSplit {
     // Gross cumulative entitlement for `who`. Non-recipients yield 0.
     fn entitlement_of(who: address) -> u64 {
         let bps = self.shares[who]
-        return self.total_deposited * bps / 10000
+        let whole = self.total_deposited / 10000
+        let rem   = self.total_deposited % 10000
+        return whole * bps + rem * bps / 10000
     }
 
     // Vested-but-not-yet-claimed for `who`. Non-recipients yield 0.
     fn pending_of(who: address) -> u64 {
         let bps = self.shares[who]
-        let entitlement = self.total_deposited * bps / 10000
+        let whole = self.total_deposited / 10000
+        let rem   = self.total_deposited % 10000
+        let entitlement = whole * bps + rem * bps / 10000
         let already = self.claimed[who]
         if entitlement <= already {
             return 0

@@ -212,6 +212,17 @@ fn mds_multiply(state: &mut [Fp; WIDTH], mds: &[[Fp; WIDTH]; WIDTH]) {
 
 /// Compute a Poseidon hash of arbitrary-length input.
 ///
+/// **M-4 (audit 2026-05-17) — ZK-CIRCUIT-ONLY.** This sponge is intentionally
+/// unparameterised (no IV, no capacity tag, no DST, no length prefix) because
+/// `evaporchain-proving` must produce the **exact same field-element sequence**
+/// as the in-circuit Poseidon gadget. Adding IV/DST/padding here would silently
+/// invalidate every existing ZK commitment and nullifier stored on-chain.
+///
+/// **Do NOT use this function for non-ZK hashing** — use `blake3_hash` instead.
+/// The function is named `poseidon_hash` (not `poseidon_hash_experimental`) to
+/// preserve the public API consumed by the proving crate; callers outside
+/// `evaporchain-proving` and `evaporchain-nova-bridge` should be reviewed.
+///
 /// Uses sponge construction: absorb input as field elements (31 bytes each),
 /// then squeeze one element as the digest.
 pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {

@@ -477,10 +477,10 @@ mod tests {
                 let _ = n.inherit();
                 current_holder = next;
             }
-            let expected = if hops as u32 > init_pow {
+            let expected = if hops > init_pow {
                 0
             } else {
-                1u64 << (init_pow - hops as u32)
+                1u64 << (init_pow - hops)
             };
             proptest::prop_assert_eq!(n.energy, expected);
         }

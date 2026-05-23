@@ -137,6 +137,7 @@ mod tests {
         crate::LightClient::new(
             header,
             1_700_000_000,
+            "",
             None,
         )
     }
@@ -183,6 +184,7 @@ mod tests {
         let lc = crate::LightClient::new(
             header,
             1_700_000_000,
+            "",
             None,
         );
 

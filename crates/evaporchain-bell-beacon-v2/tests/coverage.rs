@@ -214,7 +214,7 @@ fn verify_gap_milli_mismatch_when_tampered() {
     let cert = issue();
     let mut tampered = cert;
     // Tamper gap only — s_honest and s_cartel still match, but gap doesn't.
-    tampered.gap_milli = tampered.gap_milli + 1;
+    tampered.gap_milli += 1;
     let err = verify_certificate(
         CHAIN,
         &balanced_window(),

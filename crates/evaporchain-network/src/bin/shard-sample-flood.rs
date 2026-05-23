@@ -247,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        if sent % 1000 == 0 && sent > 0 {
+        if sent.is_multiple_of(1000) && sent > 0 {
             let elapsed = start.elapsed().as_secs_f64();
             info!(
                 sent,

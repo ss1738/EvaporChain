@@ -47,6 +47,27 @@ use crate::verifier_circuit::NovaVerifierCircuit;
 ///
 /// **Test/dev only.** See module docstring for the production
 /// trusted-setup story.
+///
+/// # SECURITY (audit B-2, 2026-05-18)
+///
+/// `circuit_specific_setup` uses arkworks's *insecure* test
+/// randomness (the "toxic waste" is recoverable), and the circuit it
+/// sizes (`dummy()`) currently emits **no soundness-binding
+/// constraints** (audit B-1: Sections 2/3 are `Option` and absent in
+/// `dummy()`). Keys from this function are therefore forgeable and
+/// MUST NOT reach mainnet. Production requires (a) a fixed-shape,
+/// section-bearing setup circuit and (b) an MPC ceremony — tracked as
+/// the audit's #1 mainnet-blocker. This `#[deprecated]` marker makes
+/// every call site emit a build warning so the insecure path cannot
+/// be shipped silently; it is intentionally not removed until the
+/// ceremony-derived, sound-circuit replacement lands.
+#[deprecated(
+    note = "INSECURE test/dev trusted setup (audit B-1/B-2): recoverable \
+            toxic waste + a constraint-vacuous circuit — forgeable keys. \
+            MUST NOT reach mainnet. Replace with the fixed-shape \
+            section-bearing circuit + MPC ceremony (audit #1 \
+            mainnet-blocker) before any production use."
+)]
 pub fn setup<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::r1cs::SynthesisError> {

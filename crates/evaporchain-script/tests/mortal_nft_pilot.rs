@@ -3,14 +3,16 @@
 //!
 //! Pins the documented invariants:
 //!   1. `set_metadata` is one-shot and minter-only (caller == builtin owner).
-//!   2. After mint, the on-chain `self.owner` is the recipient, which can
+//!   2. After mint, the on-chain `self.holder` is the recipient, which can
 //!      differ from the minter (mint-to-someone-else flow).
-//!   3. `transfer` is gated on `caller == self.owner` — the current holder,
+//!   3. `transfer` is gated on `caller == self.holder` — the current holder,
 //!      not the original minter. After transfer, the new holder is the
 //!      only one who can transfer again.
 //!   4. `transfer_count` and `last_transfer_epoch` track chain-of-custody.
 //!   5. Operations gated on `sealed == true` revert before mint.
 //!   6. Lifecycle hooks emit cleanly.
+//!   7. NFT-1 (audit 2026-05-17): compiler rejects state fields with
+//!      builtin-reserved names (owner, caller, epoch, energy).
 
 use std::collections::HashMap;
 
@@ -329,6 +331,27 @@ fn lifecycle_hooks_execute_cleanly() {
         assert!(
             !r.events.is_empty(),
             "hook {hook} must emit at least one event"
+        );
+    }
+}
+
+// NFT-1 adversarial: the compiler must reject state fields named with
+// builtin-reserved words. Each such field would be silently inaccessible
+// without `self.` but bare access would return the builtin value instead.
+#[test]
+fn nft1_reserved_state_field_names_rejected_at_compile_time() {
+    for reserved in &["owner", "caller", "epoch", "energy"] {
+        let src = format!(
+            "contract Bad {{ state {{ {reserved}: u64 = 0 }} fn foo() {{}} }}"
+        );
+        let ast = parser::parse(&src)
+            .unwrap_or_else(|e| panic!("parse must succeed for reserved-name test: {e:?}"));
+        let err = compiler::compile(&ast)
+            .expect_err(&format!("state field '{reserved}' must be rejected at compile time"));
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("reserved"),
+            "expected 'reserved' in compile error for field '{reserved}', got: {msg}"
         );
     }
 }

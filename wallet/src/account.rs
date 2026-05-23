@@ -464,4 +464,117 @@ mod tests {
         mgr.increment_nonce("alice");
         assert_eq!(mgr.cached_nonce("alice"), Some(6));
     }
+
+    // ─── Additional coverage tests (session 63) ───────────────────────────────
+
+    #[test]
+    fn test_cached_account_state_age_secs() {
+        let state = CachedAccountState {
+            balance: 1000,
+            nonce: 5,
+            last_fetched: Instant::now(),
+        };
+        assert_eq!(state.age_secs(), 0);
+    }
+
+    #[test]
+    fn test_keystore_getter() {
+        let mgr = make_manager();
+        assert_eq!(mgr.keystore().len(), 0);
+    }
+
+    #[test]
+    fn test_keystore_mut_getter() {
+        let mut mgr = make_manager();
+        assert_eq!(mgr.keystore_mut().len(), 0);
+    }
+
+    #[test]
+    fn test_rpc_getter_does_not_panic() {
+        let mgr = make_manager();
+        let _rpc = mgr.rpc();
+    }
+
+    #[test]
+    fn test_import_account_first_becomes_active() {
+        use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+        let mut mgr = make_manager();
+        let kp = MlDsaKeypair::generate();
+        let pk = kp.public_key_bytes();
+        let sk = kp.secret_key().to_vec();
+        let addr = mgr.import_account("imported", "pass", &pk, &sk).unwrap();
+        assert_ne!(addr, [0u8; 32]);
+        assert_eq!(mgr.active_name(), Some("imported"));
+        assert_eq!(mgr.account_count(), 1);
+    }
+
+    #[test]
+    fn test_import_account_second_preserves_active() {
+        use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+        let mut mgr = make_manager();
+        mgr.create_account("alice", "pass").unwrap();
+        let kp = MlDsaKeypair::generate();
+        let pk = kp.public_key_bytes();
+        let sk = kp.secret_key().to_vec();
+        mgr.import_account("bob", "pass2", &pk, &sk).unwrap();
+        assert_eq!(mgr.active_name(), Some("alice"));
+    }
+
+    #[test]
+    fn test_import_account_with_address_first_becomes_active() {
+        use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+        let mut mgr = make_manager();
+        let kp = MlDsaKeypair::generate();
+        let pk = kp.public_key_bytes();
+        let sk = kp.secret_key().to_vec();
+        let override_addr = [0xABu8; 32];
+        let addr = mgr
+            .import_account_with_address("validator1", "pass", &pk, &sk, override_addr)
+            .unwrap();
+        assert_eq!(addr, override_addr);
+        assert_eq!(mgr.active_name(), Some("validator1"));
+    }
+
+    #[test]
+    fn test_import_account_with_address_second_preserves_active() {
+        use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+        let mut mgr = make_manager();
+        mgr.create_account("first", "pass").unwrap();
+        let kp = MlDsaKeypair::generate();
+        let pk = kp.public_key_bytes();
+        let sk = kp.secret_key().to_vec();
+        let override_addr = [0xCDu8; 32];
+        mgr.import_account_with_address("second", "pass2", &pk, &sk, override_addr)
+            .unwrap();
+        assert_eq!(mgr.active_name(), Some("first"));
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let dir = std::env::temp_dir().join("evaporchain_acct_mgr_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("keystore.json");
+
+        let mut mgr = make_manager();
+        mgr.create_account("alice", "pass").unwrap();
+        mgr.save(&path).unwrap();
+
+        let loaded =
+            AccountManager::load(&path, RpcClient::new("http://localhost:3000").unwrap())
+                .unwrap();
+        assert_eq!(loaded.account_count(), 1);
+        assert_eq!(loaded.active_name(), Some("alice"));
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_increment_nonce_no_cache_entry_is_noop() {
+        let mut mgr = make_manager();
+        mgr.create_account("alice", "pass").unwrap();
+        // address exists but no cache entry → inner if-let not taken
+        mgr.increment_nonce("alice");
+        assert!(mgr.cached_nonce("alice").is_none());
+    }
 }

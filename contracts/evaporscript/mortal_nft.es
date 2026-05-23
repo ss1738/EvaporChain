@@ -8,14 +8,18 @@
 // Two lifetimes worth distinguishing:
 //   - The EvaporScript builtin `owner` is the *deployer* (the minter).
 //     Always immutable after deploy.
-//   - The on-chain `self.owner` state field is the *current holder*.
+//   - The on-chain `self.holder` state field is the *current holder*.
 //     Mutable via `transfer`. Initially set by `set_metadata` to the
 //     recipient, which may differ from the minter (mint-to-someone-else
 //     flow is the normal case for marketplace listings).
 //
 // Auth model:
 //   - `set_metadata`: caller == builtin `owner` (only the minter).
-//   - `transfer`: caller == `self.owner` (only the current holder).
+//   - `transfer`: caller == `self.holder` (only the current holder).
+//
+// NFT-1 (audit 2026-05-17): state field was previously named `owner`,
+// shadowing the builtin. Renamed to `holder`. The compiler now rejects
+// state fields with builtin-reserved names at compile time.
 
 contract MortalNft {
     state {
@@ -30,7 +34,7 @@ contract MortalNft {
 
         // Current holder. Mutable via `transfer`. Initially set by
         // set_metadata; subsequent transfer() calls update it.
-        owner: address
+        holder: address
         transfer_count: u64 = 0
         last_transfer_epoch: u64 = 0
     }
@@ -50,7 +54,7 @@ contract MortalNft {
         self.name = nft_name
         self.collection = nft_collection
         self.metadata = nft_metadata
-        self.owner = recipient
+        self.holder = recipient
         self.sealed = true
         emit("nft minted")
     }
@@ -59,15 +63,15 @@ contract MortalNft {
     // Increments `transfer_count` for chain-of-custody telemetry.
     fn transfer(to: address) {
         require(self.sealed == true, "nft not yet minted")
-        require(caller == self.owner, "only current owner can transfer")
-        self.owner = to
+        require(caller == self.holder, "only current owner can transfer")
+        self.holder = to
         self.transfer_count += 1
         self.last_transfer_epoch = epoch
         emit("nft transferred")
     }
 
     fn current_owner() -> address {
-        return self.owner
+        return self.holder
     }
 
     fn metadata_uri() -> string {

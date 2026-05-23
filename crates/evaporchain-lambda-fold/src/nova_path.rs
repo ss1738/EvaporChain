@@ -101,13 +101,9 @@ pub struct NovaFolder {
     total_energy_remaining: u128,
     step_count: u64,
     latest_epoch: u64,
-    /// L0-A (audit 2026-05-17): chain-global λ. Replaces the pre-fix
-    /// behaviour where `fold_block` grabbed the FIRST object's
-    /// half_life from `ThermodynamicWitness` (or hard-coded `100`) as
-    /// the running-total decay constant — a Layer-0 doctrine violation
-    /// (the chain has *one* λ; routing through per-object half-lives
-    /// silently used 1000× faster decay when an object with `half_life=10`
-    /// happened to be first in the witness).
+    /// L0-A (audit 2026-05-17): chain-level λ for aggregate energy decay.
+    /// Pre-fix used the first object's per-object half_life (or hardcoded 100),
+    /// which is wrong for the aggregate `total_energy_remaining` sum.
     chain_lambda: ChainLambda,
 }
 
@@ -115,6 +111,20 @@ impl NovaFolder {
     /// Create a new folder at genesis with explicit chain λ. Performs
     /// the heavy `pp` setup; Phase 3.1 contract — call once per chain.
     pub fn new(genesis: &DualCommitment, chain_lambda: ChainLambda) -> Result<Self, NovaFoldError> {
+        Ok(Self {
+            prover: RealBlockProver::new(genesis)?,
+            total_energy_remaining: 0,
+            step_count: 0,
+            latest_epoch: 0,
+            chain_lambda: ChainLambda::default_genesis(),
+        })
+    }
+
+    /// Variant that accepts an explicit ChainLambda (e.g. from governance).
+    pub fn new_with_lambda(
+        genesis: &DualCommitment,
+        chain_lambda: ChainLambda,
+    ) -> Result<Self, NovaFoldError> {
         Ok(Self {
             prover: RealBlockProver::new(genesis)?,
             total_energy_remaining: 0,
@@ -160,13 +170,12 @@ impl NovaFolder {
             self.total_energy_remaining
         } else {
             let prev_u64 = self.total_energy_remaining.min(u64::MAX as u128) as u64;
-            // L0-A (audit 2026-05-17): use the chain-global λ (single-λ
-            // doctrine) instead of the per-object half_life from
-            // `thermo.object_energies[0]` (which silently varied the
-            // running-total decay constant). Matches `crate::fold::fold`
-            // which already routed through `chain_lambda.half_life()`.
-            let decayed =
-                evaporchain_types::energy_at_epoch(prev_u64, self.chain_lambda.half_life(), elapsed);
+            // L0-A: use chain-level λ, not first object's per-object half_life.
+            let decayed = evaporchain_types::energy_at_epoch(
+                prev_u64,
+                self.chain_lambda.half_life(),
+                elapsed,
+            );
             decayed as u128
         };
         // Suppress unused warning — `thermo` is still required by

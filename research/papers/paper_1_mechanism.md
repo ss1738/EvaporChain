@@ -190,7 +190,7 @@ The protocol enforces, as cryptographic invariants:
 **Inv-1** (state-monotonicity within block): Active → Grace → Ghost transitions happen in this order; no skipping.
 **Inv-2** (energy non-negative): $E(o, t) \geq 0$ for all $o, t$ where $o$ is Active.
 **Inv-3** (ghost provenance): every Ghost has a corresponding MMR entry committed at the epoch of evaporation.
-**Inv-4** (resurrection uniqueness): a Ghost can be resurrected at most once; its MMR entry is consumed (marked with a nullifier hash that prevents re-resurrection of the same object id).
+**Inv-4** (resurrection uniqueness): a Ghost can be resurrected at most once. Re-resurrection is prevented by construction: `resurrect()` calls `db.remove_ghost(object_id)`, which deletes the ghost record; any subsequent `RefreshTx` for the same id returns `ObjectNotFound` before any state mutation occurs (see `state/src/refresh.rs`). The MMR entry persists as an append-only historical proof of the evaporation event — it is not consumed on resurrection. (GHOST-A, audit 2026-05-17: prior text said "MMR entry is consumed, marked with a nullifier hash"; corrected to reflect V1 implementation. The invariant holds by different means than stated; the MMR is not a double-spend registry in V1.)
 **Inv-5** (data redaction post-horizon): once a Ghost passes the cold-storage horizon, its `original_data` is purged; only the hash survives. Resurrection past this point requires off-chain data recovery.
 
 These invariants are enforced by the execution engine and verified by the consensus engine.
