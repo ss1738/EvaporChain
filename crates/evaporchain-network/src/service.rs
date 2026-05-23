@@ -1839,17 +1839,20 @@ impl P2pNetworkService {
                                         acceptance = MessageAcceptance::Ignore;
                                     }
                                 }
-                                if let Err(e) = swarm
+                                // libp2p 0.55+: report_message_validation_result
+                                // now returns `bool` (true = accepted by us;
+                                // false = unknown message id) instead of Result.
+                                let reported = swarm
                                     .behaviour_mut()
                                     .gossipsub
                                     .report_message_validation_result(
                                         &message_id,
                                         &propagation_source,
                                         acceptance,
-                                    )
-                                {
+                                    );
+                                if !reported {
                                     debug!(
-                                        "report_message_validation_result failed for {message_id}: {e:?}"
+                                        "report_message_validation_result returned false for {message_id} (unknown message id)"
                                     );
                                 }
                             }
@@ -1858,6 +1861,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Request { request, channel, .. },
+                                    ..
                                 },
                             )) => {
                                 if !rate_limiter.check_and_increment(&peer) {
@@ -1934,6 +1938,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Response { response, .. },
+                                    ..
                                 },
                             )) => {
                                 info!(
@@ -2000,6 +2005,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Request { request, channel, .. },
+                                    ..
                                 },
                             )) => {
                                 // Audit AUDIT-2026-05-11-1: rate-limit the
@@ -2060,6 +2066,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Response { response, .. },
+                                    ..
                                 },
                             )) => {
                                 let valid: Vec<SampleResponse> = response.samples.into_iter().flatten().collect();
