@@ -104,10 +104,12 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::doc_overindented_list_items)]
 
+pub mod bn256_g1_validation;
 pub mod circuit_builder;
 pub mod compress_ark;
 pub mod eip197;
 pub mod grain_lfsr;
+pub mod grumpkin_config;
 pub mod groth16_wrapper;
 pub mod l_u_secondary_extract;
 pub mod mds_linalg;
@@ -115,8 +117,27 @@ pub mod neptune_dump_parser;
 pub mod neptune_permutation_gadget;
 pub mod neptune_reference;
 pub mod neptune_sponge;
+pub mod cyclefold_aux_circuit;
+pub mod cyclefold_cf_x_digest;
+pub mod cyclefold_fold_homomorphism;
+pub mod cyclefold_instance_circuit;
+pub mod cyclefold_ivc_accumulator;
+pub mod cyclefold_n_aux_probe;
+pub mod cyclefold_n_aux_scaling_probe;
+pub mod cyclefold_primary_augmented_circuit;
+pub mod cyclefold_r1cs_bridge;
+pub mod cyclefold_shell_chain;
+pub mod ipa_ck_fold_gadget;
+pub mod ipa_s_tensor;
+pub mod recursion_decider_circuit;
 pub mod recursive_snark_fixture;
 pub mod scalar_adapter;
+pub mod s4_msm_gadget;
+pub mod s4_primary_extract;
+pub mod s4_primary_msm_gadget;
+pub mod s4_secondary_extract;
+pub mod s4b_secondary_r1cs_extract;
+pub mod s4b_secondary_r1cs_gadget;
 pub mod section2_gadget;
 pub mod section2_witness;
 pub mod section3_gadget;
