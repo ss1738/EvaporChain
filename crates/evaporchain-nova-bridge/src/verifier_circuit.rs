@@ -48,9 +48,9 @@ use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::convert::ToBitsGadget;
 use ark_r1cs_std::eq::EqGadget;
-use ark_r1cs_std::R1CSVar;
+use ark_r1cs_std::GR1CSVar;
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use thiserror::Error;
 
 use crate::section2_witness::Section2Witness;
@@ -355,7 +355,7 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// Pin that the skeleton circuit compiles, synthesizes, and
     /// produces the expected public-input arity (the L1-visible

@@ -2335,6 +2335,19 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn test_create_finalized_succeeds_at_or_past_finality_depth() {
+        let mut db = InMemoryStateDB::new();
+        db.put_account(make_account(1, 200));
+        // chain_tip <= block_height: always allowed
+        let r1 = SnapshotBuilder::create_finalized(&mut db, 10, 0, 10);
+        assert!(r1.is_ok(), "equal height must be allowed");
+        // chain_tip - block_height >= SNAPSHOT_MIN_FINALITY_DEPTH: allowed
+        let r2 = SnapshotBuilder::create_finalized(&mut db, 5, 0, 5 + SNAPSHOT_MIN_FINALITY_DEPTH);
+        assert!(r2.is_ok(), "finalized at exact depth must be allowed");
+    }
+
+    #[test]
     fn audit_m12_snapshotfile_apply_to_also_wipes_stale_state() {
         // Belt-and-braces: SnapshotFile::apply_to is the production
         // restore path used by fast-sync. Ensure it wipes too.
