@@ -3,29 +3,32 @@
 //!
 //! # What ships at this milestone
 //!
-//! [`setup`] — wraps `Groth16::<Bn254>::circuit_specific_setup` on
-//! `NovaVerifierCircuit::dummy()`, producing a
-//! `(ProvingKey, VerifyingKey)` pair sized to the circuit shape
-//! `dummy()` pins (5 public inputs: 2 hashes + 1 z0 + 1 zi + 1
-//! Groth16 const).
+//! [`setup`] — wraps `Groth16::<Bn254>::circuit_specific_setup`
+//! over [`NovaVerifierCircuit::setup_shape`] (audit B-1/B-2 S2a):
+//! the canonical *section-bearing* circuit, producing a
+//! `(ProvingKey, VerifyingKey)` pair (5 public inputs: 2 hashes +
+//! 1 z0 + 1 zi + 1 Groth16 const).
 //!
-//! `prove` + `verify` wrappers land in a follow-up PR once the
-//! `l_u_secondary` access gap (see [`crate::circuit_builder`])
-//! is resolved.
+//! # Audit B-1/B-2: why the keyed circuit is sound (S2a + S2b)
 //!
-//! # Why setup is safe to ship without the access gap closed
+//! The original B-1 hazard was keying setup over `dummy()` — a
+//! constraint-vacuous, section-less circuit — on the *false*
+//! assumption that its R1CS shape equals a real prover's. It does
+//! not: a real prover circuit carries the Section 2 (Neptune
+//! transcript) and Section 3 (primary RelaxedR1CS-sat) binding
+//! constraints; `dummy()` carries none, so Groth16 keys built over
+//! it are forgeable.
 //!
-//! Setup operates on `dummy()` — a witness-independent shape
-//! template. The dummy's `committed_hash_primary` /
-//! `committed_hash_secondary` are zero placeholders, but setup
-//! doesn't *prove* anything about them; it only reads the circuit
-//! shape (number of public inputs, total constraints) to size the
-//! prover/verifier keys. Once the access gap closes for real
-//! `prove`-time witnesses, the keys produced here remain valid
-//! because the shape is identical between `dummy()` and any real
-//! witness (same arity for hashes, z0, zi).
+//! S2a fixes this: setup is keyed over `setup_shape()`, whose R1CS
+//! is proven *bit-identical* to a real-witness prover circuit by
+//! the S6 determinism test
+//! (`circuit_builder::tests::s2a_setup_shape_matches_real_prover_r1cs`).
+//! S2b makes the section bindings MANDATORY in
+//! `generate_constraints` (and `validate_structurally` rejects a
+//! section-less witness), so a prover cannot substitute the
+//! vacuous circuit the keys were *not* built for.
 //!
-//! # Trusted-setup caveat (production deployment)
+//! # Trusted-setup caveat (production deployment) — S5, still open
 //!
 //! `circuit_specific_setup` uses arkworks's *insecure* test
 //! randomness. For mainnet, the keys must come from a multi-party
@@ -42,22 +45,24 @@ use ark_std::rand::{CryptoRng, RngCore};
 
 use crate::verifier_circuit::NovaVerifierCircuit;
 
-/// Run Groth16's circuit-specific trusted setup against
-/// `NovaVerifierCircuit::dummy()`. Returns `(pk, vk)`.
+/// Run Groth16's circuit-specific trusted setup over
+/// [`NovaVerifierCircuit::setup_shape`] (the canonical
+/// section-bearing circuit). Returns `(pk, vk)`.
 ///
 /// **Test/dev only.** See module docstring for the production
 /// trusted-setup story.
 ///
-/// # SECURITY (audit B-2, 2026-05-18)
+/// # SECURITY (audit B-1/B-2)
 ///
-/// `circuit_specific_setup` uses arkworks's *insecure* test
-/// randomness (the "toxic waste" is recoverable), and the circuit it
-/// sizes (`dummy()`) currently emits **no soundness-binding
-/// constraints** (audit B-1: Sections 2/3 are `Option` and absent in
-/// `dummy()`). Keys from this function are therefore forgeable and
-/// MUST NOT reach mainnet. Production requires (a) a fixed-shape,
-/// section-bearing setup circuit and (b) an MPC ceremony — tracked as
-/// the audit's #1 mainnet-blocker. This `#[deprecated]` marker makes
+/// B-1 (constraint-vacuous keyed circuit) is CLOSED: setup is keyed
+/// over `setup_shape()`, whose R1CS is proven bit-identical to a
+/// real prover's by the S6 determinism test, and S2b makes the
+/// Section 2/3 bindings mandatory (non-`Option`). B-2 is NOT closed:
+/// `circuit_specific_setup` still uses arkworks's *insecure* test
+/// randomness (the "toxic waste" is recoverable), so keys from this
+/// function remain forgeable and MUST NOT reach mainnet. Production
+/// requires an MPC ceremony (Powers of Tau + circuit-specific phase
+/// 2) — tracked as the S5 sub-stage. This `#[deprecated]` marker makes
 /// every call site emit a build warning so the insecure path cannot
 /// be shipped silently; it is intentionally not removed until the
 /// ceremony-derived, sound-circuit replacement lands.
@@ -136,6 +141,7 @@ mod tests {
     use super::*;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::rand::SeedableRng;
+    use crate::circuit_builder::real_provable_circuit;
 
     /// Setup produces a non-trivial (pk, vk) pair on the dummy
     /// circuit. Pins the public-input-count contract that Section
@@ -145,7 +151,7 @@ mod tests {
     #[test]
     fn setup_produces_keys_with_expected_public_input_count() {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
-        let (pk, vk) = setup(&mut rng).expect("setup must succeed on dummy");
+        let (pk, vk) = setup(&mut rng).expect("setup must succeed on setup_shape");
 
         // 5 public inputs as pinned by
         // `verifier_circuit::tests::skeleton_dummy_synthesizes_with_expected_public_input_arity`.
@@ -227,49 +233,70 @@ mod tests {
     /// setup → prove → verify(true). Pins that all three wrappers
     /// agree on the circuit shape.
     ///
-    /// SOUNDNESS-REBUILD STATUS (post S2a, pre S2b): `setup()` now
-    /// keys over `NovaVerifierCircuit::setup_shape()` (section-bearing),
-    /// while `dummy()` is section-LESS. The R1CS shapes diverge, so
-    /// proving a `dummy()` against `setup_shape()`-derived keys is
-    /// expected to fail. This test is left as-is and `#[ignore]`d
-    /// until PR #441 (S2b) lands — that PR flips it to assert
-    /// rejection (the soundness invariant), and adds the matching
-    /// positive round-trip test over `setup_shape()`.
+    /// Audit B-1/B-2 S2b-prover: REAL end-to-end positive — a proof
+    /// of a real-fixture circuit (both sections, satisfiable witness)
+    /// verifies against the `setup()`-keyed pk/vk. This works
+    /// precisely because S6 proves the real circuit's R1CS is
+    /// bit-identical to `setup_shape()`'s. (`setup_shape()` itself is
+    /// a SHAPE template with a zeroed, non-satisfiable witness — it
+    /// keys setup but cannot produce a verifying proof; only a real
+    /// fixture can.)
     #[test]
-    #[ignore = "post-S2a, pre-S2b: dummy() ≠ setup_shape() R1CS; replaced in PR #441"]
-    fn prove_and_verify_dummy_round_trip_accepts() {
+    #[ignore = "S2b-prover: real Nova fixture + /tmp/neptune-bn256-standard.json (expensive)"]
+    fn prove_and_verify_real_fixture_round_trip_accepts() {
+        let Some(circuit) = real_provable_circuit() else {
+            return;
+        };
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(101);
         let (pk, vk) = setup(&mut rng).expect("setup");
 
-        let dummy = NovaVerifierCircuit::dummy();
-        let public_inputs = public_inputs_for(&dummy);
-        let proof = prove(&pk, dummy, &mut rng).expect("prove");
+        let public_inputs = public_inputs_for(&circuit);
+        let proof = prove(&pk, circuit, &mut rng).expect("prove");
 
         let accepted = verify(&vk, &public_inputs, &proof).expect("verify");
-        assert!(accepted, "dummy proof must verify against dummy public inputs");
+        assert!(
+            accepted,
+            "real-fixture proof must verify against its public inputs"
+        );
     }
 
-    /// Tampered public input must be rejected by verify.
-    ///
-    /// SOUNDNESS-REBUILD STATUS: same as above — the clean-verify
-    /// sanity check on line 271 now correctly fails because keys are
-    /// keyed over setup_shape() not dummy(). Ignored pending PR #441.
+    /// Audit B-1/B-2 S2b: a section-less `dummy()` is NO LONGER
+    /// provable — `prove()` must surface the mandatory-binding
+    /// rejection rather than emit a forgeable empty-circuit proof.
+    /// This is the end-to-end (wrapper-level) proof the vacuity hole
+    /// is closed.
     #[test]
-    #[ignore = "post-S2a, pre-S2b: dummy() ≠ setup_shape() R1CS; replaced in PR #441"]
+    fn prove_rejects_section_less_dummy() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(101);
+        let (pk, _vk) = setup(&mut rng).expect("setup");
+        let result = prove(&pk, NovaVerifierCircuit::dummy(), &mut rng);
+        assert!(
+            result.is_err(),
+            "prove() on a section-less dummy must fail under S2b, got Ok"
+        );
+    }
+
+    /// Tampered public input must be rejected by verify. Catches
+    /// a regression where verify accidentally short-circuits to
+    /// `Ok(true)` regardless of input. S2b-prover: real-fixture
+    /// proof (the only satisfiable witness post-S2b).
+    #[test]
+    #[ignore = "S2b-prover: real Nova fixture + /tmp/neptune-bn256-standard.json (expensive)"]
     fn verify_rejects_tampered_public_input() {
+        let Some(circuit) = real_provable_circuit() else {
+            return;
+        };
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(202);
         let (pk, vk) = setup(&mut rng).expect("setup");
 
-        let dummy = NovaVerifierCircuit::dummy();
-        let mut public_inputs = public_inputs_for(&dummy);
-        let proof = prove(&pk, dummy, &mut rng).expect("prove");
+        let mut public_inputs = public_inputs_for(&circuit);
+        let proof = prove(&pk, circuit, &mut rng).expect("prove");
 
         // Sanity: untouched verify accepts.
         assert!(verify(&vk, &public_inputs, &proof).expect("verify clean"));
 
-        // Tamper: bump the first public input (committed_hash_primary
-        // was 0 for the dummy; make it 1).
-        public_inputs[0] = Bn254Fr::from(1u64);
+        // Tamper: perturb the first public input.
+        public_inputs[0] += Bn254Fr::from(1u64);
         let rejected = verify(&vk, &public_inputs, &proof).expect("verify tampered");
         assert!(!rejected, "verify must reject a proof against tampered public inputs");
     }
@@ -292,27 +319,33 @@ mod tests {
     /// Tampering the *second* hash slot also rejects. Existing
     /// tampered-input test only flips slot 0.
     #[test]
+    #[ignore = "S2b-prover: real Nova fixture + /tmp/neptune-bn256-standard.json (expensive)"]
     fn verify_rejects_tampered_secondary_hash() {
+        let Some(circuit) = real_provable_circuit() else {
+            return;
+        };
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(404);
         let (pk, vk) = setup(&mut rng).expect("setup");
-        let dummy = NovaVerifierCircuit::dummy();
-        let mut public_inputs = public_inputs_for(&dummy);
-        let proof = prove(&pk, dummy, &mut rng).expect("prove");
-        public_inputs[1] = Bn254Fr::from(99u64);
+        let mut public_inputs = public_inputs_for(&circuit);
+        let proof = prove(&pk, circuit, &mut rng).expect("prove");
+        public_inputs[1] += Bn254Fr::from(99u64);
         assert!(!verify(&vk, &public_inputs, &proof).expect("verify"));
     }
 
     /// A proof under one setup must not verify against a different
     /// setup's vk.
     #[test]
+    #[ignore = "S2b-prover: real Nova fixture + /tmp/neptune-bn256-standard.json (expensive)"]
     fn verify_rejects_proof_against_wrong_vk() {
+        let Some(circuit) = real_provable_circuit() else {
+            return;
+        };
         let mut rng_a = ark_std::rand::rngs::StdRng::seed_from_u64(11);
         let mut rng_b = ark_std::rand::rngs::StdRng::seed_from_u64(22);
         let (pk_a, _vk_a) = setup(&mut rng_a).expect("setup a");
         let (_pk_b, vk_b) = setup(&mut rng_b).expect("setup b");
-        let dummy = NovaVerifierCircuit::dummy();
-        let pi = public_inputs_for(&dummy);
-        let proof = prove(&pk_a, dummy, &mut rng_a).expect("prove with pk_a");
+        let pi = public_inputs_for(&circuit);
+        let proof = prove(&pk_a, circuit, &mut rng_a).expect("prove with pk_a");
         assert!(
             !verify(&vk_b, &pi, &proof).expect("verify against wrong vk"),
             "proof under setup A must not verify under setup B's vk"

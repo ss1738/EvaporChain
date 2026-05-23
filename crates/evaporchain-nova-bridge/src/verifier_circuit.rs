@@ -91,6 +91,47 @@ pub enum StructuralValidationError {
         /// Arity of the output-state vector observed.
         zi_len: usize,
     },
+
+    /// Section 2 (Neptune transcript-hash binding) witness is absent.
+    ///
+    /// Audit B-1/B-2 S2b: the soundness bindings (Sections 2 & 3) are
+    /// MANDATORY. A circuit with no Section 2 witness emits zero
+    /// transcript-hash constraints — the exact constraint-vacuity that
+    /// makes Groth16 keys forgeable. Such a circuit must never reach
+    /// trusted setup, the prover, or the verifier.
+    #[error("section2 (Neptune transcript binding) witness is mandatory but absent")]
+    MissingSection2,
+
+    /// Section 3 (primary RelaxedR1CS-satisfiability binding) witness
+    /// is absent. Same B-1/B-2 S2b rationale as [`Self::MissingSection2`]:
+    /// without it the circuit proves nothing about the folded instance.
+    #[error("section3 (primary RelaxedR1CS binding) witness is mandatory but absent")]
+    MissingSection3,
+
+    /// Section 3 witness is internally inconsistent: its declared
+    /// dimensions and its actual vector lengths disagree. The witness
+    /// vector must have `num_vars` entries and the error vector must
+    /// have `num_cons` entries. A witness that fails these cheap
+    /// invariants is malformed and is rejected before any field /
+    /// pairing work. (Exact equality to the canonical R1CS shape —
+    /// including `num_cons`/`num_vars`/`num_io` magnitudes — is
+    /// enforced *cryptographically* by the Groth16 keys, which S2a
+    /// pins to `setup_shape()`'s shape and S6 proves bit-identical to
+    /// a real prover's; it is deliberately NOT re-hardcoded here.)
+    #[error(
+        "section3 dims inconsistent: num_vars={num_vars} \
+         w_len={w_len} e_len={e_len} num_cons={num_cons}"
+    )]
+    Section3DimsInconsistent {
+        /// Declared private-witness count.
+        num_vars: usize,
+        /// Actual length of the witness vector `w_primary`.
+        w_len: usize,
+        /// Actual length of the error vector `e_primary`.
+        e_len: usize,
+        /// Declared constraint-row count.
+        num_cons: usize,
+    },
 }
 
 /// Phase 2.2 skeleton — verifier circuit for a `RecursiveSNARK<E1,
@@ -235,6 +276,34 @@ impl NovaVerifierCircuit {
                 zi_len: self.zi.len(),
             });
         }
+
+        // ── Audit B-1/B-2 S2b: soundness bindings are MANDATORY ──────
+        //
+        // Both section witnesses must be present, and Section 3's
+        // declared dims must be internally consistent. These are cheap
+        // (Option::is_some + integer/len compares) — no field, hash, or
+        // pairing work — consistent with this gate's "reject malformed
+        // shapes without paying Groth16 cost" contract. Exact equality
+        // to the canonical R1CS shape is enforced *cryptographically*:
+        // S2a pins the Groth16 keys to `setup_shape()`'s shape, so a
+        // prover substituting a different-dimensioned circuit produces
+        // an R1CS the keys do not verify.
+        if self.section2.is_none() {
+            return Err(StructuralValidationError::MissingSection2);
+        }
+        let s3 = self
+            .section3
+            .as_ref()
+            .ok_or(StructuralValidationError::MissingSection3)?;
+        if s3.w_primary.len() != s3.num_vars || s3.e_primary.len() != s3.num_cons {
+            return Err(StructuralValidationError::Section3DimsInconsistent {
+                num_vars: s3.num_vars,
+                w_len: s3.w_primary.len(),
+                e_len: s3.e_primary.len(),
+                num_cons: s3.num_cons,
+            });
+        }
+
         Ok(())
     }
 }
@@ -292,7 +361,15 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
         // the 18-element primary absorb sequence, truncated to 250 bits
         // (nova-snark NUM_HASH_BITS), equals `committed_hash_primary`.
         // Source: nova-snark/src/nova/mod.rs:597-630.
-        if let Some(ref s2) = self.section2 {
+        // Audit B-1/B-2 S2b: MANDATORY (no `Option` gate). `validate_
+        // structurally` above already rejects a missing Section 2 with
+        // `Unsatisfiable`; this `ok_or` is the defense-in-depth second
+        // line so the binding can never be silently skipped.
+        {
+            let s2 = self
+                .section2
+                .as_ref()
+                .ok_or(SynthesisError::AssignmentMissing)?;
             use crate::section2_gadget::enforce_neptune_sponge_primary;
 
             let z0_vals: Vec<Bn254Fr> = z0_vars
@@ -332,7 +409,13 @@ impl ConstraintSynthesizer<Bn254Fr> for NovaVerifierCircuit {
         //   - Secondary R1CS checks deferred: Grumpkin Fr is non-native.
         //
         // Source: nova-snark/src/nova/mod.rs:634-665
-        if let Some(ref s3) = self.section3 {
+        // Audit B-1/B-2 S2b: MANDATORY (no `Option` gate) — see the
+        // Section 2 note above.
+        {
+            let s3 = self
+                .section3
+                .as_ref()
+                .ok_or(SynthesisError::AssignmentMissing)?;
             use crate::section3_gadget::enforce_primary_relaxed_r1cs_sat;
             // The x_primary for the gadget is r_U_primary.X[0..2].
             // These are allocated as private witnesses (not public inputs)
@@ -360,18 +443,20 @@ mod tests {
     /// Pin that the skeleton circuit compiles, synthesizes, and
     /// produces the expected public-input arity (the L1-visible
     /// wiring stays stable across Phase 2.2's sub-steps).
+    /// Audit B-1/B-2 S2b: a section-less `dummy()` no longer
+    /// synthesizes — `generate_constraints` rejects it at the
+    /// mandatory-binding gate before any public-input wiring. The
+    /// canonical 5-input arity contract is pinned instead by the S6
+    /// determinism proof and the real-fixture positive
+    /// (`groth16_wrapper::tests::
+    /// prove_and_verify_real_fixture_round_trip_accepts`).
     #[test]
-    fn skeleton_dummy_synthesizes_with_expected_public_input_arity() {
+    fn skeleton_dummy_does_not_synthesize_missing_sections() {
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
-        NovaVerifierCircuit::dummy()
-            .generate_constraints(cs.clone())
-            .expect("dummy synthesize");
-        // Public inputs: 2 hashes + 1 z0 entry + 1 zi entry = 4
-        // Plus the Groth16-convention constant input = 5 total.
-        assert_eq!(
-            cs.num_instance_variables(),
-            5,
-            "Phase 2.2 public-input arity contract: 2 hashes + |z0| + |zi| + 1 const"
+        let result = NovaVerifierCircuit::dummy().generate_constraints(cs.clone());
+        assert!(
+            matches!(result, Err(SynthesisError::Unsatisfiable)),
+            "section-less dummy() must not synthesize under S2b, got {result:?}"
         );
     }
 
@@ -383,49 +468,52 @@ mod tests {
     /// would silently produce a prover key that no real witness could
     /// later satisfy.
     ///
-    /// Catches future regressions where Section 2 / Section 3 wire-in
-    /// code accidentally enforces a constraint on dummy()'s zero
-    /// witness values (e.g. a Poseidon-hash equality check that fails
-    /// when committed_hash_primary == 0 and the re-hashed value != 0).
+    /// Audit B-1/B-2 S2b: `dummy()` carries NO section witnesses, so it
+    /// is the constraint-vacuous circuit the hole was about. Synthesis
+    /// MUST now fail (`validate_structurally` → `Unsatisfiable`) — a
+    /// section-less circuit can no longer produce a satisfied CS. This
+    /// inversion of the old "dummy is satisfied" test IS the proof the
+    /// vacuity hole is closed.
     #[test]
-    fn dummy_circuit_is_satisfied_under_section_1_gate() {
+    fn dummy_circuit_is_unsatisfiable_missing_sections() {
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
-        NovaVerifierCircuit::dummy()
-            .generate_constraints(cs.clone())
-            .expect("dummy synthesize");
+        let result = NovaVerifierCircuit::dummy().generate_constraints(cs.clone());
         assert!(
-            cs.is_satisfied().expect("is_satisfied check"),
-            "dummy() must produce a satisfied CS — Section 1 gate accepts dummy \
-             (num_steps=1, |z0|=|zi|=1) and no later section adds an unsatisfied \
-             constraint on dummy's zero witness"
+            matches!(result, Err(SynthesisError::Unsatisfiable)),
+            "section-less dummy() must be Unsatisfiable under S2b, got {result:?}"
         );
     }
 
-    /// Pin that a circuit with non-trivial state-vector arity
-    /// produces matching public-input count. Real chain `z` vectors
-    /// will be larger (e.g., 4-entry state hash); this catches any
-    /// off-by-one in the public-input wiring when Section 1/2 are
-    /// filled in.
+    /// Audit B-1/B-2 S2b: the vacuity hole is closed for ANY state-
+    /// vector arity — a section-less circuit is rejected before the
+    /// public-input wiring is even reached, regardless of |z0|. (The
+    /// canonical public-input arity, 5, is pinned by the real-fixture
+    /// path: `circuit_builder::fixture_to_circuit_to_satisfied_cs` and
+    /// the S6 determinism proof.)
     #[test]
-    fn skeleton_arity_scales_with_state_vector_size() {
-        let z0 = vec![Bn254Fr::from(1u64); 4];
-        let zi = vec![Bn254Fr::from(2u64); 4];
+    fn section_less_circuit_is_unsatisfiable_regardless_of_arity() {
         let circuit = NovaVerifierCircuit::new(
             10,
-            z0,
-            zi,
+            vec![Bn254Fr::from(1u64); 4],
+            vec![Bn254Fr::from(2u64); 4],
             Bn254Fr::from(0xabcdu64),
             Bn254Fr::from(0xef01u64),
         );
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
-        circuit.generate_constraints(cs.clone()).expect("synthesize");
-        // 2 hashes + 4 z0 + 4 zi + 1 const = 11
-        assert_eq!(cs.num_instance_variables(), 11);
+        let result = circuit.generate_constraints(cs.clone());
+        assert!(
+            matches!(result, Err(SynthesisError::Unsatisfiable)),
+            "section-less circuit must be Unsatisfiable for any arity, got {result:?}"
+        );
     }
 
-    /// Happy path: a well-formed circuit passes `validate_structurally`.
+    /// Audit B-1/B-2 S2b: a circuit that is well-formed at the Section 1
+    /// level (num_steps, z0/zi arity) but carries NO mandatory section
+    /// bindings is now REJECTED by `validate_structurally`. `new()`
+    /// initialises both sections to `None`, so it can never stand in
+    /// for a real prover circuit.
     #[test]
-    fn validate_structurally_accepts_well_formed() {
+    fn validate_structurally_rejects_section_less_circuit() {
         let circuit = NovaVerifierCircuit::new(
             7,
             vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64)],
@@ -433,14 +521,22 @@ mod tests {
             Bn254Fr::from(0u64),
             Bn254Fr::from(0u64),
         );
-        assert_eq!(circuit.validate_structurally(), Ok(()));
+        assert_eq!(
+            circuit.validate_structurally(),
+            Err(StructuralValidationError::MissingSection2),
+        );
     }
 
-    /// `dummy()` is constructed with `num_steps = 1` so trusted-setup-
-    /// time synthesis doesn't hit the structural gate. Pin that here.
+    /// Audit B-1/B-2 S2b: `dummy()` (no section witnesses) is rejected
+    /// by `validate_structurally`. Setup is keyed over `setup_shape()`
+    /// (S2a), which DOES carry canonical sections — `dummy()` is no
+    /// longer a valid setup/prove input.
     #[test]
-    fn validate_structurally_accepts_dummy() {
-        assert_eq!(NovaVerifierCircuit::dummy().validate_structurally(), Ok(()));
+    fn validate_structurally_rejects_dummy_missing_sections() {
+        assert_eq!(
+            NovaVerifierCircuit::dummy().validate_structurally(),
+            Err(StructuralValidationError::MissingSection2),
+        );
     }
 
     /// `num_steps = 0` is rejected with the typed error variant.
@@ -556,9 +652,11 @@ mod tests {
         );
     }
 
-    /// `new()` initialises both section witnesses to None — pins that
-    /// trusted setup (which uses `new`/`dummy`) doesn't accidentally
-    /// drag in a Section 2 or 3 enforcement gate.
+    /// `new()` initialises both section witnesses to None — a
+    /// constructor-contract pin. Post-S2a/S2b a section-less circuit is
+    /// NOT a valid setup or prover input (trusted setup is keyed over
+    /// `setup_shape()`, which carries canonical sections); this only
+    /// asserts the raw constructor default, not provability.
     #[test]
     fn new_initialises_sections_to_none() {
         let c = NovaVerifierCircuit::new(
@@ -572,8 +670,11 @@ mod tests {
         assert!(c.section3.is_none(), "section3 must default to None");
     }
 
-    /// `dummy()` is the trusted-setup-time witness — must have no
-    /// section witnesses attached.
+    /// `dummy()` carries no section witnesses — constructor-contract
+    /// pin. NOTE: post-S2a `dummy()` is NOT the trusted-setup witness
+    /// (`setup_shape()` is); under S2b a section-less `dummy()` is
+    /// rejected by `validate_structurally`. This only pins the raw
+    /// constructor default + base shape.
     #[test]
     fn dummy_has_no_section_witnesses() {
         let d = NovaVerifierCircuit::dummy();
