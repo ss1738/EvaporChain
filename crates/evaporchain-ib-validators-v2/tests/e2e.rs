@@ -56,7 +56,7 @@ fn prior_sig() -> StateSignature {
 
 /// High-KL local: all accounts in bin 0 (full decay) vs the uniform prior.
 fn high_kl_sig() -> StateSignature {
-    StateSignature::from_energies(&vec![0u64; 16], 1024)
+    StateSignature::from_energies(&[0u64; 16], 1024)
 }
 
 /// Conformist: identical to prior (KL=0).

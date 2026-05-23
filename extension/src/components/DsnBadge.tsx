@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RotateCw } from "lucide-react";
+import { ChevronRight, RotateCw } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 
 /**

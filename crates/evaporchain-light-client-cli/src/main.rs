@@ -42,6 +42,9 @@ use std::time::SystemTime;
     version
 )]
 struct Cli {
+    /// Chain identifier — must match the node's chain_id (default: evaporchain-testnet-1).
+    #[arg(long, default_value = "evaporchain-testnet-1")]
+    chain_id: String,
     #[command(subcommand)]
     command: Cmd,
 }
@@ -113,12 +116,13 @@ enum Cmd {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let chain_id = cli.chain_id;
     let result = match cli.command {
         Cmd::SyncLatest {
             node,
             genesis_height,
             bearer_token,
-        } => run_sync_latest(node, genesis_height, bearer_token),
+        } => run_sync_latest(node, genesis_height, bearer_token, &chain_id),
         Cmd::GetState {
             node,
             key,
@@ -131,7 +135,7 @@ fn main() -> ExitCode {
             genesis_height,
             poll_secs,
             bearer_token,
-        } => run_watch(node, genesis_height, poll_secs, bearer_token),
+        } => run_watch(node, genesis_height, poll_secs, bearer_token, &chain_id),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -161,6 +165,7 @@ fn run_sync_latest(
     node: String,
     genesis_height: Option<u64>,
     bearer_token: Option<String>,
+    chain_id: &str,
 ) -> Result<(), String> {
     let transport = build_transport(&node, bearer_token);
     let now = current_time_secs();
@@ -175,7 +180,7 @@ fn run_sync_latest(
             .map_err(|e| format!("fetch latest as genesis: {e}"))?,
     };
 
-    let mut lc = LightClient::new(genesis.clone(), now, /* vk_bytes */ None);
+    let mut lc = LightClient::new(genesis.clone(), now, chain_id, /* vk_bytes */ None);
 
     // Walk forward to the chain's reported latest.
     let latest = transport
@@ -247,7 +252,7 @@ fn run_get_state(
     let latest = transport
         .fetch_latest_header()
         .map_err(|e| format!("fetch latest as anchor: {e}"))?;
-    let lc = LightClient::new(latest.clone(), now, /* vk_bytes */ None);
+    let lc = LightClient::new(latest.clone(), now, "", /* vk_bytes */ None);
 
     let value = lc
         .fetch_and_verify_state(&transport, &key, expected)
@@ -269,6 +274,7 @@ fn run_watch(
     genesis_height: u64,
     poll_secs: u64,
     bearer_token: Option<String>,
+    chain_id: &str,
 ) -> Result<(), String> {
     let transport = build_transport(&node, bearer_token);
     let now = current_time_secs();
@@ -276,7 +282,7 @@ fn run_watch(
     let genesis = transport
         .fetch_header_at(genesis_height)
         .map_err(|e| format!("fetch genesis at {genesis_height}: {e}"))?;
-    let mut lc = LightClient::new(genesis, now, /* vk_bytes */ None);
+    let mut lc = LightClient::new(genesis, now, chain_id, /* vk_bytes */ None);
 
     eprintln!(
         "watching node {node} from height {genesis_height} (poll every {poll_secs}s; Ctrl-C to stop)"

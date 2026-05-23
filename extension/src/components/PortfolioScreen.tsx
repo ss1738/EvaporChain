@@ -1,15 +1,9 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
-import { api, type TokenInfo } from "@/utils/api";
+import { api, type TokenInfo, type PriceData } from "@/utils/api";
 import { Header } from "./Header";
 import { formatBalance } from "@/utils/format";
-
-interface PriceData {
-  symbol: string;
-  price_usd: number;
-  change_24h_pct: number;
-}
 
 function Bar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -29,7 +23,7 @@ export function PortfolioScreen() {
 
   useEffect(() => {
     if (!activeAccount) return;
-    api.get<PriceData[]>("/api/prices")
+    api.getPrices()
       .catch(() => [])
       .then((p) => { setPrices(p); setLoading(false); });
   }, [activeAccount]);

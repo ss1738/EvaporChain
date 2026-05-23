@@ -172,7 +172,7 @@ mod tests {
     fn brute_force_bottleneck(cost: &[Vec<u64>]) -> u64 {
         let n = cost.len();
         let m = cost[0].len();
-        let k = n.min(m);
+        let _k = n.min(m);
         let mut best = u64::MAX;
         // Enumerate all (n choose k) subsets of left, then permute
         // them to all (m choose k) right subsets — but our case
@@ -277,7 +277,7 @@ mod tests {
             for i in 0..3 {
                 for j in 0..3 {
                     s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1442695040888963407);
-                    cost[i][j] = (s % 100);
+                    cost[i][j] = s % 100;
                 }
             }
             let exact = bottleneck_exact(&cost).unwrap();

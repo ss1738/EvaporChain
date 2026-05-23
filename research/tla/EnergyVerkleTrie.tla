@@ -181,7 +181,7 @@ CompressSubtree(s) ==
 \* Active with its preserved leaf_count + 1 (the new insert), and the
 \* "incoming" leaf gets fresh energy.
 \*
-\* Mirrors energy_verkle.rs:352-355 — the insert-into-compressed branch.
+\* Mirrors energy_verkle.rs:386 — the EnergyNode::Compressed arm of insert_recursive.
 DecompressOnInsert(s, newLeaf) ==
     /\ s \in Subtrees
     /\ subtree_state[s] = "Compressed"

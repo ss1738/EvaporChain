@@ -95,7 +95,7 @@ fn run(cli: Cli) -> Result<(), String> {
             .fetch_latest_header()
             .map_err(|e| format!("fetch latest as anchor: {e}"))?,
     };
-    let mut lc = LightClient::new(genesis, now, /* vk_bytes */ None);
+    let mut lc = LightClient::new(genesis, now, "", /* vk_bytes */ None);
 
     eprintln!(
         "monitoring account {} on {} (poll every {}s; Ctrl-C to stop)",

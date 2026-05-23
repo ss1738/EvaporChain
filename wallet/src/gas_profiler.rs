@@ -665,4 +665,111 @@ mod tests {
         let gp = GasProfiler::load_or_default(&path);
         assert!(gp.profiles.is_empty());
     }
+
+    // ─── Additional coverage tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_avg_gas_empty_profile_covers_line_78() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("empty", OpType::Transfer).unwrap();
+        assert_eq!(gp.get_profile("empty").unwrap().avg_gas(), 0.0);
+    }
+
+    #[test]
+    fn test_median_gas_empty_profile_covers_line_94() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("empty", OpType::Transfer).unwrap();
+        assert_eq!(gp.get_profile("empty").unwrap().median_gas(), 0);
+    }
+
+    #[test]
+    fn test_p95_gas_empty_profile_covers_line_108() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("empty", OpType::Transfer).unwrap();
+        assert_eq!(gp.get_profile("empty").unwrap().p95_gas(), 0);
+    }
+
+    #[test]
+    fn test_efficiency_empty_profile_covers_line_119() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("empty", OpType::Transfer).unwrap();
+        assert_eq!(gp.get_profile("empty").unwrap().efficiency(), 0.0);
+    }
+
+    #[test]
+    fn test_efficiency_zero_gas_limit_covers_line_129() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("p1", OpType::Transfer).unwrap();
+        // gas_limit == 0 → filtered out → count == 0 → return 0.0
+        gp.add_sample("p1", sample(1000, 0, 10)).unwrap();
+        assert_eq!(gp.get_profile("p1").unwrap().efficiency(), 0.0);
+    }
+
+    #[test]
+    fn test_detect_hotspots_zero_grand_total_covers_line_258() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("p1", OpType::Transfer).unwrap();
+        // gas_price == 0 → total_cost == 0 → grand_total_cost == 0
+        gp.add_sample("p1", GasSample {
+            tx_hash: "0x1".into(), op_type: OpType::Transfer,
+            gas_used: 1000, gas_limit: 2000, gas_price: 0,
+            timestamp: Utc::now().to_rfc3339(), block_number: 1, success: true,
+        }).unwrap();
+        let hotspots = gp.detect_hotspots();
+        assert_eq!(hotspots.len(), 1);
+        assert_eq!(hotspots[0].percentage_of_total, 0.0);
+    }
+
+    #[test]
+    fn test_generate_suggestions_skips_empty_profile_covers_line_280() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("empty", OpType::Transfer).unwrap();
+        // No samples → should not generate suggestions
+        let suggestions = gp.generate_suggestions();
+        assert!(suggestions.is_empty());
+    }
+
+    #[test]
+    fn test_generate_suggestions_high_variance_covers_lines_312_334() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("p1", OpType::Transfer).unwrap();
+        // Very high variance: 1000 and 100_000 → stddev/avg >> 0.5
+        gp.add_sample("p1", sample(1000, 200000, 10)).unwrap();
+        gp.add_sample("p1", sample(100000, 200000, 10)).unwrap();
+        let suggestions = gp.generate_suggestions();
+        assert!(suggestions.iter().any(|s| s.suggestion == "Inconsistent gas usage"));
+    }
+
+    #[test]
+    fn test_add_suggestion_covers_lines_341_343() {
+        let mut gp = GasProfiler::new();
+        gp.add_suggestion(OptimizationSuggestion {
+            id: "manual-1".into(),
+            op_type: OpType::Transfer,
+            suggestion: "Manual suggestion".into(),
+            estimated_savings: 5000,
+            priority: SuggestionPriority::Low,
+            created_at: Utc::now().to_rfc3339(),
+        });
+        assert_eq!(gp.suggestions.len(), 1);
+    }
+
+    #[test]
+    fn test_recent_samples_covers_lines_349_354() {
+        let mut gp = GasProfiler::new();
+        gp.create_profile("p1", OpType::Transfer).unwrap();
+        for i in 1..=5 {
+            gp.add_sample("p1", sample(i * 1000, 50000, 10)).unwrap();
+        }
+        let recent = gp.recent_samples(3);
+        assert_eq!(recent.len(), 3);
+    }
+
+    #[test]
+    fn test_stats_no_samples_covers_line_364() {
+        let gp = GasProfiler::new();
+        let stats = gp.stats();
+        assert_eq!(stats.total_samples, 0);
+        assert_eq!(stats.avg_gas_per_tx, 0.0);
+    }
 }

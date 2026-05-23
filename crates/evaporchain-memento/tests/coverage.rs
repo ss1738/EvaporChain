@@ -251,7 +251,7 @@ fn unsupported_version_is_rejected_before_commitment_check() {
     // V1 path must still succeed today.
     assert!(try_reveal(&contract, &reveal, &obs).is_ok());
     // Pin that V1 is the only variant: matching exhaustively must compile.
-    let _check = match contract.version {
+    match contract.version {
         MementoVersion::V1 => (),
     };
 }
