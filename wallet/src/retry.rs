@@ -216,4 +216,53 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(attempt_count.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
+
+    // ─── Additional coverage tests (session 62) ───────────────────────────────
+
+    #[test]
+    fn test_aggressive_config() {
+        let config = RetryConfig::aggressive();
+        assert_eq!(config.max_retries, 5);
+        assert_eq!(config.base_delay, Duration::from_millis(200));
+        assert_eq!(config.max_delay, Duration::from_secs(30));
+        assert!(config.jitter);
+    }
+
+    #[tokio::test]
+    async fn test_retry_transient_then_success_covers_sleep_path() {
+        // Fail once with a transient error (covers lines 106-108), then succeed.
+        let config = RetryConfig {
+            max_retries: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(5),
+            jitter: false,
+        };
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let a = attempts.clone();
+
+        let result: Result<i32, String> = with_retry(&config, || {
+            let c = a.clone();
+            async move {
+                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    Err("connection refused".to_string())
+                } else {
+                    Ok(99)
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), 99);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_is_transient_covers_all_keywords() {
+        assert!(is_transient("504 Gateway Timeout"));
+        assert!(is_transient("temporarily unavailable"));
+        assert!(is_transient("please retry later"));
+        assert!(is_transient("timed out after 30s"));
+        assert!(!is_transient("bad request"));
+    }
 }

@@ -47,7 +47,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTRACT_PATH="$ROOT_DIR/contracts/evaporscript/evaporcash_note.es"
 
-NODE_URL="${NODE_URL:-http://127.0.0.1:9001}"
+NODE_URL="${NODE_URL:-http://89.167.52.40:8099}"
 TOKEN="${EVAPORCHAIN_TX_TOKEN:-}"
 DEPLOYER_U8="${DEPLOYER_U8:-0}"          # 0 = genesis-funded faucet account
 HOLDER_U8="${HOLDER_U8:-0}"              # issue() bearer (read auth not needed here)
@@ -64,7 +64,7 @@ POLL_TIMEOUT_SEC=300
 usage() { cat <<'EOF'
 deploy-evaporcash.sh [options]
   --dry-run            validate + print intended calls; no network
-  --node URL           node base URL (default http://127.0.0.1:9001)
+  --node URL           node base URL (default http://89.167.52.40:8099)
   --token TOKEN        auth bearer ($EVAPORCHAIN_TX_TOKEN)
   --deployer U8        deployer/caller index (default 0 = faucet)
   --holder U8          issue() bearer index (default 0)

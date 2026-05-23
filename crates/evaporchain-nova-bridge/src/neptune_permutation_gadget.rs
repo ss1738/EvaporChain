@@ -1447,7 +1447,7 @@ mod tests {
     #[test]
     fn permute_constraint_count_is_dominated_by_sbox() {
         let params = make_test_params_width_3();
-        let init = vec![Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
+        let init = [Bn254Fr::from(1u64), Bn254Fr::from(2u64), Bn254Fr::from(3u64)];
 
         let cs = ConstraintSystem::<Bn254Fr>::new_ref();
         let mut state_vars: Vec<FpVar<Bn254Fr>> = init
@@ -1469,7 +1469,7 @@ mod tests {
         //   initial add_round_constants, since it's just adds.)
         // MDS multiplications under constant matrices: 0 constraints.
         assert!(
-            constraints >= 40 && constraints <= 60,
+            (40..=60).contains(&constraints),
             "permute constraint count {constraints} should be ~51 (SBOX-dominated, MDS-free)"
         );
     }

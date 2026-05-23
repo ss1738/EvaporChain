@@ -476,6 +476,72 @@ mod tests {
         assert!(config.include_nfts);
     }
 
+    // ─── Additional coverage tests (session 63) ───────────────────────────────
+
+    #[test]
+    fn test_config_getter() {
+        let refresher = AutoRefresher::with_default_config();
+        let cfg = refresher.config();
+        assert_eq!(cfg.threshold_pct, 25.0);
+        assert_eq!(cfg.poll_interval_secs, 60);
+    }
+
+    #[test]
+    fn test_scan_zero_max_energy_object_treated_as_full() {
+        let refresher = AutoRefresher::with_default_config();
+        let portfolio = Portfolio {
+            address: "0xtest".into(),
+            balance: 0,
+            nonce: 0,
+            objects: vec![OwnedObject {
+                id: "0xzero".into(),
+                name: "zero_max".into(),
+                energy: 0,
+                max_energy: 0,
+                current_energy: 0,
+                half_life: 0,
+                state: "Active".into(),
+                created_epoch: 0,
+                last_refreshed: 0,
+                decay_percentage: 0.0,
+                epochs_until_zero: None,
+            }],
+            nfts: vec![],
+            tokens: vec![],
+            total_energy_at_risk: 0,
+        };
+        let actions = refresher.scan(&portfolio);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_scan_zero_max_energy_nft_treated_as_full() {
+        let refresher = AutoRefresher::with_default_config();
+        let portfolio = Portfolio {
+            address: "0xtest".into(),
+            balance: 0,
+            nonce: 0,
+            objects: vec![],
+            nfts: vec![OwnedNft {
+                id: 99,
+                name: "zero_nft".into(),
+                collection: "c".into(),
+                current_energy: 0,
+                max_energy: 0,
+                half_life: 0,
+                state: "Active".into(),
+                decay_percentage: 0.0,
+                epochs_remaining: 0,
+                grace_epoch: None,
+                evaporated_epoch: None,
+            }],
+            tokens: vec![],
+            total_energy_at_risk: 0,
+        };
+        let actions = refresher.scan(&portfolio);
+        assert!(actions.is_empty());
+    }
+
     #[test]
     fn test_config_json_roundtrip() {
         let config = AutoRefreshConfig {

@@ -1839,17 +1839,20 @@ impl P2pNetworkService {
                                         acceptance = MessageAcceptance::Ignore;
                                     }
                                 }
-                                if let Err(e) = swarm
+                                // libp2p 0.55+: report_message_validation_result
+                                // now returns `bool` (true = accepted by us;
+                                // false = unknown message id) instead of Result.
+                                let reported = swarm
                                     .behaviour_mut()
                                     .gossipsub
                                     .report_message_validation_result(
                                         &message_id,
                                         &propagation_source,
                                         acceptance,
-                                    )
-                                {
+                                    );
+                                if !reported {
                                     debug!(
-                                        "report_message_validation_result failed for {message_id}: {e:?}"
+                                        "report_message_validation_result returned false for {message_id} (unknown message id)"
                                     );
                                 }
                             }
@@ -1858,6 +1861,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Request { request, channel, .. },
+                                    ..
                                 },
                             )) => {
                                 if !rate_limiter.check_and_increment(&peer) {
@@ -1934,6 +1938,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Response { response, .. },
+                                    ..
                                 },
                             )) => {
                                 info!(
@@ -2000,6 +2005,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Request { request, channel, .. },
+                                    ..
                                 },
                             )) => {
                                 // Audit AUDIT-2026-05-11-1: rate-limit the
@@ -2060,6 +2066,7 @@ impl P2pNetworkService {
                                 request_response::Event::Message {
                                     peer,
                                     message: request_response::Message::Response { response, .. },
+                                    ..
                                 },
                             )) => {
                                 let valid: Vec<SampleResponse> = response.samples.into_iter().flatten().collect();
@@ -3727,5 +3734,219 @@ mod tests {
             c.contains_key(&(MAX_CACHE_SIZE as u64)),
             "newest must be retained"
         );
+    }
+
+    // ─── New coverage tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_disk_block_fetcher_debug_format() {
+        let fetcher = DiskBlockFetcher::new(|_h| None);
+        let s = format!("{:?}", fetcher);
+        assert_eq!(s, "DiskBlockFetcher(<fn>)");
+    }
+
+    #[test]
+    fn test_disk_block_fetcher_fetch_calls_closure() {
+        let fetcher = DiskBlockFetcher::new(|h| if h == 7 { Some(dummy_block(7)) } else { None });
+        assert!(fetcher.fetch(7).is_some());
+        assert!(fetcher.fetch(8).is_none());
+    }
+
+    #[test]
+    fn test_rate_limiter_window_reset_allows_after_expiry() {
+        let mut rl = PeerRateLimiter::new();
+        let peer = PeerId::random();
+        // Exhaust the limit
+        for _ in 0..=PEER_MSG_LIMIT {
+            rl.check_and_increment(&peer);
+        }
+        assert!(!rl.check_and_increment(&peer), "must be blocked at limit");
+        // Artificially age the entry past the window
+        let entry = rl.counters.get_mut(&peer).unwrap();
+        entry.1 = std::time::Instant::now() - Duration::from_secs(15);
+        // Window expired → counter resets, call is allowed
+        assert!(rl.check_and_increment(&peer), "must be allowed after window reset");
+        assert_eq!(rl.counters[&peer].0, 1, "counter must restart at 1");
+    }
+
+    #[test]
+    fn test_rate_limiter_gc_prunes_stale_entries_when_over_cap() {
+        let mut rl = PeerRateLimiter::new();
+        // Directly insert MAX_TRACKED_PEERS + 1 entries, all older than 2× window
+        for _ in 0..MAX_TRACKED_PEERS + 1 {
+            rl.counters.insert(
+                PeerId::random(),
+                (1, std::time::Instant::now() - Duration::from_secs(100)),
+            );
+        }
+        assert!(rl.counters.len() > MAX_TRACKED_PEERS);
+        rl.maybe_gc();
+        // All entries are old (cutoff = now - 20s); retain keeps only fresh ones
+        assert!(
+            rl.counters.is_empty(),
+            "stale entries must be pruned when over MAX_TRACKED_PEERS"
+        );
+    }
+
+    #[test]
+    fn test_ban_list_is_banned_expired_removes_entry() {
+        let mut bl = PeerBanList::new();
+        let peer = PeerId::random();
+        // Insert an already-expired ban and a violation count
+        bl.banned.insert(peer, std::time::Instant::now() - Duration::from_secs(1));
+        bl.violations.insert(peer, 5);
+        // is_banned should return false and clean up both maps
+        assert!(!bl.is_banned(&peer), "expired ban must not be active");
+        assert!(!bl.banned.contains_key(&peer), "expired entry must be removed");
+        assert!(!bl.violations.contains_key(&peer), "violations entry must be removed");
+    }
+
+    #[test]
+    fn test_ban_list_gc_clears_large_violations_when_banned_empty() {
+        let mut bl = PeerBanList::new();
+        // Violations > 1024 with no active bans → gc() must clear violations
+        for _ in 0..1025 {
+            bl.violations.insert(PeerId::random(), 1);
+        }
+        assert!(bl.violations.len() > 1024);
+        assert!(bl.banned.is_empty());
+        bl.gc();
+        assert!(bl.violations.is_empty(), "violations must be cleared when banned empty and large");
+    }
+
+    #[test]
+    fn test_per_ip_tracker_release_to_zero_removes_entry() {
+        use std::net::{IpAddr, Ipv4Addr};
+        let mut t = PerIpConnectionTracker::new(5);
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 55));
+        t.try_admit(ip);
+        assert_eq!(t.count_for(&ip), 1);
+        t.release(ip);
+        assert_eq!(t.count_for(&ip), 0);
+        assert!(!t.counts.contains_key(&ip), "entry must be removed when count reaches 0");
+    }
+
+    #[test]
+    fn test_per_ip_tracker_release_idempotent_at_zero() {
+        use std::net::{IpAddr, Ipv4Addr};
+        let mut t = PerIpConnectionTracker::new(5);
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 99));
+        // release on an IP that was never admitted must not panic
+        t.release(ip);
+        assert_eq!(t.count_for(&ip), 0);
+    }
+
+    #[test]
+    fn test_load_or_generate_identity_loads_existing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        // First call: generates + persists
+        let kp1 = load_or_generate_identity(dir.path()).unwrap();
+        // Second call: loads from disk
+        let kp2 = load_or_generate_identity(dir.path()).unwrap();
+        assert_eq!(
+            kp1.public().to_peer_id(),
+            kp2.public().to_peer_id(),
+            "loaded identity must match generated identity"
+        );
+        // Key file must exist after first call
+        assert!(dir.path().join("network_key.bin").exists());
+    }
+
+    #[test]
+    fn test_rejection_counters_snapshot_all_variants() {
+        use std::sync::atomic::Ordering;
+        let c = RejectionCounters::default();
+        c.per_ip.fetch_add(1, Ordering::Relaxed);
+        c.per_subnet.fetch_add(2, Ordering::Relaxed);
+        c.total_cap.fetch_add(3, Ordering::Relaxed);
+        c.banned.fetch_add(4, Ordering::Relaxed);
+        c.unauthorized.fetch_add(5, Ordering::Relaxed);
+        let snap = c.snapshot();
+        assert_eq!(snap[0], ("per_ip", 1));
+        assert_eq!(snap[1], ("per_subnet", 2));
+        assert_eq!(snap[2], ("total_cap", 3));
+        assert_eq!(snap[3], ("banned", 4));
+        assert_eq!(snap[4], ("unauthorized", 5));
+    }
+
+    #[test]
+    fn test_sybil_ban_ip_and_unban_ip() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(1, 2, 3, 4);
+        s.ban_ip(ip, "test ban");
+        assert!(s.bans.is_banned(&ip), "IP must be banned after ban_ip");
+        let removed = s.unban_ip(&ip);
+        assert!(removed, "unban_ip must return true for a currently-banned IP");
+        assert!(!s.bans.is_banned(&ip), "IP must not be banned after unban_ip");
+        // unban for a non-banned IP returns false
+        let removed2 = s.unban_ip(&ipv4(9, 9, 9, 9));
+        assert!(!removed2, "unban_ip returns false for non-banned IP");
+    }
+
+    #[test]
+    fn test_sybil_peer_view_returns_connected_peer_info() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(10, 0, 0, 1);
+        let pid = PeerId::random();
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(pid, ip);
+        let view = s.peer_view();
+        assert_eq!(view.len(), 1);
+        let info = &view[0];
+        assert_eq!(info.peer_id, pid.to_string());
+        assert_eq!(info.ip, Some(ip.to_string()));
+        assert!(info.subnet.is_some());
+        assert_eq!(info.score, 0);
+        assert_eq!(info.infractions, 0);
+    }
+
+    #[test]
+    fn test_sybil_record_disconnect_removes_subnet_when_last_peer() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(192, 168, 1, 1);
+        let pid = PeerId::random();
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(pid, ip);
+        let key = subnet_key(&ip);
+        assert_eq!(*s.subnet_counts.get(&key).unwrap(), 1);
+        s.record_disconnect(&pid);
+        assert!(
+            !s.subnet_counts.contains_key(&key),
+            "subnet_counts key must be removed when last peer disconnects"
+        );
+        assert!(!s.ip_peers.contains_key(&ip));
+        assert!(!s.peer_ips.contains_key(&pid));
+        assert!(!s.scores.contains_key(&pid));
+    }
+
+    #[tokio::test]
+    async fn test_service_starts_with_data_dir_creates_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = make_config(0);
+        config.data_dir = Some(dir.path().to_path_buf());
+        let result = P2pNetworkService::start(config).await;
+        assert!(result.is_ok(), "start with data_dir must succeed");
+        assert!(
+            dir.path().join("network_key.bin").exists(),
+            "network_key.bin must be created in data_dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_service_starts_with_bootstrap_peer_does_not_panic() {
+        let mut config = make_config(0);
+        // Unreachable address — dial will fail gracefully (warn only)
+        config.bootstrap_peers = vec!["/ip4/127.0.0.1/tcp/19999".to_string()];
+        let result = P2pNetworkService::start(config).await;
+        assert!(result.is_ok(), "start with bootstrap peers must not fail even if dial fails");
+    }
+
+    #[tokio::test]
+    async fn test_service_starts_with_ban_list_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = make_config(0);
+        config.ban_list_path = Some(dir.path().join("bans.json"));
+        let result = P2pNetworkService::start(config).await;
+        assert!(result.is_ok(), "start with ban_list_path must succeed");
     }
 }

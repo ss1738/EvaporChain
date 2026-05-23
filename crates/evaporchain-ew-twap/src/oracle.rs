@@ -344,16 +344,8 @@ mod tests {
         let r = o.read().unwrap();
         // The honest observation dominates; the EW-TWAP is much
         // closer to the honest price than the attacker price.
-        let dist_to_honest = if r >= honest_price {
-            r - honest_price
-        } else {
-            honest_price - r
-        };
-        let dist_to_attacker = if r >= attacker_price {
-            r - attacker_price
-        } else {
-            attacker_price - r
-        };
+        let dist_to_honest = r.abs_diff(honest_price);
+        let dist_to_attacker = r.abs_diff(attacker_price);
         assert!(
             dist_to_honest < dist_to_attacker,
             "EW-TWAP should be closer to honest"
