@@ -74,7 +74,7 @@
 use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr};
 use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
 use ark_r1cs_std::fields::FieldVar;
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::gr1cs::SynthesisError;
 
 type FqV = EmulatedFpVar<Bn254Fq, Bn254Fr>;
 
@@ -298,9 +298,9 @@ mod tests {
     use ark_ec::{short_weierstrass::Projective, AffineRepr, CurveGroup};
     use ark_r1cs_std::{
         alloc::AllocVar, boolean::Boolean, convert::ToBitsGadget,
-        fields::fp::FpVar, R1CSVar,
+        fields::fp::FpVar, GR1CSVar,
     };
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// THE B.1 PRIMITIVE PROOF: in-circuit non-native bn256-G1
     /// double + add equal out-of-circuit ark bn256-G1, CS satisfied.

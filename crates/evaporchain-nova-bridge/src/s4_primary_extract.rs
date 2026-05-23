@@ -137,9 +137,9 @@ mod tests {
     use ark_ec::{short_weierstrass::Projective, AffineRepr, CurveGroup};
     use ark_r1cs_std::{
         alloc::AllocVar, convert::ToBitsGadget, fields::emulated_fp::EmulatedFpVar,
-        fields::fp::FpVar, R1CSVar,
+        fields::fp::FpVar, GR1CSVar,
     };
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     type FqV = EmulatedFpVar<ArkFq, ArkFr>;
 

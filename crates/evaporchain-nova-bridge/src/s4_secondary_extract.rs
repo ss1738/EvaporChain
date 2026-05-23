@@ -163,8 +163,8 @@ mod tests {
     use crate::s4_msm_gadget::pedersen_msm_grumpkin;
     use ark_bn254::Fr as ArkFr;
     use ark_ec::CurveGroup;
-    use ark_r1cs_std::{alloc::AllocVar, fields::emulated_fp::EmulatedFpVar, R1CSVar};
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_r1cs_std::{alloc::AllocVar, fields::emulated_fp::EmulatedFpVar, GR1CSVar};
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// Bounded-`W` real-data S4a proof (4 GB-box safe).
     ///

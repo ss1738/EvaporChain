@@ -54,7 +54,7 @@ use ark_ec::short_weierstrass::{Affine, Projective};
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
 use crate::grumpkin_config::GrumpkinConfig;
 use crate::s4_msm_gadget::{pedersen_msm_grumpkin, GrumpkinVar};
@@ -358,7 +358,7 @@ impl ConstraintSynthesizer<Bn254Fr> for RecursionDeciderCircuit {
 mod tests {
     use super::*;
     use ark_ec::{short_weierstrass::SWCurveConfig, CurveGroup};
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// Build a self-consistent Section-A witness: 3 bases, scalars,
     /// blind, and the correctly-computed native `ck_hat`.

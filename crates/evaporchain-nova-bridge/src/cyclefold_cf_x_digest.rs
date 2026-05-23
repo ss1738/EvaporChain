@@ -49,7 +49,7 @@ use ark_r1cs_std::{
     boolean::Boolean, convert::ToBitsGadget, fields::emulated_fp::EmulatedFpVar,
     fields::fp::FpVar,
 };
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 /// In-circuit `cf_x_digest` gadget — produces the same Bn254Fr
 /// digest as [`compute_cf_x_digest_native`] for the same `(P, s,
@@ -330,7 +330,7 @@ mod tests {
         use ark_r1cs_std::alloc::AllocVar;
         use ark_r1cs_std::eq::EqGadget;
         use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
-        use ark_relations::r1cs::ConstraintSystem;
+        use ark_relations::gr1cs::ConstraintSystem;
 
         let mut rng = test_rng();
         let (p, s, q) = random_tuple(&mut rng);
@@ -396,7 +396,7 @@ mod tests {
         use ark_r1cs_std::alloc::AllocVar;
         use ark_r1cs_std::eq::EqGadget;
         use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
-        use ark_relations::r1cs::ConstraintSystem;
+        use ark_relations::gr1cs::ConstraintSystem;
 
         let mut rng = test_rng();
         let (p1, s1, q1) = random_tuple(&mut rng);

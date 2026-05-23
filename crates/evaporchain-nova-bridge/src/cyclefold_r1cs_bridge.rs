@@ -35,7 +35,7 @@
 //! (the increment-2 measurements with the implicit ONE removed).
 
 use ark_bn254::Fq as Bn254Fq;
-use ark_relations::r1cs::{
+use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisMode,
 };
 
@@ -50,7 +50,7 @@ use nova_snark::traits::Engine;
 pub enum BridgeError {
     /// Arkworks `ConstraintSystem::generate_constraints` failed.
     #[error("arkworks synthesis failed: {0:?}")]
-    ArkSynthesis(ark_relations::r1cs::SynthesisError),
+    ArkSynthesis(ark_relations::gr1cs::SynthesisError),
     /// `ConstraintSystem::to_matrices()` returned `None` — the
     /// synthesis mode wasn't `Setup`/matrix-construction. Should
     /// never happen if we set the mode correctly.

@@ -27,7 +27,7 @@ use ark_r1cs_std::{
     fields::fp::FpVar,
     groups::{curves::short_weierstrass::ProjectiveVar, CurveVar},
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::gr1cs::SynthesisError;
 
 /// In-circuit Grumpkin point variable (native Fr coordinates).
 pub type GrumpkinVar = ProjectiveVar<GrumpkinConfig, FpVar<Bn254Fr>>;
@@ -63,8 +63,8 @@ pub fn pedersen_msm_grumpkin(
 mod tests {
     use super::*;
     use ark_ec::{short_weierstrass::SWCurveConfig, CurveGroup};
-    use ark_r1cs_std::{alloc::AllocVar, R1CSVar};
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_r1cs_std::{alloc::AllocVar, GR1CSVar};
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// S4a-wiring-0 (diagnostic, not a correctness assert): dump the
     /// real `serde_json::to_value(pp)["ck_secondary"]` shape so the

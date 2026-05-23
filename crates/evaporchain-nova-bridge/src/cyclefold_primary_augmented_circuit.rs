@@ -53,7 +53,7 @@ use ark_r1cs_std::{
     alloc::AllocVar, boolean::Boolean, convert::ToBitsGadget, eq::EqGadget,
     fields::emulated_fp::EmulatedFpVar, fields::fp::FpVar, fields::FieldVar,
 };
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
 /// Witness for one step of the (shell) primary augmented circuit.
 ///
@@ -541,7 +541,7 @@ mod tests {
     use super::*;
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::UniformRand;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
 
     /// Native helper mirroring the in-circuit β-5-β/γ r-from-RO

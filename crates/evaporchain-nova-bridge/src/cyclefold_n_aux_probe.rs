@@ -25,7 +25,7 @@
 //! prediction (increment 6) and Groth16 wrapper viability.
 
 use ark_bn254::Fq as Bn254Fq;
-use ark_relations::r1cs::{
+use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal,
 };
 

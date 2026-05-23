@@ -29,7 +29,7 @@ use ark_r1cs_std::{
     fields::FieldVar,
     groups::{curves::short_weierstrass::ProjectiveVar, CurveVar},
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::gr1cs::SynthesisError;
 
 /// In-circuit recursive fold of a constant commitment key `ck` into
 /// the single point `ck_hat`, exactly as `nova-snark`'s prover does
@@ -86,8 +86,8 @@ mod tests {
         short_weierstrass::SWCurveConfig, CurveGroup,
     };
     use ark_ff::Field;
-    use ark_r1cs_std::{alloc::AllocVar, R1CSVar};
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_r1cs_std::{alloc::AllocVar, GR1CSVar};
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// CORRECTNESS: in-circuit fold == out-of-circuit recursive fold
     /// == flat `Σ sᵢ·ckᵢ` (closing the loop with `ipa_s_tensor`'s

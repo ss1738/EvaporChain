@@ -52,7 +52,7 @@ use ark_r1cs_std::{
     fields::emulated_fp::EmulatedFpVar,
     fields::fp::FpVar,
 };
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
 use crate::cyclefold_aux_circuit::{cyclefold_aux_scalar_mul, Bn254G1Var};
 
@@ -134,7 +134,7 @@ mod tests {
     use super::*;
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::UniformRand;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
 
     fn consistent_witness() -> CycleFoldInstanceCircuit {

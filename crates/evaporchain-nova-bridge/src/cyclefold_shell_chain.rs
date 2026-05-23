@@ -50,7 +50,7 @@ use crate::scalar_adapter::{ark_fr_to_primary, primary_to_ark_fr};
 use ark_bn254::{Fq as Bn254Fq, Fr as Bn254Fr, G1Affine, G1Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger, PrimeField, UniformRand};
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystem};
 use ark_std::rand::RngCore;
 
 /// Pack a slice of LE bits into a `Bn254Fr` element (same routine

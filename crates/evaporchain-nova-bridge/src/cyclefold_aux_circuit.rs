@@ -36,7 +36,7 @@ use ark_r1cs_std::{
     fields::emulated_fp::EmulatedFpVar,
     groups::CurveVar,
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::gr1cs::SynthesisError;
 
 /// In-circuit BN254-G1 variable, NATIVE over a Bn254Fq circuit
 /// (`ark_bn254::constraints::GVar = ProjectiveVar<g1::Config,
@@ -66,8 +66,8 @@ mod tests {
     use ark_bn254::G1Projective as Bn254G1Proj;
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::{Field, UniformRand};
-    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, R1CSVar};
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, GR1CSVar};
+    use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
 
     /// CORRECTNESS: in-circuit `s · P` equals the out-of-circuit ark

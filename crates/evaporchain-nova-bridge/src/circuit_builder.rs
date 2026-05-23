@@ -157,8 +157,8 @@ pub(crate) fn real_provable_circuit() -> Option<NovaVerifierCircuit> {
 mod tests {
     use super::*;
     use crate::recursive_snark_fixture::generate_fixture;
-    use ark_relations::r1cs::ConstraintSynthesizer;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSynthesizer;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// End-to-end pin: real fixture → adapter → satisfied CS.
     ///
@@ -207,7 +207,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+                Err(ark_relations::gr1cs::SynthesisError::Unsatisfiable)
             ),
             "section-less fixture circuit must be Unsatisfiable under S2b, got {result:?}"
         );
@@ -248,7 +248,7 @@ mod tests {
     #[ignore]
     fn build_circuit_with_section2_alone_is_unsatisfiable() {
         use crate::recursive_snark_fixture::generate_fixture_with_digest;
-        use ark_relations::r1cs::ConstraintSystem;
+        use ark_relations::gr1cs::ConstraintSystem;
 
         let dump = std::path::Path::new("/tmp/neptune-bn256-standard.json");
         if !dump.exists() {
@@ -266,7 +266,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+                Err(ark_relations::gr1cs::SynthesisError::Unsatisfiable)
             ),
             "section2-only circuit must be Unsatisfiable under S2b, got {result:?}"
         );
@@ -307,9 +307,99 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ark_relations::r1cs::SynthesisError::Unsatisfiable)
+                Err(ark_relations::gr1cs::SynthesisError::Unsatisfiable)
             ),
             "section3-only circuit must be Unsatisfiable under S2b, got {result:?}"
+        );
+    }
+
+    /// S6 (audit B-1/B-2): the DETERMINISM PROOF for S2a.
+    ///
+    /// Groth16 keys bind exactly one R1CS shape. S2a builds the trusted-setup
+    /// circuit from a *canonical zeroed placeholder* (`setup_shape()`) instead
+    /// of a real proof. Soundness requires that placeholder to synthesize a
+    /// bit-identical R1CS — same `num_constraints`, same instance/witness var
+    /// counts — to a circuit built from REAL prover witnesses. If it does not,
+    /// the zeroed-placeholder approach is FALSIFIED and S2a is wrong.
+    ///
+    /// `#[ignore]`: needs the neptune dump + a real Nova fixture (expensive).
+    ///   cargo test -p evaporchain-nova-bridge s2a_setup_shape \
+    ///     -- --ignored --nocapture
+    #[test]
+    #[ignore = "S6: needs /tmp/neptune-bn256-standard.json + real Nova fixture (expensive)"]
+    fn s2a_setup_shape_matches_real_prover_r1cs() {
+        use crate::recursive_snark_fixture::generate_fixture_with_digest;
+        use nova_snark::nova::PublicParams;
+        use nova_snark::provider::{
+            hyperkzg::EvaluationEngine as EE1, ipa_pc::EvaluationEngine as EE2,
+        };
+        use nova_snark::spartan::snark::RelaxedR1CSSNARK;
+        use nova_snark::traits::snark::RelaxedR1CSSNARKTrait;
+        type S1 = RelaxedR1CSSNARK<E1, EE1<E1>>;
+        type S2 = RelaxedR1CSSNARK<E2, EE2<E2>>;
+
+        let dump = std::path::Path::new("/tmp/neptune-bn256-standard.json");
+        if !dump.exists() {
+            eprintln!("SKIP s2a_setup_shape: dump absent at {}", dump.display());
+            return;
+        }
+
+        // Circuit B — REAL prover circuit, BOTH sections from one fixture.
+        let circuit_step = crate::recursive_snark_fixture::TrivialIncrementCircuit;
+        let pp = PublicParams::<E1, E2, _>::setup(
+            &circuit_step,
+            &*S1::ck_floor(),
+            &*S2::ck_floor(),
+        )
+        .expect("real pp setup");
+        let (rs, pp_digest) =
+            generate_fixture_with_digest(2).expect("2-step fixture+digest");
+        let real = build_circuit_with_section2(&rs, pp_digest, dump)
+            .expect("build real section2")
+            .with_section3(
+                extract_section3_witness(&rs, &pp).expect("extract real section3"),
+            );
+        assert!(
+            real.section2.is_some() && real.section3.is_some(),
+            "real prover circuit must carry BOTH real sections"
+        );
+
+        // Circuit A — the trusted-setup shape (canonical zeroed placeholder).
+        let setup = NovaVerifierCircuit::setup_shape().expect("setup_shape()");
+        assert!(
+            setup.section2.is_some() && setup.section3.is_some(),
+            "setup_shape() must carry BOTH canonical sections"
+        );
+
+        let cs_real = ConstraintSystem::<ArkFr>::new_ref();
+        real.generate_constraints(cs_real.clone())
+            .expect("synthesize real prover circuit");
+        let cs_setup = ConstraintSystem::<ArkFr>::new_ref();
+        setup
+            .generate_constraints(cs_setup.clone())
+            .expect("synthesize setup_shape circuit");
+
+        // The R1CS shape Groth16 binds. ANY mismatch => S2a FALSIFIED.
+        assert_eq!(
+            cs_setup.num_constraints(),
+            cs_real.num_constraints(),
+            "S2a FALSIFIED: setup_shape num_constraints={} != real prover={}",
+            cs_setup.num_constraints(),
+            cs_real.num_constraints()
+        );
+        assert_eq!(
+            cs_setup.num_instance_variables(),
+            cs_real.num_instance_variables(),
+            "S2a FALSIFIED: instance-variable count mismatch (setup={} real={})",
+            cs_setup.num_instance_variables(),
+            cs_real.num_instance_variables()
+        );
+        assert_eq!(
+            cs_setup.num_witness_variables(),
+            cs_real.num_witness_variables(),
+            "S2a FALSIFIED: witness-variable count mismatch (setup={} real={})",
+            cs_setup.num_witness_variables(),
+            cs_real.num_witness_variables()
         );
     }
 }

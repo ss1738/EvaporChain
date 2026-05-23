@@ -25,7 +25,7 @@ use ark_r1cs_std::{
     eq::EqGadget,
     fields::{emulated_fp::EmulatedFpVar, FieldVar},
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::gr1cs::SynthesisError;
 
 /// Non-native scalar var over the secondary R1CS field (BN254 Fq),
 /// emulated inside the BN254-Fr circuit.
@@ -85,7 +85,7 @@ pub fn enforce_secondary_relaxed_r1cs_sat_nn(
 mod tests {
     use super::*;
     use ark_r1cs_std::alloc::AllocVar;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// Tiny hand-built secondary instance: num_vars=1, x=[0,0],
     /// z=[w0,u,0,0]. One row: A=[(0,1)]→Az=w0; B=[(0,1)]→Bz=w0;

@@ -208,7 +208,7 @@ mod tests {
             enforce_secondary_relaxed_r1cs_sat_nn, NnFq,
         };
         use ark_r1cs_std::alloc::AllocVar;
-        use ark_relations::r1cs::ConstraintSystem;
+        use ark_relations::gr1cs::ConstraintSystem;
 
         let sw = {
             let pp = canonical_public_params().expect("canonical pp");
@@ -269,7 +269,7 @@ mod tests {
             enforce_secondary_relaxed_r1cs_sat_nn, NnFq, SparseRow,
         };
         use ark_r1cs_std::alloc::AllocVar;
-        use ark_relations::r1cs::ConstraintSystem;
+        use ark_relations::gr1cs::ConstraintSystem;
 
         // Synthetic SATISFIED instance: num_vars=num_cons=s, num_io=2,
         // `d` nonzeros/row at col 0. Row: A=B=C=[(0,1)], w[0]=1, u=1,
