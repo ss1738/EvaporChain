@@ -96,7 +96,7 @@ pub fn inverse_of_two() -> Option<FieldElem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codeword::{add_p, mul_p, MOD_P};
+    use crate::codeword::mul_p;
 
     fn cw_pair(x: FieldElem, fx: FieldElem, fnx: FieldElem, energy: u64) -> EnergyCodeword {
         // Build the 2-position codeword (x, f(x)) and (-x, f(-x)).

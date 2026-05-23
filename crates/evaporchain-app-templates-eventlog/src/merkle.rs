@@ -49,13 +49,38 @@ pub fn merkle_root(receipts: &[DeployReceipt]) -> [u8; 32] {
 }
 
 /// Verify that `receipt` is at index `idx` in a tree whose root is
-/// `root`, given the sibling-hash `path` (leaf-to-root order).
+/// `root`, given the sibling-hash `path` (leaf-to-root order) and
+/// the tree's total `leaf_count`.
+///
+/// SUB-N1 (audit 2026-05-15): the earlier signature `(receipt, idx,
+/// path, root)` accepted any `path.len()` and any `idx`. A crafted
+/// `(idx, path)` could walk to a value matching the root by chance
+/// — "tree-size confusion" — certifying a non-leaf interior hash as
+/// a receipt. The verifier MUST be told the tree's leaf_count by
+/// the trusted source storing the root so it can enforce:
+///   - `path.len() == ceil(log2(max(leaf_count, 1)))`
+///   - `idx < leaf_count`
+/// These two invariants together pin the tree shape exactly.
 pub fn verify_inclusion(
     receipt: &DeployReceipt,
     idx: usize,
+    leaf_count: usize,
     path: &[[u8; 32]],
     root: &[u8; 32],
 ) -> bool {
+    // Empty-tree sentinel: an empty log has `root = [0; 32]`. No
+    // proof can verify against it.
+    if leaf_count == 0 {
+        return false;
+    }
+    if idx >= leaf_count {
+        return false;
+    }
+    let expected_depth = expected_proof_depth(leaf_count);
+    if path.len() != expected_depth {
+        return false;
+    }
+
     let mut current = leaf_hash(receipt);
     let mut i = idx;
     for sibling in path {
@@ -67,6 +92,22 @@ pub fn verify_inclusion(
         i >>= 1;
     }
     &current == root
+}
+
+/// SUB-N1: `ceil(log2(max(n, 1)))` — the number of sibling hashes
+/// in a valid proof for a tree of `n` leaves. Single-leaf trees
+/// have depth 0 (path is empty, current == root after no steps).
+fn expected_proof_depth(leaf_count: usize) -> usize {
+    if leaf_count <= 1 {
+        return 0;
+    }
+    let mut d = 0usize;
+    let mut n = leaf_count - 1;
+    while n > 0 {
+        n >>= 1;
+        d += 1;
+    }
+    d
 }
 
 fn leaf_hash(receipt: &DeployReceipt) -> [u8; 32] {
@@ -173,11 +214,11 @@ mod tests {
 
         // Path for index 0 is just [leaf_hash(r1)].
         let path = vec![leaf_hash(&r1)];
-        assert!(verify_inclusion(&r0, 0, &path, &root));
+        assert!(verify_inclusion(&r0, 0, 2, &path, &root));
 
         // Path for index 1 is [leaf_hash(r0)].
         let path = vec![leaf_hash(&r0)];
-        assert!(verify_inclusion(&r1, 1, &path, &root));
+        assert!(verify_inclusion(&r1, 1, 2, &path, &root));
     }
 
     #[test]
@@ -190,7 +231,7 @@ mod tests {
 
         // A correct path for r0 should not validate `other`.
         let path = vec![leaf_hash(&r1)];
-        assert!(!verify_inclusion(&other, 0, &path, &root));
+        assert!(!verify_inclusion(&other, 0, 2, &path, &root));
     }
 
     #[test]
@@ -202,7 +243,7 @@ mod tests {
 
         let path = vec![leaf_hash(&r1)];
         let bogus = [0xDEu8; 32];
-        assert!(!verify_inclusion(&r0, 0, &path, &bogus));
+        assert!(!verify_inclusion(&r0, 0, 2, &path, &bogus));
     }
 
     #[test]
@@ -243,13 +284,13 @@ mod tests {
         let l3 = leaf_hash(&leaves[3]);
         let n23 = node_hash(&l2, &l3);
         let path = vec![l0, n23];
-        assert!(verify_inclusion(&leaves[1], 1, &path, &root));
+        assert!(verify_inclusion(&leaves[1], 1, 4, &path, &root));
 
         // And path for l2 is [l3, n01].
         let l1 = leaf_hash(&leaves[1]);
         let n01 = node_hash(&l0, &l1);
         let path = vec![l3, n01];
-        assert!(verify_inclusion(&leaves[2], 2, &path, &root));
+        assert!(verify_inclusion(&leaves[2], 2, 4, &path, &root));
     }
 
     #[test]

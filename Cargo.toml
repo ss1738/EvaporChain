@@ -88,6 +88,7 @@ members = [
     "crates/evaporchain-singh-heartbeat",
     "crates/evaporchain-singh-lineage",
     "crates/evaporchain-witnessfit",
+    "crates/evaporchain-scl",
     "crates/evaporchain-sap",
     "crates/evaporchain-app-glue",
     "crates/evaporchain-app-templates",

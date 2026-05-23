@@ -53,7 +53,7 @@ fn insert_rejects_seventeen_parents_with_diagnostic() {
         lc.insert(Block::new(id(i), vec![], 1, 0)).unwrap();
     }
     // Crafting a 17-parent child must be rejected at the cap.
-    let parents: Vec<BlockId> = (0..17u8).map(|i| id(i)).collect();
+    let parents: Vec<BlockId> = (0..17u8).map(id).collect();
     let err = lc.insert(Block::new(id(100), parents, 1, 1)).unwrap_err();
     match err {
         LightConeError::TooManyParents(b, n) => {
@@ -72,7 +72,7 @@ fn insert_at_exact_cap_succeeds() {
     for i in 0..16u8 {
         lc.insert(Block::new(id(i), vec![], 1, 0)).unwrap();
     }
-    let parents: Vec<BlockId> = (0..16u8).map(|i| id(i)).collect();
+    let parents: Vec<BlockId> = (0..16u8).map(id).collect();
     lc.insert(Block::new(id(100), parents, 1, 1)).unwrap();
     assert!(lc.contains(&id(100)));
 }
@@ -265,7 +265,7 @@ fn prune_orphan_branch_missing_tip_is_noop() {
 fn is_antichain_rejects_oversized_input() {
     let lc = diamond();
     let oversized: Vec<BlockId> = (0..(MAX_ANTICHAIN_INPUT as u8 + 1))
-        .map(|i| id(i))
+        .map(id)
         .collect();
     assert!(!is_antichain(&lc, &oversized));
 }
@@ -276,7 +276,7 @@ fn is_antichain_at_cap_size_processes_normally() {
     // return false for unknown blocks → is_antichain returns true.
     let lc = diamond();
     let at_cap: Vec<BlockId> = (10..(10 + MAX_ANTICHAIN_INPUT as u8))
-        .map(|i| id(i))
+        .map(id)
         .collect();
     assert_eq!(at_cap.len(), MAX_ANTICHAIN_INPUT);
     assert!(is_antichain(&lc, &at_cap));

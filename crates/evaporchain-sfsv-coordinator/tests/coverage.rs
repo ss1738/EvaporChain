@@ -17,6 +17,8 @@ use evaporchain_sfsv_coordinator::config::Config;
 // Config — defaults + env overrides
 // =================================================================
 
+static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn config_default_field_values() {
     let c = Config::default();
@@ -28,11 +30,9 @@ fn config_default_field_values() {
 
 #[test]
 fn config_from_env_falls_back_to_defaults_when_unset() {
-    // Defensively clear any SFSV_* vars that might leak from the shell.
+    let _guard = ENV_MUTEX.lock().unwrap();
     for k in ["SFSV_NODE_URL", "SFSV_AUTH_TOKEN", "SFSV_CALLER_BYTE", "SFSV_BID_PORT"] {
-        // SAFETY: tests run single-threaded by default for cargo test
-        // unless --test-threads is set; for this crate the suite is
-        // small enough that the default ordering is safe.
+        // SAFETY: serialised by ENV_MUTEX; no other thread touches SFSV_* vars.
         unsafe { std::env::remove_var(k); }
     }
     let c = Config::from_env();
@@ -44,7 +44,8 @@ fn config_from_env_falls_back_to_defaults_when_unset() {
 
 #[test]
 fn config_from_env_honours_overrides() {
-    // SAFETY: see note in fallback test above.
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // SAFETY: serialised by ENV_MUTEX; no other thread touches SFSV_* vars.
     unsafe {
         std::env::set_var("SFSV_NODE_URL", "http://remote:1234");
         std::env::set_var("SFSV_AUTH_TOKEN", "tok-abc");
@@ -67,6 +68,8 @@ fn config_from_env_honours_overrides() {
 
 #[test]
 fn config_from_env_ignores_unparseable_numeric_overrides() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // SAFETY: serialised by ENV_MUTEX; no other thread touches SFSV_* vars.
     unsafe {
         std::env::set_var("SFSV_CALLER_BYTE", "not-a-number");
         std::env::set_var("SFSV_BID_PORT", "🚀");
@@ -187,20 +190,23 @@ fn submit_bid_handles_0x_prefixed_hex() {
 }
 
 #[test]
-fn submit_bid_with_short_hex_uses_zero_padding() {
-    // Coordinator's hex_to_addr is defensive: short hex → padded to 32
-    // bytes with leading zeros; invalid hex → all zeros. Either way it
-    // accepts the bid (the chain enforces ML-DSA later).
+fn submit_bid_with_short_hex_rejected() {
+    // audit 2026-05-18 (F2): short bidder_hex must be rejected, not
+    // silently zero-padded to the genesis address [0u8;32].
     let mut a = Auctioneer::new();
     a.register_listing(7, make_vault(), make_auction(1)).unwrap();
     let req = BidRequest {
         contract_id: 7,
-        bidder_hex: "01".to_string(), // only 1 byte of hex
+        bidder_hex: "01".to_string(), // only 1 byte — must reject
         max_price: 600,
         lambda_tolerance: 0,
         submitted_at: 5,
     };
-    a.submit_bid(&req).expect("short hex accepted (padded)");
+    let err = a.submit_bid(&req).unwrap_err();
+    assert!(
+        matches!(err, AuctioneerError::InvalidBidderHex(_)),
+        "expected InvalidBidderHex, got {err:?}"
+    );
 }
 
 #[test]
@@ -246,4 +252,117 @@ fn register_then_drop_then_register_succeeds_again() {
     a.register_listing(7, make_vault(), make_auction(2))
         .expect("re-registration after drop");
     assert!(a.is_tracked(7));
+}
+
+// =================================================================
+// poller::parse_listing — pure JSON → (Vault, Auction) parsing
+// =================================================================
+
+use evaporchain_sfsv_coordinator::poller::parse_listing;
+
+#[test]
+fn parse_listing_returns_none_when_listed_is_false() {
+    let json = serde_json::json!({
+        "state": {
+            "listed": false,
+            "list_ceiling": 1_000_000,
+            "list_floor": 100_000,
+            "list_opened_at": 10,
+            "list_duration": 100,
+            "deposit": 500_000,
+            "release_epoch": 9_999_999
+        }
+    });
+    assert!(parse_listing(1, &json).is_none(), "unlisted vault must return None");
+}
+
+#[test]
+fn parse_listing_returns_none_when_state_key_missing() {
+    let json = serde_json::json!({ "other": "data" });
+    assert!(parse_listing(1, &json).is_none());
+}
+
+#[test]
+fn parse_listing_returns_none_when_ceiling_le_floor() {
+    let json = serde_json::json!({
+        "state": {
+            "listed": true,
+            "list_ceiling": 100,    // ceiling == floor → invalid
+            "list_floor": 100,
+            "list_opened_at": 0,
+            "list_duration": 50,
+            "deposit": 1_000,
+            "release_epoch": 99_999
+        }
+    });
+    assert!(parse_listing(2, &json).is_none(), "ceiling == floor must return None");
+}
+
+#[test]
+fn parse_listing_returns_none_when_duration_is_zero() {
+    let json = serde_json::json!({
+        "state": {
+            "listed": true,
+            "list_ceiling": 1_000,
+            "list_floor": 100,
+            "list_opened_at": 0,
+            "list_duration": 0,     // zero duration → invalid
+            "deposit": 1_000,
+            "release_epoch": 99_999
+        }
+    });
+    assert!(parse_listing(3, &json).is_none(), "zero duration must return None");
+}
+
+#[test]
+fn parse_listing_returns_some_for_valid_state() {
+    let json = serde_json::json!({
+        "state": {
+            "listed": true,
+            "list_ceiling": 1_000_000,
+            "list_floor":   100_000,
+            "list_opened_at": 50,
+            "list_duration":  200,
+            "deposit": 500_000,
+            "release_epoch": 9_999_999,
+            "future_self_addr": [0xAB, 0, 0, 0, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0, 0, 0]
+        }
+    });
+    let result = parse_listing(4, &json);
+    assert!(result.is_some(), "valid listed vault must return Some");
+    let (vault, auction) = result.unwrap();
+    assert!(vault.is_locked(), "parsed vault must be in Listed/Locked state");
+    assert!(vault.listing.is_some(), "vault listing must be set");
+    assert_eq!(auction.ceiling, 1_000_000);
+    assert_eq!(auction.floor, 100_000);
+}
+
+#[test]
+fn parse_listing_returns_none_when_ceiling_below_floor() {
+    let json = serde_json::json!({
+        "state": {
+            "listed": true,
+            "list_ceiling": 50,
+            "list_floor": 200,   // floor > ceiling → invalid
+            "list_opened_at": 0,
+            "list_duration": 100,
+            "deposit": 1_000,
+            "release_epoch": 99_999
+        }
+    });
+    assert!(parse_listing(5, &json).is_none(), "floor > ceiling must return None");
+}
+
+#[test]
+fn parse_listing_with_missing_numeric_fields_uses_defaults() {
+    // Only `listed` present; all numeric fields absent → zero defaults.
+    // ceiling=0, floor=0 → ceiling <= floor → None (guard triggers).
+    let json = serde_json::json!({ "state": { "listed": true } });
+    assert!(
+        parse_listing(6, &json).is_none(),
+        "all-zero numeric defaults → ceiling==floor → None"
+    );
 }

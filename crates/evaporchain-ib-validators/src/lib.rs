@@ -78,7 +78,7 @@ mod press_claim_tests {
     fn the_press_claim_lives_as_a_test() {
         let uniform_energies: Vec<u64> = (0..16).map(|i| i as u64 * 100).collect();
         let uniform = StateSignature::from_energies(&uniform_energies, 1_600);
-        let concentrated = StateSignature::from_energies(&vec![0u64; 16], 1_000_000);
+        let concentrated = StateSignature::from_energies(&[0u64; 16], 1_000_000);
 
         // (a) Identical views: KL = 0 → ABSTAIN even at threshold=0.
         let p_zero = IbParams { lambda_mb: 0 };

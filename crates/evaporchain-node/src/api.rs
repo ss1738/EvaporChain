@@ -179,6 +179,14 @@ pub struct ApiState {
     /// started with `--snapshot-dir` (or the default
     /// `<data_dir>/snapshots`). `None` disables snapshot serving.
     pub snapshot_dir: Option<std::path::PathBuf>,
+    /// A6 (audit 2026-05-17): per-IP rate-limit bucket for the snapshot
+    /// download endpoint. Snapshots are gigabyte-scale .zst blobs;
+    /// without a dedicated bucket a single attacker could keep N
+    /// concurrent streams open, exhausting disk-read bandwidth even
+    /// after R12 streamed-IO landed. Sliding-window cap of
+    /// `SNAPSHOT_DOWNLOAD_PER_MINUTE` requests per IP per 60s; entries
+    /// older than the window are reaped on every hit.
+    pub snapshot_rate_limit: Mutex<HashMap<std::net::IpAddr, Vec<Instant>>>,
     /// libp2p Sybil-resistance state (peer IPs, scores, ban list,
     /// rejection counters). `None` when the node was started without
     /// `--network-mode` and the in-process libp2p swarm is absent.
@@ -1394,6 +1402,40 @@ fn require_wallet_ownership(
         }
     } else {
         Ok(())
+    }
+}
+
+/// Audit A1 (calibrated 2026-05-18): strict, FAIL-CLOSED ownership gate
+/// for the *custodial* signing endpoints (`/api/wallet/sign-tx`,
+/// `/api/wallet/submit`) where the NODE holds the key and signs on the
+/// caller's behalf. Unlike the lenient `require_wallet_ownership`
+/// (used broadly incl. signature-auth/genesis paths, which legitimately
+/// return Ok on a missing owner row), custodial signing must require:
+///   1. an authenticated session (no `user_id` None bypass), and
+///   2. an explicit owner row whose owner == that session's user.
+/// No session, no user DB, or no owner row ⇒ DENY. This closes the two
+/// residual fail-OPEN edges (`require_tx_auth` Ok(None) when no auth
+/// configured; `require_wallet_ownership` Ok(()) on owner-row absent)
+/// specifically for the path where the node would sign with a held key.
+fn require_custodial_ownership(
+    state: &ApiState,
+    user_id: Option<i64>,
+    addr_hex: &str,
+) -> Result<(), String> {
+    let user_id =
+        user_id.ok_or("custodial signing requires an authenticated session")?;
+    let user_db = state
+        .user_db
+        .as_ref()
+        .ok_or("user database not configured — custodial signing unavailable")?;
+    match user_db.get_wallet_owner(addr_hex) {
+        Ok(Some(owner_id)) if owner_id == user_id => Ok(()),
+        Ok(Some(_)) => Err("address does not belong to your account".into()),
+        Ok(None) => {
+            Err("no owner record for this address — custodial signing denied"
+                .into())
+        }
+        Err(e) => Err(format!("unable to verify wallet ownership: {e}")),
     }
 }
 
@@ -3450,7 +3492,7 @@ async fn post_hbct_seed_demo(
     headers: HeaderMap,
 ) -> Json<HbctSeedDemoResp> {
     // Audit E5: seed endpoints write demo state; admin-gate to prevent pollution.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(HbctSeedDemoResp { status: "error", minted_positions: 0, detail: "unauthorized".into() });
     }
     // Realistic-shaped demo positions. Locations are GB BMU codes +
@@ -3667,7 +3709,7 @@ async fn post_hbct_tick(
     Json(req): Json<HbctTickReq>,
 ) -> Json<HbctTickResp> {
     // Audit E5: auto-burn tick is a state mutation; admin-gate to prevent unauthorized burns.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(HbctTickResp { entries_removed: 0, mwh_burnt: 0 });
     }
     let mut book = safe_lock(&state.hbct_book);
@@ -3960,7 +4002,7 @@ async fn post_sentinel_seed_demo(
     headers: HeaderMap,
 ) -> Json<SentinelSeedDemoResp> {
     // Audit E5: governance demo seed writes to state; admin-gate.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelSeedDemoResp { status: "error", registered: vec![], detail: "unauthorized".into() });
     }
     // (id, current, min, max). Realistic-shaped chain knobs.
@@ -4019,7 +4061,7 @@ async fn post_sentinel_seed_votes(
     Json(q): Json<SentinelSeedVotesQuery>,
 ) -> Json<SentinelSeedVotesResp> {
     // Audit E5: governance vote seeding writes to state; admin-gate.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelSeedVotesResp { status: "error", votes_recorded: 0, detail: "unauthorized".into() });
     }
     // Deterministic vote slate: 3 demo validators, each voting for a
@@ -4143,7 +4185,7 @@ async fn post_sentinel_tick(
     Json(req): Json<SentinelTickReq>,
 ) -> Json<SentinelParameterResp> {
     // Audit E4: sentinel tick (parameter adjustment) must be admin-gated.
-    if let Err(_) = require_admin_auth(&headers) {
+    if require_admin_auth(&headers).is_err() {
         return Json(SentinelParameterResp { id: req.parameter_id, current: 0, min: 0, max: 0, vote_count: 0 });
     }
     let mut db = safe_lock(&state.db);
@@ -7901,7 +7943,7 @@ async fn post_settle_demurrage(
     }
 
     // A2: AUDIT-I1 binding — public key must hash to the claimed `from` address.
-    let pk_derived_addr = *blake3::hash(&pk_bytes).as_bytes();
+    let pk_derived_addr = evaporchain_types::address_from_pubkey(&pk_bytes);
     if pk_derived_addr != from {
         return Json(SettleDemurrageResp {
             status: "error",
@@ -12858,11 +12900,14 @@ async fn wallet_sign_tx(
     };
     let from_full = account_full(&from_addr);
 
-    // A1: reject cross-account signing — caller must own the `from` wallet.
-    if let Err(Json(e)) = require_wallet_ownership(&state, user_id, &from_full) {
+    // A1 (hardened 2026-05-18): custodial signing — FAIL CLOSED. Requires
+    // an authenticated session AND an owner row matching it; no owner
+    // row / no session / no user-DB ⇒ deny (the node will not sign with
+    // a held key for an address it cannot positively attribute).
+    if let Err(msg) = require_custodial_ownership(&state, user_id, &from_full) {
         return Json(WalletSignTxResp {
             success: false,
-            message: e.message,
+            message: msg,
             signed_tx: None,
             tx_hash: None,
         });
@@ -12936,9 +12981,14 @@ async fn wallet_submit_tx(
     };
     let from_full = account_full(&from_addr);
 
-    // A1: reject cross-account submission — caller must own the `from` wallet.
-    if let Err(resp) = require_wallet_ownership(&state, user_id, &from_full) {
-        return resp;
+    // A1 (hardened 2026-05-18): custodial sign+submit — FAIL CLOSED
+    // (mandatory session + matching owner row; see require_custodial_ownership).
+    if let Err(msg) = require_custodial_ownership(&state, user_id, &from_full) {
+        return Json(TxResultResponse {
+            success: false,
+            message: msg,
+            tx_hash: None,
+        });
     }
 
     let mut tx: Transaction = match serde_json::from_value(req.tx) {
@@ -12982,6 +13032,21 @@ async fn faucet_html() -> impl IntoResponse {
 
 async fn docs_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/docs.html"))
+}
+
+async fn erasure_html() -> impl IntoResponse {
+    // Self-contained embedded copy is the production default. If an
+    // on-disk override exists at <data-dir or CWD>/erasure.html it is
+    // served instead — a tightly-scoped hot-reload hook so this
+    // actively-iterated public page can be updated without a full
+    // node rebuild. Any read error silently falls back to embedded.
+    const EMBEDDED: &str = include_str!("../dashboard/erasure.html");
+    let override_path =
+        std::env::var("EVAPORCHAIN_ERASURE_HTML").unwrap_or_else(|_| "erasure.html".to_string());
+    match tokio::fs::read_to_string(&override_path).await {
+        Ok(s) if s.contains("Proof-of-Erasure") => Html(s),
+        _ => Html(EMBEDDED.to_string()),
+    }
 }
 
 async fn manifest_json() -> impl IntoResponse {
@@ -17881,7 +17946,17 @@ async fn get_encrypted_mempool_status(State(state): State<Arc<ApiState>>) -> imp
 }
 
 fn hex_to_32(s: &str) -> Option<[u8; 32]> {
-    let bytes = hex::decode(s).ok()?;
+    // A4 (audit 2026-05-17): cap input length BEFORE hex::decode allocates.
+    // R1 (parse_hex32:3412) applied this guard; the later-added hex_to_32
+    // helper missed it. A 2 MiB hex blob (within the body cap) would force
+    // a ~1 MiB Vec allocation before the post-decode length check rejects.
+    // 32 bytes encode to exactly 64 hex chars; accept an optional "0x"
+    // prefix that the chain's other parsers tolerate.
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    if stripped.len() != 64 {
+        return None;
+    }
+    let bytes = hex::decode(stripped).ok()?;
     if bytes.len() != 32 {
         return None;
     }
@@ -18469,6 +18544,36 @@ async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoRes
     }
 }
 
+/// A6 (audit 2026-05-17): per-IP cap for snapshot downloads — gigabyte
+/// streams must be throttled separately from the workspace-global
+/// `RateLimiter` to prevent a single IP from saturating disk-read
+/// bandwidth. 3 requests / 60s is a sane default — a legitimate
+/// fast-sync client only needs one per height.
+pub(crate) const SNAPSHOT_DOWNLOAD_PER_MINUTE: usize = 3;
+pub(crate) const SNAPSHOT_WINDOW_SECS: u64 = 60;
+
+/// Returns `true` if the request from `ip` is within the per-IP
+/// snapshot-download budget. Updates the bucket on every hit.
+/// Loopback always passes (used by the local fast-sync test
+/// harness + the validator's own snapshot-warmup probe).
+pub(crate) fn check_snapshot_rate_limit(
+    map: &mut HashMap<std::net::IpAddr, Vec<Instant>>,
+    ip: std::net::IpAddr,
+) -> bool {
+    if ip.is_loopback() {
+        return true;
+    }
+    let now = Instant::now();
+    let window = std::time::Duration::from_secs(SNAPSHOT_WINDOW_SECS);
+    let timestamps = map.entry(ip).or_default();
+    timestamps.retain(|t| now.duration_since(*t) < window);
+    if timestamps.len() >= SNAPSHOT_DOWNLOAD_PER_MINUTE {
+        return false;
+    }
+    timestamps.push(now);
+    true
+}
+
 /// `GET /api/snapshot/download/:height` — streams the `.zst` blob for
 /// the given height. 404 if not present.
 ///
@@ -18479,10 +18584,32 @@ async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoRes
 /// responding — a few concurrent downloads OOM'd the node. The
 /// streaming path keeps per-request memory at ~64KB regardless of
 /// snapshot size.
+///
+/// A6 (audit 2026-05-17): the workspace-global rate-limit middleware
+/// (200 req / 10s / IP) does not provide enough headroom for a
+/// gigabyte-stream endpoint — a single IP could open 200 concurrent
+/// downloads. This handler now consults a dedicated per-IP bucket
+/// (`snapshot_rate_limit` on `ApiState`) capped at
+/// [`SNAPSHOT_DOWNLOAD_PER_MINUTE`] requests per
+/// [`SNAPSHOT_WINDOW_SECS`] seconds. Loopback is exempt so the local
+/// fast-sync harness keeps working.
 async fn get_snapshot_download(
     State(state): State<Arc<ApiState>>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Path(height): Path<u64>,
 ) -> impl IntoResponse {
+    // A6 (audit 2026-05-17): per-IP snapshot-download throttle.
+    if let Some(axum::extract::ConnectInfo(addr)) = connect_info {
+        let mut map = safe_lock(&state.snapshot_rate_limit);
+        if !check_snapshot_rate_limit(&mut map, addr.ip()) {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "60")],
+                "snapshot download rate limit exceeded — 3 per minute per IP",
+            )
+                .into_response();
+        }
+    }
     let path = match snapshot_path_for(&state, height) {
         Some(p) => p,
         None => return (StatusCode::NOT_FOUND, "snapshot dir not configured").into_response(),
@@ -18687,6 +18814,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/wallet", get(wallet_html))
         // Explorer (developer dashboard)
         .route("/explorer", get(dashboard_html))
+        // Public Proof-of-Erasure / GDPR-Erasure on-ramp
+        .route("/erasure", get(erasure_html))
         .route("/health", get(health))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -21936,7 +22065,7 @@ mod a2_settle_demurrage_pk_binding {
     fn a2_pk_hash_matches_address_derivation() {
         // Simulate any 1952-byte ML-DSA public key blob.
         let pk_bytes: Vec<u8> = (0u8..=255).cycle().take(1952).collect();
-        let derived = *blake3::hash(&pk_bytes).as_bytes();
+        let derived = evaporchain_types::address_from_pubkey(&pk_bytes);
         // The handler rejects requests where this equality doesn't hold.
         let addr = derived; // by construction they match
         assert_eq!(derived, addr);
@@ -22000,5 +22129,68 @@ mod r1_parse_hex_length_cap {
     fn parse_hex_address_accepts_exact_64_chars() {
         let valid = "0".repeat(64);
         assert!(parse_hex_address(&valid).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod a6_snapshot_rate_limit {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn ip(b: u8) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(10, 0, 0, b))
+    }
+
+    #[test]
+    fn loopback_is_exempt() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        for _ in 0..1_000 {
+            assert!(check_snapshot_rate_limit(&mut m, lo));
+        }
+    }
+
+    #[test]
+    fn third_request_passes_fourth_is_blocked() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let a = ip(7);
+        for i in 0..SNAPSHOT_DOWNLOAD_PER_MINUTE {
+            assert!(check_snapshot_rate_limit(&mut m, a), "req {} should pass", i);
+        }
+        assert!(
+            !check_snapshot_rate_limit(&mut m, a),
+            "req beyond cap must be blocked"
+        );
+    }
+
+    #[test]
+    fn distinct_ips_have_independent_buckets() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let a = ip(1);
+        let b = ip(2);
+        for _ in 0..SNAPSHOT_DOWNLOAD_PER_MINUTE {
+            assert!(check_snapshot_rate_limit(&mut m, a));
+            assert!(check_snapshot_rate_limit(&mut m, b));
+        }
+        assert!(!check_snapshot_rate_limit(&mut m, a));
+        assert!(!check_snapshot_rate_limit(&mut m, b));
+    }
+
+    #[test]
+    fn stale_entries_are_reaped() {
+        let mut m: HashMap<IpAddr, Vec<Instant>> = HashMap::new();
+        let a = ip(9);
+        // Pre-seed with timestamps older than the window.
+        let old = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(SNAPSHOT_WINDOW_SECS + 10))
+            .expect("clock should allow rewind in test");
+        m.insert(a, vec![old; SNAPSHOT_DOWNLOAD_PER_MINUTE + 5]);
+        // Fresh hit should still pass — stale entries get reaped.
+        assert!(check_snapshot_rate_limit(&mut m, a));
+        assert_eq!(
+            m.get(&a).map(|v| v.len()),
+            Some(1),
+            "stale entries should be reaped, only this hit remains"
+        );
     }
 }

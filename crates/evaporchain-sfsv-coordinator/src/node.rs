@@ -180,7 +180,10 @@ impl NodeClient {
                 .unwrap_or("unknown")
                 .to_owned();
             match state.as_str() {
-                "finalised" | "finalized" | "committed" | "included" => return Ok(state),
+                // "included" is omitted — it means the tx is in a block
+                // but not yet BFT-finalised; a reorg can still remove it.
+                // Only treat consensus-final states as done (audit F5 2026-05-18).
+                "finalised" | "finalized" | "committed" => return Ok(state),
                 "rejected" => {
                     return Err(NodeError::TxRejected(resp.to_string()));
                 }

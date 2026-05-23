@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn t1_20_reconstruct_row_validation_errors() {
         let encoder = ErasureEncoder2D::with_cell_size(16);
-        let matrix = encoder.encode_2d(&vec![0xEE; 64]).unwrap();
+        let matrix = encoder.encode_2d(&[0xEE; 64]).unwrap();
         let ext = matrix.extended_dim;
 
         // Row index out of range.
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn t1_20_reconstruct_column_validation_errors() {
         let encoder = ErasureEncoder2D::with_cell_size(16);
-        let matrix = encoder.encode_2d(&vec![0xFF; 64]).unwrap();
+        let matrix = encoder.encode_2d(&[0xFF; 64]).unwrap();
         let ext = matrix.extended_dim;
 
         // Column index out of range.
@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn t1_20_get_cell_col_out_of_range_returns_none() {
         let encoder = ErasureEncoder2D::with_cell_size(16);
-        let matrix = encoder.encode_2d(&vec![0xAA; 64]).unwrap();
+        let matrix = encoder.encode_2d(&[0xAA; 64]).unwrap();
         let ext = matrix.extended_dim;
         // Valid row, invalid col → None.
         assert!(matrix.get_cell(0, ext).is_none());

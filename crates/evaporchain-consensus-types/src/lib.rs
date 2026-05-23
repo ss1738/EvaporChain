@@ -743,11 +743,13 @@ pub const MAX_SKIP_HEIGHT_GAP: u64 = 10_000;
 pub struct LightClientVerifier {
     trusted_states: std::collections::BTreeMap<u64, TrustedState>,
     trust_period: u64,
+    /// Chain ID bound into BLS vote messages — must match the signer's chain_id.
+    chain_id: String,
 }
 
 impl LightClientVerifier {
     /// Create a new verifier with a genesis trusted state.
-    pub fn new(genesis_header: LightBlockHeader, current_time: u64) -> Self {
+    pub fn new(genesis_header: LightBlockHeader, current_time: u64, chain_id: &str) -> Self {
         let height = genesis_header.height;
         let mut trusted_states = std::collections::BTreeMap::new();
         trusted_states.insert(
@@ -760,6 +762,7 @@ impl LightClientVerifier {
         Self {
             trusted_states,
             trust_period: TRUST_PERIOD_SECS,
+            chain_id: chain_id.to_string(),
         }
     }
 
@@ -768,6 +771,7 @@ impl LightClientVerifier {
         genesis_header: LightBlockHeader,
         current_time: u64,
         trust_period: u64,
+        chain_id: &str,
     ) -> Self {
         let height = genesis_header.height;
         let mut trusted_states = std::collections::BTreeMap::new();
@@ -781,6 +785,7 @@ impl LightClientVerifier {
         Self {
             trusted_states,
             trust_period,
+            chain_id: chain_id.to_string(),
         }
     }
 
@@ -900,7 +905,7 @@ impl LightClientVerifier {
             ));
         }
 
-        let msg = bls_vote_message(cert.height, cert.round, &cert.block_hash);
+        let msg = bls_vote_message(&self.chain_id, cert.height, cert.round, &cert.block_hash);
         let agg_sig = BlsSignature(cert.aggregate_signature.clone());
         if !BlsVerifier::aggregate_verify(&msg, &agg_sig, &pks) {
             return Err("BLS aggregate signature verification failed".into());
@@ -964,9 +969,17 @@ impl LightClientVerifier {
     }
 }
 
-/// Construct the BLS vote message for verification (matches tendermint.rs format).
-pub fn bls_vote_message(height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(48);
+/// Construct the BLS vote message for verification — must match tendermint.rs format exactly.
+/// Format: u8(len(chain_id)) || chain_id || "precommit" || height_le8 || round_le4 || block_hash
+pub fn bls_vote_message(chain_id: &str, height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
+    let chain_id_bytes = chain_id.as_bytes();
+    debug_assert!(
+        chain_id_bytes.len() < 256,
+        "chain_id too long for u8 length prefix"
+    );
+    let mut msg = Vec::with_capacity(1 + chain_id_bytes.len() + 9 + 8 + 4 + 32);
+    msg.push(chain_id_bytes.len() as u8);
+    msg.extend_from_slice(chain_id_bytes);
     msg.extend_from_slice(b"precommit");
     msg.extend_from_slice(&height.to_le_bytes());
     msg.extend_from_slice(&round.to_le_bytes());
@@ -1088,5 +1101,820 @@ mod tests {
                 "tombstoned validator was elected at epoch {epoch}",
             );
         }
+    }
+
+    // ── with_bls_pop constructor ─────────────────────────────────────────
+
+    #[test]
+    fn with_bls_pop_stores_key_and_pop_unverified() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp = BlsKeypair::generate();
+        let pk = kp.public_key_bytes().0;
+        let pop = kp.proof_of_possession().0;
+
+        let v = ValidatorInfo::with_bls_pop(7, 5000, [0xAA; 32], pk.clone(), pop.clone());
+
+        assert_eq!(v.id, 7);
+        assert_eq!(v.stake, 5000);
+        assert_eq!(v.address, [0xAA; 32]);
+        assert_eq!(v.bls_public_key.as_ref().unwrap(), &pk);
+        assert_eq!(v.bls_pop.as_ref().unwrap(), &pop);
+        // pop_verified must be false — caller must call verify_pop explicitly
+        assert!(!v.pop_verified);
+    }
+
+    // ── add_validator_with_pop / verify_pop ─────────────────────────────
+
+    #[test]
+    fn add_validator_with_pop_and_verify_pop_happy_path() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp = BlsKeypair::generate();
+        let pk = kp.public_key_bytes().0.clone();
+        let pop = kp.proof_of_possession().0.clone();
+
+        // verify_pop must accept a freshly-generated keypair's PoP
+        assert!(
+            ValidatorSet::verify_pop(&pk, &pop),
+            "genuine PoP must verify"
+        );
+
+        let mut vs = ValidatorSet::new();
+        let info = ValidatorInfo::with_bls_pop(3, 2000, [0x11; 32], pk.clone(), pop.clone());
+        let added = vs.add_validator_with_pop(info, pop.clone(), true);
+        assert!(added);
+        let v = vs.get(3).unwrap();
+        assert!(v.pop_verified);
+        assert_eq!(v.bls_pop.as_ref().unwrap(), &pop);
+    }
+
+    #[test]
+    fn verify_pop_rejects_wrong_signature() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let pk1 = kp1.public_key_bytes().0;
+        let pop2 = kp2.proof_of_possession().0; // wrong PoP for pk1
+
+        assert!(
+            !ValidatorSet::verify_pop(&pk1, &pop2),
+            "mismatched pk/pop must not verify"
+        );
+    }
+
+    #[test]
+    fn add_validator_with_pop_duplicate_id_returns_false() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp = BlsKeypair::generate();
+        let pop = kp.proof_of_possession().0;
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(5, 1000, [0x22; 32]));
+        let added = vs.add_validator_with_pop(
+            ValidatorInfo::new(5, 999, [0x33; 32]),
+            pop,
+            true,
+        );
+        assert!(!added, "duplicate id must be rejected");
+    }
+
+    // ── leader fallthrough (zero-total-stake branch) ──────────────────────
+
+    #[test]
+    fn leader_for_epoch_zero_stake_falls_through_to_last() {
+        // All validators have stake = 0 → total = 0 → fallthrough branch.
+        // With 3 validators, epochs 0/3/6 pick idx 0, epochs 1/4/7 pick idx 1, etc.
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 0, [0x01; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 0, [0x02; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 0, [0x03; 32]));
+
+        let leader = vs.leader_for_epoch(0).expect("should elect a leader");
+        // epoch 0 % 3 = 0 → first validator (id=1)
+        assert_eq!(leader.id, 1);
+
+        let leader1 = vs.leader_for_epoch(1).expect("should elect a leader");
+        assert_eq!(leader1.id, 2);
+
+        let leader2 = vs.leader_for_epoch(2).expect("should elect a leader");
+        assert_eq!(leader2.id, 3);
+    }
+
+    // ── is_leader ────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_leader_true_for_epoch_winner_false_for_others() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [0x02; 32]));
+
+        // Find an epoch where validator 1 wins, then assert is_leader
+        let mut found_epoch_for_v1 = None;
+        let mut found_epoch_for_v2 = None;
+        for epoch in 0..500u64 {
+            match vs.leader_for_epoch(epoch).map(|v| v.id) {
+                Some(1) if found_epoch_for_v1.is_none() => {
+                    found_epoch_for_v1 = Some(epoch)
+                }
+                Some(2) if found_epoch_for_v2.is_none() => {
+                    found_epoch_for_v2 = Some(epoch)
+                }
+                _ => {}
+            }
+        }
+        let e1 = found_epoch_for_v1.expect("v1 should win at least one epoch in 500");
+        let e2 = found_epoch_for_v2.expect("v2 should win at least one epoch in 500");
+
+        assert!(vs.is_leader(1, e1), "v1 is_leader at its winning epoch");
+        assert!(!vs.is_leader(2, e1), "v2 is not leader at v1's epoch");
+        assert!(vs.is_leader(2, e2), "v2 is_leader at its winning epoch");
+        assert!(!vs.is_leader(1, e2), "v1 is not leader at v2's epoch");
+        assert!(!vs.is_leader(99, e1), "unknown validator is never leader");
+    }
+
+    // ── unjail ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn unjail_clears_jailed_flag_when_stake_sufficient() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, MIN_STAKE, [0x01; 32]));
+        vs.jail_tombstoned_by_address(&[[0x01; 32]]);
+        assert!(vs.get(1).unwrap().jailed);
+
+        let result = vs.unjail(1);
+        assert!(result, "unjail must return true");
+        assert!(!vs.get(1).unwrap().jailed, "validator must no longer be jailed");
+    }
+
+    #[test]
+    fn unjail_non_jailed_validator_returns_false() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, MIN_STAKE, [0x01; 32]));
+        assert!(!vs.unjail(1), "unjailing a non-jailed validator must return false");
+    }
+
+    #[test]
+    fn unjail_nonexistent_validator_returns_false() {
+        let mut vs = ValidatorSet::new();
+        assert!(!vs.unjail(999), "unjailing absent validator must return false");
+    }
+
+    #[test]
+    fn unjail_below_min_stake_returns_false() {
+        let mut vs = ValidatorSet::new();
+        // Give 0 stake — below MIN_STAKE, so unjail must refuse.
+        vs.add_validator(ValidatorInfo::new(1, 0, [0x01; 32]));
+        // Manually jail it (slash_equivocation jails)
+        vs.slash_equivocation(1);
+        // After slash, stake is still 0 and validator is jailed.
+        assert!(vs.get(1).unwrap().jailed, "should be jailed after equivocation");
+        assert!(!vs.unjail(1), "cannot unjail a validator below min_stake");
+    }
+
+    // ── verify_vrf_proposal ───────────────────────────────────────────────
+
+    #[test]
+    fn verify_vrf_proposal_accepts_valid_proof() {
+        use evaporchain_crypto::vrf::{VrfKeypair, leader_vrf_input};
+
+        let vrf_kp = VrfKeypair::generate();
+        let pk_bytes = vrf_kp.public_key_bytes();
+
+        let chain_id = "test-chain";
+        let height = 42u64;
+        let round = 0u32;
+        let alpha = leader_vrf_input(chain_id, height, round);
+        let (output, proof) = vrf_kp.evaluate(&alpha);
+
+        let mut vs = ValidatorSet::new();
+        let info = ValidatorInfo::with_keys(1, 1000, [0x01; 32], None, Some(pk_bytes));
+        vs.add_validator(info);
+
+        assert!(
+            vs.verify_vrf_proposal(chain_id, 1, height, round, &output.0, &proof.0),
+            "valid VRF proof must be accepted"
+        );
+    }
+
+    #[test]
+    fn verify_vrf_proposal_rejects_wrong_chain_id() {
+        use evaporchain_crypto::vrf::{VrfKeypair, leader_vrf_input};
+
+        let vrf_kp = VrfKeypair::generate();
+        let pk_bytes = vrf_kp.public_key_bytes();
+
+        let height = 10u64;
+        let round = 0u32;
+        // Proof generated for "chain-A"
+        let alpha = leader_vrf_input("chain-A", height, round);
+        let (output, proof) = vrf_kp.evaluate(&alpha);
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::with_keys(1, 1000, [0x01; 32], None, Some(pk_bytes)));
+
+        // Verify against "chain-B" — must fail (H-1 cross-chain replay guard)
+        assert!(
+            !vs.verify_vrf_proposal("chain-B", 1, height, round, &output.0, &proof.0),
+            "proof for chain-A must not verify on chain-B"
+        );
+    }
+
+    #[test]
+    fn verify_vrf_proposal_rejects_missing_vrf_key() {
+        let mut vs = ValidatorSet::new();
+        // Validator has no VRF key registered
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+
+        let dummy_output = [0u8; 32];
+        let dummy_proof = vec![0u8; 32];
+        assert!(
+            !vs.verify_vrf_proposal("test-chain", 1, 1, 0, &dummy_output, &dummy_proof),
+            "absent VRF key must return false"
+        );
+    }
+
+    #[test]
+    fn verify_vrf_proposal_rejects_unknown_proposer() {
+        let vs = ValidatorSet::new();
+        let dummy_output = [0u8; 32];
+        let dummy_proof = vec![0u8; 32];
+        assert!(
+            !vs.verify_vrf_proposal("test-chain", 99, 1, 0, &dummy_output, &dummy_proof),
+            "unknown proposer must return false"
+        );
+    }
+
+    // ── with_bls_key / with_validators ────────────────────────────────────
+
+    #[test]
+    fn with_bls_key_stores_key_only() {
+        let pk = vec![0xBBu8; 48];
+        let v = ValidatorInfo::with_bls_key(9, 3000, [0x77; 32], pk.clone());
+        assert_eq!(v.bls_public_key.as_ref().unwrap(), &pk);
+        assert!(v.bls_pop.is_none());
+        assert!(!v.pop_verified);
+    }
+
+    #[test]
+    fn with_validators_constructor_populates_set() {
+        let vs = ValidatorSet::with_validators(vec![
+            ValidatorInfo::new(1, 100, [0x01; 32]),
+            ValidatorInfo::new(2, 200, [0x02; 32]),
+        ]);
+        assert_eq!(vs.len(), 2);
+        assert!(!vs.is_empty());
+        assert_eq!(vs.validators().len(), 2);
+    }
+
+    // ── rotate_validator_key / purge_expired_prev_keys ────────────────────
+
+    #[test]
+    fn rotate_validator_key_happy_path() {
+        use evaporchain_crypto::BlsKeypair;
+        let old_kp = BlsKeypair::generate();
+        let new_kp = BlsKeypair::generate();
+        let old_pk = old_kp.public_key_bytes().0;
+        let new_pk = new_kp.public_key_bytes().0;
+        let new_pop = new_kp.proof_of_possession().0;
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::with_bls_pop(
+            1, 1000, [0x01; 32], old_pk.clone(), old_kp.proof_of_possession().0,
+        ));
+
+        assert!(vs.rotate_validator_key(1, new_pk.clone(), new_pop.clone(), 10));
+        let v = vs.get(1).unwrap();
+        assert_eq!(v.bls_public_key.as_deref().unwrap(), new_pk.as_slice());
+        assert_eq!(v.bls_public_key_prev.as_deref().unwrap(), old_pk.as_slice());
+        assert_eq!(v.bls_prev_key_expiry_epoch.unwrap(), 10);
+        assert!(v.pop_verified);
+    }
+
+    #[test]
+    fn rotate_validator_key_no_existing_key_returns_false() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        assert!(!vs.rotate_validator_key(1, vec![1u8; 48], vec![2u8; 96], 5));
+    }
+
+    #[test]
+    fn rotate_validator_key_unknown_id_returns_false() {
+        let mut vs = ValidatorSet::new();
+        assert!(!vs.rotate_validator_key(99, vec![1u8; 48], vec![2u8; 96], 5));
+    }
+
+    #[test]
+    fn purge_expired_prev_keys_removes_past_expiry() {
+        use evaporchain_crypto::BlsKeypair;
+        let old_kp = BlsKeypair::generate();
+        let new_kp = BlsKeypair::generate();
+
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::with_bls_pop(
+            1, 1000, [0x01; 32],
+            old_kp.public_key_bytes().0, old_kp.proof_of_possession().0,
+        ));
+        vs.rotate_validator_key(1, new_kp.public_key_bytes().0, new_kp.proof_of_possession().0, 5);
+        assert!(vs.get(1).unwrap().bls_public_key_prev.is_some());
+
+        // Epoch 5 — not yet expired (expiry = 5, check is strictly >)
+        assert_eq!(vs.purge_expired_prev_keys(5), 0);
+        // Epoch 6 — now past expiry
+        assert_eq!(vs.purge_expired_prev_keys(6), 1);
+        assert!(vs.get(1).unwrap().bls_public_key_prev.is_none());
+        assert!(vs.get(1).unwrap().bls_prev_key_expiry_epoch.is_none());
+    }
+
+    // ── remove_validator / len / is_empty / validators ────────────────────
+
+    #[test]
+    fn remove_validator_present_returns_true() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 100, [0x01; 32]));
+        assert!(vs.remove_validator(1));
+        assert_eq!(vs.len(), 0);
+        assert!(vs.is_empty());
+    }
+
+    #[test]
+    fn remove_validator_absent_returns_false() {
+        let mut vs = ValidatorSet::new();
+        assert!(!vs.remove_validator(99));
+    }
+
+    // ── total_weight / update_health_score / decay_health_scores ──────────
+
+    #[test]
+    fn total_weight_excludes_jailed_validators() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [0x02; 32]));
+        vs.jail_tombstoned_by_address(&[[0x02; 32]]);
+        // Only validator 1 active, health=0 → weight = 1000
+        assert_eq!(vs.total_weight(), 1000);
+    }
+
+    #[test]
+    fn update_health_score_increments_blocks_produced_and_caps_score() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        // One evaporation → health_score = 0.05
+        vs.update_health_score(1, 1);
+        let v = vs.get(1).unwrap();
+        assert_eq!(v.blocks_produced, 1);
+        assert_eq!(v.evaporations_processed, 1);
+        assert!((v.health_score - HEALTH_PER_EVAPORATION).abs() < 1e-9);
+
+        // Drive health to MAX
+        for _ in 0..100 {
+            vs.update_health_score(1, 20);
+        }
+        assert_eq!(vs.get(1).unwrap().health_score, MAX_HEALTH_SCORE);
+    }
+
+    #[test]
+    fn decay_health_scores_reduces_all_validators() {
+        let mut vs = ValidatorSet::new();
+        let mut v = ValidatorInfo::new(1, 1000, [0x01; 32]);
+        v.health_score = 0.5;
+        vs.add_validator(v);
+        vs.decay_health_scores();
+        let after = vs.get(1).unwrap().health_score;
+        assert!((after - (0.5 - HEALTH_DECAY_RATE)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn decay_health_scores_floors_at_zero() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32])); // health=0.0
+        vs.decay_health_scores();
+        assert_eq!(vs.get(1).unwrap().health_score, 0.0);
+    }
+
+    // ── active_count / total_stake / total_self_stake / get_validator ──────
+
+    #[test]
+    fn active_count_excludes_jailed() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 100, [0x01; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 100, [0x02; 32]));
+        vs.slash_equivocation(2);
+        assert_eq!(vs.active_count(), 1);
+    }
+
+    #[test]
+    fn total_stake_and_self_stake_exclude_jailed() {
+        let mut vs = ValidatorSet::new();
+        let mut v1 = ValidatorInfo::new(1, 500, [0x01; 32]);
+        v1.delegated_stake = 200;
+        vs.add_validator(v1);
+        let mut v2 = ValidatorInfo::new(2, 300, [0x02; 32]);
+        v2.delegated_stake = 100;
+        vs.add_validator(v2);
+        vs.slash_equivocation(2); // jail v2
+
+        // total_stake = effective_stake of v1 only = 500 + 200 = 700
+        assert_eq!(vs.total_stake(), 700);
+        // total_self_stake = v1.stake only = 500
+        assert_eq!(vs.total_self_stake(), 500);
+    }
+
+    #[test]
+    fn get_validator_mirrors_get() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(3, 100, [0x03; 32]));
+        assert_eq!(vs.get_validator(3).map(|v| v.id), Some(3));
+        assert!(vs.get_validator(99).is_none());
+    }
+
+    // ── slash_downtime / slash_with_amount ────────────────────────────────
+
+    #[test]
+    fn slash_downtime_jails_on_three_or_more_misses() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 10000, [0x01; 32]));
+        let penalty = vs.slash_downtime(1, 3);
+        assert!(penalty > 0);
+        assert!(vs.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn slash_downtime_does_not_jail_on_two_misses() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 10000, [0x01; 32]));
+        vs.slash_downtime(1, 2);
+        assert!(!vs.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn slash_downtime_unknown_id_returns_zero() {
+        let mut vs = ValidatorSet::new();
+        assert_eq!(vs.slash_downtime(99, 5), 0);
+    }
+
+    #[test]
+    fn slash_with_amount_jails_when_flag_set() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 10000, [0x01; 32]));
+        let deducted = vs.slash_with_amount(1, 500, true);
+        assert_eq!(deducted, 500);
+        assert_eq!(vs.get(1).unwrap().stake, 9500);
+        assert!(vs.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn slash_with_amount_no_jail_when_flag_clear_and_stake_sufficient() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 10000, [0x01; 32]));
+        vs.slash_with_amount(1, 100, false);
+        assert!(!vs.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn slash_with_amount_caps_at_available_stake() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 100, [0x01; 32]));
+        let deducted = vs.slash_with_amount(1, 999, false);
+        assert_eq!(deducted, 100);
+        assert_eq!(vs.get(1).unwrap().stake, 0);
+    }
+
+    #[test]
+    fn slash_with_amount_unknown_id_returns_zero() {
+        let mut vs = ValidatorSet::new();
+        assert_eq!(vs.slash_with_amount(99, 100, false), 0);
+    }
+
+    // ── has_bls_keys / has_vrf_keys ────────────────────────────────────────
+
+    #[test]
+    fn has_bls_keys_true_when_all_validators_have_key() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp = BlsKeypair::generate();
+        let pk = kp.public_key_bytes().0;
+        let pop = kp.proof_of_possession().0;
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::with_bls_pop(1, 100, [0x01; 32], pk, pop));
+        assert!(vs.has_bls_keys());
+    }
+
+    #[test]
+    fn has_bls_keys_false_when_any_validator_missing_key() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp = BlsKeypair::generate();
+        let pk = kp.public_key_bytes().0;
+        let pop = kp.proof_of_possession().0;
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::with_bls_pop(1, 100, [0x01; 32], pk, pop));
+        vs.add_validator(ValidatorInfo::new(2, 100, [0x02; 32])); // no BLS key
+        assert!(!vs.has_bls_keys());
+    }
+
+    #[test]
+    fn has_vrf_keys_true_when_at_least_one_has_vrf() {
+        use evaporchain_crypto::vrf::VrfKeypair;
+        let vrf_kp = VrfKeypair::generate();
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::with_keys(1, 100, [0x01; 32], None, Some(vrf_kp.public_key_bytes())));
+        vs.add_validator(ValidatorInfo::new(2, 100, [0x02; 32]));
+        assert!(vs.has_vrf_keys());
+    }
+
+    #[test]
+    fn has_vrf_keys_false_when_none_registered() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 100, [0x01; 32]));
+        assert!(!vs.has_vrf_keys());
+    }
+
+    // ── vrf_leader_qualifies / vrf_sortition ──────────────────────────────
+
+    #[test]
+    fn vrf_leader_qualifies_rejects_jailed_validator() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        vs.slash_equivocation(1);
+        assert!(!vs.vrf_leader_qualifies(1, &[0u8; 32]));
+    }
+
+    #[test]
+    fn vrf_leader_qualifies_rejects_unknown_validator() {
+        let vs = ValidatorSet::new();
+        assert!(!vs.vrf_leader_qualifies(99, &[0u8; 32]));
+    }
+
+    #[test]
+    fn vrf_sortition_returns_zero_for_jailed() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        vs.slash_equivocation(1);
+        assert_eq!(vs.vrf_sortition(1, &[0u8; 32], 10), 0);
+    }
+
+    #[test]
+    fn vrf_sortition_returns_zero_for_unknown() {
+        let vs = ValidatorSet::new();
+        assert_eq!(vs.vrf_sortition(99, &[0u8; 32], 10), 0);
+    }
+
+    // ── leader_for_epoch_with_seed ────────────────────────────────────────
+
+    #[test]
+    fn leader_for_epoch_with_seed_returns_none_when_all_jailed() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        vs.slash_equivocation(1);
+        assert!(vs.leader_for_epoch_with_seed(0, &[0u8; 32]).is_none());
+    }
+
+    #[test]
+    fn leader_for_epoch_with_seed_consistent_for_same_input() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [0x02; 32]));
+        let seed = [0xFFu8; 32];
+        let a = vs.leader_for_epoch_with_seed(7, &seed).unwrap().id;
+        let b = vs.leader_for_epoch_with_seed(7, &seed).unwrap().id;
+        assert_eq!(a, b, "deterministic: same epoch+seed must pick same leader");
+    }
+
+    #[test]
+    fn leader_for_epoch_with_seed_zero_stake_uses_fallthrough() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 0, [0x01; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 0, [0x02; 32]));
+        // Must not panic; returns Some
+        assert!(vs.leader_for_epoch_with_seed(0, &[0u8; 32]).is_some());
+    }
+
+    // ── remaining one-liner gaps ──────────────────────────────────────────
+
+    #[test]
+    fn slash_equivocation_unknown_id_returns_zero() {
+        let mut vs = ValidatorSet::new();
+        assert_eq!(vs.slash_equivocation(99), 0);
+    }
+
+    #[test]
+    fn default_validator_set_is_empty() {
+        let vs = ValidatorSet::default();
+        assert!(vs.is_empty());
+    }
+
+    #[test]
+    fn leader_for_epoch_returns_none_when_all_jailed() {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [0x01; 32]));
+        vs.slash_equivocation(1);
+        assert!(vs.leader_for_epoch(0).is_none());
+    }
+
+    #[test]
+    fn vrf_leader_qualifies_and_sortition_active_path() {
+        use evaporchain_crypto::vrf::{VrfKeypair, leader_vrf_input};
+
+        let vrf_kp = VrfKeypair::generate();
+        let pk_bytes = vrf_kp.public_key_bytes();
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::with_keys(
+            1, 1_000_000, [0x01; 32], None, Some(pk_bytes),
+        ));
+
+        let alpha = leader_vrf_input("test-chain", 1, 0);
+        let (output, _proof) = vrf_kp.evaluate(&alpha);
+
+        // vrf_leader_qualifies reaches the active path (validator found, not jailed)
+        let _ = vs.vrf_leader_qualifies(1, &output.0);
+        // vrf_sortition also reaches the active path
+        let _ = vs.vrf_sortition(1, &output.0, 10);
+    }
+
+    // ── LightClientVerifier ───────────────────────────────────────────────
+
+    /// Build a `LightBlockHeader` signed by a set of BLS keypairs.
+    fn make_signed_header(
+        height: u64,
+        block_hash: [u8; 32],
+        keypairs: &[(u64, evaporchain_crypto::BlsKeypair)],
+        chain_id: &str,
+    ) -> LightBlockHeader {
+        use evaporchain_crypto::signatures::{BlsSignature, BlsVerifier};
+        use evaporchain_types::CommitCertificate;
+
+        let mut vs = ValidatorSet::new();
+        for (id, kp) in keypairs {
+            let pk = kp.public_key_bytes().0;
+            let pop = kp.proof_of_possession().0;
+            vs.add_validator(ValidatorInfo::with_bls_pop(*id, 1000, [(*id) as u8; 32], pk, pop));
+        }
+
+        let round = 0u32;
+        let msg = bls_vote_message(chain_id, height, round, &block_hash);
+        let sigs: Vec<BlsSignature> = keypairs.iter().map(|(_, kp)| kp.sign(&msg)).collect();
+        let agg = BlsVerifier::aggregate_signatures(&sigs).unwrap();
+        let signer_ids: Vec<u64> = keypairs.iter().map(|(id, _)| *id).collect();
+
+        LightBlockHeader {
+            height,
+            epoch: 0,
+            block_hash,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            timestamp: 1_000_000,
+            validator_set: vs,
+            commit_certificate: CommitCertificate {
+                height,
+                round,
+                block_hash,
+                aggregate_signature: agg.0,
+                signer_ids,
+            },
+        }
+    }
+
+    #[test]
+    fn light_client_verifier_new_stores_genesis_and_returns_latest_height() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp = BlsKeypair::generate();
+        let genesis = make_signed_header(0, [0xABu8; 32], &[(1, kp)], "test-chain");
+        let vcr = LightClientVerifier::new(genesis, 1_000_000, "test-chain");
+        assert_eq!(vcr.latest_trusted_height(), Some(0));
+        assert!(vcr.trusted_state_at(0).is_some());
+        assert!(vcr.trusted_state_at(99).is_none());
+        assert_eq!(vcr.trusted_count(), 1);
+    }
+
+    #[test]
+    fn light_client_verifier_with_trust_period_and_sequential_verify() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let kp3 = BlsKeypair::generate();
+
+        let chain_id = "test-chain";
+        let keypairs = vec![(1u64, kp1), (2u64, kp2), (3u64, kp3)];
+
+        let genesis = make_signed_header(0, [0x00u8; 32], &keypairs, chain_id);
+        let block1 = make_signed_header(1, [0x01u8; 32], &keypairs, chain_id);
+
+        let mut vcr =
+            LightClientVerifier::with_trust_period(genesis, 0, 9999, chain_id);
+
+        // Sequential verify (height gap = 1)
+        let result = vcr.verify(&block1, 0);
+        assert_eq!(result, VerificationResult::Valid);
+        assert_eq!(vcr.latest_trusted_height(), Some(1));
+        assert_eq!(vcr.trusted_count(), 2);
+    }
+
+    #[test]
+    fn light_client_verifier_expired_trust_period_returns_invalid() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let kp3 = BlsKeypair::generate();
+        let keypairs = vec![(1u64, kp1), (2u64, kp2), (3u64, kp3)];
+        let chain_id = "test-chain";
+
+        let genesis = make_signed_header(0, [0x00u8; 32], &keypairs, chain_id);
+        let block1 = make_signed_header(1, [0x01u8; 32], &keypairs, chain_id);
+
+        // Trust period = 100s. Current time for verify = 200 → expired.
+        let mut vcr = LightClientVerifier::with_trust_period(genesis, 0, 100, chain_id);
+        match vcr.verify(&block1, 200) {
+            VerificationResult::Invalid(msg) => assert!(msg.contains("Trust period")),
+            other => panic!("expected Invalid, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn light_client_verifier_no_trusted_state_returns_invalid() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let kp3 = BlsKeypair::generate();
+        let keypairs = vec![(1u64, kp1), (2u64, kp2), (3u64, kp3)];
+        let chain_id = "test-chain";
+
+        let genesis = make_signed_header(0, [0x00u8; 32], &keypairs, chain_id);
+        // Attempt to verify block at height 0 with no prior state → no trusted state
+        let mut vcr = LightClientVerifier::with_trust_period(genesis.clone(), 0, 9999, chain_id);
+        // height=0 → saturating_sub(1) = 0, but genesis IS the trusted state at 0
+        // Instead: verify a block at height 0 from scratch on an EMPTY verifier.
+        // We can't easily create an empty verifier from the API, so test the
+        // "no state below untrusted height" case by using height=0 on genesis verifier:
+        // The best_trusted_state_for(0.saturating_sub(1)) = best_trusted_state_for(0) = genesis.
+        // Actually this is tricky. Instead test: block at height=0 on a verifier whose genesis is height 5.
+        let genesis5 = make_signed_header(5, [0x05u8; 32], &keypairs, chain_id);
+        let mut vcr2 = LightClientVerifier::with_trust_period(genesis5, 0, 9999, chain_id);
+        let block1 = make_signed_header(1, [0x01u8; 32], &keypairs, chain_id);
+        match vcr2.verify(&block1, 0) {
+            VerificationResult::Invalid(msg) => assert!(msg.contains("No trusted state")),
+            other => panic!("expected Invalid(No trusted state), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn light_client_verifier_large_gap_returns_need_bisection() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let kp3 = BlsKeypair::generate();
+        let keypairs = vec![(1u64, kp1), (2u64, kp2), (3u64, kp3)];
+        let chain_id = "test-chain";
+
+        let genesis = make_signed_header(0, [0x00u8; 32], &keypairs, chain_id);
+        // Block at height = MAX_SKIP_HEIGHT_GAP + 2 — forces NeedBisection
+        let far_block = make_signed_header(
+            MAX_SKIP_HEIGHT_GAP + 2,
+            [0xFFu8; 32],
+            &keypairs,
+            chain_id,
+        );
+
+        let mut vcr = LightClientVerifier::with_trust_period(genesis, 0, 9_999_999, chain_id);
+        match vcr.verify(&far_block, 0) {
+            VerificationResult::NeedBisection {
+                trusted_height,
+                target_height,
+            } => {
+                assert_eq!(trusted_height, 0);
+                assert_eq!(target_height, MAX_SKIP_HEIGHT_GAP + 2);
+                // bisection_target utility
+                let mid = vcr.bisection_target(trusted_height, target_height);
+                assert_eq!(mid, (0 + MAX_SKIP_HEIGHT_GAP + 2) / 2);
+            }
+            other => panic!("expected NeedBisection, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn light_client_verifier_prune_expired_removes_stale_states() {
+        use evaporchain_crypto::BlsKeypair;
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let kp3 = BlsKeypair::generate();
+        let keypairs = vec![(1u64, kp1), (2u64, kp2), (3u64, kp3)];
+        let chain_id = "test-chain";
+
+        let genesis = make_signed_header(0, [0x00u8; 32], &keypairs, chain_id);
+        let block1 = make_signed_header(1, [0x01u8; 32], &keypairs, chain_id);
+
+        // Trust period = 100s; genesis added at t=0 → expires at t=100
+        let mut vcr = LightClientVerifier::with_trust_period(genesis, 0, 100, chain_id);
+        vcr.verify(&block1, 0); // adds block1 trusted state, also expires at 100
+
+        assert_eq!(vcr.trusted_count(), 2);
+        vcr.prune_expired(200); // both states expired at t=100
+        assert_eq!(vcr.trusted_count(), 0);
+    }
+
+    #[test]
+    fn bls_vote_message_encodes_correctly() {
+        let msg = bls_vote_message("test", 5, 2, &[0xABu8; 32]);
+        // u8(4) + "test" + "precommit" + 8 bytes height + 4 bytes round + 32 bytes hash
+        assert_eq!(msg.len(), 1 + 4 + 9 + 8 + 4 + 32);
+        assert_eq!(msg[0], 4); // len("test")
+        assert_eq!(&msg[1..5], b"test");
+        assert_eq!(&msg[5..14], b"precommit");
     }
 }

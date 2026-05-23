@@ -248,6 +248,31 @@ impl MerkleMountainRange {
 
     /// Verify an inclusion proof for a nullifier hash against a root.
     pub fn verify(proof: &MMRProof, nullifier_hash: &[u8; 32], expected_root: &[u8; 32]) -> bool {
+        // H-3: validate mmr_size structural consistency before any hash work.
+        // An adversary can supply forged mmr_size while keeping a valid
+        // (siblings, peak_hashes, root) tuple; light clients relying on
+        // mmr_size for bounds-checking are deceived without this guard.
+        let leaf_count = match leaf_count_from_mmr_size(proof.mmr_size) {
+            Some(n) => n,
+            None => return false,
+        };
+        if proof.leaf_index >= leaf_count {
+            return false;
+        }
+        // Total peaks = popcount(leaf_count); this proof covers one of them.
+        let expected_peak_count = leaf_count.count_ones() as usize;
+        if proof.peak_hashes.len() + 1 != expected_peak_count {
+            return false;
+        }
+        // The height of the peak at proof.peak_index must equal siblings.len().
+        let heights = peak_heights_from_leaf_count(leaf_count);
+        if proof.peak_index >= heights.len() {
+            return false;
+        }
+        if proof.siblings.len() != heights[proof.peak_index] as usize {
+            return false;
+        }
+
         // Rebuild from leaf to peak using siblings
         let mut current = *nullifier_hash;
 
@@ -360,6 +385,49 @@ fn bag_peaks(peaks: &[[u8; 32]]) -> [u8; 32] {
         root = hash_pair(&peaks[i], &root);
     }
     root
+}
+
+/// H-3: recover the leaf count from an MMR node count.
+///
+/// An MMR with `n` leaves has exactly `2*n - popcount(n)` nodes.
+/// Returns `None` if `mmr_size` is not a valid node count (i.e. there is
+/// no integer `n` satisfying the formula — these are not dense in ℕ).
+fn leaf_count_from_mmr_size(mmr_size: u64) -> Option<u64> {
+    if mmr_size == 0 {
+        return Some(0);
+    }
+    // Binary search: n → 2n − popcount(n) is strictly monotone increasing.
+    let mut lo = 1u64;
+    let mut hi = mmr_size;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let sz = 2 * mid - mid.count_ones() as u64;
+        match sz.cmp(&mmr_size) {
+            std::cmp::Ordering::Equal => return Some(mid),
+            std::cmp::Ordering::Less => lo = mid + 1,
+            std::cmp::Ordering::Greater => {
+                if mid == 0 {
+                    break;
+                }
+                hi = mid - 1;
+            }
+        }
+    }
+    None
+}
+
+/// Heights of all MMR peaks for `leaf_count` leaves, enumerated from the
+/// most-significant set bit of `leaf_count` down to the least.
+/// Peak `i` covers `2^heights[i]` leaves; `proof.siblings.len()` must equal
+/// `heights[proof.peak_index]` for the proof to be structurally valid.
+fn peak_heights_from_leaf_count(leaf_count: u64) -> Vec<u32> {
+    let mut heights = Vec::new();
+    for bit in (0u32..64).rev() {
+        if (leaf_count >> bit) & 1 == 1 {
+            heights.push(bit);
+        }
+    }
+    heights
 }
 
 /// Convert a leaf index (0-based among leaves) to its node position
@@ -835,6 +903,39 @@ mod tests {
                 &root
             ));
         }
+    }
+
+    /// H-3: verify() must reject a proof whose mmr_size field has been tampered.
+    ///
+    /// Without the mmr_size guard an adversary can forge the size metadata
+    /// carried in the proof while keeping a valid hash chain, fooling any
+    /// light client that trusts mmr_size for bounds-checking.
+    #[test]
+    fn h3_verify_rejects_tampered_mmr_size() {
+        let mut mmr = MerkleMountainRange::new();
+        for i in 0u8..7 {
+            mmr.append(blake3_hash(&[i]));
+        }
+        let root = mmr.root();
+        let hash = blake3_hash(&[3u8]);
+        let mut proof = mmr.prove(3).unwrap();
+
+        // Sanity: valid proof passes before tampering.
+        assert!(MerkleMountainRange::verify(&proof, &hash, &root));
+
+        // Tamper 1: bump mmr_size by 1 — 12 is not a valid MMR node count.
+        proof.mmr_size += 1;
+        assert!(
+            !MerkleMountainRange::verify(&proof, &hash, &root),
+            "verify must reject proof with non-canonical mmr_size"
+        );
+
+        // Tamper 2: zero mmr_size — leaf_index 3 ≥ leaf_count 0.
+        proof.mmr_size = 0;
+        assert!(
+            !MerkleMountainRange::verify(&proof, &hash, &root),
+            "verify must reject proof with mmr_size=0 and non-zero leaf_index"
+        );
     }
 }
 

@@ -159,7 +159,7 @@ mod tests {
         w.register(100, 1000).unwrap();
         let after = w.attention_at(100);
         assert!(
-            after >= 1400 && after <= 1600,
+            (1400..=1600).contains(&after),
             "expected ≈1500, got {after}"
         );
         // Lifetime is the sum of all weights ever registered.

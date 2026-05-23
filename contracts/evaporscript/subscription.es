@@ -49,6 +49,14 @@ contract Subscription {
     // Pay one period. Only the subscriber can pay. Bumps counters and
     // returns the amount paid so the coordinator knows how much to
     // transfer off-chain.
+    //
+    // SUB-1 (audit 2026-05-17): no enforcement that `epoch - last_payment_epoch
+    // >= period_length`. Multiple calls in the same epoch all succeed and each
+    // increments paid_periods / cumulative_paid. This is intentional — the
+    // EvaporChain subscription model works by energy-decay, not periodic
+    // gate-keeping: a subscriber who pays keeps the contract's energy alive;
+    // over-paying simply boosts energy further at their own cost. The off-chain
+    // coordinator is responsible for crediting only one payment per period.
     fn pay() -> u64 {
         require(self.sealed == true, "terms not yet set")
         require(self.cancelled == false, "subscription cancelled")
