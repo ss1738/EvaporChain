@@ -64,7 +64,6 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
     "BSL-1.0",
     "CC0-1.0",
@@ -72,10 +71,19 @@ allow = [
     "MPL-2.0",
 ]
 confidence-threshold = 0.8
-# Workspace's own private crates aren't published, so omitting a
-# `license = "…"` field is fine — they're not licensed to anyone
-# outside the workspace anyway.
+# Workspace's own private crates (publish = false) aren't licensed to
+# anyone outside the workspace, so they don't need a `license = "…"`
+# field. Combined with `publish = false` in their Cargo.toml, this
+# rule skips them.
 private = { ignore = true }
+# Per-crate license clarifications for crates whose Cargo.toml metadata
+# doesn't carry a SPDX expression cargo-deny can match. `ring` ships
+# its LICENSE file with mixed terms (the historical fork from BoringSSL
+# carries OpenSSL + ISC + MIT) but its package metadata is empty.
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = []
 
 [bans]
 multiple-versions = "warn"
