@@ -25,8 +25,6 @@ ignore = [
     { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via libp2p/tokio legacy" },
     # paste unmaintained; macro-only, no runtime risk.
     { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; proc-macro only, no runtime surface" },
-    # ring <0.17 unmaintained; pinned by reqwest's older rustls chain.
-    { id = "RUSTSEC-2025-0010", reason = "ring <0.17 unmaintained; bump blocked on transitive reqwest update" },
     # rustls-pemfile unmaintained; rustls-pki-types is the replacement,
     # already on dep tree but pemfile remains pulled in.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; replacement (rustls-pki-types) already in tree" },
@@ -50,9 +48,6 @@ ignore = [
     # (the patched series). 0.25.x has no patch — fix is only in 0.26.
     # libp2p 0.56 still pins hickory 0.25.x. Track upstream libp2p.
     { id = "RUSTSEC-2026-0118", reason = "hickory-proto 0.25.x NSEC3 unbounded loop; no 0.25.x patch (only 0.26+); waiting on libp2p to bump hickory" },
-    # TODO(security): bump aes-gcm (currently 0.10.3 → 0.11+) to drop
-    # aes 0.8.x. Pulled by evaporchain-consensus crate.
-    { id = "RUSTSEC-2025-0009", reason = "aes 0.8.4 panic on overflow-checks; pinned via aes-gcm 0.10.3 → consensus; needs aes-gcm bump" },
     # TODO(security): bump ark-* family (0.5 → 0.6) to drop transitive
     # tracing-subscriber 0.2.25 + rand 0.8.5. Pulled by
     # evaporchain-nova-bridge via ark-relations / ark-std. ark-groth16
