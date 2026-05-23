@@ -6,6 +6,47 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-23 (morning) — CI infrastructure unblock + libp2p 0.56 + ark 0.6 + Cargo.lock tracked
+
+**Focus:** unblock the 3 CI jobs failing on every PR (Extension typecheck, Security license & ban, Security dep audit) AND close as many RUSTSEC advisories as possible without owner judgment.
+**Commits shipped:** 3 PR merges to main + ~25 commits across the working branches.
+**Deliverables:**
+| Action | Outcome |
+|---|---|
+| PR #463 ci/infra unblock | MERGED (`9f4502fa`) — 10 commits: cargo-deny-action v1→v2, deny.toml schema v2, walletconnect→reown migration, wasm-bridge namespace import, verify-wasm `--update` flag for CI, drop redundant rustsec/audit-check, workspace `publish=false`, ring license clarify, CDLA-Permissive-2.0 allow |
+| PR #464 libp2p 0.54 → 0.56 | MERGED (`91cabc2e`) — 6 commits including the 2 API breaks (`request_response::Event::Message::connection_id` + `gossipsub.report_message_validation_result` return-type change) |
+| PR #465 ark-* 0.5 → 0.6 | MERGED (`6d778b1f`) — 5 commits: `ark_relations::r1cs` → `gr1cs`, `R1CSVar` → `GR1CSVar`, `ark-crypto-primitives` features +`ark-r1cs-std`. Migrated 6 nova-bridge circuit files. Also tracks `Cargo.lock` for the first time. |
+| 5 conflict PRs rebased + pushed | #402, #414, #415, #416, #425 — taking main's version on superseded audit-fix conflict blocks |
+| 3 PRs closed as superseded | #420, #403, #410 (delta vs main after merge = ∅) |
+| 25 PRs cascade-updated via `update-branch` API | 23 flipped green on Ext/Lic/WASM; 2 transient flakes (#456, #415) |
+| `verkle.rs` coverage commit | 12 new VerkleTrie proof tests (`d4fedbc8`, 121/121 → 133/133 on Mini) |
+**Empirical results:**
+- npm CVEs (extension): 18 (5 critical) → 5 (0 critical, dev-only esbuild) via @reown/walletkit migration.
+- RUSTSEC advisories: 13 firing → 9 ignored with documented TODO/reason.
+- 6 of the original 13 cleared as side-effects of the bumps (rustls-webpki 0.101.x ×3, aes-gcm chain, ring <0.17, tracing-subscriber 0.2.x).
+- `cargo deny check`: **advisories ok, bans ok, licenses ok, sources ok** on the merged ark-0.6 + libp2p-0.56 main.
+- Mini: `cargo test -p evaporchain-nova-bridge --lib` 190/190 pass after ark 0.6.
+- Mini: `cargo test -p evaporchain-network --lib` 121/121 pass after libp2p 0.56.
+- Mini: `cargo build --workspace` clean (with the now-tracked Cargo.lock).
+**Decisions made:**
+- Adopt cargo-deny v2 schema everywhere (deny.toml `version = 2` per section).
+- Migrate `@walletconnect/web3wallet` → `@reown/walletkit` (deprecated upstream; was the root of 5 critical npm CVEs).
+- Track Cargo.lock (was gitignored — caused CI/Mini cargo-deny divergence; now both resolve to the same bytes).
+- WIP: do NOT cherry-pick CI fixes into PR #462 (the user's active branch); kept on separate `ci/extension-and-deny-fixes` (later merged as #463).
+- Did NOT touch the B-1/B-2 verifier code beyond the mechanical ark 0.6 import path migration (`r1cs` → `gr1cs`, `R1CSVar` → `GR1CSVar`). Constraint logic unchanged.
+**What's next:**
+- 3 advisories still ignored, all upstream-blocked:
+  - RUSTSEC-2026-0118 + 0119 (hickory NSEC3 / CPU exhaustion) — wait for libp2p that adopts hickory 0.26+.
+  - RUSTSEC-2026-0097 (rand 0.8.5 unsound) — wait for ark-std to bump rand to 0.9.
+- 2 PRs need owner judgment to merge (#448, #439 — B-1/B-2 verifier conflicts where their work overlaps with the ark 0.6 migration).
+- 23 PRs are now MERGEABLE pending owner review.
+**Blockers / open questions:**
+- Mini disk pressure: `cargo build --workspace` hit `No space left on device` once during the session (target/ dir is huge). Cleanup needed.
+- The 3 remaining advisories are upstream-blocked; nothing actionable until libp2p / ark-std ship the relevant bumps.
+**Cross-references:** commits 9f4502fa, 91cabc2e, 6d778b1f, d4fedbc8; PRs #463, #464, #465.
+
+---
+
 ## 2026-05-19 (session 63, continued 4) — coverage push: auto_refresh 76.3%, key_rotation 98.8%
 
 **Focus:** wallet crate auto_refresh.rs + key_rotation.rs
