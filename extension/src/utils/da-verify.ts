@@ -357,11 +357,13 @@ export async function daVerify(
 
   const confidence = validCount === 0 ? 0 : 1 - Math.pow(2, -validCount);
   const allValid = results.every((r) => r.valid);
+  // Mismatch attestation early-returns at line 297; by the time we
+  // get here `attestation.kind` is provably one of verified / skipped
+  // / no-data-root / block-not-in-ring, so no mismatch check needed.
   const passes =
     allValid &&
     faultyPeers.size === 0 &&
-    confidence >= threshold &&
-    attestation.kind !== "mismatch";
+    confidence >= threshold;
 
   return {
     attestation,
