@@ -95,6 +95,20 @@ impl<F: PrimeField> StepCircuit<F> for TrivialIncrementCircuit {
 /// **Setup cost.** `PublicParams::setup` takes ~1-3 seconds on a
 /// modern dev machine for this trivial circuit. Per-step `prove_step`
 /// is ~hundreds of milliseconds. For Phase 2.2 PoC work this is fast
+/// Audit B-1/B-2 S2a: canonical, deterministic `PublicParams` for the
+/// fixed production step circuit — the trusted-setup *shape* source.
+/// Identical to the `pp` `generate_fixture` builds; needs NO proof.
+pub fn canonical_public_params(
+) -> Result<PublicParams<E1, E2, TrivialIncrementCircuit>, String> {
+    let circuit = TrivialIncrementCircuit;
+    PublicParams::<E1, E2, TrivialIncrementCircuit>::setup(
+        &circuit,
+        &*S1::ck_floor(),
+        &*S2::ck_floor(),
+    )
+    .map_err(|e| format!("canonical_public_params setup: {:?}", e))
+}
+
 /// enough to iterate.
 pub fn generate_fixture(
     num_steps: usize,
