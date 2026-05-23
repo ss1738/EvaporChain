@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { api, type StateObject, type EnergyPortfolio, type EnergyHistory } from "@/utils/api";
 import { EnergyBar } from "./EnergyBar";
