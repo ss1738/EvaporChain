@@ -189,4 +189,17 @@ mod tests {
         assert_eq!(mgr.cache.get("0xaaa"), Some(&2));
         assert_eq!(mgr.cache.get("0xbbb"), Some(&5));
     }
+
+    #[test]
+    fn test_default_covers_lines_130_132() {
+        let mgr = NonceManager::default();
+        assert!(mgr.cache.is_empty());
+    }
+
+    #[test]
+    fn test_is_nonce_error_too_low_and_stale() {
+        assert!(NonceManager::is_nonce_error("too low"));
+        assert!(NonceManager::is_nonce_error("stale nonce"));
+        assert!(!NonceManager::is_nonce_error("out of gas"));
+    }
 }
