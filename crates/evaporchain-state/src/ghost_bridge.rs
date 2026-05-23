@@ -759,4 +759,45 @@ mod tests {
         };
         assert!(matches!(c.claim_type, GhostClaimType::Existence));
     }
+    #[test]
+    fn test_registry_register_replay_rejected() {
+        let mut reg = GhostBridgeRegistry::new();
+        let ghost = make_ghost(10, 50);
+        let mut proof = make_bridge_proof(ghost.clone(), 42);
+        proof.bridge_nonce = 99;
+        // First register succeeds via unsafe path (no BLS keys needed)
+        reg.register_unsafe_no_attestation(proof.clone()).unwrap();
+        // Second register with same nonce must be rejected
+        let result = reg.register_unsafe_no_attestation(proof.clone());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "bridge nonce already processed (replay)");
+    }
+
+    #[test]
+    fn test_registry_register_full_verification_failure() {
+        let mut reg = GhostBridgeRegistry::new();
+        let ghost = make_ghost(11, 60);
+        let mut proof = make_bridge_proof(ghost.clone(), 43);
+        proof.bridge_nonce = 77;
+        // register() requires valid BLS signatures; with no validator pubkeys set,
+        // attestation_valid will be false → overall_valid = false → Err
+        let result = reg.register(proof);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "ghost bridge proof verification failed");
+    }
+
+    #[test]
+    fn test_registry_register_with_validator_keys_attestation_failure() {
+        // Keys set but signatures don't verify (dummy bytes) → Err
+        let mut reg = GhostBridgeRegistry::new();
+        let mut keys = BTreeMap::new();
+        keys.insert(0u64, vec![0xAA; 48]);
+        keys.insert(1u64, vec![0xBB; 48]);
+        reg.set_validator_keys(keys);
+        let ghost = make_ghost(12, 70);
+        let mut proof = make_bridge_proof(ghost.clone(), 44);
+        proof.bridge_nonce = 55;
+        let result = reg.register(proof);
+        assert!(result.is_err(), "invalid BLS sigs must fail verification");
+    }
 }

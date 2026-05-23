@@ -192,7 +192,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis =
             make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis, 100, /* vk_bytes */ None);
+        let mut lc = LightClient::new(genesis, 100, "", /* vk_bytes */ None);
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
         let err = lc
@@ -211,7 +211,7 @@ mod tests {
             make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
         // Garbage vk_bytes — won't be reached because identity is
         // checked before SNARK verification.
-        let mut lc = LightClient::new(genesis, 100, Some(vec![0u8; 16]));
+        let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
         let err = lc
@@ -228,7 +228,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis =
             make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis, 100, Some(vec![0u8; 16]));
+        let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
         let instance = instance_with_energy(50, 5);
@@ -246,7 +246,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis =
             make_signed_header(1, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis, 100, Some(vec![0u8; 16]));
+        let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
 
         let next = make_signed_header(2, [0xaa; 32], [0xbb; 32], vs, &kps, &[0, 1, 2]);
         let instance = instance_with_energy(10_000, 5);
@@ -267,7 +267,7 @@ mod tests {
         let (vs, kps) = make_validator_set_with_bls(4, 1000);
         let genesis =
             make_signed_header(5, [0u8; 32], [0xaa; 32], vs.clone(), &kps, &[0, 1, 2]);
-        let mut lc = LightClient::new(genesis, 100, Some(vec![0u8; 16]));
+        let mut lc = LightClient::new(genesis, 100, "", Some(vec![0u8; 16]));
 
         let same = make_signed_header(5, [0u8; 32], [0xcc; 32], vs, &kps, &[0, 1, 2]);
         let err = lc

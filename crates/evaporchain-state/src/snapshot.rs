@@ -1030,8 +1030,26 @@ impl SnapshotFile {
             });
         }
         let payload = &bytes[5..];
-        let decompressed = zstd::stream::decode_all(payload)
-            .map_err(|e| SnapshotError::DeserializationError(format!("zstd decode: {e}")))?;
+        // Audit (2026-05-18): `zstd::decode_all` is UNBOUNDED — a small
+        // highly-compressed blob from a malicious fast-sync peer could
+        // expand to OOM the joining node (decompression bomb). Stream
+        // with a hard decompressed-size ceiling and reject if exceeded.
+        const MAX_DECOMPRESSED_SNAPSHOT_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
+        let mut decompressed = Vec::new();
+        {
+            use std::io::Read;
+            let mut zdec = zstd::stream::read::Decoder::new(payload)
+                .map_err(|e| SnapshotError::DeserializationError(format!("zstd decoder: {e}")))?;
+            (&mut zdec)
+                .take(MAX_DECOMPRESSED_SNAPSHOT_BYTES + 1)
+                .read_to_end(&mut decompressed)
+                .map_err(|e| SnapshotError::DeserializationError(format!("zstd decode: {e}")))?;
+        }
+        if decompressed.len() as u64 > MAX_DECOMPRESSED_SNAPSHOT_BYTES {
+            return Err(SnapshotError::DeserializationError(
+                "decompressed snapshot exceeds 4 GiB ceiling (possible decompression bomb)".into(),
+            ));
+        }
         let file: SnapshotFile = bincode::deserialize(&decompressed)
             .map_err(|e| SnapshotError::DeserializationError(e.to_string()))?;
 
@@ -2314,6 +2332,19 @@ mod tests {
         );
         // Snapshot accounts NOT applied.
         assert!(target.get_account(&addr(1)).is_none());
+    }
+
+    #[test]
+    #[test]
+    fn test_create_finalized_succeeds_at_or_past_finality_depth() {
+        let mut db = InMemoryStateDB::new();
+        db.put_account(make_account(1, 200));
+        // chain_tip <= block_height: always allowed
+        let r1 = SnapshotBuilder::create_finalized(&mut db, 10, 0, 10);
+        assert!(r1.is_ok(), "equal height must be allowed");
+        // chain_tip - block_height >= SNAPSHOT_MIN_FINALITY_DEPTH: allowed
+        let r2 = SnapshotBuilder::create_finalized(&mut db, 5, 0, 5 + SNAPSHOT_MIN_FINALITY_DEPTH);
+        assert!(r2.is_ok(), "finalized at exact depth must be allowed");
     }
 
     #[test]

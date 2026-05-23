@@ -79,7 +79,7 @@ pub fn verify_query_round(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codeword::{mul_p, CodewordPosition, EnergyCodeword, MOD_P};
+    use crate::codeword::{CodewordPosition, EnergyCodeword};
     use crate::fold::fold_codeword;
 
     fn build_even_codeword(energy: u64) -> EnergyCodeword {

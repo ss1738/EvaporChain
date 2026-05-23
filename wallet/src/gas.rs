@@ -380,4 +380,347 @@ mod tests {
         assert!(!est.breakdown.is_empty());
         assert!(est.breakdown.contains("gas"));
     }
+
+    // ─── Additional coverage tests (session 63): all estimate_gas() arms ────
+
+    #[test]
+    fn test_estimate_gas_constant_variants() {
+        use evaporchain_types::{
+            CallContractTx, CallScriptTx, ClaimDelegationTx, DelegateTx,
+            DeployContractTx, DeployScriptTx, GovernanceAction, GovernanceTx,
+            RefundTx, RotateValidatorKeyTx, UndelegateTx, ValidatorClaimStakeTx,
+            ValidatorExitTx, ValidatorStakeTx,
+        };
+        let e = estimator();
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::DeployContract(DeployContractTx {
+                deployer: [0u8; 32],
+                template: "DecayingToken".into(),
+                init_args: "{}".into(),
+                energy: 1000,
+                half_life: 100,
+                rules: None,
+                signature: None,
+                public_key: None,
+            })),
+            GAS_DEPLOY_CONTRACT
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::CallContract(CallContractTx {
+                caller: [0u8; 32],
+                contract_id: 1,
+                method: "transfer".into(),
+                args: "{}".into(),
+                epoch: 0,
+                signature: None,
+                public_key: None,
+            })),
+            GAS_CALL_CONTRACT
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::DeployScript(DeployScriptTx {
+                deployer: [0u8; 32],
+                source_code: "let x = 1;".into(),
+                energy: 500,
+                half_life: 50,
+                signature: None,
+                public_key: None,
+            })),
+            GAS_DEPLOY_SCRIPT
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::CallScript(CallScriptTx {
+                caller: [0u8; 32],
+                contract_id: 2,
+                method: "run".into(),
+                args: "{}".into(),
+                epoch: 0,
+                signature: None,
+                public_key: None,
+            })),
+            GAS_CALL_CONTRACT
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::ValidatorStake(ValidatorStakeTx {
+                validator_address: [0u8; 32],
+                stake_amount: 1_000_000,
+                validator_id: 1,
+                nonce: 0,
+                bls_public_key: None,
+                vrf_public_key: None,
+                signature: None,
+                public_key: None,
+            })),
+            GAS_VALIDATOR_STAKE
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::ValidatorExit(ValidatorExitTx {
+                validator_address: [0u8; 32],
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })),
+            GAS_VALIDATOR_EXIT
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::ValidatorClaimStake(ValidatorClaimStakeTx {
+                validator_address: [0u8; 32],
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })),
+            GAS_VALIDATOR_EXIT
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::Governance(GovernanceTx {
+                action: GovernanceAction::CastVote {
+                    proposal_id: 1,
+                    vote: true,
+                },
+                sender: [0u8; 32],
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })),
+            25_000
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::Delegate(DelegateTx {
+                delegator: [0u8; 32],
+                validator_id: 1,
+                amount: 500,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })),
+            40_000
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::Undelegate(UndelegateTx {
+                delegator: [0u8; 32],
+                validator_id: 1,
+                amount: 500,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })),
+            40_000
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::RotateValidatorKey(RotateValidatorKeyTx {
+                validator_address: [0u8; 32],
+                validator_id: 1,
+                new_bls_public_key: vec![0u8; 48],
+                bls_pop_old: vec![0u8; 96],
+                bls_pop_new: vec![0u8; 96],
+                effective_epoch: 10,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })),
+            60_000
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::ClaimDelegation(ClaimDelegationTx {
+                delegator: [0u8; 32],
+                validator_id: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })),
+            30_000
+        );
+
+        assert_eq!(
+            e.estimate_gas(&Transaction::Refund(RefundTx {
+                source_block_height: 100,
+                source_observation_idx: 0,
+                attacker: [0u8; 32],
+                victim: [1u8; 32],
+                amount: 1000,
+                settle_block_height: 200,
+            })),
+            GAS_TRANSFER
+        );
+    }
+
+    #[test]
+    fn test_estimate_gas_size_dependent_variants() {
+        use evaporchain_types::{
+            BlobTx, DeferredTx, DeployTemplateTx, MultiSigTx, PrivateTransferTx,
+            ShieldTx, UnshieldTx, UpgradeContractTx, UserOpTx,
+        };
+        let e = estimator();
+
+        // Shield → 60_000
+        assert_eq!(
+            e.estimate_gas(&Transaction::Shield(ShieldTx {
+                from: [0u8; 32],
+                amount: 1000,
+                nonce: 0,
+                note_owner_hash: [0u8; 32],
+                value_blinding: [0u8; 32],
+                energy: None,
+                energy_blinding: None,
+                half_life: 0,
+                signature: None,
+                public_key: None,
+            })),
+            60_000
+        );
+
+        // Unshield → 80_000
+        assert_eq!(
+            e.estimate_gas(&Transaction::Unshield(UnshieldTx {
+                to: [0u8; 32],
+                amount: 500,
+                input_nullifiers: vec![],
+                anchor: [0u8; 32],
+                balance_binding: [0u8; 32],
+                input_amounts: vec![],
+                input_blindings: vec![],
+                input_value_commitments: vec![],
+                input_note_commitments: vec![],
+                input_merkle_proofs: vec![],
+                output_blindings: vec![],
+                change_commitments: vec![],
+                energy_proofs: vec![],
+            })),
+            80_000
+        );
+
+        // PrivateTransfer with 2 nullifiers + 1 commitment
+        assert_eq!(
+            e.estimate_gas(&Transaction::PrivateTransfer(PrivateTransferTx {
+                input_nullifiers: vec![[0u8; 32], [1u8; 32]],
+                output_commitments: vec![[2u8; 32]],
+                anchor: [0u8; 32],
+                balance_binding: [0u8; 32],
+                fee: 0,
+                input_amounts: vec![],
+                input_blindings: vec![],
+                input_value_commitments: vec![],
+                input_note_commitments: vec![],
+                input_merkle_proofs: vec![],
+                output_amounts: vec![],
+                output_blindings: vec![],
+                energy_proofs: vec![],
+            })),
+            100_000 + 20_000 * 2 + 15_000 * 1
+        );
+
+        // Deferred with 3 guards
+        assert_eq!(
+            e.estimate_gas(&Transaction::Deferred(DeferredTx {
+                submitter: [0u8; 32],
+                nonce: 0,
+                deposit: 0,
+                guards: vec![
+                    evaporchain_types::TemporalGuard::AfterEpoch(10),
+                    evaporchain_types::TemporalGuard::AfterEpoch(20),
+                    evaporchain_types::TemporalGuard::AfterEpoch(30),
+                ],
+                inner_tx_bytes: vec![],
+                gas_limit: 0,
+                signature: None,
+                public_key: None,
+            })),
+            75_000 + 5_000 * 3
+        );
+
+        // Blob: 20 bytes
+        assert_eq!(
+            e.estimate_gas(&Transaction::Blob(BlobTx {
+                submitter: [0u8; 32],
+                data: vec![0u8; 20],
+                nonce: 0,
+                namespace_id: 0,
+                signature: None,
+                public_key: None,
+            })),
+            50_000 + 10 * 20
+        );
+
+        // MultiSig with 2 signatures
+        assert_eq!(
+            e.estimate_gas(&Transaction::MultiSig(MultiSigTx {
+                multisig_address: [0u8; 32],
+                threshold: 2,
+                signers: vec![],
+                inner_tx_bytes: vec![],
+                signatures: vec![
+                    ([0u8; 32], vec![]),
+                    ([1u8; 32], vec![]),
+                ],
+                public_keys: vec![],
+                nonce: 0,
+            })),
+            50_000 + 10_000 * 2
+        );
+
+        // UserOp: 10 bytes call_data
+        assert_eq!(
+            e.estimate_gas(&Transaction::UserOp(UserOpTx {
+                sender: [0u8; 32],
+                nonce: 0,
+                call_data: vec![0u8; 10],
+                call_gas_limit: 100_000,
+                paymaster: None,
+                paymaster_nonce: None,
+                paymaster_data: None,
+                paymaster_signature: None,
+                paymaster_public_key: None,
+                signature: None,
+                public_key: None,
+            })),
+            30_000 + 16 * 10
+        );
+
+        // UpgradeContract: 5 bytes bytecode
+        assert_eq!(
+            e.estimate_gas(&Transaction::UpgradeContract(UpgradeContractTx {
+                owner: [0u8; 32],
+                contract_id: 1,
+                new_bytecode: vec![0u8; 5],
+                new_bytecode_hash: [0u8; 32],
+                nonce: 0,
+                admin_signature: None,
+                admin_public_key: None,
+                endorser_stakes: vec![],
+                required_stake: 0,
+                governance_approved: false,
+                signature: None,
+                public_key: None,
+            })),
+            100_000 + 200 * 5
+        );
+
+        // DeployTemplate: 8 bytes params
+        assert_eq!(
+            e.estimate_gas(&Transaction::DeployTemplate(DeployTemplateTx {
+                deployer: [0u8; 32],
+                template_class: 0x0001_0001,
+                params: vec![0u8; 8],
+                nonce: 0,
+                submitted_at_epoch: 0,
+                signature: None,
+                public_key: None,
+            })),
+            50_000 + 50 * 8
+        );
+    }
 }

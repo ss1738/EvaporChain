@@ -245,7 +245,7 @@ mod tests {
 
         let frozen = reg.freeze_below_floor(10, 50);
         assert_eq!(frozen, 1);
-        assert!(reg.get(&r1.commitment()).unwrap().is_frozen() == false);
+        assert!(!reg.get(&r1.commitment()).unwrap().is_frozen());
         assert!(reg.get(&r2.commitment()).unwrap().is_frozen());
     }
 

@@ -153,4 +153,66 @@ mod tests {
             .collect();
         assert_eq!(recovered, t.data);
     }
+
+    // ─── Additional coverage tests (session 62) ───────────────────────────────
+
+    #[test]
+    fn zeros_creates_all_zero_data() {
+        let t = Tensor::zeros(4);
+        assert_eq!(t.data.len(), 4);
+        assert!(t.data.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn zeros_with_different_sizes() {
+        assert_eq!(Tensor::zeros(0).data.len(), 0);
+        assert_eq!(Tensor::zeros(8).data.len(), 8);
+    }
+
+    #[test]
+    fn normalise_scales_non_unit_vector_to_unit() {
+        // [3,4,0,0] has norm=5; after normalise → [0.6, 0.8, 0, 0]
+        let mut t = Tensor::from_vec(vec![3.0, 4.0, 0.0, 0.0]);
+        t.normalise();
+        assert!((t.norm() - 1.0).abs() < 1e-10, "must be unit after normalise");
+        assert!((t.data[0] - 0.6).abs() < 1e-10);
+        assert!((t.data[1] - 0.8).abs() < 1e-10);
+    }
+
+    #[test]
+    fn normalise_near_zero_is_noop() {
+        // norm ≈ 0 → if-guard skips division; data unchanged
+        let mut t = Tensor::from_vec(vec![0.0, 0.0, 0.0, 0.0]);
+        t.normalise();
+        assert!(t.data.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn mat_vec_identity_returns_input() {
+        #[rustfmt::skip]
+        let id = vec![
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        let v = vec![1.0, 2.0, 3.0, 4.0];
+        let out = mat_vec(&id, &v);
+        assert_eq!(out, v);
+    }
+
+    #[test]
+    fn mat_vec_scaling_matrix() {
+        // Diagonal matrix with [2,3,4,5] → each component scaled
+        #[rustfmt::skip]
+        let m = vec![
+            2.0, 0.0, 0.0, 0.0,
+            0.0, 3.0, 0.0, 0.0,
+            0.0, 0.0, 4.0, 0.0,
+            0.0, 0.0, 0.0, 5.0,
+        ];
+        let v = vec![1.0, 1.0, 1.0, 1.0];
+        let out = mat_vec(&m, &v);
+        assert_eq!(out, vec![2.0, 3.0, 4.0, 5.0]);
+    }
 }

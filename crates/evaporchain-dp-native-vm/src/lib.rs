@@ -1,5 +1,7 @@
 //! Differential-Privacy-Native VM.
 //!
+//! **Doctrine:** `INVENTION_STACK.md §4.2` — Tier-2 VM paradigm.
+//!
 //! ## What this crate is
 //!
 //! A budget tracker + noise mechanism layer for VM-level

@@ -422,6 +422,30 @@ mod tests {
         assert_eq!(alarm.capacity, 50);
     }
 
+    // ─── Additional coverage tests (session 61) ───────────────────────────────
+
+    #[test]
+    fn input_error_when_concurrency_window_too_small_for_any_pairs() {
+        // concurrency_window_secs=1 and blocks 12 seconds apart -> zero
+        // concurrent pairs -> n_per_bucket=0 < 5 -> InputError branch
+        // (lines 199-214) in recompute_now.
+        let mut alarm = CartelAlarm::new(200, 50, 1); // 1-second window
+        // Feed 60 records; at record 50 (records_seen=50, multiple of 50,
+        // buffer.len()=50>=50) the periodic gate fires.
+        for h in 0..60 {
+            alarm.record_block(synth_block(h), h);
+        }
+        let st = alarm.status().expect("periodic run should have fired at record 50");
+        assert!(
+            st.verdict.starts_with("InputError"),
+            "expected InputError with 1-second window, got: {}",
+            st.verdict
+        );
+        // Milli fields are zero for the InputError path.
+        assert_eq!(st.s_honest_milli, 0);
+        assert_eq!(st.s_cartel_synthetic_milli, 0);
+    }
+
     use proptest::prelude::*;
 
     proptest! {
@@ -480,7 +504,7 @@ mod tests {
             // For interval ≥ 50: threshold = interval.
             // For interval < 50 (e.g. 21): threshold = next multiple
             // ≥ 50 (e.g. 63).
-            let first_run_threshold = ((50 + run_interval - 1) / run_interval) * run_interval;
+            let first_run_threshold = 50_u64.div_ceil(run_interval) * run_interval;
             if n_records >= first_run_threshold {
                 prop_assert!(
                     alarm.status().is_some(),

@@ -1526,4 +1526,192 @@ mod tests {
         assert!(db.get_vesting_schedule(1).is_none());
         assert_eq!(db.all_vesting_schedules().len(), 0);
     }
+    #[test]
+    fn test_in_memory_db_default_constructor() {
+        let db = InMemoryStateDB::default();
+        assert_eq!(db.object_count(), 0);
+        assert_eq!(db.all_account_addresses().len(), 0);
+    }
+
+    #[test]
+    fn test_nullifier_count_after_spend() {
+        let mut db = InMemoryStateDB::new();
+        assert_eq!(db.nullifier_count(), 0);
+        let n1 = [1u8; 32];
+        let n2 = [2u8; 32];
+        assert!(db.spend_nullifier(&n1));
+        assert!(db.spend_nullifier(&n2));
+        assert_eq!(db.nullifier_count(), 2);
+        assert!(!db.spend_nullifier(&n1), "double spend must be blocked");
+        assert_eq!(db.nullifier_count(), 2);
+    }
+
+    #[test]
+    fn test_remove_stake_and_all_stakes() {
+        let mut db = InMemoryStateDB::new();
+        let stake = evaporchain_types::StakeRecord {
+            validator_id: 7,
+            validator_address: [7u8; 32],
+            staked_amount: 500,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        };
+        db.put_stake(stake.clone());
+        assert_eq!(db.all_stakes().len(), 1);
+        let removed = db.remove_stake(7);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().staked_amount, 500);
+        assert_eq!(db.all_stakes().len(), 0);
+        // remove non-existent returns None
+        assert!(db.remove_stake(99).is_none());
+    }
+
+    #[test]
+    fn test_prove_account_and_prove_object() {
+        let mut db = InMemoryStateDB::new();
+        let addr = [42u8; 32];
+        // prove_account on empty trie should return a zero-depth proof
+        let proof = db.prove_account(&addr);
+        assert_eq!(proof.depth, 0);
+        // put an account and prove again
+        db.put_account(evaporchain_types::Account {
+            address: addr,
+            balance: 100,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+            vesting: None,
+        });
+        let _proof2 = db.prove_account(&addr);
+        // prove_object
+        let obj = make_object(9, 200);
+        db.put_object(obj.clone());
+        let _proof3 = db.prove_object(&obj.id);
+    }
+
+    #[test]
+    fn test_default_trait_batch_methods_on_inmemory() {
+        let mut db = InMemoryStateDB::new();
+        // InMemoryStateDB overrides begin_batch/commit_batch/rollback_batch so
+        // we cover the InMemory paths; default trait stubs are covered below.
+        db.begin_batch();
+        assert!(db.commit_batch().is_ok());
+        db.rollback_batch();
+    }
+
+    /// Cover the trait-level default no-op stubs by calling them through a
+    /// minimal `StateDB` implementor that does NOT override them.
+    #[test]
+    fn test_default_statedb_trait_stubs() {
+        use evaporchain_crypto::EnergyVerkleProof;
+        use evaporchain_types::{
+            Account, AccountAddress, GhostRecord, ObjectId, StateObject, StakeRecord,
+        };
+        use std::collections::HashMap;
+
+        // Minimal StateDB that only implements the strictly-required methods;
+        // everything else falls back to the trait defaults.
+        struct MinimalDB {
+            objects: HashMap<ObjectId, StateObject>,
+            accounts: HashMap<AccountAddress, Account>,
+            ghosts: HashMap<ObjectId, GhostRecord>,
+            nullifiers: std::collections::HashSet<[u8; 32]>,
+        }
+        impl MinimalDB {
+            fn new() -> Self { Self { objects: HashMap::new(), accounts: HashMap::new(), ghosts: HashMap::new(), nullifiers: std::collections::HashSet::new() } }
+        }
+        impl StateDB for MinimalDB {
+            fn get_object(&self, id: &ObjectId) -> Option<&StateObject> { self.objects.get(id) }
+            fn get_object_mut(&mut self, id: &ObjectId) -> Option<&mut StateObject> { self.objects.get_mut(id) }
+            fn put_object(&mut self, obj: StateObject) { self.objects.insert(obj.id, obj); }
+            fn delete_object(&mut self, id: &ObjectId) -> Option<StateObject> { self.objects.remove(id) }
+            fn put_ghost(&mut self, record: GhostRecord) { self.ghosts.insert(record.object_id, record); }
+            fn get_ghost(&self, id: &ObjectId) -> Option<&GhostRecord> { self.ghosts.get(id) }
+            fn remove_ghost(&mut self, id: &ObjectId) -> Option<GhostRecord> { self.ghosts.remove(id) }
+            fn all_object_ids(&self) -> Vec<ObjectId> { self.objects.keys().copied().collect() }
+            fn object_count(&self) -> usize { self.objects.len() }
+            fn ghost_count(&self) -> usize { self.ghosts.len() }
+            fn all_ghost_ids(&self) -> Vec<ObjectId> { self.ghosts.keys().copied().collect() }
+            fn get_account(&self, addr: &AccountAddress) -> Option<&Account> { self.accounts.get(addr) }
+            fn get_account_mut(&mut self, addr: &AccountAddress) -> Option<&mut Account> { self.accounts.get_mut(addr) }
+            fn put_account(&mut self, account: Account) { self.accounts.insert(account.address, account); }
+            fn delete_account(&mut self, addr: &AccountAddress) -> Option<Account> { self.accounts.remove(addr) }
+            fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account {
+                self.accounts.entry(*addr).or_insert_with(|| Account { address: *addr, balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0, vesting: None })
+            }
+            fn all_account_addresses(&self) -> Vec<AccountAddress> { self.accounts.keys().copied().collect() }
+            fn compute_state_root(&mut self) -> [u8; 32] { [0u8; 32] }
+            fn compress_cold_subtrees(&mut self) -> u32 { 0 }
+            fn trie_health(&mut self) -> crate::TrieHealth { crate::TrieHealth { active_leaves: 0, compressed_leaves: 0, total_nodes: 0, max_energy: 0, min_half_life: 0, last_activity_epoch: 0, compressions: 0, decompressions: 0 } }
+            fn prove_account(&mut self, _addr: &AccountAddress) -> EnergyVerkleProof { EnergyVerkleProof { key: [0u8; 32], value: None, depth: 0, commitments: vec![], path_indices: vec![], siblings: vec![], energy_path: vec![], hit_compressed: false } }
+            fn prove_object(&mut self, _id: &ObjectId) -> EnergyVerkleProof { EnergyVerkleProof { key: [0u8; 32], value: None, depth: 0, commitments: vec![], path_indices: vec![], siblings: vec![], energy_path: vec![], hit_compressed: false } }
+            fn prove_at_key(&mut self, _key: &[u8; 32]) -> EnergyVerkleProof { EnergyVerkleProof { key: [0u8; 32], value: None, depth: 0, commitments: vec![], path_indices: vec![], siblings: vec![], energy_path: vec![], hit_compressed: false } }
+            fn trie_snapshot(&mut self) -> Vec<u8> { vec![] }
+            fn load_trie_snapshot(&mut self, _bytes: &[u8]) -> Result<(), String> { Ok(()) }
+            fn put_note_tree_root(&mut self, _root: [u8; 32]) {}
+            fn get_note_tree_root(&self) -> [u8; 32] { [0u8; 32] }
+            fn spend_nullifier(&mut self, n: &[u8; 32]) -> bool { self.nullifiers.insert(*n) }
+            fn is_nullifier_spent(&self, n: &[u8; 32]) -> bool { self.nullifiers.contains(n) }
+            fn nullifier_count(&self) -> usize { self.nullifiers.len() }
+            fn all_nullifiers(&self) -> Vec<[u8; 32]> { self.nullifiers.iter().copied().collect() }
+            fn put_shielded_pool_balance(&mut self, _b: u64) {}
+            fn get_shielded_pool_balance(&self) -> u64 { 0 }
+            fn put_note_count(&mut self, _c: u64) {}
+            fn get_note_count(&self) -> u64 { 0 }
+            fn append_note_commitment(&mut self, _idx: u64, _c: [u8; 32]) {}
+            fn get_all_note_commitments(&self) -> Vec<[u8; 32]> { vec![] }
+            fn put_stake(&mut self, _r: StakeRecord) {}
+            fn get_stake(&self, _id: u64) -> Option<&StakeRecord> { None }
+            fn remove_stake(&mut self, _id: u64) -> Option<StakeRecord> { None }
+            fn all_stakes(&self) -> Vec<&StakeRecord> { vec![] }
+            fn put_delegation(&mut self, _r: evaporchain_types::DelegationRecord) {}
+            fn get_delegation(&self, _delegator: &AccountAddress, _validator_id: u64) -> Option<&evaporchain_types::DelegationRecord> { None }
+            fn remove_delegation(&mut self, _delegator: &AccountAddress, _validator_id: u64) -> Option<evaporchain_types::DelegationRecord> { None }
+            fn delegations_for_validator(&self, _id: u64) -> Vec<&evaporchain_types::DelegationRecord> { vec![] }
+            fn delegations_for_delegator(&self, _delegator: &AccountAddress) -> Vec<&evaporchain_types::DelegationRecord> { vec![] }
+            fn all_delegations(&self) -> Vec<&evaporchain_types::DelegationRecord> { vec![] }
+            fn get_proposal(&self, _id: u64) -> Option<&evaporchain_types::GovernanceProposal> { None }
+            fn put_proposal(&mut self, _p: evaporchain_types::GovernanceProposal) {}
+            fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> { vec![] }
+            fn get_governance_param(&self, _key: &str) -> Option<&str> { None }
+            fn put_governance_param(&mut self, _key: String, _value: String) {}
+            fn commit_state_snapshot(&mut self, _height: u64) {}
+            fn get_account_at_height(&self, _addr: &AccountAddress, _height: u64) -> Option<Account> { None }
+            fn get_object_at_height(&self, _id: &ObjectId, _height: u64) -> Option<StateObject> { None }
+            fn earliest_snapshot_height(&self) -> Option<u64> { None }
+            fn latest_snapshot_height(&self) -> Option<u64> { None }
+            fn prune_snapshots_before(&mut self, _height: u64) {}
+            fn prune_before_height(&mut self, _height: u64) -> u64 { 0 }
+        }
+
+        let mut db = MinimalDB::new();
+        // Call all the trait defaults that are uncovered
+        db.begin_batch();
+        assert!(db.commit_batch().is_ok());
+        db.rollback_batch();
+        assert_eq!(db.get_last_rent_epoch(), 0);
+        db.put_last_rent_epoch(5);
+        assert!(db.get_vesting_schedule(1).is_none());
+        db.put_vesting_schedule(evaporchain_types::VestingSchedule {
+            id: 1, beneficiary: [0u8; 32], total_amount: 1_000, start_epoch: 0,
+            cliff_epochs: 0, vesting_epochs: 10, released_amount: 0,
+        });
+        assert!(db.remove_vesting_schedule(1).is_none()); // default returns None
+        assert_eq!(db.all_vesting_schedules(), vec![]);
+        assert!(db.get_sentinel_param(1).is_none());
+        db.put_sentinel_param(evaporchain_sentinel::BoundedParameter {
+            id: 1, current: 5, min: 0, max: 100,
+        });
+        assert_eq!(db.all_sentinel_params(), vec![]);
+        assert_eq!(db.get_sentinel_votes(1), vec![]);
+        db.put_sentinel_votes(1, vec![]);
+        db.clear_all_nullifiers();
+        db.clear_all_note_commitments();
+        db.clear_all_stakes_and_delegations();
+        db.clear_all_sentinel_state();
+        db.clear_all_vesting_schedules();
+        db.clear_all_governance_state();
+    }
 }

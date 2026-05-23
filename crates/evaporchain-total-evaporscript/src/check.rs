@@ -31,6 +31,13 @@ pub enum TotalError {
     BoundedWhileNeverDecrements { ranking_var: String },
     #[error("BoundedWhile `{ranking_var}`: body INCREMENTS the ranking variable somewhere — divergence-prone")]
     BoundedWhileIncrementsRanking { ranking_var: String },
+    // audit 2026-05-18 (F9/F10/F11): reset anywhere in body voids convergence proof.
+    #[error(
+        "BoundedWhile `{ranking_var}`: body resets the ranking variable via a non-decrement \
+         assignment (e.g. `{ranking_var} = constant`). A reset preceding a decrement does not \
+         converge — the totality certificate would be false."
+    )]
+    BoundedWhileResetsRanking { ranking_var: String },
 }
 
 /// Witness that a [`Term`] passed the totality checker. The chain
@@ -109,6 +116,16 @@ fn check_term(t: &Term) -> Result<(), TotalError> {
                     ranking_var: ranking_var.clone(),
                 });
             }
+            // audit 2026-05-18 (F9/F10/F11): a non-decrement assignment to
+            // the ranking variable anywhere in the body (including inside
+            // nested loops) voids the convergence proof. Check before the
+            // path-analysis results, which can be spoofed by a reset+decrement
+            // sequence in the same Seq.
+            if non_decrement_assigns_var(body, ranking_var) {
+                return Err(TotalError::BoundedWhileResetsRanking {
+                    ranking_var: ranking_var.clone(),
+                });
+            }
             if !analysis.any_decrement {
                 return Err(TotalError::BoundedWhileNeverDecrements {
                     ranking_var: ranking_var.clone(),
@@ -121,6 +138,43 @@ fn check_term(t: &Term) -> Result<(), TotalError> {
             }
 
             check_term(body)
+        }
+    }
+}
+
+/// True iff `t` assigns to `var` anywhere using a form that is NOT
+/// a strict decrement (`var = var - k` with k > 0).
+///
+/// A non-decrement assignment (reset, increment, alias, constant
+/// assignment) inside a `BoundedWhile` body voids the termination
+/// proof even when a proper decrement also appears on the same path:
+/// `r = 100; r = r - 1` oscillates between 100 and 99 forever.
+/// This check covers assignments at any nesting depth, including
+/// inside inner BoundedFor/BoundedWhile bodies (F11).
+fn non_decrement_assigns_var(t: &Term, var: &str) -> bool {
+    match t {
+        Term::Assign { target, value } if target == var => {
+            // The only non-void assignment form is `var = var - k` (k > 0).
+            !matches!(value.as_strict_decrement(), Some((v, _)) if v == var)
+        }
+        Term::Assign { .. }
+        | Term::Skip
+        | Term::Return(_)
+        | Term::Require { .. }
+        | Term::Emit(_)
+        | Term::ExprStmt(_)
+        | Term::Let { .. } => false,
+        Term::Seq(items) => items.iter().any(|it| non_decrement_assigns_var(it, var)),
+        Term::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            non_decrement_assigns_var(then_body, var)
+                || non_decrement_assigns_var(else_body, var)
+        }
+        Term::BoundedFor { body, .. } | Term::BoundedWhile { body, .. } => {
+            non_decrement_assigns_var(body, var)
         }
     }
 }
@@ -633,7 +687,7 @@ mod tests {
     #[test]
     fn bounded_while_with_non_arithmetic_assign_to_ranking_rejected() {
         // while r > 0 { r = 100 }  — non-decrement reassignment.
-        // This is not a strict decrement, so all_paths fails.
+        // audit 2026-05-18 (F9): now caught by BoundedWhileResetsRanking.
         let t = Term::BoundedWhile {
             cond: bin(BinOp::Gt, var("r"), lit(0)),
             ranking_var: "r".into(),
@@ -642,10 +696,81 @@ mod tests {
         let err = check_total(&t).unwrap_err();
         assert_eq!(
             err,
-            TotalError::BoundedWhileNeverDecrements {
+            TotalError::BoundedWhileResetsRanking {
                 ranking_var: "r".into()
             }
         );
+    }
+
+    #[test]
+    fn reset_then_decrement_in_seq_rejected() {
+        // audit 2026-05-18 (F9/F10): while r > 0 { r = 100; r = r - 1 }
+        // The old Seq analysis set all_paths_decrement=true on seeing
+        // the decrement, ignoring the prior reset. The new
+        // non_decrement_assigns_var guard catches this.
+        let t = Term::BoundedWhile {
+            cond: bin(BinOp::Gt, var("r"), lit(0)),
+            ranking_var: "r".into(),
+            body: Box::new(seq(vec![
+                assign("r", lit(100)), // reset
+                dec("r", 1),           // decrement — doesn't save the loop
+            ])),
+        };
+        let err = check_total(&t).unwrap_err();
+        assert_eq!(
+            err,
+            TotalError::BoundedWhileResetsRanking {
+                ranking_var: "r".into()
+            }
+        );
+    }
+
+    #[test]
+    fn nested_loop_resetting_outer_ranking_var_rejected() {
+        // audit 2026-05-18 (F11): outer ranking var reset inside inner loop.
+        // while r > 0 {
+        //   while inner_r > 0 { r = 100; inner_r = inner_r - 1 }
+        //   r = r - 1
+        // }
+        let inner = Term::BoundedWhile {
+            cond: bin(BinOp::Gt, var("inner_r"), lit(0)),
+            ranking_var: "inner_r".into(),
+            body: Box::new(seq(vec![
+                assign("r", lit(100)),   // resets OUTER ranking var
+                dec("inner_r", 1),
+            ])),
+        };
+        // The inner loop itself is rejected first because it resets
+        // outer ranking var `r` — which the inner checker doesn't care
+        // about. But the outer checker's non_decrement_assigns_var
+        // recurses into inner loop bodies and finds `r = 100`.
+        let outer = Term::BoundedWhile {
+            cond: bin(BinOp::Gt, var("r"), lit(0)),
+            ranking_var: "r".into(),
+            body: Box::new(seq(vec![inner, dec("r", 1)])),
+        };
+        let err = check_total(&outer).unwrap_err();
+        assert_eq!(
+            err,
+            TotalError::BoundedWhileResetsRanking {
+                ranking_var: "r".into()
+            }
+        );
+    }
+
+    #[test]
+    fn decrement_only_seq_still_passes() {
+        // Ensure the new check does not break normal dec-only sequences.
+        // while r > 0 { x = x + 1; r = r - 1 }
+        let t = Term::BoundedWhile {
+            cond: bin(BinOp::Gt, var("r"), lit(0)),
+            ranking_var: "r".into(),
+            body: Box::new(seq(vec![
+                assign("x", bin(BinOp::Add, var("x"), lit(1))),
+                dec("r", 1),
+            ])),
+        };
+        check_total(&t).unwrap();
     }
 
     // ── Composition tests ─────────────────────────────────────────

@@ -1,6 +1,8 @@
 //! Capability-Decay VM — KeyKOS/seL4 object-capability with
 //! structural energy-bound authority.
 //!
+//! **Doctrine:** `INVENTION_STACK.md §4.2` — Tier-2 VM paradigm.
+//!
 //! ## Why ocap, why decay
 //!
 //! Default-deny is the inverse of EVM's default-allow + ACL.
