@@ -117,8 +117,8 @@ pub fn build_circuit_with_section3(
 mod tests {
     use super::*;
     use crate::recursive_snark_fixture::generate_fixture;
-    use ark_relations::r1cs::ConstraintSynthesizer;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSynthesizer;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// End-to-end pin: real fixture → adapter → satisfied CS.
     ///
@@ -192,7 +192,7 @@ mod tests {
     #[ignore]
     fn build_circuit_with_section2_synthesizes_and_is_satisfied() {
         use crate::recursive_snark_fixture::generate_fixture_with_digest;
-        use ark_relations::r1cs::ConstraintSystem;
+        use ark_relations::gr1cs::ConstraintSystem;
 
         let dump = std::path::Path::new("/tmp/neptune-bn256-standard.json");
         if !dump.exists() {
