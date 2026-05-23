@@ -8,11 +8,57 @@
     implemented in evaporchain-consensus/src/tendermint.rs.
 
     Author: Satyawan Singh
-    Date:   2026-04-21
+    Date:   2026-04-21 (D11 axiom-boundary section added 2026-05-21)
 
     Safety:  No two honest validators commit different blocks at the same height.
     Liveness: If 2f+1 validators are honest and connected, a new block is
               eventually committed.
+
+    Properties verified by TLC:
+
+        TypeOK                       — all variables in declared domains.
+        Agreement                    — no two honest validators commit
+                                       different blocks at the same height.
+        Validity                     — only proposed blocks can be committed.
+        CommitRequiresQuorum         — a block is committed only if it
+                                       received 2f+1 stake-weighted
+                                       precommits in some round.
+        LockSafety                   — if an honest validator is locked on
+                                       block lb in round lr, no quorum can
+                                       have formed for a different block in
+                                       any earlier round (currently fails
+                                       on Byzantine.cfg under late-prevote
+                                       traces — see audit doc § D14).
+        EquivocationDetected         — equivocating validators are slashed.
+        StateCommitmentIntegrity     — every committed block has a
+                                       state-commitment recorded at its
+                                       height (binary abstraction: "None"
+                                       vs "Committed").
+
+    Open and not modeled here (out of TLC scope — same axiom boundary as
+    PoHA.tla):
+
+        — Real cryptographic verification of BLS aggregate signatures.
+          Modeled abstractly via the prevote/precommit message sets;
+          signature validity is treated as an axiom. See Coq's
+          `PoHAFreeloading.v` for the crypto-game side (axiomatized).
+        — Domain-separation-tag (DST) collisions across the BLS keyspace
+          (audit 2026-05-17 H-2): treated as cryptographically negligible.
+        — VRF unforgeability for proposer selection.
+        — Hash collision resistance (BLAKE3) of block / proposal hashes.
+        — Network adversary's ability to delay / partition / reorder
+          messages: modeled as nondeterminism in action interleavings,
+          but specific Byzantine network strategies (e.g. selective
+          forwarding to exploit POL gaps) are out of scope.
+        — Proof-of-Lock (POL) / valid-round propagation as implemented in
+          tendermint.rs:5478-5544 (audit doc § D14).
+        — Antichain mempool drain & cross-fork equivocation tracking
+          (audit doc § D3 + § D10).
+        — Dynamic validator set: key rotation, jailing, tombstoning,
+          epoch transitions (audit doc § D7).
+
+    See `research/tla/TLA_IMPL_DRIFT_AUDIT_2026_05_21.md` for the full
+    spec-vs-impl drift accounting.
 *)
 
 EXTENDS Integers, Sequences, FiniteSets, TLC
