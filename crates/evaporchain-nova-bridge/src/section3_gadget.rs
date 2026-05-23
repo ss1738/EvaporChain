@@ -22,7 +22,7 @@ use ark_r1cs_std::{
     eq::EqGadget,
     fields::fp::FpVar,
 };
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 /// Enforce primary RelaxedR1CS satisfiability in-circuit.
 ///
@@ -132,7 +132,7 @@ fn sparse_lc_bucketed(
 mod tests {
     use super::*;
     use crate::section3_witness::Section3Witness;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
 
     /// A trivially-satisfied circuit: zero A/B/C, zero W/E, u=1.
     /// All rows reduce to 0*0 == 1*0 + 0, which is 0 == 0. CS must satisfy.
