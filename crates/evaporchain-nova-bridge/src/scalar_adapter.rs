@@ -43,6 +43,7 @@
 //! - The `Repr` type from halo2curves is a 32-byte newtype; we go
 //!   via `[u8; 32]` to keep the conversion explicit at every step.
 
+use ark_bn254::Fq as ArkFq;
 use ark_bn254::Fr as ArkFr;
 use ark_ff::{BigInteger, PrimeField as ArkPrimeField};
 use ff::PrimeField as FfPrimeField;
@@ -99,6 +100,24 @@ pub fn secondary_to_ark_fr_lossy(s: SecondaryScalar) -> ArkFr {
     ArkFr::from_le_bytes_mod_order(&repr)
 }
 
+/// Same-field conversion: nova `grumpkin::Scalar` → `ark_bn254::Fq`.
+///
+/// grumpkin's scalar field **is** BN254's base field, so this is
+/// **exact and value-preserving for every input** — the genuine
+/// same-field analog of [`primary_to_ark_fr`], NOT the lossy
+/// [`secondary_to_ark_fr_lossy`] (which reduces mod the BN254
+/// *scalar* modulus and is wrong for arithmetic-bearing values).
+///
+/// Audit B-1/B-2 S4a: feeds real secondary `RelaxedR1CSWitness`
+/// scalars (`W`, `r_W`) into the Grumpkin Pedersen-MSM gadget
+/// ([`crate::s4_msm_gadget`]), whose scalars are
+/// `EmulatedFpVar<Fq, Fr>` — they must be the exact Fq values, not
+/// Fr-reduced.
+pub fn secondary_to_ark_fq(s: SecondaryScalar) -> ArkFq {
+    let repr: [u8; 32] = s.to_repr().into();
+    ArkFq::from_le_bytes_mod_order(&repr)
+}
+
 /// Cross-field byte transcoding: `ark_bn254::Fr` → nova
 /// `grumpkin::Scalar` via LE-bytes-mod-order.
 ///
@@ -117,6 +136,34 @@ pub fn ark_fr_to_secondary_lossy(f: ArkFr) -> SecondaryScalar {
              every byte sequence ≤ 254 bits maps to *some* grumpkin::Scalar via the \
              halo2curves reduction. If this fires the BN254 Fr value somehow \
              exceeds 32 LE bytes after canonical reduction, which is impossible.",
+        )
+}
+
+/// Same-field conversion: `ark_bn254::Fq` → nova `grumpkin::Scalar`.
+///
+/// The genuine same-field reverse of [`secondary_to_ark_fq`].
+/// grumpkin's scalar field **is** BN254's base field (`Fq`), so
+/// this is **exact and value-preserving for every input** —
+/// analogous to [`ark_fr_to_primary`], NOT the lossy
+/// [`ark_fr_to_secondary_lossy`] which crosses field moduli.
+///
+/// Audit B-1/B-2 1C / increment 3b: feeds `ark_bn254::Fq` witness
+/// values (from a real arkworks-side `ConstraintSystem<Bn254Fq>`
+/// synthesis of [`crate::cyclefold_instance_circuit`]) into nova-
+/// snark's NIFS<GrumpkinEngine> primitives, which want their
+/// scalars as `grumpkin::Scalar`. Must be exact, NOT modular-
+/// reduced, for the folded relation to verify.
+pub fn ark_fq_to_secondary(f: ArkFq) -> SecondaryScalar {
+    let bigint_le = f.into_bigint().to_bytes_le();
+    let mut bytes = [0u8; 32];
+    let len = bigint_le.len().min(32);
+    bytes[..len].copy_from_slice(&bigint_le[..len]);
+    let repr = <SecondaryScalar as FfPrimeField>::Repr::from(bytes);
+    SecondaryScalar::from_repr_vartime(repr)
+        .expect(
+            "ark Fq value must canonicalise to a valid grumpkin::Scalar (same field); \
+             if this fires the modulus alignment between ark_bn254::Fq and \
+             halo2curves::grumpkin::Fr has drifted.",
         )
 }
 
@@ -215,5 +262,84 @@ mod tests {
             "bn256 and grumpkin scalar moduli must differ — if this fires our \
              lossy-secondary assumption is wrong and the adapter can be tightened"
         );
+    }
+
+    /// S4a: `secondary_to_ark_fq` is exact / value-preserving for
+    /// every input (same field), unlike the lossy Fr path.
+    #[test]
+    fn secondary_to_ark_fq_is_exact_value_preserving() {
+        for v in [0u64, 1, 2, 42, 7919, u64::MAX] {
+            assert_eq!(
+                secondary_to_ark_fq(SecondaryScalar::from(v)),
+                ArkFq::from(v),
+                "secondary_to_ark_fq must be value-preserving for {v}"
+            );
+        }
+        // q − 1 (Fq additive inverse of 1) must round-trip as the
+        // TRUE Fq −1 — i.e. `(q−1) + 1 == 0` in Fq. The lossy Fr path
+        // could not preserve this (q−1 > r).
+        let neg1_fq = secondary_to_ark_fq(-SecondaryScalar::from(1u64));
+        assert_eq!(
+            neg1_fq + ArkFq::from(1u64),
+            ArkFq::from(0u64),
+            "q-1 must map to the true Fq additive inverse of 1 (exactness)"
+        );
+    }
+
+    /// 1C increment 3b GATE: the new same-field reverse
+    /// [`ark_fq_to_secondary`] round-trips bidirectionally with
+    /// [`secondary_to_ark_fq`] for **random** Fq values (not just
+    /// small u64s). If this fails, the
+    /// arkworks↔nova-snark<GrumpkinEngine> NIFS bridge is unsound
+    /// and increment 3b is gated.
+    #[test]
+    fn ark_fq_secondary_round_trip_random() {
+        use ark_ff::UniformRand;
+        use ark_std::test_rng;
+        let mut rng = test_rng();
+        for _ in 0..32 {
+            let ark_in = ArkFq::rand(&mut rng);
+            let nova = ark_fq_to_secondary(ark_in);
+            let ark_out = secondary_to_ark_fq(nova);
+            assert_eq!(
+                ark_in, ark_out,
+                "ArkFq → SecondaryScalar → ArkFq must round-trip exactly"
+            );
+            // And the reverse direction.
+            let nova_back = ark_fq_to_secondary(ark_out);
+            assert_eq!(
+                nova, nova_back,
+                "SecondaryScalar value must be stable under round-trip"
+            );
+        }
+    }
+
+    /// Field-arithmetic preservation: addition + multiplication
+    /// commute with the bridge. If `ark_fq_to_secondary(a + b) ≠
+    /// ark_fq_to_secondary(a) + ark_fq_to_secondary(b)`, the bridge
+    /// is mathematically broken (modulus mismatch / reduction bug).
+    #[test]
+    fn ark_fq_to_secondary_preserves_arithmetic() {
+        use ark_ff::UniformRand;
+        use ark_std::test_rng;
+        let mut rng = test_rng();
+        for _ in 0..16 {
+            let a = ArkFq::rand(&mut rng);
+            let b = ArkFq::rand(&mut rng);
+            let sum_then_bridge = ark_fq_to_secondary(a + b);
+            let bridge_then_sum =
+                ark_fq_to_secondary(a) + ark_fq_to_secondary(b);
+            assert_eq!(
+                sum_then_bridge, bridge_then_sum,
+                "bridge must commute with addition"
+            );
+            let prod_then_bridge = ark_fq_to_secondary(a * b);
+            let bridge_then_prod =
+                ark_fq_to_secondary(a) * ark_fq_to_secondary(b);
+            assert_eq!(
+                prod_then_bridge, bridge_then_prod,
+                "bridge must commute with multiplication"
+            );
+        }
     }
 }

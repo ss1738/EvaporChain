@@ -176,17 +176,23 @@ fn read_g2_be_swapped(src: &[u8], abs_offset: usize) -> Result<G2Affine, Eip197D
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::circuit_builder::real_provable_circuit;
     use crate::groth16_wrapper::{prove, setup};
-    use crate::verifier_circuit::NovaVerifierCircuit;
     use ark_std::rand::SeedableRng;
 
-    /// End-to-end round-trip: prove(dummy) → eip197 encode →
-    /// eip197 decode → deep-equal original proof.
+    /// Audit B-1/B-2 S2b-prover: end-to-end codec round-trip on a
+    /// REAL-fixture proof (post-S2b the only satisfiable witness;
+    /// `dummy()` is no longer provable). prove → eip197 encode →
+    /// decode → deep-equal → byte-stable re-encode.
     #[test]
+    #[ignore = "S2b-prover: real Nova fixture + /tmp/neptune-bn256-standard.json (expensive)"]
     fn proof_round_trips_through_eip197_bytes() {
+        let Some(circuit) = real_provable_circuit() else {
+            return;
+        };
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(303);
         let (pk, _vk) = setup(&mut rng).expect("setup");
-        let proof = prove(&pk, NovaVerifierCircuit::dummy(), &mut rng).expect("prove");
+        let proof = prove(&pk, circuit, &mut rng).expect("prove");
 
         let bytes = proof_to_eip197_bytes(&proof);
         assert_eq!(bytes.len(), EIP197_PROOF_BYTES);
