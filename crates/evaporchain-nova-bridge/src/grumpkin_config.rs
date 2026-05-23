@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn generator_is_on_curve() {
         let g = GrumpkinConfig::GENERATOR;
-        assert!(!g.infinity, "generator must not be the identity");
+        assert!(!ark_ec::AffineRepr::is_zero(&g), "generator must not be the identity");
         let rhs = g.x * g.x * g.x + GrumpkinConfig::COEFF_B;
         assert_eq!(g.y * g.y, rhs, "y^2 must equal x^3 - 17");
         assert!(g.is_on_curve(), "ark is_on_curve must agree");

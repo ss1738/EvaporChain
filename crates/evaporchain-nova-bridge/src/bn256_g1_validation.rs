@@ -38,7 +38,7 @@ mod tests {
         assert_eq!(b, ark_bn254::Fq::from(3u64), "BN254 G1 COEFF_B must be 3");
 
         let g = <PrimaryG1Config as SWCurveConfig>::GENERATOR;
-        assert!(!g.infinity, "generator must not be identity");
+        assert!(!ark_ec::AffineRepr::is_zero(&g), "generator must not be identity");
         let rhs = g.x * g.x * g.x + b; // A = 0
         assert_eq!(g.y * g.y, rhs, "generator must satisfy y^2 = x^3 + 3");
         assert!(g.is_on_curve());
