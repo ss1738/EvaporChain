@@ -70,7 +70,7 @@ use crate::verifier_circuit::NovaVerifierCircuit;
 )]
 pub fn setup<R: RngCore + CryptoRng>(
     rng: &mut R,
-) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::r1cs::SynthesisError> {
+) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::gr1cs::SynthesisError> {
     let dummy = NovaVerifierCircuit::dummy();
     Groth16::<Bn254>::circuit_specific_setup(dummy, rng)
 }
@@ -86,7 +86,7 @@ pub fn prove<R: RngCore + CryptoRng>(
     pk: &ProvingKey<Bn254>,
     circuit: NovaVerifierCircuit,
     rng: &mut R,
-) -> Result<Proof<Bn254>, ark_relations::r1cs::SynthesisError> {
+) -> Result<Proof<Bn254>, ark_relations::gr1cs::SynthesisError> {
     Groth16::<Bn254>::prove(pk, circuit, rng)
 }
 
@@ -104,7 +104,7 @@ pub fn verify(
     vk: &VerifyingKey<Bn254>,
     public_inputs: &[Bn254Fr],
     proof: &Proof<Bn254>,
-) -> Result<bool, ark_relations::r1cs::SynthesisError> {
+) -> Result<bool, ark_relations::gr1cs::SynthesisError> {
     Groth16::<Bn254>::verify(vk, public_inputs, proof)
 }
 
