@@ -215,7 +215,20 @@ ProposeBlock(v) ==
        /\ UNCHANGED <<height, round, lockedBlock, lockedRound, validBlock, validRound,
                        precommits, committed, equivocations, slashed>>
 
-\* Byzantine proposer can propose anything, including equivocating blocks
+\* Byzantine proposer can propose anything, including equivocating blocks.
+\*
+\* D12 fix 2026-05-21: must update stateCommitment[h] like ProposeBlock
+\* does (line 207-209). The spec's stateCommitment abstraction is binary:
+\* "None" until any block proposal lands at height h, "Committed" once a
+\* proposal exists. Previously ByzantinePropose left stateCommitment
+\* UNCHANGED, so a Byzantine-proposed block that honest validators voted
+\* on and committed would leave stateCommitment[h] = "None", spuriously
+\* violating StateCommitmentIntegrity. In the Rust impl, every block
+\* header carries a BlockStateCommitment regardless of proposer identity
+\* — Byzantine proposers might supply an INVALID BSC, but they can't
+\* omit the field; honest validators reject blocks with malformed BSC
+\* (validation logic abstracted out of this spec). The simple binary
+\* abstraction lets us model "BSC present" without modeling validity.
 ByzantinePropose(v) ==
     /\ v \in Faulty
     /\ height[v] <= MaxHeight
@@ -226,10 +239,12 @@ ByzantinePropose(v) ==
        \* Faulty proposer may propose any block, even two different ones (equivocation)
        \E block \in NonNilBlocks :
            /\ proposals' = [proposals EXCEPT ![h][r] = @ \cup {<<v, block>>}]
+           /\ stateCommitment' = [stateCommitment EXCEPT ![h] =
+                IF @ = "None" THEN "Committed" ELSE @]
            /\ prevotes' = [prevotes EXCEPT ![h][r] = @ \cup {<<v, block>>}]
            /\ phase' = [phase EXCEPT ![v] = "Prevote"]
            /\ UNCHANGED <<height, round, lockedBlock, lockedRound, validBlock, validRound,
-                           precommits, committed, daAttested, stateCommitment,
+                           precommits, committed, daAttested,
                            equivocations, slashed>>
 
 \* Propose timeout — no proposal received, send nil prevote
