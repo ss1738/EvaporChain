@@ -50,12 +50,15 @@ ignore = [
     # Track upstream libp2p for the next major.
     { id = "RUSTSEC-2026-0118", reason = "hickory-proto 0.25.x NSEC3 unbounded loop; no 0.25.x patch (only 0.26+); waiting on libp2p to bump hickory" },
     { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.25.x O(n²) name-compression CPU exhaustion; same fix path as RUSTSEC-2026-0118 (hickory 0.26+)" },
-    # TODO(security): bump ark-* family (0.5 → 0.6) to drop transitive
-    # tracing-subscriber 0.2.25 + rand 0.8.5. Pulled by
-    # evaporchain-nova-bridge via ark-relations / ark-std. ark-groth16
-    # 0.6 changes the API; expect ripple through nova-bridge.
-    { id = "RUSTSEC-2025-0055", reason = "tracing-subscriber 0.2.25 ANSI log poisoning; pinned via ark-relations 0.5.1 → ark-*; needs ark-groth16 0.5 → 0.6" },
-    { id = "RUSTSEC-2026-0097", reason = "rand 0.8.5 unsound on custom-logger rng path; pinned via ark-std 0.5.0; same bump as RUSTSEC-2025-0055" },
+    # FIXED 2026-05-23 by ark 0.5 → 0.6 bump:
+    #   RUSTSEC-2025-0055  tracing-subscriber 0.2.25 ANSI log poisoning
+    #
+    # PARTIAL after ark 0.6: tracing-subscriber 0.2.25 is gone, but
+    # ark-std 0.6.0 still pulls in rand 0.8.5 directly (not via the
+    # logger surface). The unsound advisory still fires on the lock.
+    # Real fix is upstream: ark-std → rand 0.9. Newer cargo-deny
+    # (>=0.20) detects it where 0.19.7 didn't.
+    { id = "RUSTSEC-2026-0097", reason = "rand 0.8.5 unsound; pinned via ark-std 0.6.0; needs ark-std to bump rand to 0.9" },
 ]
 
 [licenses]
