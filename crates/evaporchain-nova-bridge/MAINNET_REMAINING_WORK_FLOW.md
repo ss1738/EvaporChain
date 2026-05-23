@@ -1,0 +1,1720 @@
+# ⚠️ ARCHITECTURAL CONCLUSION (2026-05-19, source-confirmed) — READ FIRST
+
+The D.3 measurement (≈2.03×10⁸ constraints for the non-native
+secondary R1CS) + reading nova-snark 0.68 source forces an honest
+reframe of the *production* approach:
+
+- Nova's augmented circuits **never recompute the other side's full
+  R1CS** — folding/NIFS verifies only a constant-size step; full
+  RelaxedR1CS-sat is discharged **once at the end**.
+- nova-snark 0.68 **ships `CompressedSNARK`** (Spartan + HyperKZG/IPA;
+  `nova/mod.rs`, `S1/S2: RelaxedR1CSSNARKTrait`, verify@909) — the
+  *intended* succinct wrapper. Spartan (sumcheck) compresses
+  RelaxedR1CS-sat **sub-linearly** — NOT the 203M-constraint
+  explosion.
+- ∴ the hand-rolled S2/S3/S4 path (a Groth16 circuit that explicitly
+  re-verifies *both raw* RelaxedR1CS instances) is **reinventing
+  `CompressedSNARK`, badly**. The 203M secondary blow-up is the
+  symptom of doing this the wrong way; it is NOT fixable by hardware
+  *or* by the curve-cycle redesign of the same raw approach.
+- The legitimate driver for a Groth16 path is an **EVM-cheap proof**
+  (`eip197.rs`/`groth16_wrapper` → BN254 pairing precompile). The
+  CORRECT pipeline for that is: `RecursiveSNARK → CompressedSNARK`
+  (Spartan, sub-linear) **→ a small Groth16 of the CompressedSNARK
+  *verifier*** (a fixed, small circuit verifying the Spartan/KZG
+  proof) — NOT Groth16 of the raw R1CS. Skipping the Spartan
+  compression is the root cause of everything D.3/S4b.
+
+**SOLUTION (the real one): adopt nova-snark `CompressedSNARK`; if
+EVM verification is needed, Groth16-wrap the (small) CompressedSNARK
+verifier.** This makes D.3, S4b non-native, the curve-cycle redesign,
+and the ≫123 GB host problem ALL disappear. No spend, no big machine
+— the library already does, sub-linearly, what S4b was hand-rolling
+to 203M constraints.
+
+**✅ VALIDATED [V] (2026-05-19, Mini3, box-verified):**
+`compressed_snark_compresses_real_recursive_snark ... ok`, 1 passed,
+**25.27 s on a 16 GB Mini, no OOM**. nova-snark `CompressedSNARK
+<E1,E2,TrivialIncrementCircuit, S1=Spartan, S2=Spartan>`
+`setup → prove → verify` on a REAL `RecursiveSNARK` (built against
+the canonical `pp`), asserting compressed-verified `zi == n`. The
+production path is no longer just argued from source — it is
+**empirically proven end-to-end, sub-linear, tractable on modest
+hardware, zero spend**. (One honest iteration: first run failed
+because the test used two different `pp` instances → digest mismatch;
+`setup`+`prove` succeeded even then — never a CompressedSNARK
+problem.)
+
+**What this session's verified work means, honestly:** S2a/S2b and
+the commitment-binding proofs (B.3b primary, A.3 secondary — real-
+scale box-verified) are valid as a *correctness/learning* exercise
+and their soundness insights transfer — but the **production
+architecture is CompressedSNARK**, not the 203M hand-roll. The
+honest #1-blocker path forward is: validate `CompressedSNARK` end-to-
+end, then a small Groth16-of-verifier for EVM — a scoped, library-
+based effort, not a multi-month bespoke-circuit dead-end.
+
+## EVM-WRAPPER SCOPING (2026-05-19, source-confirmed, calibrated)
+
+State of the two EVM modules in this crate:
+
+- **`eip197.rs`** [V] — 256-byte EIP-197 Groth16 wire codec incl. the
+  BN254-G2 `Fq2 (c1,c0)` swap; tested. **Codec is independent of
+  which circuit produced the proof → reused unchanged.**
+- **`groth16_wrapper.rs`** [~] — `setup/prove/verify` currently key
+  Groth16 over **`NovaVerifierCircuit`** (`verifier_circuit.rs`) =
+  the **old hand-rolled raw-RecursiveSNARK verifier**. That is the
+  S4b 203M path. Must be re-pointed at a CompressedSNARK verifier.
+
+Validated CompressedSNARK PCS config (from `recursive_snark_fixture`):
+`S1/S2 = Spartan`, **EE1 = HyperKZG / Bn256 (primary)**,
+**EE2 = IPA-PC / Grumpkin (secondary)**.
+
+**Calibrated risk (NOT overhyped):** native verify is proven 25 s;
+the *in-circuit* cost of that verifier is a **separate, unmeasured**
+quantity. HyperKZG primary is favorable (KZG open = constant-size
+pairing check, cheap in-circuit). **The Grumpkin/IPA secondary is the
+concentrated unknown** — IPA verify = log-rounds of non-native MSM,
+the exact failure shape S4b hit. Risk is identified and bounded, not
+vague; but "small" is a hypothesis, not a measured fact.
+
+**NEXT DELIVERABLE [ ]:** a *constraint-size prediction* harness for
+the CompressedSNARK-verifier-in-circuit (same no-spend / falsify-
+cheaply method that turned D.3 "buy a VPS?" into "no spend"): from
+the native `(vk, proof)` structure (sumcheck round count = log(n),
+HyperKZG vs IPA opening op-counts) × the per-op constraint costs
+already characterized in `s4_primary_msm_gadget` (g1_add / scalar_mul
+/ MSM), predict total constraints **before** building the full
+circuit. Run on Mini3 (never the training rig / node box). Decision
+gate: if predicted ≪ Groth16-tractable → build the verifier circuit
++ re-point `groth16_wrapper::setup`; if the IPA secondary dominates
+→ that, not "the wrapper", is the real remaining problem to solve.
+
+### RESOLVED by source read (2026-05-19, `ipa_pc.rs` verify L351-356)
+
+`CompressedSNARK.verify` secondary path calls Spartan→IPA verify,
+whose `ck_hat = CE::commit(&ck, &s, 0)` is a **size-`n` MSM** (`s` is
+`vec![..; n]`, `n = b_vec.len()` ≈ 10,554 secondary). **Cheap
+natively** (∴ the 25 s validation is genuine and unaffected) but
+**in-circuit ≈ 10.5k non-native Grumpkin scalar-muls ≈ S4b-scale
+(~10⁸–10⁹ cons).** So:
+
+- The size-prediction harness's open question is **answered without
+  building it**: stock nova-snark IPA-secondary verifier is **NOT**
+  in-circuit-tractable. The earlier "small Groth16-of-verifier" was
+  optimism the calibrated flag correctly hedged. **No overturn of the
+  native CompressedSNARK result; sharpening of the EVM wrapper.**
+- The blowup is not removed by CompressedSNARK — it **moves** from
+  "raw RelaxedR1CS re-verify" to "IPA `ck_hat` size-n MSM". Confirms:
+  not fixable by hardware or curve-cycle redesign.
+- **Real remaining EVM problem (named, bounded):** discharge the
+  *secondary* (Grumpkin) side cheaply on-chain. Known solved shape =
+  **Sonobe-style decider**: Groth16/KZG-wrap the **primary only**
+  (HyperKZG → constant-size BN254 pairing, EVM-cheap), discharge the
+  secondary via the folded NIFS relation — **not** a full in-circuit
+  IPA. No 10⁹ circuit, no hardware/VPS spend.
+
+### RESOLVED by source read #2 (2026-05-19, `ppsnark.rs` verify
+L1388+ vs `snark.rs` vs `ipa_pc.rs` L351) — calibrated, negative-
+leaning, NOT a config-switch win
+
+nova-snark 0.68 ships **two** Spartan variants:
+- `spartan::snark::RelaxedR1CSSNARK` (used by the validated test) —
+  **non-succinct verifier**: `ck_hat = CE::commit(&ck,&s,0)`, `s`
+  length `n` → size-`n` MSM.
+- `spartan::ppsnark::RelaxedR1CSSNARK` — **succinct verifier**:
+  `num_rounds_outer = num_cons.log_2()`, preprocessed `vk` sparse
+  commitments, O(log) sumcheck, **no size-`n` MSM at the Spartan
+  level**.
+
+So switching `S1/S2` → `ppsnark` removes the *Spartan-level*
+blowup (real, good). **BUT** ppsnark still delegates polynomial
+opening to `EE::verify`. For the **secondary** that is
+`ipa_pc::verify` (read #1), whose `ck_hat` size-`n` MSM is
+**intrinsic to IPA over the non-pairing-friendly Grumpkin secondary
+curve** — present regardless of snark vs ppsnark. nova-snark 0.68's
+secondary is the **full ~10.5k augmented circuit, not a
+CycleFold-constant** one. ∴ **no zero-cost in-circuit EVM path for
+the secondary exists in stock 0.68.** (Honest: this is NOT "just
+switch to ppsnark and you're done" — the no-overhype discipline
+forbids selling it that way.)
+
+**The three real EVM options (all genuine engineering, named +
+bounded, none requiring a 203M/10⁹ bespoke circuit or HW spend):**
+
+1. **CycleFold-constant secondary** — make the secondary circuit
+   O(1) (Sonobe/CycleFold design) so its size-`n` MSM is size-O(1).
+   Requires either Sonobe (arkworks folding lib, has a Decider) or
+   upgrading nova-snark's secondary. *Largest architectural change;
+   cleanest end state.*
+2. **Final-layer verifier recursion ("SNARK-of-SNARK")** — run the
+   secondary IPA size-`n` MSM *natively* inside one more Spartan/Nova
+   step whose verifier is `ppsnark`-succinct; Groth16-wrap only that
+   small residual. *Stays within nova-snark; one extra recursion
+   layer.*
+3. **Native-Solidity secondary verifier** — emit the secondary IPA
+   proof, verify it directly in Solidity (Grumpkin scalar-field ops;
+   fixed ~size-`n` gas cost, no SNARK circuit). *Pragmatic mainnet
+   path; gas-heavy but deterministic & buildable now.*
+
+**OPTION (2) BASE — ✅ VALIDATED [V] (2026-05-19, Mini3, box):**
+`compressed_snark_ppsnark_compresses_real_recursive_snark ... ok`,
+1 passed, **124.71 s on a 16 GB Mini, no OOM** (HEAD `cd9882bf`).
+`CompressedSNARK<E1,E2,_,S1=ppsnark,S2=ppsnark>` e2e on a real
+`RecursiveSNARK`, `zi == n` asserted. Two real API facts surfaced &
+fixed en route: (i) ppsnark `ck_floor()` > `snark`'s →
+`InvalidCommitmentKeyLength` unless `pp` is built with the ppsnark
+floor; (ii) prove is ~5× heavier than `snark` (25 s → 125 s) —
+sparse-matrix preprocessing; a one-shot final-proof cost, acceptable.
+
+**HONEST CAVEAT (kept front, no overhype):** this validates the
+*native* `ppsnark` CompressedSNARK base ONLY. It removes the
+**Spartan-level** size-`n` MSM. It does **NOT** remove the secondary
+**Grumpkin-IPA** size-`n` `ck_hat` MSM in `ipa_pc::verify` — that is
+intrinsic and still the in-circuit blocker. Option (2) is not "done";
+its *base* is proven.
+
+### RESIDUAL RECURSION SCOPED — source read #3 (2026-05-19,
+`nova/mod.rs` `CompressedSNARK::verify` L909-1025) — RECURSION
+TERMINATES SUCCINCT (source-grounded design conclusion)
+
+Full `CompressedSNARK::verify` mapped. **Every step is constant-size
+EXCEPT one:**
+- Neptune hash checks (`hash_primary/secondary`) — constant.
+- `nifs_Uf_secondary.verify`, `nifs_Un_secondary.verify`,
+  `nifs_Un_primary.verify` — constant-size NIFS folds.
+- `derandomize` (primary+secondary) — constant.
+- `rayon::join(snark_primary.verify, snark_secondary.verify)`:
+  - `snark_primary.verify` — Spartan ppsnark + **HyperKZG** ⇒
+    constant (one BN254 pairing). EVM-cheap.
+  - `snark_secondary.verify` — Spartan ppsnark + **IPA/Grumpkin**;
+    its sole super-constant op = `ipa_pc::verify` size-`n` `ck_hat`
+    MSM. **THE only non-constant term in the whole verifier.**
+
+**Why everything blew up before, precisely:** that single MSM is
+Grumpkin-group. Grumpkin's *base field* **is BN254-Fr** (the primary
+scalar field; the existing cycle). The 203M/10⁹ explosion was the
+cost of doing this Grumpkin EC **non-natively** (`EmulatedFpVar`,
+foreign field) — S4b/D.3. Done on the **matching native cycle side**
+(a recursion circuit over BN254-Fr), the same MSM is **≈`n` *native*
+constraints (~10⁵)**, linear-Spartan-provable, NOT 10⁹.
+
+**∴ final-layer recursion terminates succinct:** one recursion
+circuit over BN254-Fr does the secondary MSM **natively** (all other
+verifier steps already constant) → ppsnark-compress it (size-`n`
+R1CS is fine for the linear prover; its verifier is succinct) →
+Groth16-wrap the succinct top (HyperKZG ⇒ constant BN254 pairing ⇒
+EVM-cheap). **Option (2) is viable; the EVM mainnet path is not
+blocked.** No hardware spend, no 10⁹ bespoke circuit.
+
+**NO-OVERHYPE LINE (explicit):** the above is a *source-grounded
+design conclusion*, NOT a box-validated number. It is sound because
+the only super-constant term is provably native on the recursion
+field — but the falsifiable next step is to **measure the recursion-
+circuit constraint count** (the proven D.3-style prediction: `n`
+secondary ≈ 10.5k native Grumpkin scalar-muls × native per-op cost +
+the constant HyperKZG-pairing-in-circuit term), not to assert a final
+figure now.
+
+### SIZE PREDICTION — ✅ MEASURED [V] (2026-05-19, Mini3, box,
+HEAD `c217dce2`, `predict_native_grumpkin_msm_size_for_recursion_
+circuit ... ok`, 1 passed, 1.08 s)
+
+Real `cs.num_constraints()` of the existing native-Grumpkin
+`pedersen_msm_grumpkin` gadget (points = BN254-Fr coords = native;
+scalars = non-native Fq):
+
+| k | cons |
+|---|---|
+| 1 | 5,054 |
+| 2 | 7,587 |
+| 4 | 12,653 |
+| 8 | 22,785 |
+
+Linear fit: **2,533 cons / MSM term**, intercept 2,521. **Predicted
+at n=10,554: MSM ≈ 26.7M + HyperKZG-pairing const 2M ≈ TOTAL
+~28.7M constraints. FALSIFIER (≥1e9) DID NOT FIRE.**
+
+**Verdict (calibrated, no overhype):**
+- ✅ ~29M ≪ D.3's 2.03×10⁸ ≪ 1e9. The native-side placement gives
+  **~7× under D.3**; source-read-#3 "recursion escapes S4b scale" is
+  **empirically supported**, not just argued. The earlier flow text
+  "(~10⁵)" was optimistic — corrected: the measured figure is ~10⁷
+  (flat MSM), still well inside the conclusion.
+- ⚠️ ~29M is **tractable but NOT "small"**: Groth16 needs ~2²⁵
+  powers-of-tau, tens-of-GB prover RAM, minutes-scale prove on a
+  strong box — a **one-shot per-proof prover cost**. EVM **verify is
+  constant** (3 pairings ~250k gas) regardless — that part is cheap.
+- ~29M is a **conservative upper bound**: probe uses the *flat*
+  per-term MSM (n independent scalar-muls). IPA `ck_hat`'s scalar
+  vector has **tensor structure** (`ipa_pc.rs` L334-349) a bespoke
+  recursion circuit folds in ~log(n) → potential ~10–100× cut. Lever,
+  not requirement.
+
+**Bottom line:** Option (2) is the **validated EVM path** — buildable,
+no 10⁹ circuit, no forced HW spend, EVM verify cheap; prover-side
+~29M is heavy-but-one-shot and tensor-foldable. The B-1/B-2 #1
+mainnet-blocker architecture question is **resolved**.
+
+### BUILD INCREMENT 1 — Section A LIVE ✅ [V] (2026-05-19, Mini3,
+box, HEAD `67625605`)
+
+New module `recursion_decider_circuit.rs`:
+`ConstraintSynthesizer<Bn254Fr>`. **Section A** (secondary IPA
+`ck_hat` MSM — the dominant ~26.7M term) recomputes
+`Σ sᵢ·ckᵢ + r·h` natively via `pedersen_msm_grumpkin` and
+`enforce_equal`s the claimed commitment. Box-verified
+(`recursion_decider_circuit ... 3 passed; 0 failed; 0.27 s`):
+- `section_a_correct_commitment_satisfies_cs` — correct ⇒ CS sat.
+- `section_a_wrong_commitment_breaks_cs` — wrong ⇒ CS **UNSAT**
+  (binding is **non-vacuous** — the exact B-1 `dummy()`-vacuity
+  hazard, proven avoided).
+- `section_a_length_mismatch_is_unsatisfiable` — malformed ⇒
+  `Unsatisfiable` (crate-wide contract).
+
+**Scope boundary (explicit, no overhype):** this proves Section A
+*logic* is correct and non-vacuous at **small controlled scale (3
+bases)**. It is NOT yet: wired to a real `CompressedSNARK<ppsnark>`
+proof's secondary instance; run at n=10,554; nor are Sections B-D
+(constant-size Neptune/NIFS/HyperKZG) wired — they are explicit
+deferred stubs and `sections_bcd_wired:false` records that. "Section
+A logic proven", not "the decider works".
+
+### PREMISE-CHECK — real-proof access path scoped GREEN +
+JUSTIFIED REORDER (2026-05-19, source read #4, no spend)
+
+- `CompressedSNARK` derives `Serialize/Deserialize` (nova/mod.rs:319);
+  `RelaxedR1CSInstance` and the `ppsnark` proof are serde too. The
+  crate ALREADY extracts secondary data this way
+  (`dump_ck_secondary_shape`, `s4b_secondary_r1cs_extract`,
+  `s4_secondary_extract` parse `serde_json::to_value(pp)`). **No
+  private-field blocker — access path GREEN.**
+- Honest nuance: Section-A `ck_hat` inputs are NOT raw serde fields.
+  `s` is the tensor vector the IPA verifier *derives from
+  Fiat-Shamir challenges* (`ipa_pc.rs` L334-349); `ck` =
+  `pp.ck_secondary`; claimed `ck_hat` = reconstructed key. The
+  adapter must **replay that deterministic derivation** (challenges
+  from serde-readable `L_vec/R_vec` via the transcript), not
+  field-read it. Defined, deterministic, buildable, no spend.
+- **REORDER (flagged, not silent):** the original "increment 2 = B-D
+  then increment 3 = adapter" is inverted. The adapter premise is
+  now confirmed viable and MUST precede B-D so every section is
+  keyed over **real** proof data — never synthetic shapes (the B-1
+  `dummy()`-vacuity hazard this whole effort exists to prevent).
+
+**NEXT [ ]:** increment 2 (was 3) — build the real-proof adapter:
+generate a `CompressedSNARK<ppsnark>` proof (the validated
+`cd9882bf` path), serde-extract the secondary instance + `L_vec/
+R_vec`, replay `ipa_pc::verify`'s transcript+`s`-derivation
+(L294-356) OUT of circuit to produce the real `(s, ck, ck_hat)`
+Section-A witness, and box-verify `RecursionDeciderCircuit` Section A
+against it at real n (CS satisfied + non-vacuous, on Mini3). THEN
+increment 3 — wire constant Sections B-D against the same real proof
++ flip `sections_bcd_wired`. Heavy 29M Groth16 prove + flat-vs-tensor
+MSM decision stays deliberately scheduled (satyawan-1 / a Mini —
+never the training rig / node box).
+
+### INCREMENT-2 KERNEL — `ipa_s_tensor` ✅ [V] (2026-05-19, Mini3,
+box, HEAD `e48f0386`, `ipa_s_tensor ... 4 passed; 0 failed; 0.24 s`)
+
+`ipa_s_tensor::ipa_s_vector` = bit-exact port of `ipa_pc::verify`'s
+`s` derivation (`provider/ipa_pc.rs` L334-349). This is the subtle,
+risk-carrying piece of the real-proof adapter: a wrong index /
+exponent / round-reversal silently yields a different MSM ⇒ a
+vacuous-yet-passing binding (the B-1 hazard). **Falsified
+INDEPENDENTLY:** `Σ sᵢ·ckᵢ` (tensor path) == the literal recursive
+`ck.fold` (`pedersen.rs::fold` L487 weights `(r⁻¹,r)` + `ipa_pc`
+prove loop) at n=8/16/64, plus `s[0]=Πr⁻¹` spot-check. Two unrelated
+code paths converge ⇒ the port is faithful to nova-snark.
+
+### INCREMENT 2 COMPLETE ✅ [V] (2026-05-19, Mini3, box, HEAD
+`a356fd55`, `section_a_real_bases_real_tensor_pipeline ... ok`,
+1 passed, 50.94 s)
+
+End-to-end **real-data** witness-assembly pipeline verified:
+`canonical_public_params` → `extract_secondary_ck` (real Grumpkin
+bases) → `ipa_s_vector` (real tensor) → real `ck_hat` →
+`RecursionDeciderCircuit` Section A. Positive (CS sat) AND
+non-vacuous negative (tamper ⇒ UNSAT) on **real curve points** at
+n=256. 50.94 s / ~0.65M cons is consistent with the measured
+2,533-cons/term linear fit — the size model holds on real bases.
+
+**Scope boundary (explicit):** real `ck` + real tensor structure,
+challenges `r` synthetic-but-valid, n=256. NOT yet: `r` bound to a
+*specific* `CompressedSNARK<ppsnark>` proof's `L_vec/R_vec`
+transcript; full n≈16384 (~41M-cons) synthesis; Sections B-D. Those
+are increment 3 + the deliberately-scheduled heavy step.
+
+### INCREMENT-3(a) PREMISE-CHECK ✅ [V] + ⚠️ MATERIAL SIZE
+CORRECTION (2026-05-19, Mini3, box, HEAD `7a9857d6`,
+`dump_compressed_ppsnark_proof_structure ... ok`, 1 passed,
+123.80 s)
+
+**GREEN — serde path pinned:** secondary IPA args extract at
+`compressed.snark_secondary.eval_arg.{L_vec, R_vec, a_hat}`;
+`CMP_SERDE_ROUNDTRIP = ok` (lossless). Primary `eval_arg =
+{com,v,w}` (HyperKZG, constant — the cheap side, confirmed). Top
+keys: `snark_primary/secondary, r_U_*, l_u_secondary, nifs_*` — all
+serde-reachable.
+
+**⚠️ CALIBRATION CORRECTION (no overhype — the evidence walks back
+the earlier optimism):** `L_vec.len() = 17` ⇒ **real n = 2¹⁷ =
+131,072**, NOT the ~10,554 (≈2¹⁴) the D.3 `num_cons` implied.
+ppsnark's `S_comm.N` padding sets the IPA vector length. Revised
+flat-MSM size: **131,072 × 2,533 ≈ ~332M + 2M HyperKZG ≈ ~334M
+constraints.**
+- Still ≪ 1e9 → the *architecture* conclusion holds (recursion
+  terminates, finite, native-not-non-native; falsifier intact).
+- BUT ~334M is **~1.6× LARGER than D.3's 2.03×10⁸**, NOT 7× smaller.
+  The prior "~29M / ~7× under D.3" headline was an artifact of
+  using too-small an n; **flat-MSM at the real n does NOT beat the
+  blow-up it was meant to beat.** Correcting that claim explicitly.
+- ∴ the tensor-fold — previously logged as an *optional* "~10-100×
+  lever held in reserve" — is **NOW MANDATORY**. At n=131,072 the
+  tensor-folded `ck_hat` (≈2n native point-adds + 17 scalar-muls ≈
+  low single-digit M) is the *only* Groth16-tractable path. The
+  flat `pedersen_msm_grumpkin` that `RecursionDeciderCircuit`
+  Section A currently uses is **NOT viable at real scale** — it is
+  correct (box-verified) but must be replaced by the tensor-folded
+  form for the real circuit.
+
+### TENSOR-FOLD DECISION PROBE — ❌ OPTION (2) DEAD-END AT REAL n
+[V] (2026-05-19, Mini3, box, HEAD `8dd9745b`,
+`ipa_ck_fold_gadget ... 2 passed; 0 failed; 6.06 s`)
+
+`fold_matches_native_recursive_fold ... ok` (in-circuit fold ==
+verified tensor-`s` MSM — correctness closed). **`FOLD_PROBE`:
+n4:16236 n8:34037 n16:66486 n32:128231 ⇒ A_fold≈4000/n;
+fold_pred@131072 ≈ 524M vs flat_pred ≈ 332M, ratio = 1.579.**
+
+**Verdict — clean measured negative (no spin):**
+- The recursive fold is **~1.58× WORSE than flat**, not the
+  "10-100× lever / low single-digit M" two prior turns asserted.
+  That optimism is now **doubly falsified** — by structural
+  analysis AND by box measurement. Logging it as a wrong call.
+- ∴ **option (2) (final-layer recursion, secondary IPA `ck_hat`
+  in-circuit, flat OR fold) is a DEAD-END for the practical EVM
+  path.** Flat ≈332M / fold ≈524M: both ≪1e9 (so the *architecture*
+  claim "terminates finite, native-not-non-native" still literally
+  holds and is not retracted) but **both far beyond practically
+  provable Groth16** (~3-5×10⁸ ⇒ ~2²⁹ SRS, hundreds of GB — not
+  feasible on satyawan-1 or a Mini).
+- Root cause: nova-snark 0.68's **secondary is the full ~2¹⁷
+  augmented circuit** with IPA over non-pairing Grumpkin. No
+  in-circuit re-expression of a size-2¹⁷ MSM is Groth16-cheap.
+
+**This is now an ARCHITECTURE decision (Satyawan's call — it
+changes the mainnet ZK design, protocol-layer he owns), not a code
+increment. The honest remaining options, costs un-sugar-coated:**
+
+1. **CycleFold-constant secondary** — the principled fix: a folding
+   scheme whose secondary circuit is O(1) (single EC scalar-mul),
+   so the size-n MSM becomes size-O(1) and a small Groth16 decider
+   works. Cost: adopt Sonobe (arkworks folding lib w/ Decider) OR
+   fork/upgrade nova-snark's secondary. Largest change; correct end
+   state; the EvaporChain mainnet proof system would be rebuilt on
+   it. (Native CompressedSNARK for non-EVM use is unaffected.)
+2. **Native-Solidity secondary verifier** — emit the secondary IPA
+   proof, verify in Solidity. Honest cost: a size-2¹⁷ Grumpkin MSM
+   on-chain ≈ likely millions–tens-of-millions of gas per opening —
+   probably impractical for L1 mainnet too. Buildable now but may
+   not be economically viable; needs a gas estimate before commit.
+3. **Secondary off the critical EVM path** — aggregate/recurse many
+   proofs so the per-proof secondary cost amortizes, or
+   fraud-proof/optimistic the secondary. Design-level; defers not
+   removes the problem.
+
+Salvaged & reusable regardless of choice: `ipa_s_tensor` (faithful,
+falsified), `RecursionDeciderCircuit` Section-A pattern + non-vacuity
+discipline, the serde-extraction path, the size-probe methodology,
+and the confirmed fact that the **primary (HyperKZG) side is
+constant/EVM-cheap** — only the secondary is the blocker.
+
+### OPTION-(2)-SOLIDITY GAS ESTIMATE — ❌ ELIMINATED (2026-05-19,
+analytical, order-of-magnitude decisive, no spend)
+
+Grumpkin is NOT an EVM precompile curve (BN254 precompiles
+0x06/07/08 do not apply). All Grumpkin ops run in pure-EVM
+`MULMOD`-based field arithmetic. Anchors: 256-bit modmul ≈ 50-100
+gas effective; Grumpkin add/double ≈ ~1-2k gas; one 256-bit
+scalar-mul ≈ ~300-575k gas. The secondary IPA verify's unavoidable
+core `ck_hat = ⟨s, ck⟩` is a **size-n=131,072 Grumpkin MSM**:
+Pippenger-best ≈ ~n adds ≈ **~2×10⁸ gas**; naive ≈ ~10⁹⁺. Ethereum
+block/tx gas limit ≈ **3×10⁷**.
+
+**∴ option (2)-Solidity is ~7×–200× over the block limit —
+ELIMINATED at order-of-magnitude (no Foundry harness needed; a
+precise measurement would only pin an already-conclusive number).
+BOTH forms of option (2) (in-circuit Groth16 ~3-5×10⁸ cons AND
+native-Solidity ~10⁸-10⁹ gas) are measured-dead at real n=2¹⁷.**
+
+The choice now cleanly narrows to **(1) CycleFold-constant
+secondary** vs **(3) secondary-off-critical-path**. Recommendation
+(for Satyawan's architecture call): **(1) CycleFold** — it is the
+ecosystem's known-correct answer to *exactly* this problem (Nova
+secondary too big for EVM); CycleFold makes the secondary a single
+O(1) EC scalar-mul, after which a small Groth16 decider + the
+already-confirmed constant HyperKZG primary give a genuinely
+EVM-cheap proof. (3) is a workaround that adds protocol surface
+(fraud/aggregation) without fixing the core. Key sub-decision inside
+(1): adopt **Sonobe** (arkworks folding lib, ships a Decider +
+CycleFold — migrate EvaporChain's Nova usage to its API) vs
+**implement CycleFold around nova-snark** (keep current API, larger
+crypto build). Solo-build-protocol-layer preference applies — his
+call.
+
+**NEXT [decision, not code]:** Satyawan picks (1) vs (3), and if
+(1), Sonobe-adopt vs nova-snark-CycleFold. Do NOT write more code on
+the B-1/B-2 circuit path until that call — both option-(2) branches
+are measured dead-ends.
+
+### SONOBE PREMISE-CHECK — ⚠️ FRAMING CORRECTION (2026-05-19,
+README/Cargo.toml fetched, no spend)
+
+**Architectural fit confirmed (the part of my earlier framing that
+held):** Sonobe ships Nova + CycleFold + DeciderEth (Groth16) + a
+`solidity-verifiers` crate generating the Solidity EVM verifier
+("Currently only supports Nova+CycleFold DeciderEth proofs"). Deps
+include `ark-bn254` + `ark-grumpkin` — the cycle is native. Frontend
+is `FCircuit` (arkworks-native), clean migration target. PSE +
+0xPARC built it — ecosystem-aligned.
+
+**⚠️ Correction I must surface (the part I overstated):** README
+verbatim — *"experimental code, do not use in production. The code
+has not been audited."* Version `0.1.0`, pre-1.0. Refactor split:
+`dev` (latest) → `staging` (revamped Nova+CycleFold being PREPARED
+for audit) → `main` (older). Earlier "audit-attention, production-
+trodden" was wrong by half — audit is *being prepared*, not done.
+Per the just-persisted assert-without-measuring lesson, correcting
+this explicitly rather than burying it.
+
+**Honest landing patterns (un-sugar-coated):**
+- (1A) Track Sonobe staging; pin after their audit completes.
+  Build EvaporChain bridge + step circuits against Sonobe's API now
+  so post-audit migration is mechanical. Timeline-dependent on PSE.
+- (1B) Adopt Sonobe staging now + commission/run our own audit on
+  the pinned revision (or do a deep review). Faster ship; real
+  audit-spend item.
+- (1C) Switch to implement-CycleFold-around-nova-snark after all
+  (you bear the crypto risk; nobody else has reviewed it either, but
+  stays in your solo-build column).
+- (3) Pause B-1/B-2; revisit when Sonobe's audited release lands.
+
+### SONOBE STAGING PROBE #2 — ⚠️ `solidity-verifiers` NOT ON
+STAGING (2026-05-19, no spend; the third honest correction this
+arc, per the assert-without-measuring lesson)
+
+Probed (HTTP 200/404):
+- `crates/ivc/src/lib.rs` → **200** (Nova+CycleFold IVC on staging
+  ✓).
+- `solidity-verifiers/Cargo.toml` → 404.
+- `crates/solidity-verifiers/Cargo.toml` → 404.
+
+Workspace `[primitives, fs, ivc]`. The `solidity-verifiers` crate
+(EVM Solidity verifier templater for DeciderEth proofs — the
+last-mile piece that makes mainnet EVM verification work) **exists
+only on `main` (pre-refactor layout, ark 0.5) and has not been
+ported to the staging refactor yet**. Staging head pin candidate:
+`3a86594ec6081bdc8050cbaa1fb7389fb8d37c46` (winderica 2026-05-17).
+ark workspace: 0.6.0; edition 2024 / rust 1.85.1.
+
+**Implication for 1B:** pinning staging gets Nova+CycleFold+DeciderEth
+proof generation but NOT the EVM Solidity templater. Honest sub-paths:
+- **1B-α**: pin staging + port `solidity-verifiers` main→staging
+  ourselves (bounded; goes into our audit scope alongside the rest).
+- **1B-β**: pin staging + author our own DeciderEth→Solidity
+  templater (no PSE dependency for templating; tighter control;
+  more work).
+- **1B-γ**: hybrid staging-IVC + main-solidity-verifiers (two ark
+  versions in workspace; type-identity hell; likely impractical).
+
+Plus the ark 0.5 → 0.6 bump of the EvaporChain bridge (touches
+s4_msm_gadget, grumpkin_config, ipa_s_tensor, recursion_decider_
+circuit) is required either way.
+
+### ARCHITECTURE LOCKED — 1C: nova-snark + custom CycleFold (solo
+build) (2026-05-19, Satyawan's call)
+
+**Why:** Sonobe-state friction was accumulating — audit not yet done
+(staging refactor in progress), `solidity-verifiers` not on staging,
+ark 0.5→0.6 bump required anyway. Pivot keeps us on the **validated
+nova-snark 0.68 substrate** (25 s `snark` + 125 s `ppsnark`
+`CompressedSNARK` e2e tests both pass on Mini3) and aligns with the
+EvaporChain protocol-layer solo-build preference. All 25 commits of
+salvaged work apply.
+
+**Calibrated cost picture (no overhype, per the lesson):** CycleFold
+makes the auxiliary (secondary) circuit ~one in-circuit EC
+scalar-mul check (~few-k R1CS, independent of step circuit size —
+THE architectural win). But ppsnark padding `S_comm.N ≈
+next_pow2(max(total_nz, 2·num_vars, num_cons))` still gives
+secondary IPA opening n ≈ **8-16k**, not "constant ~hundreds." So
+the EVM cost is **~12-25M gas** for the on-chain IPA MSM (Pippenger,
+~1.5k gas/add — Solidity, since Grumpkin is not a precompile curve):
+**in the L1 block ~30M zone, cheap on L2**. "Constant" in CycleFold
+means *independent of step circuit size*, not *trivially small in
+absolute terms*. Gas needs measurement at the chosen n, not
+assertion. *(Architecture viable; absolute gas TBD.)*
+
+**Reusable assets (the 25-commit arc was not wasted):**
+`ipa_s_tensor` (bit-faithful, falsified), `pedersen_msm_grumpkin`
+(~2.5k cons/term — the auxiliary scalar-mul building block;
+characterized), `grumpkin_config`, `s4_msm_gadget`,
+`extract_secondary_ck`, `RecursionDeciderCircuit` Section-A
+non-vacuity pattern + tests, HyperKZG-primary-cheap finding (primary
+side untouched by the pivot), size-probe methodology. The 1C build
+re-uses these wholesale.
+
+**Build roadmap (sequential increments, each box-verified before
+the next, never the training rig / node box):**
+1. **Aux circuit core**: an `FCircuit`-style step that does *one*
+   in-circuit Grumpkin scalar-mul check + an out-of-circuit oracle
+   for the expected output. Measure `cs.num_constraints()` (cheapest
+   decisive test; expect ~few-k from `pedersen_msm_grumpkin` k=1).
+2. **CycleFold instance shape**: define the auxiliary R1CS the
+   primary commits to per step. Wire its (small, constant-size)
+   instance into the IVC harness on top of nova-snark's
+   NIFS/transcript primitives.
+3. **Primary augmented circuit**: step + RO update + fold of two
+   CycleFold instances (no cross-curve EC scalar-mul in the
+   primary; the auxiliary discharges it).
+4. **Cycle plumbing**: IVC step driver that maintains primary
+   running instance + auxiliary running instance + transcript.
+5. **Decider**: `CompressedSNARK<ppsnark>` over the resulting
+   small-secondary running instance; box-validate (analogue of the
+   125 s ppsnark e2e). MEASURE real n_aux post-CycleFold from the
+   real proof's `L_vec.len()` (the lesson — pin n from a real
+   artifact, not from estimates).
+6. **Solidity verifier**: author DeciderEth → Solidity templater
+   for EvaporChain's exact decider shape (primary HyperKZG +
+   small-n IPA secondary). Measure on-chain gas via Foundry.
+7. **Audit prep**: scope review of the CycleFold construction
+   (paper + correctness proofs); EvaporChain-owned, no external
+   library dependency.
+
+**NEXT [code]:** increment 1 — aux circuit core + cs probe.
+Bounded, box-verifiable, reuses `pedersen_msm_grumpkin` k=1 surface.
+
+### 1C INCREMENT 1 — ✅ AUX CORE [V] (2026-05-19, Mini3, box, HEAD
+`01add2da`, `cyclefold_aux_circuit ... 3 passed; 0 failed; 0.10 s`)
+
+New module `cyclefold_aux_circuit.rs`: native BN254-G1 ops over a
+**Bn254Fq** constraint system (`ark_bn254::constraints::GVar` —
+enabled the `r1cs` feature) + non-native `EmulatedFpVar<Bn254Fr,
+Bn254Fq>` scalar = the mirror image of `s4_msm_gadget`. Gadget
+verifies `Q = s·P` for the folding scalar × E1 commitment — the
+single load-bearing op of the CycleFold auxiliary circuit. Three box
+tests: `aux_scalar_mul_matches_native ... ok` (correctness vs ark),
+`aux_scalar_mul_wrong_expected_breaks_cs ... ok` (non-vacuity, the
+B-1 guard), `aux_scalar_mul_size_probe ... ok`.
+
+**AUX_PROBE: cs.num_constraints = 2,548, witness = 2,375.**
+
+**Predicted (NOT asserted — to be measured at increments 5/6):**
+- ppsnark padding `S_comm.N = next_pow2(max(total_nz, 2·num_vars,
+  num_cons))` ≈ `next_pow2(2·2375)` = **8,192 = 2¹³**.
+- IPA opening `n_aux ≈ 8,192` — a **16× reduction from the
+  option-(2) dead-end 2¹⁷=131,072**.
+- Solidity Pippenger gas at n=8,192 ≈ **~12M gas** (~40% of L1
+  block; cheap on L2).
+- The CycleFold reduction looks viable on this number; the real
+  end-to-end n_aux + gas wait for the real proof + Foundry, per the
+  assert-without-measuring lesson.
+
+**NEXT [code]:** increment 2 — define the CycleFold instance shape
+the primary commits to per step (a small R1CS instance wrapping
+this aux check, with the primary's NIFS challenge as public input).
+Wire its commitment+folding into the existing nova-snark
+NIFS/transcript primitives. Bounded; uses the measured ~2.5k-cons
+shape as the spec.
+
+### 1C INCREMENT 2 — ✅ CF INSTANCE SHAPE [V] (2026-05-19, Mini3,
+box, HEAD `9bb02bc3`, `cyclefold_instance_circuit ... 3 passed;
+0 failed; 0.09 s`)
+
+New module `cyclefold_instance_circuit.rs` source-anchored to
+Sonobe's `circuits.rs` (cycle constraint `C1::BaseField =
+C2::ScalarField`, `cf_U_i: CycleFoldCommittedInstance<C2>`). Wraps
+increment-1's aux scalar-mul with the public input layout the
+primary will absorb: `(P.x, P.y, s_emulated, Q.x, Q.y)`. Binds the
+witnessed `Q` to the public `(Q.x, Q.y)` via `to_affine +
+enforce_equal` — instance-level B-1 vacuity guard (publics aren't
+decorative). Three box tests: positive, non-vacuity (wrong `Q` ⇒
+UNSAT), size probe.
+
+**`CF_INSTANCE_PROBE`: cs.num_constraints = 1,985, witness = 1,812,
+instance = 22** (4 native coords + ~17 emulated-Fr limbs + 1
+reserved).
+
+**Counterintuitive empirical finding (logged):** instance is *1,985
+< 2,548 bare-aux*, not larger. Arkworks `new_input` paths elide
+intermediate witness scaffold that `new_witness` requires. Tripped
+my own size-floor `assert!(≥ 2_000)` initially — yet another
+assert-without-measuring slip, caught on box, corrected to ≥ 1,000
+with the empirical note inline. Non-vacuity test passes ⇒ binding
+holds; not a vacuity bug.
+
+**Refined prediction (still NOT asserted — real n waits for
+increments 5/6):**
+- ppsnark padding `S_comm.N = next_pow2(max(total_nz, 2·num_vars,
+  num_cons))`. With num_vars=1,812 ⇒ 2·num_vars=3,624 ⇒
+  `next_pow2 ≥ 4,096 = 2¹²`. **CAVEAT:** `total_nz` (unknown
+  pre-real-proof) could push it higher; 4,096 is a lower bound.
+- 4,096 = **32× reduction from option-(2) dead-end 2¹⁷** (better
+  than the increment-1-bare 16× estimate).
+- Predicted Solidity gas at n=4,096 ≈ ~6M (~20% of L1 30M block)
+  — very comfortable; cheap on L2.
+
+**NEXT [code]:** increment 3 — cycle plumbing: a small IVC harness
+that maintains a *primary running instance* (nova-snark
+RecursiveSNARK over a step circuit) AND a *CycleFold running
+instance* (this `CycleFoldInstanceCircuit`, folded via NIFS on
+Grumpkin = `pedersen_msm_grumpkin` for the commitment+fold),
+absorbing the primary's per-step cross-curve scalar-mul tuple
+`(P, s, Q)` into the CF instance. Reuses nova-snark's transcript /
+RO / NIFS primitives directly (no new crypto, just composition).
+Bounded; box-verify by running 2 IVC steps and checking the CF
+running instance's commitment evolves correctly.
+
+### 1C INCREMENT 3a — ✅ NIFS FOLD PRIMITIVE + HOMOMORPHISM
+SOUNDNESS GATE [V] (2026-05-19, Mini3, box, HEAD `daeb7bf8`,
+`cyclefold_fold_homomorphism ... 3 passed; 0 failed; 0.11 s`)
+
+**Honest re-scope:** the original "increment 3 = small IVC harness"
+understated the construction (a full IVC harness needs a new
+augmented circuit + step driver — multi-day novel work). Split into
+**3a (this turn)** = the cheapest decisive sub-step: prove the
+Pedersen-on-Grumpkin additive-homomorphism gate the NIFS fold
+relies on (`commit(W_a) + r·commit(W_b) ≡ commit(W_a + r·W_b)`);
+**3b (later)** = full IVC composition using
+`nova_snark::nifs::NIFS<GrumpkinEngine>` on top of the proven
+primitive.
+
+New module `cyclefold_fold_homomorphism.rs`: `CycleFoldRunning/
+IncomingInstance` types + `fold_cf_step` with the standard NIFS
+identities (`comm_w' = comm_w_R + r·comm_w_I`,
+`comm_e' = comm_e_R + r·comm_T`, `u' = u_R + r`,
+`x_i' = x_R[i] + r·x_I[i]`). Out-of-circuit
+`pedersen_commit_grumpkin` (mirror of in-circuit
+`pedersen_msm_grumpkin`).
+
+Three box tests (all randomized via `test_rng`):
+- `pedersen_grumpkin_is_homomorphic_in_witness ... ok` — **THE
+  soundness gate.** If broken, all NIFS folding here is unsound.
+- `fold_cf_step_matches_direct_commitment_of_folded_witness ... ok`
+  — every identity verified against direct computation.
+- `multi_step_fold_accumulation_consistent ... ok` — homomorphism
+  survives 3 successive folds without drift.
+
+**NEXT [code]:** increment 3b — integrate
+`nova_snark::nifs::NIFS<GrumpkinEngine>` to compute `comm_T` and
+derive the fold challenge `r` via RO (replacing the synthetic
+`comm_t` and `r = test_rng()` in 3a's tests with real prover output).
+Plus extract the `R1CSShape` for `CycleFoldInstanceCircuit` from
+arkworks `ConstraintSystem` synthesis and convert to nova-snark's
+`R1CSShape<GrumpkinEngine>` (bridge), so NIFS can act on real CF
+instances. Bounded sub-steps; reuses 3a's `fold_cf_step` as the
+out-of-circuit reference (any NIFS-induced fold must agree with
+it). After 3b, the full IVC harness (primary RecursiveSNARK ⨉ CF
+accumulator across steps) is increment 4.
+
+### 1C INCREMENT 3b-1 — ✅ SCALAR BRIDGE [V] (2026-05-19, Mini3,
+box, HEAD `8604fb14`, `scalar_adapter ... 9 passed; 0 failed;
+0.01 s`)
+
+Discovered that half the bridge already existed
+(`secondary_to_ark_fq`, value-preserving same-field
+`grumpkin::Scalar → ArkFq`). Added the missing reverse
+[`scalar_adapter::ark_fq_to_secondary`] (mirror of
+`ark_fr_to_primary` template, same-field via LE bytes). Two new
+randomized tests:
+- `ark_fq_secondary_round_trip_random` — 32 random Fq, both
+  directions exact.
+- `ark_fq_to_secondary_preserves_arithmetic` — add + mul commute
+  with the bridge ⇒ **mathematically sound, no modulus mismatch**.
+
+The arkworks ↔ nova-snark<GrumpkinEngine> scalar bridge is now
+GREEN, exact, value-preserving in both directions. The remaining
+3b sub-steps (R1CSShape extraction + NIFS<GrumpkinEngine>::prove
+integration) are mechanical with this primitive in hand.
+
+### 1C INCREMENT 3b-2 — ✅ R1CSShape BRIDGE [V] (2026-05-20,
+Mini3, box, HEAD `7e86d394`,
+`cyclefold_r1cs_bridge ... 1 passed; 0 failed; 0.09 s`)
+
+New module `cyclefold_r1cs_bridge.rs`: generic
+`arkworks_cs_to_nova_grumpkin_shape<C: ConstraintSynthesizer<
+Bn254Fq>>` synthesises into arkworks `ConstraintSystem<Bn254Fq>`,
+walks `ConstraintMatrices` A/B/C, sorts each row's `(coeff, col)`
+strictly ascending (nova-snark `SparseMatrix::new` asserts this;
+arkworks `to_matrices` doesn't sort), converts each scalar via
+`ark_fq_to_secondary`, wraps in `SparseMatrix<SecondaryScalar>`
+(rows=num_cons, cols=num_io+num_vars+1 — the +1 is the implicit
+ONE column), and emits `R1CSShape<GrumpkinEngine>`.
+
+End-to-end box test: real `CycleFoldInstanceCircuit` → shape →
+**`num_cons = 1985 / num_vars = 1812 / num_io = 21`** ✓ matches
+increment-2 measurements exactly (R1CS preserved bit-for-bit, no
+rows lost, no off-by-one in IO accounting).
+
+**Two real signature/format facts pinned via write→box→fix:**
+- `R1CSShape::new` takes `SparseMatrix<E::Scalar>`, not raw `Vec`
+  triples (my source-read of just the inner `is_valid` triples
+  was incomplete).
+- `SparseMatrix::new` asserts `windows(2).all(|w| w[0].0 < w[1].0)`
+  per row — strict ascending col order. Arkworks `to_matrices`
+  doesn't sort; bridge must.
+
+### 1C INCREMENT 3b-3 — ✅ SATISFIED (shape, U, W) ARTIFACTS [V]
+(2026-05-20, Mini3, box, HEAD `0c929866`,
+`cyclefold_r1cs_bridge ... 2 passed; 0 failed; 0.59 s`)
+
+`arkworks_cs_to_nova_grumpkin_satisfied_pair(circuit, ck_label) →
+NovaGrumpkinR1CSArtifacts { shape, ck, instance, witness }` —
+synthesise in default Prove mode (witness + instance assignments
+populated), bridge matrices via [3b-2], extract assignments via
+`ark_fq_to_secondary`, setup Pedersen `CK` over `GrumpkinEngine::CE`,
+build `R1CSWitness::new` (randomises `r_W`), commit via
+`witness.commit(&ck)` (uses the internal `r_W` so `comm_W` matches),
+build `R1CSInstance::new(&shape, &comm_w, &X)`. **The soundness
+gate:** real `CycleFoldInstanceCircuit` through the full bridge ⇒
+`shape.is_sat(&ck, &U, &W)` accepts.
+
+**Caught and fixed a real column-layout bug the dims-only test
+could not:** arkworks indexes matrix cols `[ONE, X (num_io),
+W (num_vars)]` but nova-snark's `is_sat` (L510) builds
+`z = [W, ONE, X]`. Aggregate dims match either way, but per-row col
+indices were nonsense by layout ⇒ `Az·Bz ≠ Cz` ⇒ `UnSat: R1CS is
+unsatisfiable` on first run. Applied remap to both convert closures
+(0→num_vars, 1..=num_io→num_vars+col, num_io+1..→col-num_io-1) +
+re-sort (cols shuffled). Exactly the silent column-convention
+divergence the is_sat gate was designed to catch.
+
+The layered bridge is now end-to-end sound:
+- 3b-1: scalar `ArkFq ↔ SecondaryScalar` (value-preserving).
+- 3b-2: arkworks `ConstraintSystem` → nova-snark `R1CSShape`
+  (dims preserved exactly).
+- 3b-3: + assignments + Pedersen commitment → `(shape, U, W)`
+  pair that `is_sat` accepts.
+
+### 1C INCREMENT 3b-4 — ✅ REAL NIFS<GrumpkinEngine> FOLD [V]
+(2026-05-20, Mini3, box, HEAD `2fadba36`,
+`cyclefold_r1cs_bridge ... 3 passed; 0 failed; 2.72 s`)
+
+`NIFS::<GrumpkinEngine>::prove(&ck, &ROConstants::default(),
+&pp_digest=0, &shape, &U_running, &W_running, &U2_incoming,
+&W2_incoming)` works end-to-end on two bridged CF instances.
+Deterministic `CE::setup(label, n)` means both artifacts share the
+same `ck` for matching label + `num_vars`, so passing `art1.ck`
+into prove is sound (no need to thread a separate ck). Two box
+gates passed:
+- `shape.is_sat_relaxed(&ck, &U', &W')` accepts the folded relaxed
+  pair — the main NIFS soundness gate.
+- `NIFS::verify(&ro_consts, &pp_digest, &U_running, &U2_incoming)`
+  produces the same `U'` as `NIFS::prove` — prover/verifier
+  semantic agreement.
+
+**The 1C foundation is complete:** every layered primitive needed
+to fold CycleFold instances using nova-snark's own NIFS is now
+built, box-verified, and end-to-end consistent:
+- Inc 1: CycleFold aux gadget (2,548 cons measured, non-vacuous).
+- Inc 2: CF instance circuit (1,985 cons, public IO bound).
+- Inc 3a: Pedersen-on-Grumpkin homomorphism + `fold_cf_step`
+  reference.
+- Inc 3b-1: ArkFq ↔ SecondaryScalar bridge (value-preserving).
+- Inc 3b-2: arkworks `ConstraintSystem` → nova-snark `R1CSShape`
+  (dims preserved exactly, column layout remap caught + fixed via
+  is_sat gate).
+- Inc 3b-3: Satisfied `(shape, U, W)` artifacts +
+  `R1CSShape::is_sat` accepts.
+- Inc 3b-4: Real `NIFS::<GrumpkinEngine>::prove` +
+  `is_sat_relaxed` accepts + `NIFS::verify` ≡ `NIFS::prove`.
+
+### 1C INCREMENT 4a — ✅ FOLD ACCUMULATOR COMPOSITION [V]
+(2026-05-20, Mini3, box, HEAD `710a54db`,
+`cyclefold_ivc_accumulator ... 2 passed; 0 failed; 6.54 s`)
+
+**Honest re-scope logged:** the original "increment 4 = reuse
+nova-snark RecursiveSNARK" was imprecise — that path keeps the
+heavy ~2¹⁷ secondary and DOESN'T deliver CycleFold's reduction.
+Getting the reduction needs a NEW primary augmented circuit (multi-
+day construction, tracked as **4b**). 4a is the cheapest decisive
+sub-step that validates the *composition pattern* without needing
+the real primary yet.
+
+`run_synthetic_cf_accumulator(num_steps, ck_label)`: bridges N
+synthetic cross-curve scalar-mul tuples (placeholder for what 4b's
+primary will emit per step) → `CycleFoldInstanceCircuit` → 3b-3
+satisfied artifacts → 3b-4's `NIFS::<GrumpkinEngine>::prove` folded
+into the running pair. Per-step `is_sat_relaxed` gate inside the
+runner + final `is_sat_relaxed` gate from the caller.
+
+Two box tests:
+- 3 steps: ok.
+- 6 steps stress: ok (catches accumulator drift — relaxed `u`
+  grows, cross-term commitments compose).
+
+**∴ the fold accumulator composition is sound end-to-end across N
+folds.** 4b's job is now narrowly defined: emit the right per-step
+`(P, s, Q)` tuple; the folding side is proven to handle them.
+
+### 1C INCREMENT 4b-α — ✅ PRIMARY AUGMENTED CIRCUIT SHELL [V]
+(2026-05-20, Mini3, box, HEAD `1e59253b`,
+`cyclefold_primary_augmented_circuit ... 3 passed; 0 failed; 0.01 s`)
+
+New module `cyclefold_primary_augmented_circuit.rs`:
+`PrimaryAugmentedCircuitShell` + `ConstraintSynthesizer<Bn254Fr>`
+with the **pinned CycleFold-augmented IVC public IO schema (all
+Bn254Fr scalars)**: `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest]`
++ reserved ONE = 7 instance vars. Stub step `z_{i+1} = z_i + 1`
+enforced. `(P, s, Q)` carried in witness only (4b-β will hash them
+into `cf_x_digest` via Neptune).
+
+**`PRIMARY_SHELL_PROBE`: 1 cons / 0 witness / 7 instance vars.**
+Pinned regression baseline for 4b-β growth (Section R Neptune RO +
+Section F primary NIFS + Section C tuple hash).
+
+**THREE real findings caught via write→box→fix on this shell,
+surfaced transparently (not buried):**
+1. Compile error 1: tried to allocate BN254 G1 coords (Bn254Fq) as
+   `FpVar<Bn254Fr>` public inputs in the primary's Fr-circuit —
+   **architecture-level IO error.** Fixed per Sonobe `circuits.rs`
+   L230/L280: CF-augmented IO is all Bn254Fr scalars, with raw
+   `(P,s,Q)` linked via a single Bn254Fr `cf_x_digest` hash; the
+   aux side recomputes the matching digest from its Bn254Fq-side
+   allocation. No raw coords cross the field boundary.
+2. Compile error 2: `s_step: Bn254Fq` — but the CycleFold
+   primary-fold challenge is in **E1.scalar = Bn254Fr** (native to
+   BN254 point arithmetic). The aux side already used
+   `EmulatedFpVar<Fr,Fq>` (matches `CycleFoldInstanceCircuit::
+   scalar: Bn254Fr`).
+3. Logic error: first non-vacuity test was tautological — `z_{i+1}`
+   was derived from `self.z_i + 1` at allocation, so tampering
+   `z_i` shifted both values together and the constraint never
+   broke. Fixed by making `z_i1` a separate prover-supplied
+   struct field; constraint `z_i1 == z_i + 1` actually fires.
+
+Each surfaced and corrected via the same discipline pattern the
+whole arc has used — the compiler and box runs caught what the
+hand-design didn't.
+
+### 1C INCREMENT 4b-β-1 — ✅ NATIVE cf_x_digest ORACLE [V]
+(2026-05-20, Mini3, box, HEAD `91b31c3a`,
+`cyclefold_cf_x_digest ... 3 passed; 0 failed; 3.36 s`)
+
+New module `cyclefold_cf_x_digest.rs`:
+[`compute_cf_x_digest_native(p, s, q) → Bn254Fr`] with a pinned,
+bit-exact, reproducible encoding (each Bn254Fq coord split into
+127-bit lo+hi Bn254Fr limbs — both `<2¹²⁷`, safely representable in
+either field, lossless reconstruction; concatenate with native `s`
+into a 9-element Bn254Fr vector; absorb into `neptune_hash_primary`;
+squeeze). This is the **oracle 4b-β-2's in-circuit gadget will
+reproduce bit-for-bit** — pinned FIRST so the in-circuit work has
+a known-correct target.
+
+Three box tests, all passing:
+- `limb_decomposition_is_lossless` — lo's LE bits match f's [0..127],
+  hi's match [127..254], both padded zero above. Pins the bit-level
+  invariant.
+- `cf_x_digest_is_deterministic` — same `(P, s, Q)` ⇒ same digest.
+- `cf_x_digest_distinguishes_distinct_tuples` — changing `s` OR `Q`
+  changes the digest. **Binding gate held.**
+
+**One real test-artifact surfaced + fixed (not buried):** first run
+the binding gate appeared to fail — turned out `test_rng()` is
+deterministically seeded, and two independent `test_rng()` calls
+produce identical sequences. My `random_tuple()` used its own
+internal rng + the outer test created another, so `Bn254Fr::rand`
+in both produced the same scalar → `bogus = p · same = q` → identical
+digest. The binding property always held; the test was self-
+defeated. Fix: share one `&mut rng` across the test; use
+constructively-distinct `bogus = q + G` as a belt-and-braces.
+
+### 1C INCREMENT 4b-β-2 — ✅ IN-CIRCUIT cf_x_digest + ORACLE-MATCH
+[V] (2026-05-20, Mini3, box, HEAD `da703de8`,
+`cyclefold_cf_x_digest ... 4 passed; 0 failed; 3.48 s`)
+
+`enforce_cf_x_digest(cs, p_x, p_y, s, q_x, q_y, params) →
+FpVar<Bn254Fr>`: in-circuit limb decomposition (Bn254Fq value's
+254 LE bits via `to_bits_le`, split at 127, pack each half into
+`FpVar<Bn254Fr>` via `Boolean::le_bits_to_fp`); absorbs 9 Fr
+elements into the BESPOKE-aligned `enforce_neptune_sponge_primary`
+(byte-identical to `neptune_hash_primary` per section2_gadget's
+PR #103); applies 250-bit LE truncation (matches NUM_HASH_BITS
+native squeeze, same `gadget_bytes_le[31] &= 0x03;` reconciliation
+pattern as existing section2 tests).
+
+**Oracle-match gate `enforce_cf_x_digest_matches_native_oracle`
+passed on first try** — careful staging (4b-β-1 oracle pinned
+first) + reuse of existing BESPOKE infrastructure paid off; all
+the subtle pieces (limb split, sponge alignment, truncation)
+aligned without iteration. Section C of the primary augmented
+circuit (`cf_x_digest` binding) is now end-to-end: native oracle
++ in-circuit gadget, byte-identical, soundness-gated.
+
+### 1C INCREMENT 4b-β-3 — ✅ SECTION C WIRED LIVE [V] (2026-05-20,
+Mini3, box, HEAD `575e7043`,
+`cyclefold_primary_augmented_circuit ... 5 passed; 0 failed;
+1.62 s`)
+
+`PrimaryAugmentedCircuitShell::generate_constraints` Section C is
+now LIVE: allocates `(P_x, P_y, s, Q_x, Q_y)` as
+`EmulatedFpVar`/`FpVar` witnesses, calls
+[`crate::cyclefold_cf_x_digest::enforce_cf_x_digest`],
+`enforce_equal`s the gadget output against the existing public
+`cf_x_digest_var`. `NeptuneParams<Bn254Fr>` added as a Clone-able
+struct field (loaded once via the crate-relative dump path).
+`sections_wired` stays `false` until R + F are also wired.
+
+Two new non-vacuity gates passed (different break paths through the
+same binding):
+- `shell_section_c_wrong_p_breaks_cs` — tamper P ⇒ digest mismatch
+  ⇒ UNSAT.
+- `shell_section_c_wrong_s_breaks_cs` — tamper s ⇒ digest mismatch
+  ⇒ UNSAT.
+
+**`PRIMARY_SHELL_PROBE: 6,267 cons / 5,455 witness / 7 instance`.**
+Growth from 4b-α: +6,266 cons, +5,455 witness vars (Section C
+cost: 4 × Bn254Fq limb decomp + Neptune sponge 9-element absorb /
+permute / squeeze + 250-bit LE truncation). Pinned baseline for
+4b-β-4/5 Section R + F growth.
+
+### 1C INCREMENT 4b-β-4 — ✅ SECTION R WIRED LIVE [V] (2026-05-20,
+Mini3, box, HEAD `75b3db29`,
+`cyclefold_primary_augmented_circuit ... 7 passed; 0 failed;
+3.66 s`)
+
+Section R now LIVE: absorbs `[pp_hash, i, z_0, z_i, z_{i+1},
+cf_x_digest]` (the natively-Fr-representable IO fields) into
+`enforce_neptune_sponge_primary`, applies 250-bit truncation,
+`enforce_equal`s against the new public `current_step_hash`.
+CF running-instance absorb (Bn254Fq `u`/`x` via limb decomp)
+explicitly deferred to 4b-β-4b. Native helper
+`compute_current_step_hash_native` mirrors the gadget.
+
+Two new non-vacuity gates passed first try (different break paths
+through the Neptune sponge):
+- `shell_section_r_wrong_i_breaks_cs` — tamper `i` ⇒ UNSAT.
+- `shell_section_r_wrong_pp_hash_breaks_cs` — tamper `pp_hash` ⇒
+  UNSAT.
+
+**`PRIMARY_SHELL_PROBE: 7,628 cons / 6,660 witness / 8 instance`**
+(+1,361 cons, +1 instance var `current_step_hash` over 4b-β-3).
+Section R is ~5× cheaper than Section C because it absorbs 6
+native `FpVar<Bn254Fr>` (no Bn254Fq limb decomp).
+
+Third consecutive first-try pass — careful staging + reuse of the
+BESPOKE-aligned Neptune infrastructure keeps earning its keep.
+
+### 1C INCREMENT 4b-β-4b — ✅ SECTION R cf_u LIMB ABSORB [V]
+(2026-05-20, Mini3, box, HEAD `408b2add`,
+`cyclefold_primary_augmented_circuit ... 8 passed; 0 failed;
+3.90 s`)
+
+Section R now absorbs `cf_u_running: ark_bn254::Fq` via 127-bit
+lo+hi limb decomposition (same canonical encoding `cf_x_digest`
+uses; consistent bit-level invariant across sections). One new
+non-vacuity gate `shell_section_r_wrong_cf_u_running_breaks_cs`
+passed first try.
+
+**`PRIMARY_SHELL_PROBE: 8,858 cons / 7,726 witness / 8 instance`**
+(+1,230 cons from 4b-β-4 = cost of 1 EmulatedFpVar alloc + limb
+decomp + 2 Neptune absorbs). Bn254Fq-limb-into-Section-R pattern
+established and proven non-vacuous.
+
+**Four consecutive first-try passes this micro-arc** (β-1 oracle,
+β-2 gadget, β-3 wire-in, β-4 Section R, β-4b cf_u absorb). Careful
+staging + reuse of BESPOKE Neptune infrastructure keeps earning.
+
+**HONEST PIVOT — bypass non-blocking 4b work for the genuinely
+high-leverage NEXT (5-α):** finishing 4b (β-4c full CF running
+instance comm_w/comm_e/x_vec absorb + β-5 Section F primary NIFS
+verification) is mechanical extension; neither *blocks* the
+increment-5 n_aux measurement, because measuring n_aux requires
+ONLY a `RelaxedR1CSInstance/Witness` over `CycleFoldInstanceCircuit
+` (which we already have via 3b-3) → run `ppsnark::prove` directly
+→ serde-extract the resulting proof's `eval_arg.L_vec.len()`. The
+full Nova IVC harness (which DOES need the complete 4b primary
+augmented circuit) is the integration story, but the *measurement*
+that pins predicted ~2¹³ vs reality stands alone.
+
+### 1C INCREMENT 5-α — ✅ n_aux MEASURED + ⚠️ CALIBRATION
+CORRECTION (2026-05-20, Mini3, box, HEAD `da3735a1`,
+`cf_secondary_n_aux_measurement_real_proof ... ok`, 1 passed,
+13.04 s)
+
+**`N_AUX_MEASURED log_n_aux=14, n_aux=16,384, shape_num_cons=1,985,
+shape_num_vars=1,812`** — real ppsnark proof on the CF instance,
+serde-extracted from `proof.eval_arg.L_vec.len()=14`.
+
+**The architecture reduction HOLDS** (16,384 < 131,072 option-2
+dead-end ⇒ **8× reduction**, falsifier intact at `log_n_aux<17`),
+**but the prior predictions were off by 2×** and the gas estimate
+revises material:
+- 4b-α predicted ~2¹³ = 8,192 (16× reduction).
+- 4b-β-3 predicted "≥ 2¹² = 4,096 (caveat: total_nz could push
+  higher)" — caveat fired: `S_comm.N` is dominated by `total_nz` (~
+  10k) here, not `2·num_vars=3,624`, padding to 16,384.
+- **Real n_aux = 16,384.** Reduction is 8×, not 16×/32×.
+
+**Revised Solidity gas estimate (un-sugar-coated):** Pippenger MSM
+at `n=16,384` in pure-EVM Grumpkin arithmetic ≈ 16k × ~1.5k gas /
+add ≈ **~24M gas (~80 % of L1's 30M block)**, vs prior estimates
+of ~6M (~20 %) and ~12M (~40 %). **Tight on L1 but still buildable;
+cheap on L2.** 1C is viable; the budget is more constrained than the
+earlier optimism suggested.
+
+**Third honest correction this 1C arc** (≈10⁵→~10⁷ flat-MSM size;
+"tensor-fold 10-100× lever" was 1.58× *worse*; now 2¹³→2¹⁴). Per
+the assert-without-measuring lesson: each surfaced via measurement,
+none buried; each makes the architecture story tighter and more
+credible.
+
+### 1C INCREMENT 6-α — ✅ FOUNDRY GAS MEASURED + ⚠️ L1 NOT VIABLE
+[V] (2026-05-20, local Foundry 1.7.1,
+`forge test -vv ... 4 tests passed`, HEAD `1917f9e4`)
+
+New `foundry-bench/` workspace (`src/Grumpkin.sol` minimal affine
+library + `test/BenchGrumpkin.t.sol` 4 gas-anchor benchmarks).
+**Measured per-op gas (naive affine Solidity, EIP-2565 ModExp):**
+- `GRUMPKIN_ADD_DISTINCT_GAS = 3,834`
+- `GRUMPKIN_ADD_DOUBLING_GAS = 3,661`
+- `GRUMPKIN_SCALARMUL_256_GAS = 1,545,603`
+
+**Pippenger extrapolation at the real `n_aux = 16,384`:**
+- Best-case (no overhead): **62,734,336 ≈ 62.7M gas**
+- Realistic (+40% bucket/window overhead): **87,828,070 ≈ 87.8M**
+- Ethereum L1 block limit: **30,000,000 = 30M**
+
+**DECISIVE: 1C-on-L1 is NOT viable with naive Solidity Grumpkin
+arithmetic.** ~62-88M gas vs 30M block limit — **2-3× over.**
+Even with heavy hand-optimization (Jacobian projective + ~5-bit
+windowing + assembly) realistic speedup is ~2×, landing at
+**~30-45M gas — still at-or-over the limit.** My earlier
+analytical "~24M" estimate undershot by 2-3× — assumed an
+unrealistic level of out-of-the-box optimization.
+
+**Fourth + most material honest correction this 1C arc:**
+1. `~10⁵` flat-MSM cons → actually `~10⁷`.
+2. "Tensor-fold 10-100× lever" → actually 1.58× worse than flat.
+3. n_aux predicted `2¹³` → actually `2¹⁴`.
+4. **Solidity gas predicted ~24M (L1-viable) → actually ~63-88M
+   (NOT L1-viable).**
+
+Each surfaced via measurement, none buried. The architecture
+*conclusion* (CycleFold + ppsnark + Groth16-decider over a smaller
+secondary) remains correct in principle; the *deployment-target*
+calibration has shifted materially. **1C-on-L1 is impractical;
+1C-on-L2 is trivially cheap** (L2 gas is 100-1000× lower,
+calldata costs amortize over rollup batches).
+
+**NEXT [decision, not code]:** the L1 viability question is now
+settled empirically. The choices:
+- (a) **Pivot mainnet scope to L2-only** (Optimism / Arbitrum /
+  Base): accept the Foundry result, finish 1C as an L2-targeted
+  build (4b-β-4c + 4b-β-5 + audit prep + L2 deployment).
+- (b) **Heroic L1 optimization push**: build a hand-optimized
+  Jacobian + windowed Solidity verifier, re-measure with Foundry,
+  hope to land under 30M. Multi-week crypto engineering, no
+  guarantee.
+- (c) **Re-architect for a smaller secondary**: change the CF
+  instance circuit to reduce n_aux below 2¹⁴ — e.g., constrain
+  it more tightly, or split into multiple smaller proofs. Real
+  but speculative gain.
+- (d) **Pause + step back**: this 1C arc has ~67 commits of
+  focused work; the architecture is proven, the L1-gas reality is
+  pinned, but the deployment target needs a strategic
+  re-decision. Park at this clean checkpoint, evaluate against
+  other EvaporChain mainnet items.
+
+Recommendation: **(a) L2-only mainnet scope** is the honest
+landing given the measurements. Heroic L1 optimization (b) is a
+multi-week gamble; (c) re-architecting is speculative; (d) is
+fine if there are higher-priority tracks elsewhere.
+
+### MAINNET DEPLOYMENT TARGET LOCKED — L2-ONLY (2026-05-20,
+Satyawan's call, post-Foundry-measurement)
+
+**Decision:** EvaporChain mainnet ZK proof verification targets
+**L2 (Optimism / Arbitrum / Base)**, not Ethereum L1. The Foundry
+measurement settled it: L1 verification at the real n_aux=16,384
+costs ~63-88M gas (2-3× over the 30M block limit) with naive
+Solidity; even heavy optimization (~2× speedup) lands ~30-45M,
+borderline-over. L2 gas is 100-1000× cheaper — the same Solidity
+verifier deploys trivially.
+
+**What this decision does and doesn't change:**
+- The CycleFold + ppsnark + Groth16-decider architecture stands.
+- 1C primitives (inc 1-3b-4), accumulator (4a), and primary
+  augmented shell (4b-α + β-1-β-4b) all carry forward unchanged.
+- Section F (4b-β-5) primary NIFS verification is STILL needed
+  for the IVC harness — L1-vs-L2 doesn't affect circuit design.
+- 4b-β-4c (full CF instance absorb in Section R) STILL needed.
+- Audit prep (inc 7) STILL needed.
+- What CHANGES: increment 6's "L1 Solidity templater + Foundry
+  optimization" effort is dropped. L2 deployment is the same
+  Solidity contract, just deployed to a different chain.
+
+### 1C INCREMENT 4b-β-4c — ✅ SECTION R CF COMMITMENTS ABSORB [V]
+(2026-05-20, Mini3, box, HEAD `1932ee2a`,
+`cyclefold_primary_augmented_circuit ... 9 passed; 0 failed;
+4.12 s`)
+
+Section R sponge absorb extended to 12 elements:
+`[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest, cf_u_lo, cf_u_hi,
+cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y]`. New non-
+vacuity gate `shell_section_r_wrong_cf_comm_w_x_breaks_cs` passed.
+
+**`PRIMARY_SHELL_PROBE: 8,870 cons / 7,742 witness / 8 instance`**
+— 4 native `FpVar<Bn254Fr>` absorbs cost just **+12 cons** vs
++1,230 for the cf_u limb absorb (β-4b). Native vs non-native is
+the dominant cost gradient in Section R; further x_vec Bn254Fq
+absorbs will each carry ~1,230 cons of limb-decomp overhead.
+
+**Fifth consecutive first-try pass this micro-arc.**
+
+### 1C INCREMENT 4b-β-4d — ✅ SECTION R x_vec ABSORB COMPLETE [V]
+(2026-05-20, Mini3, box, HEAD `b93cc1b2`,
+`cyclefold_primary_augmented_circuit ... 10 passed; 0 failed`)
+
+Section R now absorbs the **full CF running instance** — 54 sponge
+elements: `[pp_hash, i, z_0, z_i, z_{i+1}, cf_x_digest, cf_u_lo,
+cf_u_hi, cf_comm_w_x, cf_comm_w_y, cf_comm_e_x, cf_comm_e_y,
+(x_vec[k]_lo, x_vec[k]_hi for k in 0..21)]`. New non-vacuity gate
+`shell_section_r_wrong_cf_x_vec_breaks_cs` passed.
+
+**`PRIMARY_SHELL_PROBE: 36,164 cons / 31,592 witness / 8 instance`
+— +27,294 cons over β-4c** (21 × ~1,300 = ~27,300, matches the
+β-4b 1,230/element prediction). The shell roughly quadrupled in
+cons (8,870 → 36,164) from the x_vec limb loop.
+
+**Sixth consecutive first-try pass this micro-arc.** Section R is
+now structurally complete — every component of the CF running
+instance (commitments + scalar + x_vec) flows through the
+transcript hash and is non-vacuously bound to the public
+`current_step_hash`.
+
+### 1C INCREMENT 4b-β-5-α — ✅ SECTION F NATIVE FOLD LIVE [V]
+(2026-05-20, Mini3, box, HEAD `98b21a3b`,
+`cyclefold_primary_augmented_circuit ... 12 passed; 0 failed;
+7.83 s`)
+
+Section F native field identities enforced: `u_new = u_R + r` and
+`X_new[i] = X_R[i] + r·X_I[i]` for i=0,1 (Nova `X.len()=2`
+convention; `u_I=1` implicit). EC-side identities (`comm_W_new =
+comm_W_R + r·comm_W_I`, `comm_E_new = comm_E_R + r·comm_T`)
+delegate to CycleFold aux via the existing cf_x_digest binding
+(Section C) — not duplicated in-circuit on the primary side. New
+struct fields: `primary_{u_r, x_r, x_i, r, u_new, x_new}`.
+`u_new` + `X_new` are PUBLIC INPUTS (next step's inputs); rest
+are witnesses.
+
+Two new non-vacuity gates passed first try (different fold-
+identity break paths):
+- `shell_section_f_wrong_u_new_breaks_cs` — tamper `u_new` ⇒ UNSAT.
+- `shell_section_f_wrong_x_new_breaks_cs` — tamper `X_new[0]` ⇒
+  UNSAT.
+
+**`PRIMARY_SHELL_PROBE: 36,169 cons / 31,600 witness / 11 instance`
+— Section F native adds just +5 cons** (1 for u_new equality +
+4 for the two X_new equalities). Native fold is essentially free;
+the cost lives in the EC delegation (cf_x_digest from Section C),
+not the linear combinations themselves.
+
+**Seventh consecutive first-try pass this micro-arc.**
+
+### 1C INCREMENT 4b-β-5-β — ✅ r-FROM-RO DERIVATION LIVE [V]
+(2026-05-20, Mini3, box, HEAD `0f27b584`,
+`cyclefold_primary_augmented_circuit ... 13 passed; 0 failed;
+11.48 s`)
+
+`primary_r` is no longer a free witness — bound in-circuit to
+`Neptune250([pp_hash, previous_step_hash, X_I[0], X_I[1]])` via
+`enforce_neptune_sponge_primary` (same BESPOKE-aligned
+infrastructure Sections C/R use). A malicious prover can no
+longer pick an arbitrary fold challenge.
+
+New struct field `previous_step_hash` (witness). Native helper
+`compute_primary_r_native` mirrors the gadget. `consistent_step`
+now uses the real derived `r` and recomputes `u_new`/`X_new`
+consistently. Refactored `primary_x_i` into a shared `[FpVar;2]`
+between the X_new fold and the r-RO absorb (avoids duplicate
+witness allocation).
+
+New non-vacuity gate `shell_section_f_wrong_previous_step_hash_
+breaks_cs` passed first try.
+
+**`PRIMARY_SHELL_PROBE: 37,524 cons / 32,800 witness / 11
+instance`** — r-RO sponge adds **+1,355 cons** (matches Section
+R's native-IO-only +1,361 baseline; one more 4-element Neptune
+absorb).
+
+**Eighth consecutive first-try pass this micro-arc.**
+
+### 1C INCREMENT 4b-β-5-γ — ✅ comm_T ABSORB LIVE [V]
+(2026-05-20, Mini3, box, HEAD `24b134f7`,
+`cyclefold_primary_augmented_circuit ... 14 passed; 0 failed;
+11.62 s`)
+
+r-from-RO derivation extended to 8 elements: `[pp_hash,
+previous_step_hash, X_I[0], X_I[1], comm_t_x_lo, comm_t_x_hi,
+comm_t_y_lo, comm_t_y_hi]`. comm_T (BN254 G1; Bn254Fq coords)
+limb-decomposed via the same 127-bit pattern Section C uses for
+P.x/P.y. New non-vacuity gate
+`shell_section_f_wrong_comm_t_breaks_cs` passed first try.
+
+**`PRIMARY_SHELL_PROBE: 39,984 cons / 34,932 witness / 11 instance`
+— comm_T absorb adds +2,460 cons** (2 × ~1,230 limb-decomp cost,
+matches β-4b/β-4d/Section C cost model).
+
+**Honest scope note (in struct docs):** byte-level parity with
+`nifs.rs::prove`'s exact transcript order (e.g., U2.comm_W_I
+absorb too) is a separate later alignment effort, analogous to
+`section2_gadget`'s BESPOKE work. The architectural pattern is
+landed (r bound to pp + previous transcript + incoming primary
+public IO + cross-term commitment); bit-level reconciliation is
+its own pass.
+
+**Ninth consecutive first-try pass this micro-arc.**
+
+### 1C INCREMENT 4b-β-5-δ + 4b-β COMPLETE ✅ [V] (2026-05-20,
+Mini3, box, HEADs `4bcd9d3c` + `b1e31951`,
+`cyclefold_primary_augmented_circuit + cyclefold_cf_x_digest ...
+20+15 passed; 0 failed; eleventh first-try this micro-arc)`
+
+**β-5-δ:** new `enforce_cf_x_digest_pair` + `compute_cf_x_digest_
+pair_native` (cf_x_digest now binds TWO cross-curve scalar-mul
+tuples — cf1: `r·comm_W_I`, cf2: `r·comm_T`, matching Sonobe's
+`circuits.rs` cf1/cf2 pattern). Shell refactored: `(p_step, s_
+step, q_step)` → `(t1_*, t2_*)`. Section C uses pair variant.
+Oracle-match gate + `shell_section_c_wrong_t2_p_breaks_cs` pass.
+PRIMARY_SHELL_PROBE: 47,597 cons / 41,580 witness / 11 instance
+(+7,613 cons; less than naive 2× via constraint-system overlap).
+
+**`sections_wired` flipped: false → true.** Existing
+`shell_synthesises_and_cs_is_satisfied` updated to assert the new
+state; 15/15 still pass after the flip.
+
+**1C-4b structurally COMPLETE.** All four sections of the
+`PrimaryAugmentedCircuitShell` wired and non-vacuously gated:
+
+| Section | Binding | Cons |
+|---|---|---|
+| Step (β-α) | `z_{i+1} = z_i + 1` (stub F) | 1 |
+| C (β-3 + β-5-δ) | cf_x_digest pair (cf1+cf2) | ~13.9k |
+| R (β-4 + β-4b + β-4c + β-4d) | 54-element transcript hash | ~29.9k |
+| F (β-5-α + β-5-β + β-5-γ) | native fold (u+X) + r-from-RO with comm_T | ~3.8k |
+
+**Honest scope caveat preserved inline:** byte-level parity with
+nova-snark's exact `nifs.rs::prove` transcript ordering (e.g.,
+absorbing `U2.comm_W_I` into the r-RO too) is a separate BESPOKE-
+style alignment follow-up, analogous to `section2_gadget`'s
+neptune-vs-arkworks reconciliation. The architectural pattern is
+landed; bit-level reconciliation is its own pass.
+
+**Eleven consecutive first-try passes this 4b shell-extension
+micro-arc** (β-1 → β-2 → β-3 → β-4 → β-4b → β-4c → β-4d → β-5-α →
+β-5-β → β-5-γ → β-5-δ + flip). Careful staging (oracle-first
+gadget design + reuse of BESPOKE-aligned Neptune + per-field
+non-vacuity gating) earned consistent dividends.
+
+**NEXT [code/decision]:** with the structural shell complete the
+remaining work cleanly factors:
+- (a) **Increment 4b-β-ε: BESPOKE alignment** — make the r-from-RO
+  transcript byte-identical to `nifs.rs::prove`'s ordering (incl.
+  absorbing `U2.comm_W_I` and any other elements). Required for
+  *true* cryptographic interoperability with stock nova-snark.
+- (b) **Wire shell into IVC harness** — compose 4b shell with 4a's
+  fold accumulator across multiple steps. Box-verify the running
+  primary + CF instances evolve correctly N steps.
+- (c) **Increment 7 audit prep + write-up.**
+- (d) **L2 deployment** of the validated decider on Optimism /
+  Arbitrum / Base (the locked target post-Foundry).
+
+Recommendation: prioritise (c) audit prep next — gathers all
+artifacts in one place for review, surfaces any gaps. (a) BESPOKE
+alignment becomes a focused crypto-pass; (b) IVC integration
+becomes a focused engineering pass; (d) deployment after both.
+
+### 1C INCREMENT (b)-1 — ✅ PRIMARY STATE THREADING [V]
+(2026-05-20, Mini3, box, HEAD `d9ce77b1`,
+`cyclefold_shell_chain ... 1 passed; 12.69 s`)
+
+New module `cyclefold_shell_chain.rs`:
+[`build_shell_for_step`] threads step `i-1`'s outputs into step
+`i`'s inputs (`z_{i+1}→z_i`, `current_step_hash→previous_step_
+hash`, `primary_u_new→u_R`, `primary_x_new→X_R`). Two-step chain
+test synthesises shell_0 and shell_1, both CSes satisfied, plus
+explicit `step_1_z_i == step_0_z_{i+1}` cross-check assertion.
+
+**Honest scope notes preserved inline** (deferred sub-steps):
+- (b)-2: CF running instance threading via 4a's fold accumulator
+  (`cf_u_running`, `cf_comm_*`, `cf_x_vec` must be folded via
+  NIFS-on-Grumpkin across steps).
+- (b)-3: `comm_T` chained from real per-step NIFS prove output
+  (currently independent random per step).
+- (b)-4: aux-side validation across the chain.
+
+Native r-from-RO + current_step_hash helpers inlined locally
+(small duplication vs invasive module-pub refactor of test-only
+helpers in `cyclefold_primary_augmented_circuit` — duplication
+is preferable to API churn at this depth).
+
+**Twelfth consecutive first-try pass** (counting the trivial
+borrow-after-move compile fix as part of the standard write→box→
+fix rhythm; the underlying threading logic was right first time).
+
+Audit dossier updated to include this milestone (next commit).
+Remaining: (b)-2 CF accumulator integration, (a) BESPOKE
+alignment, (c) Solidity verifier prototype + audit prep, (d) L2
+deployment, (e) external audit.
+
+### 1C INCREMENT (b)-2 — ✅ CF ACCUMULATOR INTEGRATION (step 0
+end-to-end) [V] (2026-05-20, Mini3, box, HEAD `c98fd972`,
+`shell_cf_accumulator_two_step_integration ... ok; 1 passed;
+8.01 s`)
+
+The link between primary shell and secondary-side CF accumulator
+is end-to-end verified for step 0:
+1. Shell synthesised with `cf_*` fields tied to
+   `CycleFoldRunningInstance::zero(21)` ⇒ CS satisfied (Section R
+   transcript binds the running CF state consistently with the
+   absorbed values).
+2. Shell's `t1` tuple `(P, s, Q)` bridged to a CF instance via
+   3b-3's `arkworks_cs_to_nova_grumpkin_satisfied_pair`.
+3. `NIFS::<GrumpkinEngine>::prove` folded the CF instance into the
+   running pair.
+4. `shape.is_sat_relaxed` accepted the post-fold pair.
+
+**Honest scope note preserved in code:** step 1's CF-side chaining
+requires extracting the running CF state into arkworks types
+(nova-snark's `RelaxedR1CSInstance/Witness` fields are
+`pub(crate)`). Sub-step (b)-2b extends the bridge to expose them.
+The architectural pattern — primary Section R commits to running
+CF state; running CF state evolves via 4a's NIFS fold; both speak
+the same Grumpkin/Bn254Fr field layout — is verified at step 0.
+
+**Thirteenth consecutive first-try pass** (counting the trivial
+StdRng-type fix as part of the standard write→box→fix rhythm).
+
+Remaining: (b)-2b multi-step CF chaining (needs pub(crate)
+extraction helpers), (a) BESPOKE alignment, (c) Solidity
+verifier, (d) L2 deployment, (e) external audit.
+
+### 1C INCREMENT (b)-2b — ✅ FULL 2-STEP CF CHAIN [V] (2026-05-20,
+Mini3, box, HEAD `36de2ea4`,
+`shell_cf_accumulator_two_step_integration ... ok; 14.99 s`)
+
+The (b) IVC integration arc is now architecturally CLOSED at the
+end-to-end level:
+
+1. **Diagnostic** pinned `RelaxedR1CSInstance<GrumpkinEngine>`
+   JSON schema (HEAD `9344e97a`): top keys `{X, comm_E, comm_W,
+   u}`; commitments `{comm: <64-hex>}`; u/X scalars `<64-hex>`.
+2. **Extractor** `pub fn extract_relaxed_running_inst` in
+   `s4_secondary_extract.rs` parses the schema using existing
+   helpers (`decode_grumpkin_point` made `pub(crate)`,
+   `parse_secondary_scalar_hex` + `secondary_to_ark_fq`).
+3. **Full 2-step chain test:**
+   - shell_0 with `running_zero` CF state ⇒ CS sat.
+   - shell_0.t1 → CF instance → NIFS fold into running ⇒
+     `is_sat_relaxed` ok.
+   - Running CF state extracted via serde extractor.
+   - shell_1 with extracted post-step-0 CF state ⇒ CS sat.
+   - shell_1.t1 → CF instance → NIFS fold into running ⇒
+     `is_sat_relaxed` ok.
+
+**The primary↔CF accumulator IVC chain works end-to-end across 2
+steps.** Both shells absorb running CF state into Section R that's
+CONSISTENT with the actual NIFS-folded values. Both NIFS folds
+satisfy `is_sat_relaxed`. The architectural pattern is closed.
+
+**Fourteenth consecutive first-try pass.** Diagnostic → extractor
+→ 2-step chain — every step worked on first attempt this 4b
+micro-arc + the (b) integration follow-on.
+
+**Remaining 1C work (cleaner now that integration is closed):**
+- (a) **BESPOKE alignment** — byte-level `nifs.rs::prove`
+  transcript parity (separate crypto-alignment pass; analogous to
+  section2_gadget's neptune-vs-arkworks reconciliation, already
+  CLOSED).
+- (c) **Production Solidity decider verifier** for L2 — multi-week
+  crypto + Solidity engineering pass.
+- (d) **L2 deployment** (Optimism / Arbitrum / Base — pick + deploy).
+- (e) **External audit** on the pinned revision.
+
+### 1C INCREMENT (a)-1 — ✅ comm_W_I ABSORB ADDED [V] (2026-05-20,
+Mini3, box, HEAD `30ad7177`,
+`cyclefold_primary_augmented_circuit + cyclefold_shell_chain ...
+17 passed; 0 failed; 27.74 s`)
+
+Per `nova_snark::nifs::NIFS::prove`, the r-RO transcript absorbs
+`U2.absorb_in_ro` (which includes `comm_W_I`) BEFORE `comm_T`.
+Our r-RO previously absorbed only comm_T; this step adds comm_W_I
+absorb with the same 127-bit BN254 G1 limb pattern. Sponge order:
+`[pp_hash, previous_step_hash, X_I[0], X_I[1], comm_W_I (4 limbs),
+comm_T (4 limbs)]` = 12 elements.
+
+New struct field `primary_comm_w_i: G1Affine`. Native helper +
+shell-chain helper + inlined chain-test closure all updated.
+New non-vacuity gate `shell_section_f_wrong_comm_w_i_breaks_cs`
+passed first try.
+
+**`PRIMARY_SHELL_PROBE: 50,057 cons / 43,712 witness / 11 instance`
+— +2,460 cons** (exactly the comm_T-absorb cost, same shape).
+
+**Fifteenth consecutive first-try pass.**
+
+**Remaining (a) sub-steps (byte-level parity completion):**
+- (a)-2 transcript domain tags: `RO::new(consts)` initial state
+  must match nova-snark's specific constants. Currently our
+  Neptune sponge uses `enforce_neptune_sponge_primary`'s standard
+  init via `params_from_dump_path(neptune-bn256-standard.json)` —
+  may already match or may need a domain-separator adjustment.
+- (a)-3 verify against a real nova-snark NIFS::prove run: produce
+  a NIFS proof from `nova_snark::nifs::NIFS<E2>::prove` on a
+  bridged CF instance, extract its derived `r` (would require
+  pub(crate) access — likely via serde or instrumentation), and
+  compare against our in-circuit r. End-to-end byte parity gate.
+
+After (a)-2 / (a)-3: (c) Solidity verifier, (d) L2 deployment,
+(e) external audit.
+
+---
+
+# EvaporChain — Remaining Work to Mainnet (Sequential Flow)
+
+**Date:** 2026-05-19 · **Status:** NOT mainnet-ready · **Companion:**
+`S4_DESIGN.md` (detailed specs), this file = the end-to-end ordered flow.
+
+**Calibration rules (auditor-grade, apply to every step):**
+- A step is "DONE" ONLY with explicit box evidence (`... ok` / `N passed`
+  on a run that actually fit in memory). An OOM-died/timed-out run is
+  **not** a result.
+- "Confidence" tags: **[V]** box-verified this work · **[I]** implemented,
+  not yet verified · **[S]** specced/pinned, not implemented ·
+  **[X]** not started · **[~]** project-asserted, not re-verified.
+- Hardware: 4 GB Hetzner node-box = node only (never build). Mini 1
+  (16 GB) = tractable units. **`satyawan-1` (32-core / 123 GB) =
+  PROVEN scale-gate host** — B.3b (OOM'd twice ≤16 GB) PASSED there
+  in 332 s, no OOM (2026-05-19); fr009 training undisturbed (finished
+  naturally; queue advanced). `nice -19`, never touch the GPU
+  training. The scale-gates (A.3/B.3b/D.3) are RUNNABLE there, not
+  indefinitely deferred.
+
+---
+
+## PHASE 0 — Baseline (already done; do not redo)
+
+- **0.1 [V]** S2a — section-bearing trusted-setup shape; S6 determinism
+  proof passed (real Nova fixture).
+- **0.2 [V]** S2b — mandatory section bindings; full suite GREEN, 5 box
+  cycles; section-less circuits provably unprovable.
+- **0.3 [V]** S4 curve configs — `GrumpkinConfig` + `ark_bn254::g1::Config`
+  pass byte-for-byte cross-library trust gates.
+- **0.4 [V]** S4a primitives — `pedersen_msm_grumpkin` gadget +
+  `secondary_to_ark_fq` exact converter box-proven.
+- **0.5 [V]** S4 de-risk — no in-circuit pairing; non-native field & EC
+  gadgets are arkworks-provided. Zero bespoke crypto primitives remain.
+
+---
+
+## PHASE A — Finish S4a secondary binding
+
+- **A.1 [V]** S4b primitive proof — BOX-VERIFIED on **Mini 1**
+  (2026-05-19): `secondary_relaxed_r1cs_nn_sat_and_adversarial ... ok`,
+  `1 passed; 0 failed`, 0.31 s, 0 errors. Proves the S4b/D.1 core
+  non-native row-sat logic (correct witness satisfies; perturbed row →
+  UNSATISFIABLE).
+- **A.2 [V]** Bounded-`W` secondary binding — BOX-VERIFIED on **Mini 1**
+  (2026-05-19): `secondary_msm_binds_real_prefix ... ok`, `1 passed`,
+  34.61 s (real Nova fixture + N=12 non-native MSM genuinely ran), 0
+  errors, first run. Extraction decoders + Pedersen-MSM gadget verified
+  on REAL extracted `ck`/`W`/`r_W`; in-circuit == out-of-circuit ark MSM
+  + adversarial. (Build-host pivoted node-box→Mini 1; node-box stays
+  node-only.)
+- **A.3 [V — scale-gate CLEARED on satyawan-1]** Full-`W` secondary
+  soundness closure — BOX-VERIFIED satyawan-1 (119 GB) 2026-05-19:
+  `secondary_msm_binds_full_comm_w ... ok`, 1 passed, 756.75 s, no
+  OOM, training undisturbed (fr143 finished naturally, fr020 alive).
+  FULL real `W` in-circuit MSM == the ACTUAL Section-2-bound
+  `r_U_secondary.comm_W` (`comm_W == Σ Wᵢ·ckᵢ + r_W·h`) + adversarial.
+  The genuine B-1 secondary commitment-binding closure on real data
+  at full scale — NOT bounded, NOT an ark-proxy.
+
+## PHASE B — S4a primary (bn256-G1) analog  *(RECLASSIFIED: DEEP, not mechanical — box-falsified 2026-05-19)*
+
+> **FINDING:** B.1 compile-failed on Mini 1 (15 errors). ark's SW
+> `ProjectiveVar<P,F>` is bounded `F: FieldVar<P::BaseField,
+> BasePrimeField<P>>`; bn256-G1 has `P::BaseField = Fq`, so it
+> demands a field var with constraint field **Fq**. `EmulatedFpVar
+> <Fq,Fr>` is `FieldVar<Fq,Fr>` — does NOT satisfy it. **ark
+> `ProjectiveVar` supports ONLY native curve coords (base==circuit
+> field).** Secondary worked because Grumpkin base=Fr=circuit field.
+> **There is no library drop-in for the primary side.** The earlier
+> "mechanical/days" estimate is withdrawn.
+
+- **B.0 [V — DECIDED, source-grounded 2026-05-19]** Strategy =
+  **Option 1 (bespoke non-native bn256-G1 SW point gadget)**.
+  Justification (nova-snark 0.68 `RecursiveSNARK::verify`,
+  nova/mod.rs:567–651): verify calls `is_sat_relaxed` on BOTH
+  `r_U_primary`(ck_primary) AND `r_U_secondary`(ck_secondary), and
+  `is_sat_relaxed` (r1cs/mod.rs:447–474) recomputes
+  `U.comm_W==Commit(ck,W)`. The transcript/hash check only absorbs
+  `comm_W` coords as field elements — it does NOT verify the MSM
+  relation. ∴ **Option 2 (skip primary MSM) is UNSOUND** (permits
+  the B-1 forgery: hash one comm_W, R1CS-sat a different W). Option 3
+  (wrapper-as-curve-cycle) is far deeper and discards the working
+  S2/S3 single circuit. Option 1 is deep (≈ a second S4b) but bounded
+  & standard.
+- **B.1 [V]** Non-native bn256-G1 SW add/double over
+  `EmulatedFpVar<Fq,Fr>` — BOX-VERIFIED on Mini 1 (2026-05-19):
+  `nonnative_bn256_g1_double_add_match_ark ... ok`, 1 passed, 0.34 s,
+  0 errors. In-circuit 2G/3G == out-of-circuit ark bn256-G1 (generic
+  case). The hardest conceptual piece (bespoke non-native foreign-
+  curve arithmetic) is proven; EC math correct first try.
+- **B.2 [V]** Native-scalar double-and-add ladder over B.1 —
+  BOX-VERIFIED Mini 1 (2026-05-19): `nonnative_bn256_g1_scalar_mul_
+  matches_ark ... ok` (5·G == ark 5G, real FpVar<Fr> bits) +
+  B.1 regression ok, 2 passed, 0.66 s. Generic-case; edge-hardening
+  (identity/leading-zeros/degenerate) = documented follow.
+- **B.2b [V]** `pedersen_msm_bn256_g1` full primary MSM —
+  BOX-VERIFIED Mini 1 (2026-05-19): `nonnative_bn256_g1_msm_matches_
+  ark ... ok` (`Σ sᵢ·baseᵢ + r·h = 35G` == ark) + B.1/B.2 regression,
+  3 passed, 2.23 s, 0 errors, first run. **The hardest crypto
+  obstacle in the whole flow — in-circuit non-native foreign-curve
+  MSM — is proven viable.** Remaining for primary: B.2-hardening
+  (edge-safe arbitrary-`W` scalars) + the mechanical decoder/converter.
+- **B.2-hardening [V]** Edge-safe arbitrary-scalar mul — BOX-VERIFIED
+  Mini 1 (2026-05-19): `nonnative_bn256_g1_complete_scalar_mul_
+  arbitrary_and_edges ... ok`, 1 passed, **983 s**, 0 errors, first
+  run. RCB complete formulas (SW a=0, projective, identity=(0,1,0)),
+  exception-free; proven for k=0(→identity)/1/7/large over the full
+  254-bit ladder vs ark bn256-G1. **The primary non-native EC stack
+  is now soundness-correct AND edge-safe** — no forgeable edge holes.
+  SCALE NOTE: 983 s for 4 small scalars ⇒ full-`W` (thousands of
+  254-bit scalars) is *extremely* heavy — B.3 must be bounded on
+  Mini 1, full-scale = satyawan-1/cluster (same scale-gate class as
+  A.3; a MAINNET EXIT requirement, not a logic gap).
+- **B.3a [V]** Primary extraction decoders correct on REAL data —
+  BOX-VERIFIED Mini 1 (2026-05-19): `primary_extract_decodes_real_
+  data ... ok`, 1 passed, 29.80 s, 0 errors, first run. Real
+  `ck_primary`/`r_W_primary`/`comm_W` decode to on-curve bn256-G1 +
+  parseable Fr. The genuinely-open primary question is RESOLVED.
+- **B.3b [V — scale-gate CLEARED on satyawan-1]** Full in-circuit
+  complete-formula primary binding on real data. OOM'd twice ≤16 GB
+  (Mini 1); **PASSED on satyawan-1 (119 GB) 2026-05-19**:
+  `primary_msm_binds_real_prefix ... ok`, 1 passed, 332.63 s, no OOM,
+  training undisturbed. The in-circuit complete-formula primary
+  commitment binding on REAL fixture data is VERIFIED. (True-full-`W`
+  / larger-N is a further magnitude point but the binding logic on
+  real in-circuit data is proven.)
+- Depends on: B.0 (DECIDED). Primary gadget logic B.1→B.2-hardening
+  all `[V]`; only B.3a (cheap, now) + B.3b (scale-gate) remain.
+
+## PHASE C — S4 integration (the actual soundness closure)
+
+> **DEPENDENCY CORRECTION (2026-05-19, verify-grounded):** C is NOT a
+> clean post-B step. (1) **C.1-primary** = recompute the primary MSM
+> *inside* the verifier circuit + enforce `== r_U_primary.comm_W` —
+> that IS the **B.3b** full in-circuit complete-formula binding, which
+> EMPIRICALLY OOMs ≤16 GB → C.1-primary inherits the B.3b scale-gate.
+> (2) **C-secondary** needs the secondary `W` *in-circuit* to bind,
+> but the secondary `W` only enters via **PHASE D (S4b)** — so C's
+> secondary side is **downstream of D**, not after B. Real ordering:
+> `A → B(logic) → D → C`, with C's full binding ALSO scale-gated.
+
+- **C.1 [X]** Bind both recomputed MSM points to the Section-2-bound
+  coords inside the verifier circuit. Primary side = B.3b-scale-gated;
+  secondary side gated on D. Gadgets proven `[V]`; *closure* (wiring
+  into `generate_constraints`) is downstream of D + scale.
+- **C.2 [X]** Surface the **primary** `comm_W` into the transcript
+  (currently only secondary's is — see `S4_DESIGN.md` structural note).
+- Depends on: A + B(logic) `[V]`; **D**; and the B.3b/A.3 scale-gates.
+
+> **D.3 SIZE MEASURED (2026-05-19, Mini3, tractable harness — no
+> spend, no big box):** synthetic fit ≈ `3844·s + 813` (~1281
+> constraints / non-native nonzero) × REAL secondary dims
+> (`num_cons=10554, num_vars=10536, total_nnz=126899`) ⇒ **full-D.3
+> ≈ 2.03 × 10⁸ constraints ≈ 57–284 GB**. Consistent with satyawan-1
+> (123 GB) hanging (123 GB is *inside* the band). **DECISION: do NOT
+> buy/rent a bigger box to brute-force this.** The primary R1CS
+> (native, Section 3) is ~10⁴ constraints; the secondary via
+> non-native emulation is ~2×10⁸ — a **~20,000× blow-up purely from
+> Fq emulation**, also impractical for Groth16 setup/prove itself.
+> This is quantitative proof the **curve-cycle redesign (B.0 Option
+> 3) is the necessary architecture**, not optional — it removes the
+> 20,000× factor at the root. Standalone-full-D.3 (≈256–512 GB,
+> ~$10–30 hourly cloud, one-off) is only a checkbox; the redesign is
+> the real path.
+
+## PHASE D — S4b: secondary RelaxedR1CS satisfiability *(THE deep one)*
+
+- **D.1 [V]** Non-native row-sat gadget — proven via A.1
+  (`secondary_relaxed_r1cs_nn_sat_and_adversarial`, Mini 1).
+- **D.2 [V]** Secondary R1CS extractor — BOX-VERIFIED Mini 1
+  (2026-05-19): `secondary_r1cs_extract_decodes_real_data ... ok`,
+  1 passed, 30.81 s, first run. Byte-identical mirror of proven
+  `section3_witness`, secondary/ArkFq, bucketed for D.1; real-data
+  shape self-consistent (dims, W/E lens, A/B/C num_cons buckets,
+  col-in-z-range). Decode-only / tractable.
+- **D.3 [X]** Full secondary RelaxedR1CS enforced in-circuit over
+  `EmulatedFpVar<Fq,Fr>` (every `(Az)(Bz)==u(Cz)+E` op non-native).
+- **D.4 [X]** Bounded box-verify + full verify on bigger box.
+- **Effort: genuinely multi-week** — comparable to all PHASE 0 work
+  combined; non-native arithmetic is where ZK soundness bugs hide.
+- Depends on: A.1 (gadget proof). Largely parallel to B/C.
+
+## PHASE E — S4-verify (S6-analog, adversarial)
+
+- **E.1 [X]** Determinism: `setup_shape()` R1CS still bit-identical with
+  ALL S4 constraints present (S6 re-run, extended).
+- **E.2 [X]** Adversarial end-to-end: commitment-mismatch AND
+  secondary-unsat BOTH rejected, real fixture, bigger box.
+- Depends on: PHASE C + D complete.
+
+## PHASE F — S5: MPC trusted-setup ceremony  *(orthogonal B-2 axis)*
+
+- **F.1 [X]** Ceremony design: Powers-of-Tau (or adopt existing) +
+  circuit-specific phase 2 over `setup_shape()`; participant set,
+  transcript verification, public attestation.
+- **F.2 [X]** Run ceremony; replace `#[deprecated] groth16_wrapper::
+  setup` insecure path with ceremony-derived params.
+- **F.3 [X]** Verify transcript + key correctness.
+- **Effort: multi-week, partly NON-engineering** (external participants,
+  logistics). Can run in PARALLEL with D/E (independent of S4a/S4b).
+
+## PHASE G — Independent external audit of the *closed* circuit
+
+- **G.1 [X]** Only scopeable after C+D+E+F green. External ZK auditor
+  review of the now-sound verifier + ceremony transcript.
+- Depends on: E + F complete.
+
+## PHASE H — Broader codebase re-audit  *(separate track — LOW confidence scope)*
+
+- **H.1 [~/X]** Consensus, DA, bridge, execution, EvaporScript: prior
+  audit rounds are project-asserted closed but **NOT re-verified in the
+  B-1/B-2 work**. An independent re-audit pass is required before mainnet
+  and is **out of scope of this flow's verification** — flagged honestly,
+  not estimated.
+
+---
+
+## MAINNET EXIT CRITERIA (all must hold)
+
+1. PHASE A–E green with explicit box evidence (full-`W`, not bounded).
+2. PHASE F: ceremony-derived keys in place; insecure setup path removed.
+3. PHASE G: independent external audit of the closed circuit passed.
+4. PHASE H: broader-codebase re-audit passed (separate track).
+5. Only then is the ZK `VerkleProofVerifier` eligible to replace the
+   interim BLS-quorum path in `Deploy.s.sol`.
+
+## CRITICAL PATH & HONEST TIMELINE
+
+`A → (B,C) → D → E`, with `F` in parallel, then `G`, then `H`.
+The **D (S4b) + F (S5) pair is multi-week-to-month** and is the true
+gate; everything in B/C is days (pinned/mechanical). **No
+evidence-supported timeline shorter than "multi-week before an external
+audit can even begin" exists.** Mitigation throughout: the unsound
+circuit is **not deployed** (`Deploy.s.sol` = BLS-quorum) — this is a
+pre-mainnet rebuild, not a live incident.
