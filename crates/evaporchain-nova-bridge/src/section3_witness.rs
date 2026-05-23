@@ -77,6 +77,70 @@ pub struct Section3Witness {
 }
 
 impl Section3Witness {
+    /// Audit B-1/B-2 S2a: canonical R1CS *shape* from the fixed step
+    /// circuit's `PublicParams` — values zeroed. Groth16 keys bind
+    /// #vars/#cons (lengths) not values, and the gadget is
+    /// data-independent (emits `num_cons` gates regardless of values),
+    /// so a zeroed witness of correct lengths yields a bit-identical
+    /// R1CS to a real one. No proof needed.
+    pub fn canonical_shape(
+        pp: &PublicParams<E1, E2, TrivialIncrementCircuit>,
+    ) -> Result<Self, ExtractError> {
+        let pp_val = serde_json::to_value(pp)
+            .map_err(|e| ExtractError::SerdeError(e.to_string()))?;
+        let shape = &pp_val["r1cs_shape_primary"];
+        let num_cons = shape["num_cons"]
+            .as_u64()
+            .ok_or_else(|| ExtractError::MissingField("num_cons".into()))?
+            as usize;
+        let num_vars = shape["num_vars"]
+            .as_u64()
+            .ok_or_else(|| ExtractError::MissingField("num_vars".into()))?
+            as usize;
+        let num_io = shape["num_io"]
+            .as_u64()
+            .ok_or_else(|| ExtractError::MissingField("num_io".into()))?
+            as usize;
+        if num_cons > MAX_R1CS_NUM_CONS {
+            return Err(ExtractError::ShapeTooLarge {
+                name: "num_cons",
+                value: num_cons,
+                cap: MAX_R1CS_NUM_CONS,
+            });
+        }
+        if num_vars > MAX_R1CS_NUM_VARS {
+            return Err(ExtractError::ShapeTooLarge {
+                name: "num_vars",
+                value: num_vars,
+                cap: MAX_R1CS_NUM_VARS,
+            });
+        }
+        if num_io > MAX_R1CS_NUM_IO {
+            return Err(ExtractError::ShapeTooLarge {
+                name: "num_io",
+                value: num_io,
+                cap: MAX_R1CS_NUM_IO,
+            });
+        }
+        let num_cols = num_vars + 1 + num_io;
+        let zero = ArkFr::from(0u64);
+        Ok(Self {
+            w_primary: vec![zero; num_vars],
+            e_primary: vec![zero; num_cons],
+            u_primary: zero,
+            x_primary: [zero, zero],
+            a_primary: parse_csr(&shape["A"], num_cons, num_cols)
+                .map_err(|e| ExtractError::MissingField(format!("A: {e}")))?,
+            b_primary: parse_csr(&shape["B"], num_cons, num_cols)
+                .map_err(|e| ExtractError::MissingField(format!("B: {e}")))?,
+            c_primary: parse_csr(&shape["C"], num_cons, num_cols)
+                .map_err(|e| ExtractError::MissingField(format!("C: {e}")))?,
+            num_cons,
+            num_vars,
+            num_io,
+        })
+    }
+
     /// Augmented witness `z = [W, u, X[0], X[1]]`.
     pub fn build_z(&self) -> Vec<ArkFr> {
         let mut z = Vec::with_capacity(self.num_vars + 1 + self.num_io);
