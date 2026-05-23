@@ -49,3 +49,8 @@ data-v1/
 # Python caches in research/
 __pycache__/
 *.pyc
+
+# TLC model-checker state output (gigabytes per run)
+states/
+/states/
+**/states/
