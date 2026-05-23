@@ -44,10 +44,12 @@ ignore = [
     # Not removed: hickory got bumped 0.24.4 → 0.25.2 which introduced
     # a fresh vulnerability (next entry).
     #
-    # TODO(security): need libp2p that uses hickory-proto >= 0.26.0
-    # (the patched series). 0.25.x has no patch — fix is only in 0.26.
-    # libp2p 0.56 still pins hickory 0.25.x. Track upstream libp2p.
+    # TODO(security): both DNS advisories below need libp2p that uses
+    # hickory-proto >= 0.26.0 (the patched series). 0.25.x has no
+    # patch — only 0.26+. libp2p 0.56 still pins hickory 0.25.x.
+    # Track upstream libp2p for the next major.
     { id = "RUSTSEC-2026-0118", reason = "hickory-proto 0.25.x NSEC3 unbounded loop; no 0.25.x patch (only 0.26+); waiting on libp2p to bump hickory" },
+    { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.25.x O(n²) name-compression CPU exhaustion; same fix path as RUSTSEC-2026-0118 (hickory 0.26+)" },
     # TODO(security): bump ark-* family (0.5 → 0.6) to drop transitive
     # tracing-subscriber 0.2.25 + rand 0.8.5. Pulled by
     # evaporchain-nova-bridge via ark-relations / ark-std. ark-groth16
