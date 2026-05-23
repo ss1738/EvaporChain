@@ -20,7 +20,7 @@ description = "T0.10 Path A — bridge between chain-side Nova RecursiveSNARK an
 # Arkworks side: the wrapper circuit + Groth16 prover live here.
 # Same versions as `ethereum-bridge/wrapper/Cargo.toml` so a future
 # merge / shared-dep refactor stays straightforward.
-ark-bn254              = "0.6"
+ark-bn254              = { version = "0.6", features = ["r1cs"] }
 ark-crypto-primitives  = { version = "0.6", features = ["sponge", "constraints", "ark-r1cs-std"] }
 ark-ec                 = "0.6"
 ark-ff                 = "0.6"
@@ -41,6 +41,12 @@ ff            = "0.13"
 group         = "0.13"
 generic-array = "1"
 
+# halo2curves: used by Section B off-chain adapter (decompress_comm_w_as_fr)
+# to decode nova's bn256::Affine GroupEncoding hex blobs. Same 0.9 line
+# nova-snark 0.68 pulls. Promoted from dev-deps so it's available to
+# the library and binaries, not just tests.
+halo2curves = "0.9"
+
 # Misc.
 hex        = "0.4"
 serde      = { version = "1", features = ["derive"] }
@@ -53,3 +59,5 @@ thiserror  = "1"
 
 [dev-dependencies]
 rand = "0.8"
+# (halo2curves promoted to regular dep above — used by Section B
+# off-chain adapter as well as the grumpkin_config tests.)
