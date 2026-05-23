@@ -8,11 +8,57 @@
     implemented in evaporchain-consensus/src/tendermint.rs.
 
     Author: Satyawan Singh
-    Date:   2026-04-21
+    Date:   2026-04-21 (D11 axiom-boundary section added 2026-05-21)
 
     Safety:  No two honest validators commit different blocks at the same height.
     Liveness: If 2f+1 validators are honest and connected, a new block is
               eventually committed.
+
+    Properties verified by TLC:
+
+        TypeOK                       — all variables in declared domains.
+        Agreement                    — no two honest validators commit
+                                       different blocks at the same height.
+        Validity                     — only proposed blocks can be committed.
+        CommitRequiresQuorum         — a block is committed only if it
+                                       received 2f+1 stake-weighted
+                                       precommits in some round.
+        LockSafety                   — if an honest validator is locked on
+                                       block lb in round lr, no quorum can
+                                       have formed for a different block in
+                                       any earlier round (currently fails
+                                       on Byzantine.cfg under late-prevote
+                                       traces — see audit doc § D14).
+        EquivocationDetected         — equivocating validators are slashed.
+        StateCommitmentIntegrity     — every committed block has a
+                                       state-commitment recorded at its
+                                       height (binary abstraction: "None"
+                                       vs "Committed").
+
+    Open and not modeled here (out of TLC scope — same axiom boundary as
+    PoHA.tla):
+
+        — Real cryptographic verification of BLS aggregate signatures.
+          Modeled abstractly via the prevote/precommit message sets;
+          signature validity is treated as an axiom. See Coq's
+          `PoHAFreeloading.v` for the crypto-game side (axiomatized).
+        — Domain-separation-tag (DST) collisions across the BLS keyspace
+          (audit 2026-05-17 H-2): treated as cryptographically negligible.
+        — VRF unforgeability for proposer selection.
+        — Hash collision resistance (BLAKE3) of block / proposal hashes.
+        — Network adversary's ability to delay / partition / reorder
+          messages: modeled as nondeterminism in action interleavings,
+          but specific Byzantine network strategies (e.g. selective
+          forwarding to exploit POL gaps) are out of scope.
+        — Proof-of-Lock (POL) / valid-round propagation as implemented in
+          tendermint.rs:5478-5544 (audit doc § D14).
+        — Antichain mempool drain & cross-fork equivocation tracking
+          (audit doc § D3 + § D10).
+        — Dynamic validator set: key rotation, jailing, tombstoning,
+          epoch transitions (audit doc § D7).
+
+    See `research/tla/TLA_IMPL_DRIFT_AUDIT_2026_05_21.md` for the full
+    spec-vs-impl drift accounting.
 *)
 
 EXTENDS Integers, Sequences, FiniteSets, TLC
@@ -25,17 +71,51 @@ CONSTANTS
     Validators,         \* Set of validator IDs (e.g., {0, 1, 2})
     MaxRound,           \* Maximum rounds per height before forced commit (10)
     MaxHeight,          \* Bound on heights for model checking
-    Faulty              \* Set of Byzantine validators (|Faulty| < n/3)
+    Faulty,             \* Set of Byzantine validators (|Faulty| < n/3 by STAKE)
+    FaultyStake,        \* Nat>0 : per-validator stake of Faulty validators
+    HonestStake         \* Nat>0 : per-validator stake of Honest validators
 
 ASSUME Faulty \subseteq Validators
-ASSUME Cardinality(Faulty) * 3 < Cardinality(Validators)
+ASSUME FaultyStake >= 1
+ASSUME HonestStake >= 1
+
+\* D1/D5 fix 2026-05-21: ValidatorStake function is derived inside the
+\* spec rather than supplied as a CONSTANT, because TLC .cfg files only
+\* accept identifier-keyed record literals, not integer-keyed function
+\* literals like `[0 |-> ..., 1 |-> ...]`. The two-scalar shape lets
+\* configs select either uniform stake (FaultyStake = HonestStake) or
+\* a Byzantine attacker with disparate stake (FaultyStake < HonestStake)
+\* without changing the spec.
+ValidatorStake == [v \in Validators |-> IF v \in Faulty THEN FaultyStake ELSE HonestStake]
 
 \* ══════════════════════════════════════════════════════════════════════════
 \* Derived constants
 \* ══════════════════════════════════════════════════════════════════════════
 
 N == Cardinality(Validators)
-Quorum == (N * 2 + 2) \div 3       \* 2f+1 = ceil(2n/3), matches Rust: (n*2+2)/3
+
+\* Sum of stake of a set of validators (D1/D5 fix 2026-05-21: mirrors
+\* PoHA.tla:104-111 but iterates the validator SET, not the set of
+\* stake VALUES, so two validators with equal stake are correctly
+\* counted twice).
+StakeOf(VSet) ==
+    LET RECURSIVE Sum(_)
+        Sum(S) ==
+            IF S = {} THEN 0
+            ELSE LET x == CHOOSE x \in S : TRUE
+                 IN ValidatorStake[x] + Sum(S \ {x})
+    IN Sum(VSet)
+
+TotalStake == StakeOf(Validators)
+
+\* Byzantine assumption is now STAKE-weighted, matching Rust's
+\* `attested_stake * 3 > total_stake * 2` predicate
+\* (`certificate.rs:55-58`, `finality.rs:56-59`).
+\* Under unequal stake, count-based `|Faulty| * 3 < |Validators|`
+\* is INSUFFICIENT — a small-stake majority by count can be a
+\* large-stake minority. The strict-`>` inequality matches the
+\* Rust u128-safe implementation.
+ASSUME StakeOf(Faulty) * 3 < TotalStake
 
 Honest == Validators \ Faulty
 
@@ -82,16 +162,30 @@ vars == <<height, round, phase, lockedBlock, lockedRound, validBlock, validRound
 VotesForBlock(voteSet, block) ==
     Cardinality({m \in voteSet : m[2] = block})
 
-\* Check if any non-nil block has quorum in vote set
+\* Stake-weighted sum of votes for a particular block value
+\* (D1/D5 fix 2026-05-21).
+StakeVotesForBlock(voteSet, block) ==
+    StakeOf({m[1] : m \in {m \in voteSet : m[2] = block}})
+
+\* Check if any non-nil block has quorum in vote set.
+\* STAKE-WEIGHTED STRICT-> matches Rust:
+\*   `attested_stake * 3 > total_stake * 2`
+\* (`certificate.rs:55-58`, `finality.rs:56-59`).
+\* D1/D5 fix 2026-05-21: was `>= Quorum` count-based; that was
+\* equivalent only under equal stake.
 HasQuorumFor(voteSet, block) ==
-    VotesForBlock(voteSet, block) >= Quorum
+    StakeVotesForBlock(voteSet, block) * 3 > TotalStake * 2
 
-\* Check if nil has quorum
+\* Check if nil has quorum (stake-weighted, same predicate shape).
 HasNilQuorum(voteSet) ==
-    VotesForBlock(voteSet, "Nil") >= Quorum
+    StakeVotesForBlock(voteSet, "Nil") * 3 > TotalStake * 2
 
-\* Total votes cast
+\* Total votes cast (cardinality — unchanged; some liveness
+\* arguments still legitimately want a count not a stake sum).
 TotalVotes(voteSet) == Cardinality(voteSet)
+
+\* Total stake committed to a vote set (sum of distinct voter stakes).
+TotalVoteStake(voteSet) == StakeOf({m[1] : m \in voteSet})
 
 \* Get the quorum block if one exists
 QuorumBlock(voteSet) ==
@@ -167,7 +261,20 @@ ProposeBlock(v) ==
        /\ UNCHANGED <<height, round, lockedBlock, lockedRound, validBlock, validRound,
                        precommits, committed, equivocations, slashed>>
 
-\* Byzantine proposer can propose anything, including equivocating blocks
+\* Byzantine proposer can propose anything, including equivocating blocks.
+\*
+\* D12 fix 2026-05-21: must update stateCommitment[h] like ProposeBlock
+\* does (line 207-209). The spec's stateCommitment abstraction is binary:
+\* "None" until any block proposal lands at height h, "Committed" once a
+\* proposal exists. Previously ByzantinePropose left stateCommitment
+\* UNCHANGED, so a Byzantine-proposed block that honest validators voted
+\* on and committed would leave stateCommitment[h] = "None", spuriously
+\* violating StateCommitmentIntegrity. In the Rust impl, every block
+\* header carries a BlockStateCommitment regardless of proposer identity
+\* — Byzantine proposers might supply an INVALID BSC, but they can't
+\* omit the field; honest validators reject blocks with malformed BSC
+\* (validation logic abstracted out of this spec). The simple binary
+\* abstraction lets us model "BSC present" without modeling validity.
 ByzantinePropose(v) ==
     /\ v \in Faulty
     /\ height[v] <= MaxHeight
@@ -178,10 +285,12 @@ ByzantinePropose(v) ==
        \* Faulty proposer may propose any block, even two different ones (equivocation)
        \E block \in NonNilBlocks :
            /\ proposals' = [proposals EXCEPT ![h][r] = @ \cup {<<v, block>>}]
+           /\ stateCommitment' = [stateCommitment EXCEPT ![h] =
+                IF @ = "None" THEN "Committed" ELSE @]
            /\ prevotes' = [prevotes EXCEPT ![h][r] = @ \cup {<<v, block>>}]
            /\ phase' = [phase EXCEPT ![v] = "Prevote"]
            /\ UNCHANGED <<height, round, lockedBlock, lockedRound, validBlock, validRound,
-                           precommits, committed, daAttested, stateCommitment,
+                           precommits, committed, daAttested,
                            equivocations, slashed>>
 
 \* Propose timeout — no proposal received, send nil prevote
@@ -203,7 +312,29 @@ ProposeTimeout(v) ==
 \* ─────────────────── Prevote (receive proposal + vote) ──────────────────
 
 \* Honest validator receives proposal and sends prevote
-\* Matches on_message() ConsensusMessage::Proposal handling
+\* Matches on_message() ConsensusMessage::Proposal handling.
+\*
+\* D14 fix 2026-05-21: gate the action on "no later-round activity
+\* exists for this height" — this models Rust's on_message stale-
+\* round handling at tendermint.rs:4998-5011, where a validator
+\* receiving a round-r message while round_state.round > r drops
+\* the message, and a round_state.round < msg.round() triggers
+\* RoundSkip before processing. The net effect: a validator cannot
+\* vote in a stale round when later-round messages are visible.
+\*
+\* Without this gate, TLC's nondeterministic interleaving lets a
+\* round-r validator vote in round r EVEN AFTER other validators
+\* advanced and produced round (r+1) activity, retrospectively
+\* completing a stake-quorum for a different block in round r that
+\* the now-locked validator in round r+1 couldn't have observed.
+\* This was the LockSafety violation surfaced after D12 closed the
+\* depth-8 StateCommitmentIntegrity mask (audit doc § D14).
+\*
+\* The gate is essentially "RoundSkip(v) is not currently enabled
+\* OR v is already at the latest round with activity" — meaning the
+\* validator must take RoundSkip BEFORE this action when both are
+\* enabled. Combined with weak fairness on RoundSkip, this matches
+\* the Rust ordering exactly.
 ReceiveProposalAndPrevote(v) ==
     /\ v \in Honest
     /\ height[v] <= MaxHeight
@@ -211,21 +342,25 @@ ReceiveProposalAndPrevote(v) ==
     /\ LET h == height[v]
            r == round[v]
        IN
+       \* D14 gate: no later-round activity visible at this height
+       /\ ~(\E futureR \in (r+1)..MaxRound :
+               \E w \in Validators, b \in BlockValues :
+                   \/ <<w, b>> \in prevotes[h][futureR]
+                   \/ <<w, b>> \in precommits[h][futureR])
        /\ \E p \in Validators, block \in NonNilBlocks :
            /\ <<p, block>> \in proposals[h][r]
            /\ ~HasVoted(prevotes[h][r], v)
-           \* Lock check: classical Tendermint voting rule (weaker than Rust impl).
-           \* TLA: votes for block when lockedRound < r even if lockedBlock ≠ block.
-           \* Rust (tendermint.rs:5479-5490): votes Nil whenever lockedBlock differs,
-           \*   regardless of lockedRound. Rust is STRICTLY stricter.
-           \* Safety implication: this TLA action models a MORE PERMISSIVE voter.
-           \* If safety holds here (TLC confirms), it holds a fortiori for Rust.
-           \* NOT a bug — the spec proves a weaker property; Rust inherits it.
-           \* (spec / proof drift finding — audit 2026-05-17)
+           \* Lock check (D2 fix 2026-05-21): mirror Rust's stricter rule from
+           \* tendermint.rs:5532-5544 — once locked on a block, vote for that
+           \* block; if locked on a different block, vote Nil regardless of
+           \* lockedRound. The previous spec admitted a more permissive branch
+           \* (vote for new block whenever lockedRound < r) that the Rust
+           \* implementation never takes; that branch let the model reach
+           \* states the production code cannot, so TLC was proving a weaker
+           \* property than what we actually ship.
            /\ LET voteBlock ==
                   IF lockedBlock[v] = "Nil" THEN block
                   ELSE IF lockedBlock[v] = block THEN block
-                  ELSE IF lockedRound[v] < r THEN block
                   ELSE "Nil"
               IN
               /\ prevotes' = [prevotes EXCEPT ![h][r] = @ \cup {<<v, voteBlock>>}]
@@ -272,9 +407,17 @@ PrevoteNilQuorumOrTimeout(v) ==
     /\ LET h == height[v]
            r == round[v]
        IN
-       \* Either nil has quorum or we model timeout (nondeterministic)
+       \* D14 fix 2026-05-21: the timeout-fallback must NOT fire when
+       \* any block has stake quorum — otherwise this action can
+       \* preempt the lock that PrevoteQuorumReached should set,
+       \* admitting a LockSafety violation under stake-weighted Byzantine
+       \* model checking. In Rust, PrevoteQuorumReached's effect is
+       \* OBSERVATIONAL on the same vote stream — a validator that sees
+       \* the stake quorum locks; only when no block quorum exists does
+       \* the timer-driven nil precommit fire.
        /\ \/ HasNilQuorum(prevotes[h][r])
-          \/ TotalVotes(prevotes[h][r]) >= Quorum  \* Enough votes but no single block has quorum
+          \/ /\ TotalVoteStake(prevotes[h][r]) * 3 > TotalStake * 2
+             /\ \A b \in NonNilBlocks : ~HasQuorumFor(prevotes[h][r], b)
        /\ precommits' = [precommits EXCEPT ![h][r] = @ \cup {<<v, "Nil">>}]
        /\ phase' = [phase EXCEPT ![v] = "Precommit"]
        /\ UNCHANGED <<height, round, lockedBlock, lockedRound, validBlock, validRound,
@@ -400,15 +543,28 @@ DetectEquivocation(v) ==
 
 \* ─────────────────── Round skip ─────────────────────────────────────────
 \* Matches Rust: on_message() round-skip logic when msg.round() > round_state.round
-
+\*
+\* D14 fix 2026-05-21: gate RoundSkip on "no block has stake quorum in
+\* my current round". If a quorum exists for some block b in round r,
+\* the validator MUST lock on b via PrevoteQuorumReached before skipping
+\* to a later round — otherwise the validator advances unlocked, then
+\* votes for a different block in the new round, and a later validator
+\* completing the round-r quorum creates a retrospective quorum the
+\* now-locked-elsewhere validator couldn't have observed. This is the
+\* second half of the LockSafety fix (audit doc § D14); D14a gates
+\* ReceiveProposalAndPrevote on no-later-round-activity, D14b tightens
+\* PrevoteNilQuorumOrTimeout on no-block-has-quorum.
 RoundSkip(v) ==
     /\ v \in Honest
     /\ height[v] <= MaxHeight
     /\ LET h == height[v]
            r == round[v]
        IN
+       \* D14 gate: a block with stake quorum in this round must be
+       \* locked on (via PrevoteQuorumReached) before skipping.
+       /\ \A b \in NonNilBlocks : ~HasQuorumFor(prevotes[h][r], b)
        \* If we see votes from a future round, skip to it
-       \E futureR \in (r+1)..MaxRound :
+       /\ \E futureR \in (r+1)..MaxRound :
            /\ \E w \in Validators, b \in BlockValues :
                \/ <<w, b>> \in prevotes[h][futureR]
                \/ <<w, b>> \in precommits[h][futureR]
@@ -531,7 +687,7 @@ Progress ==
 DAEventualAttestation ==
     \A h \in 1..MaxHeight :
         (\E v \in Honest : \E i \in 1..Len(committed[v]) : committed[v][i][1] = h)
-        ~> (Cardinality(daAttested[h] \cap Honest) >= Quorum)
+        ~> (StakeOf(daAttested[h] \cap Honest) * 3 > TotalStake * 2)  \* D1/D5: stake-weighted
 
 \* Fairness assumption: honest validators eventually take their enabled actions
 Fairness ==
