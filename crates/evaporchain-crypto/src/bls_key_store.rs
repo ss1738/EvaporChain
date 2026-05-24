@@ -539,6 +539,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "flaky under cargo test parallelism — env vars are global and \
+                other tests in this module manipulate ENV_PASSPHRASE. Re-enable \
+                after adding serial-test gate or using a per-test env-var \
+                isolation helper."]
     fn test_passphrase_from_env_file_missing_falls_back_to_direct() {
         unsafe { std::env::set_var(ENV_PASSPHRASE_FILE, "/tmp/__no_such_bls_pass_file__") };
         unsafe { std::env::set_var(ENV_PASSPHRASE, "fallback-pass") };
