@@ -113,7 +113,12 @@ jobs:
   bench:
     name: Benchmarks — regression check
     runs-on: [self-hosted, mini]
-    if: github.event_name == 'pull_request'
+    # Temporarily disabled to free runner bandwidth for the in-flight
+    # PR-merge queue. Bench is informational (no merge gate). The
+    # GitHub dispatcher heavily prioritises shorter jobs, so 21-min
+    # bench cycles starve the 15-30 min rust-check job. Re-enable
+    # after the bulk merge completes.
+    if: false
     steps:
       - uses: actions/checkout@v4
         with:
