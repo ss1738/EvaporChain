@@ -89,6 +89,31 @@ impl ValidatorSetCommitment {
     /// against the live `ValidatorSet` which carries prev-key history.
     /// Bridge-level verification operates on the snapshot as it stood at
     /// commitment time, so the live grace window is not in scope here.
+    ///
+    /// # SECURITY — ROGUE-KEY GAP (audit bridge-PoP, 2026-05-18)
+    ///
+    /// `BlsVerifier::aggregate_verify` over a common message with summed
+    /// G1 keys is **rogue-key-vulnerable**: it is sound only if every
+    /// signer key had proof-of-possession verified upstream.
+    /// `ValidatorSetCommitment` carries only `(stake, pk)` — **no PoP
+    /// status** — and `validators_hash` binds `(id‖stake‖pk)`, NOT PoP.
+    ///
+    /// The naive "fix" (add a `pop_verified: bool` to the commitment and
+    /// gate on it) is **security theater, NOT a fix**: the commitment is
+    /// supplied by the (possibly malicious) source chain — an attacker
+    /// crafting a rogue key simply sets `pop_verified = true`. A sound
+    /// fix is a genuine crypto-protocol change, one of:
+    ///   (a) bind authenticated PoP into `validators_hash` AND have the
+    ///       commitment-update trust model authenticate that hash, or
+    ///   (b) switch the cert scheme to rogue-key-secure message
+    ///       augmentation (each signer signs `pk‖msg`) — a chain-wide
+    ///       signing-scheme change.
+    /// Both are deliberate dedicated efforts, deliberately NOT rushed
+    /// here (rushing would ship a worse, false-assurance vuln). This
+    /// gap is made explicit + un-silent below so the bridge path is
+    /// NOT silently trusted for mainnet value until (a)/(b) lands.
+    /// Mitigation today: the live bridge trust path is the BLS-quorum
+    /// `StateMembershipAttester` deployment, not this verifier.
     pub fn verify_certificate_signature(&self, cert: &CommitCertificate, vote_msg: &[u8]) -> bool {
         // Collect public keys of signers
         let pks: Vec<BlsPublicKey> = cert
@@ -102,6 +127,16 @@ impl ValidatorSetCommitment {
             warn!("Some signers not in validator set commitment");
             return false;
         }
+
+        // AUDIT bridge-PoP: un-silent the rogue-key gap. This aggregate
+        // verification is NOT rogue-key-secure (no authenticated PoP in
+        // the commitment). Must not be relied on for mainnet value until
+        // the scheme change (see doc-comment) lands.
+        warn!(
+            "bridge-PoP: verify_certificate_signature uses rogue-key-UNSAFE \
+             aggregate_verify (commitment carries no authenticated PoP) — \
+             not mainnet-safe for value transfer; see SECURITY doc-comment"
+        );
 
         let agg_sig = BlsSignature(cert.aggregate_signature.clone());
         BlsVerifier::aggregate_verify(vote_msg, &agg_sig, &pks)
