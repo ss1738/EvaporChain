@@ -758,13 +758,15 @@ mod tests {
     #[test]
     fn test_param_types() {
         // Ensure all ParamType variants are distinct and clonable.
-        let types = [ParamType::Address,
+        let types = [
+            ParamType::Address,
             ParamType::Uint,
             ParamType::Int,
             ParamType::String,
             ParamType::Bool,
             ParamType::Bytes,
-            ParamType::Array];
+            ParamType::Array,
+        ];
         for (i, a) in types.iter().enumerate() {
             for (j, b) in types.iter().enumerate() {
                 if i == j {
