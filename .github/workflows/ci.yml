@@ -46,7 +46,7 @@ jobs:
     runs-on: [self-hosted, mini]
     steps:
       - uses: actions/checkout@v4
-      - run: cargo test -p integration-tests -- --include-ignored
+      - run: cargo test -p evaporchain-integration-tests -- --include-ignored
         timeout-minutes: 15
 
   # Coq/Rocq mechanization gate — closes the M2 / Layer 7 LLSA
