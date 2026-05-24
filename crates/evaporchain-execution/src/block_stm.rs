@@ -2002,26 +2002,50 @@ impl ExecutionEngine for BlockStmExecutor {
                         r
                     }
                 }
+                // v1: privacy disabled pending ZK circuit — see PRIV-001/002.
+                // Gated on the single shared flag so a malicious proposer that
+                // embeds a shielded tx directly in a block cannot run it; the
+                // tx fails deterministically with no shielded-pool effect.
+                // SIBLING: the identical guard lives in parallel.rs — re-enable
+                // BOTH (and the mempool admission gate) together.
                 Transaction::Shield(shield) => {
-                    self.privacy_executor.set_epoch(block.epoch);
-                    self.privacy_executor
-                        .execute_shield(db, shield)
-                        .map(|_| ())
-                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                    if crate::privacy_exec::SHIELDED_TX_DISABLED_V1 {
+                        Err(ExecutionError::ContractError(
+                            crate::privacy_exec::SHIELDED_TX_DISABLED_MSG.to_string(),
+                        ))
+                    } else {
+                        self.privacy_executor.set_epoch(block.epoch);
+                        self.privacy_executor
+                            .execute_shield(db, shield)
+                            .map(|_| ())
+                            .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                    }
                 }
                 Transaction::Unshield(unshield) => {
-                    self.privacy_executor.set_epoch(block.epoch);
-                    self.privacy_executor
-                        .execute_unshield(db, unshield)
-                        .map(|_| ())
-                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                    if crate::privacy_exec::SHIELDED_TX_DISABLED_V1 {
+                        Err(ExecutionError::ContractError(
+                            crate::privacy_exec::SHIELDED_TX_DISABLED_MSG.to_string(),
+                        ))
+                    } else {
+                        self.privacy_executor.set_epoch(block.epoch);
+                        self.privacy_executor
+                            .execute_unshield(db, unshield)
+                            .map(|_| ())
+                            .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                    }
                 }
                 Transaction::PrivateTransfer(ptx) => {
-                    self.privacy_executor.set_epoch(block.epoch);
-                    self.privacy_executor
-                        .execute_private_transfer(db, ptx)
-                        .map(|_| ())
-                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                    if crate::privacy_exec::SHIELDED_TX_DISABLED_V1 {
+                        Err(ExecutionError::ContractError(
+                            crate::privacy_exec::SHIELDED_TX_DISABLED_MSG.to_string(),
+                        ))
+                    } else {
+                        self.privacy_executor.set_epoch(block.epoch);
+                        self.privacy_executor
+                            .execute_private_transfer(db, ptx)
+                            .map(|_| ())
+                            .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                    }
                 }
                 Transaction::Deferred(dtx) => self
                     .deferred_queue
