@@ -1168,18 +1168,28 @@ fn exec_token(
             serde_json::json!({ "burned": amount })
         }
         "refresh_balance" => {
-            // EVR-20 spec auth: any caller can refresh (incentivised
-            // keeper op, similar to ERC-20's pattern of letting anyone
-            // trigger lazy state-maintenance ops). The previous
-            // creator-only check made the token un-maintainable
-            // without the deployer online. The amount of `energy` to
-            // restore is bounded by the per-balance refresh cost
-            // upstream — this method just applies the credit.
+            // VM-001 (audit 2026-05-24): refresh_balance CREDITS a token
+            // balance — i.e. it mints supply — so it must be owner-gated
+            // exactly like `mint`. The prior version ignored `caller`/
+            // `creator` and applied a caller-supplied `energy` with a raw
+            // `+=`, letting ANY account credit ANY address an arbitrary
+            // balance (unbounded mint / theft of supply). The intended
+            // "keeper pattern" (anyone refreshes, amount derived from
+            // per-balance decay state) needs per-balance decay tracking that
+            // `TokenState` does not carry (balances are plain u64, no
+            // per-address last-refresh) — that is a v2 redesign. For v1,
+            // gate to the creator/owner and use checked_add.
+            if caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "only owner can refresh_balance (it credits supply — VM-001)".into(),
+                ));
+            }
             let addr = canonicalize_address_hex(&get_str(args, "addr")?)?;
             let energy = get_u64(args, "energy")?;
-            *ts.balances.entry(addr).or_insert(0) += energy;
-            // `caller` is intentionally not consulted — see comment.
-            let _ = (caller, creator);
+            let bal = ts.balances.entry(addr).or_insert(0);
+            *bal = bal
+                .checked_add(energy)
+                .ok_or_else(|| ContractError::StateError("balance overflow".into()))?;
             serde_json::json!({ "refreshed": energy })
         }
         _ => return Err(ContractError::UnknownMethod(method.into())),
@@ -4575,6 +4585,38 @@ mod tests {
         let r = eng.call(id, "balance_of",
             &serde_json::json!({"addr": addr_hex(2)}), &addr(2), 0).unwrap();
         assert!(r.return_value["balance"].as_u64().unwrap() >= 50);
+    }
+
+    /// VM-001 regression (audit 2026-05-24): a NON-creator caller must NOT
+    /// be able to credit an arbitrary balance via refresh_balance.
+    /// FAILS-BEFORE: refresh_balance ignored caller → addr(2) could mint to
+    /// any address. PASSES-AFTER: owner-gated, so this is rejected and no
+    /// balance is credited.
+    #[test]
+    fn test_token_refresh_balance_unauthorized_rejected_vm001() {
+        let mut eng = engine();
+        let id = eng.deploy(
+            ContractTemplate::DecayingToken,
+            serde_json::json!({
+                "name": "TC", "symbol": "T", "total_supply": 1000,
+                "decay_half_life": 100, "owner": addr_hex(1),
+            }),
+            vec![], addr(1), 1000, 100, 0,
+        ).unwrap();
+        // addr(2) is NOT the creator (addr(1)) — must be rejected.
+        let res = eng.call(id, "refresh_balance",
+            &serde_json::json!({"addr": addr_hex(3), "energy": 1_000_000}),
+            &addr(2), 0,
+        );
+        assert!(res.is_err(), "VM-001: non-creator refresh_balance must be rejected");
+        // The balance must NOT have been credited.
+        let r = eng.call(id, "balance_of",
+            &serde_json::json!({"addr": addr_hex(3)}), &addr(3), 0).unwrap();
+        assert_eq!(
+            r.return_value["balance"].as_u64().unwrap(),
+            0,
+            "VM-001: unauthorized refresh must not credit any balance"
+        );
     }
 
     #[test]
