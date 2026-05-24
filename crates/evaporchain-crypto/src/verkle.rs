@@ -554,7 +554,7 @@ impl Default for VerkleTrie {
 mod tests {
     use super::*;
 
-    fn make_key(byte: u8) -> [u8; 32] {
+    pub(super) fn make_key(byte: u8) -> [u8; 32] {
         let mut k = [0u8; 32];
         k[0] = byte;
         k
@@ -564,7 +564,7 @@ mod tests {
         *blake3::hash(&[seed]).as_bytes()
     }
 
-    fn make_value(byte: u8) -> [u8; 32] {
+    pub(super) fn make_value(byte: u8) -> [u8; 32] {
         let mut v = [0u8; 32];
         v[0] = byte;
         v
@@ -1262,6 +1262,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use super::tests::{make_key, make_value};
     use proptest::prelude::*;
 
     fn arb_key() -> impl Strategy<Value = [u8; 32]> {
