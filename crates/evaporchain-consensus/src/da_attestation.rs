@@ -248,37 +248,35 @@ impl DAAttestationManager {
 
     /// Verify a DA certificate from a received block.
     ///
-    /// Checks: supermajority, height match, data_root match, all signatures.
+    /// DA-001 / SIB-003 (audit 2026-05-24): this was a THIRD, weaker DA-cert
+    /// verifier (no dedup, no registered-key binding, trusted the self-declared
+    /// `cert.attested_stake` via `is_supermajority()`). It now delegates to the
+    /// single authoritative `DACertificate::verify_signatures_bound` so the three
+    /// verifiers can't diverge again. This static helper has no validator set, so
+    /// it supplies each attestation's OWN key/stake as the "registered" values —
+    /// sound ONLY for trusted/honest fixtures (it is test-only today). PRODUCTION
+    /// MUST call `verify_signatures_bound` with the real validator-set lookup
+    /// (see `tendermint.rs::verify_da_certificate`).
+    #[deprecated(
+        note = "DA-001/SIB-003: no registered-validator binding. Use DACertificate::verify_signatures_bound with the validator set on any consensus path."
+    )]
     pub fn verify_certificate(
         cert: &DACertificate,
         expected_height: u64,
         expected_data_root: &[u8; 32],
     ) -> bool {
-        // Basic checks
         if cert.block_number != expected_height {
             return false;
         }
         if cert.data_root != *expected_data_root {
             return false;
         }
-        if !cert.is_supermajority() {
-            return false;
-        }
-
-        // Verify all attestation signatures
-        for att in &cert.attestations {
-            if att.block_number != expected_height {
-                return false;
-            }
-            if att.data_root != *expected_data_root {
-                return false;
-            }
-            if !verify_attestation_signature(att) {
-                return false;
-            }
-        }
-
-        true
+        cert.verify_signatures_bound(&|vid| {
+            cert.attestations
+                .iter()
+                .find(|a| a.validator_id == vid)
+                .map(|a| (a.public_key.clone(), a.stake))
+        })
     }
 }
 
@@ -313,6 +311,10 @@ fn verify_attestation_signature(att: &DAAttestation) -> bool {
 
 #[cfg(test)]
 mod tests {
+    // The verify_certificate tests below call the deprecated wrapper to pin
+    // its (honest-fixture) behaviour after it was collapsed onto
+    // verify_signatures_bound (DA-001/SIB-003).
+    #![allow(deprecated)]
     use super::*;
     use evaporchain_crypto::signatures::BlsKeypair;
 

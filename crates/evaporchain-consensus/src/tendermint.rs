@@ -8199,16 +8199,22 @@ impl TendermintConsensus {
             return false;
         }
         // C-09 FIX: Verify all BLS signatures on attestations and recompute
-        // attested_stake from attestation data. Without this, a forged certificate
-        // with fabricated attested_stake and garbage signatures would be accepted.
-        // Q8 (audit 2026-05-17): use verify_signatures_with_active so attestations
-        // from jailed or exited validators are excluded. verify_signatures() ignores
-        // the current active set, allowing a cert built by validators who were since
-        // jailed to still pass — a liveness attack (stale quorum locks finalization).
-        if !cert.verify_signatures_with_active(&|vid| self.validator_set.get(vid).is_some()) {
+        // attested_stake from attestation data.
+        // DA-001 / CONS-003 (audit 2026-05-24): use verify_signatures_bound with a
+        // REGISTERED-validator lookup — binds each attestation to the validator's
+        // registered BLS key (so a signer can't authenticate with their own key
+        // while claiming another id), counts the REGISTERED stake (not the
+        // self-declared att.stake), dedups by validator_id, and excludes jailed/
+        // exited signers (Q8). A validator with no registered BLS key is treated
+        // as inactive (skipped). Closes the single-party DA-cert forgery class.
+        if !cert.verify_signatures_bound(&|vid| {
+            self.validator_set
+                .get(vid)
+                .and_then(|v| v.bls_public_key.clone().map(|k| (k, v.stake)))
+        }) {
             warn!(
                 block = block.number,
-                "DA certificate contains invalid BLS signatures, inflated stake, or inactive signers"
+                "DA certificate contains invalid BLS signatures, inflated/forged stake, unregistered key, or inactive signers"
             );
             return false;
         }
