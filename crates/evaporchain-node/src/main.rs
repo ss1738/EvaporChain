@@ -1515,8 +1515,8 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
     if !args.mainnet_strict {
         return Ok(());
     }
-    // Keep this constant in sync with auth.rs::master_encryption_key().
-    const DEV_MASTER_KEY: &str = "EVAPORCHAIN_DEV_KEY_DO_NOT_USE_IN_PRODUCTION";
+    // API-001: single source of truth for the dev-key string + env-var name.
+    use crate::auth::{DEV_MASTER_KEY, ENV_KEY_MASTER};
 
     let mut issues: Vec<String> = Vec::new();
     if !args.tendermint_mode {
@@ -1558,7 +1558,7 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
             args.validator_count
         ));
     }
-    match std::env::var("EVAPORCHAIN_KEY_MASTER") {
+    match std::env::var(ENV_KEY_MASTER) {
         Err(_) => issues.push("EVAPORCHAIN_KEY_MASTER must be set in --mainnet mode".into()),
         Ok(v) if v == DEV_MASTER_KEY => issues.push(
             "EVAPORCHAIN_KEY_MASTER is set to the dev default; pick a real high-entropy value"
