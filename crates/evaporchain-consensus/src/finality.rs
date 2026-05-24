@@ -295,8 +295,12 @@ impl FinalityTracker {
             return false; // Reject finality without any signers
         }
         // Audit C2: u128 to prevent wrap when stake > u64::MAX/2.
-        if total_stake > 0 && (signing_stake as u128) * 3 < (total_stake as u128) * 2 {
-            return false; // Reject finality without 2/3 stake
+        // SIB-004 (audit 2026-05-24): strict `> 2T/3` (reject when `<= 2T/3`).
+        // The non-strict form accepted exactly 2/3, diverging from
+        // `has_supermajority`/`stake_quorum_threshold` and admitting the Q4
+        // disjoint-quorum boundary case into the finality record.
+        if total_stake > 0 && (signing_stake as u128) * 3 <= (total_stake as u128) * 2 {
+            return false; // Reject finality without STRICTLY more than 2/3 stake
         }
 
         let signer_count = certificate.signer_ids.len();
