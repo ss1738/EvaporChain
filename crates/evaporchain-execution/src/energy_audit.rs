@@ -187,4 +187,44 @@ mod tests {
         assert_eq!(db_compartment(&db, Compartment::Accounts, 0), 1_500);
         assert_eq!(db_compartment(&db, Compartment::Stake, 0), 1_800);
     }
+
+    /// ECON-001 regression (audit 2026-05-24): a slash must CONSERVE total
+    /// accounted energy. The fix routes the slashed validator stake to the
+    /// RefreshPool by permanently cutting `staked_amount` (Stake↓amount,
+    /// RefreshPool↑amount). The old mechanism parked it in `slashed_amount`
+    /// (SlashedPool↑amount) AND ALSO credited RefreshPool by the same amount,
+    /// inflating the total by `amount` per slash.
+    #[test]
+    fn econ001_slash_conserves_total_energy() {
+        use evaporchain_state::db::StateDB;
+
+        // FIXED mechanism: cut staked_amount, route `amount` to RefreshPool.
+        let mut db = InMemoryStateDB::new();
+        db.put_stake(stake(7, 1_000, 0));
+        let before = db_total_energy(&db, 0);
+        let amount = 300u64;
+        let mut s = db.get_stake(7).cloned().unwrap();
+        s.staked_amount = s.staked_amount.saturating_sub(amount);
+        db.put_stake(s);
+        let after = db_total_energy(&db, amount); // RefreshPool now holds `amount`
+        assert_eq!(
+            after, before,
+            "ECON-001: slash must conserve total accounted energy"
+        );
+
+        // OLD buggy mechanism: park in slashed_amount AND credit RefreshPool →
+        // double-count inflates the total by `amount` (demonstrates the bug).
+        let mut bug = InMemoryStateDB::new();
+        bug.put_stake(stake(7, 1_000, 0));
+        let bug_before = db_total_energy(&bug, 0);
+        let mut sb = bug.get_stake(7).cloned().unwrap();
+        sb.slashed_amount = sb.slashed_amount.saturating_add(amount);
+        bug.put_stake(sb);
+        let bug_after = db_total_energy(&bug, amount);
+        assert_eq!(
+            bug_after,
+            bug_before + amount,
+            "old double-count inflated total by `amount` (the ECON-001 bug)"
+        );
+    }
 }

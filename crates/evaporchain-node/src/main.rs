@@ -4349,11 +4349,18 @@ async fn main() -> Result<()> {
                 for action in commits.drain(..) {
                     if let ConsensusAction::SlashValidator { validator_id, amount, ref reason } = action {
                         let mut db_guard = safe_lock(&db);
+                        // ECON-001 (audit 2026-05-24): redistribute the slashed validator
+                        // stake to RefreshPool (via settle_slash below) by PERMANENTLY
+                        // cutting staked_amount — NOT by parking it in slashed_amount,
+                        // where it was double-counted: held in the SlashedPool compartment
+                        // (audit: live = staked - slashed) AND credited to RefreshPool,
+                        // inflating total accounted energy by `amount` on every slash.
+                        // Capture the pre-slash stake first for the delegation-slash %.
+                        let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                         if let Some(mut stake) = db_guard.get_stake(validator_id).cloned() {
-                            stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
+                            stake.staked_amount = stake.staked_amount.saturating_sub(amount);
                             db_guard.put_stake(stake);
                         }
-                        let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                         let delegation_pct = compute_delegation_slash_pct(reason, stake_total);
                         let delegated_slashed = slash_delegations_for_validator(
                             &mut *db_guard, validator_id, delegation_pct,
@@ -5507,11 +5514,16 @@ async fn main() -> Result<()> {
                         );
                         if let ConsensusAction::SlashValidator { validator_id, amount, ref reason } = action {
                             let mut db_guard = safe_lock(&db);
+                            // ECON-001 (audit 2026-05-24): SIBLING of the primary slash
+                            // path above — redistribute the slashed validator stake to
+                            // RefreshPool by permanently cutting staked_amount, not by
+                            // parking it in slashed_amount (which double-counted it). Keep
+                            // this path identical to the primary one.
+                            let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                             if let Some(mut stake) = db_guard.get_stake(validator_id).cloned() {
-                                stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
+                                stake.staked_amount = stake.staked_amount.saturating_sub(amount);
                                 db_guard.put_stake(stake);
                             }
-                            let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
                             let delegation_pct = compute_delegation_slash_pct(reason, stake_total);
                             let delegated_slashed = slash_delegations_for_validator(
                                 &mut *db_guard, validator_id, delegation_pct,
