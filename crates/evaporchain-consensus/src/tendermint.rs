@@ -1311,6 +1311,18 @@ impl TendermintConsensus {
             "block_source_mode" => &["fifo", "antichain"],
             "conservation_enforcement" => &["observe", "enforce"],
             "lambda_fold_mode" => &["hash_chain", "nova"],
+            // D7-Part2 (research/tla/CrossEpochAgreement.tla) — cross-epoch
+            // quorum-intersection safety under dynamic validator sets. The
+            // count-based churn cap (MAX_CHURN_FRACTION) is insufficient under
+            // stake weighting: an adversary can swing >1/3 of stake across an
+            // epoch boundary within the count budget. `enforce` activates the
+            // TLC-verified C5 rule in `apply_epoch_transition` — stake updates
+            // respect a one-epoch activation delay (frozen stayers) and total
+            // join+leave+stake-delta churn is capped at MAX_STAKE_CHURN_FRACTION
+            // of total stake. Default `observe` = legacy behaviour (immediate
+            // stake updates, count-only cap) for bit-compatibility until
+            // dynamic validator sets are activated on a network.
+            "cross_epoch_churn_mode" => &["observe", "enforce"],
             // Item B (V1) of the smart-contract layer: structural-totality
             // gate at DeployScript admission. `permissive` (default)
             // accepts every parseable contract; `total` rejects any
@@ -1994,6 +2006,9 @@ impl TendermintConsensus {
             ("conservation_enforcement", "enforce"),
             ("lambda_fold_mode", "hash_chain"),
             ("cartel_alarm_mode", "observe"),
+            // D7-Part2 cross-epoch quorum-intersection safety (C5).
+            // Default "observe" = legacy count-only churn cap.
+            ("cross_epoch_churn_mode", "observe"),
             // POST_EXEC_STATE_VERIFICATION_PLAN.md Phase 4 (lane T0.3) —
             // default "warn" preserves the af6876d/cb12cf1 always-on
             // Phase 2+3 behaviour. Operators flip to "off" to disable
@@ -6316,9 +6331,16 @@ impl TendermintConsensus {
 
         // Apply epoch transitions at epoch boundaries
         if EpochTransitionManager::is_epoch_boundary(block.number) {
-            let result = self
-                .epoch_manager
-                .apply_epoch_transition(&mut self.validator_set, block.epoch);
+            let enforce_stake_churn = self
+                .governance_params
+                .get("cross_epoch_churn_mode")
+                .map(|m| m == "enforce")
+                .unwrap_or(false);
+            let result = self.epoch_manager.apply_epoch_transition(
+                &mut self.validator_set,
+                block.epoch,
+                enforce_stake_churn,
+            );
             if !result.applied.is_empty() {
                 info!(
                     epoch = block.epoch,

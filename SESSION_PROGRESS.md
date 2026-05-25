@@ -81,6 +81,28 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 
 ---
 
+## 2026-05-23 (midday) — D7-Part2: close cross-epoch quorum-intersection gap (C5)
+
+**Focus:** cross-epoch agreement under dynamic validator sets — the count-based churn cap is insufficient under stake weighting.
+**Commits shipped:** 1 (a605343a) on branch `tla-d7p2-cross-epoch-agreement`.
+**Deliverables:**
+- `evaporchain-consensus` `validator_set.rs`: `EpochTransitionManager::apply_epoch_transition` gains an `enforce_stake_churn` arg implementing TLC-verified rule C5 — one-epoch stake-update activation delay (frozen stayers) + a join+leave+|stake-delta| churn budget capped at `MAX_STAKE_CHURN_FRACTION` (1/16). New `PendingStakeUpdate { validator_id, new_stake, ready_at_epoch }`.
+- `tendermint.rs`: new governance flag `cross_epoch_churn_mode` (allowlist + snapshot default `observe`); `apply_block` epoch-boundary caller reads it.
+- `research/tla/CrossEpochAgreement.tla` + `_C5.cfg`: rule C5 (frozen stayers + stayers >2/3 stake both epochs + f<1/4).
+**Empirical results:**
+- TLC: C5 verified — 483,553 distinct states, no `HonestQuorumIntersection` violation. Base (no fix) violates at the initial state. C1/C2/C3 each TLC-rejected; C4 also verified (850,288 states).
+- Mini: `cargo test -p evaporchain-consensus` green (exit 0). 4 new C5 enforce-path tests + all existing epoch-transition tests pass.
+**Decisions made:**
+- C5 is governance-gated, default `observe` (legacy count-only cap) — bit-compatible until dynamic validator sets are activated on a network.
+- Budget derivation: must be < 1/3 − f; at f < 1/4, < 1/12; using 1/16 for margin.
+**What's next:**
+- Optionally mirror C5 into `evaporchain-consensus-types` (WASM extract has a duplicate `apply_epoch_transition`, still 3-arg).
+- Owner decision: open/merge PR for this branch alongside the other D7 PRs.
+**Blockers / open questions:** none for C5; WASM-extract mirror is a judgment call (flag default-off, prod authority is `evaporchain-consensus`).
+**Cross-references:** commit a605343a; `research/tla/CrossEpochAgreement.tla`; task #38.
+
+---
+
 ## 2026-05-19 (session 63, continued 4) — coverage push: auto_refresh 76.3%, key_rotation 98.8%
 
 **Focus:** wallet crate auto_refresh.rs + key_rotation.rs

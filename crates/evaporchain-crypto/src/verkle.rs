@@ -554,7 +554,7 @@ impl Default for VerkleTrie {
 mod tests {
     use super::*;
 
-    fn make_key(byte: u8) -> [u8; 32] {
+    pub(super) fn make_key(byte: u8) -> [u8; 32] {
         let mut k = [0u8; 32];
         k[0] = byte;
         k
@@ -564,7 +564,7 @@ mod tests {
         *blake3::hash(&[seed]).as_bytes()
     }
 
-    fn make_value(byte: u8) -> [u8; 32] {
+    pub(super) fn make_value(byte: u8) -> [u8; 32] {
         let mut v = [0u8; 32];
         v[0] = byte;
         v
@@ -1262,6 +1262,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use super::tests::{make_key, make_value};
     use proptest::prelude::*;
 
     fn arb_key() -> impl Strategy<Value = [u8; 32]> {
@@ -1402,5 +1403,177 @@ mod proptests {
             bytes_to_scalar(&high),
             "top 2 bits of byte 31 must be masked (254-bit subspace)"
         );
+    }
+
+    #[test]
+    fn test_verkle_proof_approx_size() {
+        let mut trie = VerkleTrie::new();
+        for i in 0..5u8 {
+            trie.insert(make_key(i), make_value(i));
+        }
+        let proof = trie.prove(&make_key(2));
+        let sz = proof.approx_size();
+        assert!(sz >= 72, "approx_size must include key+value+depth baseline");
+    }
+
+    #[test]
+    fn test_verkle_trie_default_constructor() {
+        let trie = VerkleTrie::default();
+        assert!(trie.is_empty());
+        assert_eq!(trie.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_from_empty_trie() {
+        let mut trie = VerkleTrie::new();
+        assert!(!trie.delete(&make_key(7)), "delete on empty trie must return false");
+    }
+
+    #[test]
+    fn test_delete_non_existent_key_from_internal_trie() {
+        let mut trie = VerkleTrie::new();
+        // Two keys with same byte[0]=0 → root = Internal{0: Inner{…}}
+        let mut k1 = [0u8; 32]; k1[1] = 0;
+        let mut k2 = [0u8; 32]; k2[1] = 1;
+        trie.insert(k1, make_value(1));
+        trie.insert(k2, make_value(2));
+        // Try to delete a key with byte[0]=0, byte[1]=2 (not in trie)
+        let mut k_miss = [0u8; 32]; k_miss[1] = 2;
+        assert!(!trie.delete(&k_miss), "delete of absent key must return false");
+        assert_eq!(trie.len(), 2, "trie unchanged after failed delete");
+    }
+
+    #[test]
+    fn test_delete_leaves_internal_with_multiple_children() {
+        let mut trie = VerkleTrie::new();
+        trie.insert(make_key(0), make_value(0));
+        trie.insert(make_key(1), make_value(1));
+        trie.insert(make_key(2), make_value(2));
+        // Delete one key → 2 keys remain in Internal
+        assert!(trie.delete(&make_key(1)));
+        assert_eq!(trie.len(), 2);
+        assert_eq!(trie.get(&make_key(0)), Some(make_value(0)));
+        assert_eq!(trie.get(&make_key(2)), Some(make_value(2)));
+    }
+
+    #[test]
+    fn test_delete_collapses_to_internal_when_remaining_child_not_leaf() {
+        // k1 and k2 share byte[0]=0 → root.child[0] = Inner{k1, k2}
+        // k3 has byte[0]=1 → root has 2 children: child[0]=Inner, child[1]=Leaf(k3)
+        // Delete k3 → root has 1 child: child[0]=Inner  → collapse hits non-Leaf arm
+        let mut k1 = [0u8; 32];             // byte[0]=0, byte[1]=0
+        let mut k2 = [0u8; 32]; k2[1] = 1; // byte[0]=0, byte[1]=1
+        let k3 = make_key(1);               // byte[0]=1
+        let mut trie = VerkleTrie::new();
+        trie.insert(k1, make_value(10));
+        trie.insert(k2, make_value(20));
+        trie.insert(k3, make_value(30));
+        assert!(trie.delete(&k3));
+        assert_eq!(trie.len(), 2);
+        assert_eq!(trie.get(&k1), Some(make_value(10)));
+        assert_eq!(trie.get(&k2), Some(make_value(20)));
+    }
+
+    #[test]
+    fn test_prove_missing_key_through_internal() {
+        // k1=[0,0,...] and k2=[0,1,...] force Internal at depth 0 and 1.
+        // Prove k3=[0,2,...] which is absent → hits None=>break in prove loop.
+        let k1 = [0u8; 32];
+        let mut k2 = [0u8; 32]; k2[1] = 1;
+        let mut trie = VerkleTrie::new();
+        trie.insert(k1, make_value(1));
+        trie.insert(k2, make_value(2));
+        let mut k_miss = [0u8; 32]; k_miss[1] = 2;
+        let proof = trie.prove(&k_miss);
+        assert!(proof.value.is_none(), "non-existent key must yield None value");
+    }
+
+    #[test]
+    fn test_verify_depth_exceeds_max_returns_false() {
+        let proof = VerkleProof {
+            key: [0u8; 32],
+            value: Some([1u8; 32]),
+            depth: MAX_DEPTH + 1,
+            commitments: vec![[0u8; 32]; MAX_DEPTH + 1],
+            path_indices: vec![0u8; MAX_DEPTH + 1],
+            siblings: vec![vec![]; MAX_DEPTH + 1],
+        };
+        assert!(!VerkleTrie::verify(&proof, &[0u8; 32]));
+    }
+
+    #[test]
+    fn test_verify_mismatched_proof_lengths_returns_false() {
+        // depth=2 but commitments only has 1 entry
+        let proof = VerkleProof {
+            key: [0u8; 32],
+            value: Some([1u8; 32]),
+            depth: 2,
+            commitments: vec![[0u8; 32]; 1],
+            path_indices: vec![0u8; 2],
+            siblings: vec![vec![]; 2],
+        };
+        assert!(!VerkleTrie::verify(&proof, &[0u8; 32]));
+    }
+
+    #[test]
+    fn test_verify_path_indices_key_binding_cr2_rejects_mismatch() {
+        // depth=1, path_indices[0] != key[0] → CR-2 check returns false
+        let mut key = [0u8; 32]; key[0] = 5;
+        let proof = VerkleProof {
+            key,
+            value: Some([1u8; 32]),
+            depth: 1,
+            commitments: vec![[0u8; 32]],
+            path_indices: vec![9u8], // 9 != key[0]=5
+            siblings: vec![vec![]],
+        };
+        assert!(!VerkleTrie::verify(&proof, &[0u8; 32]));
+    }
+
+    #[test]
+    fn test_verify_non_existence_proof_through_real_trie() {
+        // Build a real non-existence proof and verify it (value=None path in verify)
+        let k1 = [0u8; 32];
+        let mut k2 = [0u8; 32]; k2[0] = 1;
+        let mut trie = VerkleTrie::new();
+        trie.insert(k1, make_value(10));
+        trie.insert(k2, make_value(20));
+        let mut k_miss = [0u8; 32]; k_miss[0] = 2;
+        let proof = trie.prove(&k_miss);
+        let root = trie.root();
+        // Non-existence proof: value is None, verify against real root
+        assert!(proof.value.is_none());
+        // The verify call exercises the None => [0u8; 32] branch
+        let _result = VerkleTrie::verify(&proof, &root);
+    }
+
+    #[test]
+    fn test_verify_sibling_overlaps_path_returns_false() {
+        // Build a real 2-entry trie, get a valid proof, then tamper siblings to overlap path
+        let k1 = [0u8; 32];
+        let mut k2 = [0u8; 32]; k2[0] = 1;
+        let mut trie = VerkleTrie::new();
+        trie.insert(k1, make_value(1));
+        trie.insert(k2, make_value(2));
+        let root = trie.root();
+        let mut proof = trie.prove(&k1);
+        // If proof has depth>0 siblings, tamper sibling to use same index as path
+        if proof.depth > 0 && !proof.siblings[0].is_empty() {
+            let path_idx = proof.path_indices[0];
+            proof.siblings[0][0] = (path_idx, [0u8; 32]); // overlap → must reject
+            assert!(!VerkleTrie::verify(&proof, &root));
+        } else {
+            // Depth=0 or no siblings: construct an artificial depth=1 proof with overlap
+            let mut key = [0u8; 32]; key[0] = 0;
+            let tampered = VerkleProof {
+                key,
+                value: Some(make_value(1)),
+                depth: 1,
+                commitments: vec![[0u8; 32]],
+                path_indices: vec![0u8],
+                siblings: vec![vec![(0u8, [0u8; 32])]],  // sib_idx == path_idx=0
+            };
+            assert!(!VerkleTrie::verify(&tampered, &root));
+        }
     }
 }
