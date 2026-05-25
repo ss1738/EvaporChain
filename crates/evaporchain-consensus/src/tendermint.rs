@@ -2874,8 +2874,14 @@ impl TendermintConsensus {
                 active_count: 0,
                 ghost_count: 0,
             };
+            // L0-A (audit 2026-05-17): pass the chain-global λ so the
+            // Nova-path running-total decays via single-λ doctrine, not
+            // via the first object's per-object half_life. Default-genesis
+            // matches existing conservation-gate behaviour at this layer
+            // until CONS-A wires a governance read path for λ.
             self.lambda_fold_nova = Some(Box::new(evaporchain_lambda_fold::NovaFolder::new(
                 &genesis_dc,
+                evaporchain_energy_kernel::ChainLambda::default_genesis(),
             )?));
         }
 
