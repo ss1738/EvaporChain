@@ -232,8 +232,8 @@ mod tests {
 
         // Adversary holds N-1=6 shares, but 4 of them have decayed
         // below floor. Only 2 fresh < k_threshold of 4.
-        for i in 0..4 {
-            shares[i].energy = 50;
+        for share in shares.iter_mut().take(4) {
+            share.energy = 50;
         }
         // shares[4..7] still at 1000.
         let err = reconstruct_bulk(&shares, k_threshold, 100).unwrap_err();

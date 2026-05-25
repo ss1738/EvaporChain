@@ -580,12 +580,12 @@ mod tests {
         let inputs_6: Vec<FpVar<Bn254Fr>> = (1..=6u64)
             .map(|i| FpVar::<Bn254Fr>::new_input(cs_a.clone(), || Ok(Bn254Fr::from(i))).unwrap())
             .collect();
-        enforce_poseidon_primary(cs_a.clone(), &config, &inputs_6).expect("6 absorbs");
+        let _ = enforce_poseidon_primary(cs_a.clone(), &config, &inputs_6).expect("6 absorbs");
 
         let inputs_25: Vec<FpVar<Bn254Fr>> = (1..=25u64)
             .map(|i| FpVar::<Bn254Fr>::new_input(cs_b.clone(), || Ok(Bn254Fr::from(i))).unwrap())
             .collect();
-        enforce_poseidon_primary(cs_b.clone(), &config, &inputs_25).expect("25 absorbs");
+        let _ = enforce_poseidon_primary(cs_b.clone(), &config, &inputs_25).expect("25 absorbs");
 
         let nc6 = cs_a.num_constraints();
         let nc25 = cs_b.num_constraints();

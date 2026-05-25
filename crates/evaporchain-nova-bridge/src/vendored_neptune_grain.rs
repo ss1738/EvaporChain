@@ -159,8 +159,8 @@ mod tests {
 
         // Convert neptune's bool vec to bytes for comparison.
         let mut neptune_bytes = [0u8; 10];
-        for i in 0..80 {
-            if neptune_init[i] {
+        for (i, &bit) in neptune_init.iter().take(80).enumerate() {
+            if bit {
                 let byte_idx = i / 8;
                 let bit_idx = 7 - (i % 8);
                 neptune_bytes[byte_idx] |= 1 << bit_idx;

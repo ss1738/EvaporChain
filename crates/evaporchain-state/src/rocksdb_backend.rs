@@ -114,6 +114,12 @@ struct BatchUndoLog {
     governance_params_snapshot: HashMap<String, String>,
 }
 
+/// Paired account+object map captured at a given height for the
+/// rolling historical-snapshot window. Aliased so the
+/// `BTreeMap<u64, …>` declaration on `RocksDBStateDB::snapshots`
+/// fits clippy's `type_complexity` budget.
+type HistoricalSnapshot = (HashMap<AccountAddress, Account>, HashMap<ObjectId, StateObject>);
+
 /// RocksDB-backed state database with in-memory write-through cache.
 pub struct RocksDBStateDB {
     db: DB,
@@ -151,7 +157,7 @@ pub struct RocksDBStateDB {
     /// In-memory rolling window of historical account+object snapshots
     /// (MAX_SNAPSHOTS_ROCKSDB entries). Not persisted across restarts —
     /// used for light-client queries within the recent window only.
-    snapshots: BTreeMap<u64, (HashMap<AccountAddress, Account>, HashMap<ObjectId, StateObject>)>,
+    snapshots: BTreeMap<u64, HistoricalSnapshot>,
     // Batch mode: buffer writes for atomic commit (Mutex for Sync)
     pending_batch: std::sync::Mutex<Option<WriteBatch>>,
     // Undo log for reverting in-memory state on rollback

@@ -264,9 +264,9 @@ fn adversarial_double_clear_rejected() {
     // re-entrancy / double-settlement is impossible.
     let mut auction = carbon_auction();
     let carol = Bid::new(id(0xD3), 7_000, 50, 80).unwrap();
-    try_clear(&mut auction, &[carol.clone()], 100).unwrap().unwrap(); // first clear OK
+    try_clear(&mut auction, std::slice::from_ref(&carol), 100).unwrap().unwrap(); // first clear OK
 
-    let err = try_clear(&mut auction, &[carol], 110).unwrap_err();
+    let err = try_clear(&mut auction, std::slice::from_ref(&carol), 110).unwrap_err();
     assert!(
         matches!(err, ClearError::Lifecycle(LifecycleError::NotOpen)),
         "second try_clear on Cleared auction must return NotOpen, got {err:?}"

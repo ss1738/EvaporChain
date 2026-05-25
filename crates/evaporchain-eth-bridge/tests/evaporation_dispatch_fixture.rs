@@ -13,7 +13,7 @@ use bls12_381::hash_to_curve::{ExpandMsgXmd, HashToCurve};
 use bls12_381::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
 use evaporchain_eth_bridge::mmr::{build_and_prove, ghost_leaf_hash};
 use evaporchain_eth_bridge::valset::{compute_root, Validator};
-use group::{Curve, Group};
+use group::Curve;
 use serde_json::json;
 use sha3::{Digest, Keccak256};
 use std::fs;
@@ -25,8 +25,8 @@ const DOMAIN_TAG_HEADER_TEXT: &str = "EvaporChain/v1/header";
 fn keygen_deterministic(seed: u64) -> (Scalar, G1Affine) {
     let mut bytes = [0u8; 64];
     bytes[0..8].copy_from_slice(&seed.to_le_bytes());
-    for i in 8..64 {
-        bytes[i] = (seed.wrapping_mul(i as u64) & 0xFF) as u8;
+    for (i, byte) in bytes.iter_mut().enumerate().skip(8) {
+        *byte = (seed.wrapping_mul(i as u64) & 0xFF) as u8;
     }
     let sk = Scalar::from_bytes_wide(&bytes);
     let pk: G1Affine = (G1Projective::generator() * sk).into();
