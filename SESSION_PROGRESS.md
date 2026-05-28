@@ -24,14 +24,17 @@ Working journal for the build. Each session appends an entry at the TOP. Newest 
 **Decisions made:**
 - For #461's β-saturation bug, fixed the test rather than the impl. The integer Boltzmann saturating both forks to caliber=0 (and head-id tie-break then preferring the smaller-id-but-higher-energy fork) is a real corner case worth re-examining in a separate doctrine pass, but the unsaturated semantic is what mcc_choose is actually used for in practice.
 - For #469's test breakage, kept `make_test_tc()` BLS-free (default, used by 30+ tests) and added a new `make_test_tc_with_bls()` for the 3 DA-cert tests — smaller blast radius than retrofitting BLS signatures across every consensus-message test.
+**Late-afternoon continuation (commits 0bd9b4b2, launchd swap):**
+- 5 nested-workspace Cargo.lock files (under `crates/*-wasm/`, `ethereum-bridge/circuits/`, `fuzz/`, `prototypes/fold-a-block/`) now tracked. Commit `0bd9b4b2`. Same reasoning as the 2026-05-23 root Cargo.lock track: standalone/sub-workspaces shouldn't drift between CI and Mini.
+- Mini-1 runner watchdog converted from `nohup /tmp/runner-watchdog.sh &` to a launchd LaunchAgent at `~/Library/LaunchAgents/com.evaporchain.actions-runner.plist` (KeepAlive + RunAtLoad + ThrottleInterval 5). Survives Mini reboot.
+- **launchd PATH gotcha cost ~4 CI jobs.** Initial plist lacked `~/.cargo/bin` in `EnvironmentVariables.PATH`; KeepAlive respawned the runner every ~5s and each respawn grabbed a queued job and failed it with `cargo: command not found` (exit 127) before I caught and patched the plist. Damage-controlled via `gh api .../runs/{id}/rerun-failed-jobs`. See `lesson_2026_05_28_launchd_path_gotcha.md`.
 **What's next:**
-- Mini-1 runner watchdog is still on a `nohup /tmp/runner-watchdog.sh` and dies on Mini reboot — needs launchd conversion.
-- Convert the 5 nested-workspace Cargo.lock files (under `crates/*-wasm/`, `ethereum-bridge/circuits/`, `fuzz/`, `prototypes/fold-a-block/`) into a deliberate gitignore entry or commit them — currently they are working-tree noise that's easy to sweep up by accident.
 - Open MAINNET_READINESS lanes are mostly 🔴 BLOCKED on cluster bring-up (T3.1) or operator decisions; no code-only lanes left to claim right now.
+- Optional verification: Mini-1 reboot to confirm the LaunchAgent survives the boot cycle (it's `RunAtLoad: true` + KeepAlive so it should).
 **Blockers / open questions:**
 - T3.1 (Phase C cluster deploy) blocks roughly 6 downstream lanes (T0.6, T0.7, T0.10, T1.18, etc.). Not a code item.
 - Hetzner permanent node is up and proven but a 5-node soak still wants a second paid VPS (operator decision).
-**Cross-references:** PRs #461 (d49b550b), #469 (b4a7a207); commits 05dd7012, e4462e1e, 3b69ef27.
+**Cross-references:** PRs #461 (d49b550b), #469 (b4a7a207); commits 05dd7012, e4462e1e, 3b69ef27, 0bd9b4b2; lesson `lesson_2026_05_28_launchd_path_gotcha.md`.
 
 ---
 
