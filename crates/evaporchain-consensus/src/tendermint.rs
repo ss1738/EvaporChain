@@ -16862,18 +16862,38 @@ mod da_tests {
     use evaporchain_state::db::InMemoryStateDB;
     use evaporchain_types::{BlobTx, TransferTx};
 
-    /// Deterministic BLS keypair per validator id. Shared between the
-    /// mock validator set (`make_test_tc`) and the cert builder
-    /// (`make_valid_da_cert`) so DA-001's `verify_signatures_bound`
-    /// check (`att.public_key == registered_key`) passes in tests.
-    /// Test-only: do NOT reuse outside this module.
+    /// Deterministic BLS keypair per validator id. Used by the DA-cert
+    /// fixtures (`make_test_tc_with_bls` + `make_valid_da_cert`) so
+    /// DA-001's `verify_signatures_bound` check
+    /// (`att.public_key == registered_key`) passes. Test-only: do NOT
+    /// reuse outside this module.
     fn validator_kp(vid: u64) -> BlsKeypair {
         let mut sk = [0u8; 32];
         sk[0] = vid as u8;
         BlsKeypair::from_secret_bytes(&sk).expect("deterministic test kp")
     }
 
+    /// Default test consensus — validators have NO registered BLS key.
+    /// Use this for tests that exercise consensus paths with
+    /// `bls_signature: None` (equivocation, jailing, basic Tendermint
+    /// flow). The prevote/precommit handler skips BLS verification when
+    /// `validator.bls_public_key` is None AND `has_bls_keys()==false`
+    /// on the whole set, which is the case here.
     fn make_test_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        TendermintConsensus::new_for_test(1, 100, vs)
+    }
+
+    /// Same as `make_test_tc()` but each validator has its registered
+    /// BLS public key set to `validator_kp(vid).public_key_bytes()`.
+    /// Only DA-cert verification tests need this — DA-001's
+    /// `verify_signatures_bound` requires the attestation's public_key
+    /// to match the validator's registered key.
+    fn make_test_tc_with_bls() -> TendermintConsensus {
         let mut vs = ValidatorSet::new();
         for vid in 1..=4u64 {
             let mut info = ValidatorInfo::new(vid, 1000, [vid as u8; 32]);
@@ -17922,7 +17942,7 @@ mod da_tests {
     #[test]
     fn test_da_valid_cert_accepted_before_enforcement() {
         // Valid DA certificates should always be accepted, even before enforcement
-        let tc = make_test_tc();
+        let tc = make_test_tc_with_bls();
 
         // Block at height 5 (before default enforcement of 100) with valid cert
         let block = make_block_with_valid_da_cert(5, 3);
@@ -17935,7 +17955,7 @@ mod da_tests {
     #[test]
     fn test_da_valid_cert_accepted_after_enforcement() {
         // Valid DA certificates should be accepted at and after enforcement height
-        let tc = make_test_tc();
+        let tc = make_test_tc_with_bls();
 
         // Block at height 100 (at enforcement) with valid cert
         let block = make_block_with_valid_da_cert(100, 3);
@@ -18191,7 +18211,7 @@ mod da_tests {
     #[test]
     fn test_da_enforcement_height_zero_means_always_enforced() {
         // Setting enforcement height to 0 means enforcement from the very first block
-        let mut tc = make_test_tc();
+        let mut tc = make_test_tc_with_bls();
         tc.set_da_enforcement_height(0);
 
         let block = make_block_no_da_cert(0);
