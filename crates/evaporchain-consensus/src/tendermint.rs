@@ -3050,11 +3050,10 @@ impl TendermintConsensus {
     /// (default 1000 millibits) — same path `current_tip` uses to
     /// build its MccForkChoice. Empty DAG → empty Vec.
     pub fn enumerate_candidate_heads(&self) -> Vec<([u8; 32], u64)> {
-        let beta_mb = self
-            .governance_params
-            .get("crooks_mev_beta_mb")
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(1000);
+        // β MUST match the acceptance path (evaluate) and the proposer
+        // (current_tip) — shared source, else mcc_full's authoritative
+        // head diverges from what validators accept (aligned 2026-05-22).
+        let beta_mb = Self::mcc_fork_choice_beta_mb();
         let fc = crate::fork_choice::MccForkChoice::new(self.light_cone_dag.clone(), beta_mb);
         fc.enumerate_with_caliber()
     }
@@ -4192,12 +4191,10 @@ impl TendermintConsensus {
             .unwrap_or("linear");
         if mode == "mcc" {
             // Build a snapshot MccForkChoice with the chain's current
-            // DAG + β. β source = governance flag; default 1000 mb.
-            let beta_mb = self
-                .governance_params
-                .get("crooks_mev_beta_mb")
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(1000);
+            // DAG + β. β MUST match the acceptance path (evaluate) or a
+            // proposer's select_tip choice could be rejected on accept —
+            // see mcc_fork_choice_beta_mb (aligned 2026-05-22).
+            let beta_mb = Self::mcc_fork_choice_beta_mb();
             // ForkChoice trait must be in scope for the
             // `select_tip` method to resolve.
             use crate::fork_choice::ForkChoice;
@@ -4207,6 +4204,27 @@ impl TendermintConsensus {
             }
         }
         self.parent_hash
+    }
+
+    /// Canonical β (in millibits) for MCC fork-choice, shared by the
+    /// proposer's `select_tip` (`current_tip`) and the acceptance path's
+    /// `evaluate`. Derived from the chain's energy-decay half-life so the
+    /// fork-choice temperature tracks the decay rate: `β = 1e6 / half_life`.
+    ///
+    /// Both fork-choice seams MUST read β from here. A divergence (the
+    /// proposer used `crooks_mev_beta_mb` while accept used this value
+    /// until 2026-05-22) makes the two paths saturate the Boltzmann
+    /// weight at different path-energies, so a proposer's chosen tip can
+    /// be rejected by validators even with no caliber tie — a liveness
+    /// hazard once `parent_acceptance_mode = "mcc"` is enabled. Surfaced
+    /// by `research/tla/MccForkChoice.tla`.
+    pub(crate) fn mcc_fork_choice_beta_mb() -> u64 {
+        let half_life = evaporchain_energy_kernel::ChainLambda::new(
+            evaporchain_energy_kernel::DEFAULT_LAMBDA,
+        )
+        .half_life()
+        .max(1);
+        1_000_000u64 / half_life
     }
 
     pub fn phase(&self) -> Phase {
@@ -5156,13 +5174,9 @@ impl TendermintConsensus {
                         // requirement). Replicated inline to avoid
                         // adding `evaporchain-cfm` to the consensus
                         // Cargo.toml mid-session — Lane I.7 will promote
-                        // the dep cleanly.
-                        let half_life = evaporchain_energy_kernel::ChainLambda::new(
-                            evaporchain_energy_kernel::DEFAULT_LAMBDA,
-                        )
-                        .half_life()
-                        .max(1);
-                        let beta_mb = 1_000_000u64 / half_life;
+                        // the dep cleanly. β MUST match the proposer's
+                        // select_tip path (current_tip) — shared source.
+                        let beta_mb = Self::mcc_fork_choice_beta_mb();
                         let fc = crate::fork_choice::MccForkChoice::new(
                             self.light_cone_dag.clone(),
                             beta_mb,
@@ -9229,7 +9243,7 @@ mod tests {
             let block = Block {
                 number: 1,
                 epoch: 1,
-                parent_hash: [0xFF; 32], // lex max — diverges from default [0; 32]
+                parent_hash: [0x00; 32], // lex min — wins smaller-id tie-break vs local 0xFF
                 state_root: [0u8; 32],
                 transactions: vec![],
                 timestamp: 0,
@@ -9263,8 +9277,10 @@ mod tests {
             }
         };
 
-        // Sanity: tc.parent_hash starts at [0; 32].
-        assert_eq!(tc.parent_hash, [0u8; 32]);
+        // Local parent set to lex max so the candidate's lex-min hash
+        // wins the smaller-id tie-break under MCC (aligned 2026-05-22).
+        tc.parent_hash = [0xFF; 32];
+        assert_eq!(tc.parent_hash, [0xFFu8; 32]);
 
         // ── Mode: linear (default). Diverging parent → reject + RequestSync.
         let actions_linear = tc.on_message(mk_proposal());
@@ -9281,10 +9297,11 @@ mod tests {
         let mut tc2 = make_consensus(1, ids);
         tc2.governance_params
             .insert("parent_acceptance_mode".to_string(), "mcc".to_string());
-        assert_eq!(tc2.parent_hash, [0u8; 32]);
+        tc2.parent_hash = [0xFF; 32]; // local = lex max; candidate 0x00 wins smaller-id tie
+        assert_eq!(tc2.parent_hash, [0xFFu8; 32]);
 
         let actions_mcc = tc2.on_message(mk_proposal());
-        // MCC mode accepts (lex tie-break: FF > 00). The proposal
+        // MCC mode accepts (smaller-id tie-break: 00 < FF). The proposal
         // proceeds past the parent check; we don't assert on what
         // happens after (timestamp, chain_id, sig checks may still
         // intervene), only that the parent-hash gate did NOT
@@ -9298,7 +9315,7 @@ mod tests {
         assert!(
             !mcc_request_sync,
             "mcc mode must NOT emit the parent-hash-divergence RequestSync \
-             at the linear short-circuit site (FF > 00 lex tie-break accepts) \
+             at the linear short-circuit site (00 < FF smaller-id tie-break accepts) \
              — got actions {:?}",
             actions_mcc
         );
@@ -14024,7 +14041,9 @@ mod tests {
         // Argmax contract: first entry of the scored list must equal
         // `MccForkChoice::select_tip`'s pick (with the same DAG + β).
         use crate::fork_choice::ForkChoice;
-        let beta_mb = 1000;
+        // Must use the SAME β as enumerate_candidate_heads (the shared
+        // mcc_fork_choice_beta_mb source), else the argmax can differ.
+        let beta_mb = TendermintConsensus::mcc_fork_choice_beta_mb();
         let fc = crate::fork_choice::MccForkChoice::new(tc.light_cone_dag.clone(), beta_mb);
         let selected = fc.select_tip().expect("non-empty DAG → Some");
         assert_eq!(
