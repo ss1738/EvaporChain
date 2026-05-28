@@ -1899,12 +1899,17 @@ mod tests {
         }));
 
         // total_bytes should now be a non-trivial sum (every arm hit).
+        // PRIV-001/002 v1 stop-gap (SHIELDED_TX_DISABLED_V1): Shield,
+        // Unshield, PrivateTransfer are rejected at mempool admission.
+        // 24 submitted → 21 admitted; the gas-estimation arms are still
+        // covered for those 3 variants because estimate_tx_gas runs
+        // before the rejection gate.
         assert!(pool.total_bytes() > 0);
-        assert_eq!(pool.len(), 24);
+        assert_eq!(pool.len(), 21);
 
-        // Drain via take_with_gas_limit to exercise every arm in
-        // estimate_tx_gas. Use a high budget so all are taken.
+        // Drain via take_with_gas_limit to exercise every non-shielded
+        // arm in estimate_tx_gas. Use a high budget so all are taken.
         let taken = pool.take_with_gas_limit(100, u64::MAX);
-        assert_eq!(taken.len(), 24);
+        assert_eq!(taken.len(), 21);
     }
 }

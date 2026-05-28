@@ -16862,12 +16862,24 @@ mod da_tests {
     use evaporchain_state::db::InMemoryStateDB;
     use evaporchain_types::{BlobTx, TransferTx};
 
+    /// Deterministic BLS keypair per validator id. Shared between the
+    /// mock validator set (`make_test_tc`) and the cert builder
+    /// (`make_valid_da_cert`) so DA-001's `verify_signatures_bound`
+    /// check (`att.public_key == registered_key`) passes in tests.
+    /// Test-only: do NOT reuse outside this module.
+    fn validator_kp(vid: u64) -> BlsKeypair {
+        let mut sk = [0u8; 32];
+        sk[0] = vid as u8;
+        BlsKeypair::from_secret_bytes(&sk).expect("deterministic test kp")
+    }
+
     fn make_test_tc() -> TendermintConsensus {
         let mut vs = ValidatorSet::new();
-        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
-        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
-        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
-        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        for vid in 1..=4u64 {
+            let mut info = ValidatorInfo::new(vid, 1000, [vid as u8; 32]);
+            info.bls_public_key = Some(validator_kp(vid).public_key_bytes().0);
+            vs.add_validator(info);
+        }
         TendermintConsensus::new_for_test(1, 100, vs)
     }
 
@@ -17803,6 +17815,10 @@ mod da_tests {
     }
 
     /// Helper: create a valid DA certificate with BLS-signed attestations.
+    /// Signs each attestation with the *registered* validator keypair
+    /// (see `validator_kp` above) so DA-001's `verify_signatures_bound`
+    /// closure can match `att.public_key` to the validator's registered
+    /// `bls_public_key` field.
     fn make_valid_da_cert(block_number: u64, num_attesters: u64) -> Vec<u8> {
         use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
 
@@ -17814,7 +17830,7 @@ mod da_tests {
         let mut builder = CertificateBuilder::new(block_number, data_root, total_stake);
 
         for vid in 1..=num_attesters {
-            let kp = BlsKeypair::generate();
+            let kp = validator_kp(vid);
             let att = create_attestation(block_number, &data_root, vid, 8, stake_per, &kp);
             assert!(builder.add_attestation(att));
         }
